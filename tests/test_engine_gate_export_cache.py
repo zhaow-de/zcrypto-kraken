@@ -4,6 +4,7 @@ and the counts derived from it, must equal the replay it replaces."""
 from __future__ import annotations
 
 import json
+import re
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -109,9 +110,25 @@ def _fake_builder(targets: dict[str, float]):
     return builder
 
 
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _squash(text: str) -> str:
-    """Typer wraps its error box to the terminal width, so a message can be split across lines."""
-    return " ".join(text.split())
+    r"""Typer's error panel normalised on BOTH axes it varies: styling stripped, then all whitespace.
+
+    Rich styles each hyphen of an option separately -- `--cache` renders as
+    `\x1b[1;36m-\x1b[0m\x1b[1;36m-cache\x1b[0m` -- so the literal flag is not a substring of a styled
+    panel at all, and the panel word-wraps at COLUMNS, so a phrase can break across lines. Apply this
+    to the EXPECTED string as well as the actual one: the assertion stays readable and matches either
+    rendering. The same normalisation already lives in `tests/test_archive_pull.py` and six other
+    modules; this file had a whitespace-only version, which is why CI went red where local runs did not.
+
+    Which environments style, measured rather than assumed: `GITHUB_ACTIONS=true` alone does (that is
+    what CI trips -- `.github/workflows/coverage.yml` sets no colour variable), and `FORCE_COLOR=1`
+    does. `CI=true` alone does not, `TERM=xterm-256color` alone does not, and CliRunner's `color=True`
+    does NOT style this panel, so forcing the env is the only lever that reproduces CI here.
+    """
+    return re.sub(r"\s+", "", _ANSI_SGR.sub("", text))
 
 
 def _prom(text: str) -> dict[str, float]:
@@ -583,6 +600,9 @@ def test_gate_export_emits_cache_metrics(tmp_path, monkeypatch):
 
 
 def _gate_export(tmp_path, monkeypatch, *extra: str):
+    # Style the output HERE, always: a refusal asserted only against an unstyled panel is colour-lucky,
+    # and CI (which styles) is then the first place the difference shows -- as it was.
+    monkeypatch.setenv("FORCE_COLOR", "1")
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     _write_success_record(engine_cfg.journal_dir, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -609,7 +629,10 @@ def test_gate_export_refuses_cache_and_slice_apart(tmp_path, monkeypatch, extra)
     extra = tuple(str(tmp_path / "gate-cache.json") if a == "CACHE" else a for a in extra)
     result = _gate_export(tmp_path, monkeypatch, *extra)
     assert result.exit_code == 2, result.output
-    assert "--cache and --slice go together" in _squash(result.output), result.output
+    # The forcing above is load-bearing, so it is held: without this line nothing fails when the
+    # setenv is removed, and the assertion below silently goes back to testing the unstyled panel.
+    assert _ANSI_SGR.search(result.output), "FORCE_COLOR did not take -- this run is not exercising the styled panel CI produces"
+    assert _squash("--cache and --slice go together") in _squash(result.output), result.output
 
 
 @pytest.mark.parametrize("bad", ["-1", "24", "100"], ids=["below", "at-the-bound", "far-above"])
