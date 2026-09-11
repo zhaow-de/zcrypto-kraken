@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "Ripe now, and stays ripe until the key moves: `grep -c 'now.hour % _ROTATION_SLICES' cli/engine/gate_cache.py` is non-zero while `grep -c -- '--slice' infra/nas/pull-entrypoint.sh` is non-zero — the sibling loop is counter-keyed and this one is not."
+ripe_when: "Ripe now, and stays ripe until the key moves: `grep -c 'now.hour % _ROTATION_SLICES' cli/engine/gate_cache.py` is non-zero."
 ---
 
 # Gate cache reverification slice is clock keyed
@@ -44,13 +44,13 @@ served as a PASS forever. The gate this feeds is what authorises real-money trad
 `zcrypto-gate-cache-reverify-stalled` pages when the oldest verification age passes three days. Its
 bar was set against an assumed daily sweep; under a clock key there is no bound, so at some periods
 a fixed set of slices is never sampled and the age for those cycles climbs without limit — the
-rule fires, but the page's explanation of why does not include the cause.
+rule fires while its own bar was set against a sweep the loop does not perform. (The runbook page that stated the wrong bound is corrected in the PR that files this topic; the code is not.)
 
 The severity today depends on the loop's real period, which is measurable and is step 1 below. At
 ~65 min the worst gap is ~48 h, inside the alert bar. The exposure is the period drifting into the
 band where slices starve, with nothing watching for it.
 
-Note that `cli/engine/gate_cache.py:31` already carries an assert against the **adjacent** failure —
+Note that `cli/engine/gate_cache.py:34` already carries an assert against the **adjacent** failure —
 `_ROTATION_SLICES > 24` leaving high slices unreachable — and names D2/D3 while doing it. Someone
 reasoned about starvation in this exact spot and about a different mechanism.
 
@@ -72,9 +72,11 @@ reasoned about starvation in this exact spot and about a different mechanism.
 
 ## Suggested next steps
 
-1. **Measure the loop's real period** from the NAS, which decides how bad this is today. Read
-   consecutive `pull complete` timestamps from the archive-pull container's logs over a day and
-   take the distribution, not one gap. Under ~65 min the worst-case gap is ~48 h and inside the
+1. **Measure the loop's real period** from the NAS, which decides how bad this is today.
+   `ssh nas 'sudo /usr/local/bin/docker logs zcrypto-archive-pull --since 24h'` — the absolute path
+   is not optional, since `docker` is off that host's non-interactive ssh PATH and a bare `docker`
+   reads as "no containers". Take consecutive `pull complete` timestamps from that output and
+   read the distribution, not one gap. Under ~65 min the worst-case gap is ~48 h and inside the
    alert bar; in the 72-90 min band a fixed set of slices is never visited.
 2. **Decide where the counter lives.** A counter in the cache file resets on a recreate; a counter
    derived from a persisted run ordinal does not, at the cost of another field in the cache schema
