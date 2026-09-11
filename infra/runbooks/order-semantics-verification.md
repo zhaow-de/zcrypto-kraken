@@ -81,7 +81,7 @@ Decide this first; it can predate everything above. Stop bumping the pin, and ke
 
 - Freeze before the pass. The version you run the probes against must be the version still pinned when the engine is armed. Land the bump you intend to arm on, then stop.
 - A bump in the repo does not touch a running container, so an engine armed on the old version keeps trading on it. What the bump kills is the path forward: the armed converge is refused from that tree, and once an image built from it is deployed the gate refuses to arm too. Nothing warns at the moment of the bump; the refusal arrives at the arming step.
-- A bump that lands after a pass is a decision to re-run the pass, at the full attended cost, or to revert the pin. There is no third option: a bump can move fill, cancel, post-only or reconciliation behaviour without moving anything the suite can see.
+- A bump that lands after a pass is a decision to re-run the pass, at the full attended cost, or to revert the pin. There is no third option: a bump can move fill, cancel, post-only or reconciliation behaviour without moving anything the suite can see (no count command: the adapter's venue behaviour is upstream; the attended probes are what read it).
 
 While the engine is disarmed, bump freely. The freeze starts when the pass is scheduled and ends when the arming window closes. The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
 
@@ -155,9 +155,9 @@ $RUN --probes all --evidence-dir "$EVID"
 
 Rules:
 
-- Never write either value into a file, a history-recorded command, or a subagent prompt.
-- Never run `ansible-inventory --host` / `--list` / `--graph --vars`: `CLAUDE.md`'s Secrets rule, and `infra/ansible/scripts/vault-pass.sh` refuses those ancestries.
-- The harness reads both values, not merely their presence (`exec_client_config()` passes `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` into `KrakenExecutionClientConfig`), and never stores, logs, prints or writes them; its refusals name the two variables, never their contents.
+- Never write either value into a file, a history-recorded command, or a subagent prompt (no count command: a history line or a prompt sits outside the tree, and no hook scans for secrets).
+- Never run `ansible-inventory --host` / `--list` / `--graph --vars` (set: the non-comment lines of the non-Markdown files under `infra/`, `.claude/`, `cli/` — the roles, templates, units, hooks and scripts a command runs from — with `infra/ansible/scripts/vault-pass.sh`, whose text is the refusal, excluded beside the counter; count: `infra/scripts/count-list.sh ansible-inventory-secret-forms-invoked`): `CLAUDE.md`'s Secrets rule, and `infra/ansible/scripts/vault-pass.sh` refuses those ancestries.
+- The harness reads both values, not merely their presence (`exec_client_config()` passes `KRAKEN_SPOT_API_KEY` / `KRAKEN_SPOT_API_SECRET` into `KrakenExecutionClientConfig`), and never stores, logs, prints or writes them; its refusals name the two variables, never their contents (no count command: a property of the harness's own code, which no test asserts).
 - Close the shell when the run is done. Nothing sensitive should be in it, and that is the check.
 
 Nonce: the adapter mints finer-than-millisecond nonces (`docs/reference/adapter-verification/1.230.0.md`), so after a harness run a millisecond-nonce REST script on the same key gets `EAPI:Invalid nonce`. Give any sidecar tooling you reach for afterwards `time_ns()` nonces.
@@ -183,7 +183,7 @@ Read every `PLAN` line before continuing. For each one confirm:
 - 4a/4c: a BUY price ~30 % below the printed mid; 4d: a SELL price ~30 % above it,
 - 4b: a BUY price just above the printed ask (it must cross),
 - 4c/4d carry `leverage=2`; 4a/4b carry `leverage=None`,
-- `client_order_id` carries the harness's `901`/`P6V` tags (`O-<stamp>-901-P6V-<n>`), never the engine's `-001-000-`; `--selftest` proves the shape.
+- `client_order_id` carries the harness's `901`/`P6V` tags (`O-<stamp>-901-P6V-<n>`), never the engine's `-001-000-` (no count command: `tests/test_order_semantics_probe.py::test_selftest_passes_with_no_credentials_and_no_network` runs the `--selftest` that proves the shape).
 
 Also read probe 2's row: it lists any pre-existing open order or position that read can see. Anything there must be explained before you place a probe order; a `REVIEW` verdict on probe 2 is a stop sign, not a footnote. An empty row is a floor, not a clear venue: probe 2 reads the startup-reconciliation cache, which is blind on the five pairs §5.4 names, and `--pair` defaults to BTC/EUR, one of them. A leftover from an earlier run, on the pair you are about to trade, is exactly what this row cannot list. Read Kraken → Trade → Open Orders by eye before §5.2 places anything.
 
@@ -276,8 +276,8 @@ uv run python infra/scripts/grafana-query.py \
   'zcrypto_exec_position{host="zcrypto"}'
 ```
 
-- `zcrypto_exec_external_events_total{disposition="unmatched"}` should have risen by roughly the number of order events the probes generated. `(no series)` is a FAIL of the telemetry path, never a zero.
-- `zcrypto_exec_kill_tripped` must still be 0. A trip means an order the engine's ledger vouches for diverged, which probe orders structurally cannot cause, so investigate it as a real event.
+- `zcrypto_exec_external_events_total{disposition="unmatched"}` should have risen by roughly the number of order events the probes generated. `(no series)` is a FAIL of the telemetry path, never a zero (no count command: how an operator reads a query's output leaves no record in the tree).
+- `zcrypto_exec_kill_tripped` must still be 0. A trip need not be a diverged order — the kill also latches on a weekly tracking-band breach and on a position that could not be read after an intent — but the divergence path is the one the probes could be suspected of, and they structurally cannot reach it: an external event no ledger row vouches for reaches nothing at all (no count command: `tests/test_engine_executor.py::test_an_external_event_the_ledger_does_not_vouch_for_reaches_nothing_at_all`), so investigate any trip as a real event.
 - `zcrypto_exec_position` must be unchanged and flat.
 
 Then confirm the engine's next boundary cycle journals normally:
@@ -300,7 +300,7 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 
 The harness prints the table under `PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md` and writes `evidence-<stamp>.json` into `--evidence-dir`. Then sweep the homes of "<version> is unverified" in the same change, or the next reader meets a contradiction:
 
-1. Add the version to `cli/engine/order-semantics-verified.json`, exactly as the interpreter spells it (§2.1). This is the act that says the re-run happened, and the one that clears both guards. Add a version only when its `docs/reference/adapter-verification/<version>.md` record carries a PASS.
+1. Add the version to `cli/engine/order-semantics-verified.json`, exactly as the interpreter spells it (§2.1). This is the act that says the re-run happened, and the one that clears both guards. Add a version only when its `docs/reference/adapter-verification/<version>.md` record carries a PASS (no count command: the file's own `_never` line and its `_notes` map state the pairing; no test checks it).
 2. `tests/test_engine_execgate.py` pins the record's exact contents and fails deliberately the moment you do (1); its assertion message points back at this list. Update it to the new set by hand, not by pasting whatever the diff shows.
 3. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window): pre-probe step 4, whose unmatched-external baseline and live-orders-boot caveat both name the version they were taken on.
 4. The previous version's `docs/reference/adapter-verification/` record, cross-linked so the series reads as one and neither file claims to be current.
