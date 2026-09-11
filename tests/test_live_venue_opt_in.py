@@ -83,15 +83,34 @@ class Module(NamedTuple):
     label: str
 
 
+def _assigned(node: ast.AST) -> set[str]:
+    """Every bare name assigned anywhere under this node, by `=`, `:=`, a `for`, a `with` or an import."""
+    out: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            out.add(child.id)
+        elif isinstance(child, (ast.Import, ast.ImportFrom)):
+            out |= {(a.asname or a.name).split(".")[0] for a in child.names}
+    return out
+
+
 def _module_strings(tree: ast.Module) -> dict[str, str]:
     """Module-level `NAME = "literal"`, annotated or not, so a gate keyed on a constant resolves to the
-    flag it means. A binding this misses reads UNRESOLVED, which fails the one-name assertion."""
+    flag it means.
+
+    A name that any function also assigns is left OUT, so it reads UNRESOLVED rather than resolving to
+    the module's value. A gate inside such a function may be reading the local binding, and answering
+    with the module-level one would name a flag the gate does not read -- reporting the one opt-in for
+    a gate keyed on a second, which is a false negative wearing the right answer's clothes. Refusing
+    to resolve it is the same direction every other unreadable key falls in.
+    """
     out: dict[str, str] = {}
     for node in tree.body:
         targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
         if isinstance(getattr(node, "value", None), ast.Constant) and isinstance(node.value.value, str):
             out.update({t.id: node.value.value for t in targets if isinstance(t, ast.Name)})
-    return out
+    shadowed = set().union(*(_assigned(n) for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))), set())
+    return {name: value for name, value in out.items() if name not in shadowed}
 
 
 def _module_functions(tree: ast.Module) -> dict[str, ast.AST]:
@@ -435,6 +454,7 @@ from tests.venue_gate_absent_by_construction import venue_is_up
 
 FLAG = "ZCRYPTO_LIVE_VENUE_TESTS"
 OTHER = "ZCRYPTO_SOMETHING_ELSE"
+SHADOWED = "ZCRYPTO_LIVE_VENUE_TESTS"
 ROOT = Path("data")
 
 
@@ -531,6 +551,12 @@ def test_skips_in_an_except_handler_with_no_condition_anywhere():
         pytest.skip("the commonest reachability skip has no condition at all")
 
 
+def test_gated_on_a_constant_a_function_rebinds():
+    SHADOWED = "ZCRYPTO_SOMETHING_ELSE"
+    if os.environ.get(SHADOWED) != "1":
+        pytest.skip("the module-level value is not what this gate reads")
+
+
 def test_gated_on_a_helper_this_file_cannot_read():
     if not venue_is_up():
         pytest.skip("the whole decision lives one module away")
@@ -556,8 +582,17 @@ def test_a_second_opt_in_name_is_caught_in_every_spelling_the_language_offers():
     assert sum(name == "ZCRYPTO_SOMETHING_ELSE" for _, _, name in offenders) == 7, (
         f"every spelling of the second flag must be caught, got {[(g.line, n) for _, g, n in offenders]}"
     )
-    assert any(name.startswith("<unresolved") for _, _, name in offenders), "a computed key must be refused"
+    unresolved = sorted(name for _, _, name in offenders if name.startswith("<unresolved"))
+    assert len(unresolved) == 2, f"a computed key and a shadowed constant must both be refused, got {unresolved}"
     assert OPT_IN not in {name for _, _, name in offenders}, "the one opt-in must not be reported as a second flag"
+
+
+def test_a_constant_a_function_rebinds_is_refused_rather_than_answered_from_the_module():
+    """The module-level `SHADOWED` holds the one opt-in and the gate reads a local rebinding holding a
+    second flag. Answering from the module would name the right flag for the wrong gate -- a false
+    negative wearing the correct answer's clothes -- so the key is refused instead."""
+    gate = next(g for g in _gates(_FIXTURE) if "SHADOWED" in g.guards)
+    assert gate.env == ("<unresolved: SHADOWED>",), f"a shadowed constant must not resolve, got {gate.env}"
 
 
 def test_a_reachability_keyed_skip_is_caught_in_every_place_a_skip_can_sit():
