@@ -212,16 +212,17 @@ rules:
     condition: C
     # The gate cache (spec 00060) skips replay_cycle on a fingerprint hit -- and that replay is the
     # ONLY place the journal's parquet bytes are re-hashed (the NAS pull uses --no-verify and
-    # delegates to it). Spec 00062 therefore force-replays a rotating ~1/24 slice each run so the
-    # whole journal is re-verified about daily. THIS RULE IS THAT MECHANISM'S ONLY WITNESS: if the
-    # rotation stops, a stalled cache is indistinguishable from a healthy one except through this
-    # number. Note save_cache logs a warning and continues on write failure, so a full disk presents
-    # as a working cache with invalidated=0 and a quietly-ageing age here (T0077).
-    # CORRECTION: "about daily" above does not hold. due_for_reverification keys the slice on the
-    # hour the run STARTED, and this loop's period is the pull interval plus that cycle's work, so
-    # the sampled hour drifts and coverage is not uniform -- spec 00102 D3 simulated this same loop
-    # and found a clock key gives no bound at all. Read this bar as "some part of the journal has
-    # gone three days unread", not as three sweeps of a daily sweep. The defect is registered.
+    # delegates to it). Spec 00062 therefore force-replays a rotating ~1/24 slice each run, so the
+    # whole journal is re-verified within 24 runs -- about 26 h at the loop's measured 64-minute
+    # period. THIS RULE IS THAT MECHANISM'S ONLY WITNESS: if the rotation stops, a stalled cache is
+    # indistinguishable from a healthy one except through this number. Note save_cache logs a
+    # warning and continues on write failure, so a full disk presents as a working cache with
+    # invalidated=0 and a quietly-ageing age here (T0077).
+    # The 24-run bound is real only since T0198. Spec 00062 D3 keyed the slice on the hour the run
+    # STARTED; this loop's period is the pull interval plus that cycle's work, so the sampled hour
+    # drifts and at some periods a fixed set of slices is never sampled at all -- no bound, and this
+    # rule cannot see it, because it reads an age and the age of a slice nobody reaches never rises.
+    # gate-export now takes the run counter as --slice and the clock has left the key entirely.
     data:
       - refId: A
         queryType: ""
@@ -241,13 +242,17 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 3d. A full rotation is ~24h, so this is ~3 sweeps of slack: late enough that a skipped
-            # hour or a restart never pages, early enough that a genuinely stopped rotation surfaces
-            # long before the evidence is meaningfully stale.
+            # 3d. A full rotation is 24 runs -- ~26 h at the measured 64-minute period -- so this is
+            # a little under three sweeps of slack: late enough that a container recreate (which
+            # resets the counter to 0) never pages, early enough that a genuinely stopped rotation
+            # surfaces long before the evidence is meaningfully stale. The slack is in RUNS, not
+            # hours, so it shrinks if the loop slows: past a ~3 h period one sweep exceeds 3 d and a
+            # healthy rotation would page. Re-derive this threshold if the pull interval changes.
             - evaluator: {type: gt, params: [259200]}
     # OK, NOT Alerting -- deliberately unlike its zcrypto-gate siblings. gate-export emits this
-    # metric only when --cache is active and non-empty (the NAS archive-pull loop passes `--cache`,
-    # infra/nas/pull-entrypoint.sh), so absence is legitimate whenever the cache is off or a
+    # metric only when --cache is active and non-empty (the NAS archive-pull loop passes `--cache`
+    # and its run counter as `--slice`, infra/nas/pull-entrypoint.sh -- the CLI refuses one without
+    # the other), so absence is legitimate whenever the cache is off or a
     # container recreate has discarded it; "the exporter vanished" is zcrypto-gate-exporter-stale's.
     noDataState: OK
     execErrState: Alerting
