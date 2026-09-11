@@ -58,7 +58,7 @@ What accumulates unseen differs by host:
 
 **Verify by value before you call it fixed.** The recipe is `zcrypto-bump-alloy` Step 3, which also names the pages a recreate is expected to fire and what each proves. The canonical proof is `uv run python infra/scripts/grafana-query.py 'count(up{host="<host>"})'` ≥ 1 with the rule back to **Normal**; `(no series)` is a FAIL, never a zero. On a capture host, confirm the fix never touched the unbackfillable daemon: `sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0 and the capture container's `RestartCount` unchanged.
 
-**Expect `zcrypto-fleet-daemon-restarted` to fire once for `job="integrations/self"`** after the restart. That is this action's own record; it self-clears within 15 minutes and needs nothing. A second firing on the same host with no action from you is a crash loop.
+**Expect `zcrypto-fleet-daemon-restarted` to fire once for `job="integrations/self"`** after the restart. That is this action's own record; it self-clears within 15 minutes and needs nothing. A firing that does not clear after that window, or clears and returns with no action from you, is a crash loop — under a restart loop the rule's window never empties, so there is no second firing to wait for.
 
 ### Retire when
 

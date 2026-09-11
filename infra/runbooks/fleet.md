@@ -102,7 +102,7 @@ A warning-severity Grafana alert, one instance per `(host, job)`: that daemon's 
 1. **Check the deploy log first** — `docs/reference/deploy-log.jsonl`'s last line, or the channel: a converge in the last 15 minutes explains it completely.
 2. **Otherwise read the container**: `sudo docker inspect --format '{{.RestartCount}} {{.State.OOMKilled}}' <name>` — `zcrypto-capture`, `zcrypto-engine`, `grafana-alloy`, or the ops poller `zcrypto-ops-liquidations` (`ssh hp`); on the NAS docker is `/usr/local/bin/docker`. `OOMKilled=true` names the cause; read the memory panels for how it got there and treat it as the headroom page that did not get a chance to fire.
 3. **For a capture daemon, confirm capture recovered**: `sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | head` shows files advancing. A single-host restart costs seconds and the peer's copy heals it; the reconciler will book whatever was not.
-4. **A second firing with no action from you is a crash loop** — read `sudo docker logs --since 20m zcrypto-capture` before anything else.
+4. **A firing that outlives the window, or clears and returns with no action from you, is a crash loop** — read `sudo docker logs --since 20m zcrypto-capture` before anything else.
 
 ### Retire when
 
