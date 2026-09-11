@@ -935,13 +935,14 @@ def test_due_for_reverification_matches_the_runs_slice_index():
 
 
 def test_rotation_slices_guard_rejects_values_above_24():
-    """`slice_of` returns `[0, _ROTATION_SLICES)` but `due_for_reverification` selects the current
-    slice via `now.hour % _ROTATION_SLICES`, which can only ever produce `[0, 23]` -- any
+    """`slice_of` returns `[0, _ROTATION_SLICES)` but the index its caller supplies is that caller's
+    cycle counter modulo 24 (`pull-entrypoint.sh`), which can only ever produce `[0, 23]` -- any
     `_ROTATION_SLICES > 24` would leave the high slices permanently unreachable, silently never
-    re-verified. The module-level guard immediately below the constant must actually fire for such
-    a value, not just exist as inert prose next to it -- extracts the real constant-plus-guard
-    lines from the module source (comment lines and blank lines around it drift-tolerant) and execs
-    them standalone with the constant patched to 25."""
+    re-verified. Same bound as under the old clock key, resting on a different fact, which is
+    exactly where a docstring goes stale unnoticed. The module-level guard immediately below the
+    constant must actually fire for such a value, not just exist as inert prose next to it --
+    extracts the real constant-plus-guard lines from the module source (comment lines and blank
+    lines around it drift-tolerant) and execs them standalone with the constant patched to 25."""
     lines = inspect.getsource(gate_cache).splitlines()
     start = lines.index("_ROTATION_SLICES = 24")
     end = start + 1
