@@ -69,11 +69,11 @@ The stop reaches nothing else. Each Alloy is its own compose project and its own
 
 ### Must fire
 
-**Ops half — seven pages.** An entry that names fewer books a seven-page blackout as a smaller one, and teaches the next responder to discount the rest.
+**Ops half — eight pages.** An entry that names fewer books an eight-page blackout as a smaller one, and teaches the next responder to discount the rest.
 
 - `zcrypto-alloy-dark-ops` (critical, `metrics`): `for: 10m` + 60 s + ~5 min staleness ≈ **16 min**.
 - `zcrypto-hcio-watchdog` (critical, `metrics`), **ahead of it, at ≈11 min**: the ops Alloy *is* the healthchecks.io scrape, so `hc_checks_down_total` goes stale with it and the rule's `or on() vector(999)` fallback trips at ~5 min staleness + `for: 5m` + 60 s. This is the one route where the watchdog leads rather than trails.
-- Five instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical), [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning) and [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause.
+- Six instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical), [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning) and [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause and [`zcrypto-ops-grafana-keepalive-stale`](ops-node.md#zcrypto-ops-grafana-keepalive-stale) (warning).
 - **Not** the Grafana watchdog check. It `curl`s Grafana from the host, not through Alloy, and keeps pinging success throughout.
 - The ops Loki rules stay quiet: their `[6h]`/`[26h]` windows still hold hours of prior lines.
 
@@ -284,7 +284,7 @@ sudo docker stop grafana-alloy
 
 ### Must fire
 
-The same seven pages drill C's ops half lists, on the same clocks: `zcrypto-hcio-watchdog` at ≈11 min, `zcrypto-alloy-dark-ops` at ≈16 min, and the five NoData rules at ≈11 min. Each trips inside K's shorter hold, which is why K is the induction that times them.
+The same eight pages drill C's ops half lists, on the same clocks: `zcrypto-hcio-watchdog` at ≈11 min, `zcrypto-alloy-dark-ops` at ≈16 min, and the six NoData rules at ≈11 min. Each trips inside K's shorter hold, which is why K is the induction that times them.
 
 ### Operator action
 
@@ -298,7 +298,7 @@ Then restore with the recipe from [`observability.md#zcrypto-alloy-dark-ops`](ob
 sudo docker restart grafana-alloy
 ```
 
-Not `sudo docker start grafana-alloy`: it restores the container but exercises no recipe, and verifying the recipe by value is half of what this drill is for. Read the recovery back by value, `sudo docker ps --format '{{.Names}} {{.Status}}'`, then the five NoData rules resolving.
+Not `sudo docker start grafana-alloy`: it restores the container but exercises no recipe, and verifying the recipe by value is half of what this drill is for. Read the recovery back by value, `sudo docker ps --format '{{.Names}} {{.Status}}'`, then the six NoData rules resolving.
 
 ### Record
 
@@ -505,7 +505,7 @@ sudo docker exec -e COINALYZE_API_KEY= zcrypto-ops-liquidations zcrypto --ship-l
 
 Per path, record: arrived or not; the three timestamps (rule `activeAt`, Slack message, device); and **the channel's mobile setting and DND state at the time**. Without the mobile setting a push that did not arrive cannot be told from a channel set to "mentions only", which is the leading hypothesis.
 
-**With no mention anywhere, paths 1 and 2 push only under "all new messages".** Two fix candidates: an `<!channel>` in the notification template, and the mobile setting itself, recorded as an operator precondition in `docs/reference/fleet.md`. **The mention candidate is scoped by severity, not by path**: the Slack template branches on `severity`, so putting a mention on the critical branch alone reaches path 1 only. Path 2 rides a `warning` rule, and path 3 is healthchecks.io's own integration, which no Grafana template touches at all. A critical-only mention leaves two of the three paths exactly where they are.
+**With no mention anywhere, paths 1 and 2 push only under "all new messages".** Two fix candidates: an `<!channel>` in the notification template, and the mobile setting itself. **The mention candidate is scoped by severity, not by path**: the Slack template branches on `severity`, so putting a mention on the critical branch alone reaches path 1 only. Path 2 rides a `warning` rule, and path 3 is healthchecks.io's own integration, which no Grafana template touches at all. A critical-only mention leaves two of the three paths exactly where they are.
 
 ### Record
 
@@ -529,7 +529,7 @@ You are deciding whether a scenario that has **already** been proven, by a drill
 
 **A proven scenario is re-verified only when the code path it proved has changed since the proof.** Not on a schedule, and not because the proof is old: a drill that re-exercises an unchanged path costs an attended window and buys nothing, and on the capture side it costs a fault induced on live, unbackfillable data.
 
-The record of every proof is `docs/reference/drill-log.md`, one entry per run under the scenario id; read what was proved and when there, not here. The scenarios with a section above rest on the code path that section's *Retire when* names. The scenarios with no section here:
+The record of a proof is `docs/reference/drill-log.md`, one entry per run under the scenario id, for every run since the log exists; the proofs that predate it — F, H, J, L, M and T — are in the matrix of `docs/open-topics/archive/T0049-go-live-drill-matrix-day2-runbook.md`. Read what was proved and when there, not here. The scenarios with a section above rest on the code path that section's *Retire when* names. The scenarios with no section here:
 
 - **F**, WS loss on the capture side: [`capture.md#zcrypto-capture-all-streams-silent`](capture.md#zcrypto-capture-all-streams-silent).
 - **H**, the capture daemon stopped, and the host down.

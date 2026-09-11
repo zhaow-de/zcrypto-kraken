@@ -44,7 +44,7 @@ Abort if a window carrying `WebSocket` or `REST` in `components`, or in its `nam
 
 #### 1.2 The engine's 4-hour boundary
 
-The boundary schedule and the `[B, B+30 min]` cycle window are stated at [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) and in `.claude/rules/fleet-deploys.md`.
+The boundary schedule is `.claude/rules/fleet-deploys.md`'s engine bullet; a healthy completion lands inside `[B, B+30 min]`, as [`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) derives and §7.2 below reads.
 
 - Run the probes inside the inter-cycle gap: no earlier than B+35 min, finishing well before the next boundary. A full `--probes all --apply` run takes roughly 3–5 minutes.
 - Confirm the last boundary journaled (from the workstation):
@@ -321,7 +321,7 @@ The harness exits 3 and prints, between two 78-character `!` rules, every client
 
 Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and cancels it, a silent interaction between two systems in the logs of only one of them. On the five legs where that read is blind ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)) it is not cancelled either; it just keeps working. Both outcomes say the same thing: leave nothing for it to find.
 
-Ctrl-C behaviour: one Ctrl-C is safe. It stops the node, which runs the harness's cancel-everything sweep while the exec client is still connected; the node holds its clients open for `--order-timeout` seconds after the stop so those cancels can reach the venue, so raising `--order-timeout` widens that window and the time an interrupt takes to exit. Every later interrupt is swallowed, deliberately, so the sweep always completes. An interrupted run still prints its table and its leftover banner, and exits 2, or 3 if anything survived the sweep. If you must abandon it, `kill -9` the process from another terminal and work this section by hand.
+Ctrl-C behaviour: one Ctrl-C is safe. It stops the node, which runs the harness's cancel-everything sweep while the exec client is still connected; the node holds its clients open for `max(10, --order-timeout)` seconds after the stop so those cancels can reach the venue, so raising `--order-timeout` widens that window and the time an interrupt takes to exit. Every later interrupt is swallowed, deliberately, so the sweep always completes. An interrupted run still prints its table and its leftover banner, and exits 2, or 3 if anything survived the sweep. If you must abandon it, `kill -9` the process from another terminal and work this section by hand.
 
 What an interrupt does not do is finish the run. Every probe the sequence had not yet reached is abandoned (the terminal says how many) and their rows never appear, so an interrupted run is never a partial pass to read verdicts out of. Re-run the probes you still owe, as their own invocation.
 
