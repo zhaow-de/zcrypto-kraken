@@ -164,7 +164,7 @@ The kill file the flatten placed stays until a human clears it. Read it (`sudo c
 
 ### Record
 
-Entry `B`: decision-to-flat in minutes, what was open when the clock started, what each leg cost to close, and anything the procedure could not close on its own.
+Entry `B`: decision-to-flat in minutes, what was open when the clock started, what each leg cost to close, anything the procedure could not close on its own, and the two pages the Must fire names — their arrival times and channels, or their absence when B was run against a dark engine.
 
 ### Retire when
 
