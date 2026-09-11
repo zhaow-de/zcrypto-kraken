@@ -7,6 +7,7 @@ import inspect
 import json
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1096,16 +1097,17 @@ def test_a_counter_keyed_rotation_visits_every_slice_within_24_runs():
 
 
 # The bound above is a property of the pair: the module refuses to read a clock, and the CALLER
-# supplies a per-run counter. Nothing in Python can hold the caller's half, so it is read here --
-# the alternative is the bound stated in three runbooks and held by no one, which is what T0198
-# found.
+# supplies a per-run counter. Nothing in Python can hold the caller's half, so it is read here -- a
+# `$(date +%H)` in the shell file restores the defect with every Python test still green.
 
 _PULL_ENTRYPOINT = pathlib.Path(__file__).resolve().parent.parent / "infra" / "nas" / "pull-entrypoint.sh"
-_COUNTER_ASSIGNMENTS = {
-    ("cycle", "0"),  # initialised once, before the loop
-    ("cycle", "$((cycle + 1))"),  # incremented once per iteration, reading only itself
-    ("slice", "$((cycle % 24))"),  # the index gate-export is handed: the counter, reduced
-}
+# Every non-comment line that names the counter, and how many times each may appear. A multiset, not a
+# set: a second `cycle=0` or a second increment IS the defect, and a set would fold it into the first.
+_COUNTER_LINES = Counter({"cycle=0": 1, "cycle=$((cycle + 1))": 1, "slice=$((cycle % 24))": 1})
+# `cycle` or `slice` as a bare identifier in any position: a target in any form (`export`, `local`, `read`,
+# `for … in`, `x=1; slice=`) or a read inside `$(( ))`. Not `$slice`, a read; not `--slice`, a flag.
+_NAMES_THE_COUNTER = re.compile(r"(?<![\w$-])(cycle|slice)(?![\w-])")
+_GATE_EXPORT = ["zcrypto", "engine", "gate-export"]
 
 
 def test_the_pull_loop_hands_gate_export_its_run_counter():
@@ -1113,34 +1115,53 @@ def test_the_pull_loop_hands_gate_export_its_run_counter():
     there -- `$(date +%H)`, `${EPOCHSECONDS}`, an hour parsed from a filename -- restores the exact
     defect with every Python test still green, because no Python test can see this file.
 
-    A MATCHER, not a scan for spellings I thought of: every assignment to `cycle` or `slice` must be
-    one of three enumerated right-hand sides, so a fourth fails whatever it reads. Listing clock
-    spellings to reject would pass the one I did not list."""
+    CLOSED WORLD by line, not a scan for spellings: every non-comment line naming `cycle` or `slice`
+    as a bare identifier must be one of three enumerated lines, each exactly once, so a fourth fails
+    whatever it reads -- a keyword-prefixed assignment (`export slice=…`), a same-line one, a `read`
+    or a `for`, or a duplicate of a line that is allowed. An earlier version matched line-anchored
+    assignments into a set and let the last three kinds through. It over-refuses by design: a new
+    line that merely reads `$((cycle …))` fails too, which costs a line here, where under-refusing
+    would cost the bound. Comment lines are skipped, so prose about the counter stays free.
+
+    The invocation is PARSED, not substring-matched -- `tests/test_config_selectors_are_parsed.py`
+    refuses that over a hand-edited file, and rightly, since a `--slice` in a comment or on another
+    command would satisfy it. shlex tokens, the command found by token subsequence, and `--slice`
+    asserted ADJACENT to `$slice`: the `log ERROR "gate-export failed …"` line, where `gate-export`
+    sits inside one longer token, is not mistaken for the call."""
     text = _PULL_ENTRYPOINT.read_text()
     lines = text.splitlines()
 
-    found = {
-        (m.group(1), m.group(2).strip()) for m in (re.match(r"[ \t]*(cycle|slice)=(.*)$", line) for line in lines) if m is not None
-    }
-    assert found == _COUNTER_ASSIGNMENTS, (
-        f"unrecognised assignment to the rotation counter in {_PULL_ENTRYPOINT.name}: {sorted(found - _COUNTER_ASSIGNMENTS)} "
-        f"(missing: {sorted(_COUNTER_ASSIGNMENTS - found)}). `--slice` must carry a per-run counter and nothing else; if this "
-        "is a deliberate change, prove the 24-run bound over the new expression in the test above before widening this set."
+    naming = [
+        (i, line.strip()) for i, line in enumerate(lines) if not line.lstrip().startswith("#") and _NAMES_THE_COUNTER.search(line)
+    ]
+    found = Counter(stripped for _, stripped in naming)
+    assert found == _COUNTER_LINES, (
+        f"lines naming the rotation counter in {_PULL_ENTRYPOINT.name}: unexpected {dict(found - _COUNTER_LINES)}, "
+        f"missing {dict(_COUNTER_LINES - found)}. `--slice` must carry a per-run counter and nothing else; if this is a "
+        "deliberate change, prove the 24-run bound over the new expression in the tests above before widening this set."
     )
 
-    # Enumerated right-hand sides are worth nothing if the increment sits outside the loop.
-    where = {name: [i for i, line in enumerate(lines) if re.match(rf"[ \t]*{name}=", line)] for name in ("cycle", "slice")}
-    loop = next(i for i, line in enumerate(lines) if line.strip() == "while true; do")
-    assert where["cycle"][0] < loop < where["cycle"][1] < where["slice"][0], (
-        f"cycle=0 must precede `while true; do` (line {loop + 1}) and both the increment and slice= must follow it: {where}"
+    # Enumerated lines are worth nothing if the increment sits outside the loop.
+    at = {stripped: i for i, stripped in naming}
+    loops = [i for i, line in enumerate(lines) if line.strip() == "while true; do"]
+    assert len(loops) == 1, loops
+    assert at["cycle=0"] < loops[0] < at["cycle=$((cycle + 1))"] < at["slice=$((cycle % 24))"], (
+        f"cycle=0 must precede `while true; do` (line {loops[0] + 1}), and the increment and slice= must follow it: {at}"
     )
 
-    # And the value must actually reach gate-export. Backslash continuations are joined, because the
-    # invocation is four lines long and `--slice` sits on a different one from the command name.
-    invocations = [c for c in re.sub(r"\\\n", " ", text).splitlines() if "gate-export" in c and "zcrypto engine" in c]
+    # The value must reach gate-export. Backslash continuations are joined first: the call spans four lines.
+    invocations = []
+    for logical in re.sub(r"\\\n", " ", text).splitlines():
+        try:
+            tokens = shlex.split(logical, comments=True)
+        except ValueError:
+            continue  # an unbalanced quote; losing the call this way fails the count below, never passes it
+        if any(tokens[i : i + 3] == _GATE_EXPORT for i in range(len(tokens))):
+            invocations.append(tokens)
     assert len(invocations) == 1, invocations
-    assert '--slice "$slice"' in invocations[0], invocations[0]
-    assert "--cache" in invocations[0], "`--slice` without `--cache` is refused by the CLI; this call passes both or neither"
+    tokens = invocations[0]
+    assert tokens.count("--slice") == 1 and tokens[tokens.index("--slice") + 1] == "$slice", tokens
+    assert tokens.count("--cache") == 1, "`--slice` without `--cache` is refused by the CLI; this call passes both"
 
 
 def test_a_counter_reset_mid_sequence_leaves_the_bound_intact():
