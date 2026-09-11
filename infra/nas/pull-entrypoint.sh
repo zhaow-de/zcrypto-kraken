@@ -119,7 +119,7 @@ while true; do
 		# visible here. It gates the dead-man ping, so it must equal the evaluator in
 		# infra/grafana/alerts.yaml's rule, where it is derived -- change them together.
 		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
-				--cache /tmp/gate-cache.json --lag-fail-seconds 21600 \
+				--cache /tmp/gate-cache.json --slice "$slice" --lag-fail-seconds 21600 \
 				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
 			log ERROR "gate-export failed (dest=$JOURNAL_DEST), continuing"
 		fi

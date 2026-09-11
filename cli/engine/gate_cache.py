@@ -28,10 +28,12 @@ logger = get_logger("engine.gate_cache")
 
 CACHE_SCHEMA_VERSION = 2
 _ROTATION_SLICES = 24
-# due_for_reverification selects the current slice via `now.hour % _ROTATION_SLICES`, which can only
-# ever produce [0, 23] -- any value > 24 would leave slices 24.._ROTATION_SLICES-1 permanently
-# unreachable, silently never re-verified (the exact failure D2/D3 exist to prevent).
-assert _ROTATION_SLICES <= 24, "_ROTATION_SLICES > 24 would leave high slices unreachable via now.hour % _ROTATION_SLICES"
+# The caller's slice index is the loop's own cycle counter modulo 24 (`pull-entrypoint.sh`), so it can
+# only ever produce [0, 23] -- any _ROTATION_SLICES > 24 would leave slices 24.._ROTATION_SLICES-1
+# permanently unreachable, silently never re-verified (the exact failure D2/D3 exist to prevent).
+# The same bound now holds for a different reason than it did under the clock key, and both reasons
+# are the modulus: change `slice=$((cycle % 24))` in the entrypoint and this assert stops covering it.
+assert _ROTATION_SLICES <= 24, "_ROTATION_SLICES > 24 would leave high slices unreachable via a `cycle % 24` index"
 
 # The replay entry points (spec 00065 D1). Coverage is DERIVED from these by _replay_code_paths()
 # below -- the transitive cli.* import closure -- so the roots are the only hand-maintained input
@@ -222,10 +224,20 @@ def slice_of(cycle_ts: datetime) -> int:
     return int(digest.hexdigest(), 16) % _ROTATION_SLICES
 
 
-def due_for_reverification(cycle_ts: datetime, now: datetime) -> bool:
-    """True when this cycle falls in the run's current slice (D3): `now.hour % _ROTATION_SLICES`.
-    Stateless -- no rotation cursor to persist, corrupt, or reset."""
-    return slice_of(cycle_ts) == now.hour % _ROTATION_SLICES
+def due_for_reverification(cycle_ts: datetime, slice_index: int) -> bool:
+    """True when this cycle falls in the run's slice, which the CALLER supplies as its own run
+    counter modulo `_ROTATION_SLICES` (T0198, on spec 00102 D3's ruling).
+
+    Not the clock. Spec 00062 D3 keyed this on `now.hour % _ROTATION_SLICES` and called it stateless;
+    the loop's period is `3600 s + work`, so the sampled hour drifts, and at 72 / 80 / 90 minutes a
+    fixed set of 4 / 6 / 8 slices is never visited at all -- no bound, and the only witness rule reads
+    an age that never rises for a slice nobody reaches. A counter gives `24 x period` regardless of
+    drift, which is the bound `infra/runbooks/gate.md` states and this had never delivered.
+
+    Still stateless HERE: the counter lives in the caller's loop, not in a cursor this module
+    persists. A restart resets it to 0 and the loop re-visits low slices sooner, which spec 00102 D3
+    accepts for the sibling that already passes `--slice` five times from the same variable."""
+    return slice_of(cycle_ts) == slice_index % _ROTATION_SLICES
 
 
 @dataclass(frozen=True)

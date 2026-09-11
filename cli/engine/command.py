@@ -197,12 +197,17 @@ def _replay_one(record: CycleRecord, reader) -> CycleOutcome:
 
 
 def _evaluate_journal(
-    journal_root: Path, *, cache_path: Path | None = None, now: datetime
+    journal_root: Path, *, cache_path: Path | None = None, slice_index: int | None = None, now: datetime
 ) -> tuple[list[CycleOutcome], JournalCounts, datetime | None, CacheStats]:
     """Replay every journaled cycle and classify every sidecar; absent boundaries are never fabricated (`evaluate_gate` scores them
     missing). `cache_path` (spec 00060) is opt-in: with None neither `replay_fingerprint` nor `evidence_fingerprint` runs, so no bug
     in either reaches a no-cache caller; a caught raise degrades that run or record to a plain replay, anything else propagates.
-    `due_for_reverification` (spec 00062 D2-D4) re-replays the run's slice on a hit: only a replay re-hashes parquet bytes."""
+    `due_for_reverification` (spec 00062 D2-D4) re-replays the run's slice on a hit: only a replay re-hashes parquet bytes.
+    `slice_index` is that slice, the CALLER's cycle counter -- not the clock, which drifts against a `3600 s + work` loop and
+    starved a fixed set of slices forever (T0198, on spec 00102 D3's ruling). It travels with `cache_path` and is required with
+    it: without a cache every cycle is replayed anyway, so there is no slice to name and no re-verification to schedule."""
+    if (cache_path is None) != (slice_index is None):
+        raise ValueError("_evaluate_journal takes cache_path and slice_index together or neither")
     reader = _snapshot_reader(journal_root)
 
     cache_active = cache_path is not None
@@ -241,8 +246,8 @@ def _evaluate_journal(
                     exc,
                 )
         cached_entry = cache.entries.get(record.cycle_ts) if fp is not None else None
-        reverify = due_for_reverification(record.cycle_ts, now)
-        if cached_entry is not None and cached_entry[0] == fp and not reverify:
+        # `slice_index` is not None wherever a cached_entry can exist -- the invariant above ties it to cache_path.
+        if cached_entry is not None and cached_entry[0] == fp and not due_for_reverification(record.cycle_ts, slice_index):
             outcome, verified_at = cached_entry[1], cached_entry[2]  # carry verified_at forward
             from_cache_count += 1
         else:
@@ -1006,7 +1011,7 @@ def report(
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
     now = _utc_now()
-    entries, counts, _, _ = _evaluate_journal(journal_root, cache_path=None, now=now)
+    entries, counts, _, _ = _evaluate_journal(journal_root, cache_path=None, slice_index=None, now=now)
 
     try:
         status = evaluate_gate(entries, now=now)
@@ -1135,16 +1140,28 @@ def gate_export(
         help="Incremental scoring cache path: reuse prior replay outcomes for unchanged cycles instead of "
         "re-replaying the whole journal every run. Omit for today's full replay, unchanged.",
     ),
+    slice_: Optional[int] = typer.Option(
+        None,
+        "--slice",
+        min=0,
+        max=23,
+        help="The re-verification rotation index for --cache: the caller's cycle counter modulo 24, so every cached cycle is "
+        "re-replayed within 24 runs whatever the loop's period. Required with --cache.",
+    ),
 ) -> None:
     """Emit the >= 14-clean-day gate as machine-readable Prometheus metrics (atomic textfile write)
     and ping an independent dead-man's-switch healthcheck. Exits 0 on a successful emit even when the
     gate has a mismatch or the journal is stale -- those are findings, reported through the metrics
     and a /fail ping -- and non-zero only on an operational failure."""
+    # Together or neither: a --slice with no --cache names a rotation nothing reads, and a --cache with no --slice
+    # is the clock key this replaced -- it would have to invent one, and every invented key drifts (T0198).
+    if (cache is None) != (slice_ is None):
+        raise typer.BadParameter("--cache and --slice go together")
     export_started = time.monotonic()
     config = _load_engine_config()
     journal_root = journal_dir if journal_dir is not None else config.journal_dir
     now = _utc_now()
-    entries, counts, newest_ts, cache_stats = _evaluate_journal(journal_root, cache_path=cache, now=now)
+    entries, counts, newest_ts, cache_stats = _evaluate_journal(journal_root, cache_path=cache, slice_index=slice_, now=now)
 
     try:
         status = evaluate_gate(entries, now=now)
