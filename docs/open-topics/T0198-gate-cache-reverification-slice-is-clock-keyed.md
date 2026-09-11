@@ -77,10 +77,12 @@ reasoned about starvation in this exact spot and about a different mechanism.
    is not optional, since `docker` is off that host's non-interactive ssh PATH and a bare `docker`
    reads as "no containers". The loop logs one `pull complete` per
    channel and five are wired, so the gaps between consecutive lines are within-cycle, not the
-   period. The line carries `source=<user@host:>` and never the channel name, so pick one source
-   out of the output and filter on that — `awk '/pull complete source=/{print $3}' | sort | uniq -c`
-   lists which are present. One source's consecutive gaps are the period; read their distribution,
-   not one gap. Under ~65 min the worst-case gap is ~48 h and inside the
+   period. The line carries `source=<user@host:>` and never the channel name, so list the
+   sources with `grep -o 'source=[^ ]*' | sort | uniq -c` — run against a real line, unlike the two
+   selectors this step shipped before it. **Three of the five verified channels share one host**, so
+   that source appears three times a cycle; take one whose count is lowest, filter the log on it,
+   and read the distribution of its consecutive gaps. That is the period; a gap between any two
+   adjacent lines is not. Under ~65 min the worst-case gap is ~48 h and inside the
    alert bar; in the 72-90 min band a fixed set of slices is never visited.
 2. **Decide where the counter lives.** A counter in the cache file resets on a recreate; a counter
    derived from a persisted run ordinal does not, at the cost of another field in the cache schema
