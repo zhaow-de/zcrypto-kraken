@@ -814,14 +814,11 @@ RUNBOOKS = REPO / "infra/runbooks"
 # `-- ALERT` / `-- KNOWN LIMITATION` marker cannot become part of them; match that literal form.
 _ANCHOR_TAG = re.compile(r'<a name="([A-Za-z0-9._-]+)"></a>')
 # Path-agnostic across the runbook directory -- the procedures live in per-subsystem files and the
-# README is only the index -- and BOTH halves are captured, because a link resolves against the file
+# README holds the scope alone -- and BOTH halves are captured, because a link resolves against the file
 # it names: an anchor living in a SIBLING file scrolls nowhere. The anchor half excludes `.` (the
 # file half needs it), since a dashboard description ends its sentence right after the citation and
 # a dot-accepting class would swallow it.
 _RUNBOOK_LINK = re.compile(r"infra/runbooks/([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
-# The index's own rows link SIDEWAYS -- `](capture.md#anchor)`, relative, no `infra/runbooks/`
-# prefix -- so `_RUNBOOK_LINK` structurally cannot see them. Matched separately for that reason.
-_INDEX_LINK = re.compile(r"\]\(([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)\)")
 
 
 def _runbook_anchors() -> dict[str, list[str]]:
@@ -899,22 +896,6 @@ def test_every_runbook_link_in_a_dashboard_description_resolves():
 
     assert cited, "no dashboard cites a runbook anchor -- the regex is broken, not the descriptions"
     assert not broken, f"a dashboard description points at a runbook anchor its named file does not define: {broken}"
-
-
-def test_the_index_routes_to_every_section_and_only_to_real_ones():
-    """Every index row resolves and every section is routed to. The README is a pure index, so its
-    rows ARE the entry point a summary's path lands on, and their links are relative, which puts them
-    outside every other guard here -- a move that updates the summaries and forgets the index
-    misroutes exactly the page the responder lands on."""
-    anchors = _runbook_anchors()
-    linked = _INDEX_LINK.findall((RUNBOOKS / "README.md").read_text())
-
-    assert linked, "the index has no anchor-bearing rows -- the regex is broken, not the index"
-    broken = [(f"{name}#{a}", anchors.get(a) or "no runbook file") for name, a in linked if name not in anchors.get(a, ())]
-    assert not broken, f"an index row links at a section the file it names does not define (row, actually defined in): {broken}"
-
-    unrouted = sorted(set(anchors) - {a for _, a in linked})
-    assert not unrouted, f"a runbook section no index row routes to -- unreachable from the entry point: {unrouted}"
 
 
 def test_the_backlog_stuck_summary_sits_where_the_vocabulary_guard_reads_it():
@@ -1442,9 +1423,8 @@ _CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 def test_every_runbook_cross_reference_resolves():
     """A runbook citing a section in another runbook must cite one that exists.
 
-    `test_the_index_routes_to_every_section_and_only_to_real_ones` covers README.md's index rows in a
-    direction this test does not -- that every anchor is routed TO -- so do not drop it on the
-    strength of this one. The charset matches its siblings deliberately: broad enough that a stray
+    The other direction -- that every section is routed TO -- is `infra/scripts/runbook-triggers.py`'s:
+    a section's kind marker is its trigger, and a fired kind nothing names is counted. The charset matches its siblings deliberately: broad enough that a stray
     capital produces a MATCH that fails the assert, rather than no match and silent non-coverage.
     """
     anchors = {f"{name}#{anchor}" for anchor, names in _runbook_anchors().items() for name in names}

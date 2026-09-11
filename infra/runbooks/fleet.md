@@ -4,7 +4,7 @@ You are here because **an alert fired in Slack**. Find the section whose anchor 
 
 These four rules are one routine — memory watched continuously across the fleet, regardless of converges — and they cover every long-lived process the fleet scrapes: both capture daemons, the engine, the ops liquidations poller, and Alloy on all four hosts. They replaced the hand-scheduled RSS reads the capture-image bake used to carry.
 
-`README.md` beside this file is the index, and states what belongs in a runbook at all.
+`README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
 ______________________________________________________________________
 

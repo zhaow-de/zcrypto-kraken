@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**. These are the two capture VPSes as *machines* — `zcrypto` (primary, also the trade engine) and `zcrypto-red` (secondary) — not the venue feed and not the archive. Every signal below is produced by Alloy's embedded node-exporter (`prometheus.exporter.unix` in `infra/ansible/roles/capture/files/config.alloy`): the `filesystem`, `loadavg`/`cpu` and `textfile` collectors, the last of them reading `.prom` files that small systemd oneshots write into `/var/lib/zcrypto-node-textfile`. Each section is written to be actioned without opening any other document.
 
-`README.md` beside this file is the index, and states what belongs in a runbook at all.
+`README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
 **Standing constraints on everything below.** Reads on a host are fine at any hour; a **converge, an image re-pin or anything that stops the capture daemon is an attended action** — the operator's explicit word, never a 03:00 reflex, because L2 capture is unbackfillable. And **never print a container's whole environment or config on `zcrypto`** (`docker inspect … {{json .Config}}` / `.Config.Env`, `docker exec … env`, `docker compose config`): that host carries the live Kraken trade key and the Loki push password as container env. Scope every inspect to the field you need — `.State`, `.RestartCount`, `.Config.Image`, `.Mounts`.
 

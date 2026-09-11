@@ -14,7 +14,7 @@ A branch-end status claim names the CLASS it covers ("every spec/plan commit on 
 
 ## Dataset-catalog sync (every dataset-introducing closeout)
 
-An iteration that introduces, relocates, or retires a dataset updates `docs/reference/data-catalog-full.md` (or `data-catalog.md` for v0-class sets) **in the same closeout** — location(s), producer, schema/grid, consumption convention, caveats. The catalogs are the research loop's dataset inventory; the open-topics index carries consumer-shaped pointers, but a loop brainstorming "what inputs exist?" reads the catalog — an uncataloged dataset is invisible to it.
+An iteration that introduces, relocates, or retires a dataset updates `docs/reference/data-catalog-full.md` (or `data-catalog.md` for v0-class sets) **in the same closeout** — location(s), producer, schema/grid, consumption convention, caveats. The catalogs are the research loop's dataset inventory; the open-topics index carries a topic's title and trigger, but a loop brainstorming "what inputs exist?" reads the catalog — an uncataloged dataset is invisible to it.
 
 ## The decisions-log entry
 

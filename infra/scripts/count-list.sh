@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus and the three contracts loaded whole name by entry, and a universal with no entry beside it is the finding.
+# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus and the four contracts name by entry, and a universal with no entry beside it is the finding.
 # Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
@@ -143,6 +143,10 @@ c_capture_hosts_with_automatic_reboot() {
   echo "$n"
 }
 
+c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-triggers.py triggers; }
+
+c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
+
 # Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
 # restart event per capture host it limits to (the capture_host group is both), and the count is the
 # pairs of events on different hosts within an hour of each other; a group row pairs with itself.
@@ -201,6 +205,8 @@ main() {
   emit "inspect-reads-of-dot-image" c_inspect_reads_of_dot_image
   emit "capture-hosts-with-automatic-reboot" c_capture_hosts_with_automatic_reboot
   emit "capture-hosts-converged-within-an-hour" c_capture_hosts_converged_within_an_hour
+  emit "runbook-sections-without-a-trigger" c_runbook_sections_without_a_trigger
+  emit "runbook-sections-without-a-retire-when" c_runbook_sections_without_a_retire_when
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed

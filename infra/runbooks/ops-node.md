@@ -4,7 +4,7 @@ You are here because **an alert fired in Slack**, or because **a guard in the co
 
 Everything below is produced on one host — `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers run there (`infra/ansible/roles/ops/`); **five** fire a `Type=oneshot` unit that runs an ephemeral, digest-pinned `docker run --rm --pull never` and then publishes a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
 
-`README.md` beside this file is the index, and states what belongs in a runbook at all.
+`README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
 ______________________________________________________________________
 

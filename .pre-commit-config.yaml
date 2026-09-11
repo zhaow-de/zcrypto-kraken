@@ -129,13 +129,12 @@ repos:
       # Excluded by the negative lookahead: the verbatim per-phase decision logs *-decisions.md,
       # whose option lists + "(Decision: N)" markers mdformat would restructure (the
       # iteration-closeout skill owns their shape). Nothing else under docs/ is covered (reference/, specs/,
-      # plans/, open-topics topic files format by hand).
+      # plans/, open-topics format by hand; the topics index is rendered by infra/scripts/topics-index.py).
       files: |
         (?x)^(
             README\.md|
             infra/README\.md|
             infra/external-systems\.md|
             infra/runbooks/.*\.md|
-            docs/open-topics/README\.md|
             docs/research/(?!.*-decisions\.md$).*\.md
         )$

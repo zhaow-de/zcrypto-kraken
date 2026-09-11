@@ -1,7 +1,9 @@
 """The open-topics frontmatter invariants `.claude/skills/topic-ops/SKILL.md` states, checked
 mechanically."""
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,7 +58,7 @@ def test_every_topic_link_in_the_index_resolves():
 
 
 def test_the_index_has_one_title_and_no_blockquote_line():
-    """A conflict marker mdformat has rewritten is an extra H1 (`<<<<<<< HEAD` over `=======`) or a blockquote (`>>>>>>>`)."""
+    """A second `# ` line or a `>` line is a conflict marker's residue or a hand edit; the render has one title and no blockquote."""
     lines = (TOPICS / "README.md").read_text().split("\n")
     titles = [n for n, line in enumerate(lines, 1) if line.startswith("# ")]
     quoted = [n for n, line in enumerate(lines, 1) if line.startswith(">")]
@@ -87,6 +89,39 @@ def duplicate_bullets(text: str) -> list[str]:
 
 
 _ANY_TOPIC_ITEM = re.compile(r"^\s*[-*+] .*\]\((?:archive/)?T\d{4}-")
+
+
+def _generator():
+    spec = importlib.util.spec_from_file_location(
+        "topics_index_under_test", TOPICS.parents[1] / "infra" / "scripts" / "topics-index.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # registered before exec, so the dataclass resolves its annotations
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_index_is_the_render_of_the_topic_files():
+    """The index is derived state: a bullet, a section or a clause that differs from what the topic files render is a hand edit or a stale regeneration."""
+    assert (TOPICS / "README.md").read_text(encoding="utf-8") == _generator().render(TOPICS), (
+        "docs/open-topics/README.md differs from the render -- run `uv run python infra/scripts/topics-index.py`"
+    )
+
+
+def test_the_render_places_a_topic_by_status_and_carries_a_live_trigger(tmp_path):
+    (tmp_path / "archive").mkdir()
+    (tmp_path / "T0002-b.md").write_text(
+        "---\nstatus: open\nripe_when: 'when the\n  moon\n  is full'\n---\n\n# T0002 — a live one\n"
+    )
+    (tmp_path / "T0003-c.md").write_text("---\nstatus: partial\n---\n\n# Half done\n")
+    (tmp_path / "archive" / "T0001-a.md").write_text("---\nstatus: resolved\n---\n\n# Done long ago\n")
+    (tmp_path / "T0004-d.md").write_text("---\nstatus: open\n---\n\n# T0002 — a title that opens with another topic's serial\n")
+    text = _generator().render(tmp_path)
+    assert text.index("## Open") < text.index("## Partially done") < text.index("## Resolved")
+    assert "- [T0002 — a live one](T0002-b.md) — ripe when: when the moon is full\n" in text
+    assert "- [T0003 — Half done](T0003-c.md)\n" in text
+    assert "- [T0004 — T0002 — a title that opens with another topic's serial](T0004-d.md)\n" in text
+    assert "- [T0001 — Done long ago](archive/T0001-a.md)\n" in text
 
 
 def test_the_index_has_one_bullet_per_topic():
