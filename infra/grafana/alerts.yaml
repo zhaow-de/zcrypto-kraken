@@ -3836,9 +3836,10 @@ rules:
     condition: C
     data:
       # 0 means that collector errored on its last scrape, so its whole metric family goes quietly
-      # ABSENT -- and every rule keyed on those series then evaluates NoData, which this fleet maps
-      # to OK. A failed `filesystem` collector silently disarms the disk-low rule; a failed
-      # `textfile` collector silently disarms every one-off timer alert.
+      # ABSENT -- and most rules keyed on those series then evaluate NoData, which this fleet maps
+      # to OK, leaving them disarmed. A minority carry noDataState: Alerting and page instead, so
+      # they fire beside this rule rather than as a second fault; which is which is per host, and
+      # infra/runbooks/observability.md#zcrypto-node-collector-failed tables it.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 3600, to: 0}
@@ -3862,7 +3863,7 @@ rules:
     execErrState: Alerting
     for: 15m
     annotations:
-      summary: "A node-exporter collector is failing on this host, so its entire metric family is absent. Most rules keyed on those series evaluate NoData, which this fleet maps to OK, leaving them silently disarmed right now; a minority are set to page on NoData instead and fire beside this one rather than as a second fault. The runbook table says which, per host. Check Alloy's logs on the named host for the failing collector. Runbook: infra/runbooks/observability.md#zcrypto-node-collector-failed"
+      summary: "A node-exporter collector is failing on this host, so its entire metric family is absent. On most hosts the rules keyed on those series evaluate NoData, which this fleet maps to OK, leaving them silently disarmed right now, while a minority are set to page instead and fire beside this one rather than as a second fault. The proportion inverts on the NAS. The runbook table says which, per host. Check Alloy's logs on the named host for the failing collector. Runbook: infra/runbooks/observability.md#zcrypto-node-collector-failed"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "402"
     labels:
