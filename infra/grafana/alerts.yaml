@@ -217,6 +217,11 @@ rules:
     # rotation stops, a stalled cache is indistinguishable from a healthy one except through this
     # number. Note save_cache logs a warning and continues on write failure, so a full disk presents
     # as a working cache with invalidated=0 and a quietly-ageing age here (T0077).
+    # CORRECTION: "about daily" above does not hold. due_for_reverification keys the slice on the
+    # hour the run STARTED, and this loop's period is the pull interval plus that cycle's work, so
+    # the sampled hour drifts and coverage is not uniform -- spec 00102 D3 simulated this same loop
+    # and found a clock key gives no bound at all. Read this bar as "some part of the journal has
+    # gone three days unread", not as three sweeps of a daily sweep. The defect is registered.
     data:
       - refId: A
         queryType: ""
