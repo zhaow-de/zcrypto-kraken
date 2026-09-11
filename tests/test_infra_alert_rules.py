@@ -969,7 +969,9 @@ def test_the_capture_silence_rules_stay_quiet_when_the_query_itself_cannot_run(u
     reach its own Prometheus, and `for: 0s` is what made a one-minute platform hiccup page instantly.
 
     The residual -- a rule-scoped execution error on these two pages nothing -- is read by the daily
-    pass's rule-health report (`infra/scripts/ops_daily.py`) and named in the runbook."""
+    pass's rule-health report (`infra/scripts/ops_daily.py`) and explained at
+    `infra/runbooks/capture.md#capture-silence-rules-and-datasource-errors`, which is the section to
+    read before changing either rule's execErrState."""
     rule = _rule(uid)
     assert rule["execErrState"] == "OK", "a Grafana query failure would page a total-capture-blackout that nothing observed"
     assert rule["noDataState"] == "OK", "the sibling blindness state moved without its reason"
