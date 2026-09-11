@@ -113,7 +113,7 @@ Free space on the spool's filesystem fell below `DEFAULT_MIN_FREE_BYTES = 1 GiB`
 
 It also withholds the host's healthchecks.io ping, so that dead-man fires and stays fired: saturated, and blind to anything worse on this host. The breached interval is booked as a watermark gap in `GapMonitor`, so the lost time reaches the gap accounting instead of reading clean.
 
-The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. The 1 GiB watermark sits below `zcrypto-capture-disk-low`'s 10 %-free early warning, so disk-low only fires first when the fill is gradual; a sudden consumer (the capture image alone is ~3.25 GB a copy) breaches the watermark with disk-low still green.
+The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. The 1 GiB watermark sits below `zcrypto-capture-disk-low`'s 10 %-free early warning, so disk-low only fires first when the fill is gradual; a sudden consumer (one pulled capture image — `infra/scripts/prune-host-images.py <host>`'s dry run prints each removable image's size) breaches the watermark with disk-low still green.
 
 **One line is not this alert**: `disk watermark UNMEASURABLE path=… -- treating as not-healthy (probe failing)` means the probe itself raised, a flaky mount. That withholds the ping but does not set this gauge, so this critical rule stays silent and only hc.io speaks.
 
@@ -121,7 +121,7 @@ The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. T
 
 1. **Look before deleting anything.** `ssh <host>`, then `df -h /` and `sudo du -xsh "$(sudo docker info --format '{{.DockerRootDir}}')" /var/log /var/lib/zcrypto-capture /tmp 2>/dev/null | sort -h`.
 2. **Free space from the safe pools, in this order.**
-   - **Docker image layers first**, usually the entire answer, since every converge pulls a ~3.25 GB image. From your workstation: `uv run python infra/scripts/prune-host-images.py <host>`, then the same command with `--apply`; its `--help` states the keep-set and when to pass `--keep`. Never `docker image prune -a`: it takes the recorded rollback operands.
+   - **Docker image layers first**, usually the entire answer, since every converge pulls another capture image; the dry run prints each removable image's size and the free space before removal. From your workstation: `uv run python infra/scripts/prune-host-images.py <host>`, then the same command with `--apply`; its `--help` states the keep-set and when to pass `--keep`. Never `docker image prune -a`: it takes the recorded rollback operands.
    - **The systemd journal**: `sudo journalctl --vacuum-size=200M`.
    - **On the primary only**, the engine's own journal ring: `sudo systemctl start zcrypto-engine-journal-prune.service` (idempotent; its daily timer exists on the engine host alone).
 3. **Never hand-delete inside `/var/lib/zcrypto-capture`.** The live hour's parts (`<HH>.part####.parquet`), quarantined spills (`<HH>.held####.parquet`), an interrupted merge (`<HH>.parquet.merging`) and `*.corrupt*` forensics all end in names a careless `*.parquet` sweep eats, and every one of them is unbackfillable. If the spool genuinely is the consumer, run the sanctioned prune instead: `sudo systemctl start zcrypto-capture-prune.service`. It deletes only committed finals (`<HH>.parquet`) and their `.sha256` sidecars older than 14 days, and refuses to sweep a system root. Its own timer runs daily at 03:17 UTC.
