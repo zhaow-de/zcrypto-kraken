@@ -46,7 +46,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # flipping the scope to `full` does not help because the flag is still sent. Converge from a pre-spec-00102 state
 # WITH `-e nas_apply_compose=true`; without the flag the role is render-only and still reports
 # success. Delete the `archive-pull-*.prom` textfiles on the way out, or their gauges stay frozen
-# and keep feeding the dashboard. What a rollout cost belongs in that rollout's fleet-pins row,
+# and keep feeding the dashboard. What a rollout cost belongs in that rollout's commit message,
 # never here.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest -- the trap

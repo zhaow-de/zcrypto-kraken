@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus names by entry, and a universal with no entry beside it is the finding.
+# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus and the three contracts loaded whole name by entry, and a universal with no entry beside it is the finding.
 # Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
@@ -121,6 +121,33 @@ c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.p
 
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
+c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+
+c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+
+# A capture host counts unless the setting it reads first -- its host_vars, else the group -- is one of
+# six false spellings (0, f, false, n, no, off): the template renders the value raw into apt's config,
+# whose reader accepts these and more, so the count never under-reports. A host with the key in neither
+# file counts too, since the base role's default is not read here.
+c_capture_hosts_with_automatic_reboot() {
+  local h f n=0
+  for h in zcrypto zcrypto-red; do
+    for f in "infra/ansible/host_vars/$h/vars.yml" infra/ansible/group_vars/capture_host/vars.yml; do
+      if grep -qE '^base_unattended_upgrades_automatic_reboot:' "$f" 2>/dev/null; then
+        grep -qiE '^base_unattended_upgrades_automatic_reboot: *["'"'"']?(0|f|false|n|no|off)["'"'"']? *$' "$f" || n=$((n + 1))
+        continue 2
+      fi
+    done
+    n=$((n + 1))
+  done
+  echo "$n"
+}
+
+# Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
+# restart event per capture host it limits to (the capture_host group is both), and the count is the
+# pairs of events on different hosts within an hour of each other; a group row pairs with itself.
+c_capture_hosts_converged_within_an_hour() { jq -s '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600)] | length' docs/reference/deploy-log.jsonl; }
+
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
 
 c_micro_prs() { count_micro_prs develop; }
@@ -170,6 +197,10 @@ main() {
   emit "un-tagged-primary-runs" c_un_tagged_primary_runs
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
   emit "nas-rows-without-compat" c_nas_rows_without_compat
+  emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner
+  emit "inspect-reads-of-dot-image" c_inspect_reads_of_dot_image
+  emit "capture-hosts-with-automatic-reboot" c_capture_hosts_with_automatic_reboot
+  emit "capture-hosts-converged-within-an-hour" c_capture_hosts_converged_within_an_hour
   emit "converge-sh-wrapped-in-timeout" c_converge_sh_wrapped_in_timeout
   emit "topic-only-merges" c_micro_prs
   emit "claude-commits-since-the-round-closed" c_claude_commits_since_the_round_closed

@@ -78,7 +78,7 @@ The deployed hash scope is **`incremental`** (`nas_archive_pull_hash_scope` in `
 
 The loop's real period is interval **plus** work, so periodic saturation inside a cycle is the design, not a fault.
 
-One cause is always worth ruling out: a converge or restart that **recreated** the container discards the gate exporter's `/tmp/gate-cache.json` and buys one cold full-journal replay — roughly an hour of near-saturation with nothing wrong, and growing with the journal (`docs/reference/fleet-pins.md` carries the measured rate).
+One cause is always worth ruling out: a converge or restart that **recreated** the container discards the gate exporter's `/tmp/gate-cache.json` and buys one cold full-journal replay — roughly an hour of near-saturation with nothing wrong, and growing with the journal (`docs/reference/fleet-pins.md`'s standing constraint says how to read the current rate).
 
 DSM's own jobs — a RAID scrub, media indexing, snapshot replication — share this CPU and nothing in the repo schedules or controls them.
 

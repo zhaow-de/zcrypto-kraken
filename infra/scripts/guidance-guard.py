@@ -10,6 +10,9 @@ import sys
 
 SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
+CONTRACT = re.compile(
+    r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md)$"
+)  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
 META_OPEN = "export const meta = {"  # the authoring reference's own shape, and the only one read
@@ -126,8 +129,8 @@ def bullets(text: str) -> list[tuple[int, str]]:
 
 
 def uncounted_universals(path: str, text: str) -> list[tuple[int, str]]:
-    """Corpus bullets whose prose outside code spans carries a universal word, with neither a count entry nor a no-count declaration: (line, word)."""
-    if not CORPUS.match(path):
+    """Corpus and contract bullets whose prose outside code spans carries a universal word, with neither a count entry nor a no-count declaration: (line, word)."""
+    if not (CORPUS.match(path) or CONTRACT.match(path)):
         return []
     hits: list[tuple[int, str]] = []
     for i, block in bullets(text):
@@ -206,8 +209,9 @@ def _message(path: str) -> tuple[str, str]:
     return _clean(pathlib.Path(path).read_text())
 
 
-def _ambient(paths: list[str]) -> list[str]:
-    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p) or WORKFLOW_FILE.match(p)]
+def _judged(paths: list[str]) -> list[str]:
+    """The paths a commit is judged on: the ambient set for growth and universals, the contracts for universals alone."""
+    return [p for p in paths if CORPUS.match(p) or SKILL_FILE.match(p) or WORKFLOW_FILE.match(p) or CONTRACT.match(p)]
 
 
 def range_fails(base: str, head: str) -> list[str]:
@@ -218,7 +222,7 @@ def range_fails(base: str, head: str) -> list[str]:
     out: list[str] = []
     for commit in listed.stdout.split():
         changed = _git("diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", "--root", commit).stdout.split("\n")
-        paths = _ambient(changed)
+        paths = _judged(changed)
         if not paths:
             continue
         before = {p: t for p in paths if (t := _show(f"{commit}^:{p}")) is not None}
@@ -291,7 +295,7 @@ def main(argv: list[str]) -> int:
     if staged.returncode != 0:
         print(staged.stderr, file=sys.stderr)
         return 2
-    paths = _ambient(staged.stdout.split("\n"))
+    paths = _judged(staged.stdout.split("\n"))
     if not paths:
         return 0
     before = {p: t for p in paths if basis and (t := _show(f"{basis}:{p}")) is not None}
