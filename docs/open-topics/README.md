@@ -34,7 +34,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0183 — A reconciliation reports a perfect score when it compared nothing](T0183-reconciliation-reports-perfect-on-an-empty-set.md)
 - [T0184 — The soak report averages a specified HHI sentinel as though it were a measurement](T0184-soak-hhi-aggregate-averages-a-sentinel.md) — ripe when: uv run zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir <a store pulled from the engine host, which has no replica> reports a non-zero realized no-book bar count in its null-reference block, or an hhi verdict other than consistent; on a page carrying NO VERDICT or STORE-BOUND WINDOW a non-zero no-book count still fires the first arm, while a zero count and the verdict cell evaluate nothing
 - [T0186 — The soak report re-caps the book with module defaults while the builder used the configured caps](T0186-soak-recaps-with-default-position-caps.md)
-- [T0190 — Three flags gate the live-venue tests and `CLAUDE.md` documents one](T0190-live-venue-opt-in-flags-disagree.md)
+- [T0190 — Three flags implement the one live-venue opt-in](T0190-live-venue-opt-in-flags-disagree.md) — ripe when: the next branch that adds a venue-reaching test, or any change to `tests/test_live_venue_opt_in.py` — either is a moment someone is already holding this context
 
 ## Resolved
 

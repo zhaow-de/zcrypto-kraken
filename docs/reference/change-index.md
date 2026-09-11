@@ -318,3 +318,4 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #478 | 2026-09-09 | docs(engine): T0191 — the zero-price refusal's comment says what a carri | — | — | T0191 |
 | #479 | 2026-09-09 | docs(open_topics): T0191 closes — the update #478 should have carried | — | — | T0191 |
 | #481 | 2026-09-09 | fix(prose_tripwire): a shrink stops lowering the ceiling | — | — | T0189 |
+| #496 | 2026-09-11 | fix(tests): T0190 — one venue opt-in flag, and the guard that holds it | — | — | T0190 |
