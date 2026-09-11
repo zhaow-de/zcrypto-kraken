@@ -235,8 +235,12 @@ def due_for_reverification(cycle_ts: datetime, slice_index: int) -> bool:
     drift, which is the bound `infra/runbooks/gate.md` states and this had never delivered.
 
     Still stateless HERE: the counter lives in the caller's loop, not in a cursor this module
-    persists. A restart resets it to 0 and the loop re-visits low slices sooner, which spec 00102 D3
-    accepts for the sibling that already passes `--slice` five times from the same variable."""
+    persists -- so a container restart sends it back to 0 while KEEPING the cache (`/tmp` survives a
+    restart; only a recreate discards it). The bound is therefore 24 runs between restarts and up to
+    47 across one: a restart k runs into a sweep re-visits the slices it just did and reaches the rest
+    up to k runs late. Spec 00102 D3 accepts the reset for the sibling that already passes `--slice`
+    five times from the same variable; what loses slices outright is restarting more often than every
+    24 runs, and the reverify-stalled rule is the witness for that."""
     return slice_of(cycle_ts) == slice_index % _ROTATION_SLICES
 
 

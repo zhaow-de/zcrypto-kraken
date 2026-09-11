@@ -1164,10 +1164,12 @@ def test_the_pull_loop_hands_gate_export_its_run_counter():
     assert tokens.count("--cache") == 1, "`--slice` without `--cache` is refused by the CLI; this call passes both"
 
 
-def test_a_counter_reset_mid_sequence_leaves_the_bound_intact():
-    """A container restart resets the shell's `cycle` to 0. Spec 00102 D3 accepts that for the
-    sibling -- the cost is re-visiting low slices sooner, never an unreached one -- and the bound has
-    to survive it, since the NAS container is recreated on every converge."""
+def test_a_counter_reset_mid_sequence_delays_slices_but_never_drops_one():
+    """A container restart resets the shell's `cycle` to 0 and KEEPS the cache -- `/tmp` survives a
+    restart; only a recreate discards it, and a recreate is harmless because the cold replay
+    re-stamps everything. Spec 00102 D3 accepts the reset for the sibling and the ruling stands here;
+    what it costs is stated below and held: a reset k runs into a sweep re-visits the slices it just
+    did, and reaches the rest up to k runs LATE -- never an unreached one."""
     cycles = [datetime(2026, 1, 1) + timedelta(hours=i) for i in range(480)]
     # Within 24 runs OF THE RESET every slice is reached, whatever the counter held before it: the
     # reset at run 9 means the bound is measured from there, so 9 + 24 runs.
@@ -1175,3 +1177,27 @@ def test_a_counter_reset_mid_sequence_leaves_the_bound_intact():
     # And the 9 runs before the reset reach only what a counter starting at 17 would: no slice is
     # lost to the reset, which is the half that would be silent if it were wrong.
     assert _counter_keyed_slices(9, cycles, start=17) == {s % 24 for s in range(17, 26)}
+
+    # The per-slice gap the reverify-stalled rule reads, not the sweep: the entrypoint's own sequence
+    # -- one full sweep (cycle 1..24), a restart k runs into the next, then uninterrupted -- driven
+    # through the real key with one cycle per slice. The worst gap is exactly 24 + k, so 47 at k = 23:
+    # the "up to 47 across one restart" that the key's docstring, the alert and the runbook state.
+    one_per_slice: dict[int, datetime] = {}
+    for i in range(10_000):
+        stamp = datetime(2026, 1, 1) + timedelta(hours=i)
+        one_per_slice.setdefault(slice_of(stamp), stamp)
+        if len(one_per_slice) == 24:
+            break
+    assert len(one_per_slice) == 24, one_per_slice
+    worst = []
+    for k in range(24):
+        last: dict[int, int] = {}
+        gap = 0
+        for run, counter in enumerate([*range(1, 25), *range(1, k + 1), *range(1, 49)]):
+            for s, stamp in one_per_slice.items():
+                if due_for_reverification(stamp, counter % 24):
+                    gap = max(gap, run - last[s]) if s in last else gap
+                    last[s] = run
+        assert len(last) == 24, f"reset at k={k}: slices never reached {sorted(set(range(24)) - set(last))}"
+        worst.append(gap)
+    assert worst == [24 + k for k in range(24)], worst
