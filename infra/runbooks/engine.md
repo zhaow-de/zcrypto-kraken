@@ -110,7 +110,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A warning-severity Grafana alert (`Engine · the execution safety gate has stopped being evaluated`): `time() - zcrypto_exec_last_evaluation_timestamp_seconds` has read above 17100 s (4h45m) for 10 minutes, or the series is missing entirely.
+A warning-severity Grafana alert (`Engine · the execution safety gate has stopped being evaluated`): `time() - zcrypto_exec_last_evaluation_timestamp_seconds{host="zcrypto"}` has read above 17100 s (4h45m) for 10 minutes, or the series is missing entirely.
 
 ### What it means
 
@@ -203,7 +203,7 @@ None of these lines reaches Loki (the engine ships only the `zcrypto` logger), s
 
 ### What to do
 
-- **A Kraken outage in progress and both engine sockets retrying** (`Reconnecting` lines every few seconds, `Reconnect attempt N failed`): **stop the engine** before the retry count nears 150 in ten minutes. The capture daemon's own reconnect needs the budget more than the disarmed engine does.
+- **A Kraken outage in progress and both engine sockets retrying** (`Reconnecting` lines every few seconds, `Reconnect attempt N failed`): **stop the engine** before the retry count nears 150 in ten minutes. A ban self-renews only while something keeps retrying, so stopping the engine is worth doing after the budget is already breached as well as before. The capture daemon's own reconnect needs the budget more than the disarmed engine does.
 
   ```bash
   sudo systemctl stop zcrypto-engine     # NOT `docker stop`
@@ -351,7 +351,7 @@ The cycle reached a controlled failure path and recorded it as `failed-cycle-<HH
 - **`refresh_deadline`**: the store's settle-verify refresh could not complete inside the 25-minute reserve after the boundary. Usually the venue's OHLC fetch or the transport under it.
 - **`stale_pair`**: one or more pairs' raw series were stale against the boundary invariant, so the build was skipped. The sidecar's `offending_pairs` names them.
 
-The engine is alive: the failure itself refreshed this gauge, which is why the staleness rule cannot see this.
+The engine is alive: a failed cycle still refreshes `zcrypto_engine_cycle_completed_at_seconds`, which is why the staleness rule cannot see this.
 
 **A re-run cannot make the day clean.** The engine never re-runs a boundary that already has any artifact (`startup_action` refuses on the artifact's existence, independently of the `[B, B+25 min]` window), so no automatic retry is coming. The only re-run path is `zcrypto engine cycle --at <boundary> --replace`, and its record's `completed_at` will sit outside `[B, B+30 min]`, which the gate scores as a late cycle and fails anyway. So the clean-day streak for that UTC day is already gone; re-run only when the boundary's **targets** matter to something downstream, never to repair the score.
 

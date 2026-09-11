@@ -589,7 +589,7 @@
       "id": 106,
       "type": "timeseries",
       "title": "Capture counters — cumulative since process start",
-      "description": "How much damage each capture machine has taken over its whole life. Deliberately all-green with no page lines: scale reads here, recency reads on the delta panels beside it. Every series resets when the capture container is recreated, so a step down to zero is a restart, not a repair. Gap seconds are on the right axis because they are the one series here measured in time rather than counts. Scoped by the capture-machine picker.",
+      "description": "How much damage each capture machine has taken over its whole life. The engine host also runs the trade engine, whose market-data socket is idle by design; what its log lines mean and the reconnect budget this daemon needs are infra/runbooks/engine.md#engine-data-socket-idle. Deliberately all-green with no page lines: scale reads here, recency reads on the delta panels beside it. Every series resets when the capture container is recreated, so a step down to zero is a restart, not a repair. Gap seconds are on the right axis because they are the one series here measured in time rather than counts. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
