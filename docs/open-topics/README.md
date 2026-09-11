@@ -33,7 +33,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0183 — A reconciliation reports a perfect score when it compared nothing](T0183-reconciliation-reports-perfect-on-an-empty-set.md)
 - [T0184 — The soak report averages a specified HHI sentinel as though it were a measurement](T0184-soak-hhi-aggregate-averages-a-sentinel.md) — ripe when: uv run zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir <a store pulled from the engine host, which has no replica> reports a non-zero realized no-book bar count in its null-reference block, or an hhi verdict other than consistent; on a page carrying NO VERDICT or STORE-BOUND WINDOW a non-zero no-book count still fires the first arm, while a zero count and the verdict cell evaluate nothing
 - [T0186 — The soak report re-caps the book with module defaults while the builder used the configured caps](T0186-soak-recaps-with-default-position-caps.md)
-- [T0190 — Three flags gate the live-venue tests and `CLAUDE.md` documents one](T0190-live-venue-opt-in-flags-disagree.md)
 
 ## Resolved
 
@@ -201,6 +200,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0185 — The capture daemon accepts an empty pair list and keeps the dead-man switch green](archive/T0185-capture-accepts-empty-pair-list.md)
 - [T0188 — The soak report's identity check counts a NaN comparison as made and passed](archive/T0188-soak-identity-check-counts-a-nan-comparison-as-passed.md)
 - [T0189 — The prose ratchet converts every cut into silent headroom](archive/T0189-prose-ratchet-converts-each-cut-into-headroom.md)
+- [T0190 — Three flags implement the one live-venue opt-in](archive/T0190-live-venue-opt-in-flags-disagree.md)
 - [T0191 — The zero-price refusal's comment inverts the consequence it exists to justify](archive/T0191-flatten-zero-price-comment-inverts-its-own-consequence.md)
 - [T0192 — The week-boundary tracking fixture cannot tell its refusal arms apart](archive/T0192-tracking-fixture-cannot-tell-its-refusal-arms-apart.md)
 - [T0195 — `--write-baseline` truncates the whole baseline to whatever paths are scanned](archive/T0195-write-baseline-truncates-to-the-scanned-subset.md)
