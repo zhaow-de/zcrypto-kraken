@@ -48,6 +48,17 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # success. Delete the `archive-pull-*.prom` textfiles on the way out, or their gauges stay frozen
 # and keep feeding the dashboard. What a rollout cost belongs in that rollout's commit message,
 # never here.
+# The pinned image MUST accept `--slice` (T0198): `pull-entrypoint.sh` passes it to `gate-export`
+# every cycle, and that file is a bind mount, so the REACHABLE order is a NEW ENTRYPOINT AGAINST AN
+# OLD IMAGE -- any nas-tagged converge copies it from the tree (an Alloy bump runs exactly
+# `--tags nas -e nas_apply_compose=true`), a render-only converge leaves it for the next restart of
+# any kind to pick up, and a roll back to any image built before that merge does the same. The
+# signature is `gate-export` exiting 2 on `No such option: --slice` on every cycle: `NAS ·
+# archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the hc.io
+# `zcrypto-gate-verify` dead-man stops pinging. Nothing is falsified and the gate metrics simply
+# freeze at their last values, but the re-verification rotation is STOPPED until the pin moves. The
+# reverse order cannot arise from an ordinary converge -- pin and entrypoint live in one tree -- and
+# the CLI refuses `--cache` without `--slice` anyway.
 nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest -- the trap
 # the committed pin kills.
