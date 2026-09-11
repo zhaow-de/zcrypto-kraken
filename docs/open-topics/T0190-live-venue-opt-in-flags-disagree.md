@@ -1,5 +1,6 @@
 ---
-status: resolved
+status: partial
+ripe_when: 'the next branch that adds a venue-reaching test, or any change to `tests/test_live_venue_opt_in.py` — either is a moment someone is already holding this context'
 ---
 
 # Three flags implement the one live-venue opt-in
@@ -44,7 +45,7 @@ The claim was written by reading the `skipif` rather than running it, and it sur
 - The fix cannot ride a docstring-pass branch: renaming a constant moves the AST, and those branches carry proven inertness as their whole value.
 - `ZCRYPTO_E1B_LIVE`'s probe is an attended live-order path, so its opt-in is doing more work than a read-only contract check — whether one flag should cover both is part of the decision, not settled here.
 
-## Resolution
+## Done so far
 
 - **Decided by the owner, 2026-09-09: one flag covers the class.** `ZCRYPTO_LIVE_VENUE_TESTS` is the opt-in for every venue-reaching test, including the order-placing probe — no second flag on blast-radius grounds, because the granularity buys nothing a reader can act on. So `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are renames, not a design question.
 
@@ -86,3 +87,29 @@ nothing is the defect this topic is about.
 - **The census the guard walks**: 61 skip gates in `tests/`, of which 6 read the environment and all 6 name `ZCRYPTO_LIVE_VENUE_TESTS`. **The breakdown of the other 55 is not given here, because three successive versions of it were wrong in the same direction** — "an absent dataset, a uid or a missing binary" for all 55; then 1 binary and 15 others; then 7 and 9, where a reviewer re-derived 8 and 8. Every version was hand-classified from the guards' surface text and every version missed binaries hiding as `bash is None`, the RESULT of a `shutil.which` two lines up. A number wrong three times in one direction is a fact about the method rather than about the tree: run `_tree_gates()` and classify on what each gate REACHES, which is what the guard does and what no hand pass managed. Two reachability-keyed `pytest.fail` gates exist, both in `test_engine_node.py`. So the degeneracy control lives in the tree rather than only in a fixture, and a fourth test requires both counter-shapes to be present — a non-environment gate, and a reachability-keyed `pytest.fail` — so no assertion can pass vacuously on an empty set.
 
 - **Where the rule lived at the moment this closed**, measured rather than assumed: in `tests/test_live_venue_opt_in.py`'s module docstring, in this file, and in no surface a session loads — `deaa3e7c7` deleted the corpus paragraph on 2026-09-10 and nothing replaced it. That is a statement about the tree on this date and not a task parked here; the guidance line is `zcrypto-marco`'s, and the PR that carries this resolution records what became of it.
+
+## Suggested next steps
+
+- **The reachability guard: a skip decided by whether the venue ANSWERS.** Not delivered, and the
+  owner ruled on 2026-09-11 that it is its own piece of work rather than a fifth round on this branch.
+  The property is real and the repo asserts it nowhere: `tests/test_live_venue_opt_in.py` holds the one
+  flag name and refuses what it cannot read, and says in its docstring that it does not hold this.
+
+  **Start from the diagnosis rather than from the current code.** A MATCHER matches a guard against
+  enumerated forms and fails when none match, so it has no branch that can leak. A REDUCER walks an
+  expression asking what it reads, and at every node it cannot classify it must choose between
+  refusing and permitting — so closed-world is a property of every branch, not of the design. The
+  shipped guard is a reducer; four rounds of widening one, and one round of a reducer claiming a
+  matcher's property in its own docstring, left thirteen of twenty-seven planted defects passing.
+
+  **The measured cost, which is why it was not paid here:** 18 of the tree's 61 guard expressions have
+  no form a matcher could accept, because their meaning is not readable off their shape — `not
+  X.exists()` is manifest whatever `X` is, `not rows` is not. Three are calls to one module-private
+  helper; fifteen are bare locals, six of those a `shutil.which` result read one line later. Each
+  needs its predicate inlined or declared. Re-derive that number with the blanking transform over
+  `_tree_gates()` before acting on it; four hand counts on this branch were wrong.
+
+  **What it would have caught, so the value is not theoretical:** `tests/test_tape_bars_rest_control.py`
+  skipped on a truncated Kraken answer with the opt-in set. It took a census, a guard, four review
+  rounds and a ruling to surface; a matcher would have refused that gate on day one and made someone
+  say what it reads.
