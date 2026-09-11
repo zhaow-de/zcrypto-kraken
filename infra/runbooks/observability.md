@@ -80,7 +80,7 @@ The rule carries no host selector, so it covers every host whose keep-regex admi
 
 ### What it means
 
-A `0` means that collector errored on its last scrape, so **its whole metric family goes quietly absent**. Rules keyed on those series then evaluate NoData: most of this fleet maps NoData to OK and goes quiet, but a minority carry `noDataState: Alerting` and page instead. Treat this page as "N rules on this host are switched off right now" until you know which N, and expect the Alerting ones beside it rather than as a second fault.
+A `0` means that collector errored on its last scrape, so **its whole metric family goes quietly absent**. Rules keyed on those series then evaluate NoData: most of this fleet maps NoData to OK and goes quiet, but a minority carry `noDataState: Alerting` and page instead. The proportion is per host and inverts on the NAS, where most of the dependents page — read your host's row below rather than the fleet's habit. Treat this page as "N rules on this host are switched off right now" until you know which N, and expect the Alerting ones beside it rather than as a second fault.
 
 From `infra/grafana/alerts.yaml`, the dependents per collector, and which of them page on NoData instead of going quiet:
 
