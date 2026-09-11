@@ -51,7 +51,7 @@ The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`: `access_
 1. **If `<name>.pem` is the only PEM under `pinned-leaves/`, issue its replacement first** — `infra/scripts/zaccess-client-cert.sh issue <new-name>` (it refuses a name that exists) — and converge that in before revoking.
 2. **Delete the PEM from the repo and converge** — `infra/ansible/roles/access/files/pinned-leaves/<name>.pem`, then `site.yml --limit zaccess --tags access` from the single-identity agent: [`zaccess-converge`](#zaccess-converge). This is the revocation; the steps below tidy up and prove it.
 3. **Remove the host copy** — `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead, for hygiene.
-4. **Confirm by value — the revoked leaf is refused at the handshake.** `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reading 0 proves the render only. Extract the leaf and key from the bundle the issue step produced (`openssl pkcs12 -in zaccess-<name>.p12 -passin file:zaccess-<name>.p12.pass -nodes -out leaf.pem`; the vaulted bundle comes back through `infra/scripts/zaccess-extract-client-cert.sh`), then `timeout 30 curl -sv --cert leaf.pem https://tmux.zaccess.zhaow.me/ -o /dev/null 2>&1 | grep -c '^< HTTP/'` reads 0 and the trace ends in a TLS alert. A `< HTTP/` line means the running Caddy still pins the leaf: `sudo systemctl reload caddy`, re-run. Delete `leaf.pem` after.
+4. **Confirm by value — the revoked leaf is refused at the handshake.** `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reading 0 proves the render only. Extract the leaf and key from the bundle `<name>` was ORIGINALLY issued with -- not step 1's `<new-name>` bundle, which is still pinned and would read as a refusal that never came (`openssl pkcs12 -in zaccess-<name>.p12 -passin file:zaccess-<name>.p12.pass -nodes -out leaf.pem`; the vaulted bundle comes back through `infra/scripts/zaccess-extract-client-cert.sh`), then `timeout 30 curl -sv --cert leaf.pem https://tmux.zaccess.zhaow.me/ -o /dev/null 2>&1 | grep -c '^< HTTP/'` reads 0 and the trace ends in a TLS alert. A `< HTTP/` line means the running Caddy still pins the leaf: `sudo systemctl reload caddy`, re-run. Delete `leaf.pem` after.
 
 ### Retire when
 
@@ -96,7 +96,7 @@ The bridgehead runs Alloy **natively** (an apt package, no docker) — the only 
 
 ### What to do
 
-1. `systemctl status alloy` — is the unit running at all?
+1. On the bridgehead: `systemctl status alloy` — is the unit running at all?
 2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, and no drift assert catches a bad render before it lands.
 3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`--limit zaccess --tags access`) to re-render it: [`zaccess-converge`](#zaccess-converge). Count that file, never print it — it carries the Grafana Cloud push passwords.
 4. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
@@ -121,7 +121,7 @@ The whole host is one small root filesystem (a 25 GB Linode) — Alloy, Caddy's 
 
 ### What to do
 
-1. `df -h /`.
+1. On the bridgehead: `df -h /`.
 2. `du -sh /var/log/* /var/lib/alloy* 2>/dev/null | sort -rh | head` — journald and Alloy's own WAL are the usual growth points on a host this small.
 3. Caddy's ACME state is `/var/lib/caddy`: `sudo du -sh /var/lib/caddy`, and `sudo journalctl -u caddy --no-pager -n 200 | grep -i acme` for a renewal loop.
 4. Reclaim space (`journalctl --vacuum-size=200M` is the usual first move) rather than resizing the disk — everything on this host is re-issuable, so growing the volume is a last resort, not a routine response.
@@ -146,7 +146,7 @@ Both ends of the tunnel run a probe timer that writes `zaccess_wireguard_handsha
 
 ### What to do
 
-1. `wg show zaccess0` on **both** ends and compare `latest handshake`.
+1. On the bridgehead and on the ops host: `wg show zaccess0` on **both** ends and compare `latest handshake`.
 2. Check the `Endpoint` the ops-side client conf resolves to (`/etc/wireguard/zaccess0.conf` on `zcrypto-ops`) against the bridgehead's actual public address — a home-ISP IP change on the ops side is the routine cause of a stuck endpoint, not a config error.
 3. Confirm UDP `51820` is still open on the Linode Cloud Firewall and the bridgehead's own nftables rules (`firewall_extra_udp_ports` in `group_vars/access_host/vars.yml`) — the two layers are maintained separately.
 4. `systemctl restart wg-quick@zaccess0` on the ops node is the usual fix — it re-initiates the handshake against the configured endpoint without touching the bridgehead's own service; agentboard and the ops-side NAS relay restart with it through `Requires=`.
