@@ -614,9 +614,15 @@ def test_gate_export_refuses_cache_and_slice_apart(tmp_path, monkeypatch, extra)
 
 @pytest.mark.parametrize("bad", ["-1", "24", "100"], ids=["below", "at-the-bound", "far-above"])
 def test_gate_export_refuses_a_slice_outside_the_rotation(tmp_path, monkeypatch, bad):
-    """`slice_of` returns [0, 24), so an out-of-range index matches no cycle and the run silently
-    re-verifies NOTHING -- the cache would look healthy and go stale forever. 24 is the boundary an
-    off-by-one caller (`cycle % 25`, or a 1-based counter) produces, so it is named explicitly."""
+    """The range is a CONTRACT check on the caller, not a safety property, and which half it catches
+    is worth being exact about. `due_for_reverification` reduces its index modulo 24 deliberately --
+    a caller that forgot its own `% 24` still rotates, which the unit test beside it pins -- so an
+    out-of-range value does not stop the rotation. It ALIASES: -1 re-verifies slice 23, 24 slice 0,
+    100 slice 4. Refusing it at the edge is what makes a broken reduction visible instead of merely
+    uneven. The half this CANNOT catch is a reduction with too small a modulus: `cycle % 12` passes
+    every value here and starves twelve slices forever, and what holds that is the bound in
+    `tests/test_engine_gate_cache.py`, not this range. 24 is the boundary an off-by-one caller
+    (`cycle % 25`, or a 1-based counter) produces, so it is named explicitly."""
     result = _gate_export(tmp_path, monkeypatch, "--cache", str(tmp_path / "gate-cache.json"), "--slice", bad)
     assert result.exit_code == 2, result.output
 
