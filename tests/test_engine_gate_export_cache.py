@@ -745,9 +745,9 @@ def test_warm_equals_cold_with_rotation_active(tmp_path, monkeypatch):
     populate_now = cycles[-1] + timedelta(minutes=10)
     command._evaluate_journal(journal, cache_path=cache_path, slice_index=_COLD, now=populate_now)  # populate
 
-    any_forced = False
+    now = cycles[-1] + timedelta(minutes=10)  # FIXED across the sweep: only the slice moves between runs
+    forced = 0
     for run in range(24):
-        now = cycles[-1].replace(hour=run, minute=10)  # the clock moves independently of the slice now
         cold_entries, cold_counts, cold_newest, _ = command._evaluate_journal(journal, cache_path=None, now=now)
         warm_entries, warm_counts, warm_newest, warm_stats = command._evaluate_journal(
             journal, cache_path=cache_path, slice_index=run, now=now
@@ -757,10 +757,12 @@ def test_warm_equals_cold_with_rotation_active(tmp_path, monkeypatch):
         assert warm_counts == cold_counts
         assert warm_newest == cold_newest
         assert evaluate_gate(warm_entries, now=now) == evaluate_gate(cold_entries, now=now)
-        if warm_stats.replayed > 0:
-            any_forced = True
+        forced += warm_stats.replayed
 
-    assert any_forced, "rotation never forced a single replay across all 24 slices -- test is vacuous"
+    # Exactly once each: one sweep of the 24 slice indices re-verifies every cycle once and only once.
+    # This is the assertion that tells the keys apart -- with the clock held fixed, a clock-keyed rotation
+    # would force one slice's cycles on all 24 runs, and zero forced would mean the test proved nothing.
+    assert forced == len(cycles), f"{forced} forced re-verifications across one sweep of {len(cycles)} cycles"
 
 
 def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp_path, monkeypatch):
@@ -796,7 +798,7 @@ def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp
 def test_verified_at_carried_on_hit_stamped_on_replay(tmp_path, monkeypatch):
     """D5: verified_at is carried forward on a cache hit and stamped to `now` only on an actual
     replay (cold or forced); oldest_verification_age reflects the least-recently-replayed entry and
-    falls below one rotation period (24h) once a full sweep has forced every slice at least once."""
+    falls below one sweep -- 24 runs of the loop, at whatever period -- once every slice has been forced."""
     journal = tmp_path / "journal"
     _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -822,16 +824,18 @@ def test_verified_at_carried_on_hit_stamped_on_replay(tmp_path, monkeypatch):
     assert replay_stats.replayed == 1
     assert load_cache(cache_path, fp).entries[CYCLE_TS][2] == replay_now
 
-    # 24 consecutive runs: the (only) entry's own slice comes up exactly once, so its age relative
-    # to the last run is below one rotation period -- and that holds for ANY run period, which is
-    # the bound the clock key never delivered. Here the clock advances an hour a run; the slice does
-    # not read it.
+    # 24 consecutive runs at the loop's real period (64 min), so the clock and the slice DIVERGE --
+    # `now.hour` is not the run index on most runs, and the slice does not read it. The (only)
+    # entry's own slice comes up exactly once, so at the last run its age is under one sweep: 24
+    # runs of the period, whatever the period is.
+    period = timedelta(minutes=64)
+    sweep_start = CYCLE_TS + timedelta(days=1)
     for run in range(24):
-        command._evaluate_journal(journal, cache_path=cache_path, slice_index=run, now=CYCLE_TS.replace(hour=run))
-    final_now = CYCLE_TS.replace(hour=23, minute=59)
+        command._evaluate_journal(journal, cache_path=cache_path, slice_index=run, now=sweep_start + run * period)
+    final_now = sweep_start + 23 * period
     age = oldest_verification_age(load_cache(cache_path, fp), final_now)
     assert age is not None
-    assert age < 24 * 3600
+    assert age < 24 * period.total_seconds()
 
 
 def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
