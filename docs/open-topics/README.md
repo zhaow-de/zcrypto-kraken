@@ -14,6 +14,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0187 — The dark-with-exposure page reads no exposure over a position it never observed](T0187-dark-with-exposure-reads-zero-over-an-unmade-observation.md) — ripe when: any one arm: RUNG 2 starts — the memo's `**RUNG 2 — concentrated, time-boxed` entry records a start and not only its `DependsOn`; or an engine restart is planned while a position is open with nobody attending it; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.
 - [T0193 — A non-finite snapshot close escapes the soak report as a traceback](T0193-nonfinite-snapshot-close-escapes-the-soak-report.md)
 - [T0194 — Several journal readers never validate the record they read](T0194-journal-readers-that-never-validate-the-record.md)
+- [T0198 — Gate cache reverification slice is clock keyed](T0198-gate-cache-reverification-slice-is-clock-keyed.md) — ripe when: Ripe now, and stays ripe until the key moves: `grep -c 'now.hour % _ROTATION_SLICES' cli/engine/gate_cache.py` is non-zero while `grep -c -- '--slice' infra/nas/pull-entrypoint.sh` is non-zero — the sibling loop is counter-keyed and this one is not.
 
 ## Partially done
 
