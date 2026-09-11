@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Load the vault-encrypted deploy key(s) into a throwaway ssh-agent for this run only.
+# Load the vault-encrypted deploy keys into a throwaway ssh-agent for this run only.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"; cd "$SD/.."
 VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-$SD/vault-pass.sh}"
-# One key when --limit names one host whose key exists, every fleet key otherwise (a group or a
-# comma list). The bridgehead's sshd offers `MaxAuthTries 2` (infra/runbooks/zaccess.md), so an
-# agent holding five keys is refused before its own is tried; a single-key agent, offered alone
-# (IdentitiesOnly with the .pub as the identity), is what lets converge.sh reach every host and
-# record every converge in docs/reference/deploy-log.jsonl.
+# Every fleet key, the --limit host's first when --limit names one host with a key. The hardened hosts' sshd
+# offers `MaxAuthTries 2` (roles/hardening leaves devsec's `ssh_max_auth_retries` default), so a key the agent
+# presents third is refused before it is tried; and a play's ssh reaches more than its --limit host — the
+# capture and engine roles probe the other capture host by delegate_to — so no key is left out, only moved.
 LIMIT=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--limit" ] && LIMIT="$a"
@@ -15,9 +14,10 @@ for a in "$@"; do
   prev="$a"
 done
 KEYS=(files/deploy_zcrypto_ed25519 files/deploy_zcrypto-red_ed25519 files/deploy_zcrypto-ops_ed25519 files/deploy_nas_ed25519 files/deploy_zaccess_ed25519)
-if [ -n "$LIMIT" ] && [ -f "files/deploy_${LIMIT}_ed25519" ] && [ -f "files/deploy_${LIMIT}_ed25519.pub" ]; then
-  KEYS=("files/deploy_${LIMIT}_ed25519")
-  export ANSIBLE_SSH_EXTRA_ARGS="${ANSIBLE_SSH_EXTRA_ARGS:-} -o IdentitiesOnly=yes -o IdentityFile=$PWD/files/deploy_${LIMIT}_ed25519.pub"
+if [ -n "$LIMIT" ] && [ -f "files/deploy_${LIMIT}_ed25519" ]; then
+  ordered=("files/deploy_${LIMIT}_ed25519")
+  for k in "${KEYS[@]}"; do [ "$k" = "files/deploy_${LIMIT}_ed25519" ] || ordered+=("$k"); done
+  KEYS=("${ordered[@]}")
 fi
 eval "$(ssh-agent -s)" >/dev/null
 trap 'ssh-agent -k >/dev/null 2>&1 || true' EXIT
