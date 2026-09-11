@@ -28,7 +28,7 @@ status: open   # one of: open | partial | resolved
 
 …followed by, in order:
 
-- `# <Title>` — H1 matching the slug.
+- `# <Title>` — H1 matching the slug; no square bracket in it, since the rendered index links the title.
 - `## Context — what` — one paragraph stating what the topic is.
 - `## Why this matters` — the consequence or motivation; why it's worth tracking.
 - `## Findings so far` — what is already known (link relevant commits, PRs, files, log lines). `_(none)_` is acceptable when the topic is opened cold.
@@ -36,7 +36,7 @@ status: open   # one of: open | partial | resolved
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
-**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently. A splice — a section moved, merged or removed — is an edit and takes the same anchor count and heading-set check; after any rebase touching the index (a keep-both resolution re-adds a moved bullet), grep each topic id for exactly one link.
+**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently. A splice — a section moved, merged or removed — is an edit and takes the same anchor count and heading-set check; after any rebase touching the index, re-render it — `uv run python infra/scripts/topics-index.py` — and let the frontmatter test compare.
 
 ## Partially completing a topic
 
@@ -66,7 +66,7 @@ Write the evidence at close, while it is known: an archived topic whose work is 
 
 A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved`, **deleting its `ripe_when:` key**, **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`).
 
-Delete `ripe_when:` rather than leaving it discharged: `grep -l '^ripe_when:' docs/open-topics/archive/` must stay empty, so that a hit is *by construction* a stranded live deferral rather than something to read through and adjudicate. A closed topic has no trigger — if it still has one, it is not closed. `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in its category's `### Resolved` subsection, with its link now pointing at the archived path (see Index sync).
+Delete `ripe_when:` rather than leaving it discharged: `grep -l '^ripe_when:' docs/open-topics/archive/` must stay empty, so that a hit is *by construction* a stranded live deferral rather than something to read through and adjudicate. A closed topic has no trigger — if it still has one, it is not closed. `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in the render's `## Resolved` list, with its link now pointing at the archived path (see Index sync).
 
 ## Index sync (every change)
 
