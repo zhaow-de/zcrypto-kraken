@@ -80,7 +80,7 @@ nothing is the defect this topic is about.
 
 - **Which reading of "carries a fail-when-set arm" the guard took: the behaviour, not an explicit `pytest.fail` call.** This topic's own measurement is what settles it — the table's `no — skipif only` column was written by reading the gates rather than running them, and run, all three fail. Requiring a literal `pytest.fail` would mean adding a reachability probe to two tests that already fail correctly, a design change the owner's ruling did not authorise.
 
-- **Proven with `infra/scripts/mutate-probe.sh`: ten probes, all KILLED**, and one earlier probe discarded as badly built. Eight mutate a file under test — a fourth flag name that has never existed in this tree, which is the anti-staleness property measured rather than argued; reachability folded into a real opt-in gate; a flag read moved one call away into a helper three real gates call; that read written as a membership test; the same read through `os.environ.copy()`; that helper re-imported from a module that cannot be read, so three real gates lose their whole decision; a decision reached as an attribute of a module that will not read; and a membership read inside the same helper. Two mutate the guard's own resolution rule, one with a control of a different shape from its mutation. A control touching the guard's own `OPT_IN` was run deliberately to settle whether it is a valid control: it is — it goes red, because `OPT_IN` is a literal here and the tree's flag names are literals in the test files. It is the weaker choice because it would fail identically for a guard that found no gate at all, which is a different thing from proving nothing.
+- **Proven with `infra/scripts/mutate-probe.sh`: twelve probes**, and three discarded as badly built. Ten KILLED when run, and one of the ten — reachability folded into a real opt-in gate — SURVIVES at the tip, because the assertion it proved was deleted with the reachability claim. A probe verdict is true of the commit that ran it and not of the branch. Eight mutate a file under test — a fourth flag name that has never existed in this tree, which is the anti-staleness property measured rather than argued; reachability folded into a real opt-in gate; a flag read moved one call away into a helper three real gates call; that read written as a membership test; the same read through `os.environ.copy()`; that helper re-imported from a module that cannot be read, so three real gates lose their whole decision; a decision reached as an attribute of a module that will not read; and a membership read inside the same helper. Two mutate the guard's own resolution rule, one with a control of a different shape from its mutation. A control touching the guard's own `OPT_IN` was run deliberately to settle whether it is a valid control: it is — it goes red, because `OPT_IN` is a literal here and the tree's flag names are literals in the test files. It is the weaker choice because it would fail identically for a guard that found no gate at all, which is a different thing from proving nothing.
 
 - **Three shapes are proven by planted worktrees rather than by probes**, because a sed expression cannot restructure a statement into a branch: a skip in an `else`, one in an `except` handler with no condition anywhere, and one under a `match` case. Planting the first read's three defects gave `7 passed` on the walker that was supposed to catch them; the second read's eleven gave `10 passed`. Both now fail and name every planted gate by line and by guard.
 
@@ -115,3 +115,16 @@ nothing is the defect this topic is about.
   skipped on a truncated Kraken answer with the opt-in set. It took a census, a guard, four review
   rounds and a ruling to surface; a matcher would have refused that gate on day one and made someone
   say what it reads.
+
+- **What the two surviving assertions miss, measured by planting each shape at the tip.** A second
+  opt-in name reaches a gate uncaught through five bindings — an annotated module constant, a binding
+  inside a module-level `if` or `try`, a class attribute read as `self.K`, and a name arriving by
+  star-import; only a plain module-level `K = ...` is caught, and none of the five is refused either.
+  `unittest` is half in scope: `raise unittest.SkipTest` yields a gate, `@unittest.skipIf(...)` and
+  `self.skipTest(...)` yield none. Gate DISCOVERY is asserted by nothing and cannot be asserted from
+  inside the guard — any set it computes to check the walker is computed by the walker. And six
+  mutation probes reverting the guard's most recent recognition additions all SURVIVED: the fixture
+  carries the shapes, but no assertion fails when the code stops seeing them.
+
+  These are edges of the property that DID ship, not of the one that did not, and they are listed so
+  the next attempt inherits them measured rather than rediscovering them.

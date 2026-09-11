@@ -17,6 +17,26 @@ WHAT IT DOES NOT HOLD, deliberately and by the owner's ruling of 2026-09-11: **t
 by whether the venue answers.** Four review rounds tried to assert it and none closed it. The property
 is real and the repo has it nowhere; asserting it needs a static analyser, and this file is not one.
 
+AND WHAT THE TWO SURVIVING CLAIMS THEMSELVES MISS, measured by planting each shape rather than reasoned
+about, because three rounds of this file's prose claimed more than its code delivered:
+
+- a second opt-in name reaches a gate uncaught through five bindings the scope merge does not see --
+  an annotated module constant (`K: str | None = os.environ.get(...)`), a binding inside a module-level
+  `if` or `try`, a class attribute read as `self.K`, and a name arriving by star-import. Only a plain
+  module-level `K = ...` is caught. None of the five is REFUSED either, so the floor does not cover
+  what the one-name assertion misses;
+- `unittest` is half in scope: `raise unittest.SkipTest` yields a gate, `@unittest.skipIf(...)` and
+  `self.skipTest(...)` yield none;
+- gate DISCOVERY is not asserted at all, and cannot be from inside this file -- see
+  `test_the_fixture_carries_every_position_a_skip_can_sit`;
+- and nothing in the tree holds the recognition this file most recently gained: six mutation probes,
+  each reverting one of those additions, all SURVIVED, because the fixture exercises the shapes but no
+  assertion fails when the code stops recognising them.
+
+Those are the honest edges of a guard that is worth having anyway: it holds the one flag name over
+every gate it does find, and it refuses what it cannot read. A future attempt should start from the
+matcher-versus-reducer diagnosis below rather than from this code.
+
 The diagnosis, for whoever writes that analyser, because it is the thing to read first. A MATCHER
 matches a guard against enumerated forms and fails when none match, so it has no branch that can leak.
 A REDUCER walks an expression asking what it reads, and at every node it cannot classify it must
@@ -74,7 +94,7 @@ _MAPPING_VIEWS = ("copy", "keys", "values", "items")
 
 
 class Gate(NamedTuple):
-    """One skip site: where it is, and what its guards read, reach and could not be read at all."""
+    """One skip site: where it is, what environment keys its guards read, and what could not be read."""
 
     line: int
     kind: str
@@ -409,8 +429,7 @@ def _locals_of(function: ast.AST | None) -> dict[str, ast.AST]:
         return {}
     # Parameters first: a name the caller binds is a VALUE, and calling one is not calling something
     # this file failed to read. `cli/derivatives/funding.py`'s `_get_bytes(*, opener)` is the shape --
-    # `opener(url)` refused as unreadable until this line, while the network its default carries is
-    # picked up from the default expression either way.
+    # `opener(url)` was refused as unreadable until this line.
     out: dict[str, ast.AST] = {a.arg: None for a in ast.walk(function) if isinstance(a, ast.arg)}
     for node in ast.walk(function):
         if isinstance(node, ast.Assign):
@@ -708,8 +727,13 @@ def _skip_helpers(tree: ast.Module, attribute: str, bound: set[str], modules: se
 
 
 def _is_pytest_call(node: ast.AST, attribute: str, bound: set[str], modules: set[str]) -> bool:
-    """Whether this node reaches pytest's `<attribute>`: as an attribute of the module under any alias,
-    as a bare name the module imported, or as `raise pytest.skip.Exception(...)`."""
+    """Whether this node reaches pytest's `<attribute>`: an attribute of the module under any alias,
+    `<alias>.mark.<attribute>` applied conditionally, a bare name the module imported or assigned it or
+    bound it through `functools.partial`, `getattr(<alias>, "<attribute>")`, `raise
+    pytest.<attribute>.Exception` and `raise unittest.SkipTest`.
+
+    `unittest` is HALF in scope and the other half is not covered: `@unittest.skipIf(...)` and
+    `self.skipTest(...)` produce no gate, so a gate spelled either way is outside both assertions."""
     if isinstance(node, ast.Raise) and node.exc is not None:
         raised = ast.unparse(node.exc.func if isinstance(node.exc, ast.Call) else node.exc)
         # `raise pytest.skip.Exception` and `raise unittest.SkipTest` are the two raised spellings.
@@ -772,7 +796,7 @@ def _gate(line: int, kind: str, guards: list[ast.AST], module: Module, scope: di
 
 
 def _gates(source: str, label: str = "<fixture>", path: Path | None = None) -> list[Gate]:
-    """Every gate in this module whose guards decide a `pytest.<attribute>()`.
+    """Every gate in this module whose guards decide a `pytest.skip()`.
 
     Two shapes reach it: the `skipif` marker, wherever it is written -- a decorator, a `condition=`
     keyword, or a `pytest.param(..., marks=...)` entry -- and a call, whose guards are read off the
@@ -867,7 +891,8 @@ def test_no_skip_gate_in_tests_is_decided_by_something_this_file_cannot_read():
 def test_the_tree_holds_the_control_that_keeps_the_one_name_assertion_falsifiable():
     """The one-name assertion passes on an empty set, so it needs a live counter-shape: a skip gate
     that reads no environment at all and must keep passing. Fifty-five of the tree's sixty-one are that
-    shape, and a guard that flagged every gate would pass its own fixture while refusing all of them."""
+    shape, and a guard that refused every gate would still pass its own fixture while turning all
+    fifty-five red."""
     plain = [(label, gate) for label, gate in _tree_gates() if not gate.env]
     assert plain, "every skip gate in tests/ reads the environment -- the one-name assertion has no control"
 
@@ -1119,15 +1144,18 @@ def test_a_constant_a_function_rebinds_is_refused_rather_than_answered_from_the_
     assert gate.env == ("<unresolved: SHADOWED>",), f"a shadowed constant must not resolve, got {gate.env}"
 
 
-def test_a_gate_is_found_wherever_a_skip_can_sit():
-    """Gate DISCOVERY, which the narrowing left standing: what a gate reads is only checked over gates
-    that are FOUND, and a skip in an `else`, an `except` handler or under a `match` case has no
-    condition anywhere for a walker that reads conditions. Two earlier shapes of this file produced no
-    gate at all for those, so the one-name assertion ran over a set they were missing from.
+def test_the_fixture_carries_every_position_a_skip_can_sit():
+    """The fixture carries a guarded skip in every position one can sit: an `if`, an `else`, an
+    `except` handler, a `match` case, a nesting, and behind each receiver and spelling the walker
+    recognises. That is a property of the FIXTURE and it is what this test checks.
 
-    The skip sites are DERIVED from the fixture rather than listed: every guarded one must have a gate.
-    Listing them is how this test's first shape came to walk four of the eight the deleted test had
-    covered, leaving four fixture gates that nothing read at all.
+    It does NOT check that the walker finds them, and the attempt to is deleted rather than repaired.
+    `assert guarded <= found` compared a set derived from `_is_pytest_call` and `_guards_of` against a
+    set `_gates` derives from the same pair, so it held by construction: three mutations that broke
+    discovery and were KILLED by the test this replaced all SURVIVED it. **Discovery cannot be asserted
+    from inside this file** -- any set it computes to check the walker against is computed by the
+    walker. Asserting it needs a fixture whose expected gates are written down independently, which is
+    the enumeration this file's whole history argues against, or a second implementation.
     """
     tree = ast.parse(_FIXTURE)
     parents = _parents(tree)
@@ -1135,8 +1163,6 @@ def test_a_gate_is_found_wherever_a_skip_can_sit():
     bound = _pytest_bindings(tree, "skip") | _skip_helpers(tree, "skip", _pytest_bindings(tree, "skip"), modules, parents)
     guarded = {n.lineno for n in ast.walk(tree) if _is_pytest_call(n, "skip", bound, modules) and _guards_of(n, parents)}
     assert len(guarded) >= 8, f"the fixture must carry every position a skip can sit, got {len(guarded)}"
-    found = {gate.line for gate in _gates(_FIXTURE)}
-    assert guarded <= found, f"skip sites the fixture guards but the walker finds no gate for: {sorted(guarded - found)}"
 
 
 def test_a_gate_decided_one_module_away_is_refused_rather_than_called_clean():
