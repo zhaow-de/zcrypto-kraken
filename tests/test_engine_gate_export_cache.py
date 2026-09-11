@@ -638,10 +638,17 @@ def test_evaluate_journal_refuses_a_cache_without_a_slice(tmp_path):
 
 def test_gate_export_forwards_the_slice_it_was_given(tmp_path, monkeypatch):
     """The CLI seam itself. `gate_export` must hand `_evaluate_journal` the `--slice` it was GIVEN --
-    not the clock, not a constant. Both of those survived a mutation probe against the rest of this
-    file: every other CLI test here passes a quiet slice that computes to 0 and asserts only what a
-    quiet run does, so a forwarded `now.hour` or `0` was indistinguishable from the real thing. That
-    is T0198's own defect, reachable at the one Python seam the fix added.
+    not the clock, not a constant.
+
+    The mutation that survived before this test, named exactly, because the BARE form does not:
+    `slice_index=(now.hour if slice_ is not None else None)`, and its constant twin. A bare
+    `slice_index=now.hour` or `slice_index=0` is KILLED at this test's parent by the pre-existing
+    `test_gate_export_no_cache_option_reports_zero_cached`, which runs with no `--cache` -- a
+    non-None slice beside a None cache trips `_evaluate_journal`'s together-or-neither invariant and
+    the run exits 1. That invariant is not this seam's guard: it rejects only the SHAPE, so a
+    mutation keeping None where None belongs walks straight through it, and every other CLI test
+    here passes a quiet slice that computes to 0 while asserting only what a quiet run does. T0198's
+    own defect, reachable at the one Python seam the fix added.
 
     Read through the metrics, the only place a caller can see WHICH cycles were re-verified. `--slice`
     is the cycle's own slice while the patched clock reads a different hour, so a forwarded clock or
@@ -664,7 +671,18 @@ def test_gate_export_forwards_the_slice_it_was_given(tmp_path, monkeypatch):
     def run(slice_index: int) -> tuple[float, float]:
         result = runner.invoke(
             app,
-            ["engine", "gate-export", "--journal-dir", str(journal), "--textfile", str(out), "--cache", str(cache_path), "--slice", str(slice_index)],
+            [
+                "engine",
+                "gate-export",
+                "--journal-dir",
+                str(journal),
+                "--textfile",
+                str(out),
+                "--cache",
+                str(cache_path),
+                "--slice",
+                str(slice_index),
+            ],
         )
         assert result.exit_code == 0, result.output
         m = _prom(out.read_text())
