@@ -1,4 +1,4 @@
-"""The commit-msg guard over the always-loaded guidance: growth is stated in the message, and a universal is counted."""
+"""The commit-msg guard over the always-loaded guidance: growth is stated in the message, and a universal is counted. `--uncounted` reads the same universal test over any page as an instrument, refusing nothing."""
 
 from __future__ import annotations
 
@@ -128,16 +128,21 @@ def bullets(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def uncounted_universals(path: str, text: str) -> list[tuple[int, str]]:
-    """Corpus and contract bullets whose prose outside code spans carries a universal word, with neither a count entry nor a no-count declaration: (line, word)."""
-    if not (CORPUS.match(path) or CONTRACT.match(path)):
-        return []
+def universals_without_a_count(text: str) -> list[tuple[int, str]]:
+    """Bullets whose prose outside code spans carries a universal word, with neither a count entry nor a no-count declaration: (line, word)."""
     hits: list[tuple[int, str]] = []
     for i, block in bullets(text):
         m = UNIVERSAL.search(CODE_SPAN.sub("", block))
         if m and not any(c in block for c in COUNTED):
             hits.append((i, m.group(0)))
     return hits
+
+
+def uncounted_universals(path: str, text: str) -> list[tuple[int, str]]:
+    """The corpus and contract bullets a commit is refused on; `--uncounted` reads any page with the same test and refuses nothing."""
+    if not (CORPUS.match(path) or CONTRACT.match(path)):
+        return []
+    return universals_without_a_count(text)
 
 
 def evaluate(before: dict[str, str], after: dict[str, str], message: str, against: str = "") -> list[str]:
@@ -264,6 +269,19 @@ def main(argv: list[str]) -> int:
             print(f"guidance-guard: a workflow the guard cannot measure -- {exc}", file=sys.stderr)
             return 2
         return 0
+    if argv[1:2] == ["--uncounted"]:
+        if len(argv) == 2:
+            print("usage: guidance-guard.py --uncounted <page>...", file=sys.stderr)
+            return 2
+        for path in argv[2:]:  # the runbook instrument: one line per bullet carrying an uncounted universal, never a refusal
+            try:
+                text = pathlib.Path(path).read_text()
+            except OSError as exc:
+                print(f"guidance-guard: cannot read {path}: {exc.strerror or exc}", file=sys.stderr)
+                return 2
+            for i, word in universals_without_a_count(text):
+                print(f"{path}:{i} {word}")
+        return 0
     if argv[1:2] == ["--range"] and len(argv) == 3 and ".." in argv[2] and "..." not in argv[2]:
         base, head = argv[2].split("..", 1)
         fails = range_fails(base, head)
@@ -275,7 +293,10 @@ def main(argv: list[str]) -> int:
         print(f"guidance-guard: every commit of {argv[2]} states its ambient growth")
         return 0
     if len(argv) != 2:
-        print("usage: guidance-guard.py <commit-message-file> | --ambient-bytes | --range <base>..<head>", file=sys.stderr)
+        print(
+            "usage: guidance-guard.py <commit-message-file> | --ambient-bytes | --range <base>..<head> | --uncounted <page>...",
+            file=sys.stderr,
+        )
         return 2
     merge_head = _git("rev-parse", "--git-path", "MERGE_HEAD").stdout.strip()
     if merge_head and os.path.exists(merge_head):
