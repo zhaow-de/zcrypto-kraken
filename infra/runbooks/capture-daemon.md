@@ -113,7 +113,7 @@ Free space on the spool's filesystem fell below `DEFAULT_MIN_FREE_BYTES = 1 GiB`
 
 It also withholds the host's healthchecks.io ping, so that dead-man fires and stays fired: saturated, and blind to anything worse on this host. The breached interval is booked as a watermark gap in `GapMonitor`, so the lost time reaches the gap accounting instead of reading clean.
 
-The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. The 1 GiB watermark sits below `zcrypto-capture-disk-low`'s 10 %-free early warning, so disk-low only fires first when the fill is gradual; a sudden consumer (one pulled capture image — `infra/scripts/prune-host-images.py <host>`'s dry run prints each image's size) breaches the watermark with disk-low still green.
+The spool is `/var/lib/zcrypto-capture`, on the root filesystem on both hosts. The 1 GiB watermark sits below `zcrypto-capture-disk-low`'s 10 %-free early warning, so disk-low only fires first when the fill is gradual; a sudden consumer (one pulled capture image — `infra/scripts/prune-host-images.py <host>`'s dry run prints each removable image's size) breaches the watermark with disk-low still green.
 
 **One line is not this alert**: `disk watermark UNMEASURABLE path=… -- treating as not-healthy (probe failing)` means the probe itself raised, a flaky mount. That withholds the ping but does not set this gauge, so this critical rule stays silent and only hc.io speaks.
 
