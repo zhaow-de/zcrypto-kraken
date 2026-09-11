@@ -188,7 +188,7 @@ The peer comparison, step 3 below, is mandatory for **every** page where the hou
 
 For shape 3 that comparison is the whole of the disk evidence, since the redemption renamed the rest away.
 
-The rule is a latch on a cumulative counter: it stays firing until the capture process restarts, in practice at the next capture re-pin, or the host stops reporting, which pages on its own. No six-hour window clears it; that window is `zcrypto-capture-hour-finalized-early`'s.
+The rule is a latch on a cumulative counter: it stays firing until the capture process restarts, in practice at the next capture re-pin, or the host stops reporting, which pages on its own. That restart is a supervised act on the capture pair and never something done to quiet a board, and a converge that changes neither the image nor the config does not restart it and does not clear it. No six-hour window clears it; that window is `zcrypto-capture-hour-finalized-early`'s.
 
 ### What to do
 
