@@ -12,42 +12,42 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A warning-severity Grafana alert (`Engine · sleeve composition changed`): the number of the shadow engine's sleeves carrying non-zero exposure stepped up or down within the last 26 hours. Nothing is broken. This alert announces a change in **what the book is**, not a fault.
+A warning-severity Grafana alert (`Engine · sleeve composition changed`): the number of the shadow engine's sleeves carrying non-zero exposure stepped up or down within the last 26 hours. Nothing is broken. This alert announces a change in what the book is, not a fault.
 
 ### What it means
 
-The engine's book is three sleeves — `B`, `A1`, `A2` — combined at fixed one-third weights, and the combination is deliberately fixed: the weights do not react to which sleeves are currently earning. A sleeve that is sitting flat contributes zero and costs nothing to carry; it re-arms on its own signal, with no deploy and no config change.
+The book is three sleeves, `B`, `A1`, `A2`, at fixed one-third weights. A flat sleeve contributes zero and re-arms on its own signal, with no deploy and no config change.
 
-A book with one sleeve live is structurally a **one-sleeve book at a third of that sleeve's own gross** — the fixed weights — and lower again while the exposure governor's multiplier is below 1.0. `cli/risk/governor.py` puts it there two independent ways: five bars at half after any bar losing the daily limit or more, and a drawdown ladder cutting to 0.5, then 0.25, then flat. A halved book is as likely to be the daily-loss arm as a deep drawdown. Two consequences follow, and both are why this alert exists rather than a dashboard panel:
+A one-sleeve book is a third of that sleeve's own gross, and lower again while `cli/risk/governor.py`'s multiplier is below 1.0: five bars at half after any bar losing the daily limit or more, and a drawdown ladder cutting to 0.5, then 0.25, then flat. A halved book is as likely to be the daily-loss arm as a deep drawdown.
 
-- **The composition changing does NOT tell you the gross changed — measure it, do not scale it.** Each sleeve's gross is its own and they move independently, so a count that steps up can leave the book's gross where it was or below it. What does hold is the obligation: everything sized against the previous composition — the drift band, the expected order notionals — was derived under a state that no longer holds, and the direction and size of the change are whatever the series says they are. Read them.
-- **Order placeability moves with it — measure it per leg, and measure it against `ordermin`.** The intended orders sit under the venue's minimums, which is why so few would clear at small live size. The binding floor is **`ordermin`**, a base-unit quantity floor — **not** `costmin`, a per-leg notional floor. And a composition change need not spread exposure over more instruments at all, so it does not follow that individual orders got smaller. Read the engine's own intended orders in the day's `orders.jsonl`, not the count.
+- **The composition changing does not tell you the gross changed.** Measure it, do not scale it. Everything sized against the previous composition (the drift band, the expected order notionals) was derived under a state that no longer holds. Read the series.
+- **Order placeability moves with it.** Measure it per leg, and against `ordermin`, a base-unit quantity floor, not `costmin`, a per-leg notional floor. Read the engine's own intended orders in the day's `orders.jsonl`, not the count.
 
-The alert reads `changes(zcrypto_engine_active_sleeves[26h])`, so it fires on a step in **either** direction: a dormant sleeve arming, or an active one going flat. The window is wider than a day, so the page persists long enough to be seen and then ages out on its own.
+The alert reads `changes(zcrypto_engine_active_sleeves[26h])`, so it fires on a step in either direction: a dormant sleeve arming, or an active one going flat.
 
-Two things this alert deliberately does **not** do. It does not fire when the engine goes dark — the series simply stops, and `noDataState` is `OK`, because engine liveness is the healthchecks.io dead-man's job and the cycle-completed staleness rule's, not this one's. And it does not fire on a failed cycle: a cycle that never reached the build reports no composition at all, so both gauges hold their previous values rather than reading as "everything went flat".
+It does not fire when the engine goes dark: `noDataState` is `OK`, because engine liveness is the healthchecks.io dead-man's job and [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale)'s. It does not fire on a failed cycle either: a cycle that never reached the build reports no composition, so both gauges hold their previous values rather than reading as "everything went flat".
 
 ### What to do
 
-1. **Identify which sleeve moved, and in which direction.** `uv run python infra/scripts/grafana-query.py 'zcrypto_engine_sleeve_gross'` — one value per `sleeve` label. Compare against `zcrypto_engine_active_sleeves` over the last few days to see when the step landed. A single 4h cycle's blip and a sustained re-arming are different events; do not act on one cycle.
+1. **Identify which sleeve moved, and in which direction.** `uv run python infra/scripts/grafana-query.py 'zcrypto_engine_sleeve_gross'` prints one value per `sleeve` label. Compare against `zcrypto_engine_active_sleeves` over the last few days to see when the step landed. A single 4h cycle's blip and a sustained re-arming are different events; do not act on one cycle.
 
-2. **Do not restart, converge, or "fix" anything.** The engine is behaving exactly as designed — the sleeve's own signal turned on or off. There is no failure here to recover from, and a restart changes nothing about the composition.
+2. **Do not restart, converge, or "fix" anything.** The sleeve's own signal turned on or off. There is no failure to recover from, and a restart changes nothing about the composition.
 
-3. **Re-derive the numbers that were sized against the old composition** before the next go-live decision reads them: the model-consistency band the gate compares realized performance against, and the expected order notionals versus the venue minimums. Both were derived under the previous sleeve count and neither updates itself. The command is `uv run zcrypto engine accum-replay --journal-dir <journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD> --nav 1000 --minimums <newest kraken-refdata-*.json>`, and three things decide whether its answer is usable:
+3. **Re-derive the numbers that were sized against the old composition** before the next go-live decision reads them: the model-consistency band the gate compares realized performance against, and the expected order notionals versus the venue minimums. Neither updates itself. The command is `uv run zcrypto engine accum-replay --journal-dir <journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD> --nav 1000 --minimums <newest kraken-refdata-*.json>`, and three things decide whether its answer is usable:
 
-   - **Run it over a window that starts well before the composition changed, and slice**, or run it standalone and know what you are getting: the replay initialises held quantity to zero at its FIRST cycle, so a window starting in a low-gross stretch carries an additive offset that never decays. A live book is never flat.
-   - **A band the gate can rest on needs ≥3 COMPLETE ISO weeks in the new composition** — that is the basis the gate's edge is defined on. Anything shorter is the current combined floor, useful for reading today and not for ratifying.
+   - **Run it over a window that starts well before the composition changed, and slice**, or run it standalone and know what you are getting: the replay initialises held quantity to zero at its first cycle, so a window starting in a low-gross stretch carries an additive offset that never decays.
+   - **A band the gate can rest on needs at least 3 complete ISO weeks in the new composition.** That is the basis the gate's edge is defined on.
    - **Re-check the minimums stamp in the same pass** and quote which snapshot you used; Kraken moves those without notice.
 
-   **That command is the FLOOR half only — read the realized half beside it, or you have re-derived one side of a comparison.** `accum-replay` measures what the venue's minimums make unavoidable; what the engine actually held is `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD>`, which prints both halves per complete ISO week at one NAV. The two cannot drift apart by construction — both compute the same drift function, and it is the same one the engine's own weekly trip evaluates. Until the engine has journaled fills the realized column reads *no data*, and that is the honest answer for a series that has not started, never a zero to average in.
+   **That command is the floor half only.** Read the realized half beside it, or you have re-derived one side of a comparison. `accum-replay` measures what the venue's minimums make unavoidable; what the engine actually held is `uv run zcrypto engine tracking-report --journal-dir <pulled journal> --since <YYYY-MM-DD> --until <YYYY-MM-DD>`, which prints both halves per complete ISO week at one NAV. Until the engine has journaled fills the realized column reads *no data*, and that is the honest answer for a series that has not started, never a zero to average in.
 
-4. **Record the transition durably** — date, which sleeve, the gross before and after — as a new row in `docs/reference/sleeve-composition-ledger.md`, which exists for exactly this and carries the read recipe. This alert ages out within a day and is not a record, and the book's composition history is what a later gate reading depends on.
+4. **Record the transition durably** (date, which sleeve, the gross before and after) as a new row in `docs/reference/sleeve-composition-ledger.md`, which carries the read recipe. This alert ages out with its 26 h window and is not a record; the book's composition history is what a later gate reading depends on.
 
-5. **If the count went DOWN to one or zero**, treat it as information, not an emergency: a long-only sleeve going flat in a downtrend is the risk control working. Zero active sleeves means a flat book — no exposure, no turnover — which is a legitimate state and not a reason to intervene.
+5. **If the count went down to one or zero**, treat it as information, not an emergency: a long-only sleeve going flat in a downtrend is the risk control working. Zero active sleeves is a flat book, a legitimate state and not a reason to intervene.
 
 ### Retire when
 
-`zcrypto-engine-sleeve-count-changed` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_engine_active_sleeves` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`) — either way the rule can no longer fire and this section describes nothing.
+`zcrypto-engine-sleeve-count-changed` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_engine_active_sleeves` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`). Either way the rule can no longer fire and this section describes nothing.
 
 ______________________________________________________________________
 
@@ -61,20 +61,20 @@ A warning-severity Grafana alert (`Engine · order submission has been armed for
 
 ### What it means
 
-The engine may submit orders only when BOTH arming keys are present: the `armed` flag baked into its deployed config, and an arm file the operator places on the engine host. `zcrypto_exec_armed` deliberately conflates the two into one 0/1 gauge — remote telemetry can say THAT the engine is armed, never WHICH of the two keys is set. The alert reads `min_over_time(zcrypto_exec_armed[6h]) == 1`: the MINIMUM over the window, not an average, so a single dip to 0 — a disarm at any point — clears the condition; only a gauge that has read 1 at every sample for the whole six hours trips it.
+The engine may submit orders only when both arming keys are present: the `armed` flag baked into its deployed config, and an arm file the operator places on the engine host. `zcrypto_exec_armed` conflates the two into one 0/1 gauge: remote telemetry can say that the engine is armed, never which key set it. The alert reads `min_over_time(zcrypto_exec_armed{host="zcrypto"}[6h]) > 0.5`, the minimum over the window and not an average, so a single dip to 0 (a disarm at any point) clears the condition; only a gauge that read 1 at every sample for the whole six hours trips it.
 
-Arming is expected only inside an attended probe window, and is normally removed by the operator when that window ends. This alert exists because the failure mode is forgetting to remove it, not the arming itself — firing does not by itself mean anything went wrong, or that an order was actually submitted: the gate-level reading still needs the kill switch clear, the restart hold cleared, and the venue online before anything could move. But an engine left armed for six unattended hours has quietly removed one of the two keys that are supposed to stand between a mistake and real money, which is worth resolving even when nothing downstream has gone wrong yet.
+Arming is expected only inside an attended probe window, and is normally removed by the operator when that window ends. The alert exists because the failure mode is forgetting to remove it, not the arming itself, so firing does not by itself mean an order was submitted. But an engine left armed for six unattended hours has quietly removed one of the two keys that are supposed to stand between a mistake and real money, which is worth resolving even when nothing downstream has gone wrong yet.
 
 ### What to do
 
-1. **Read the full picture on the engine host**: `zcrypto engine exec-status`. This is the only place `reasons` and the two arming keys are visible separately — the dashboard and this page can show only that the engine is armed, never which key put it there.
-2. **If the probe window is over, remove the arm file.** Deleting it disarms the engine immediately — no deploy, no restart, no engine downtime. `zcrypto_exec_armed` reads 0 on the engine's next evaluation (at most one cycle, roughly four hours), and because the rule reads `min_over_time` over the window, a single 0 sample is enough to drop it — the alert clears at the very next rule evaluation after that disarmed reading lands, not after six more hours have to pass.
-3. **If the probe window is still legitimately open, leave it and let the alert ride.** It re-fires on the same condition every time `for: 15m` re-qualifies, so expect it to keep paging for the length of a long window; that repetition is intentional, not a bug.
+1. **Read the full picture on the engine host**: `zcrypto engine exec-status`. This is the only place `reasons` and the two arming keys are visible separately; the dashboard and this page can show only that the engine is armed, never which key put it there.
+2. **If the probe window is over, remove the arm file.** Deleting it disarms the engine immediately: no deploy, no restart, no engine downtime. `zcrypto_exec_armed` reads 0 on the engine's next evaluation (at most one cycle, roughly four hours), and because the rule reads `min_over_time` over the window, a single 0 sample is enough to drop it. The alert clears at the next rule evaluation after that disarmed reading lands, not after six more hours.
+3. **If the probe window is still legitimately open, leave it and let the alert ride.** It re-fires on the same condition every time `for: 15m` re-qualifies, so expect it to keep paging for the length of a long window; that repetition is intentional.
 4. **If you did not expect the engine to be armed at all**, treat this as a live safety-envelope breach: read the engine log and the `exec-status` output together, remove the arm file, and confirm nothing was submitted through the same window. Two places say so: the Engine board's **Execution — what actually happened at the venue** row, where `zcrypto_exec_orders_total{outcome="submitted"}` flat across the window is the answer you want, and the exec ledger's own `submitted` rows for the boundaries the window spans (the ledger read in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) prints them by value). The ledger is the authority; the board is the fast read.
 
 ### Retire when
 
-The engine begins arming continuously as its normal operating mode (order submission goes live and stays live). At that point a duration-based "armed too long" rule fires forever, and this rule must be **REPLACED** by one shaped for continuous arming — never silenced in place. Until then, `zcrypto-engine-exec-armed-too-long` retires only if it is absent from `infra/grafana/alerts.yaml`.
+The engine begins arming continuously as its normal operating mode (order submission goes live and stays live). At that point a duration-based "armed too long" rule fires forever, and this rule must be **replaced** by one shaped for continuous arming, never silenced in place. Until then, `zcrypto-engine-exec-armed-too-long` retires only if it is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 
@@ -185,43 +185,43 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fires this. You are reading `docker logs zcrypto-engine` on the engine host — because a reconnect line caught your eye, or because a Kraken outage is in progress and you are deciding whether the engine is making it worse.
+Nothing fires this. You are reading `docker logs zcrypto-engine` on the engine host, because a reconnect line caught your eye, or because a Kraken outage is in progress and you are deciding whether the engine is making it worse.
 
 ### What it means
 
 The engine's Kraken **data** socket is idle by design while disarmed: nothing is subscribed between intents, and the executor subscribes quotes per intent.
 
-The idle timer is off — `cli/engine/node.py::_data_client_config` sets `ws_idle_timeout_ms=0` (spec `00101` D1) — so a quiet socket is never timed out; `docs/reference/fleet-pins.md`'s engine row records which revision is deployed. The lines mean:
+The idle timer is off: `cli/engine/node.py::_data_client_config` sets `ws_idle_timeout_ms=0` (spec `00101` D1), so a quiet socket is never timed out; `docs/reference/fleet-pins.md`'s engine row records which revision is deployed. The lines mean:
 
-- **`Read idle timeout: no data received for 10.0s`** — the timer has been turned back on. That is a config regression, not a venue event: the literal `0` was replaced (writing `None` does it, silently). Nothing to do on the host; fix the config and redeploy.
-- **`Reconnecting` → `Reconnect succeeded`**, without a preceding `Read idle timeout` **or** `Heartbeat timeout` line — a real drop. Read it against `zcrypto_capture_reconnects_total{host="zcrypto"}` on the integrity board's "Capture counters — cumulative since process start" panel: both moving means the venue or the host's network moved; the engine alone moving is the engine's problem.
-- **`Heartbeat timeout: no frame received for 90.0s`** — a dead peer, caught by the heartbeat at three intervals. Expect a reconnect to follow.
+- **`Read idle timeout: no data received for 10.0s`**: the timer has been turned back on. That is a config regression, not a venue event: the literal `0` was replaced (writing `None` does it, silently). Nothing to do on the host; fix the config and redeploy.
+- **`Reconnecting` → `Reconnect succeeded`**, without a preceding `Read idle timeout` or `Heartbeat timeout` line: a real drop. Read it against `zcrypto_capture_reconnects_total{host="zcrypto"}` on the integrity board's "Capture counters — cumulative since process start" panel: both moving means the venue or the host's network moved; the engine alone moving is the engine's problem.
+- **`Heartbeat timeout: no frame received for 90.0s`**: a dead peer, caught by the heartbeat at three intervals. Expect a reconnect to follow.
 
-None of these lines reaches Loki — the engine ships only the `zcrypto` logger — so `docker logs` on the host is the only place they can be read.
+None of these lines reaches Loki (the engine ships only the `zcrypto` logger), so `docker logs` on the host is the only place they can be read.
 
-**Why the socket's behaviour is capture's problem.** Kraken's edge rate-limits connection attempts to ~150 per rolling 10 minutes **per IP**, and bans the IP for 10 minutes on breach. The engine host is the L2 capture primary; `ws.kraken.com`, `ws-auth.kraken.com` and `api.kraken.com` resolve to the same edge. So a retry storm from the engine's two sockets can take the capture daemon's ability to reconnect with it — and L2 is unbackfillable. The engine's failure backoff (≈ 0.7 → 5 s, ~30 attempts per 150 s per socket, no knob to change it) crosses that limit about 6.3 minutes into a fast-failing outage.
+**Why the socket's behaviour is capture's problem.** Kraken's edge rate-limits connection attempts to ~150 per rolling 10 minutes per IP and bans the IP for 10 minutes on breach. `ws.kraken.com`, `ws-auth.kraken.com` and `api.kraken.com` resolve to the same edge, and the engine host is the L2 capture primary. A retry storm from the engine's two sockets can take the capture daemon's ability to reconnect with it, and L2 is unbackfillable. The engine's backoff has no knob and crosses that limit about six minutes into a fast-failing outage.
 
 ### What to do
 
-- **A Kraken outage in progress and both engine sockets retrying** (`Reconnecting` lines every few seconds, `Reconnect attempt N failed`): **stop the engine** before the retry count nears 150 in ten minutes. A ban self-renews only while something keeps retrying, and the capture daemon's own reconnect needs the budget more than the disarmed engine does.
+- **A Kraken outage in progress and both engine sockets retrying** (`Reconnecting` lines every few seconds, `Reconnect attempt N failed`): **stop the engine** before the retry count nears 150 in ten minutes. The capture daemon's own reconnect needs the budget more than the disarmed engine does.
 
   ```bash
   sudo systemctl stop zcrypto-engine     # NOT `docker stop`
   ```
 
-  **`docker stop zcrypto-engine` does not stop the engine.** The unit's `ExecStart` is an attached `docker compose up` with `Restart=always`, `RestartSec=10`: stopping the container makes the compose process return, the unit exit, and systemd start it again ten seconds later — the retries you were trying to stop resume on their own. `systemctl stop` runs the unit's `ExecStop` (`docker compose down`) and leaves it down.
+  **`docker stop zcrypto-engine` does not stop the engine.** The unit's `ExecStart` is an attached `docker compose up` with `Restart=always`, `RestartSec=10`: stopping the container makes the compose process return, the unit exit, and systemd start it again ten seconds later, so the retries you were trying to stop resume on their own. `systemctl stop` runs the unit's `ExecStop` (`docker compose down`) and leaves it down.
 
   **The cost, before you do it:** boundary cycles run at 00/04/08/12/16/20 UTC, and a boundary that passes with no journal artifact zeroes the ratified gate streak. A restart re-runs a missed boundary only within `[B, B+25 min]` and only while that boundary has no `cycle-<HH>.json` *or* `failed-cycle-<HH>.json`. Stopping just after a boundary is nearly free; stopping just before one costs the streak.
 
   Start it again with `sudo systemctl start zcrypto-engine` once `zcrypto_capture_reconnects_total{host="zcrypto"}` stops moving, and read the next `cycle-<HH>.json` for `completed_at` inside `[B, B+30 min]` as the all-clear.
 
-- **A single `Reconnecting`/`Reconnect succeeded` pair** with the venue quiet — note it and move on; the heartbeat did its job.
+- **A single `Reconnecting`/`Reconnect succeeded` pair** with the venue quiet: note it and move on; the heartbeat did its job.
 
-- **Any `Read idle timeout` line at all** — the knob regressed. Find the change to `cli/engine/node.py::_data_client_config` and redeploy; the builder test that pins it (`test_engine_node.py`) says which value was written.
+- **Any `Read idle timeout` line at all**: the knob regressed. Find the change to `cli/engine/node.py::_data_client_config` and redeploy; the builder test that pins it (`test_engine_node.py`) says which value was written.
 
 ### Retire when
 
-`ws_idle_timeout_ms=0` is no longer set in `cli/engine/node.py::_data_client_config` — a standing subscription landed and spec `00101` D5's restore rule applied — or the socket lines reach Loki, whichever comes first.
+`ws_idle_timeout_ms=0` is no longer set in `cli/engine/node.py::_data_client_config` (a standing subscription landed and spec `00101` D5's restore rule applied), or the socket lines reach Loki, whichever comes first.
 
 ______________________________________________________________________
 
@@ -231,19 +231,19 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **critical** Grafana alert (`Engine · cycles have stopped`): `time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}` above 16500 s (4h35m) for 5 minutes, **or the series is gone entirely** — `noDataState` is `Alerting`. Panel 11 on the `zcrypto-engine` board is the same number.
+A **critical** Grafana alert (`Engine · cycles have stopped`): `time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}` above 16500 s (4h35m) for 5 minutes, **or the series is gone entirely**, since `noDataState` is `Alerting`. Panel 11 on the `zcrypto-engine` board is the same number.
 
 16500 is cadence arithmetic, not a generic staleness bar: boundaries are **00/04/08/12/16/20 UTC** and a healthy completion lands inside `[B, B+30 min]`, so the worst legitimate age is 4h30m, reached just before the next cycle lands. Anything past that is a stopped or crash-looping engine, never a slow one.
 
 ### What it means
 
-At least one boundary produced **no journal artifact at all** — neither `cycle-<HH>.json` nor `failed-cycle-<HH>.json`. This is not the failed-cycle case: a failed cycle writes its sidecar and still refreshes this gauge, and has its own rule below.
+At least one boundary produced **no journal artifact at all**, neither `cycle-<HH>.json` nor `failed-cycle-<HH>.json`. This is not the failed-cycle case: a failed cycle writes its sidecar and still refreshes this gauge, and has its own rule below.
 
 Three shapes produce it, and the order you rule them out matters:
 
-- **The telemetry plane on the primary is dark.** The gauge is seeded at engine startup from the newest journal artifact (falling back to process start), so it is never legitimately absent while the engine runs — absence means the exporter or the whole plane is gone. `Fleet · Alloy dark — Capture primary` reads `count(up{host="zcrypto"})`, which stays ≥ 1 while Alloy is up even though the engine's own scrape target reads 0, so the two rules do **not** cover each other. The accepted cost is named in the rule: a genuine Alloy-dark event on the primary double-pages.
+- **The telemetry plane on the primary is dark.** The gauge is seeded at engine startup from the newest journal artifact (falling back to process start), so it is never legitimately absent while the engine runs; absence means the exporter or the whole plane is gone. `Fleet · Alloy dark — Capture primary` counts the host's series rather than reading this scrape's value, so the two rules do not cover each other.
 - **The engine container is stopped or crash-looping.**
-- **`run_cycle` raised before writing anything** — a poisoned store, a disk error. The node survives it deliberately and logs `shadow node: run_cycle(<ts>) raised; the boundary stays journal-absent`. Note the dead-man behaves differently here: a success pings healthchecks.io, a sidecar pings `/fail`, and a *raising* cycle pings **nothing** — so a healthchecks.io alert with no preceding `/fail` reads "the node is up but a cycle raised; suspect the store".
+- **`run_cycle` raised before writing anything**: a poisoned store, a disk error. The node survives it deliberately and logs `shadow node: run_cycle(<ts>) raised; the boundary stays journal-absent`. The dead-man behaves differently here: a success pings healthchecks.io, a sidecar pings `/fail`, and a *raising* cycle pings **nothing**, so a healthchecks.io alert with no preceding `/fail` reads "the node is up but a cycle raised; suspect the store".
 
 **A missed boundary is not recoverable once B+25 min has passed**, so that UTC day will not be clean and the gate's streak resets at the next day-close.
 
@@ -255,7 +255,7 @@ Three shapes produce it, and the order you rule them out matters:
    ```
    uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto"}) or on() vector(0)' 'up{job="engine_app",host="zcrypto"}'
    ```
-   A `count` of 0, or `(no series)`, means the primary's telemetry plane is dark: follow `Fleet · Alloy dark — Capture primary` and stop here, because every rule scoped to this host is blind. `count` ≥ 1 with `up{job="engine_app"}` at 0 means Alloy is fine and nothing is answering on `127.0.0.1:9102` — the engine container is down. **An empty result is never a zero.**
+   A `count` of 0, or `(no series)`, means the primary's telemetry plane is dark: follow `Fleet · Alloy dark — Capture primary` and stop here, because every rule scoped to this host is blind. `count` ≥ 1 with `up{job="engine_app"}` at 0 means Alloy is fine and nothing is answering on `127.0.0.1:9102`: the engine container is down. **An empty result is never a zero.**
 2. **Read the container, every inspect scoped to one field.** This container carries the live Kraken trade key in its environment; an unscoped inspect prints it.
    ```
    ssh zcrypto
@@ -269,13 +269,13 @@ Three shapes produce it, and the order you rule them out matters:
    sudo ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/
    sudo ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/snapshots/
    ```
-   A boundary with `snapshots/cycle-<HH>/` but no record raised **after** snapshotting (store or model side); no snapshots dir at all raised before the refresh got that far (store unreadable, config). A `failed-cycle-<HH>.json` present means this is not your alert — go to the failed-cycle section below.
+   A boundary with `snapshots/cycle-<HH>/` but no record raised **after** snapshotting (store or model side); no snapshots dir at all raised before the refresh got that far (store unreadable, config). A `failed-cycle-<HH>.json` present means this is not your alert: go to the failed-cycle section below.
 4. **Restart only if the unit is down or the process is wedged, and only inside the inter-cycle gap.** The boundaries are fixed at 00/04/08/12/16/20 UTC, so the gap is from roughly B+30 min to the next boundary; run `date -u` first and do not start a restart with a boundary minutes away.
    ```
    sudo systemctl restart zcrypto-engine
    ```
-   **`docker stop zcrypto-engine` does not stop the engine** — the unit is an attached `docker compose up` with `Restart=always`/`RestartSec=10`, so systemd brings it back ten seconds later; [`engine-data-socket-idle`](#engine-data-socket-idle) has the full treatment and the outage-time reasoning. If now is still within `[B, B+25 min]` and that boundary has no artifact, the restarted node re-runs it by itself; past that nothing catches up, and a `cycle --at` for a lapsed boundary lands outside the 30-minute window, so the day stays unclean either way.
-5. **A converge is a separate, attended decision** — the engine play needs `-e converge_primary=true` and re-asserts the inter-cycle window, and it restarts the live trade engine. Never run `site.yml` un-tagged on the primary.
+   **`docker stop zcrypto-engine` does not stop the engine**: the unit is an attached `docker compose up` with `Restart=always`/`RestartSec=10`, so systemd brings it back ten seconds later; [`engine-data-socket-idle`](#engine-data-socket-idle) has the full treatment and the outage-time reasoning. If now is still within `[B, B+25 min]` and that boundary has no artifact, the restarted node re-runs it by itself; past that nothing catches up, and a `cycle --at` for a lapsed boundary lands outside the 30-minute window, so the day stays unclean either way.
+5. **A converge is a separate, attended decision** (`.claude/rules/fleet-deploys.md`): the engine play needs `-e converge_primary=true` and re-asserts the inter-cycle window, and it restarts the live trade engine. Never run `site.yml` un-tagged on the primary.
 6. **All-clear by value**: the next `cycle-<HH>.json` lands with `completed_at` inside `[B, B+30 min]`, and `uv run python infra/scripts/grafana-query.py 'time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}'` drops below 1800.
 
 ### Retire when
@@ -292,26 +292,21 @@ ______________________________________________________________________
 
 A **critical** Grafana alert (`Engine · position open at last report and the engine is not reporting`). Two halves, both scoped to the capture primary, and the alert fires only when both hold for 10 minutes:
 
-- **`$A`** — `max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)` — the largest exposure across symbols **at last sight**, over a 24 h lookback. The gauge is published by the engine this alert detects the absence of, so it is read backwards; `abs`, because a short is exposure too. The value on the page is this number, in base units.
-- **`$B`** — `min(up{job="engine_app",host="zcrypto"}) or on() vector(0)` — the engine scrape's **value**, not its presence. `engine_app` is a static scrape target, so the `up` series stays present reading 0 when the container dies.
+- **`$A`**: `max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)`, the largest exposure across symbols **at last sight**, over a 24 h lookback. The value on the page is this number, in base units.
+- **`$B`**: `min(up{job="engine_app",host="zcrypto"}) or on() vector(0)`, the engine scrape's **value**, not its presence. `engine_app` is a static scrape target, so the `up` series stays present reading 0 when the container dies.
 
 Panel 64 on the `zcrypto-engine` board (`Position by symbol (base units)`) is `$A`'s own series.
 
-**Two bounds, because the two ways `$B` reaches 0 arrive on different clocks.** Both add the rule's `for: 10m` (`infra/grafana/alerts.yaml`) and the `zcrypto-gate` group's evaluation interval — 60 s, a **stack** setting that no file in this repo carries, so re-read it from Grafana's provisioning rule-group endpoint as [`drills-telemetry.md`](drills-telemetry.md) describes rather than trusting this line.
-
-- **The engine container dies** — a value read, no staleness term. `up` falls to 0 on the first failed scrape at the 60 s `scrape_interval` the capture role sets for `engine_app` (`infra/ansible/roles/capture/files/config.alloy`), so **≈ 12 min** from the container going away.
-- **The primary's Alloy goes dark** — the series is taken away rather than set to 0, and the `or on() vector(0)` fallback cannot supply the 0 until it goes stale, which is Prometheus's ~5 min. So **≈ 16 min** from Alloy stopping.
-
-**Which of the two applies is the elapsed time**, and step 1 below is what tells you which. The page arriving means the exposure has already been unwatched for that whole bound, plus however long the phone sat unread. The 4-minute gap between the bounds is not that number.
+The two ways `$B` reaches 0 arrive on different clocks: a dead container at the 60 s scrape interval, a dark Alloy only once the fallback's series goes stale. So the page arriving means the exposure has already been unwatched for something over ten minutes, plus however long the phone sat unread. Step 1 tells you which.
 
 ### What it means
 
-**Two routes reach this page, and one of them is a HEALTHY engine.** They are not separable in the expression — a dark telemetry plane and a dead host remove the series identically, and a rule that stayed quiet on an absent series would be blind to losing the primary outright — so the double-page is accepted, and telling the routes apart is the first thing you do rather than something the rule did for you.
+**Two routes reach this page, and one of them is a HEALTHY engine.** Telling the routes apart is the first thing you do, not something the rule did for you.
 
-- **The exporter route.** Nothing answers on the engine's metrics port with a non-zero position at its last report. Usually the container is stopped, crash-looping or wedged — the fault the rule exists for — but the exporter is an in-process HTTP server, so a dead metrics thread on an otherwise live, trading engine looks identical from here. Step 2 below is what tells them apart, and it is not optional.
-- **The Alloy route.** The capture primary's telemetry plane is dark. The engine is running, may still be trading, and may already have closed the position — you cannot see it. Closing a live position here pays spread and fees for a telemetry incident.
+- **The exporter route.** Nothing answers on the engine's metrics port with a non-zero position at its last report. Usually the container is stopped, crash-looping or wedged, the fault the rule exists for; but the exporter is an in-process HTTP server, so a dead metrics thread on an otherwise live, trading engine looks identical from here. Step 2 below is what tells them apart, and it is not optional.
+- **The Alloy route.** The capture primary's telemetry plane is dark. The engine is running, may still be trading, and may already have closed the position; you cannot see it. Closing a live position here pays spread and fees for a telemetry incident.
 
-**A resolve is not an all-clear.** The 24 h lookback is also this page's horizon: `$A` falls to 0 when the last position reading ages out of it, and the alert clears — while the engine may still be dark and the position still open. It is sized to outlast a full daily ops pass for exactly that reason. If this cleared without you acting, the exposure is still there.
+**A resolve is not an all-clear.** The 24 h lookback is also this page's horizon: `$A` falls to 0 when the last position reading ages out of it, and the alert clears, while the engine may still be dark and the position still open. It is sized to outlast a full daily ops pass for exactly that reason. If this cleared without you acting, the exposure is still there.
 
 **`zcrypto-engine-cycle-stale` normally fires alongside this one**, and on the same fault. That rule pages on any engine darkness; this one adds *and there is money exposed*, which is what changes the response.
 
@@ -322,20 +317,20 @@ Panel 64 on the `zcrypto-engine` board (`Position by symbol (base units)`) is `$
    uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto"}) or on() vector(0)' 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'
    ```
    `count` ≥ 1 with `up{job="engine_app"}` at 0 ⇒ Alloy is fine and nothing is answering on `127.0.0.1:9102`: the **exporter route**, and `Fleet · Alloy dark — Capture primary` is quiet. A `count` of 0, or `(no series)`, ⇒ the **Alloy route**, and that rule is firing beside this one. **An empty result is never a zero.**
-2. **Read the engine on the host — on BOTH routes, and before touching the position.** Step 1 names the route; it does not establish that the engine is dark, and neither route's answer is sufficient on its own. On the **exporter** route, `up{job="engine_app"}` at 0 proves only that nothing answers on `127.0.0.1:9102` — the exporter is an **in-process HTTP server**, so a dead metrics thread leaves a live engine trading on. On the **Alloy** route, the discriminator cannot separate a dark plane from a dead host, because both remove the series.
+2. **Read the engine on the host — on BOTH routes, and before touching the position.** Step 1 names the route; it does not establish that the engine is dark, and neither route's answer is sufficient on its own. On the **exporter** route, `up{job="engine_app"}` at 0 proves only that nothing answers on `127.0.0.1:9102`: the exporter is an **in-process HTTP server**, so a dead metrics thread leaves a live engine trading on. On the **Alloy** route, the discriminator cannot separate a dark plane from a dead host, because both remove the series.
    ```
    ssh zcrypto
    sudo docker ps --filter name=zcrypto-engine
    sudo docker exec zcrypto-engine zcrypto engine exec-status
    ```
-   A running container that answers `exec-status` ⇒ the engine process is there and its gate state is readable, so **the position stands and step 3 does not apply**, whichever route step 1 named. On the Alloy route that is a telemetry incident: follow [`observability.md#zcrypto-alloy-dark-capture-primary`](observability.md#zcrypto-alloy-dark-capture-primary) and stop here. On the exporter route it is the metrics thread that died, not the engine — treat it as engine liveness and read the journal artifacts and container logs through [`#zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) steps 2–4, which own the restart cadence. **`ssh` failing, the container gone, or `exec-status` not answering is what "confirmed dark" means** and is the only path into step 3.
-3. **Only once the engine is confirmed dark**, the response is [`drills-order-path.md#drill-b`](drills-order-path.md#drill-b) — the flatten procedure: the kill file first, then every resting order cancelled account-wide and the position closed. It is a separate attended procedure with its own decision-to-flat measurement; it is not part of this page. **Its exit 0 is not proof the book is clear** — that verdict is blind on five pairs, and confirming open orders on Kraken's own page is a step of the procedure, not a courtesy ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)). That drill also records that closing the position does **not** clear this page while the engine is still dark.
-4. **Read what the position actually was before acting on it.** `$A` is the largest absolute leg at last sight; the per-symbol breakdown is panel 64 and the engine's exec ledger on the host. On the exporter route the ledger is authoritative — the gauge stopped at the moment the exporter did.
+   A running container that answers `exec-status` ⇒ the engine process is there and its gate state is readable, so **the position stands and step 3 does not apply**, whichever route step 1 named. On the Alloy route that is a telemetry incident: follow [`observability.md#zcrypto-alloy-dark-capture-primary`](observability.md#zcrypto-alloy-dark-capture-primary) and stop here. On the exporter route it is the metrics thread that died, not the engine: treat it as engine liveness and read the journal artifacts and container logs through [`#zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) steps 2–4, which own the restart cadence. **`ssh` failing, the container gone, or `exec-status` not answering is what "confirmed dark" means** and is the only path into step 3.
+3. **Only once the engine is confirmed dark**, the response is [`drills-order-path.md#drill-b`](drills-order-path.md#drill-b), the flatten procedure: the kill file first, then every resting order cancelled account-wide and the position closed. It is a separate attended procedure with its own decision-to-flat measurement; it is not part of this page. **Its exit 0 is not proof the book is clear**: that verdict is blind on five pairs, and confirming open orders on Kraken's own page is a step of the procedure, not a courtesy ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)). That drill also records that closing the position does **not** clear this page while the engine is still dark.
+4. **Read what the position actually was before acting on it.** `$A` is the largest absolute leg at last sight; the per-symbol breakdown is panel 64 and the engine's exec ledger on the host. On the exporter route the ledger is authoritative: the gauge stopped at the moment the exporter did.
 5. **All-clear by value**, not by the alert clearing: `uv run python infra/scripts/grafana-query.py 'up{job="engine_app",host="zcrypto"}' 'max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h])))'` with `up` back at 1, and the position reading whatever you intended to leave it at.
 
 ### Retire when
 
-`zcrypto-engine-dark-with-exposure` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_position` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`), or `engine_app` stops being a static scrape target there — the value read in `$B` exists because nothing removes that target when the container stops.
+`zcrypto-engine-dark-with-exposure` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_position` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`), or `engine_app` stops being a static scrape target there: the value read in `$B` exists because nothing removes that target when the container stops.
 
 ______________________________________________________________________
 
@@ -345,7 +340,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert (`Engine · the last cycle failed`): `zcrypto_engine_cycle_success{host="zcrypto"}` reads 0, with `for: 0s` — the outcome is already final the instant the gauge reads 0, so there is no pending period to wait through. Panel 12 on the `zcrypto-engine` board is the same gauge, titled so that an **absent** series reads as "no outcome known yet", not as failure.
+A **warning** Grafana alert (`Engine · the last cycle failed`): `zcrypto_engine_cycle_success{host="zcrypto"}` reads 0, with `for: 0s`, so the outcome is already final the instant the gauge reads 0 and there is no pending period to wait through. Panel 12 on the `zcrypto-engine` board is the same gauge, titled so that an **absent** series reads as "no outcome known yet", not as failure.
 
 The gauge stays 0 until a later boundary succeeds, up to 4 hours away. One event, not a condition worsening.
 
@@ -353,16 +348,16 @@ The gauge stays 0 until a later boundary succeeds, up to 4 hours away. One event
 
 The cycle reached a controlled failure path and recorded it as `failed-cycle-<HH>.json` beside the day's records. The sidecar names the reason, and there are exactly two:
 
-- **`refresh_deadline`** — the store's settle-verify refresh could not complete inside the 25-minute reserve measured from the boundary. Usually the venue's OHLC fetch or the transport under it.
-- **`stale_pair`** — one or more pairs' raw series were stale against the boundary invariant, so the build was skipped. The sidecar's `offending_pairs` names them.
+- **`refresh_deadline`**: the store's settle-verify refresh could not complete inside the 25-minute reserve after the boundary. Usually the venue's OHLC fetch or the transport under it.
+- **`stale_pair`**: one or more pairs' raw series were stale against the boundary invariant, so the build was skipped. The sidecar's `offending_pairs` names them.
 
-The engine is alive: this gauge was refreshed by the failure itself. That is exactly why liveness cannot cover this and the two rules exist separately — the metrics sink runs after every cycle, success or failure, and refreshes `cycle_completed_at` unconditionally, so an engine whose every cycle fails on schedule keeps `Engine · cycles have stopped` silent forever.
+The engine is alive: the failure itself refreshed this gauge, which is why the staleness rule cannot see this.
 
-**A re-run cannot make the day clean.** The engine never re-runs a boundary that already has any artifact — `startup_action` refuses on the artifact's existence, independently of the `[B, B+25 min]` window — so no automatic retry is coming. The only re-run path is `zcrypto engine cycle --at <boundary> --replace`, and its record's `completed_at` will sit outside `[B, B+30 min]`, which the gate scores as a late cycle and fails anyway. So the clean-day streak for that UTC day is already gone; re-run only when the boundary's **targets** matter to something downstream, never to repair the score.
+**A re-run cannot make the day clean.** The engine never re-runs a boundary that already has any artifact (`startup_action` refuses on the artifact's existence, independently of the `[B, B+25 min]` window), so no automatic retry is coming. The only re-run path is `zcrypto engine cycle --at <boundary> --replace`, and its record's `completed_at` will sit outside `[B, B+30 min]`, which the gate scores as a late cycle and fails anyway. So the clean-day streak for that UTC day is already gone; re-run only when the boundary's **targets** matter to something downstream, never to repair the score.
 
 The failure logs at WARNING (`run_cycle: <ts> failed (<reason>: <pairs>); sidecar at …`), so it does **not** page `Engine · ERROR logs`; the healthchecks.io check took a `/fail` ping.
 
-One nuance worth knowing before you chase a fresh failure: the gauge is also **seeded at engine startup** from the newest journal artifact, sidecars included. A restart taken while the newest artifact is a failed cycle re-publishes 0 and re-arms this page with nothing new having failed — check the sidecar's `cycle_ts` against the container's `StartedAt` before treating it as a new event.
+One nuance before you chase a fresh failure: the gauge is also **seeded at engine startup** from the newest journal artifact, sidecars included. A restart taken while the newest artifact is a failed cycle re-publishes 0 and re-arms this page with nothing new having failed. Check the sidecar's `cycle_ts` against the container's `StartedAt` before treating it as a new event.
 
 ### What to do
 
@@ -371,14 +366,14 @@ One nuance worth knowing before you chase a fresh failure: the gauge is also **s
    ssh zcrypto
    sudo sh -c 'cat /var/lib/zcrypto-engine/journal/$(date -u +%F)/failed-cycle-*.json'
    ```
-2. **Read the boundary's own log lines**: `sudo docker logs --since 5h zcrypto-engine | grep -E 'run_cycle|refresh|stale' | tail -40`. A `refresh_deadline` alongside Kraken REST trouble is a venue event — check `https://status.kraken.com` and the capture side's venue-status signal before suspecting the engine. A `stale_pair` naming one pair while everything else is fresh is that pair's feed; check the corporate-action ledger in `docs/reference/` for a symbol change or delisting.
+2. **Read the boundary's own log lines**: `sudo docker logs --since 5h zcrypto-engine | grep -E 'run_cycle|refresh|stale' | tail -40`. A `refresh_deadline` alongside Kraken REST trouble is a venue event: check `https://status.kraken.com` and the capture side's venue-status signal before suspecting the engine. A `stale_pair` naming one pair while everything else is fresh is that pair's feed: check the corporate-action ledger in `docs/reference/` for a symbol change or delisting.
 3. **Nothing needs restarting.** The engine attempts the next boundary on its own. A restart here buys nothing and costs the restart hold.
-4. **If — and only if — the boundary's targets are needed downstream**, re-run it attended, inside the inter-cycle gap (`date -u` first; boundaries 00/04/08/12/16/20 UTC):
+4. **If, and only if, the boundary's targets are needed downstream**, re-run it attended, inside the inter-cycle gap (`date -u` first; boundaries 00/04/08/12/16/20 UTC):
    ```
    sudo docker exec zcrypto-engine zcrypto engine cycle --at <YYYY-MM-DDTHH:00:00+00:00> --replace
    ```
-   Never `--replace` a boundary that carries a success record — that destroys journaled evidence the gate scores.
-5. **The same reason at consecutive boundaries is a store or feed problem, not four accidents.** Check the store's freshness (`sudo ls -l /var/lib/zcrypto-engine/store/`) and the capture primary's own health — the engine reads the venue through the same host. A store data-integrity failure has its own documented recovery (`zcrypto engine seed`), which is an attended action, not a per-cycle retry.
+   Never `--replace` a boundary that carries a success record; that destroys journaled evidence the gate scores.
+5. **The same reason at consecutive boundaries is a store or feed problem, not four accidents.** Check the store's freshness (`sudo ls -l /var/lib/zcrypto-engine/store/`) and the capture primary's own health; the engine reads the venue through the same host. A store data-integrity failure has its own documented recovery (`zcrypto engine seed`), which is an attended action, not a per-cycle retry.
 6. **All-clear by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_engine_cycle_success{host="zcrypto"}'` reads 1 after the next boundary.
 
 ### Retire when
@@ -393,35 +388,35 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert (`Engine · ERROR logs`) on the `logs` receiver: at least one ERROR or CRITICAL line from the engine on the capture primary in the last 15 minutes. The message text is on the page — up to **five distinct messages**, 200 characters each, one alert instance per distinct line. Zero is the healthy baseline.
+A **warning** Grafana alert (`Engine · ERROR logs`) on the `logs` receiver: at least one ERROR or CRITICAL line from the engine on the capture primary in the last 15 minutes. The message text is on the page: up to **five distinct messages**, 200 characters each, one alert instance per distinct line. Zero is the healthy baseline.
 
-Two properties of the page itself: a storm can carry more lines than the five shown, and the `logs` receiver **disables resolve messages** — log alerts age out rather than resolving, so no all-clear ping is coming.
+Two properties of the page itself: a storm can carry more lines than the five shown, and the `logs` receiver **disables resolve messages**, so log alerts age out rather than resolving and no all-clear ping is coming.
 
 ### What it means
 
-Something went wrong **between** boundaries. The cycle rules see only a boundary's final outcome, so key or API failures, store refresh errors, venue-snapshot failures, order-path exceptions, a raising metrics sink (`metrics sink raised for cycle … -- continuing`) and the node's own `shadow node: run_cycle(…) raised` all surface here first — on the host that holds the live Kraken trade key.
+Something went wrong **between** boundaries. The cycle rules see only a boundary's final outcome, so key or API failures, store refresh errors, venue-snapshot failures, order-path exceptions, a raising metrics sink and the node's own `shadow node: run_cycle(…) raised` all surface here first, on the host that holds the live Kraken trade key.
 
 Note what does **not** appear here: a controlled cycle failure logs at WARNING, so a `failed-cycle` sidecar never pages this rule. If you are seeing both, they are two findings.
 
 ### What to do
 
-1. **Read the full lines, not the 200-character hoist.** Panel 102 on the `zcrypto-logs` board filtered to `container="engine"`, or on the host `sudo docker logs --since 30m zcrypto-engine | tail -80` — tracebacks are in the same stream. Count a storm before calling it five errors: `sum(count_over_time({host="zcrypto", container="engine", level=~"ERROR|CRITICAL"}[15m]))`.
+1. **Read the full lines, not the 200-character hoist.** Panel 102 on the `zcrypto-logs` board filtered to `container="engine"`, or on the host `sudo docker logs --since 30m zcrypto-engine | tail -80`; tracebacks are in the same stream. Count a storm before calling it five errors: `sum(count_over_time({host="zcrypto", container="engine", level=~"ERROR|CRITICAL"}[15m]))`.
 2. **Classify by message, and act on the class:**
-   - **`shadow node: run_cycle(…) raised`** — a boundary is being lost right now with no artifact written. Go to [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) step 3 immediately, well before its 4h35m bar can fire.
-   - **`shadow node: snapshot_fn() raised`** — venue truth only. The cycle proceeds with `venue_state=None` by design; this cannot cost a boundary. Read it beside [`zcrypto-venue-snapshot-stale`](#zcrypto-venue-snapshot-stale) and [`zcrypto-venue-concordance-failed`](#zcrypto-venue-concordance-failed).
-   - **`metrics sink raised …`** — telemetry only; the record and its artifact were already written before the sink ran, so nothing about the cycle is in doubt.
-   - **Anything naming the executor, an order, a fill, the ledger, or the kill switch — this is the execution path, and it is the one to act on now.** Continue at step 3.
-3. **An execution-path error while ARMED is a live money situation.** Read the gate on the host, which is the only place `reasons` exists at all — it never reaches Grafana, and `zcrypto_exec_armed` conflates the two arming keys into one gauge:
+   - **`shadow node: run_cycle(…) raised`**: a boundary is being lost right now with no artifact written. Go to [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) step 3 immediately, well before its 4h35m bar can fire.
+   - **`shadow node: snapshot_fn() raised`**: venue truth only. The cycle proceeds with `venue_state=None` by design; this cannot cost a boundary. Read it beside [`zcrypto-venue-snapshot-stale`](#zcrypto-venue-snapshot-stale) and [`zcrypto-venue-concordance-failed`](#zcrypto-venue-concordance-failed).
+   - **`metrics sink raised …`**: telemetry only; the record and its artifact were already written before the sink ran, so nothing about the cycle is in doubt.
+   - **Anything naming the executor, an order, a fill, the ledger, or the kill switch is the execution path, and it is the one to act on now.** Continue at step 3.
+3. **An execution-path error while ARMED is a live money situation.** Read the gate on the host, which is the only place `reasons` exists at all (it never reaches Grafana, and `zcrypto_exec_armed` conflates the two arming keys into one gauge):
    ```
    sudo docker exec zcrypto-engine zcrypto engine exec-status
    ```
-   It prints `level=<none|reduce_only|full>`, a `reasons=` line (`-` means none), then every gate input. **If it reads `level=full` — or anything other than `level=none` — and you do not understand the error, disarm.** Per the arm/disarm procedure in [`engine-procedures.md`](engine-procedures.md#engine-probe-window):
+   It prints `level=<none|reduce_only|full>`, a `reasons=` line (`-` means none), then every gate input. **If it reads `level=full`, or anything other than `level=none`, and you do not understand the error, disarm.** Per the arm/disarm procedure in [`engine-procedures.md`](engine-procedures.md#engine-probe-window):
    ```
    sudo rm /var/lib/zcrypto-engine/exec/armed
    ```
-   That disarms immediately — no deploy, no restart, no engine downtime — and the gate then reads `level=none`, `reasons=arm_file_absent`. **Removing the arm file is only the first key.** The deployed config still says armed until `exec_armed` is converged back to `false`, which the procedure requires **the same day**: until then anything that recreates that file re-arms the engine with no review. Do the converge as that procedure describes, inside the inter-cycle gap.
-4. **Then reconcile what actually happened at the venue** — the exec ledger's `exec-<HH>.json` records for every boundary the window spans (the ledger read in `engine-procedures.md` prints them by value), and `zcrypto_exec_orders_total{outcome="submitted"}` on the Engine board as the fast read. The ledger is the authority.
-5. **Do not restart on an ERROR line alone.** Restart only when the node loop itself is wedged — no completion at the next boundary — and then only inside the inter-cycle gap.
+   That disarms immediately (no deploy, no restart, no engine downtime) and the gate then reads `level=none`, `reasons=arm_file_absent`. **Removing the arm file is only the first key.** The deployed config still says armed until `exec_armed` is converged back to `false`, which [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) requires the same day; do the converge as that procedure describes, inside the inter-cycle gap.
+4. **Then reconcile what actually happened at the venue**: the exec ledger's `exec-<HH>.json` records for every boundary the window spans (the ledger read in `engine-procedures.md` prints them by value), and `zcrypto_exec_orders_total{outcome="submitted"}` on the Engine board as the fast read. The ledger is the authority.
+5. **Do not restart on an ERROR line alone.** Restart only when the node loop itself is wedged (no completion at the next boundary), and then only inside the inter-cycle gap.
 6. **The same message every boundary is a defect, not an incident to re-triage.** Capture the message and put the work where work lives; this runbook is not the backlog.
 
 ### Retire when
@@ -442,33 +437,31 @@ A **critical** Grafana alert (`Engine · log pipeline dead`) on the `metrics` re
 
 **The title names only one of the two states this can be, and the phone shows the title first.** Separate them with the cycle age before doing anything else.
 
-- **The log plane is dead while the engine is fine.** Then `Engine · ERROR logs` is blind — the only error channel for the process holding the live trade key sees nothing — until this is fixed.
-- **The engine missed a cycle.** The engine is a **burst emitter**: roughly eleven lines within ~90 s of each 4-hourly boundary and nothing between, so a missed burst empties the window. This is an accepted, named cost of the window's sizing rather than a defect: `Engine · cycles have stopped` fires first and correctly on the `metrics` receiver (about B+40m to B+1h10m), and this rule follows at about B+2h01m saying the log pipeline is dead when it is fine.
-
-The 6 h window is sized to the cycle and **tolerates exactly zero missed cycles**: 6 h against a 4.00 h period is 2 h of slack. Do not tighten it toward the ERROR rule's 15 minutes — they watch different things.
+- **The log plane is dead while the engine is fine.** Then `Engine · ERROR logs` is blind, the only error channel for the process holding the live trade key sees nothing, until this is fixed.
+- **The engine missed a cycle.** The engine is a **burst emitter**: a burst of lines around each 4-hourly boundary and nothing between, so a missed burst empties the window, and `Engine · cycles have stopped` will already have fired on the same fault.
 
 ### What to do
 
-1. **Which state? Read the cycle age and the shipper's own gauges together**, from the workstation. **Scope the logship series by `job`** — the capture daemon and the engine both publish them on this host and both carry `host="zcrypto"`, so an unscoped query returns two series and answers about the wrong process:
+1. **Which state? Read the cycle age and the shipper's own gauges together**, from the workstation. **Scope the logship series by `job`**: the capture daemon and the engine both publish them on this host and both carry `host="zcrypto"`, so an unscoped query returns two series and answers about the wrong process:
    ```
    uv run python infra/scripts/grafana-query.py \
      'time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}' \
      'time() - zcrypto_logship_last_cycle_timestamp_seconds{job="engine_app",host="zcrypto"}' \
      'increase(zcrypto_logship_dropped_lines_total{job="engine_app",host="zcrypto"}[6h])'
    ```
-   Cycle age above 16500 ⇒ the **engine**: follow [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) and expect this page to clear at the next boundary's burst. Cycle age healthy ⇒ the **log plane**; continue below. `(no series)` on the cycle age is itself the finding — the telemetry plane is dark, not quiet.
-2. **Read the two shipper gauges as the two questions they are.** `zcrypto_logship_last_cycle_timestamp_seconds` is liveness — the worker advances it on an idle cycle too, and it stalls only while the worker is stuck retrying or wedged. `zcrypto_logship_dropped_lines_total` is delivery — a permanently rejected batch (a revoked token, a wrong path) still completes a cycle and still advances the liveness gauge, so credential failures show up **only** as dropped lines. **Do not use `zcrypto_logship_last_success_timestamp_seconds` for liveness**: it goes stale whenever logging is merely quiet, and it is absent entirely until the first successful ship.
+   Cycle age above 16500 ⇒ the **engine**: follow [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) and expect this page to clear at the next boundary's burst. Cycle age healthy ⇒ the **log plane**; continue below. `(no series)` on the cycle age is itself the finding: the telemetry plane is dark, not quiet.
+2. **Read the two shipper gauges as the two questions they are.** `zcrypto_logship_last_cycle_timestamp_seconds` is liveness: the worker advances it on an idle cycle too, and it stalls only while the worker is stuck retrying or wedged. `zcrypto_logship_dropped_lines_total` is delivery: a permanently rejected batch (a revoked token, a wrong path) still completes a cycle and still advances the liveness gauge, so credential failures show up **only** as dropped lines. **Do not use `zcrypto_logship_last_success_timestamp_seconds` for liveness**: it goes stale whenever logging is merely quiet, and it is absent entirely until the first successful ship.
 3. **On the host, prove which half is broken:**
    ```
    ssh zcrypto
    sudo docker logs --since 6h zcrypto-engine | wc -l
    sudo docker logs --since 6h zcrypto-engine | grep -iE 'ship|loki|401|403|timeout' | tail
    ```
-   A non-zero count means the process is logging and the shipper is what failed — the ship handler's own failures are visible locally only. **Print that count before trusting any conclusion drawn from an empty grep.**
-4. **Check whether capture went dark with it.** Both `zcrypto-capture-log-dead-primary` and this rule firing ⇒ the host's push path or Grafana Cloud, not the engine — the two services read Loki creds from the same rendered file. Engine alone ⇒ the engine container or its env.
-5. **A credential fix is a converge, never a hand edit** — the engine's Loki env comes from the render, and the file is read at container create, so a rotated token needs the role's converge. That is attended, needs `-e converge_primary=true`, and runs inside the inter-cycle gap only.
-6. **All-clear by value**: after the next boundary's burst, the rule's own query returns at least 11 — `sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))`. Confirm the number; an empty result is not a zero.
+   A non-zero count means the process is logging and the shipper is what failed; the ship handler's own failures are visible locally only. **Print that count before trusting any conclusion drawn from an empty grep.**
+4. **Check whether capture went dark with it.** Both `zcrypto-capture-log-dead-primary` and this rule firing ⇒ the host's push path or Grafana Cloud, not the engine; the two services read Loki creds from the same rendered file. Engine alone ⇒ the engine container or its env.
+5. **A credential fix is a converge, never a hand edit**: the engine's Loki env comes from the render, and the file is read at container create, so a rotated token needs the role's converge. That is attended, needs `-e converge_primary=true`, and runs inside the inter-cycle gap only.
+6. **All-clear by value**: after the next boundary's burst, the rule's own query returns a count above 0, the threshold being `< 1`: `sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))`. Confirm the number; an empty result is not a zero.
 
 ### Retire when
 
-`zcrypto-engine-log-dead` is absent from `infra/grafana/alerts.yaml`, or the engine no longer ships as `container="engine"` (`ZCRYPTO_LOG_SERVICE` in `infra/ansible/roles/engine/templates/compose.yaml.j2`). The 6 h window retires only with a re-measured cadence — it is derived from the 4-hourly loop, not copied from the other log canaries.
+`zcrypto-engine-log-dead` is absent from `infra/grafana/alerts.yaml`, or the engine no longer ships as `container="engine"` (`ZCRYPTO_LOG_SERVICE` in `infra/ansible/roles/engine/templates/compose.yaml.j2`). The 6 h window is derived from the 4-hourly loop, not copied from the other log canaries; it changes only when that cadence does.
