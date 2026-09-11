@@ -6,6 +6,7 @@ from __future__ import annotations
 import inspect
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -919,12 +920,18 @@ def test_slice_of_distributes_without_gross_skew():
         assert count <= 3 * mean, f"slice {slice_index} holds {count}, more than 3x the mean {mean}"
 
 
-def test_due_for_reverification_matches_the_run_hour():
+def test_due_for_reverification_matches_the_runs_slice_index():
+    """The key is the caller's slice index and nothing else -- in particular not the clock, which
+    is why the three tests above exist. A caller that has already reduced its counter (the
+    entrypoint's `cycle % 24`) and one that has not must agree: the reduction is idempotent here."""
     cycle_ts = datetime(2026, 7, 10, 8, 0)
     expected_slice = slice_of(cycle_ts)
-    for hour in range(24):
-        now = datetime(2026, 7, 15, hour, 0)
-        assert due_for_reverification(cycle_ts, now) == (expected_slice == hour % 24)
+    for slice_index in range(24):
+        assert due_for_reverification(cycle_ts, slice_index) == (expected_slice == slice_index)
+    # An un-reduced counter: run 24 is slice 0 again, run 97 is slice 1. A caller that forgot its
+    # own `% 24` must not silently stop re-verifying everything.
+    for run in range(24, 120):
+        assert due_for_reverification(cycle_ts, run) == (expected_slice == run % 24)
 
 
 def test_rotation_slices_guard_rejects_values_above_24():
@@ -1003,3 +1010,146 @@ def test_closure_covers_every_module_the_replay_roots_actually_execute():
         "these modules execute on every replay but are NOT digested into replay_fingerprint, so "
         f"editing one serves a stale cached verdict at an unchanged fingerprint: {missing}"
     )
+
+
+# --- the rotation's bound, against both keys (T0198) ----------------------------------------------
+#
+# The property spec 00102 D3 rules for and this rotation has never had: every slice is re-verified
+# within a bounded number of runs, at any period the pull loop actually runs at. The first assertion
+# below reproduces the DEFECT and is what makes the second falsifiable -- without it, "every slice
+# within 24 runs" is a sentence that passes against a key nobody checked.
+
+_BAND_MINUTES = range(60, 121)  # the loop's period is 3600 s + work; 64.3 min measured over 67 cycles
+_SIM_START = datetime(2026, 1, 1, 0, 0)
+
+
+def _clock_keyed_slices(period_minutes: int, runs: int) -> set[int]:
+    """The slices a CLOCK-keyed rotation reaches -- `now.hour % 24`, the key this rotation used until
+    T0198. Reimplemented here rather than imported, because the point of the first assertion is to
+    hold the removed behaviour still while the second measures its replacement."""
+    now, seen = _SIM_START, set()
+    for _ in range(runs):
+        seen.add(now.hour % 24)
+        now += timedelta(minutes=period_minutes)
+    return seen
+
+
+def _counter_keyed_slices(runs: int, cycles: list[datetime], *, start: int = 0, reset_at: int | None = None) -> set[int]:
+    """The slices a COUNTER-keyed rotation reaches, driven through the real `due_for_reverification`
+    exactly as `pull-entrypoint.sh` drives it: `slice=$((cycle % 24))`, one increment per run."""
+    seen: set[int] = set()
+    cycle_counter = start
+    for run in range(runs):
+        if reset_at is not None and run == reset_at:
+            cycle_counter = 0  # a container restart, which spec 00102 D3 accepts
+        slice_index = cycle_counter % 24
+        seen.update(slice_of(c) for c in cycles if due_for_reverification(c, slice_index))
+        cycle_counter += 1
+    return seen
+
+
+def test_a_clock_keyed_rotation_starves_a_fixed_set_of_slices_forever():
+    """The defect T0198 fixes, reproduced: spec 00102 D3 simulated this same loop and found that at
+    72, 80 and 90 minutes a fixed set of 4, 6 and 8 slices is NEVER visited, however long it runs.
+    Measured here over 400 days -- far past any transient -- and the missing sets are NAMED, because
+    "some slices" is the claim a reader cannot check.
+
+    Swept across the whole band the loop can run at, so the size of the exposure is a number rather
+    than three anecdotes: 5 of the band's 61 whole-minute periods starve at least one slice forever.
+    That 64 is not among them is why this has been latent for the rotation's whole life, and why the
+    3-day reverify-stalled alert has never fired on it -- the alert reads an age, and the age of a
+    slice nobody reaches never rises."""
+    runs = 400 * 24
+    starving = {p: sorted(set(range(24)) - _clock_keyed_slices(p, runs)) for p in _BAND_MINUTES}
+    starving = {p: missing for p, missing in starving.items() if missing}
+    assert sorted(starving) == [72, 80, 90, 96, 120], sorted(starving)
+    assert [len(starving[p]) for p in (72, 80, 90)] == [4, 6, 8], f"spec 00102 D3's figures are not reproduced: {starving}"
+    assert starving[90] == [2, 5, 8, 11, 14, 17, 20, 23], starving[90]
+    assert max(len(m) for m in starving.values()) == 12, starving  # at 120 min, half the journal is never re-read
+    # 64 min is the measured mean (67 cycles), and it reaches everything -- latent, not firing.
+    assert _clock_keyed_slices(64, runs) == set(range(24))
+
+
+def test_a_counter_keyed_rotation_visits_every_slice_within_24_runs():
+    """The property, in two halves that a single assertion cannot carry.
+
+    The bound: 24 consecutive runs reach all 24 slices. On its own that is weak evidence -- a
+    clock-keyed rotation at 60 minutes passes it too -- so the second half asserts what makes the
+    bound hold AT EVERY period, which is that the period is not an input to the key at all. There is
+    no sweep over periods here because there is nothing to sweep: a sweep whose loop variable never
+    reaches the code under test measures one case 61 times and reports it as 61."""
+    cycles = [datetime(2026, 1, 1) + timedelta(hours=i) for i in range(480)]
+    assert len({slice_of(c) for c in cycles}) == 24, "the fixture must populate every slice, or the sweep proves nothing"
+
+    reached = _counter_keyed_slices(24, cycles)
+    assert reached == set(range(24)), f"slices never reached in 24 runs: {sorted(set(range(24)) - reached)}"
+    assert _counter_keyed_slices(23, cycles) != set(range(24)), "24 runs must be the bound, not a round number above it"
+
+    # The structural half. A clock term can only re-enter through an argument, so the signature is
+    # where it is refused -- and a re-added `now` would not fail the bound above.
+    params = list(inspect.signature(due_for_reverification).parameters)
+    assert params == ["cycle_ts", "slice_index"], (
+        f"due_for_reverification takes {params}: any third input is a term the run's period can re-enter through, "
+        "which is the defect T0198 closed -- if the new argument is genuinely needed, prove the bound over it here first"
+    )
+
+
+# The bound above is a property of the pair: the module refuses to read a clock, and the CALLER
+# supplies a per-run counter. Nothing in Python can hold the caller's half, so it is read here --
+# the alternative is the bound stated in three runbooks and held by no one, which is what T0198
+# found.
+
+_PULL_ENTRYPOINT = pathlib.Path(__file__).resolve().parent.parent / "infra" / "nas" / "pull-entrypoint.sh"
+_COUNTER_ASSIGNMENTS = {
+    ("cycle", "0"),  # initialised once, before the loop
+    ("cycle", "$((cycle + 1))"),  # incremented once per iteration, reading only itself
+    ("slice", "$((cycle % 24))"),  # the index gate-export is handed: the counter, reduced
+}
+
+
+def test_the_pull_loop_hands_gate_export_its_run_counter():
+    """`due_for_reverification`'s bound holds only if `--slice` carries a per-run counter. A clock
+    there -- `$(date +%H)`, `${EPOCHSECONDS}`, an hour parsed from a filename -- restores the exact
+    defect with every Python test still green, because no Python test can see this file.
+
+    A MATCHER, not a scan for spellings I thought of: every assignment to `cycle` or `slice` must be
+    one of three enumerated right-hand sides, so a fourth fails whatever it reads. Listing clock
+    spellings to reject would pass the one I did not list."""
+    text = _PULL_ENTRYPOINT.read_text()
+    lines = text.splitlines()
+
+    found = {
+        (m.group(1), m.group(2).strip()) for m in (re.match(r"[ \t]*(cycle|slice)=(.*)$", line) for line in lines) if m is not None
+    }
+    assert found == _COUNTER_ASSIGNMENTS, (
+        f"unrecognised assignment to the rotation counter in {_PULL_ENTRYPOINT.name}: {sorted(found - _COUNTER_ASSIGNMENTS)} "
+        f"(missing: {sorted(_COUNTER_ASSIGNMENTS - found)}). `--slice` must carry a per-run counter and nothing else; if this "
+        "is a deliberate change, prove the 24-run bound over the new expression in the test above before widening this set."
+    )
+
+    # Enumerated right-hand sides are worth nothing if the increment sits outside the loop.
+    where = {name: [i for i, line in enumerate(lines) if re.match(rf"[ \t]*{name}=", line)] for name in ("cycle", "slice")}
+    loop = next(i for i, line in enumerate(lines) if line.strip() == "while true; do")
+    assert where["cycle"][0] < loop < where["cycle"][1] < where["slice"][0], (
+        f"cycle=0 must precede `while true; do` (line {loop + 1}) and both the increment and slice= must follow it: {where}"
+    )
+
+    # And the value must actually reach gate-export. Backslash continuations are joined, because the
+    # invocation is four lines long and `--slice` sits on a different one from the command name.
+    invocations = [c for c in re.sub(r"\\\n", " ", text).splitlines() if "gate-export" in c and "zcrypto engine" in c]
+    assert len(invocations) == 1, invocations
+    assert '--slice "$slice"' in invocations[0], invocations[0]
+    assert "--cache" in invocations[0], "`--slice` without `--cache` is refused by the CLI; this call passes both or neither"
+
+
+def test_a_counter_reset_mid_sequence_leaves_the_bound_intact():
+    """A container restart resets the shell's `cycle` to 0. Spec 00102 D3 accepts that for the
+    sibling -- the cost is re-visiting low slices sooner, never an unreached one -- and the bound has
+    to survive it, since the NAS container is recreated on every converge."""
+    cycles = [datetime(2026, 1, 1) + timedelta(hours=i) for i in range(480)]
+    # Within 24 runs OF THE RESET every slice is reached, whatever the counter held before it: the
+    # reset at run 9 means the bound is measured from there, so 9 + 24 runs.
+    assert _counter_keyed_slices(33, cycles, start=17, reset_at=9) == set(range(24))
+    # And the 9 runs before the reset reach only what a counter starting at 17 would: no slice is
+    # lost to the reset, which is the half that would be silent if it were wrong.
+    assert _counter_keyed_slices(9, cycles, start=17) == {s % 24 for s in range(17, 26)}
