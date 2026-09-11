@@ -1097,8 +1097,11 @@ def test_a_counter_keyed_rotation_visits_every_slice_within_24_runs():
 
 
 # The bound above is a property of the pair: the module refuses to read a clock, and the CALLER
-# supplies a per-run counter. Nothing in Python can hold the caller's half, so it is read here -- a
-# `$(date +%H)` in the shell file restores the defect with every Python test still green.
+# supplies a per-run counter. That half has TWO parts and both are held in Python: the shell file,
+# which no test sees unless it READS it, which is what this one does; and gate-export's forwarding of
+# the `--slice` it was handed, held by `test_gate_export_forwards_the_slice_it_was_given` in
+# tests/test_engine_gate_export_cache.py. A `$(date +%H)` in the shell file, or a clock forwarded at
+# that seam, each restores the defect with every other test still green.
 
 _PULL_ENTRYPOINT = pathlib.Path(__file__).resolve().parent.parent / "infra" / "nas" / "pull-entrypoint.sh"
 # Every non-comment line that names the counter, and how many times each may appear. A multiset, not a
