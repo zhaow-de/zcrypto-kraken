@@ -4588,7 +4588,7 @@ rules:
     # incident. Prometheus staleness alone is ~5m, so the effective notice is ~15m.
     for: 10m
     annotations:
-      summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out the WireGuard tunnel handshake-age and edge TLS cert-expiry gauges alongside basic host metrics. Every OTHER rule scoped to this host is now blind, so their silence means nothing until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/zaccess.md#zaccess-bridgehead-dark"
+      summary: "The bridgehead's Alloy has shipped no metrics for >10m — its telemetry plane is dark: its host metrics and its own half of the WireGuard handshake-age and TLS cert-expiry gauges are gone (the ops-side half keeps reporting; the tmux and nas edge certificates go unwatched), and zaccess-disk-high, the only other rule scoped to this host, is blind until this clears. Native Alloy (apt package, no docker on this host): first checks are `systemctl status alloy` then `journalctl -u alloy --no-pager -n 100`; `systemctl restart alloy` is the usual fix. Runbook: infra/runbooks/zaccess.md#zaccess-bridgehead-dark"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "101"
     labels:

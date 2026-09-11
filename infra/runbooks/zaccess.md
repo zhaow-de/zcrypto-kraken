@@ -1,8 +1,12 @@
 # Bridgehead runbooks — the internet access host
 
-You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to converge the bridgehead, revoke a client certificate or ship its Alloy config: the three procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
+
+Everything here is one Linode VPS, `zaccess`, reached as `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; the other end of its WireGuard tunnel is `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages under systemd — and holds no capture data: everything on it is re-issuable.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
+
+______________________________________________________________________
 
 <a name="zaccess-converge"></a>
 
@@ -14,15 +18,21 @@ Nothing fired. You are about to converge the bridgehead — `site.yml --limit za
 
 ### What it means
 
-Every converge of this host needs an agent holding **only its own key**. `ssh_hardening` leaves `ssh_max_auth_retries` at its `devsec.hardening` default, so sshd here offers `MaxAuthTries 2`, and `infra/ansible/scripts/run.sh` loads all five vaulted fleet deploy keys into one agent with `files/deploy_zaccess_ed25519` **last** — both tries go to other hosts' keys before the right one is offered, and the run dies on `Too many authentication failures`. The other four hosts sit earlier in that load order, so only `zaccess` trips it.
+Every converge of this host needs an agent holding **only its own key**; `converge.sh`, both of whose passes go through `run.sh`, cannot reach it, so no converge here lands in `docs/reference/deploy-log.jsonl`. `ssh_hardening` leaves `ssh_max_auth_retries` at its `devsec.hardening` default, so sshd here offers `MaxAuthTries 2`, and `infra/ansible/scripts/run.sh` loads all five vaulted fleet deploy keys into one agent. Three of the five belong to hosts that run the `hardening` role — `zcrypto`, `zcrypto-red` and this one; the ops node and the NAS never run it, so their position does not matter — and two slots cannot serve three, so one always loses: `run.sh` elects this one by loading `files/deploy_zaccess_ed25519` **last**, both tries go to the capture hosts' keys, and the run dies.
 
 ### What to do
 
-So converge it not through `run.sh` but from `infra/ansible/`, where `ansible.cfg` supplies the vault password independently: `eval "$(ssh-agent -s)"; uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/deploy_zaccess_ed25519 | ssh-add -; ANSIBLE_SSH_EXTRA_ARGS="-o IdentitiesOnly=yes -o IdentityFile=$PWD/files/deploy_zaccess_ed25519.pub" uv run ansible-playbook site.yml --limit zaccess --tags access`. That agent has no trap of its own the way `run.sh`'s does — `ssh-agent -k` when the play is done.
+From `infra/ansible/`, where `ansible.cfg` supplies the vault password on its own:
+
+1. `eval "$(ssh-agent -s)"; uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/deploy_zaccess_ed25519 | ssh-add -`
+2. `ANSIBLE_SSH_EXTRA_ARGS="-o IdentitiesOnly=yes -o IdentityFile=$PWD/files/deploy_zaccess_ed25519.pub" uv run ansible-playbook site.yml --limit zaccess --tags access` — `IdentitiesOnly=yes` offers nothing without an `IdentityFile`, and the `.pub` is enough; name the tag: nothing refuses an un-tagged run on this host.
+3. `ssh-agent -k` — this agent has no exit trap the way `run.sh`'s does.
 
 ### Retire when
 
 `infra/ansible/roles/hardening/` sets `ssh_max_auth_retries` explicitly above the number of keys `infra/ansible/scripts/run.sh` loads, or `run.sh` stops loading every fleet key into one agent — either one ends the collision this procedure exists for.
+
+______________________________________________________________________
 
 <a name="zaccess-revoke-client-cert"></a>
 
@@ -34,13 +44,14 @@ Nothing fired. A client certificate is to lose its access to the mTLS edge.
 
 ### What it means
 
-The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`. `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so removing a PEM and re-rendering drops the pin and the leaf is refused at the next handshake. The role ships the directory with `ansible.builtin.copy`, which has no `--delete`, so the host keeps its copy of a PEM the repo no longer has — inert, because the Caddyfile no longer names it.
+The pins are PEMs in `infra/ansible/roles/access/files/pinned-leaves/`: `access_pinned_leaves` globs that directory and the Caddyfile template renders one `file /etc/caddy/pinned-leaves/<name>.pem` line per PEM inside its `verifier leaf` block, so deleting a PEM and converging drops the pin, and the `reload caddy` handler makes the running edge refuse that leaf at its next handshake. The role ships the directory with `ansible.builtin.copy`, which has no delete, so the host keeps a PEM the repo no longer has — inert, the Caddyfile no longer names it. A task failing after the Caddyfile is written strands that reload (`force_handlers` is off): the file is revoked and the running Caddy is not, which is why the confirm is a handshake, not a grep. The edge gates `:443` alone; SSH on `:10022` and the relay on `:20022` do not pass through it. Deleting the last PEM renders an empty `verifier leaf { }` block, and what Caddy does with that is recorded nowhere in this tree — the procedure assumes another pin remains.
 
 ### What to do
 
-1. **Delete the PEM from the repo and converge** — `infra/ansible/roles/access/files/pinned-leaves/<name>.pem`, then `site.yml --limit zaccess --tags access`. That converge needs a single-identity agent: [`zaccess-converge`](#zaccess-converge). This step is the revocation; the two below only tidy up and confirm it.
-2. **Remove the host copy** — `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead, for hygiene.
-3. **Confirm by value**: `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reads 0.
+1. **If `<name>.pem` is the only PEM under `pinned-leaves/`, issue its replacement first** — `infra/scripts/zaccess-client-cert.sh issue <new-name>` (it refuses a name that exists) — and converge that in before revoking.
+2. **Delete the PEM from the repo and converge** — `infra/ansible/roles/access/files/pinned-leaves/<name>.pem`, then `site.yml --limit zaccess --tags access` from the single-identity agent: [`zaccess-converge`](#zaccess-converge). This is the revocation; the steps below tidy up and prove it.
+3. **Remove the host copy** — `sudo rm /etc/caddy/pinned-leaves/<name>.pem` on the bridgehead, for hygiene.
+4. **Confirm by value — the revoked leaf is refused at the handshake.** `grep -c 'pinned-leaves/<name>.pem' /etc/caddy/Caddyfile` reading 0 proves the render only. Extract the leaf and key from the bundle the issue step produced (`openssl pkcs12 -in zaccess-<name>.p12 -passin file:zaccess-<name>.p12.pass -nodes -out leaf.pem`; the vaulted bundle comes back through `infra/scripts/zaccess-extract-client-cert.sh`), then `timeout 30 curl -sv --cert leaf.pem https://tmux.zaccess.zhaow.me/ -o /dev/null 2>&1 | grep -c '^< HTTP/'` reads 0 and the trace ends in a TLS alert. A `< HTTP/` line means the running Caddy still pins the leaf: `sudo systemctl reload caddy`, re-run. Delete `leaf.pem` after.
 
 ### Retire when
 
@@ -54,15 +65,16 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired. You are changing the bridgehead's `config.alloy` or a keep-regex, and looking for the digest operand and the bake gate the other Alloys make you satisfy.
+Nothing fired. You are changing the bridgehead's `config.alloy` and looking for the digest operand and the bake gate the other Alloys make you satisfy.
 
 ### What it means
 
-**The bridgehead's Alloy takes no digest operand and owes no bake** — unlike the capture and ops Alloys, which refuse an ordinary converge after a config edit. It is a native deb whose version is FOLLOWED from apt: the `access` role installs it `state: present` with no version and clears any `dpkg` hold, because a hold makes `apt upgrade` skip it silently and a forced version turns an upstream bump into a failed task that drops the host from the play. Its `config.alloy` is an ungated `copy`, so every converge ships it and a hand edit cannot outlive the next run. There is no `zaccess_alloy_digest` and no pins row — that is deliberate, not an oversight, so do not add one; read the installed version off the host with `dpkg-query -W alloy`. A keep-regex or `config.alloy` change under `infra/ansible/roles/access/files/` converges with a plain `site.yml --limit zaccess --tags access`, whose SSH-agent constraint is [`zaccess-converge`](#zaccess-converge).
+There is none: **the bridgehead's Alloy takes no digest operand and owes no bake.** It is a native deb whose version is FOLLOWED from apt — the `access` role installs it `state: present` with no version and clears any `dpkg` hold, because a hold makes `apt upgrade` skip it silently and a forced version turns an upstream bump into a failed task that drops the host from the play, and the pinned-leaves and Caddyfile tasks below it — the revocation path — with it. Its `config.alloy` is an ungated `copy`: every converge ships it, so a hand edit cannot outlive the next run and there is no drift assert. There is no `zaccess_alloy_digest` and no pins row, deliberately — do not add one. Caddy is on the same footing.
 
 ### What to do
 
-Edit the file under `infra/ansible/roles/access/files/`, then converge with a plain `site.yml --limit zaccess --tags access` — the ungated `copy` ships it. No digest to bump, no bake to wait for, no drift assert to satisfy. Read the installed version back with `dpkg-query -W alloy` on the host.
+1. Edit `infra/ansible/roles/access/files/config.alloy`, then `site.yml --limit zaccess --tags access` from the single-identity agent: [`zaccess-converge`](#zaccess-converge).
+2. Read the installed versions off the host: `dpkg-query -W alloy caddy`.
 
 ### Retire when
 
@@ -80,15 +92,14 @@ A critical-severity Grafana alert (`zcrypto-alloy-dark-zaccess`): the internet b
 
 ### What it means
 
-The bridgehead runs Alloy **natively** (an apt package, no docker) — the only host in the fleet where that's true. When it stops shipping, every other rule scoped to `host="zaccess"` goes blind at the same time: the WireGuard tunnel handshake-age gauge, the edge TLS cert-expiry gauge, and this host's own disk-high content rule all read no data, which renders identically to healthy. Nothing on this host reacts to its own Alloy dying — there is no container to restart, no compose stack to recreate, just the one systemd unit.
+The bridgehead runs Alloy **natively** (an apt package, no docker) — the only host in the fleet where that is true — and nothing on the host reacts to that unit dying: no container to restart, one systemd unit. While it is dark, `zaccess-disk-high` — the only other rule scoped to `host="zaccess"` — reads no data, and `noDataState: OK` renders that identically to healthy. The two `zaccess_*` rules keep their ops-side half: `zaccess-tunnel-stale` still watches the tunnel from `host="ops"` and `zaccess-cert-expiring` still watches `target="nas-dsm"`. What goes unwatched are the `tmux` and `nas` edge certificates — only this host's probe writes those two targets.
 
 ### What to do
 
-1. `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`.
-2. `systemctl status alloy` — is the unit running at all?
-3. `journalctl -u alloy --no-pager -n 100` — a config parse failure (a hand edit that didn't survive the next converge, or a credentials rotation that didn't reach `/etc/default/alloy`) is the usual cause on this host, since the config copy here is deliberately ungated (every converge ships it, so there is no separate drift-assert task to catch a bad render before it lands).
-4. `systemctl restart alloy` is the usual fix. If it will not stay up, check `/etc/default/alloy` for the six `GRAFANA_*` values and re-converge (`--limit zaccess --tags access`) to re-render them — that converge needs a single-identity SSH agent — [`zaccess-converge`](#zaccess-converge).
-5. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
+1. `systemctl status alloy` — is the unit running at all?
+2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, and no drift assert catches a bad render before it lands.
+3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`--limit zaccess --tags access`) to re-render it: [`zaccess-converge`](#zaccess-converge). Count that file, never print it — it carries the Grafana Cloud push passwords.
+4. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
 
 ### Retire when
 
@@ -106,13 +117,13 @@ A warning-severity Grafana alert (`zaccess-disk-high`): the bridgehead's root fi
 
 ### What it means
 
-The whole host is one small root filesystem (a 25 GB Linode) — Alloy, Caddy's ACME state, and the WireGuard config all live under `mountpoint="/"`, so there is no separate spool to watch the way the capture hosts' unbackfillable L2 spool needs one. This host holds no capture data and nothing on it is unbackfillable — the risk here is running the box out of room for logs or a stuck ACME renewal artifact, not data loss.
+The whole host is one small root filesystem (a 25 GB Linode) — Alloy, Caddy's ACME state and the WireGuard config all live under `mountpoint="/"`. Nothing on it is unbackfillable: the risk is running the box out of room for logs or a stuck ACME renewal, not data loss.
 
 ### What to do
 
-1. `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; `df -h /`.
+1. `df -h /`.
 2. `du -sh /var/log/* /var/lib/alloy* 2>/dev/null | sort -rh | head` — journald and Alloy's own WAL are the usual growth points on a host this small.
-3. Check for a stuck ACME renewal loop — Caddy re-requesting a cert repeatedly leaves debug artifacts: `sudo du -sh /var/lib/caddy` and `sudo journalctl -u caddy --no-pager -n 200 | grep -i acme`.
+3. Caddy's ACME state is `/var/lib/caddy`: `sudo du -sh /var/lib/caddy`, and `sudo journalctl -u caddy --no-pager -n 200 | grep -i acme` for a renewal loop.
 4. Reclaim space (`journalctl --vacuum-size=200M` is the usual first move) rather than resizing the disk — everything on this host is re-issuable, so growing the volume is a last resort, not a routine response.
 
 ### Retire when
@@ -131,15 +142,15 @@ A warning-severity Grafana alert (`zaccess-tunnel-stale`): the `zaccess0` WireGu
 
 ### What it means
 
-Both ends of the tunnel run a probe timer that writes `zaccess_wireguard_handshake_age_seconds` from `wg show zaccess0 latest-handshakes` — the bridgehead's copy under `host="zaccess"`, the ops node's under `host="ops"`. The rule takes `max by (host)`, so each end is evaluated on its own and the notification names the end that reported stale — a genuine outage is visible from both sides and therefore raises **one instance per end**, so expect two. A healthy tunnel handshakes every couple of minutes given `PersistentKeepalive = 25` on the ops-side client conf, so 300s is already several missed keepalives, not noise. This does not mean the whole bridgehead is unreachable: that is `zaccess-bridgehead-dark`'s job (this host's Alloy itself going dark) and `zcrypto-alloy-dark-ops`'s job (the ops node's).
+Both ends of the tunnel run a probe timer that writes `zaccess_wireguard_handshake_age_seconds` from `wg show zaccess0 latest-handshakes` — the bridgehead's copy under `host="zaccess"`, the ops node's under `host="ops"`. The rule takes `max by (host)`, so each end is evaluated on its own and the notification names the end that reported stale; a genuine outage is visible from both sides, so expect **one instance per end**. A healthy tunnel handshakes every couple of minutes given `PersistentKeepalive = 25` on the ops-side client conf, so 300s is already several missed keepalives, not noise. One hole: an end whose `latest-handshakes` reads 0 — never handshaked since the interface came up — writes no gauge at all, and this rule is `noDataState: OK`, so a restart that fails to re-establish goes silent rather than staying red. That is why step 5 reads the value rather than watching the alert clear. A fully dark bridgehead or ops node is the Alloy-dark rules' job, not this one's.
 
 ### What to do
 
-1. `wg show zaccess0` on **both** ends — `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me` for the bridgehead, the usual ops access for `zcrypto-ops` — and compare `latest handshake` on each.
+1. `wg show zaccess0` on **both** ends and compare `latest handshake`.
 2. Check the `Endpoint` the ops-side client conf resolves to (`/etc/wireguard/zaccess0.conf` on `zcrypto-ops`) against the bridgehead's actual public address — a home-ISP IP change on the ops side is the routine cause of a stuck endpoint, not a config error.
-3. Confirm UDP `51820` is still open on the Linode Cloud Firewall and the bridgehead's own nftables rules (`firewall_extra_udp_ports` in `group_vars/access_host/vars.yml`) — a firewall change elsewhere in the fleet is the other routine cause.
-4. `systemctl restart wg-quick@zaccess0` on the ops node is the usual fix — it re-initiates the handshake against the configured endpoint without touching the bridgehead's own service.
-5. Confirm recovery: `wg show zaccess0` on both ends shows a handshake under a few minutes old, and `uv run python infra/scripts/grafana-query.py 'zaccess_wireguard_handshake_age_seconds'` returns a low value for both hosts.
+3. Confirm UDP `51820` is still open on the Linode Cloud Firewall and the bridgehead's own nftables rules (`firewall_extra_udp_ports` in `group_vars/access_host/vars.yml`) — the two layers are maintained separately.
+4. `systemctl restart wg-quick@zaccess0` on the ops node is the usual fix — it re-initiates the handshake against the configured endpoint without touching the bridgehead's own service; agentboard and the ops-side NAS relay restart with it through `Requires=`.
+5. Confirm recovery by value: `wg show zaccess0` on both ends shows a handshake under a few minutes old, and `uv run python infra/scripts/grafana-query.py 'zaccess_wireguard_handshake_age_seconds'` returns a low value for **both** hosts — a missing host is the silent case above, not recovery.
 
 ### Retire when
 
@@ -157,14 +168,14 @@ A warning-severity Grafana alert (`zaccess-cert-expiring`): a tracked zaccess en
 
 ### What it means
 
-Two probe timers write `zaccess_tls_not_after_seconds{target=...}`: the bridgehead's own probe handshakes against each Caddy vhost on `127.0.0.1:443` and writes `target="tmux"`/`target="nas"`; the ops node's probe handshakes against the NAS admin port and writes `target="nas-dsm"`. The rule takes `min by (host, target)`, so each tracked certificate is evaluated on its own and the page names the one that tripped. `tmux` and `nas` are Caddy-managed: Caddy's ACME client renews them automatically, well before 14 days out under normal operation, so either arriving at this threshold usually means renewal has been failing silently rather than an unavoidable expiry. `nas-dsm` is the Synology DSM's own certificate, outside Caddy's control — its renewal (or lack of it) is a DSM-side concern.
+Two probe timers write `zaccess_tls_not_after_seconds{target=...}`: the bridgehead's own handshakes against each Caddy vhost on `127.0.0.1:443` and writes `target="tmux"`/`target="nas"`; the ops node's handshakes against the NAS admin port and writes `target="nas-dsm"`. `tmux` and `nas` are Caddy-managed — its ACME client renews them well before 14 days out, so either reaching this threshold means renewal has been failing silently. `nas-dsm` is the Synology DSM's own certificate, outside Caddy's control — a DSM-side concern.
 
 ### What to do
 
-1. **Read the `target` from the notification** — it names the certificate that tripped. To see every target's expiry at once, `uv run python infra/scripts/grafana-query.py 'zaccess_tls_not_after_seconds'` — one value per `target` label; `date -d @<value>` turns it into a calendar date.
-2. **`tmux` or `nas`**: `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; `journalctl -u caddy --no-pager -n 200 | grep -i acme` for renewal failures (a failed HTTP-01 challenge, rate limiting, or a stale ACME account are the usual causes — port 80 must stay reachable for the challenge). `systemctl status caddy` — confirm the unit is up and serving both vhosts.
-3. **`nas-dsm`**: log into the DSM admin console directly and check its own certificate manager — this is DSM's certificate lifecycle, not something either bridgehead role touches.
-4. Confirm recovery: re-run the query in step 1 — the tripped target's value should read comfortably above `time() + 14*86400`.
+1. **Read the `target` from the notification** — it names the certificate that tripped. To see every target's expiry at once, `uv run python infra/scripts/grafana-query.py 'zaccess_tls_not_after_seconds'` — one value per `target`; `date -d @<value>` turns it into a calendar date.
+2. **`tmux` or `nas`**: on the bridgehead, `journalctl -u caddy --no-pager -n 200 | grep -i acme` for renewal failures — a failed HTTP-01 challenge, rate limiting or a stale ACME account; port 80 must stay reachable for the challenge — and `systemctl status caddy` to confirm the unit is up and serving both vhosts.
+3. **`nas-dsm`**: log into the DSM admin console and check its own certificate manager — DSM's certificate lifecycle, not something either bridgehead role touches.
+4. Confirm recovery: re-run the query in step 1 — the tripped target's value reads comfortably above `time() + 14*86400`.
 
 ### Retire when
 
