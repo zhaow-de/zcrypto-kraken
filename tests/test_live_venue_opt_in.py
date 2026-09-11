@@ -1,69 +1,51 @@
-"""Reachability may FAIL a test, never skip it, and one flag name opens every test that reaches a venue.
+"""One flag name opens every test that reaches a venue, and a gate this file cannot read is refused.
 
 A test that reaches a live venue is gated on `ZCRYPTO_LIVE_VENUE_TESTS=1`, never on whether the venue
 answers. Gated on reachability such a test runs in CI, where it is a flake source, and goes
 green-by-skip the day the venue blocks the runner -- and a skip is indistinguishable from a pass in a
-summary line, so an outage reads as coverage of a contract nobody exercised. Gated on the flag, the
-same outage FAILS. That asymmetry is what the opt-in buys, and it is the whole of the rule.
+summary line, so an outage reads as coverage of a contract nobody exercised.
 
-HOW THIS FILE ASKS THE QUESTION, which is the part worth understanding before changing anything. It
-does not recognise the ways a guard can read the environment or reach the venue. It REDUCES each
-guard to a reading -- environment keys, network surfaces, and what could not be read -- and an
-expression it cannot reduce is REFUSED rather than assumed to read nothing.
+WHAT THIS FILE HOLDS, and it is less than that rule:
 
-That inversion is the finding of three review rounds, not a preference. The first shape recognised
-spellings and called everything else clean; twenty-five planted defects passed it, because recognition
-fails by MIS-recognising and nothing sits under that. The reductions grew from four spellings to
-fourteen across three source lists and a fresh reader still found eleven more. Closed-world is the
-only shape with a floor: an unrecognised guard is a failure by construction, so the next spelling
-nobody has thought of fails loudly instead of passing quietly.
+- every skip gate in `tests/` whose reading names environment keys names `ZCRYPTO_LIVE_VENUE_TESTS`
+  and no other, so a second opt-in cannot appear unnoticed;
+- no skip gate has anything this file could not read. A guard is REDUCED to a reading rather than
+  recognised, and an expression that will not reduce is refused. That floor is the only assertion here
+  that has never been evaded.
 
-Three assertions over every skip gate in `tests/`:
+WHAT IT DOES NOT HOLD, deliberately and by the owner's ruling of 2026-09-11: **that no skip is decided
+by whether the venue answers.** Four review rounds tried to assert it and none closed it. The property
+is real and the repo has it nowhere; asserting it needs a static analyser, and this file is not one.
 
-- every gate whose reading names environment keys names `ZCRYPTO_LIVE_VENUE_TESTS` and no other;
-- no gate's reading reaches a network client library;
-- no gate has anything it could not read.
+The diagnosis, for whoever writes that analyser, because it is the thing to read first. A MATCHER
+matches a guard against enumerated forms and fails when none match, so it has no branch that can leak.
+A REDUCER walks an expression asking what it reads, and at every node it cannot classify it must
+choose between refusing and permitting -- so "closed-world" is a property of every branch rather than
+of the design. This file is a reducer. Its first shape claimed the matcher's property in this
+docstring while seven of its branches permitted, and thirteen of twenty-seven planted defects walked
+through them.
 
-The permitted predicates in `_PREDICATES` are the leaves of the reduction, and their SOURCE is this
-tree rather than judgement: blanking names and literals out of every guard expression `_tree_gates()`
-finds gives 15 distinct shapes over 61 expressions, and these are the predicates those shapes use.
-Each declares WHAT IT READS, and the venue property is computed from that declaration rather than by
-re-deriving meaning from a shape a second time.
+The measured cost of the matcher, which is what the decision turned on: **18 of the tree's 61 guard
+expressions have no form a matcher could accept**, because their meaning is not readable off their
+shape. `not X.exists()` is manifest whatever `X` is -- the method names the reading. `not rows` is
+not: the form does not say whether `rows` came off a disk or off Kraken. The 18 are three calls to one
+module-private helper and fifteen bare locals, six of those a `shutil.which` result read one line
+later. Each would need its predicate inlined or declared. Re-derive with the blanking transform over
+`_tree_gates()`; do not take the number from here.
 
-What that list does NOT do, stated because an earlier draft of this paragraph said it did: it is not
-an allowlist of methods a guard may call. A method on a value that reads nothing -- `raw.get(k)`,
-`", ".join(xs)`, `path.samefile(other)` -- is permitted whether or not its name is listed, because a
-receiver with no venue provenance cannot acquire one by having a method called on it. `_PREDICATES` is
-the set this file UNDERSTANDS well enough to attribute a reading to. What is refused is a call it
-cannot resolve to a definition in our own code and cannot attribute to a library, and the refusal
-names both ways out: rewrite the guard in a form this file can reduce, or add the form with what it
-reads. A mutation probe is what forced the distinction -- `PRIMARY_ROOT.samefile(...)` SURVIVED a probe
-written against the stronger claim, and the stronger claim was the thing that was wrong.
-
-One earned exemption, stated because it is the only one: a function that already `pytest.fail`s on a
-condition reading the venue may skip on what the venue RETURNED. Its loud arm has fired by then, so
-the skip is not reachable by an outage -- which is a different thing from a skip decided by whether
-the venue answers at all. `tests/test_tape_bars_rest_control.py` is the case: it fails on no candles
-and on a window shorter than the day it compares, and then skips on local archive state.
-
-Out of scope, and both directions are bounded rather than open. Whether a venue-reaching test is
-gated AT ALL: no AST says a call leaves the machine, so an ungated venue test is not findable here --
-it is also the loud failure, running red in CI on the first outage, rather than the silent one. And
-WHICH calls reach the network: `NETWORK` names client libraries, so a probe built on `subprocess` and
-a command-line tool is not recognised as one. What catches those is the third assertion, if and only
-if the probe sits behind a name this file cannot read.
+`_PREDICATES` is the set this file understands well enough to attribute a reading to, not an allowlist
+of callable names: a method on a value that reads nothing reads nothing whatever it is called. What is
+refused is a call it cannot resolve to a definition in our own code and cannot attribute to a library,
+and the refusal names both ways out.
 
 The class had three names until T0190: `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` implemented the
 same rule under their own spellings, so an agent that set the one name it had been given got the other
 two tests silently skipped. The owner ruled one flag for the class on 2026-09-09, the order-placing
-probe included, because the finer grain bought nothing a reader could act on.
-
-Those two names in the paragraph above are why `git grep 'ZCRYPTO_VENUE_CONTRACT\\|ZCRYPTO_E1B_LIVE' --
-tests/ cli/ infra/ .claude/ CLAUDE.md` returns one hit rather than none, and the hit is this file. A
-guard that names what it forbids is always inside its own corpus; the sweep is not regressed and the
-answer is not to delete the history it records. What keeps the guard from reading ITSELF is that the
-walker runs over gates and this file has none: its shapes are held as source in a string, which no
-parse of this module sees as code.
+probe included. Those two names are why `git grep` for them over `tests/ cli/ infra/ .claude/
+CLAUDE.md` is not empty: the hits are this docstring. A guard that names what it forbids sits inside
+its own corpus, and that is expected rather than a regression. What keeps it from reading ITSELF is
+that the walker runs over gates and this file has none -- its shapes are held as source in a string,
+which no parse of this module sees as code.
 """
 
 from __future__ import annotations
@@ -85,8 +67,6 @@ OPT_IN = "ZCRYPTO_LIVE_VENUE_TESTS"
 # so a probe reaching for a different verb on the same library is caught by the same entry. What this
 # tuple cannot name is a probe that shells out or uses our own adapter; the docstring says so, and the
 # opaque assertion is what covers those when they sit behind a helper.
-NETWORK = ("urllib", "socket", "http", "requests", "httpx", "aiohttp", "websockets", "asyncio.open_connection")
-
 # Every mapping accessor that answers with a value for a key. `setdefault` and `pop` mutate as well as
 # read, which is why they fall out of a list assembled from what a gate USUALLY looks like -- and a
 # gate keyed on either reads the environment exactly as `.get` does.
@@ -103,7 +83,6 @@ class Gate(NamedTuple):
     line: int
     kind: str
     env: tuple[str, ...]
-    network: tuple[str, ...]
     opaque: tuple[str, ...]
     guards: str
 
@@ -367,25 +346,6 @@ def _environment_key(node: ast.AST, strings: dict[str, str]) -> str:
     return f"<unresolved: {ast.unparse(node)}>"
 
 
-def _is_network(text: str) -> bool:
-    """A dotted name is a network surface when its first segment is one, or when it IS one -- the
-    `asyncio.open_connection` entry names a verb because `asyncio` alone is not a network library."""
-    return text.split(".")[0] in NETWORK or any(text == n or text.startswith(n + ".") for n in NETWORK)
-
-
-# --- the closed world -----------------------------------------------------------------------------
-# Everything below answers ONE question about a guard expression: what does it read? The answer is a
-# reading, and an expression this file cannot reduce to a reading is REFUSED rather than assumed to
-# read nothing. That is the whole of the inversion. Three rounds of the previous design -- which
-# recognised the ways an expression could read the environment and called everything else clean --
-# left twenty-five planted defects passing, because recognition fails by MIS-recognising and there is
-# no backstop under it. Here an unrecognised shape is a failure by construction.
-#
-# The permitted predicates below are the leaves of that reduction. Their source is this tree's own
-# guards, not judgement: blanking names and literals out of every guard expression `_tree_gates()`
-# finds gives 15 distinct shapes over 61 expressions, and these are the predicates those shapes use.
-# Each names WHAT IT READS, and the venue property is computed from that declaration rather than by
-# re-recognising the shape a second time.
 _PREDICATES = {
     "exists": "a path on disk",
     "is_file": "a path on disk",
@@ -415,17 +375,16 @@ _REFUSAL_REMEDY = (
 
 
 class Reading(NamedTuple):
-    """What one guard expression reads: environment keys, network surfaces, and what was unreadable."""
+    """What one guard expression reads: environment keys, and what it could not read at all."""
 
     env: frozenset[str]
-    network: frozenset[str]
     refused: frozenset[str]
 
     def __or__(self, other):
-        return Reading(self.env | other.env, self.network | other.network, self.refused | other.refused)
+        return Reading(self.env | other.env, self.refused | other.refused)
 
 
-_NOTHING = Reading(frozenset(), frozenset(), frozenset())
+_NOTHING = Reading(frozenset(), frozenset())
 
 # What a function reads is a property of the function, not of who called it, so it is computed once.
 # Measured: the walk over 220 modules costs 28s without this and a fraction of that with it, because a
@@ -436,11 +395,11 @@ _OS_ALIASES: dict[int, frozenset[str]] = {}
 
 
 def _reads(*parts: str) -> Reading:
-    return Reading(frozenset(parts), frozenset(), frozenset())
+    return Reading(frozenset(parts), frozenset())
 
 
 def _refuses(*names: str) -> Reading:
-    return Reading(frozenset(), frozenset(), frozenset(names))
+    return Reading(frozenset(), frozenset(names))
 
 
 def _locals_of(function: ast.AST | None) -> dict[str, ast.AST]:
@@ -511,8 +470,6 @@ def _classify(node: ast.AST, module: Module, scope: dict[str, ast.AST], seen: fr
             return _classify(scope[node.id], module, scope, seen | {node.id})
         return _NOTHING  # a parameter, a module constant, or a value already reduced
     if isinstance(node, ast.Attribute):
-        if _is_network(ast.unparse(node)):
-            return Reading(frozenset(), frozenset({ast.unparse(node)}), frozenset())
         owned = _owned_attribute(node, module, scope)
         if owned is not None:
             body, holder = owned
@@ -612,8 +569,6 @@ def _classify_call(node: ast.Call, module: Module, scope: dict[str, ast.AST], se
                 k.startswith("<unresolved: the environment") for k in inner.env
             ):
                 return _reads(_environment_key(node.args[0], module.strings)) if node.args else _reads("<unresolved: no key>")
-        if _is_network(ast.unparse(func)):
-            return args | Reading(frozenset(), frozenset({ast.unparse(func)}), frozenset())
         if func.attr in _PREDICATES:
             return args | _classify(func.value, module, scope, seen)
     if isinstance(func, ast.Name):
@@ -781,32 +736,9 @@ def _gate(line: int, kind: str, guards: list[ast.AST], module: Module, scope: di
         line=line,
         kind=kind,
         env=tuple(sorted(reading.env)),
-        network=tuple(sorted(reading.network)),
         opaque=tuple(sorted(reading.refused | set(extra))),
         guards=" ; ".join(ast.unparse(g) for g in guards)[:300],
     )
-
-
-def _fails_loudly_on_the_venue(module: Module, parents: dict[ast.AST, ast.AST], modules: set[str]) -> set[int]:
-    """Functions that already `pytest.fail` on a condition reading the venue.
-
-    A skip inside one of those is not reachable by an OUTAGE: the loud arm has already fired by the
-    time the skip is evaluated, so what remains is the venue's ANSWER intersected with local state,
-    which is a different thing from a skip decided by whether the venue answers at all. That is the
-    distinction this guard could not express in its first shape, and it is stated here rather than
-    left for a reader to infer -- a function may earn the right to skip on venue-derived data by
-    failing first, and no other way.
-    """
-    bound = _pytest_bindings(module.tree, "fail")
-    loud: set[int] = set()
-    for node in ast.walk(module.tree):
-        if not _is_pytest_call(node, "fail", bound, modules):
-            continue
-        function = _enclosing_function(node, parents)
-        guards = _guards_of(node, parents)
-        if function is not None and guards and _fold(guards, module, _locals_of(function), frozenset()).network:
-            loud.add(id(function))
-    return loud
 
 
 def _gates(source: str, label: str = "<fixture>", attribute: str = "skip", path: Path | None = None) -> list[Gate]:
@@ -829,7 +761,6 @@ def _gates(source: str, label: str = "<fixture>", attribute: str = "skip", path:
     bound = _pytest_bindings(module.tree, attribute)
     modules = _pytest_modules(module.tree)
     bound |= _skip_helpers(module.tree, attribute, bound, modules, parents)
-    loud = _fails_loudly_on_the_venue(module, parents, modules) if attribute == "skip" else set()
     out: list[Gate] = []
     for node in ast.walk(module.tree):
         if attribute == "skip" and isinstance(node, ast.Call) and ast.unparse(node.func).endswith("mark.skipif"):
@@ -840,11 +771,8 @@ def _gates(source: str, label: str = "<fixture>", attribute: str = "skip", path:
         elif _is_pytest_call(node, attribute, bound, modules):
             guards = _guards_of(node, parents)
             if guards:
-                function = _enclosing_function(node, parents)
-                gate = _gate(node.lineno, f"{attribute}-site", guards, module, _locals_of(function))
-                if attribute == "skip" and function is not None and id(function) in loud:
-                    gate = gate._replace(network=())
-                out.append(gate)
+                scope = _locals_of(_enclosing_function(node, parents))
+                out.append(_gate(node.lineno, f"{attribute}-site", guards, module, scope))
     return out
 
 
@@ -857,11 +785,6 @@ def _labelled(gates: list[Gate], label: str) -> list[tuple[str, Gate]]:
 def _second_flags(labelled: list[tuple[str, Gate]]) -> list[tuple[str, Gate, str]]:
     """Every environment key a skip gate reads that is not the one opt-in."""
     return [(label, gate, name) for label, gate in labelled for name in gate.env if name != OPT_IN]
-
-
-def _reachability_skips(labelled: list[tuple[str, Gate]]) -> list[tuple[str, Gate]]:
-    """Every skip gate whose guards reach a network client library."""
-    return [(label, gate) for label, gate in labelled if gate.network]
 
 
 def _unreadable(labelled: list[tuple[str, Gate]]) -> list[tuple[str, Gate]]:
@@ -890,18 +813,6 @@ def test_every_environment_keyed_skip_gate_in_tests_reads_the_one_venue_opt_in()
     )
 
 
-def test_no_skip_gate_in_tests_decides_on_whether_the_venue_answers():
-    """The fail-when-set arm, as a property rather than as a call: with the opt-in set, a venue that
-    does not answer can only fail a test, because no skip in the tree is reached from a network call."""
-    offending = _reachability_skips(_tree_gates())
-    assert not offending, "\n".join(
-        f"{label}:{gate.line} [{gate.kind}] skips on {list(gate.network)} -- an unreachable venue would "
-        f"skip here, and a skip reads as a pass: gate it on {OPT_IN} and let the probe FAIL instead. "
-        f"Guards: {gate.guards}"
-        for label, gate in offending
-    )
-
-
 def test_no_skip_gate_in_tests_is_decided_by_something_this_file_cannot_read():
     """The two assertions above are worth their names only over gates whose guards were actually read.
 
@@ -925,11 +836,6 @@ def test_the_tree_holds_the_controls_that_keep_those_assertions_falsifiable():
     permitted half of the asymmetry actually being used."""
     plain = [(label, gate) for label, gate in _tree_gates() if not gate.env]
     assert plain, "every skip gate in tests/ reads the environment -- the one-name assertion has no control"
-    reachability_fails = [(label, gate) for label, gate in _tree_gates("fail") if gate.network]
-    assert reachability_fails, (
-        "no `pytest.fail` in tests/ is keyed on reachability -- nothing in the tree exercises the half of "
-        f"the rule that MAY read the venue, so {OPT_IN}=1 no longer fails loudly anywhere"
-    )
 
 
 # Every shape the three assertions must catch and every shape they must not, as source rather than as
@@ -1179,16 +1085,21 @@ def test_a_constant_a_function_rebinds_is_refused_rather_than_answered_from_the_
     assert gate.env == ("<unresolved: SHADOWED>",), f"a shadowed constant must not resolve, got {gate.env}"
 
 
-def test_a_reachability_keyed_skip_is_caught_in_every_place_a_skip_can_sit():
-    """Eight places a reachability skip can sit: inline, through a helper, nested below the condition,
-    in an `else`, in an `except` handler, under a `match` case, behind a class receiver and behind an
-    instance one. The `except` and `match` cases have no condition anywhere -- an `except` is the
-    commonest way to write a reachability skip, and a `match` decides through its subject -- so reading
-    conditions alone finds no gate in either, which is what the first two shapes of this file did. The
-    last two were planted by a reviewer against the third shape and read clean."""
-    caught = _reachability_skips(_FIXTURE_GATES)
-    assert len(caught) == 8, f"expected eight reachability skips, got {[(g.line, g.guards[:60]) for _, g in caught]}"
-    assert any("except" not in g.guards and "urlopen" in g.guards for _, g in caught), "the except-handler case must be among them"
+def test_a_gate_is_found_wherever_a_skip_can_sit():
+    """Gate DISCOVERY, which the narrowing left standing: what a gate reads is only checked over gates
+    that are found, and a skip in an `else`, an `except` handler or under a `match` case has no
+    condition anywhere for a walker that reads conditions. Two earlier shapes of this file produced no
+    gate at all for those, so the assertion above ran over a set they were missing from."""
+    found = {g.line for g in _gates(_FIXTURE)}
+    for marker in (
+        "an else is gated by the same condition",
+        "the commonest reachability skip has no condition at all",
+        "a match decides through its subject",
+        "still gated on reachability",
+    ):
+        line = next(i for i, text in enumerate(_FIXTURE.splitlines(), 1) if marker in text)
+        enclosing = max((g for g in found if g <= line), default=None)
+        assert enclosing is not None and line - enclosing < 6, f"no gate found for the skip at fixture line {line}"
 
 
 def test_a_gate_decided_one_module_away_is_refused_rather_than_called_clean():
@@ -1218,15 +1129,4 @@ def test_a_gate_with_no_venue_dependency_passes_beside_them():
     the dataset gates that are most of `tests/` -- an absent dataset is not an outage read as coverage."""
     dataset = [gate for gate in _gates(_FIXTURE) if "ROOT.exists" in gate.guards]
     assert len(dataset) == 1, f"the fixture's one dataset gate must be seen, got {dataset}"
-    assert dataset[0].env == () and dataset[0].network == () and dataset[0].opaque == (), f"got {dataset[0]}"
-
-
-def test_a_reachability_keyed_fail_is_not_a_skip_gate():
-    """The permitted half, and the reason the rule is worth following: reading the venue to FAIL is what
-    makes the opt-in mean something. Asserted on the LINE the `pytest.fail` sits on, because the first
-    shape of this test searched gate guards for a string that only ever appears in a fail's MESSAGE --
-    an empty list for every possible implementation, and an assertion that could not fail."""
-    fail_line = next(i for i, text in enumerate(_FIXTURE.splitlines(), 1) if "pytest.fail(" in text)
-    assert fail_line not in {g.line for g in _gates(_FIXTURE)}, "a `pytest.fail` must not be read as a skip gate"
-    fails = [g for g in _gates(_FIXTURE, attribute="fail") if g.network]
-    assert [g.line for g in fails] == [fail_line], f"the fail arm must be seen at {fail_line}, got {fails}"
+    assert dataset[0].env == () and dataset[0].opaque == (), f"got {dataset[0]}"
