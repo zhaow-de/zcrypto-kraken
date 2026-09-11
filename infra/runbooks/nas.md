@@ -74,7 +74,7 @@ The loop's steps, in the order `infra/nas/pull-entrypoint.sh` runs them, each be
 6. the `hot` rsync from the ops node (raw `rsync`, not the wrapper — it emits no `pull complete` line);
 7. `sleep ${ARCHIVE_PULL_INTERVAL:-3600}`.
 
-The deployed hash scope is **`incremental`** (`nas_archive_pull_hash_scope` in `infra/ansible/host_vars/nas/vars.yml`): each pull hashes the parquets rsync re-sent plus a rotating 1/24 slice, so every segment is re-hashed within 24 uninterrupted cycles — the slice counter lives in the loop's process and restarts from 0 with the container. `full` re-hashes every segment every cycle and costs proportionally more.
+The deployed hash scope is **`incremental`** (`nas_archive_pull_hash_scope` in `infra/ansible/host_vars/nas/vars.yml`): each pull hashes the parquets rsync transferred, first arrivals included, plus a rotating 1/24 slice, so every segment is re-hashed within 24 uninterrupted cycles — the slice counter lives in the loop's process and restarts from 0 with the container. `full` re-hashes every segment every cycle and costs proportionally more.
 
 The loop's real period is interval **plus** work, so periodic saturation inside a cycle is the design, not a fault.
 
