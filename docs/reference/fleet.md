@@ -54,7 +54,7 @@ What runs where: hosts, services, data paths, mounts, replication, telemetry lab
 - Reboot the secondary first, then the primary — the canary order of an image rollout: a kernel that bricks the secondary leaves the primary untouched.
 - Schedule: ≥ 1 h from each 4 h bar boundary and off the hour boundary; ≥ 1 h between hosts; the primary in the book-traffic trough, right after a completed engine cycle, measured from the archive rather than guessed; and never inside a published Kraken maintenance window, read again immediately before — `.claude/rules/fleet-deploys.md` carries the feed (no count command: a reboot leaves no row in the tree; the deploy log records converges).
 - Expect a ~83 s capture gap; both containers self-restart.
-- Verify by outcome before touching the next host — the checks a converge owes: every book stream's next `<HH>.parquet` begins at `:00:00.0x`; the NAS archive-pull's next pull reports `failed=0`; `infra/scripts/continuity.py` on a pulled copy shows no new truncated hours; on the primary, the next `cycle-<HH>.json` lands with `completed_at` inside `[B, B+30 min]`, and the restart marker is the container's `.State.StartedAt`, never the reboot command's return time (no count command: a reboot leaves no row in the tree).
+- Verify by outcome before touching the next host — the checks a converge owes: every book stream's next `<HH>.parquet` begins at `:00:00.0x`; the NAS archive-pull's next pass logs `pull complete … failed=0` for every verified channel; `infra/scripts/continuity.py` on a pulled copy shows no new truncated hours; on the primary, the next `cycle-<HH>.json` lands with `completed_at` inside `[B, B+30 min]`, and the restart marker is the container's `.State.StartedAt`, never the reboot command's return time (no count command: a reboot leaves no row in the tree).
 
 ## Drills
 
@@ -63,5 +63,5 @@ Inducing a fault without touching production — the recipes, the standing rules
 ## Telemetry labels
 
 - Loki labels: `container`, `host`, `job`, `level`, `service_name`; `host ∈ {nas, ops, zcrypto, zcrypto-red}`.
-- The bridgehead ships Prometheus under `host="zaccess"`; its `zaccess_wireguard_handshake_age_seconds` and `zaccess_tls_not_after_seconds` also arrive under `host="ops"` from the ops-side probe, so the tunnel and the NAS cert are watched from both ends.
+- The bridgehead ships Prometheus under `host="zaccess"`; its `zaccess_wireguard_handshake_age_seconds` and `zaccess_tls_not_after_seconds` also arrive under `host="ops"` from the ops-side probe, so the tunnel is watched from both ends; the certificates are two different ones — the bridgehead reads its own edge certificate per vhost (`target="tmux"`, `target="nas"`), the ops probe reads the NAS's DSM certificate (`target="nas-dsm"`), and nothing else reads either.
 - Prometheus carries the same four `host` values plus `host="primary"`/`"secondary"` on one series, `zcrypto_reconcile_trade_deficit_rows_total` (`cli/archive/command.py` — the reconcile series keyed by `host=` where its siblings use `source=`; the textfile label wins over the ops Alloy's `external_labels`): `host=` is not uniform when keying a rule or a query.
