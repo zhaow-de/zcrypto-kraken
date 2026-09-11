@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Load the vault-encrypted deploy keys into a throwaway ssh-agent for this run only.
+# Load the vault-encrypted deploy keys into a throwaway ssh-agent, then hand the process to ansible-playbook.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"; cd "$SD/.."
 VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-$SD/vault-pass.sh}"
@@ -7,6 +7,8 @@ VPF="${ANSIBLE_VAULT_PASSWORD_FILE:-$SD/vault-pass.sh}"
 # offers `MaxAuthTries 2` (roles/hardening leaves devsec's `ssh_max_auth_retries` default), so a key the agent
 # presents third is refused before it is tried; and a play's ssh reaches more than its --limit host — the
 # capture and engine roles probe the other capture host by delegate_to — so no key is left out, only moved.
+# A group, a comma list or no --limit keeps the listed order, the bridgehead's key fifth: it converges under
+# its own --limit only.
 LIMIT=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--limit" ] && LIMIT="$a"
