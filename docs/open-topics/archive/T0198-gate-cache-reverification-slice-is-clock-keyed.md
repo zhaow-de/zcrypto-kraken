@@ -71,22 +71,50 @@ reasoned about starvation in this exact spot and about a different mechanism.
 
 ## Resolution
 
-Fixed on branch `fix/t0198-gate-cache-slice-counter` — `f7a148f1f` the guard, `c5c1b388e` the fix,
-three carrier commits after it. The re-verification slice is the
-caller's run counter, `due_for_reverification(cycle_ts, slice_index)`, and `now` has left the
-signature. `gate-export` gained `--slice`, validated `[0, 24)` and required with `--cache` (either
-flag alone is refused); `infra/nas/pull-entrypoint.sh` passes `--slice "$slice"` — the same
-`slice=$((cycle % 24))` the five `archive pull` calls in the same loop body already read, so this is
-a sixth reader of one variable rather than a second rotation.
+Fixed on branch `fix/t0198-gate-cache-slice-counter`. Commits are named by subject rather than by
+hash, because the branch's messages were rewritten before push and a hash here would have gone stale:
+`test(engine): T0198 — the rotation's bound, against both keys` is the guard, `fix(engine): T0198 —
+the re-verification slice is the run counter, not the clock` is the fix, and the carrier and
+review-fix commits follow them.
 
-**Step 1, the measurement, as the baseline this was fixed against.** Read from the NAS on
-2026-09-11 over 67 consecutive cycles: the loop's period is **64.3 min mean**, and the worst gap
-between two re-verifications of one slice was **48.3 h** — inside the alert's 3-day bar, which is
-why nothing had ever fired. 64 min is not one of the periods that starve a slice outright, so the
-exposure was latent rather than active: a change to the pull interval, or enough extra work per
-cycle to drift the period into the 72-90 min band, would have starved a fixed set of slices with
-every signal green. The guard now reproduces that band and names the starved slices per period, so
-the defect is held rather than remembered.
+The re-verification slice is the caller's run counter, `due_for_reverification(cycle_ts,
+slice_index)`, and `now` has left the signature. `gate-export` gained `--slice`, validated `[0, 24)`
+and required with `--cache` (either flag alone is refused); `infra/nas/pull-entrypoint.sh` passes
+`--slice "$slice"` — the same `slice=$((cycle % 24))` the five `archive pull` calls in the same loop
+body already read, so this is a sixth reader of one variable rather than a second rotation.
+
+**The bound this delivers, exactly.** Every slice is re-verified within 24 runs while the container
+runs uninterrupted. A restart keeps the cache (`/tmp` survives one; only a recreate discards it) and
+sends the counter back to 0, so a restart k runs into a sweep re-visits the slices it just did and
+reaches the rest up to k runs late: the worst per-slice gap across one restart is 24 + k, so 47. At
+the measured period that is ~50 h against the alert's 3-day bar, and one restart mid-sweep reaches
+that bar once the loop runs slower than ~92 min. Restarting more often than every 24 runs is the case
+that loses slices outright, and the reverify-stalled rule is the witness for it.
+
+**Step 1, the measurement, as the baseline this was fixed against — and how to re-derive it.** Read
+from the NAS on 2026-09-11 ~20:05Z:
+
+1. `ssh nas 'sudo /usr/local/bin/docker logs -t zcrypto-archive-pull --since 72h'` → 402 lines: 335
+   `pull complete` (the five verified channels) and 67 `archive pull complete` (the journal, pulled
+   `--no-verify`).
+2. `grep 'pull complete' | grep -o 'source=[^ ]*' | sort | uniq -c` → zcrypto-red 67, zcrypto 134,
+   z-home 201. The lowest-count source appears once per cycle, so its timestamps are the cycle clock.
+3. Consecutive gaps of those 67 timestamps: **62.8 / 64.4 / 65.8 min** (min / median / max), mean
+   **64.3**, advancing 4.34 min per cycle against the hour. **MEASURED.**
+4. The UTC hour of each timestamp is the slice `now.hour % 24` would have picked; the largest gap
+   between consecutive cycles landing in the same hour is **48.3 h** (hours 3 and 18), with all 24
+   hours visited. **DERIVED**, and the proxy matters: `gate-export`'s own `now` is taken later in the
+   same cycle, after the pulls, and it logs nothing to that container's stdout, so near an hour
+   boundary its hour can differ from the pull line's by one. Spec 00102 D3's simulated ~48 h at
+   ~65 min agrees, which is corroboration, not the source.
+
+So the exposure was latent rather than active: 64 min is not one of the periods that starve a slice
+outright, and 48.3 h sat inside the 3-day bar, which is why nothing ever fired. A change to the pull
+interval, or enough extra work per cycle to drift the period into the 72-90 min band, would have
+starved a fixed set of slices with every signal green. The guard re-derives that band and names the
+starved slices per period — it is a simulation of the removed key, so it holds no present behaviour;
+what holds the present behaviour is the pair beside it, the 24-run bound and the signature that
+carries no clock.
 
 **A least-recently-verified key was designed, simulated, and withdrawn before it was proposed.**
 The idea was to drop the rotation index entirely and re-verify whichever cached cycle carried the
@@ -113,11 +141,22 @@ than a fixed rotation; in the healthy case its bound is also 24 runs, because 24
 their turn, and in the two unhealthy cases above it has no bound at all. It was more state, one
 extra failure mode per piece of that state, and no better bound — so the counter was ruled instead.
 
-**What the fix costs, stated rather than paid here.** `gate_cache.py` sits inside its own
-`replay_fingerprint` closure (81 files), so this change invalidates every cache:
-`zcrypto_gate_cache_invalidated` goes to 1 on the first run after the deploy and that run replays
-the whole journal — the better part of an hour and growing. Expect `zcrypto-gate-exporter-stale` to
-sit near its bar on that run. The converge is the fleet's concern, not this topic's, and it has one
-ordering constraint worth carrying into it: the NAS image pin and the entrypoint land in the SAME
-converge, because a new image with an old entrypoint means `--cache` with no `--slice`, which the
-CLI refuses and which fails gate-export outright.
+**What the fix costs, and the crossing it opens.** `gate_cache.py` sits inside its own
+`replay_fingerprint` closure (81 files), so the first run on a new image replays the whole journal —
+the better part of an hour and growing. `zcrypto_gate_cache_invalidated` does **not** mark it: the
+code reaches the NAS only through a re-pin, a re-pin recreates the container, `/tmp/gate-cache.json`
+goes with it, and `load_cache` returns a non-rejected empty cache for an absent path, so the gauge
+reads 0. `infra/ansible/host_vars/nas/vars.yml` already says so for the same reason. The signature of
+the cold run is `zcrypto_gate_cache_hits` 0 with `zcrypto_gate_cache_replayed` at the full cycle
+count. Expect `zcrypto-gate-exporter-stale` to sit near its bar on that run.
+
+The crossing is the fleet's concern rather than this topic's, and it is stated at the pin, in
+`infra/ansible/host_vars/nas/vars.yml`, because that is where the person who trips it will be
+reading. The reachable order is a NEW ENTRYPOINT AGAINST AN OLD IMAGE: the entrypoint is a bind
+mount that any nas-tagged converge copies from the tree, so an Alloy bump, a render-only converge
+followed by any restart, or a pin rollback to a pre-T0198 image all produce it, and the old CLI
+exits 2 on `No such option: --slice` every cycle until the image carrying `--slice` is pinned. It
+fails loudly — the NAS ERROR rule inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, the hc.io
+dead-man stops — and no gate verdict is falsified, but the gate freezes and the rotation stops. The
+reverse order, a new image with an old entrypoint, is refused by the CLI for the same reason and
+cannot arise from an ordinary converge, since the pin and the entrypoint live in one tree.
