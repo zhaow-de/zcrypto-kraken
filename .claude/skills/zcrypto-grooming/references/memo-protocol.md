@@ -36,7 +36,7 @@ The single source of truth for the memo's data model, tooling discipline and mec
 - **The list IS the schedule**: ordered as the suggested execution sequence, the next work item on top, and nothing above something it depends on.
 - **A `DependsOn:` that names an artifact states whether the artifact EXISTS.** "Read X first" and "build X first" compress to the same reference and fail differently. The work to produce a missing prerequisite is itself a queue item, sequenced above its consumer.
 - **Milestones sequence like items.** A `###` milestone may carry one `DependsOn:` line directly under its heading (another milestone, or a named trigger/date); milestones appear in dependency-true order, and an item is eligible for pickup when its own **and** its milestone's `DependsOn:` are satisfied.
-- An added item **condenses** its `docs/open-topics/README.md` entry rather than pasting it: the subject keeps the index's title wording; `Why` compresses to the clauses that matter for this milestone; detail stays in the topic file, reachable through the `T<NNNN>` reference.
+- An added item takes the index's title wording as its subject and **condenses** the topic's own text into `Why` — the clauses that matter for this milestone, not a paste; detail stays in the topic file, reachable through the `T<NNNN>` reference.
 
 ## How references resolve
 

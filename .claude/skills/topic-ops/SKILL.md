@@ -1,6 +1,6 @@
 ---
 name: topic-ops
-description: Use when creating a T<NNNN> topic, flipping its status to partial or resolved, archiving it, or editing docs/open-topics/README.md — the serials, the file shape, the index sync and the archive move.
+description: Use when creating a T<NNNN> topic, flipping its status to partial or resolved, or archiving it — the serials, the file shape, the rendered index and the archive move.
 disable-model-invocation: false
 ---
 
@@ -46,7 +46,7 @@ A topic is partially completed by flipping its front-matter `status: open` → `
 
 - Insert a `## Done so far` section immediately after `## Findings so far`, linking the relevant commits, PRs, and spec that delivered the completed work.
 - Trim `## Suggested next steps` to list only the still-open remainder.
-- In `docs/open-topics/README.md`, move the topic's bullet from its category's `### Open` to the end of the same category's `### Partially done` subsection (Index sync below).
+- Re-render `docs/open-topics/README.md` (Index sync below).
 
 A partially completed topic later closes the normal way (see below).
 
@@ -70,19 +70,4 @@ Delete `ripe_when:` rather than leaving it discharged: `grep -l '^ripe_when:' do
 
 ## Index sync (every change)
 
-In the same change as opening, partially completing, or closing a topic, edit `docs/open-topics/README.md`:
-
-First, place the topic in the right top-level category and keep it there across its lifecycle:
-
-- **`## Research and development`** — research, experiment, validation, modeling, and data-pipeline topics (the work of finding and proving an edge).
-- **`## Live trading preparation`** — topics about going live: paper-trading, live-readiness, production execution, monitoring/alerting, and data freshness for live inference.
-
-Within the chosen category, the topic moves between that category's `### Open` / `### Partially done` / `### Resolved` subsections:
-
-- **Opening:** append a new bullet at the **end of the category's `### Open` subsection**. Within `### Open`, entries stay in serial / creation order (append-only).
-- **Partially completing:** **move** the bullet from `### Open` to the **end of the same category's `### Partially done` subsection** (transition order).
-- **Closing:** **move** the bullet from `### Open` or `### Partially done` to the **end of the same category's `### Resolved` subsection**, and **update its link to the archived path** (`archive/<file>`) since the file itself moves into `docs/open-topics/archive/` (see Closing a topic). Within `### Resolved`, entries are in resolution order (append-only at close time), which may differ from serial order.
-
-Each bullet is a markdown link to the topic file followed by a one-sentence description, e.g. `- [T9999 — an example topic](T9999-an-example-topic.md) — one-sentence description of what it is and when it becomes ripe.`
-
-The pre-commit `mdformat` hook covers `docs/open-topics/README.md`; the TOC is generated at `--maxlevel 3` (so it lists the two categories and their `###` subsections) — let `mdformat` regenerate it, never hand-edit the `<!-- mdformat-toc … -->` block.
+`docs/open-topics/README.md` is rendered from the topic files, never edited by hand: after opening, partially completing or closing a topic, run `uv run python infra/scripts/topics-index.py` and commit the result with the topic. The render is three lists by status — `## Open`, `## Partially done`, `## Resolved` — one bullet per topic in serial order, the bullet being the serial and the file's H1 title with, for a live topic, its `ripe_when`; `tests/test_open_topics_frontmatter.py` refuses an index that differs from the render, and `mdformat` leaves the file alone for the same reason.
