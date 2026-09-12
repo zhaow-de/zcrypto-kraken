@@ -65,7 +65,7 @@ The alert shipped 2026-07-26 but had never fired, so nothing established it *wou
 
 **Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build, the ≥24 h secondary canary bake, then the primary re-pin (`fleet-deploys.md`). Merged and unrolled is the intended state here; the deploy is its own attended step.
 
-**What had landed before the close — the root-cause fix (2026-07-13)**, kept as it was recorded:
+**What had landed before the close — the desyncs were OUR bug, and the root-cause fix (2026-07-13)**, kept as it was recorded:
 
 **The root-cause question this topic carried — *"why do the high-activity pairs fail checksums this
 often — `book.py`'s checksum window vs Kraken's update coalescing at depth-100?"* — is ANSWERED, and

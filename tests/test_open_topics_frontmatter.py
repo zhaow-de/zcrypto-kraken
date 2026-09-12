@@ -63,9 +63,14 @@ def _headings(path: Path, prefix: str) -> list[str]:
 def test_an_archived_topic_records_how_it_was_disposed_of(path: Path):
     """An archived topic whose work is done but unrecorded is indistinguishable on inspection from one
     whose work was never done."""
-    assert _headings(path, "Resolution"), (
+    found = _headings(path, "Resolution")
+    assert found, (
         f"{path.name}: an archived topic carries no `## Resolution` -- it records no commit, PR, spec or "
         f"measurement that disposed of it, so nothing here distinguishes done from never done"
+    )
+    assert len(found) == 1, (
+        f"{path.name}: {len(found)} headings begin `Resolution` ({found}) -- two of them means a fold left "
+        f"the old section standing beside the new one, and a reader cannot tell which records the close"
     )
 
 
