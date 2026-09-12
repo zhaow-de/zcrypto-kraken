@@ -85,9 +85,7 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_an_empty_pr_fetch_is_an_error_rather_than_perfect_compliance(tmp_path):
-    """The fetch that certainly measured nothing used to print 0. `gh pr list` returns `[]` with rc 0 for a base
-    branch that does not exist, a changed `--base`, or a token that cannot see PRs, so the emptiness does not
-    announce itself -- and 0 here reads as every merged PR carrying its read line."""
+    """An empty fetch used to print 0, which reads as every merged PR carrying its read line."""
     snapshot = tmp_path / "prs.json"
     snapshot.write_text("[]")
     done = subprocess.run(

@@ -80,13 +80,8 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # line naming a model below the floor counts as no read, the same as the gate reads it. The line may sit
 # anywhere in the body: jq's "m" flag is dot-all, not line anchoring, so the anchor is a literal newline.
 # COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
-# The window starts where THIS regex's rule starts. Two commits landed on 2026-09-10: the template gained a
-# `Read before push by: <model>` line at 1736d7b96 (11:52Z), and merge-gate.py gained the arm demanding
-# `Claude (Opus|Fable)` at 600b364d1 (15:08Z). The jq below encodes the SECOND -- it refuses a line whose model
-# lacks the `Claude ` prefix -- so the later stamp is the floor; using the earlier one would count three hours of
-# PRs against a spelling nothing had asked for yet. A PR merged before it breaks no rule, and 183 of them inside
-# the 30-day window buried the compliance this entry exists to measure. The clause expires on its own once the
-# rolling window clears the date.
+# merge-gate.py's `Claude (Opus|Fable)` arm landed at 600b364d1, and the jq below is that arm -- not the PR
+# template's earlier `<model>` line (1736d7b96, three hours before), which asked for no such spelling.
 READ_LINE_RULE_SINCE="2026-09-10T15:08:02Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
@@ -97,12 +92,9 @@ c_merged_prs_without_a_floor_read() {
   # never fetched and the count would silently under-report -- 204 PRs sat in the window against a --limit 200,
   # which is how this read 184 and called it a measurement. An unknowable count is an error, never a number.
   oldest="$(printf '%s' "$prs" | jq -r '[.[] | .mergedAt] | min // "none"')" || return 2
-  # An EMPTY fetch is the one that certainly measured nothing, and it used to take the `none` branch and print 0 --
-  # perfect compliance from the least evidence, which is the opposite of this entry's own doctrine. `gh pr list`
-  # returns `[]` with rc 0 for a renamed base branch, a changed `--base` or a token that cannot see PRs, so the
-  # emptiness is not self-announcing. It refuses with the rest.
+  # `gh pr list` prints `[]` and exits 0 for a base branch that does not exist or a token that cannot see PRs.
   if [ "$oldest" = "none" ]; then
-    echo "count-list: the merged-PR fetch returned no rows at all -- a base branch that does not exist, or a token that cannot see PRs, reads the same as a clean window" >&2
+    echo "count-list: the merged-PR fetch returned no rows at all -- check the base branch and the token" >&2
     return 2
   fi
   if [ "$oldest" \> "$floor" ]; then

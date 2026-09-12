@@ -489,13 +489,10 @@ def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
 
 
 # --- the ops journal keep-regex is a census too (T0178) -------------------------------------------
-# The same `keep` logic applies to UNITS: the ops Alloy's journal rule drops every unit it does not
-# name, so a timer added to the role without being added to the regex ships no journal lines at all,
-# silently. Prose counts of "the five zcrypto units" drifted across seven files because nothing
-# re-derived them; this asserts the relationship those counts were standing in for.
+# A timer added to the role and not to the keep-regex ships no journal lines at all, silently.
 _OPS_TIMERS = REPO / "infra/ansible/roles/ops/templates"
-# A unit whose journal is deliberately NOT shipped, with the reason. Both are shell runners whose
-# output is a handful of echoes, not the Python logging the parse stage below the keep rule expects.
+# Deliberately unshipped, with the reason: both are shell runners, and the parse stage below the keep
+# rule reads the Python logging shape.
 _JOURNAL_NOT_SHIPPED = {
     "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
     "zcrypto-grafana-keepalive": "a shell curl loop; same shape, and its silence is what the keepalive alert reads",
@@ -512,8 +509,8 @@ def _ops_journal_keep_regex() -> str:
 
 
 def _journal_units_kept() -> set[str]:
-    """The units the keep rule admits, read out of its alternation rather than matched as substrings:
-    the regex is written `zcrypto-(archive-pull|verify-replay|...)`, so no full unit name appears in it."""
+    """The units the keep rule admits. Read out of the alternation: the regex is written
+    `zcrypto-(archive-pull|verify-replay|...)`, so no full unit name appears in it to match on."""
     inner = re.search(r"zcrypto-\((.*?)\)", _ops_journal_keep_regex())
     assert inner, "the journal keep-regex no longer spells its units as one `zcrypto-(a|b|c)` alternation"
     return {f"zcrypto-{m}" for m in inner.group(1).split("|")}
@@ -524,8 +521,7 @@ def _installed_units() -> set[str]:
 
 
 def test_the_ops_journal_keep_regex_accounts_for_every_unit_the_role_installs():
-    """Every timer unit is named in the keep-regex or excluded here with its reason -- so adding a
-    timer fails this test rather than quietly shipping nothing."""
+    """Adding a timer fails here until it is named in the regex or excluded with a reason."""
     kept = _journal_units_kept()
     units = sorted(_installed_units())
     assert units, "no timer templates found -- the glob is broken, not the role empty"
