@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: a session holding the Fable review floor picks this up, OR a change to `infra/ansible/roles/capture/` opens — `git log --oneline develop..HEAD -- infra/ansible/roles/capture/` non-empty on the branch doing that work
+status: resolved
 ---
 
 # The capture hosts' Alloy drift refusal prescribes a recreate the converge does not need
@@ -25,9 +24,30 @@ Checked rather than inferred from the ops twin, because a shared phrase is not a
 
 The ops-side fix and its reasoning are on `feat/grafana-keepalive` — the same correction applies here, with `capture_alloy_digest` for `ops_alloy_digest`. Its second half is worth carrying too: "nothing further is needed" is false when the container is DOWN, because `status_code: [200, -1]` treats a connection failure as success and no task in that play starts Alloy.
 
-## Suggested next steps
+## Resolution
 
-- Replace the recreate clause with what the re-run actually does: the handler reloads a RUNNING Alloy, and starting a stopped one reads the new file. Scope the promise to clearing the refusal, not to finishing a rollout — a new metric family still owes the by-value first scrape `zcrypto-bump-alloy` requires.
-- Leave the recreate knowledge in the handler comment, where someone rotating a credential meets it; it is correct there and only misplaced in the refusal.
-- Do not rewrite the sentence before it: the comment under that task explains that the `when:` guard exists so a run carrying the digest is never asserted against before its copy runs, and the re-run IS the remedy that guard keeps open.
-- The change touches the capture path, so `commit-messages.md` puts its review floor at Fable and `fleet-deploys.md` governs any converge that deploys it.
+The `fail_msg` now says what the re-run does. Its remedy clause reads: that run copies the file and its handler
+reloads a RUNNING Alloy, which is all this refusal needs, and if the container is down its next start reads the
+new file because no task here starts it. The wording is the ops twin's, already on develop, with
+`capture_alloy_digest` for `ops_alloy_digest`.
+
+Each link the topic asserts was re-checked on the capture role rather than carried over from the ops side, since
+a shared phrase is not a shared mechanism:
+
+- the copy at `install the alloy pipeline config` carries `notify: reload alloy`;
+- that handler POSTs `/-/reload` with `status_code: [200, -1]`, so a DOWN Alloy passes the reload as a connection
+  failure — which is why the second half of the correction is load-bearing and "nothing further is needed" would
+  have been false;
+- the recreate knowledge stays in the handler comment, where someone rotating a credential meets it: a reload
+  does not re-read `alloy-secrets.env`, which is process-level.
+
+The sentence before the refusal is untouched, as the topic asks: the `when:` guard exists so a run carrying the
+digest is never asserted against before its copy runs, and that re-run IS the remedy the guard keeps open.
+
+**The unblocking, recorded because the trigger named it:** this topic's `ripe_when` first arm was "a session
+holding the Fable review floor picks this up". The account's Fable quota is exhausted, and the gate now accepts
+an Opus read on a guarded path when the PR body carries `Fable floor substituted by Opus: <reason>` — so the arm
+is satisfied by substitution rather than by Fable becoming available.
+
+No converge is owed by this topic: the text surfaces only when the assert trips, and a converge a solution still
+needs is the fleet's concern (`.claude/rules/fleet-deploys.md`), not the topic's.
