@@ -175,6 +175,40 @@ def test_the_substitution_line_does_not_lower_the_floor_below_opus():
     assert len(fails) == 1 and "the floor is Claude Opus" in fails[0]
 
 
+@pytest.mark.parametrize("reason", ["<reason>", "TODO", "tbd", "N/A", "none", "x", ".", "----", "reason", "why", "short"])
+def test_a_reason_nobody_wrote_is_no_reason(reason):
+    """The placeholder is the string this repo prints in its own refusal message and in CLAUDE.md, so a
+    copy-paste of the instruction would otherwise clear the floor; the filler tokens arrive the same way."""
+    fails = _eval(_pr(body=_read_by_opus_with_substitution(reason)), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0]
+
+
+@pytest.mark.parametrize(
+    ("shape", "body_tpl"),
+    [
+        ("an HTML comment, which the rendered PR hides", "## Summary\n\n{read}\n\n<!--\n{line}\n-->\n\n- [x] done\n"),
+        ("a fenced block, which is a quotation of code", "## Summary\n\n{read}\n\n```\n{line}\n```\n\n- [x] done\n"),
+        ("a quoted line, which is somebody else's text", "## Summary\n\n{read}\n\n> {line}\n\n- [x] done\n"),
+    ],
+)
+def test_a_substitution_a_reader_cannot_see_does_not_lift_the_floor(shape, body_tpl):
+    """The whole point of the line is that it is visible where the merge decision is read. The pull-request
+    template ships an HTML comment block, so this is the likeliest accident, not a contrived one."""
+    body = body_tpl.format(
+        read=f"Read before push by: Claude Opus 5 at {TIP}",
+        line="Fable floor substituted by Opus: the account's Fable limit is reached",
+    )
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0], shape
+
+
+def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():
+    """The same stripping applies to the read line: a read claimed inside a comment is a read nobody can check."""
+    body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "the whole-branch read is unrecorded" in fails[0]
+
+
 def test_the_substitution_line_is_inert_where_no_guarded_path_is_touched():
     """It lifts one arm and adds nothing: a PR that never needed a Fable read is judged exactly as before."""
     body = _read_by_opus_with_substitution("not needed here")

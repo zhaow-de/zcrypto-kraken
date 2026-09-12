@@ -19,6 +19,38 @@ FLOOR = re.compile(r"Claude (Opus|Fable)\b", re.I)
 # passes when this line carries a reason -- written where the merge decision is read, so the substitution is
 # visible to whoever opens the PR later, instead of being a gate nobody can see was bypassed.
 SUBSTITUTE = re.compile(r"^Fable floor substituted by Opus: *(\S.*?) *$", re.M)
+# A reason has to be one somebody wrote. These are the strings that arrive when nobody did: the placeholder this
+# repo prints in its own instructions (the sibling READ_LINE arm below refuses `<...>` for the same reason), and
+# the tokens a filler reaches for. A one-word reason is not a reason, hence the length.
+_PLACEHOLDER = re.compile(r"^(?:todo|tbd|n/?a|none|x|\.|-+|reason|why)\b", re.I)
+_MIN_REASON = 12
+# A body is read as a reader sees it: an HTML comment is invisible in the rendered PR (the pull-request template
+# ships one), a fenced block is a quotation of code, and a `>` line is somebody else's text. A floor lifted inside
+# any of the three would be lifted where nobody can see it, which is the property this arm exists for. The same
+# stripping applies to the read line itself: a read claimed inside a comment is a read nobody can check.
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
+_FENCE = re.compile(r"^ {0,3}(?:```|~~~).*?^ {0,3}(?:```|~~~) *$", re.M | re.S)
+
+
+def _as_a_reader_sees_it(body: str) -> str:
+    """The body with what a rendered PR hides removed -- comments, fenced blocks, and quoted lines."""
+    body = _COMMENT.sub("", body)
+    body = _FENCE.sub("", body)
+    return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
+
+
+def _substitution_reason(body: str) -> str | None:
+    """The stated reason for substituting Opus for the Fable floor, or None when the body states none a reader
+    would accept: hidden from the rendered page, left as the placeholder, or a filler token."""
+    m = SUBSTITUTE.search(_as_a_reader_sees_it(body))
+    if not m:
+        return None
+    reason = m.group(1).strip()
+    if reason.startswith("<") or _PLACEHOLDER.match(reason) or len(reason) < _MIN_REASON:
+        return None
+    return reason
+
+
 FABLE_PATHS = (
     "CLAUDE.md",
     ".claude/",
@@ -48,7 +80,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
             return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
-    m = READ_LINE.search(body)
+    m = READ_LINE.search(_as_a_reader_sees_it(body))
     if not m or m.group(1).strip().startswith("<"):
         return ["no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"]
     model, sha = m.group(1).strip(), m.group(2)
@@ -61,7 +93,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
         if files is None:
             return ["the PR's file list was not fetched, so the paths that need a Fable read cannot be checked"]
         touched = _fable_paths_touched(files)
-        if touched and not SUBSTITUTE.search(body):
+        if touched and _substitution_reason(body) is None:
             more = f" and {len(touched) - 1} more" if len(touched) > 1 else ""
             return [
                 f"the read named in the body was by {model!r}, and the PR touches {touched[0]}{more}: the floor there is "
