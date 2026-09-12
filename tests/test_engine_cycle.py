@@ -14,7 +14,7 @@ from cli.engine.concordance import compare_targets, replay_cycle
 from cli.engine.cycle import _code_version, _expand_to_basket, run_cycle, select_model_inputs, symbol_keyed_targets
 from cli.engine.errors import EngineError
 from cli.engine.instruments import COSTMIN, INSTRUMENT_IDS
-from cli.engine.journal import SCHEMA_VERSION, CycleRecord, from_json, to_json, validate_record
+from cli.engine.journal import SCHEMA_VERSION, CycleRecord, SnapshotEntry, from_json, to_json, validate_record
 from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, read_store_series
 from cli.engine.venuestate import InstrumentConstraints, VenueState
 from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
@@ -572,11 +572,31 @@ def test_first_cycle_orders_start_flat(tmp_path, monkeypatch):
 
 
 def _success_record_json(boundary: datetime, targets: dict[str, float], *, schema_version: int = SCHEMA_VERSION) -> str:
-    # A minimal previous-record fixture: run_cycle only reads final_targets back via from_json.
+    """A previous-record fixture. `run_cycle` reads only `final_targets` back, but the predecessor read validates
+    (T0194), so the record has to be one the writer could have journaled: both grids per pair, keyed for its own
+    schema, and a snapshot window of more than one bar."""
+    pairs = sorted(targets) or (["BTC"] if schema_version == 1 else ["BTC/EUR"])
+    # validate_record's no-peek invariant: the 4h snapshot ends at cycle_ts - 4h, the daily one at (last
+    # midnight <= cycle_ts) - 1d.
+    midnight = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
+    last_by_grid = {"240": boundary - timedelta(hours=4), "1440": midnight - timedelta(days=1)}
+    snapshots = tuple(
+        SnapshotEntry(
+            pair=pair,
+            grid=grid,
+            n_bars=2,
+            first_ts=last_by_grid[grid] - timedelta(days=1),
+            last_ts=last_by_grid[grid],
+            content_hash="f" * 64,
+            path=f"{grid}-{pair.replace('/', '-')}",
+        )
+        for pair in pairs
+        for grid in ("240", "1440")
+    )
     record = CycleRecord(
         schema_version=schema_version,
         cycle_ts=boundary,
-        snapshots=(),
+        snapshots=snapshots,
         final_targets=dict(targets),
         started_at=boundary,
         completed_at=boundary + timedelta(minutes=2),
