@@ -1,6 +1,6 @@
 export const meta = {
   name: 're-review',
-  description: 'Scoped read of a fix range against a prior review: every prior finding closed by a named hunk, consciously left, or open; new findings refuted by two skeptics',
+  description: 'Scoped read of a fix range against a prior review: every prior finding closed by a hunk that answers its class, consciously left, or open; new findings refuted by two skeptics',
   whenToUse: 'After the fixes a review asked for, before push. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], left, grading, reportDir, model?}',
   phases: [
     { title: 'Re-read', detail: 'one reader over the fix range with the prior findings' },
@@ -15,6 +15,7 @@ if (!repo || !range || !tip || !Array.isArray(prior) || !grading || !reportDir) 
 }
 for (const p of prior) {
   if (!Number.isInteger(p.id) || !p.severity || !p.path || !Number.isInteger(p.line) || !p.claim) throw new Error(`prior finding needs integer id, severity, path, integer line, claim: ${JSON.stringify(p)}`)
+  if (/\n/.test(p.claim)) throw new Error(`prior finding ${p.id}: claim is one line -- the full text stays in the prior review's report, which the reader can open`)
 }
 
 // --- schemas -----------------------------------------------------------------------------------
@@ -35,7 +36,7 @@ const PRIOR = {
   properties: {
     id: { type: 'integer' },
     status: { type: 'string', enum: ['closed', 'left', 'open'] },
-    by: { type: 'string', description: 'the hunk or commit that closed it, the words that leave it, or why it is open' },
+    by: { type: 'string', description: 'the hunk or commit that closed it and the class it answers, or why the finding has no class beyond itself; the words of the author that leave it and whether the reason holds; or why it is open' },
   },
   required: ['id', 'status', 'by'],
 }
@@ -65,9 +66,9 @@ const readerPrompt = `You are the scoped second reader, a different agent from t
 The prior review's findings, which these commits answer:
 ${priorList}
 
-What the author names as consciously left: ${left || 'nothing'}
+What the author names as consciously left, each by prior id with its reason (a reason is a claim: check it against the tree like any other): ${left || 'nothing'}
 
-Read \`git diff ${range}\` first, then each commit message; every claim a message makes is checked against the tree — a mutation verdict re-run with its exact strings, a number re-derived by a command you quote. Then walk every prior finding by id: closed (name the hunk or commit), left (only when the author's words above name it), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, not again under findings, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding. Write a Markdown report to ${reportDir}/re-review.md with \`## Counts\`, \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
+Read \`git diff ${range}\` first, then each commit message; a claim a message makes is re-measured when the range's correctness rests on it — a mutation verdict re-run with the exact strings the message quotes, a number re-derived by a command you quote; a message that names a verdict without the command that produced it has not shown it, so grade that claim unmeasured rather than choosing a probe of your own; a claim about a file the range does not touch is read, not re-run, and the full suite is CI's to run, not yours. A check whose failure would have looked like success — a probe whose failing output nobody read, a grep whose miss prints nothing, an install whose output was suppressed — was not run, whatever the message says. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of — the sibling spellings, the other carriers of the same claim, the other branches of the same condition — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself — a wrong number, a dangling reference, a sentence that contradicts its own file — say that instead, and say why nothing else carries it; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id, and say whether the reason holds), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, not again under findings, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding. Write a Markdown report to ${reportDir}/re-review.md with \`## Counts\`, \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
 const refutePrompt = (f, k) => `You are skeptic ${k + 1} of 2. ${common(`refute-${f.id}-${k + 1}`)}
 
