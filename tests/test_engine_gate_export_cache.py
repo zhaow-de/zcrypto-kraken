@@ -4,11 +4,13 @@ and the counts derived from it, must equal the replay it replaces."""
 from __future__ import annotations
 
 import json
+import re
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
+import pytest
 from typer.testing import CliRunner
 
 import cli.engine.command as command
@@ -108,8 +110,47 @@ def _fake_builder(targets: dict[str, float]):
     return builder
 
 
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _squash(text: str) -> str:
+    r"""Typer's error panel normalised on BOTH axes it varies: styling stripped, then all whitespace.
+
+    Rich styles each hyphen of an option separately -- `--cache` renders as
+    `\x1b[1;36m-\x1b[0m\x1b[1;36m-cache\x1b[0m` -- so the literal flag is not a substring of a styled
+    panel at all, and the panel word-wraps at COLUMNS, so a phrase can break across lines. Apply this
+    to the EXPECTED string as well as the actual one: the assertion stays readable and matches either
+    rendering. Provenance, counted rather than gestured at, because "the same normalisation" was doing
+    the lying: NINE other modules strip ANSI, of which TWO normalise both axes the way this one does,
+    deleting whitespace outright -- `tests/test_archive_pull.py` and `tests/test_panel_command.py`;
+    `tests/test_trades_command.py` is a third variant that collapses runs to a single space instead.
+    This file had a whitespace-only version, which is why CI went red where local runs did not.
+
+    Which environments style, measured rather than assumed: `GITHUB_ACTIONS=true` alone does (that is
+    what CI trips -- `.github/workflows/coverage.yml` sets no colour variable), and `FORCE_COLOR=1`
+    does. `CI=true` alone does not, `TERM=xterm-256color` alone does not, and CliRunner's `color=True`
+    does NOT style this panel, so forcing the env is the only lever that reproduces CI here.
+    """
+    return re.sub(r"\s+", "", _ANSI_SGR.sub("", text))
+
+
 def _prom(text: str) -> dict[str, float]:
     return {ln.split()[0]: float(ln.split()[1]) for ln in text.splitlines() if ln and not ln.startswith("#")}
+
+
+def _quiet_slice(*cycles: datetime) -> int:
+    """A slice index none of `cycles` hashes to: a run that forces no re-verification, so a test
+    about the cache's own bookkeeping reads only that. COMPUTED, never a hand-written hour -- the
+    clock-keyed version of these tests carried hand-computed comments ("hour=12 is neither cycle's
+    slice"), which are facts about `slice_of`'s digest that no assertion re-checked."""
+    taken = {slice_of(c) for c in cycles}
+    quiet = next((s for s in range(24) if s not in taken), None)
+    assert quiet is not None, f"every slice is taken by {len(cycles)} cycles -- no quiet run exists"
+    return quiet
+
+
+# A cold populate has no cache entries to re-verify, so no slice index can change what it does.
+_COLD = 0
 
 
 def _counted_replay_cycle(monkeypatch, calls: list[datetime]):
@@ -164,17 +205,20 @@ def test_warm_cache_equals_cold_cache(tmp_path, monkeypatch):
     _write_success_record(journal, CYCLE_TS)
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
-    # hour=12 is neither cycle's rotation slice (CYCLE_TS -> 13, CYCLE_TS+4h -> 23), so a forced
-    # reverification cannot muddy this warm/cold comparison.
+    # A slice neither cycle hashes to, so a forced reverification cannot muddy this warm/cold
+    # comparison. `now` no longer decides that -- the run's slice index does (T0198).
+    quiet = _quiet_slice(CYCLE_TS, CYCLE_TS + timedelta(hours=4))
     now = CYCLE_TS + timedelta(hours=4, minutes=10)
 
     cold_entries, cold_counts, cold_newest, cold_stats = command._evaluate_journal(journal, cache_path=None, now=now)
 
     cache_path = tmp_path / "gate-cache.json"
     cold_cache_entries, cold_cache_counts, cold_cache_newest, cold_cache_stats = command._evaluate_journal(
-        journal, cache_path=cache_path, now=now
+        journal, cache_path=cache_path, slice_index=quiet, now=now
     )
-    warm_entries, warm_counts, warm_newest, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    warm_entries, warm_counts, warm_newest, warm_stats = command._evaluate_journal(
+        journal, cache_path=cache_path, slice_index=quiet, now=now
+    )
 
     assert cold_cache_entries == cold_entries
     assert warm_entries == cold_entries
@@ -206,22 +250,22 @@ def test_warm_cache_replays_only_the_new_cycle(tmp_path, monkeypatch):
     _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
-    # hour=8 is neither CYCLE_TS's (13) nor CYCLE_TS+4h's (23) rotation slice.
+    quiet = _quiet_slice(CYCLE_TS, CYCLE_TS + timedelta(hours=4))  # neither cycle is ever due
     now = CYCLE_TS + timedelta(minutes=10)
 
     calls: list[datetime] = []
     _counted_replay_cycle(monkeypatch, calls)
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
     assert calls == [CYCLE_TS]
 
     calls.clear()
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
     assert calls == []  # unchanged journal, warm cache -> zero replays
 
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
     calls.clear()
-    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
     assert calls == [CYCLE_TS + timedelta(hours=4)]  # exactly the new cycle, not the whole journal
     assert stats.replayed == 1
     assert stats.from_cache == 1
@@ -240,9 +284,10 @@ def test_vanished_record_evicted_from_the_cache(tmp_path, monkeypatch):
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
-    now = CYCLE_TS + timedelta(hours=4, minutes=10)  # hour=12, neither cycle's rotation slice
+    quiet = _quiet_slice(CYCLE_TS, CYCLE_TS + timedelta(hours=4))
+    now = CYCLE_TS + timedelta(hours=4, minutes=10)
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)  # warm both entries
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)  # warm both entries
 
     fp = replay_fingerprint(path=command._EVALUATE_JOURNAL_REPLAY_PATH)
     warm = load_cache(cache_path, fp)
@@ -250,7 +295,7 @@ def test_vanished_record_evicted_from_the_cache(tmp_path, monkeypatch):
 
     record_path.unlink()  # the journal record for CYCLE_TS vanishes; its snapshots are left in place
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
 
     after = load_cache(cache_path, fp)
     assert set(after.entries) == {CYCLE_TS + timedelta(hours=4)}  # the vanished record's entry is evicted
@@ -264,9 +309,10 @@ def test_tampered_record_misses_cache(tmp_path, monkeypatch):
     record_path = _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
-    now = CYCLE_TS + timedelta(minutes=10)  # hour=8, not CYCLE_TS's rotation slice (13)
+    quiet = _quiet_slice(CYCLE_TS)  # never due, so the replay below is the tamper's doing alone
+    now = CYCLE_TS + timedelta(minutes=10)
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)  # populate the cache
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)  # populate the cache
 
     payload = json.loads(record_path.read_text())
     payload["final_targets"] = {"BTC": 0.3, "ETH": 0.05}
@@ -275,7 +321,7 @@ def test_tampered_record_misses_cache(tmp_path, monkeypatch):
     calls: list[datetime] = []
     _counted_replay_cycle(monkeypatch, calls)
 
-    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
     assert calls == [CYCLE_TS]  # tampered evidence forces a replay, not a stale cache hit
     assert stats.replayed == 1
     assert stats.from_cache == 0
@@ -290,17 +336,17 @@ def test_replay_fingerprint_change_invalidates_everything(tmp_path, monkeypatch)
     _write_success_record(journal, CYCLE_TS + timedelta(hours=4))
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
-    # hour=8 is neither cycle's rotation slice (CYCLE_TS -> 13, CYCLE_TS+4h -> 23).
+    quiet = _quiet_slice(CYCLE_TS, CYCLE_TS + timedelta(hours=4))  # neither cycle is ever due
     now = CYCLE_TS + timedelta(minutes=10)
 
     monkeypatch.setattr(command, "replay_fingerprint", lambda **_: "fp-v1")
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)  # populate the cache under fp-v1
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)  # populate under fp-v1
 
     calls: list[datetime] = []
     _counted_replay_cycle(monkeypatch, calls)
     monkeypatch.setattr(command, "replay_fingerprint", lambda **_: "fp-v2")
 
-    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
 
     assert sorted(calls) == [CYCLE_TS, CYCLE_TS + timedelta(hours=4)]  # every cycle replayed
     assert stats.invalidated is True
@@ -322,13 +368,14 @@ def test_evaluate_journal_threads_the_replay_path_into_the_fingerprint(tmp_path,
     # replay itself succeeds cleanly and the ONLY thing under test is the cache accept/reject call.
     monkeypatch.setattr(concordance, "build_crossfreq_system", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
-    now = CYCLE_TS + timedelta(minutes=10)  # hour=8, not CYCLE_TS's rotation slice (13)
+    quiet = _quiet_slice(CYCLE_TS)  # never due, so the replay below is the route switch's doing alone
+    now = CYCLE_TS + timedelta(minutes=10)
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=now)  # builds the cache under "fast"
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)  # builds the cache under "fast"
 
     monkeypatch.setattr(command, "_EVALUATE_JOURNAL_REPLAY_PATH", "verified")
 
-    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
 
     assert stats.invalidated is True  # rejected: cache was built under "fast", this run is "verified"
     assert stats.replayed == 1
@@ -350,13 +397,14 @@ def test_cached_failure_stays_a_failure(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
-    now = CYCLE_TS + timedelta(minutes=10)  # hour=8, not CYCLE_TS's rotation slice (13)
+    quiet = _quiet_slice(CYCLE_TS)  # never due, so the warm run below is a pure cache hit
+    now = CYCLE_TS + timedelta(minutes=10)
 
-    cold_entries, cold_counts, _, cold_stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    cold_entries, cold_counts, _, cold_stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
     assert cold_entries[0].mismatch is True
     assert cold_stats.replayed == 1
 
-    warm_entries, warm_counts, _, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+    warm_entries, warm_counts, _, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=quiet, now=now)
     assert warm_entries == cold_entries
     assert warm_entries[0].mismatch is True  # a cached failure must never come back as a pass
     assert warm_counts == cold_counts
@@ -424,7 +472,7 @@ def test_broken_replay_fingerprint_degrades_not_aborts(tmp_path, monkeypatch):
     monkeypatch.setattr(command, "replay_fingerprint", _boom)
 
     entries, counts, newest_ts, stats = command._evaluate_journal(
-        journal, cache_path=cache_path, now=CYCLE_TS + timedelta(minutes=10)
+        journal, cache_path=cache_path, slice_index=_COLD, now=CYCLE_TS + timedelta(minutes=10)
     )
 
     assert counts.replayed_ok == 1
@@ -463,7 +511,7 @@ def test_unreadable_covered_module_degrades_the_run_not_aborts(tmp_path, monkeyp
 
     try:
         entries, counts, newest_ts, stats = command._evaluate_journal(
-            journal, cache_path=cache_path, now=CYCLE_TS + timedelta(minutes=10)
+            journal, cache_path=cache_path, slice_index=_COLD, now=CYCLE_TS + timedelta(minutes=10)
         )
     finally:
         (tmp_path / "fake-repo" / "cli" / "pkg" / "helper.py").chmod(0o644)
@@ -484,7 +532,7 @@ def test_missing_replay_root_degrades_the_run_not_aborts(tmp_path, monkeypatch):
     monkeypatch.setattr(gate_cache, "_REPLAY_ROOTS", (missing,))
 
     entries, counts, newest_ts, stats = command._evaluate_journal(
-        journal, cache_path=cache_path, now=CYCLE_TS + timedelta(minutes=10)
+        journal, cache_path=cache_path, slice_index=_COLD, now=CYCLE_TS + timedelta(minutes=10)
     )
 
     assert counts.replayed_ok == 1
@@ -506,6 +554,7 @@ def test_gate_export_emits_cache_metrics(tmp_path, monkeypatch):
 
     out = tmp_path / "gate.prom"
     cache_path = tmp_path / "gate-cache.json"
+    quiet = str(_quiet_slice(CYCLE_TS, CYCLE_TS + timedelta(hours=4)))  # neither cycle is due on this run
 
     result = runner.invoke(
         app,
@@ -518,6 +567,8 @@ def test_gate_export_emits_cache_metrics(tmp_path, monkeypatch):
             str(out),
             "--cache",
             str(cache_path),
+            "--slice",
+            quiet,
         ],
     )
     assert result.exit_code == 0, result.output
@@ -537,6 +588,8 @@ def test_gate_export_emits_cache_metrics(tmp_path, monkeypatch):
             str(out),
             "--cache",
             str(cache_path),
+            "--slice",
+            quiet,
         ],
     )
     assert result2.exit_code == 0, result2.output
@@ -544,6 +597,140 @@ def test_gate_export_emits_cache_metrics(tmp_path, monkeypatch):
     assert m2["zcrypto_gate_cache_hits"] == 2
     assert m2["zcrypto_gate_cache_replayed"] == 0
     assert m2["zcrypto_gate_cache_invalidated"] == 0
+
+
+# --- T0198: --cache and --slice are one option, and the range is the caller's contract -----------
+
+
+def _gate_export(tmp_path, monkeypatch, *extra: str):
+    # Style the output HERE, always: a refusal asserted only against an unstyled panel is colour-lucky,
+    # and CI (which styles) is then the first place the difference shows -- as it was.
+    #
+    # FORCE_COLOR alone does not settle it. rich's `Console._detect_color_system` returns None for a
+    # dumb terminal BEFORE it honours forcing, and it counts both `dumb` and `unknown` as dumb, so
+    # under either the panel renders plain and the styling assertion below becomes a false red about
+    # the terminal rather than a true one about the refusal. Measured from a scrubbed environment:
+    # FORCE_COLOR=1 with TERM=dumb or TERM=unknown renders no escapes; with TERM pinned here, an
+    # ambient dumb, unknown or unset TERM all render them. So pin both, and the styled panel is what
+    # every run asserts against -- which is what this helper claims and now delivers.
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    _write_success_record(engine_cfg.journal_dir, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    monkeypatch.setattr(command, "_utc_now", lambda: CYCLE_TS + timedelta(minutes=10))
+    return runner.invoke(
+        app,
+        ["engine", "gate-export", "--journal-dir", str(engine_cfg.journal_dir), "--textfile", str(tmp_path / "gate.prom"), *extra],
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param(("--cache", "CACHE"), id="cache-without-slice"),
+        pytest.param(("--slice", "0"), id="slice-without-cache"),
+    ],
+)
+def test_gate_export_refuses_cache_and_slice_apart(tmp_path, monkeypatch, extra):
+    """The two are one option. A `--cache` with no `--slice` would have to invent a rotation key,
+    and the invented one was the clock, which drifts against this loop's `3600 s + work` period and
+    starved a fixed set of slices forever (T0198) -- so the refusal is the fix's load-bearing half,
+    not an ergonomic nicety. A `--slice` with no `--cache` names a rotation nothing reads.
+    Exit 2 (typer.BadParameter), never a silent default."""
+    extra = tuple(str(tmp_path / "gate-cache.json") if a == "CACHE" else a for a in extra)
+    result = _gate_export(tmp_path, monkeypatch, *extra)
+    assert result.exit_code == 2, result.output
+    # The forcing above is load-bearing, so it is held: without this line nothing fails when the
+    # setenv is removed, and the assertion below silently goes back to testing the unstyled panel.
+    assert _ANSI_SGR.search(result.output), (
+        "styling did not take (FORCE_COLOR/TERM) -- this run is not exercising the styled panel CI produces"
+    )
+    assert _squash("--cache and --slice go together") in _squash(result.output), result.output
+
+
+@pytest.mark.parametrize("bad", ["-1", "24", "100"], ids=["below", "at-the-bound", "far-above"])
+def test_gate_export_refuses_a_slice_outside_the_rotation(tmp_path, monkeypatch, bad):
+    """The range is a CONTRACT check on the caller, not a safety property, and which half it catches
+    is worth being exact about. `due_for_reverification` reduces its index modulo 24 deliberately --
+    a caller that forgot its own `% 24` still rotates, which the unit test beside it pins -- so an
+    out-of-range value does not stop the rotation. It ALIASES: -1 re-verifies slice 23, 24 slice 0,
+    100 slice 4. Refusing it at the edge is what makes a broken reduction visible instead of merely
+    uneven. The half this CANNOT catch is a reduction with too small a modulus: `cycle % 12` passes
+    every value here and starves twelve slices forever, and what holds that is the bound in
+    `tests/test_engine_gate_cache.py`, not this range. 24 is the boundary an off-by-one caller
+    (`cycle % 25`, or a 1-based counter) produces, so it is named explicitly."""
+    result = _gate_export(tmp_path, monkeypatch, "--cache", str(tmp_path / "gate-cache.json"), "--slice", bad)
+    assert result.exit_code == 2, result.output
+
+
+def test_evaluate_journal_refuses_a_cache_without_a_slice(tmp_path):
+    """The CLI's refusal is one caller's. `_evaluate_journal` is the function every caller reaches,
+    so it holds the same invariant itself rather than trusting the option parser above it."""
+    with pytest.raises(ValueError, match="together or neither"):
+        command._evaluate_journal(tmp_path / "journal", cache_path=tmp_path / "c.json", now=CYCLE_TS)
+    with pytest.raises(ValueError, match="together or neither"):
+        command._evaluate_journal(tmp_path / "journal", cache_path=None, slice_index=0, now=CYCLE_TS)
+
+
+def test_gate_export_forwards_the_slice_it_was_given(tmp_path, monkeypatch):
+    """The CLI seam itself. `gate_export` must hand `_evaluate_journal` the `--slice` it was GIVEN --
+    not the clock, not a constant.
+
+    The mutation that survived before this test, named exactly, because the BARE form does not:
+    `slice_index=(now.hour if slice_ is not None else None)`, and its constant twin. A bare
+    `slice_index=now.hour` or `slice_index=0` is KILLED at this test's parent by the pre-existing
+    `test_gate_export_no_cache_option_reports_zero_cached`, which runs with no `--cache` -- a
+    non-None slice beside a None cache trips `_evaluate_journal`'s together-or-neither invariant and
+    the run exits 1. That invariant is not this seam's guard: it rejects only the SHAPE, so a
+    mutation keeping None where None belongs walks straight through it, and every other CLI test
+    here passes a quiet slice that computes to 0 while asserting only what a quiet run does. T0198's
+    own defect, reachable at the one Python seam the fix added.
+
+    Read through the metrics, the only place a caller can see WHICH cycles were re-verified. `--slice`
+    is the cycle's own slice while the patched clock reads a different hour, so a forwarded clock or
+    constant forces nothing and the warm run reads a hit where a replay is owed."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    journal = engine_cfg.journal_dir
+    _write_success_record(journal, CYCLE_TS)
+    monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
+    now = CYCLE_TS + timedelta(minutes=10)
+    monkeypatch.setattr(command, "_utc_now", lambda: now)
+
+    own_slice, quiet = slice_of(CYCLE_TS), _quiet_slice(CYCLE_TS)
+    # Without these the test could pass against a forwarded clock by coincidence.
+    assert own_slice != now.hour, f"the clock's hour is the cycle's own slice ({own_slice}); pick another CYCLE_TS"
+    assert own_slice != quiet, (own_slice, quiet)
+
+    out = tmp_path / "gate.prom"
+    cache_path = tmp_path / "gate-cache.json"
+
+    def run(slice_index: int) -> tuple[float, float]:
+        result = runner.invoke(
+            app,
+            [
+                "engine",
+                "gate-export",
+                "--journal-dir",
+                str(journal),
+                "--textfile",
+                str(out),
+                "--cache",
+                str(cache_path),
+                "--slice",
+                str(slice_index),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        m = _prom(out.read_text())
+        return m["zcrypto_gate_cache_hits"], m["zcrypto_gate_cache_replayed"]
+
+    run(quiet)  # cold: populates the cache, replaying everything whatever the slice
+    assert run(quiet) == (1.0, 0.0), "a slice no cycle holds must leave the warm run a pure cache hit"
+    assert run(own_slice) == (0.0, 1.0), (
+        "the cycle's own slice must force a replay: the CLI did not forward --slice (a clock or a "
+        "constant reaches due_for_reverification instead)"
+    )
 
 
 def test_gate_export_no_cache_option_reports_zero_cached(tmp_path, monkeypatch):
@@ -581,7 +768,7 @@ def test_tampered_parquet_with_intact_record_is_caught_within_one_rotation(tmp_p
     own_slice = slice_of(CYCLE_TS)
 
     # Warm the cache with a genuine, untampered replay.
-    warm_entries, _, _, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, now=CYCLE_TS)
+    warm_entries, _, _, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=_COLD, now=CYCLE_TS)
     assert warm_entries[0].mismatch is False
     assert warm_stats.replayed == 1
 
@@ -591,17 +778,20 @@ def test_tampered_parquet_with_intact_record_is_caught_within_one_rotation(tmp_p
     ts, closes = _series(CYCLE_TS, 240, 100.0)
     write_parquet(_snapshot_frame(ts, [c + 1.0 for c in closes]), parquet_path)
 
+    # 24 runs of the loop. The slice is the run counter; the clock is held FIXED, which is the
+    # whole point of T0198 -- under the clock key these were one number and a drifting loop could
+    # skip the tampered cycle's slice forever.
+    now = CYCLE_TS + timedelta(minutes=10)
     caught = False
-    for hour in range(24):
-        now = CYCLE_TS.replace(hour=hour, minute=0)
-        entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
-        if hour == own_slice:
+    for run in range(24):
+        entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=run, now=now)
+        if run == own_slice:
             assert entries[0].mismatch is True, "the cycle's own rotation slice must force a replay that catches the tamper"
             assert counts.mismatches == 1
             assert stats.replayed == 1
             assert stats.from_cache == 0
             caught = True
-        elif hour < own_slice:
+        elif run < own_slice:
             # Before its own slice comes up this rotation, the tampered snapshot is still served
             # from cache as a stale PASS -- exactly the exposure spec 00062 closes.
             assert entries[0].mismatch is False
@@ -611,12 +801,12 @@ def test_tampered_parquet_with_intact_record_is_caught_within_one_rotation(tmp_p
             assert entries[0].mismatch is True
             assert stats.from_cache == 1
 
-    assert caught, f"the cycle's own slice ({own_slice}) never came up across a full 24h sweep"
+    assert caught, f"the cycle's own slice ({own_slice}) never came up across 24 consecutive runs"
 
 
 def test_rotation_is_bounded(tmp_path, monkeypatch):
-    """Warm cache, no tampering: one run replays only the cycles whose slice matches the run's
-    current hour (~n/24), the rest are served from cache -- rotation must not degrade to a full
+    """Warm cache, no tampering: one run replays only the cycles whose slice matches the run's own
+    slice index (~n/24), the rest are served from cache -- rotation must not degrade to a full
     replay every run, which would defeat spec 00060's whole cost saving."""
     journal = tmp_path / "journal"
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -627,14 +817,16 @@ def test_rotation_is_bounded(tmp_path, monkeypatch):
         _write_success_record(journal, cycle_ts)
 
     warm_now = cycles[-1] + timedelta(minutes=10)
-    command._evaluate_journal(journal, cache_path=cache_path, now=warm_now)  # cold: fully populates the cache
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=_COLD, now=warm_now)  # cold: populates the cache
 
+    probe_slice = slice_of(cycles[0])  # a slice at least one cycle holds, so the probe is not vacuous
     probe_now = cycles[-1] + timedelta(hours=1, minutes=10)
-    expected_due = sum(1 for c in cycles if slice_of(c) == probe_now.hour % 24)
+    expected_due = sum(1 for c in cycles if slice_of(c) == probe_slice)
+    assert 0 < expected_due < len(cycles), expected_due
 
     calls: list[datetime] = []
     _counted_replay_cycle(monkeypatch, calls)
-    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=probe_now)
+    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=probe_slice, now=probe_now)
 
     assert len(calls) == expected_due
     assert stats.replayed == expected_due
@@ -644,8 +836,8 @@ def test_rotation_is_bounded(tmp_path, monkeypatch):
 
 def test_warm_equals_cold_with_rotation_active(tmp_path, monkeypatch):
     """Spec 00060 D4 preserved under an active rotation: a cache hit's CycleOutcome and
-    evaluate_gate's verdict must equal a fresh replay's, for every possible run hour -- including
-    the hours where rotation forces a real replay on top of an otherwise-eligible cache hit."""
+    evaluate_gate's verdict must equal a fresh replay's, for every one of the 24 slice indices --
+    including the runs where rotation forces a real replay on top of an otherwise-eligible hit."""
     journal = tmp_path / "journal"
     cycles = [CYCLE_TS + timedelta(hours=4 * i) for i in range(6)]
     for cycle_ts in cycles:
@@ -653,22 +845,27 @@ def test_warm_equals_cold_with_rotation_active(tmp_path, monkeypatch):
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=cycles[-1] + timedelta(minutes=10))  # populate
+    populate_now = cycles[-1] + timedelta(minutes=10)
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=_COLD, now=populate_now)  # populate
 
-    any_forced = False
-    for hour in range(24):
-        now = cycles[-1].replace(hour=hour, minute=10)
+    now = cycles[-1] + timedelta(minutes=10)  # FIXED across the sweep: only the slice moves between runs
+    forced = 0
+    for run in range(24):
         cold_entries, cold_counts, cold_newest, _ = command._evaluate_journal(journal, cache_path=None, now=now)
-        warm_entries, warm_counts, warm_newest, warm_stats = command._evaluate_journal(journal, cache_path=cache_path, now=now)
+        warm_entries, warm_counts, warm_newest, warm_stats = command._evaluate_journal(
+            journal, cache_path=cache_path, slice_index=run, now=now
+        )
 
         assert warm_entries == cold_entries
         assert warm_counts == cold_counts
         assert warm_newest == cold_newest
         assert evaluate_gate(warm_entries, now=now) == evaluate_gate(cold_entries, now=now)
-        if warm_stats.replayed > 0:
-            any_forced = True
+        forced += warm_stats.replayed
 
-    assert any_forced, "rotation never forced a single replay across the 24h sweep -- test is vacuous"
+    # Exactly once each: one sweep of the 24 slice indices re-verifies every cycle once and only once.
+    # This is the assertion that tells the keys apart -- with the clock held fixed, a clock-keyed rotation
+    # would force one slice's cycles on all 24 runs, and zero forced would mean the test proved nothing.
+    assert forced == len(cycles), f"{forced} forced re-verifications across one sweep of {len(cycles)} cycles"
 
 
 def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp_path, monkeypatch):
@@ -681,13 +878,15 @@ def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
     cache_path = tmp_path / "gate-cache.json"
 
-    command._evaluate_journal(journal, cache_path=cache_path, now=CYCLE_TS)  # warm, genuine pass
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=_COLD, now=CYCLE_TS)  # warm, genuine pass
 
     ts, closes = _series(CYCLE_TS, 240, 100.0)
     write_parquet(_snapshot_frame(ts, [c + 1.0 for c in closes]), parquet_path)  # tamper post-cache
 
-    forced_now = CYCLE_TS.replace(hour=slice_of(CYCLE_TS))
-    entries, counts, _, stats = command._evaluate_journal(journal, cache_path=cache_path, now=forced_now)
+    forced_now = CYCLE_TS + timedelta(minutes=20)
+    entries, counts, _, stats = command._evaluate_journal(
+        journal, cache_path=cache_path, slice_index=slice_of(CYCLE_TS), now=forced_now
+    )
 
     assert entries[0].mismatch is True
     assert counts.mismatches == 1
@@ -702,7 +901,7 @@ def test_forced_reverification_failure_counts_as_replayed_and_moves_the_gate(tmp
 def test_verified_at_carried_on_hit_stamped_on_replay(tmp_path, monkeypatch):
     """D5: verified_at is carried forward on a cache hit and stamped to `now` only on an actual
     replay (cold or forced); oldest_verification_age reflects the least-recently-replayed entry and
-    falls below one rotation period (24h) once a full sweep has forced every slice at least once."""
+    falls below one sweep -- 24 runs of the loop, at whatever period -- once every slice has been forced."""
     journal = tmp_path / "journal"
     _write_success_record(journal, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -711,32 +910,35 @@ def test_verified_at_carried_on_hit_stamped_on_replay(tmp_path, monkeypatch):
     own_slice = slice_of(CYCLE_TS)
 
     now0 = CYCLE_TS  # a fresh (cold) replay -- stamps verified_at = now0
-    command._evaluate_journal(journal, cache_path=cache_path, now=now0)
+    command._evaluate_journal(journal, cache_path=cache_path, slice_index=_COLD, now=now0)
     assert load_cache(cache_path, fp).entries[CYCLE_TS][2] == now0
 
-    # A cache hit (any hour other than the cycle's own slice) must carry verified_at FORWARD,
+    # A cache hit (any slice index other than the cycle's own) must carry verified_at FORWARD,
     # never bump it to the hit's own `now`.
-    hit_hour = (own_slice + 1) % 24
-    hit_now = CYCLE_TS.replace(hour=hit_hour, minute=30)
-    _, _, _, hit_stats = command._evaluate_journal(journal, cache_path=cache_path, now=hit_now)
+    hit_now = CYCLE_TS.replace(minute=30)
+    _, _, _, hit_stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=(own_slice + 1) % 24, now=hit_now)
     assert hit_stats.from_cache == 1
     assert load_cache(cache_path, fp).entries[CYCLE_TS][2] == now0  # unchanged by the hit
 
     # A forced reverification (the cycle's own slice) stamps verified_at to the REPLAY time, not
     # carried forward from the prior entry.
-    replay_now = CYCLE_TS.replace(hour=own_slice, minute=45)
-    _, _, _, replay_stats = command._evaluate_journal(journal, cache_path=cache_path, now=replay_now)
+    replay_now = CYCLE_TS.replace(minute=45)
+    _, _, _, replay_stats = command._evaluate_journal(journal, cache_path=cache_path, slice_index=own_slice, now=replay_now)
     assert replay_stats.replayed == 1
     assert load_cache(cache_path, fp).entries[CYCLE_TS][2] == replay_now
 
-    # After a full 24h sweep, the (only) entry's own slice must have come up exactly once, so its
-    # age relative to the sweep's end is below one rotation period.
-    for hour in range(24):
-        command._evaluate_journal(journal, cache_path=cache_path, now=CYCLE_TS.replace(hour=hour))
-    final_now = CYCLE_TS.replace(hour=23, minute=59)
+    # 24 consecutive runs at the loop's real period (64 min), so the clock and the slice DIVERGE --
+    # `now.hour` is not the run index on most runs, and the slice does not read it. The (only)
+    # entry's own slice comes up exactly once, so at the last run its age is under one sweep: 24
+    # runs of the period, whatever the period is.
+    period = timedelta(minutes=64)
+    sweep_start = CYCLE_TS + timedelta(days=1)
+    for run in range(24):
+        command._evaluate_journal(journal, cache_path=cache_path, slice_index=run, now=sweep_start + run * period)
+    final_now = sweep_start + 23 * period
     age = oldest_verification_age(load_cache(cache_path, fp), final_now)
     assert age is not None
-    assert age < 24 * 3600
+    assert age < 24 * period.total_seconds()
 
 
 def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
@@ -757,8 +959,21 @@ def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
     out = tmp_path / "gate.prom"
     cache_path = tmp_path / "gate-cache.json"
 
+    quiet = str(_quiet_slice(CYCLE_TS))  # never due, so the second run below is a pure cache hit
     result = runner.invoke(
-        app, ["engine", "gate-export", "--journal-dir", str(journal), "--textfile", str(out), "--cache", str(cache_path)]
+        app,
+        [
+            "engine",
+            "gate-export",
+            "--journal-dir",
+            str(journal),
+            "--textfile",
+            str(out),
+            "--cache",
+            str(cache_path),
+            "--slice",
+            quiet,
+        ],
     )
     assert result.exit_code == 0, result.output
     m = _prom(out.read_text())
@@ -770,17 +985,27 @@ def test_metrics_renamed_and_new_ones_present(tmp_path, monkeypatch):
     # hardcoded 0.0, or an offset export_started, both fail this exact-value assertion.
     assert m["zcrypto_gate_export_duration_seconds"] == 2.5
 
-    # A second (warm) run, clock advanced past the cycle's own rotation slice so this is a cache
-    # hit: verified_at carries forward from now0, pinning oldest_verification_age to the exact
-    # elapsed delta rather than merely `>= 0.0`.
-    own_slice = slice_of(CYCLE_TS)
-    hit_hour = (own_slice + 1) % 24
-    now1 = (CYCLE_TS + timedelta(days=1)).replace(hour=hit_hour, minute=10, second=0, microsecond=0)
+    # A second (warm) run on a slice the cycle does not hold, so this is a cache hit: verified_at
+    # carries forward from now0, pinning oldest_verification_age to the exact elapsed delta rather
+    # than merely `>= 0.0`. The clock advances a full day and the slice stays put -- independent.
+    now1 = now0 + timedelta(days=1)
     monkeypatch.setattr(command, "_utc_now", lambda: now1)
     monkeypatch.setattr(command.time, "monotonic", lambda values=iter([200.0, 201.25]): next(values))
 
     result2 = runner.invoke(
-        app, ["engine", "gate-export", "--journal-dir", str(journal), "--textfile", str(out), "--cache", str(cache_path)]
+        app,
+        [
+            "engine",
+            "gate-export",
+            "--journal-dir",
+            str(journal),
+            "--textfile",
+            str(out),
+            "--cache",
+            str(cache_path),
+            "--slice",
+            quiet,
+        ],
     )
     assert result2.exit_code == 0, result2.output
     m2 = _prom(out.read_text())

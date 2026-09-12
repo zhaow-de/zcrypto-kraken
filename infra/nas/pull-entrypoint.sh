@@ -34,7 +34,8 @@ on_term() {
 }
 trap on_term TERM INT
 
-# Spec 00102 D3: the 1/24 slice index is a COUNTER, never the clock. The loop's real period is
+# Spec 00102 D3: the 1/24 slice index -- and, since gate-export reads `--slice` from it too, the
+# journal cycles' re-verification slice -- is a COUNTER, never the clock. The loop's real period is
 # interval+work, so a slice keyed on now.hour starves a fixed subset of slices forever whenever
 # that drifted period divides 24h -- segments silently never re-verified.
 cycle=0
@@ -119,7 +120,7 @@ while true; do
 		# visible here. It gates the dead-man ping, so it must equal the evaluator in
 		# infra/grafana/alerts.yaml's rule, where it is derived -- change them together.
 		if ! zcrypto engine gate-export --journal-dir "$JOURNAL_DEST" --textfile "$GATE_TEXTFILE" \
-				--cache /tmp/gate-cache.json --lag-fail-seconds 21600 \
+				--cache /tmp/gate-cache.json --slice "$slice" --lag-fail-seconds 21600 \
 				${GATE_HEALTHCHECK_URL:+--healthcheck-url "$GATE_HEALTHCHECK_URL"}; then
 			log ERROR "gate-export failed (dest=$JOURNAL_DEST), continuing"
 		fi
