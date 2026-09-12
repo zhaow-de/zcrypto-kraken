@@ -25,7 +25,10 @@ CLI = REPO / "cli"
 READERS = {
     ("cli/engine/command.py", "_evaluate_journal"): "replays",
     ("cli/engine/command.py", "replay"): "replays",
-    ("cli/engine/command.py", "_seed_cycle_state"): "completed_at only",
+    # Reads `completed_at` alone -- and seeds `zcrypto_engine_cycle_success` True beside it, a startup gauge
+    # the next cycle overwrites within four hours. Named here because the row must not read as "consumes
+    # nothing": it publishes a verdict off an unvalidated record, bounded by that overwrite.
+    ("cli/engine/command.py", "_seed_cycle_state"): "completed_at only, plus the startup gauge it seeds",
     ("cli/engine/command.py", "_window_records"): "validates",
     ("cli/engine/cycle.py", "_previous_success"): "validates",
     ("cli/engine/executor.py", "_cycle_records_through"): "validates",

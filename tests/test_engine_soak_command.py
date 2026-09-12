@@ -67,7 +67,9 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
             n_bars=len(h4_ts),
             first_ts=h4_ts[0],
             last_ts=last_ts,
-            content_hash=snapshot_content_hash(h4_ts, [closes_by_label.get(x, closes_by_label[labels[-1]]) for x in h4_ts]),
+            # The invented stamp has no close of its own: fall back to the EARLIEST in the fixture, never
+            # `labels[-1]`, which prices a past bar with the newest close the fixture holds.
+            content_hash=snapshot_content_hash(h4_ts, [closes_by_label.get(x, closes_by_label[labels[0]]) for x in h4_ts]),
             path="p240",
         )
         # Both grids per pair, since the soak's read now validates; the realized numbers come from the store, so
