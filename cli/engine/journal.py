@@ -87,6 +87,20 @@ def _is_symbol_key(key: str) -> bool:
     return "/" in key
 
 
+def require_comparable_cycle_ts(record: CycleRecord) -> None:
+    """Refuse a record whose `cycle_ts` cannot be ordered against an aware boundary.
+
+    A caller that FILTERS by `cycle_ts` before validating -- which `executor._cycle_records_through` does, so one
+    invalid artifact outside the window cannot refuse a pass that never reads it -- orders two stamps before
+    `validate_record` has seen either. Without this the ordering raised TypeError out of the reader, past the
+    `except EngineError` its caller holds, which is the escape `_refuse_mixed_awareness` exists to stop.
+    """
+    if not isinstance(record.cycle_ts, datetime):
+        raise EngineJournalError(f"cycle_ts must be a datetime, got {record.cycle_ts!r}")
+    if record.cycle_ts.tzinfo is None or record.cycle_ts.utcoffset() is None:
+        raise EngineJournalError(f"cycle_ts must be timezone-aware to order against a boundary, got {record.cycle_ts!r}")
+
+
 def _refuse_mixed_awareness(record: CycleRecord) -> None:
     """Refuse a record that mixes naive and aware stamps, before anything orders two of them.
 

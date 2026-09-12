@@ -2,13 +2,14 @@
 validation, and the snapshot-boundary (no-peek) invariant."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from cli.engine import (
     SCHEMA_VERSION,
     CycleRecord,
+    EngineError,
     EngineJournalError,
     SnapshotEntry,
     from_json,
@@ -538,3 +539,38 @@ def test_v1_closes_stay_base_keyed_too():
 def test_closes_violations(closes):
     with pytest.raises(EngineJournalError, match="closes"):
         validate_record(_record(closes=closes))
+
+
+# --- a stamp that cannot be compared is refused, not compared (T0194) -----------------------------
+# `from_json` accepts a naive stamp -- `datetime.fromisoformat` returns naive for one with no offset -- and
+# `validate_record` then ordered `first_ts >= last_ts` and `started_at > completed_at`. On a naive/aware MIX
+# those raise TypeError, which is not this module's error, so the CLI readers' `except EngineJournalError` and
+# the soak command's `except EngineError` were both bypassed and a documented refusal became a traceback. The
+# `!=` no-peek checks do not raise on such a mix: they read silently always-true, which is the hazard
+# `cli/engine/cycle.py`'s docstring has carried all along. Neither half was asserted anywhere, and deleting the
+# refusal left seven engine test files green.
+
+
+def test_a_record_mixing_naive_and_aware_stamps_is_refused_with_this_modules_error():
+    """The mix is refused before anything orders two stamps, and the message names both sides so a reader can
+    see which stamp to fix."""
+    aware = _entry("BTC/EUR", "240", datetime(2026, 7, 9, 20, 0, tzinfo=timezone.utc), VALID_H4_LAST)
+    naive = _entry("BTC/EUR", "1440", datetime(2026, 7, 7, 0, 0), VALID_DAILY_LAST)
+    with pytest.raises(EngineJournalError, match="mixes timezone-aware and naive"):
+        validate_record(_valid_record_v2(snapshots=(aware, naive)))
+
+
+def test_the_comparison_the_validator_would_reach_raises_a_typeerror_which_is_not_an_engine_error():
+    """The reason the refusal exists, as a measurement rather than a claim: ordering a mixed pair raises, and
+    what it raises is outside the class every caller of this module catches."""
+    with pytest.raises(TypeError, match="offset-naive and offset-aware"):
+        datetime(2026, 7, 9, 20, 0) >= datetime(2026, 7, 10, 4, 0, tzinfo=timezone.utc)  # noqa: B015
+    assert not issubclass(TypeError, EngineError)
+
+
+def test_a_wholly_naive_record_still_validates():
+    """The property the fix rests on, and the reason no fixture in this file changed: a record whose stamps are
+    all naive compares consistently, so it is left to the checks below rather than refused for its awareness."""
+    record = _valid_record_v2()
+    assert record.cycle_ts.tzinfo is None
+    validate_record(record)

@@ -47,7 +47,7 @@ from cli.engine.execledger import (
 )
 from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
-from cli.engine.journal import CycleRecord, from_json, validate_record
+from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_ts, validate_record
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
@@ -374,6 +374,9 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
     out: dict[datetime, CycleRecord] = {}
     for path in sorted(Path(journal_dir).glob("*/cycle-*.json")):
         record = from_json(path.read_text())
+        # The filter orders two stamps, so the one field it reads is refused first -- with this module's own
+        # error, which the caller handles, rather than the TypeError a naive stamp raised straight past it.
+        require_comparable_cycle_ts(record)
         if record.cycle_ts > until:
             # Filter first, validate second: a record this pass discards must not refuse it. Validating above
             # the filter let one invalid artifact from any week -- including one no pass will ever score --

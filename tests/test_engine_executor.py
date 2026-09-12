@@ -50,7 +50,7 @@ import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
 import cli.engine.venuestate as venuestate_module
 from cli.config import EngineConfig
-from cli.engine.errors import EngineError
+from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
     append_plan_entry,
@@ -5158,3 +5158,75 @@ def test_the_offers_walk_reaches_every_stub_the_fidelity_table_points_at_it():
     assert len(named) > 5, f"the table points only {sorted(named)} at this guard -- the join is checking nothing"
     walked = {label for label, *_ in _nautilus_standins()}
     assert named == walked, f"{sorted(named ^ walked)} is claimed on one side of the join and absent from the other"
+
+
+# --- the tracking read validates what it keeps, and refuses what it orders (T0194) ----------------
+# Two fixes met in `_cycle_records_through` and the first review of them missed that they collide: the
+# `cycle_ts <= until` filter moved ABOVE `validate_record` so an artifact no pass will score cannot refuse every
+# pass, and the filter orders two stamps, which on a naive `cycle_ts` raised TypeError straight past the
+# `except EngineError` the caller holds. Both halves are asserted here; neither was, and restoring the pre-fix
+# ordering exactly left the suite green.
+
+
+def _journal_with(tmp_path, boundary, *, mangle=None):
+    """One `cycle-<HH>.json` under a day directory, optionally mangled after serialisation."""
+    from cli.engine.executor import _cycle_records_through  # noqa: PLC0415 -- the private reader IS the subject
+
+    record = CycleRecord(
+        schema_version=2,
+        cycle_ts=boundary,
+        snapshots=_track_snapshots(boundary),
+        final_targets={"BTC/EUR": 0.1},
+        started_at=boundary + timedelta(seconds=90),
+        completed_at=boundary + timedelta(minutes=2),
+        code_version="1.0.0",
+        builder_path="fast",
+    )
+    journal = tmp_path / "journal"
+    day = journal / f"{boundary:%Y-%m-%d}"
+    day.mkdir(parents=True, exist_ok=True)
+    text = to_json(record)
+    if mangle is not None:
+        text = mangle(text)
+    (day / f"cycle-{boundary:%H}.json").write_text(text)
+    return journal, _cycle_records_through
+
+
+def _drop_snapshots(text: str) -> str:
+    """A record that loads and does not validate: `snapshots` emptied, which validate_record refuses."""
+    payload = json.loads(text)
+    payload["snapshots"] = []
+    return json.dumps(payload)
+
+
+def test_an_invalid_record_outside_the_window_does_not_refuse_the_pass(tmp_path):
+    """The reorder's point. One schema-invalid artifact from a week nothing will ever score used to refuse every
+    later scoring pass, and the refusal lands as a WARNING with no alert rule behind it."""
+    boundary = datetime(2026, 7, 10, 4, tzinfo=timezone.utc)
+    journal, reader = _journal_with(tmp_path, boundary, mangle=_drop_snapshots)
+    assert reader(journal, boundary - timedelta(hours=4)) == {}
+
+
+def test_an_invalid_record_inside_the_window_refuses_the_pass(tmp_path):
+    """The other half: a record this pass WILL score is validated, and its refusal propagates, because `_stage`
+    reads final, closes and nav straight out of it on the live trade path."""
+    boundary = datetime(2026, 7, 10, 4, tzinfo=timezone.utc)
+    journal, reader = _journal_with(tmp_path, boundary, mangle=_drop_snapshots)
+    with pytest.raises(EngineJournalError, match="snapshots"):
+        reader(journal, boundary)
+
+
+def test_a_naive_cycle_ts_is_refused_with_this_modules_error_not_a_typeerror(tmp_path):
+    """The collision the second read found: the filter orders `cycle_ts` against an aware boundary BEFORE
+    validate_record can see it, so a naive stamp escaped as TypeError past the caller's `except EngineError`.
+    The reader refuses it first, with the error the caller handles."""
+    boundary = datetime(2026, 7, 10, 4, tzinfo=timezone.utc)
+
+    def naive_cycle_ts(text: str) -> str:
+        payload = json.loads(text)
+        payload["cycle_ts"] = boundary.replace(tzinfo=None).isoformat()
+        return json.dumps(payload)
+
+    journal, reader = _journal_with(tmp_path, boundary, mangle=naive_cycle_ts)
+    with pytest.raises(EngineJournalError, match="timezone-aware"):
+        reader(journal, boundary)

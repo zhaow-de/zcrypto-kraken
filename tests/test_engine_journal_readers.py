@@ -136,10 +136,18 @@ def test_one_reader_per_adjudicated_function(site):
 
 
 def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
-    """The `try` around a call to `callee` whose handler swallows -- `pass`, `continue`, or a bare `return`.
+    """The `try` around a call to `callee` whose handler does not re-raise.
 
     A `validates` row proves only that the call is WRITTEN. A refusal caught and dropped leaves the caller
-    holding the record it refused, which is the defect the row exists to deny."""
+    holding the record it refused, which is the defect the row exists to deny. The first version of this listed
+    handler spellings -- `pass`, `continue`, a bare `return` -- and a review showed `logger.warning(...)` walking
+    straight past it, so the test is now the property rather than the list: a handler with no `raise` anywhere in
+    it swallows, whatever it does instead. A handler that converts the error (`raise _abort(...) from exc`) or
+    re-raises bare is not swallowing.
+
+    One carrier is knowingly out of scope: a `validate_record` inside a branch that cannot be taken -- reachability
+    is not a question an `ast` walk of one function answers, and a guard written into a dead branch is a different
+    defect from one whose refusal is dropped."""
     parents = _enclosing(fn)
     for node in ast.walk(fn):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee):
@@ -147,13 +155,10 @@ def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
         up: ast.AST = node
         while up in parents:
             up = parents[up]
-            if isinstance(up, ast.Try):
-                for handler in up.handlers:
-                    body = handler.body
-                    if len(body) == 1 and isinstance(body[0], (ast.Pass, ast.Continue)):
-                        return up
-                    if len(body) == 1 and isinstance(body[0], ast.Return) and body[0].value is None:
-                        return up
+            if isinstance(up, ast.Try) and any(
+                not any(isinstance(n, ast.Raise) for n in ast.walk(handler)) for handler in up.handlers
+            ):
+                return up
     return None
 
 
