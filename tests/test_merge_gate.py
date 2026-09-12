@@ -142,7 +142,282 @@ def test_an_opus_read_passes_off_the_guarded_paths():
 )
 def test_an_opus_read_on_a_guarded_path_fails(path):
     fails = _eval(_pr(body=_read_by("Claude Opus 4.8")), files=["cli/costs/schedule.py", path])
-    assert len(fails) == 1 and path in fails[0] and fails[0].endswith("the floor there is Claude Fable")
+    assert len(fails) == 1 and path in fails[0] and "the floor there is Claude Fable" in fails[0]
+    assert "Fable floor substituted by Opus" in fails[0], "the refusal names the one line that lifts it"
+
+
+def _read_by_opus_with_substitution(reason: str) -> str:
+    return f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\nFable floor substituted by Opus: {reason}\n\n- [x] done\n"
+
+
+@pytest.mark.parametrize("path", ["CLAUDE.md", ".claude/rules/fleet-deploys.md", "cli/engine/journal.py", "cli/capture/daemon.py"])
+def test_the_substitution_line_admits_an_opus_read_on_a_guarded_path(path):
+    """The Fable floor is substitutable and only in the open: the body says the substitution happened and why, so
+    whoever opens the PR afterwards reads it there rather than having to notice a gate nobody ran."""
+    body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
+    assert _eval(_pr(body=body), files=["cli/costs/schedule.py", path]) == []
+
+
+def test_the_substitution_line_needs_a_reason():
+    """A bare marker would be a switch anyone could flip without saying anything; the reason is the whole point."""
+    body = f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\nFable floor substituted by Opus:\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0]
+
+
+def test_the_substitution_line_does_not_lower_the_floor_below_opus():
+    """It substitutes for FABLE, never for the Opus floor every PR has: a cheaper read stays refused with it."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Haiku 4.5 at {TIP}\n\n"
+        f"Fable floor substituted by Opus: the Fable limit is reached\n\n- [x] done\n"
+    )
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor is Claude Opus" in fails[0]
+
+
+@pytest.mark.parametrize("reason", ["<reason>", "TODO", "tbd", "N/A", "none", "x", ".", "----", "reason", "why", "short"])
+def test_a_reason_nobody_wrote_is_no_reason(reason):
+    """The placeholder is the string this repo prints in its own refusal message and in CLAUDE.md, so a
+    copy-paste of the instruction would otherwise clear the floor; the filler tokens arrive the same way."""
+    fails = _eval(_pr(body=_read_by_opus_with_substitution(reason)), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0]
+
+
+@pytest.mark.parametrize(
+    ("shape", "body_tpl"),
+    [
+        ("an HTML comment, which the rendered PR hides", "## Summary\n\n{read}\n\n<!--\n{line}\n-->\n\n- [x] done\n"),
+        ("a fenced block, which is a quotation of code", "## Summary\n\n{read}\n\n```\n{line}\n```\n\n- [x] done\n"),
+        ("a quoted line, which is somebody else's text", "## Summary\n\n{read}\n\n> {line}\n\n- [x] done\n"),
+    ],
+)
+def test_a_substitution_a_reader_cannot_see_does_not_lift_the_floor(shape, body_tpl):
+    """The whole point of the line is that it is visible where the merge decision is read. The pull-request
+    template ships an HTML comment block, so this is the likeliest accident, not a contrived one."""
+    body = body_tpl.format(
+        read=f"Read before push by: Claude Opus 5 at {TIP}",
+        line="Fable floor substituted by Opus: the account's Fable limit is reached",
+    )
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0], shape
+
+
+@pytest.mark.parametrize(
+    ("shape", "body"),
+    [
+        (
+            "an unterminated comment, which hides the rest of the rendered page",
+            "## Summary\n\n{read}\n\n<!-- note to self\n{line}\n",
+        ),
+        ("a marker under an unterminated opener", "## Summary\n\n{read}\n\n<!-- \n\n{line}\n\nmore prose\n"),
+        (
+            "a ``` block nested inside a ```` block, which is how this feature gets documented",
+            "## Summary\n\n{read}\n\n````\n```\n{line}\n```\n````\n\n- [x] done\n",
+        ),
+        ("an unterminated fence, which renders the rest as code", "## Summary\n\n{read}\n\n```\n{line}\n"),
+        (
+            "a <details> block, collapsed until somebody clicks it",
+            "## Summary\n\n{read}\n\n<details><summary>why</summary>\n{line}\n</details>\n\n- [x] done\n",
+        ),
+    ],
+)
+def test_no_delimiter_shape_hides_a_substitution_from_the_gate(shape, body):
+    """The first pass at this used two regexes and each of these got past it. A renderer keeps state; so does the
+    walk now, which is why an unterminated opener hides to the end of the document here as it does there."""
+    filled = body.format(
+        read=f"Read before push by: Claude Opus 5 at {TIP}",
+        line="Fable floor substituted by Opus: the account's Fable limit is reached",
+    )
+    fails = _eval(_pr(body=filled), files=["cli/engine/journal.py"])
+    assert fails, shape
+    assert any("Claude Fable" in f or "unrecorded" in f for f in fails), (shape, fails)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "&lt;reason&gt;",  # renders as the placeholder itself, so the `<` check has to see through the escape
+        "\uff34\uff2f\uff24\uff2f fill in later",  # fullwidth TODO, which NFKC folds onto the token
+        "aaaaaaaaaaaa",
+        "!!!!!!!!!!!!",
+        "-------------",
+        ".... ---- ....",
+        "fill in",
+        "placeholder",
+    ],
+)
+def test_a_reason_with_no_content_does_not_lift_the_floor(reason):
+    """Length was the wrong bar: it admitted a run of one character and rejected an honest short answer. The bar
+    is distinct alphanumerics, after unescaping, NFKC and dropping the zero-width padding."""
+    fails = _eval(_pr(body=_read_by_opus_with_substitution(reason)), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0]
+
+
+@pytest.mark.parametrize("reason", ["no Fable", "Fable\u914d\u984d\u5df2\u7528\u76e1", "quota exhausted"])
+def test_a_short_honest_reason_in_any_script_lifts_the_floor(reason):
+    """The mirror of the case above, and the reason the bar is not length: two true words, or a dense script, must
+    not be refused for being brief."""
+    assert _eval(_pr(body=_read_by_opus_with_substitution(reason)), files=["cli/engine/journal.py"]) == []
+
+
+def test_a_leftover_placeholder_line_does_not_refuse_the_filled_one():
+    """Once the line is instructed as a fill-in template, a leftover above a filled one is the natural accident:
+    every occurrence is considered, not the first."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "Fable floor substituted by Opus: <reason>\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
+@pytest.mark.parametrize(
+    ("shape", "above"),
+    [
+        ("an unterminated tilde fence", "~~~"),
+        ("a tilde fence whose info string carries backticks, which CommonMark allows", "~~~`js`"),
+        ("a <details> that comments out its own closer, so the element never closes", "<details><!--</details>-->"),
+    ],
+)
+def test_no_delimiter_line_above_the_substitution_leaves_it_counting(shape, above):
+    """Every unsafe divergence three rounds of review found put the marker below a delimiter line — a tilde fence
+    the pattern declined, a details element that commented out its own closer — so the prefix rule refuses on the
+    delimiter itself rather than on a judgement about what it does."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n{above}\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]), shape
+
+
+def test_a_one_line_comment_above_the_line_leaves_it_counting():
+    """The repo's own pull-request template ships `<!-- A few sentences mirroring the spec's goal. -->` above both
+    lines, and a comment that opens and closes on one line hides nothing below it under any parse. Breaking the
+    prefix on it refused a template-derived body, and the refusal told the author to move a line that was already
+    where it belonged."""
+    body = (
+        f"## Summary\n\n<!-- A few sentences mirroring the spec's goal. -->\n\n"
+        f"Read before push by: Claude Opus 5 at {TIP}\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
+def test_a_one_line_details_above_the_line_still_refuses():
+    """Not symmetric, and the asymmetry is measured: a one-line `<details>` can comment out its own closer, so
+    the element stays open and everything below renders collapsed."""
+    body = (
+        f"## Summary\n\n<details><!--</details>-->\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"])
+
+
+def test_a_terminated_fence_above_the_line_refuses_it_too():
+    """The cost of the plain-prefix rule, stated rather than hidden: a TERMINATED fence between the read line and
+    the substitution refuses as well. Three review rounds found seven walk-versus-renderer divergences, every
+    unsafe one with the marker below a delimiter line, so the prefix does not try to tell the two apart."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "```\ngh pr view 1\n```\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "plain prefix" in fails[0], fails
+
+
+def test_the_refusal_says_when_the_line_is_there_but_hidden():
+    """An author looking straight at the line needs to be told it is invisible, not that it is missing."""
+    body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "hidden from the rendered page" in fails[0]
+
+
+def test_the_refusal_distinguishes_a_bad_reason_from_a_missing_line():
+    """The other diagnostic: the line is visible and the reason is not one, which is a different fix."""
+    fails = _eval(_pr(body=_read_by_opus_with_substitution("TODO")), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "its reason is the placeholder" in fails[0]
+
+
+@pytest.mark.parametrize(
+    ("shape", "body"),
+    [
+        (
+            "a </details> inside a code span, which the renderer escapes rather than honouring",
+            "## Summary\n\n{read}\n\n<details><summary>why</summary>\n\nthe `</details>` tag closes it\n\n{line}\n</details>\n",
+        ),
+        ("a fence opener whose info string carries <!--", "## Summary\n\n{read}\n\n```<!--\n-->\n{line}\n```\n"),
+        ("a fence opener whose info string carries <details", "## Summary\n\n{read}\n\n```<details\n</details>\n{line}\n```\n"),
+    ],
+)
+def test_a_closer_the_renderer_does_not_honour_does_not_reveal_the_line(shape, body):
+    """The second pass at the walk got past on both: a closer written inside a code span left the hidden state,
+    and a fence opener carrying a comment opened the comment instead of the fence. A renderer settles fences
+    before inline markup exists, and a code span is content — so the walk does too."""
+    filled = body.format(
+        read=f"Read before push by: Claude Opus 5 at {TIP}",
+        line="Fable floor substituted by Opus: the account's Fable limit is reached",
+    )
+    assert _eval(_pr(body=filled), files=["cli/engine/journal.py"]), shape
+
+
+@pytest.mark.parametrize(
+    ("shape", "above"),
+    [
+        ("an inline `<!--` in prose, which renders as text", "the walker treats `<!--` as an opener"),
+        ("an inline `<details>` in prose", "about `<details>` blocks and what they hide"),
+        ("a four-space-indented fence, which is an indented code block", "    ```"),
+        ("a line-initial ```x``` span, whose info string has a backtick", "```gh pr view```"),
+        ("a comment closed with --!>, which every browser honours", "<!-- a note --!>"),
+    ],
+)
+def test_prose_about_the_gate_does_not_refuse_the_pr_it_sits_in(shape, above):
+    """The mirror failure, and the likeliest one on this very branch: a PR body that DISCUSSES comments and fences
+    must not lose the lines it carries. Each of these discarded the rest of the body once. The prose sits BELOW
+    the two lines, which is where a PR puts its discussion and where the plain-prefix rule leaves it alone."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        f"Fable floor substituted by Opus: the account's Fable limit is reached\n\n{above}\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == [], shape
+
+
+def test_a_comment_above_the_read_line_closed_the_html_way_still_records_the_read():
+    """`--!>` closes a comment in every browser, so the page shows what follows and the read line counts. The
+    read line is judged by the walk alone, which is why a construct above it is not fatal the way it is for the
+    substitution."""
+    body = f"## Summary\n\n<!-- a note --!>\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
+def test_a_read_line_below_a_details_that_hides_it_is_no_recorded_read():
+    """The hole this closes, measured by the fourth safety read: a one-line `<details>` that comments out its own
+    closer leaves the element open, so the page renders the read line collapsed while a walk shows it. The read
+    line is judged in the plain prefix for the same reason the substitution is."""
+    body = f"## Summary\n\n<details><!--</details>-->\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "plain prefix" in fails[0], fails
+
+
+def test_a_read_line_below_a_fence_is_refused_and_told_why():
+    """The cost of extending the prefix to the read line, stated: a body that opens a fence above its read line
+    is refused, and the refusal names the prefix rather than claiming the line is missing."""
+    body = f"## Summary\n\n```\ngh pr view 1\n```\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "plain prefix" in fails[0], fails
+
+
+def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():
+    """The same stripping applies to the read line: a read claimed inside a comment is a read nobody can check."""
+    body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "the whole-branch read is unrecorded" in fails[0]
+
+
+def test_the_substitution_line_is_inert_where_no_guarded_path_is_touched():
+    """It lifts one arm and adds nothing: a PR that never needed a Fable read is judged exactly as before."""
+    body = _read_by_opus_with_substitution("not needed here")
+    assert _eval(_pr(body=body), files=["cli/costs/schedule.py"]) == []
 
 
 def test_a_look_alike_path_is_not_guarded():
