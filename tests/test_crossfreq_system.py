@@ -635,3 +635,43 @@ def test_fast_path_full_history_equivalence():
     )
     assert round(max_dd(fast.governed_net), 4) == round(max_dd(verified.governed_net), 4)
     assert round(max_dd(fast.ungoverned_net), 4) == round(max_dd(verified.ungoverned_net), 4)
+
+
+# --- a close VALUE is refused at the door both builders enter (T0193) -----------------------------
+# The front door checked shape and never a value, so a NaN reached the fast path's rolling statistics and died on
+# `float.as_integer_ratio()` with a ValueError no caller catches. The verified path refused the same input
+# downstream with a written message, so the two paths disagreed by accident.
+
+
+@pytest.mark.parametrize("grid", ["daily", "h4"])
+@pytest.mark.parametrize("where", ["first", "middle", "last"])
+@pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
+def test_a_non_finite_close_is_refused_by_both_builders(grid, where, builder):
+    """The six placements T0193 measured, against both paths: every one refuses with a written PortfolioError."""
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
+    prices = d_prices if grid == "daily" else h_prices
+    n = len(d_ts) if grid == "daily" else len(h_ts)
+    idx = {"first": 0, "middle": n // 2, "last": n - 1}[where]
+    prices["AAA"] = list(prices["AAA"])
+    prices["AAA"][idx] = float("nan")
+    with pytest.raises(PortfolioError, match="finite positive"):
+        builder(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), 0.0, -1.0, True, "100.0"])
+def test_the_refusal_covers_the_rest_of_the_class(bad):
+    """A bool passes every isinstance check an int does, and zero and negative closes are the same defect one
+    step on: the verified path's own guard already refuses all of them."""
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
+    d_prices["AAA"] = list(d_prices["AAA"])
+    d_prices["AAA"][3] = bad
+    with pytest.raises(PortfolioError, match="finite positive"):
+        build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+
+
+def test_a_gap_is_still_legal():
+    """`None` is a gap, not a corrupt value, and the control that keeps the refusal honest."""
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
+    d_prices["AAA"] = list(d_prices["AAA"])
+    d_prices["AAA"][3] = None
+    build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts, config=CFG2)

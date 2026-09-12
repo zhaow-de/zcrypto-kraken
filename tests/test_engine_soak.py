@@ -2828,6 +2828,31 @@ def test_realized_internals_unavailable_degrades():
     assert ri.identity_ok is False and ri.cap_consistent is False
 
 
+def test_a_non_finite_snapshot_close_degrades_with_a_reason_rather_than_escaping():
+    """T0193. A NaN close reached the fast builder's rolling statistics and escaped as a ValueError, past this
+    function's `except (EngineError, PortfolioError)` and past the soak command's `except EngineError`.
+
+    The builder's front door refuses it now, so spec 00059 D7 applies as written and the reason names the corrupt
+    bar. The ten-leg fixture is what makes this non-vacuous: a single-pair record trips the asset-set check first
+    and never reaches a value."""
+    clean = basket_fixture.grids()
+    result = basket_fixture.build(clean)
+    # The NaN goes in BEFORE the record is built, so its snapshot hash covers it -- which is the only way a
+    # corrupt close reaches the builder at all: injecting one after the fact trips the assembler's hash check
+    # first, and that refusal is a different defect with its own handling.
+    corrupt = basket_fixture.grids()
+    ts, by_symbol = corrupt[240]
+    by_symbol["ADA/EUR"] = list(by_symbol["ADA/EUR"])
+    by_symbol["ADA/EUR"][len(ts) // 2] = float("nan")
+    latest = basket_fixture.record(corrupt, schema_version=2, result=result)
+
+    ri = realized_internals([], latest, basket_fixture.reader(corrupt))
+
+    assert ri.available is False
+    assert "finite positive" in ri.reason, ri.reason
+    assert "nan" in ri.reason.lower(), ri.reason
+
+
 def test_realized_internals_degrades_on_builder_portfolio_error():
     """A single-pair (BTC-only) snapshot satisfies validate_record and _assemble_latest_grids, but
     the REAL builder's default 10-asset universe doesn't match -- _validate_grid raises
