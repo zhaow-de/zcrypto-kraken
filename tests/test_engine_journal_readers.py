@@ -144,11 +144,10 @@ def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
     A `validates` row proves only that the call is WRITTEN. A refusal caught and dropped leaves the caller
     holding the record it refused, which is the defect the row exists to deny. The first version of this listed
     handler spellings -- `pass`, `continue`, a bare `return` -- and a review showed `logger.warning(...)` walking
-    straight past it, so the test is now the property rather than the list: a handler with no `raise` anywhere in
-    it swallows, whatever it does instead. A handler that converts the error (`raise _abort(...) from exc`) or
-    re-raises bare is not swallowing -- nor is one whose only `raise` sits inside an `if`, which this check admits
-    and which drops the refusal on its default path: the same reachability question as the carrier excluded
-    below, and out of scope for the same reason.
+    straight past it, so the test is the property rather than the list: a handler whose own body does not raise
+    swallows, whatever it does instead. Converting the error (`raise _abort(...) from exc`) or re-raising bare is
+    not swallowing; a `raise` reached only inside an `if` IS, because the handler drops the refusal on its other
+    path.
 
     One carrier is knowingly out of scope: a `validate_record` inside a branch that cannot be taken -- reachability
     is not a question an `ast` walk of one function answers, and a guard written into a dead branch is a different
@@ -160,8 +159,10 @@ def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
         up: ast.AST = node
         while up in parents:
             up = parents[up]
+            # The handler's OWN statements, not `ast.walk`: walking descends into an `if`, so a conditional
+            # `raise` counted and the handler passed while dropping the refusal on its other path.
             if isinstance(up, ast.Try) and any(
-                not any(isinstance(n, ast.Raise) for n in ast.walk(handler)) for handler in up.handlers
+                not any(isinstance(st, ast.Raise) for st in handler.body) for handler in up.handlers
             ):
                 return up
     return None

@@ -381,8 +381,6 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
             # Filter first, validate second: a record this pass discards must not refuse it for a SCHEMA fault.
             # Validating above the filter let one invalid artifact from any week -- including one no pass will
             # ever score -- refuse every later scoring pass, and the refusal lands as a WARNING with no alert
-            # behind it. The one fault a discarded record still refuses on is the stamp above, deliberately: an
-            # unorderable `cycle_ts` cannot be placed inside or outside the window, so there is no discarding it.
             continue
         # `_stage` reads final, closes and nav straight out of these on the live trade path, so the read's own
         # guarantee is not enough here and a refusal propagates (T0194).
