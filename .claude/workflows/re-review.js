@@ -87,7 +87,7 @@ A reader graded this ${f.severity}: at \`${f.path}:${f.line}\` — ${f.claim}
 Its evidence: ${f.evidence}
 Its consequence: ${f.consequence}
 
-${f.priorId ? `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is the reader's reason, the evidence above.\n\n` : ''}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip. Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
+${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip. Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')
@@ -108,11 +108,11 @@ const open = [...report.prior.filter((p) => p.status === 'open').map((p) => p.id
 const RANK = { Critical: 3, Important: 2, Minor: 1 }
 const byId = new Map(prior.map((p) => [p.id, p]))
 // A reopened prior goes to the skeptics as the reader's reason it is open -- a standing sibling, a left reason that fails -- not as the instance first graded, which the fix may well have answered.
-const reopened = open.filter((id) => byId.has(id)).map((id) => { const why = (report.prior.find((p) => p.id === id) || { by: 'the reader did not account for it' }).by; return { ...byId.get(id), claim: `prior #${id} stands open`, evidence: why, consequence: 'the prior finding stands', priorId: id, firstGrading: byId.get(id).claim } })
+const reopened = open.filter((id) => byId.has(id)).map((id) => { const why = (report.prior.find((p) => p.id === id) || { by: 'no reason given: the reader\'s table did not account for this prior, so nothing here says why it stands' }).by; return { ...byId.get(id), claim: `prior #${id} stands open`, evidence: why, consequence: 'the prior finding stands', priorId: id, firstGrading: byId.get(id).claim } })
 const findings = [...report.findings, ...reopened].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ ...f, id: i + 1 }))
 const count = (sev, list) => list.filter((f) => f.severity === sev).length
 const claimsOf = (kind) => report.messageClaims.filter((c) => c.disposition === kind).length
-log(`prior: ${report.prior.filter((p) => p.status === 'closed').length} closed, ${report.prior.filter((p) => p.status === 'left').length} left, ${open.length} open; new: ${count('Critical', findings)} Critical / ${count('Important', findings)} Important / ${count('Minor', findings)} Minor; message claims: ${claimsOf('re-measured')} re-measured, ${claimsOf('read')} read, ${claimsOf('declined')} declined`)
+log(`prior: ${report.prior.filter((p) => p.status === 'closed').length} closed, ${report.prior.filter((p) => p.status === 'left').length} left, ${open.length} open; new: ${count('Critical', report.findings)} Critical / ${count('Important', report.findings)} Important / ${count('Minor', report.findings)} Minor, plus ${reopened.length} reopened; message claims: ${claimsOf('re-measured')} re-measured, ${claimsOf('read')} read, ${claimsOf('declined')} declined`)
 
 // --- Refute the Criticals and Importants, new or reopened -----------------------------------------------------
 phase('Refute')
