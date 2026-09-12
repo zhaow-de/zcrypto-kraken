@@ -12,7 +12,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0178 — Ops unit census drift — how many timers, writers and log sources, restated in file after file and agreeing with nothing](T0178-ops-unit-census-drift.md)
 - [T0179 — The capture hosts' Alloy drift refusal prescribes a recreate the converge does not need](T0179-capture-alloy-refusal-prescribes-a-recreate.md) — ripe when: a session holding the Fable review floor picks this up, OR a change to `infra/ansible/roles/capture/` opens — `git log --oneline develop..HEAD -- infra/ansible/roles/capture/` non-empty on the branch doing that work
 - [T0187 — The dark-with-exposure page reads no exposure over a position it never observed](T0187-dark-with-exposure-reads-zero-over-an-unmade-observation.md) — ripe when: any one arm: RUNG 2 starts — the memo's `**RUNG 2 — concentrated, time-boxed` entry records a start and not only its `DependsOn`; or an engine restart is planned while a position is open with nobody attending it; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.
-- [T0193 — A non-finite snapshot close escapes the soak report as a traceback](T0193-nonfinite-snapshot-close-escapes-the-soak-report.md)
 - [T0194 — Several journal readers never validate the record they read](T0194-journal-readers-that-never-validate-the-record.md)
 
 ## Partially done
@@ -203,6 +202,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0189 — The prose ratchet converts every cut into silent headroom](archive/T0189-prose-ratchet-converts-each-cut-into-headroom.md)
 - [T0191 — The zero-price refusal's comment inverts the consequence it exists to justify](archive/T0191-flatten-zero-price-comment-inverts-its-own-consequence.md)
 - [T0192 — The week-boundary tracking fixture cannot tell its refusal arms apart](archive/T0192-tracking-fixture-cannot-tell-its-refusal-arms-apart.md)
+- [T0193 — A non-finite snapshot close escapes the soak report as a traceback](archive/T0193-nonfinite-snapshot-close-escapes-the-soak-report.md)
 - [T0195 — `--write-baseline` truncates the whole baseline to whatever paths are scanned](archive/T0195-write-baseline-truncates-to-the-scanned-subset.md)
 - [T0196 — Two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](archive/T0196-cost-stress-alone-test-name-does-not-isolate.md)
 - [T0197 — The OI level-column null-density guard is unscoped, unlike its sibling zero-population guard](archive/T0197-oi-null-density-guard-is-unscoped-against-forward-refresh.md)
