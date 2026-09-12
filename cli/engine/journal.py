@@ -56,8 +56,8 @@ class CycleRecord:
 
 
 def _as_positive_float(value: object) -> float:
-    """Coerce a journaled `nav` at READ time, since several callers read a record without ever calling `validate_record`,
-    and refuse a bool -- it passes every isinstance check an int does, so `"nav": true` would score a whole cycle at NAV=1."""
+    """Coerce a journaled `nav` at READ time and refuse a bool -- it passes every isinstance check an int does, so
+    `"nav": true` would score a whole cycle at NAV=1."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EngineJournalError(f"nav must be a number, got {value!r}")
     out = float(value)
@@ -265,7 +265,7 @@ def from_json(s: str) -> CycleRecord:
             builder_path=payload["builder_path"],
             # .get, not [...]: a record written before these keys existed lacks them, and raising on the absence would
             # take the journal's consumers down over its own upgrade. dict() coerces as final_targets does, so a truncated
-            # artifact whose closes is a list or a scalar raises here -- several callers never call validate_record.
+            # artifact whose closes is a list or a scalar raises at the read rather than downstream.
             closes=dict(raw) if (raw := payload.get("closes")) is not None else None,
             nav=None if (rawn := payload.get("nav")) is None else _as_positive_float(rawn),
             held=dict(rawh) if (rawh := payload.get("held")) is not None else None,
