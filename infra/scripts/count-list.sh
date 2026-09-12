@@ -100,6 +100,11 @@ c_operator_term_surfaces() { uv run pytest tests/test_internal_terms_not_operato
 
 c_operator_term_allowlist_edits() { git log --oneline -G_WP_CARRIERS -- tests/test_internal_terms_not_operator_visible.py | wc -l; }
 
+# The skip gates under `tests/` the guard finds: one opt-in name over those; a computed key, or a call it can neither
+# resolve in this repo nor attribute to a library, refused; a library call attributed, not walked. The guard is the
+# count; its docstring lists what passes it uncaught -- five binding shapes, two `unittest` forms.
+c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || return 2; }
+
 c_topics_without_a_trigger() { grep -L '^ripe_when:' docs/open-topics/T*.md | wc -l; }
 
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
@@ -199,6 +204,7 @@ main() {
   emit "prose-only-commits-without-the-prover" c_prose_only_commits_without_the_prover
   emit "spec-hash-provenance" c_spec_hash_provenance
   emit "operator-term-surfaces" c_operator_term_surfaces c_operator_term_allowlist_edits
+  emit "skip-gate-contract" c_skip_gate_contract
   emit "live-topics-without-a-trigger" c_topics_without_a_trigger
   emit "canary-bypasses-on-the-primary" c_canary_bypasses
   emit "converges-inside-a-kraken-window" c_converges_inside_a_kraken_window

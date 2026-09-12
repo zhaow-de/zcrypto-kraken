@@ -26,7 +26,7 @@ status: open   # one of: open | partial | resolved
 
 `ripe_when:` (when present) is the bare condition plus the one check that evaluates it — a clause a reviewer runs and reads true/false at a glance. Its history, reasoning, and what the check read live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
 
-…followed by, in order:
+…followed by, in order — a live topic's shape; the archived shape, under *Closing a topic*, ends at `## Resolution`:
 
 - `# <Title>` — H1 matching the slug; no square bracket in it, since the rendered index links the title.
 - `## Context — what` — one paragraph stating what the topic is.
@@ -57,7 +57,7 @@ A partially completed topic later closes the normal way (see below).
 A topic may be closed only when **all three** hold:
 
 - **Its issue is genuinely disposed of** — *fixed*, *shown to be a non-issue* (a measured refutation is a valid resolution), or *consciously dropped with the reason recorded in the file*;
-- **the file itself records HOW** — a `## Resolution` section (or the `## Done so far` a `partial` topic already carries) naming the commits / PR / spec / measurement that disposed of it, and trimming or explicitly labelling any `## Suggested next steps` that no longer apply; **and**
+- **the file itself records HOW** — a `## Resolution` section naming the commits / PR / spec / measurement that disposed of it. A `partial` topic's `## Done so far` is RENAMED to `## Resolution` — its name says the work is unfinished, and the archive holds finished work — and NO `## Suggested next steps` section survives into the archive: a line under that heading reads as pending whatever it says. **and**
 - **it carries no live deferred sub-item** — a remaining "do X when Y" is first split into its own topic (with its `ripe_when:`), because a deferral left inside an archived file is lost.
 
 If only some sub-items are done the topic is `partial`, not resolved (see *Partially completing a topic*). If none are, it stays `open`.
