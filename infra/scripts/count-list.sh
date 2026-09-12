@@ -212,7 +212,7 @@ c_gate_gauge_writes_outside_the_publish_call() { [ -f cli/engine/command.py ] ||
 
 # `--delete` anywhere in the archive pull's module: the mirror keeps every day it ever fetched, which is
 # what makes a mismatch count span days and an empty tree mean the pull has never succeeded.
-c_archive_pull_delete_flags() { grep -nE -- '--delete' cli/archive/command.py | grep -vE '^[0-9]+:[[:space:]]*#' | wc -l; }
+c_archive_pull_delete_flags() { [ -f cli/archive/command.py ] || return 2; grep -nE -- '--delete' cli/archive/command.py | grep -vE '^[0-9]+:[[:space:]]*#' | wc -l; }
 
 # A deployed `--cache` naming a path outside `/tmp/`: wider than the bullet's "a path both hosts reach",
 # which is the direction that never under-reports the siting the cross-host poisoning rule forbids.
@@ -232,21 +232,30 @@ c_engine_hosts_besides_the_primary() {
   uv run python - <<'INV'
 import yaml
 groups = yaml.safe_load(open("infra/ansible/inventory/hosts.yml"))["all"]["children"]
-members, stack = set(), [groups["engine_host"]]
+groups["engine_host"]  # a KeyError here is the group gone, which must be loud rather than a zero
+members, seen, stack = set(), set(), ["engine_host"]
 while stack:  # a host reaches the group through a child group too, and it holds the trade key just the same
-    node = stack.pop()
+    name = stack.pop()
+    if name in seen:
+        continue
+    seen.add(name)
+    node = groups.get(name) or {}  # a child is written as a NAME defined under all.children (`ops_host: {}`), not inline
     members |= set(node.get("hosts") or {})
-    stack += list((node.get("children") or {}).values())
+    stack += list(node.get("children") or {})
 print(len(members - {"zcrypto"}))
 INV
 }
 
 # `docker inspect <container>` with no `--format`, the form that prints the whole config -- the live Kraken
-# trade key with it on the engine host. Narrower than the bare command an operator types, which nothing records.
-c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE -- '--format|-f ' | wc -l; }
+# trade key with it on the engine host. Each INVOCATION is read, cut at `;`, `&&` or `|`, so an unscoped inspect
+# beside a formatted command counts; a backticked mention in prose has no operand and does not. Narrower than the
+# bare command an operator types at a prompt, which nothing records.
+c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^\`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^\`;&|][^;&|]*' | grep -vE -- '--format|-f ' | wc -l; }
 
 # The pinned leaves the edge renders, one `file /etc/caddy/pinned-leaves/<name>.pem` line per tracked PEM:
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.
+# Read from the INDEX, while `access_pinned_leaves` globs the filesystem: an untracked PEM in that directory would
+# render and is not counted here, which is the direction that keeps the number reproducible in CI. Left knowingly.
 c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
 
 main() {
