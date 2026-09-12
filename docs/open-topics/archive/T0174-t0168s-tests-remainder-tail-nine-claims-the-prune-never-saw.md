@@ -32,8 +32,6 @@ Verbatim from T0168's `### From the tests/ remainder` section at `7be03116`, eac
 
 ## Resolution
 
-*Pointer note: this topic's `## Done so far` and `## Suggested next steps` sections were folded into this `## Resolution` when it was archived, so a reference to either elsewhere in this file names this section.*
-
 The owner pruned the tail on 2026-09-06, agreeing in full to the coordinator's recommendations. All of it landed on branch `fix/t0174-tests-remainder-tail`.
 
 ### The keeps
