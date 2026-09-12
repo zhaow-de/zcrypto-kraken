@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import html
 import json
 import pathlib
 import re
 import subprocess
 import sys
+import unicodedata
 
 REPO = "zhaow-de/zcrypto-kraken"
 GUARD = pathlib.Path(__file__).with_name("guidance-guard.py")
@@ -15,42 +17,6 @@ JOURNAL = "docs/reference/ops-journal/"
 FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
 READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
 FLOOR = re.compile(r"Claude (Opus|Fable)\b", re.I)
-# The Fable floor is substitutable, and only by a line that says so in the body. An Opus read on a Fable path
-# passes when this line carries a reason -- written where the merge decision is read, so the substitution is
-# visible to whoever opens the PR later, instead of being a gate nobody can see was bypassed.
-SUBSTITUTE = re.compile(r"^Fable floor substituted by Opus: *(\S.*?) *$", re.M)
-# A reason has to be one somebody wrote. These are the strings that arrive when nobody did: the placeholder this
-# repo prints in its own instructions (the sibling READ_LINE arm below refuses `<...>` for the same reason), and
-# the tokens a filler reaches for. A one-word reason is not a reason, hence the length.
-_PLACEHOLDER = re.compile(r"^(?:todo|tbd|n/?a|none|x|\.|-+|reason|why)\b", re.I)
-_MIN_REASON = 12
-# A body is read as a reader sees it: an HTML comment is invisible in the rendered PR (the pull-request template
-# ships one), a fenced block is a quotation of code, and a `>` line is somebody else's text. A floor lifted inside
-# any of the three would be lifted where nobody can see it, which is the property this arm exists for. The same
-# stripping applies to the read line itself: a read claimed inside a comment is a read nobody can check.
-_COMMENT = re.compile(r"<!--.*?-->", re.S)
-_FENCE = re.compile(r"^ {0,3}(?:```|~~~).*?^ {0,3}(?:```|~~~) *$", re.M | re.S)
-
-
-def _as_a_reader_sees_it(body: str) -> str:
-    """The body with what a rendered PR hides removed -- comments, fenced blocks, and quoted lines."""
-    body = _COMMENT.sub("", body)
-    body = _FENCE.sub("", body)
-    return "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
-
-
-def _substitution_reason(body: str) -> str | None:
-    """The stated reason for substituting Opus for the Fable floor, or None when the body states none a reader
-    would accept: hidden from the rendered page, left as the placeholder, or a filler token."""
-    m = SUBSTITUTE.search(_as_a_reader_sees_it(body))
-    if not m:
-        return None
-    reason = m.group(1).strip()
-    if reason.startswith("<") or _PLACEHOLDER.match(reason) or len(reason) < _MIN_REASON:
-        return None
-    return reason
-
-
 FABLE_PATHS = (
     "CLAUDE.md",
     ".claude/",
@@ -59,6 +25,128 @@ FABLE_PATHS = (
     "infra/ansible/roles/capture/",
     "infra/ansible/roles/engine/",
 )
+# The Fable floor is substitutable, and only by a line that says so in the body. An Opus read on a Fable path
+# passes when this line carries a reason -- written where the merge decision is read, so the substitution is
+# visible to whoever opens the PR later, instead of being a gate nobody can see was bypassed.
+SUBSTITUTE = re.compile(r"^Fable floor substituted by Opus: *(\S.*?) *$", re.M)
+# A reason has to be one somebody wrote. These are the strings that arrive when nobody did: the placeholder this
+# repo prints in its own instructions (the sibling READ_LINE arm below refuses `<...>` for the same reason), and
+# the tokens a filler reaches for. The content bar is distinct alphanumerics rather than length, so a short honest
+# reason in any script passes -- `no Fable` and `Fable配額已用盡` are reasons; `aaaaaaaaaaaa` and `............`
+# are not.
+_PLACEHOLDER = re.compile(r"^(?:todo|tbd|n/?a|none|x|reason|why|fill in|placeholder)\b", re.I)
+_MIN_REASON_CHARS = 6
+_MIN_DISTINCT = 3
+# Zero-width and other format characters pad a reason to any length while rendering as nothing, so they go before
+# anything is measured; HTML entities are unescaped first, because `&lt;reason&gt;` renders as the placeholder the
+# `<` check exists to refuse; and NFKC folds the fullwidth forms of the filler tokens onto the tokens themselves.
+_INVISIBLE = re.compile(r"[\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]")
+
+
+def _normalised(reason: str) -> str:
+    reason = unicodedata.normalize("NFKC", html.unescape(reason))
+    return " ".join(_INVISIBLE.sub("", reason).split())
+
+
+def _is_a_stated_reason(reason: str) -> bool:
+    """Whether a reason says something. A determined author can always write a plausible falsehood; what this
+    refuses is the reason nobody wrote -- the placeholder, a filler token, a run of one character."""
+    reason = _normalised(reason)
+    if reason.startswith("<") or _PLACEHOLDER.match(reason):
+        return False
+    if len(reason) < _MIN_REASON_CHARS:
+        return False
+    return len({c.casefold() for c in reason if c.isalnum()}) >= _MIN_DISTINCT
+
+
+# A body is read as a reader sees it, which a pair of regexes cannot do: an unterminated `<!--` hides everything
+# after it in the rendered page, a fence closes only on a run of its own character at least as long as its opener
+# (so a ``` inside a ```` block is content, not a close), and an unterminated fence renders the rest as code. Each
+# of those hid a line from the reader while a regex pass still saw it, and the mirror failure is as bad: a stray
+# line-initial fence, or a `-->` in the author's own prose under the template's comment opener, swallowed a real
+# read line and the gate then refused a legitimate PR for the wrong reason. So the body is walked once, in order,
+# with the state a renderer keeps. `<details>` goes with them: collapsed by default is not visible either.
+_FENCE_OPEN = re.compile(r"^(?P<run>`{3,}|~{3,})")
+
+
+def _as_a_reader_sees_it(body: str) -> str:
+    """The body with everything a rendered PR hides removed: comments (terminated or not), fenced blocks (nested
+    or not), `<details>` blocks, and quoted lines."""
+    visible: list[str] = []
+    fence: str | None = None  # the opening run, when inside a fenced block
+    hidden_to_end = False  # an unterminated comment or details block hides the rest of the document
+    in_comment = False
+    in_details = False
+    for raw in body.splitlines():
+        if hidden_to_end:
+            break
+        line = raw
+        if fence is not None:
+            run = _FENCE_OPEN.match(line.lstrip())
+            if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
+                fence = None
+            continue
+        if in_comment or in_details:
+            closer = "-->" if in_comment else "</details>"
+            if closer not in line:
+                continue
+            line = line.split(closer, 1)[1]
+            in_comment = in_details = False
+        # Comments and details are resolved before fences: inside a fence there is no markup to resolve, and a
+        # fence opener is only an opener when the line is not already hidden.
+        while True:
+            if "<!--" in line:
+                before, rest = line.split("<!--", 1)
+                if "-->" in rest:
+                    line = before + rest.split("-->", 1)[1]
+                    continue
+                visible.append(before)
+                in_comment, hidden_to_end = True, False
+                line = None
+                break
+            if "<details" in line:
+                before, rest = line.split("<details", 1)
+                if "</details>" in rest:
+                    line = before + rest.split("</details>", 1)[1]
+                    continue
+                visible.append(before)
+                in_details = True
+                line = None
+                break
+            break
+        if line is None:
+            continue
+        run = _FENCE_OPEN.match(line.lstrip())
+        if run:
+            fence = run.group("run")
+            continue
+        if line.lstrip().startswith(">"):
+            continue
+        visible.append(line)
+    return "\n".join(visible)
+
+
+def _hidden_hint(body: str, pattern: re.Pattern[str]) -> str:
+    """A clause for the refusal when the line IS in the body and is hidden from the rendered page. Without it the
+    gate reports the line as missing, and an author looking straight at it has no way to tell what happened."""
+    if pattern.search(body) and not pattern.search(_as_a_reader_sees_it(body)):
+        return (
+            " — the line is in the body but hidden from the rendered page: an HTML comment (terminated or not), a "
+            "fenced block, or a quoted line"
+        )
+    return ""
+
+
+def _substitution_reason(body: str) -> str | None:
+    """The stated reason for substituting Opus for the Fable floor, or None when the body states none a reader
+    would accept. Every occurrence is considered, not the first: a leftover placeholder line above a filled one is
+    the natural accident once the line is instructed as a template, and it must not refuse the filled one."""
+    for m in SUBSTITUTE.finditer(_as_a_reader_sees_it(body)):
+        if _is_a_stated_reason(m.group(1)):
+            return _normalised(m.group(1))
+    return None
+
+
 _DONE = ("SUCCESS", "NEUTRAL", "SKIPPED")
 _BAD = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STARTUP_FAILURE")
 
@@ -82,7 +170,10 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
     head = pr.get("headRefOid") or ""
     m = READ_LINE.search(_as_a_reader_sees_it(body))
     if not m or m.group(1).strip().startswith("<"):
-        return ["no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"]
+        return [
+            "no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"
+            + _hidden_hint(body, READ_LINE)
+        ]
     model, sha = m.group(1).strip(), m.group(2)
     family = FLOOR.match(model)
     if not family:
@@ -98,6 +189,15 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
             return [
                 f"the read named in the body was by {model!r}, and the PR touches {touched[0]}{more}: the floor there is "
                 f"Claude Fable, or a body line 'Fable floor substituted by Opus: <reason>' saying why it is not available"
+                + (
+                    _hidden_hint(body, SUBSTITUTE)
+                    or (
+                        " — the body carries the line, and its reason is the placeholder, a filler token, or too "
+                        "little to be a reason"
+                        if SUBSTITUTE.search(_as_a_reader_sees_it(body))
+                        else ""
+                    )
+                )
             ]
     if head.startswith(sha):
         return []
@@ -190,7 +290,7 @@ def main(argv: list[str]) -> int:
     number = argv[1:2]
     pr = json.loads(_gh("pr", "view", *number, "--json", FIELDS))
     head_commit = files = None
-    m = READ_LINE.search(pr.get("body") or "")
+    m = READ_LINE.search(_as_a_reader_sees_it(pr.get("body") or ""))
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()

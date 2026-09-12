@@ -202,6 +202,88 @@ def test_a_substitution_a_reader_cannot_see_does_not_lift_the_floor(shape, body_
     assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0], shape
 
 
+@pytest.mark.parametrize(
+    ("shape", "body"),
+    [
+        (
+            "an unterminated comment, which hides the rest of the rendered page",
+            "## Summary\n\n{read}\n\n<!-- note to self\n{line}\n",
+        ),
+        ("a marker under an unterminated opener", "## Summary\n\n{read}\n\n<!-- \n\n{line}\n\nmore prose\n"),
+        (
+            "a ``` block nested inside a ```` block, which is how this feature gets documented",
+            "## Summary\n\n{read}\n\n````\n```\n{line}\n```\n````\n\n- [x] done\n",
+        ),
+        ("an unterminated fence, which renders the rest as code", "## Summary\n\n{read}\n\n```\n{line}\n"),
+        (
+            "a <details> block, collapsed until somebody clicks it",
+            "## Summary\n\n{read}\n\n<details><summary>why</summary>\n{line}\n</details>\n\n- [x] done\n",
+        ),
+    ],
+)
+def test_no_delimiter_shape_hides_a_substitution_from_the_gate(shape, body):
+    """The first pass at this used two regexes and each of these got past it. A renderer keeps state; so does the
+    walk now, which is why an unterminated opener hides to the end of the document here as it does there."""
+    filled = body.format(
+        read=f"Read before push by: Claude Opus 5 at {TIP}",
+        line="Fable floor substituted by Opus: the account's Fable limit is reached",
+    )
+    fails = _eval(_pr(body=filled), files=["cli/engine/journal.py"])
+    assert fails, shape
+    assert any("Claude Fable" in f or "unrecorded" in f for f in fails), (shape, fails)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "&lt;reason&gt;",  # renders as the placeholder itself, so the `<` check has to see through the escape
+        "\uff34\uff2f\uff24\uff2f fill in later",  # fullwidth TODO, which NFKC folds onto the token
+        "aaaaaaaaaaaa",
+        "!!!!!!!!!!!!",
+        "-------------",
+        ".... ---- ....",
+        "fill in",
+        "placeholder",
+    ],
+)
+def test_a_reason_with_no_content_does_not_lift_the_floor(reason):
+    """Length was the wrong bar: it admitted a run of one character and rejected an honest short answer. The bar
+    is distinct alphanumerics, after unescaping, NFKC and dropping the zero-width padding."""
+    fails = _eval(_pr(body=_read_by_opus_with_substitution(reason)), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0]
+
+
+@pytest.mark.parametrize("reason", ["no Fable", "Fable\u914d\u984d\u5df2\u7528\u76e1", "quota exhausted"])
+def test_a_short_honest_reason_in_any_script_lifts_the_floor(reason):
+    """The mirror of the case above, and the reason the bar is not length: two true words, or a dense script, must
+    not be refused for being brief."""
+    assert _eval(_pr(body=_read_by_opus_with_substitution(reason)), files=["cli/engine/journal.py"]) == []
+
+
+def test_a_leftover_placeholder_line_does_not_refuse_the_filled_one():
+    """Once the line is instructed as a fill-in template, a leftover above a filled one is the natural accident:
+    every occurrence is considered, not the first."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "Fable floor substituted by Opus: <reason>\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
+def test_the_refusal_says_when_the_line_is_there_but_hidden():
+    """An author looking straight at the line needs to be told it is invisible, not that it is missing."""
+    body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "hidden from the rendered page" in fails[0]
+
+
+def test_the_refusal_distinguishes_a_bad_reason_from_a_missing_line():
+    """The other diagnostic: the line is visible and the reason is not one, which is a different fix."""
+    fails = _eval(_pr(body=_read_by_opus_with_substitution("TODO")), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "its reason is the placeholder" in fails[0]
+
+
 def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():
     """The same stripping applies to the read line: a read claimed inside a comment is a read nobody can check."""
     body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
