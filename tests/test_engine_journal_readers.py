@@ -19,9 +19,12 @@ CLI = REPO / "cli"
 # One row per `from_json` call site under `cli/`: the function it sits in, and how that site gets the guarantee.
 # `"validates"` means `validate_record` is called on the record in the same function. `"replays"` means the site
 # hands the record to `concordance.replay_cycle`, which validates -- it does NOT mean every branch of the site
-# replays: `_evaluate_journal` scores from the gate cache when the evidence fingerprint hits, and that fingerprint
-# does not cover the three fields `validate_record` alone checks. Any other value is the reason this reader needs
-# neither, and it is checked against the site's own code below.
+# replays: `_evaluate_journal` scores from the gate cache when the evidence fingerprint hits. That fingerprint
+# (`gate_cache.evidence_fingerprint`) covers every snapshot field, `cycle_ts`, `completed_at` and `final_targets`,
+# and nothing else -- `schema_version`, `closes`, `nav`, `held`, `started_at`, `code_version` and `builder_path`
+# sit outside it, so a record whose `closes` gained a zero, or whose `schema_version` changed, keeps its
+# fingerprint and carries a cached PASS a real replay would have refused. Any other value is the reason this
+# reader needs neither, and it is checked against the site's own code below.
 READERS = {
     ("cli/engine/command.py", "_evaluate_journal"): "replays",
     ("cli/engine/command.py", "replay"): "replays",
