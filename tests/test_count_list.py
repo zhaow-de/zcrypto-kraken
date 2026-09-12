@@ -84,6 +84,25 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_an_empty_pr_fetch_is_an_error_rather_than_perfect_compliance(tmp_path):
+    """The fetch that certainly measured nothing used to print 0. `gh pr list` returns `[]` with rc 0 for a base
+    branch that does not exist, a changed `--base`, or a token that cannot see PRs, so the emptiness does not
+    announce itself -- and 0 here reads as every merged PR carrying its read line."""
+    snapshot = tmp_path / "prs.json"
+    snapshot.write_text("[]")
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
+        timeout=120,
+    )
+    assert done.returncode == 2, f"an empty fetch must be an error, got rc {done.returncode}: {done.stdout}"
+    assert "no rows at all" in done.stderr, done.stderr
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_saturated_pr_fetch_is_an_error_rather_than_an_under_count(tmp_path):
     """Every row inside the window means the fetch stopped there: rows below it were never seen, so the count
     would under-report by however many it missed. 204 PRs against a --limit 200 is how this read 184 and called
