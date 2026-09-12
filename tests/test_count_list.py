@@ -66,6 +66,9 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
         {"headRefName": "feat/b", "mergedAt": stamp, "body": "Read before push by: Claude Haiku 4.5 at 22ac48df\n"},
         {"headRefName": "ops-journal", "mergedAt": stamp, "body": "## 2026-09\n"},
         {"headRefName": "feat/c", "mergedAt": stamp, "body": "## Summary\n"},
+        # Older than the window on purpose: it is BELOW the floor, so it is not counted, and its presence is what
+        # tells the counter the fetch reached past the window rather than stopping inside it.
+        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "body": "## Summary\n"},
     ]
     snapshot = tmp_path / "prs.json"
     snapshot.write_text(json.dumps(prs))
@@ -78,6 +81,27 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
         timeout=120,
     )
     assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t2\n", done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_saturated_pr_fetch_is_an_error_rather_than_an_under_count(tmp_path):
+    """Every row inside the window means the fetch stopped there: rows below it were never seen, so the count
+    would under-report by however many it missed. 204 PRs against a --limit 200 is how this read 184 and called
+    it a measurement."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    prs = [{"headRefName": f"feat/{i}", "mergedAt": stamp, "body": "## Summary\n"} for i in range(3)]
+    snapshot = tmp_path / "prs.json"
+    snapshot.write_text(json.dumps(prs))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
+        timeout=120,
+    )
+    assert done.returncode == 2, f"a saturated fetch must be an error, got rc {done.returncode}: {done.stdout}"
+    assert "saturated" in done.stderr, done.stderr
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")

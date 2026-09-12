@@ -80,11 +80,25 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # line naming a model below the floor counts as no read, the same as the gate reads it. The line may sit
 # anywhere in the body: jq's "m" flag is dot-all, not line anchoring, so the anchor is a literal newline.
 # COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
+# The window starts where the RULE starts: the read line entered the PR template at 1736d7b96 (2026-09-10T11:52Z)
+# and the gate's arm at 600b364d1 the same afternoon. A PR merged before that breaks no rule, and 183 of them
+# inside the 30-day window buried the compliance this entry exists to measure. The clause expires on its own once
+# the rolling window clears that date.
+READ_LINE_RULE_SINCE="2026-09-10T11:52:00Z"
 c_merged_prs_without_a_floor_read() {
-  local prs
+  local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
-  else prs="$(timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt,headRefName)" || return 2; fi
-  printf '%s' "$prs" | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}") | not)] | length'
+  else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 --json body,mergedAt,headRefName)" || return 2; fi
+  floor="$(printf '%s' "$prs" | jq -r --arg since "$READ_LINE_RULE_SINCE" '[(now - 2592000 | todate), $since] | max')" || return 2
+  # A saturated fetch cannot answer. If the OLDEST row fetched is still inside the window, rows below it were
+  # never fetched and the count would silently under-report -- 204 PRs sat in the window against a --limit 200,
+  # which is how this read 184 and called it a measurement. An unknowable count is an error, never a number.
+  oldest="$(printf '%s' "$prs" | jq -r '[.[] | .mergedAt] | min // "none"')" || return 2
+  if [ "$oldest" != "none" ] && [ "$oldest" \> "$floor" ]; then
+    echo "count-list: the merged-PR fetch is saturated -- its oldest row ($oldest) is inside the window ($floor), so rows are missing" >&2
+    return 2
+  fi
+  printf '%s' "$prs" | jq --arg floor "$floor" '[.[] | select(.mergedAt >= $floor) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}") | not)] | length'
 }
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
