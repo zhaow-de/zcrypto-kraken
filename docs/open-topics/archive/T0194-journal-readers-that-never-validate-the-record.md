@@ -20,7 +20,7 @@ A record reaching a consumer by a route that skipped `validate_record` carried n
 
 - **The census at the time.** `validate_record` had four production call sites: `cli/engine/concordance.py`, `cli/engine/cycle.py` (the writer, before journaling), `cli/engine/feeders.py`, and `cli/engine/soak.py` — the last on `latest_record` alone, never on the scored records it compares against.
 - **The enumeration, by an `ast` walk of `cli/` rather than by grep: seven production readers call `from_json`.** Four were unguarded — `command.py`'s `_window_records`, `cycle.py`'s `_previous_success`, `executor.py`'s `_cycle_records_through`, `soak.py`'s `soak_report`, two of them on the live trade path. Two replay each record through `concordance.replay_cycle`, which validates. One reads `completed_at` alone, for a startup gauge.
-- Moving validation into the read would reverse a documented design decision rather than fill a gap, and its blast radius is every consumer of a journal artifact on the live trade path: an artifact that loads today would start raising. That is what settled the layer.
+- Moving validation into the read would have reversed a documented design decision rather than filled a gap, and its blast radius was every consumer of a journal artifact on the live trade path: an artifact that loaded then would have started raising. That is what settled the layer.
 
 ## Resolution
 

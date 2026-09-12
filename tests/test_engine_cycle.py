@@ -573,8 +573,14 @@ def test_first_cycle_orders_start_flat(tmp_path, monkeypatch):
 
 def _success_record_json(boundary: datetime, targets: dict[str, float], *, schema_version: int = SCHEMA_VERSION) -> str:
     """A previous-record fixture. `run_cycle` reads only `final_targets` back, but the predecessor read validates
-    (T0194), so the record has to be one the writer could have journaled: both grids per pair, keyed for its own
-    schema, and a snapshot window of more than one bar."""
+    (T0194), so the record has to PASS `validate_record`: both grids per pair, keyed for its own schema, both
+    no-peek boundaries, and a snapshot window of more than one bar.
+
+    It is not a record the writer could have emitted, and does not need to be: the digest is a placeholder and
+    the 4h entries declare two bars over 24 hours, where the writer sets `n_bars=len(union_ts)` over the real
+    window. Nothing these cases reach recomputes either -- the only snapshot field read on this path is the 4h
+    `last_ts`. A test that recomputes the digest or cross-checks `n_bars` needs a fixture built by the writer's
+    own arithmetic, not this one."""
     pairs = sorted(targets) or (["BTC"] if schema_version == 1 else ["BTC/EUR"])
     # validate_record's no-peek invariant: the 4h snapshot ends at cycle_ts - 4h, the daily one at (last
     # midnight <= cycle_ts) - 1d.
