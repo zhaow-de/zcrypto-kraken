@@ -1,6 +1,6 @@
 export const meta = {
   name: 're-review',
-  description: 'Scoped read of a fix range against a prior review: every prior finding closed by a hunk that answers its class, consciously left, or open; new findings refuted by two skeptics',
+  description: 'Read a fix range against a prior review: each prior finding closed at its class, left, or open',
   whenToUse: 'After the fixes a review asked for, before push. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], left, grading, reportDir, model?}',
   phases: [
     { title: 'Re-read', detail: 'one reader over the fix range with the prior findings' },

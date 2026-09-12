@@ -1,6 +1,6 @@
 export const meta = {
   name: 'review',
-  description: 'Review a diff range: one reader per lens on the caller\'s model, in parallel, a union at maximum severity, two skeptics on every Critical and Important',
+  description: 'Read a diff range: one reader per lens, two skeptics on every Critical or Important',
   whenToUse: 'The read a different agent from the author owes a branch before push. args: {repo, range, tip, lenses: [{name, brief}], grading, reportDir, model?}',
   phases: [
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
