@@ -29,8 +29,6 @@ Delivered across PRs #350, #352, #353, #354, #355 and the `ops-journal` branch: 
 
 **Both delays earned themselves.** The first live run found a log plane that had never worked — Loki queried on Prometheus's path, 404, invisible to a green suite because no test asserted a URL. The first pass found the journal paragraph summing only ERROR/CRITICAL, which would have recorded the day's only finding as "0 lines". Neither was reachable by review; both needed the thing to actually run.
 
-**One observation left open, and deliberately not held here**: the capture WARNING volume arrives in ~600-line bursts rather than continuously, with resubscribes and desyncs at 0, so it is not the post-restart replay the rollout skill attributes those lines to. Integrity is intact (gap seconds 0, gate streak 50). It is recorded in the journal entry and carried into tomorrow's reminder for a second data point; it is an operational finding the pass produced, not an unbuilt part of this topic.
-
 **What had landed before the close**, in the detail the delivery recorded:
 
 Delivered on `feat/t0157-day2-runbooks-daily-ops` (spec `00104`, plan `00104`, changelog `iter-156`):
@@ -44,3 +42,9 @@ Delivered on `feat/t0157-day2-runbooks-daily-ops` (spec `00104`, plan `00104`, c
 - **The alerts and the checks carry their runbook links on the LIVE stack, and the first pass has run.** Grafana, from merged `develop`: 79 → 83 rules, 27 → 83 carrying a `Runbook:` link, 0 without; orphan report clean; every rule a valid `noDataState`. healthchecks: 10 of 10 descriptions written, all resolving, none carrying an internal token — the three that pre-existed all did. The pass then ran end to end and returned **all-clear (exit 0)**, its entry committed to the standing `ops-journal` branch.
 - **Day one earned its place twice over.** The journal paragraph summed only ERROR/CRITICAL, so the day's only finding — 1802 WARNING lines across the capture pair — would have been written as "logs 0 ERROR/CRITICAL lines", the journal reproducing inside itself the silence it exists to prevent. And writing the ten descriptions *from* the dead-man map found a cross-reference pointing at the wrong file, in a direction 28 references wide that nothing guarded. Both fixed and guarded.
 - **One measurement left open deliberately**: the capture WARNING volume arrives in two ~600-line bursts 16 h apart, with resubscribes, resubscribe errors and desyncs all reading 0 — so it is not the post-restart replay the rollout skill attributes those lines to. Integrity intact (gap seconds 0, gate streak 50). Recorded in the journal; no metric moved, no page owed.
+
+## Remaining open
+
+*Carried out of the Resolution above by the owner's ruling of 2026-09-12, which permits a historical archived topic to name what is still open in its own section rather than have it read as resolved. This is a workaround for files closed before the rule, not a shape a new topic may take: a topic that closes with a live item still splits that item out before it is archived.*
+
+**One observation left open, and deliberately not held here**: the capture WARNING volume arrives in ~600-line bursts rather than continuously, with resubscribes and desyncs at 0, so it is not the post-restart replay the rollout skill attributes those lines to. Integrity is intact (gap seconds 0, gate streak 50). It is recorded in the journal entry and carried into tomorrow's reminder for a second data point; it is an operational finding the pass produced, not an unbuilt part of this topic.
