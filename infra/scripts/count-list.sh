@@ -232,17 +232,33 @@ c_verified_versions_without_a_pass_record() { jq -r '.verified_nautilus_versions
 c_engine_hosts_besides_the_primary() {
   uv run python - <<'INV'
 import yaml
-groups = yaml.safe_load(open("infra/ansible/inventory/hosts.yml"))["all"]["children"]
-groups["engine_host"]  # a KeyError here is the group gone, which must be loud rather than a zero
-members, seen, stack = set(), set(), [("engine_host", None)]
+
+inventory = yaml.safe_load(open("infra/ansible/inventory/hosts.yml"))["all"]
+index: dict[str, dict] = {}
+
+
+def collect(groups):
+    """Every group by name, wherever the file defines it and however often -- a group's body may sit under
+    `all.children`, nested inside another group, or be split across both, and Ansible merges them all."""
+    for name, node in (groups or {}).items():
+        node = node or {}
+        entry = index.setdefault(name, {"hosts": {}, "children": {}})
+        entry["hosts"].update(node.get("hosts") or {})
+        entry["children"].update({child: (body or {}) for child, body in (node.get("children") or {}).items()})
+        collect(node.get("children"))
+
+
+collect(inventory.get("children"))
+index["engine_host"]  # a KeyError here is the group gone, which must be loud rather than a zero
+members, seen, stack = set(), set(), ["engine_host"]
 while stack:  # a host reaches the group through a child group too, and it holds the trade key just the same
-    name, inline = stack.pop()
+    name = stack.pop()
     if name in seen:
         continue
     seen.add(name)
-    for node in (groups.get(name) or {}, inline or {}):  # a child is a NAME under all.children (`ops_host: {}`) and MAY carry an inline body; read both, never one or the other
-        members |= set(node.get("hosts") or {})
-        stack += list((node.get("children") or {}).items())
+    node = index.get(name) or {"hosts": {}, "children": {}}
+    members |= set(node["hosts"])
+    stack += list(node["children"])
 print(len(members - {"zcrypto"}))
 INV
 }
