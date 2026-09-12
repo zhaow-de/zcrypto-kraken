@@ -173,7 +173,7 @@ The daemon said something is wrong, and the message is the routing. Anything not
 ### What to do
 
 1. **Read the `msg` label on the page and route with the table above.** The owning section, not this one, carries the fix.
-2. **Widen when the page truncated.** Grafana Explore, Loki: `{host="<host>", container="capture", level=~"ERROR|CRITICAL"}` over the last hour. That is the unbounded read: `topk(5, …)` bounded the page, never the stream (no count command: the `topk` is in `infra/grafana/alerts.yaml`'s `zcrypto-capture-error-logs` expr alone).
+2. **Widen when the page truncated.** Grafana Explore, Loki: `{host="<host>", container="capture", level=~"ERROR|CRITICAL"}` over the last hour. That is the unbounded read: `topk(5, …)` bounded the page, never the stream (no count command: the `topk(5, …)` bounding THIS page is in `infra/grafana/alerts.yaml`'s `zcrypto-capture-error-logs` expr; its two sibling log rules bound their own the same way).
 3. **Or read it on the host**: `sudo docker logs zcrypto-capture 2>&1 | grep "<a distinctive phrase from the page>"`. Scope by reading the timestamp the daemon's own logger stamps on each record, never with a bare `--since HH:MM:SS` (see the stuck-pair section's step 1) (no count command: `cli/logging/formatters.py`'s `PlainTextFormatter` stamps UTC; a hand `--since` goes unrecorded).
 4. **Print the input's line count before trusting any zero.** An empty filtered query is never a proven absence (no count command: trusting a zero is an operator's read nothing in the tree records); require a positive trace first.
 5. **Nothing here is fixed by restarting the daemon.** The message names the fix, and a capture-daemon stop is an attended action that costs live, unbackfillable L2.
