@@ -143,7 +143,8 @@ def test_parse_ts_raises_capture_error_on_garbage():
 def test_capture_help_lists_options():
     result = runner.invoke(app, ["capture", "--help"])
     assert result.exit_code == 0
-    # Strip ANSI: when the terminal reports color (e.g. CI with FORCE_COLOR), rich styles option
+    # Strip ANSI: wherever rich styles the panel -- `GITHUB_ACTIONS=true` alone does, which is what CI trips since
+    # .github/workflows/coverage.yml sets no colour variable, and `FORCE_COLOR=1` does too -- rich styles option
     # names with escape codes *between* characters (`-`<esc>`-pairs`), so a raw substring check for
     # "--pairs" fails even though it renders. Normalize before asserting.
     output = _ANSI_RE.sub("", result.output)
