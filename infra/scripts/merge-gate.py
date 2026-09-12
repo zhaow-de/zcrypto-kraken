@@ -15,6 +15,10 @@ JOURNAL = "docs/reference/ops-journal/"
 FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
 READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
 FLOOR = re.compile(r"Claude (Opus|Fable)\b", re.I)
+# The Fable floor is substitutable, and only by a line that says so in the body. An Opus read on a Fable path
+# passes when this line carries a reason -- written where the merge decision is read, so the substitution is
+# visible to whoever opens the PR later, instead of being a gate nobody can see was bypassed.
+SUBSTITUTE = re.compile(r"^Fable floor substituted by Opus: *(\S.*?) *$", re.M)
 FABLE_PATHS = (
     "CLAUDE.md",
     ".claude/",
@@ -57,10 +61,11 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
         if files is None:
             return ["the PR's file list was not fetched, so the paths that need a Fable read cannot be checked"]
         touched = _fable_paths_touched(files)
-        if touched:
+        if touched and not SUBSTITUTE.search(body):
             more = f" and {len(touched) - 1} more" if len(touched) > 1 else ""
             return [
-                f"the read named in the body was by {model!r}, and the PR touches {touched[0]}{more}: the floor there is Claude Fable"
+                f"the read named in the body was by {model!r}, and the PR touches {touched[0]}{more}: the floor there is "
+                f"Claude Fable, or a body line 'Fable floor substituted by Opus: <reason>' saying why it is not available"
             ]
     if head.startswith(sha):
         return []

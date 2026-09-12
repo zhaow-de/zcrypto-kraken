@@ -142,7 +142,43 @@ def test_an_opus_read_passes_off_the_guarded_paths():
 )
 def test_an_opus_read_on_a_guarded_path_fails(path):
     fails = _eval(_pr(body=_read_by("Claude Opus 4.8")), files=["cli/costs/schedule.py", path])
-    assert len(fails) == 1 and path in fails[0] and fails[0].endswith("the floor there is Claude Fable")
+    assert len(fails) == 1 and path in fails[0] and "the floor there is Claude Fable" in fails[0]
+    assert "Fable floor substituted by Opus" in fails[0], "the refusal names the one line that lifts it"
+
+
+def _read_by_opus_with_substitution(reason: str) -> str:
+    return f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\nFable floor substituted by Opus: {reason}\n\n- [x] done\n"
+
+
+@pytest.mark.parametrize("path", ["CLAUDE.md", ".claude/rules/fleet-deploys.md", "cli/engine/journal.py", "cli/capture/daemon.py"])
+def test_the_substitution_line_admits_an_opus_read_on_a_guarded_path(path):
+    """The Fable floor is substitutable and only in the open: the body says the substitution happened and why, so
+    whoever opens the PR afterwards reads it there rather than having to notice a gate nobody ran."""
+    body = _read_by_opus_with_substitution("the account's Fable limit is reached; the owner authorised Opus")
+    assert _eval(_pr(body=body), files=["cli/costs/schedule.py", path]) == []
+
+
+def test_the_substitution_line_needs_a_reason():
+    """A bare marker would be a switch anyone could flip without saying anything; the reason is the whole point."""
+    body = f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\nFable floor substituted by Opus:\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor there is Claude Fable" in fails[0]
+
+
+def test_the_substitution_line_does_not_lower_the_floor_below_opus():
+    """It substitutes for FABLE, never for the Opus floor every PR has: a cheaper read stays refused with it."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Haiku 4.5 at {TIP}\n\n"
+        f"Fable floor substituted by Opus: the Fable limit is reached\n\n- [x] done\n"
+    )
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "the floor is Claude Opus" in fails[0]
+
+
+def test_the_substitution_line_is_inert_where_no_guarded_path_is_touched():
+    """It lifts one arm and adds nothing: a PR that never needed a Fable read is judged exactly as before."""
+    body = _read_by_opus_with_substitution("not needed here")
+    assert _eval(_pr(body=body), files=["cli/costs/schedule.py"]) == []
 
 
 def test_a_look_alike_path_is_not_guarded():
