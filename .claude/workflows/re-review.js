@@ -24,8 +24,8 @@ const FINDING = {
   type: 'object',
   properties: {
     severity: { type: 'string', enum: ['Critical', 'Important', 'Minor'] },
-    path: { type: 'string' },
-    line: { type: 'integer' },
+    path: { type: 'string', description: 'repo-relative path, or a commit sha for a message finding' },
+    line: { type: 'integer', description: '1-based line, 0 when the finding has no line' },
     claim: { type: 'string' },
     evidence: { type: 'string' },
     consequence: { type: 'string' },
@@ -79,7 +79,7 @@ ${priorList}
 
 What the author names as consciously left, each by prior id with its reason (the reason is a claim this read rests on: check it against the tree): ${left || 'nothing'}
 
-Read \`git diff ${range}\` first, then each commit message; a claim a message makes is re-measured when the range's correctness rests on it — a mutation verdict re-run with the exact strings the message quotes, a number re-derived by a command you quote; a claim about a file the range does not touch is read, not re-run, and the full suite is CI's to run, not yours; a claim you neither re-measured nor read is named with why the range does not rest on it, so a scoped read is distinguishable from a skipped one. A verdict a message names without the command that produced it has not been shown, and a check whose failure would have looked like success — a probe whose failing output nobody read, a grep whose miss prints nothing, an install whose output was suppressed — has not been run, whatever the message says: each is a finding at the commit, Important, never a probe of your own choosing. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of — the sibling spellings, the other carriers of the same claim, the other branches of the same condition — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself — a wrong number, a dangling reference, a sentence that contradicts its own file — say that instead, and say why nothing else carries it; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree; a left whose reason does not hold is open, the reason's failure being why), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, not again under findings, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding. Write a Markdown report to ${reportDir}/re-review.md with \`## Counts\`, \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\`, \`## Claims\` (one row per claim a message makes: re-measured with its command, read with what was read, or declined with why the range does not rest on it) and \`## Executed\`, then return the structured output; the report and the structure must agree.`
+Read \`git diff ${range}\` first, then each commit message; a claim a message makes is re-measured when the range's correctness rests on it — a mutation verdict re-run with the exact strings the message quotes, a number re-derived by a command you quote; a claim about a file the range does not touch is read, not re-run, and the full suite is CI's to run, not yours; a claim you neither re-measured nor read is named with why the range does not rest on it, so a scoped read is distinguishable from a skipped one. A verdict a message names without the command that produced it has not been shown, and a check whose failure would have looked like success — a probe whose failing output nobody read, a grep whose miss prints nothing, an install whose output was suppressed — has not been run, whatever the message says: each is a finding at the commit, graded as the grading above grades a claim that does not reproduce (Important where it is silent), never a probe of your own choosing. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of — the sibling spellings, the other carriers of the same claim, the other branches of the same condition — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself — a wrong number, a dangling reference, a sentence that contradicts its own file — say that instead, and say why nothing else carries it; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree; a left whose reason does not hold is open, the reason's failure being why), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, not again under findings, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding. Write a Markdown report to ${reportDir}/re-review.md with \`## Counts\`, \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\`, \`## Claims\` (one row per claim a message makes: re-measured with its command, read with what was read, or declined with why the range does not rest on it) and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
 const refutePrompt = (f, k) => `You are skeptic ${k + 1} of 2. ${common(`refute-${f.id}-${k + 1}`)}
 
@@ -87,7 +87,7 @@ A reader graded this ${f.severity}: at \`${f.path}:${f.line}\` — ${f.claim}
 Its evidence: ${f.evidence}
 Its consequence: ${f.consequence}
 
-Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip. Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
+${f.priorId ? `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is the reader's reason, the evidence above.\n\n` : ''}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip. Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')
@@ -108,13 +108,13 @@ const open = [...report.prior.filter((p) => p.status === 'open').map((p) => p.id
 const RANK = { Critical: 3, Important: 2, Minor: 1 }
 const byId = new Map(prior.map((p) => [p.id, p]))
 // A reopened prior goes to the skeptics as the reader's reason it is open -- a standing sibling, a left reason that fails -- not as the instance first graded, which the fix may well have answered.
-const reopened = open.filter((id) => byId.has(id)).map((id) => { const why = (report.prior.find((p) => p.id === id) || { by: 'the reader did not account for it' }).by; return { ...byId.get(id), claim: `prior #${id} stands open: ${why}`, evidence: `the finding as first graded: ${byId.get(id).claim}`, consequence: 'the prior finding stands', priorId: id } })
+const reopened = open.filter((id) => byId.has(id)).map((id) => { const why = (report.prior.find((p) => p.id === id) || { by: 'the reader did not account for it' }).by; return { ...byId.get(id), claim: `prior #${id} stands open`, evidence: why, consequence: 'the prior finding stands', priorId: id, firstGrading: byId.get(id).claim } })
 const findings = [...report.findings, ...reopened].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ ...f, id: i + 1 }))
 const count = (sev, list) => list.filter((f) => f.severity === sev).length
 const claimsOf = (kind) => report.messageClaims.filter((c) => c.disposition === kind).length
 log(`prior: ${report.prior.filter((p) => p.status === 'closed').length} closed, ${report.prior.filter((p) => p.status === 'left').length} left, ${open.length} open; new: ${count('Critical', findings)} Critical / ${count('Important', findings)} Important / ${count('Minor', findings)} Minor; message claims: ${claimsOf('re-measured')} re-measured, ${claimsOf('read')} read, ${claimsOf('declined')} declined`)
 
-// --- Refute the new Criticals and Importants -----------------------------------------------------
+// --- Refute the Criticals and Importants, new or reopened -----------------------------------------------------
 phase('Refute')
 const graded = (
   await parallel(
