@@ -4,6 +4,8 @@ status: resolved
 
 # Every `config.alloy` change is silently skipped by ordinary capture converges
 
+**Correction (2026-09-12, T0179):** the recreate statements in this file describe the SINGLE-FILE mount world. Since the directory mount below landed, a `/-/reload` re-reads the config, and both roles' drift refusals now say so; a recreate is the remedy for a rotated credential only. An operator arriving here from a `fail_msg` pointer should read the recreate lines as the record of what was true then.
+
 ## Context — what
 
 Found 2026-07-28 while checking whether [[T0105]]'s `ripe_when:` trigger was satisfiable. It is not, and the reason is a deploy gate, not a missing metric.

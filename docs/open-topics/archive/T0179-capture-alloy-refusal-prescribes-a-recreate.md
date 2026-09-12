@@ -31,17 +31,17 @@ reloads a RUNNING Alloy, which is all this refusal needs, and if the container i
 new file because no task here starts it. The wording is the ops twin's, already on develop, with
 `capture_alloy_digest` for `ops_alloy_digest`.
 
-Each link the topic asserts was re-checked on the capture role rather than carried over from the ops side, since
-a shared phrase is not a shared mechanism:
+Each link `## Findings so far` asserts was re-checked on the capture role at this tip rather than carried over
+from the ops side, since a shared phrase is not a shared mechanism. The recreate knowledge stays in the handler
+comment, where someone rotating a credential meets it.
 
-- the copy at `install the alloy pipeline config` carries `notify: reload alloy`;
-- that handler POSTs `/-/reload` with `status_code: [200, -1]`, so a DOWN Alloy passes the reload as a connection
-  failure — which is why the second half of the correction is load-bearing and "nothing further is needed" would
-  have been false;
-- the recreate knowledge stays in the handler comment, where someone rotating a credential meets it: a reload
-  does not re-read `alloy-secrets.env`, which is process-level.
+**One premise the topic did not name, and the whole correction rests on it:** a reload only reaches the process
+because `alloy-compose.yaml.j2` mounts `./conf:/etc/alloy:ro`, a DIRECTORY. Under a single-file bind the reload
+re-reads a pinned stale inode and still returns 200, which would make this `fail_msg` false while looking right.
+That mount is the structural fix [[T0109]] landed, and `tests/test_infra_compose_templates.py` holds it:
+`test_the_alloy_config_is_never_bind_mounted_as_a_single_file`.
 
-The sentence before the refusal is untouched, as the topic asks: the `when:` guard exists so a run carrying the
+The sentence before the refusal is untouched: the `when:` guard exists so a run carrying the
 digest is never asserted against before its copy runs, and that re-run IS the remedy the guard keeps open.
 
 **The unblocking, recorded because the trigger named it:** this topic's `ripe_when` first arm was "a session
