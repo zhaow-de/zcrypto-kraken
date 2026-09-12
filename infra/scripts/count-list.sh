@@ -107,6 +107,12 @@ c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || ret
 
 c_topics_without_a_trigger() { grep -L '^ripe_when:' docs/open-topics/T*.md | wc -l; }
 
+# The bullets and numbered steps of the top-level runbook pages, this list's own README aside: an internal token --
+# `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`, `D<N>` -- inside one is a reference an operator who
+# reached the page from an alert description cannot resolve. A paragraph, a table row and a declaration's why may
+# carry one; the classes and the path exemption are `tests/test_internal_terms_not_operator_visible.py`'s.
+c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
+
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
 
 # COUNT_LIST_FEED_SNAPSHOT is the snapshot arm of the audit: set it and the count reads a recorded
@@ -206,6 +212,7 @@ main() {
   emit "operator-term-surfaces" c_operator_term_surfaces c_operator_term_allowlist_edits
   emit "skip-gate-contract" c_skip_gate_contract
   emit "live-topics-without-a-trigger" c_topics_without_a_trigger
+  emit "runbook-bullets-with-an-internal-token" c_runbook_bullets_with_an_internal_token
   emit "canary-bypasses-on-the-primary" c_canary_bypasses
   emit "converges-inside-a-kraken-window" c_converges_inside_a_kraken_window
   emit "drills-on-the-primary" c_drills_on_the_primary
