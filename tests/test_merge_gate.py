@@ -271,28 +271,37 @@ def test_a_leftover_placeholder_line_does_not_refuse_the_filled_one():
     assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
 
 
-def test_the_line_does_not_count_under_an_unterminated_construct():
-    """Defence in depth, with its cost stated: below an UNTERMINATED fence the walk and the rendered page can
-    disagree about everything, so a line there does not lift the floor even when the walk would show it. The
-    refusal says where to put it instead."""
+@pytest.mark.parametrize(
+    ("shape", "above"),
+    [
+        ("an unterminated tilde fence", "~~~"),
+        ("a tilde fence whose info string carries backticks, which CommonMark allows", "~~~`js`"),
+        ("a <details> that comments out its own closer, so the element never closes", "<details><!--</details>-->"),
+        ("a terminated comment on its own line", "<!-- a note -->"),
+    ],
+)
+def test_no_delimiter_line_above_the_substitution_leaves_it_counting(shape, above):
+    """Every unsafe divergence three rounds of review found put the marker below a delimiter line — a tilde fence
+    the pattern declined, a details element that commented out its own closer — so the prefix rule refuses on the
+    delimiter itself rather than on a judgement about what it does."""
     body = (
-        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
-        "~~~\ngh pr view 1\n\n"
-        "Fable floor substituted by Opus: the account's Fable limit is reached\n"
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n{above}\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
     )
-    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
-    assert len(fails) == 1, fails
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]), shape
 
 
-def test_a_closed_fence_above_the_line_leaves_it_counting():
-    """The mirror, and the reason the prefix stops at UNTERMINATED constructs alone: a body that quotes a command
-    above the line is ordinary, and refusing it would buy nothing the walk does not already give."""
+def test_a_terminated_fence_above_the_line_refuses_it_too():
+    """The cost of the plain-prefix rule, stated rather than hidden: a TERMINATED fence between the read line and
+    the substitution refuses as well. Three review rounds found seven walk-versus-renderer divergences, every
+    unsafe one with the marker below a delimiter line, so the prefix does not try to tell the two apart."""
     body = (
         f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
         "```\ngh pr view 1\n```\n\n"
         "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
     )
-    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1 and "plain prefix" in fails[0], fails
 
 
 def test_the_refusal_says_when_the_line_is_there_but_hidden():
@@ -342,12 +351,21 @@ def test_a_closer_the_renderer_does_not_honour_does_not_reveal_the_line(shape, b
 )
 def test_prose_about_the_gate_does_not_refuse_the_pr_it_sits_in(shape, above):
     """The mirror failure, and the likeliest one on this very branch: a PR body that DISCUSSES comments and fences
-    must not lose the lines below it. Each of these discarded the rest of the body once."""
+    must not lose the lines it carries. Each of these discarded the rest of the body once. The prose sits BELOW
+    the two lines, which is where a PR puts its discussion and where the plain-prefix rule leaves it alone."""
     body = (
-        f"## Summary\n\n{above}\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
-        f"Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        f"Fable floor substituted by Opus: the account's Fable limit is reached\n\n{above}\n\n- [x] done\n"
     )
     assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == [], shape
+
+
+def test_a_comment_above_the_read_line_closed_the_html_way_still_records_the_read():
+    """`--!>` closes a comment in every browser, so the page shows what follows and the read line counts. The
+    read line is judged by the walk alone, which is why a construct above it is not fatal the way it is for the
+    substitution."""
+    body = f"## Summary\n\n<!-- a note --!>\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
 
 
 def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():

@@ -70,7 +70,10 @@ def _is_a_stated_reason(reason: str) -> bool:
 # tildes, and for a backtick fence an info string with no backtick in it (`” ```gh pr view``` ”` is a paragraph,
 # not an opener). The bound matters in both directions -- four spaces is an indented code block, which RENDERS
 # its backticks, and treating it as an opener hid the rest of a body that a reader can see in full.
-_FENCE_OPEN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})(?P<info>[^`]*)$")
+# A tilde fence's info string may carry backticks; a backtick fence's may not (`” ```gh pr view``` ”` is a
+# paragraph, not an opener). The bound therefore belongs to the backtick branch alone -- applied to both, it
+# declined a tilde opener that a renderer honours, and everything below it counted as body.
+_FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
@@ -106,7 +109,10 @@ def _as_a_reader_sees_it(body: str) -> str:
                 fence = None
             continue
         if in_comment or in_details:
-            masked = _outside_code_spans(line)
+            # Inside a comment BLOCK a renderer parses no markdown, so a `-->` written in backticks still
+            # closes it; inside a `<details>` element markdown resumes after the blank line, so a span there
+            # is content.
+            masked = line if in_comment else _outside_code_spans(line)
             if in_comment:
                 m = _COMMENT_CLOSE.search(masked)
                 if not m:
@@ -119,7 +125,7 @@ def _as_a_reader_sees_it(body: str) -> str:
                 line, in_details = line[at + len("</details>") :], False
         opener = _FENCE_OPEN.match(line)
         if opener:
-            fence = opener.group("run")
+            fence = opener.group("run") or opener.group("trun")
             continue
         # An inline comment or details element, opened and closed on this line, takes its own span and nothing
         # more. Code spans are masked so a `<!--` written as prose about this gate is not read as markup.
@@ -155,55 +161,27 @@ def _as_a_reader_sees_it(body: str) -> str:
     return "\n".join(visible)
 
 
-def _unterminated_opener(body: str) -> int | None:
-    """The line index where a comment, `<details>` or fence opens and never closes, or None when the body closes
-    everything it opens. Such a construct hides every line after it in the rendered page, and it is the shape a
-    walk imitating a renderer is most likely to disagree about."""
-    fence: str | None = None
-    opened_at: int | None = None
-    in_comment = in_details = False
-    for i, raw in enumerate(body.splitlines()):
-        line = raw
-        if fence is not None:
-            run = _FENCE_CLOSE.match(line)
-            if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
-                fence, opened_at = None, None
-            continue
-        if in_comment or in_details:
-            masked = _outside_code_spans(line)
-            if in_comment:
-                m = _COMMENT_CLOSE.search(masked)
-                if not m:
-                    continue
-                line, in_comment, opened_at = line[m.end() :], False, None
-            else:
-                at = masked.find("</details>")
-                if at < 0:
-                    continue
-                line, in_details, opened_at = line[at + len("</details>") :], False, None
-        opener = _FENCE_OPEN.match(line)
-        if opener:
-            fence, opened_at = opener.group("run"), i
-            continue
-        stripped = _outside_code_spans(line).lstrip()
-        if stripped.startswith("<!--") and not _COMMENT_CLOSE.search(stripped):
-            in_comment, opened_at = True, i
-        elif stripped.startswith("<details") and "</details>" not in stripped:
-            in_details, opened_at = True, i
-    return opened_at
-
-
 def _before_anything_that_can_hide(body: str) -> str:
-    """The body up to an unterminated comment, `<details>` or fence, which hides everything after it.
+    """The body up to the first line that OPENS a comment, a `<details>` element or a fence, terminated or not.
 
-    Defence in depth for the arm that LIFTS a floor: the walk above tries to be a renderer, and a renderer has
-    more edge cases than a reviewer can enumerate -- two of them got a substitution past an earlier version of
-    it. A terminated construct is left alone, since the walk removes it and the reader sees the rest; it is the
-    unterminated one, where the page and the walk can disagree about everything below, that the line may not sit
-    under.
+    Depth for the arm that LIFTS a floor, and the only guard here whose correctness does not rest on
+    out-parsing a renderer. Three review rounds found seven ways for the walk above to disagree with the page,
+    and every unsafe one put the substitution line below a delimiter line -- so the line counts in the plain
+    prefix and nowhere else. An earlier version cut at UNTERMINATED constructs alone and would have caught none
+    of them, including neither of the two its own docstring cited, which is why the qualifier is gone.
+
+    The cost is named rather than hidden: a terminated fence or `<details>` block between the read line and the
+    substitution starts refusing, and the refusal says where the line goes. `open-pr` already puts it directly
+    under the read line. The read line itself is judged by the walk alone -- refusing a real read because prose
+    below it quotes a command costs more than it buys.
     """
-    at = _unterminated_opener(body)
-    return body if at is None else "\n".join(body.splitlines()[:at])
+    out: list[str] = []
+    for raw in body.splitlines():
+        stripped = raw.lstrip()
+        if _FENCE_OPEN.match(raw) or stripped.startswith("<!--") or stripped.startswith("<details"):
+            break
+        out.append(raw)
+    return "\n".join(out)
 
 
 def _hidden_hint(body: str, pattern: re.Pattern[str]) -> str:
