@@ -11,6 +11,12 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "infra" / "scripts" / "guidance-guard.py"
 
 
+def _tracked(pathspec: str) -> list[str]:
+    """The index's paths, so an untracked scratch page under a judged directory never turns the suite red."""
+    out = subprocess.run(["git", "-C", str(_ROOT), "ls-files", pathspec], capture_output=True, text=True, check=True)
+    return out.stdout.split()
+
+
 def _load(path: pathlib.Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -236,29 +242,35 @@ def test_a_skill_file_is_not_read_for_universals():
 
 
 def test_a_contract_is_read_for_universals_and_is_not_ambient():
-    """The four contracts read whole by the sessions and skills that act on them take the universal test; their bytes are not paid on every turn, so growth there needs no line."""
+    """The contracts read whole by the sessions and skills that act on them -- the runbook pages among them since 2026-09-12 -- take the universal test; their bytes are not paid on every turn, so growth there needs no line."""
     contract = "docs/reference/fleet-pins.md"
     fails = guard.evaluate({}, {contract: "- Never re-pin the NAS to an AVX build.\n"}, "x\n")
     assert len(fails) == 1 and fails[0].startswith(f"{contract}:1 carries a universal ('Never')"), fails
+    page = "infra/runbooks/nas.md"
+    fails = guard.evaluate({}, {page: "- The pull never retries a verified segment.\n"}, "x\n")
+    assert len(fails) == 1 and fails[0].startswith(f"{page}:1 carries a universal ('never')"), fails
+    assert guard.evaluate({}, {page: "- The pull never retries a verified segment (no count command: the venue's).\n"}, "x\n") == []
     assert guard._judged(
-        [contract, "docs/reference/fleet.md", "infra/runbooks/README.md", "infra/runbooks/nas.md", "cli/x.py"]
+        [contract, "docs/reference/fleet.md", "infra/runbooks/README.md", page, "infra/runbooks/sub/x.md", "cli/x.py"]
     ) == [
         contract,
         "docs/reference/fleet.md",
         "infra/runbooks/README.md",
+        page,
     ]
     assert guard.ambient_bytes(contract, "- Never re-pin the NAS to an AVX build.\n") == 0
+    assert guard.ambient_bytes(page, "- The pull never retries a verified segment.\n") == 0
 
 
 def test_the_corpus_on_disk_carries_no_uncounted_universal():
-    """The universal test as a CI assertion over the real files -- the corpus and the four contracts -- not only over what a commit stages."""
+    """The universal test as a CI assertion over the real files -- the corpus, the contracts and every runbook page -- not only over what a commit stages."""
     paths = [
         _ROOT / "CLAUDE.md",
         *sorted((_ROOT / ".claude" / "rules").glob("*.md")),
         _ROOT / "docs" / "reference" / "fleet.md",
         _ROOT / "docs" / "reference" / "fleet-pins.md",
         _ROOT / ".claude" / "skills" / "zcrypto-grooming" / "references" / "memo-protocol.md",
-        _ROOT / "infra" / "runbooks" / "README.md",
+        *sorted(_ROOT / p for p in _tracked("infra/runbooks/*.md") if "/" not in p[len("infra/runbooks/") :]),
     ]
     bad = [
         (p.relative_to(_ROOT), i, w) for p in paths for i, w in guard.uncounted_universals(str(p.relative_to(_ROOT)), p.read_text())
@@ -500,3 +512,16 @@ def test_the_uncounted_subcommand_names_a_page_it_cannot_read_and_exits_2(tmp_pa
     assert proc.returncode == 2 and "cannot read" in proc.stderr and "Traceback" not in proc.stderr
     proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted"], capture_output=True, text=True)
     assert proc.returncode == 2 and proc.stderr.startswith("usage:")
+
+
+def test_a_steps_prose_under_its_own_command_block_is_still_the_step(tmp_path):
+    """An indented fence belongs to the list item it sits in -- the shape every runbook step with a command has -- so the prose under the block is read; a fence at the margin ends the item."""
+    page = tmp_path / "p.md"
+    page.write_text(
+        "1. A step with a block:\n   ```bash\n   grep -c only /dev/null\n   ```\n   An empty result is never a zero.\n"
+        "2. A counted step:\n   ```bash\n   true\n   ```\n   Always read the count (no count command: the operator's shell).\n\n"
+        "- A bullet, then a fence at the margin:\n```bash\nalways\n```\nA paragraph that only looks like a continuation.\n"
+    )
+    proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted", str(page)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [f"{page}:1 never"]

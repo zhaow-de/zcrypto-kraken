@@ -33,16 +33,16 @@ The tree only grows by design: the pulls run `rsync -a` with **no** `--delete`, 
    sudo du -sh /volume1/ZhaoCrypto/* /volume1/docker/* 2>/dev/null | sort -h
    sudo du -sh /volume1/@docker
    ```
-2. **Reclaim images, and only images.** Every converge pulls another capture image and nothing on this host ever removes one; the dry run below prints each removable image's size and the free space before removal. From the workstation, dry-run first:
+2. **Reclaim images, and only images.** Every re-pin to a new digest adds another capture image once a flagged converge applies it, and nothing on this host ever removes one (set: the non-comment, non-Markdown lines under `infra/`, `cli/` and `.claude/` invoking `docker rmi`, `docker image rm|prune` or `docker system prune`, the script and counter excluded; count: `infra/scripts/count-list.sh image-removals-outside-the-pruner`; for the re-pins, no count command: the image arrives at the role's `compose up -d`, gated on `nas_apply_compose`; a hand deletion on the NAS is an operator act nothing in the tree records); the dry run below prints each removable image's size and the free space before removal. From the workstation, dry-run first:
    ```
    uv run python infra/scripts/prune-host-images.py nas
    uv run python infra/scripts/prune-host-images.py nas --apply
    ```
    The keep-set is every `docs/reference/fleet-pins.md` row naming `nas`, plus whatever digest any container on the host holds, stopped ones included, plus each `--keep <digest12>` you pass for an image pre-staged for a converge still to come — no authority can see that one. So **the pins row must already be true of this host** — run it right after that row is updated, never before, which is what the script's own `--help` says and what it cannot check for you.
    **Never `docker system prune` or `docker image prune -a` by hand**: both take the recorded rollback operands with them.
-3. **Never delete under `/volume1/ZhaoCrypto`.** `capture-segments*/` and `capture-reconciled/` are unbackfillable L2; `liquidations/` is sole-custody of a non-backfillable feed; `l2-panel/` and `hot/` are the ops node's copies of work you would have to recompute; `kraken-ohlcvt-updates/` and `kraken-trades/` are the hand-downloaded Kraken history dumps the datasets are rebuilt from. The `engine-journal/` mirror is a replica of an authoritative copy on the engine host, but the gate exporter scores the whole mirror, so trimming it moves `zcrypto_gate_mismatch_total`'s baseline — not a page-time action.
+3. **Never delete under `/volume1/ZhaoCrypto`.** (no count command: a hand deletion on the NAS is an operator act nothing in the tree records) `capture-segments*/` and `capture-reconciled/` are unbackfillable L2; `liquidations/` is sole-custody of a non-backfillable feed; `l2-panel/` and `hot/` are the ops node's copies of work you would have to recompute; `kraken-ohlcvt-updates/` and `kraken-trades/` are the hand-downloaded Kraken history dumps the datasets are rebuilt from. The `engine-journal/` mirror is a replica of an authoritative copy on the engine host, but the gate exporter scores the whole mirror, so trimming it moves `zcrypto_gate_mismatch_total`'s baseline — not a page-time action.
 4. **If images are already pruned and the fraction is still under 0.1, this is a capacity decision, not an ops fix.** Report the `du` breakdown and the growth rate; adding or resizing storage on DSM is attended and outside the repo.
-5. **Confirm by value**, never by "it looked better": `uv run python infra/scripts/grafana-query.py 'node_filesystem_avail_bytes{mountpoint="/volume1"} / node_filesystem_size_bytes{mountpoint="/volume1"}'` reads above `0.1`. `(no series)` is a FAIL, not a zero — it means the read never happened.
+5. **Confirm by value**, never by "it looked better" (no count command: how an operator confirms leaves no trace in the tree; `grafana-query.py` prints `(no series)` for an empty result): `uv run python infra/scripts/grafana-query.py 'node_filesystem_avail_bytes{mountpoint="/volume1"} / node_filesystem_size_bytes{mountpoint="/volume1"}'` reads above `0.1`. `(no series)` is a FAIL, not a zero — it means the read never happened.
 
 ### Retire when
 
@@ -84,7 +84,7 @@ DSM's own jobs — a RAID scrub, media indexing, snapshot replication — share 
 
 ### What to do
 
-1. **Ask the only question that matters — is the loop still completing?**
+1. **Ask the only question that matters — is the loop still completing?** (no count command: a triage priority, not a set anything in the tree can hold; the bare-clock parse is `docker logs --since`'s own; the channels are `infra/nas/pull-entrypoint.sh`'s `--channel` calls)
    ```
    ssh nas
    sudo /usr/local/bin/docker logs --since 6h zcrypto-archive-pull | grep -E 'pull complete|gate-export'
@@ -97,9 +97,9 @@ DSM's own jobs — a RAID scrub, media indexing, snapshot replication — share 
    `zcrypto_archive_pull_verify_seconds` is labelled per `channel`, so it names which pull grew. A pull-lag figure climbing past one engine cycle is the loop falling behind; a flat one is not.
 3. **Identify who is busy** on the host: `uptime`, then `top -b -n1 | head -25`. A `python`/`zcrypto` process inside the pull container is the loop; DSM daemons and md/RAID threads are DSM's. Read CPU from the host, not from `docker stats` — DSM's kernel mounts no CPU cgroup at all (`infra/nas/README.md`, *Resource budget*), which is also why this stack sets memory limits and no CPU limits.
 4. **Do not restart the container to shed load.** A recreate costs the cold gate replay above — it raises load for the next hour rather than lowering it.
-5. **If the loop genuinely cannot keep up**, the knob is `nas_archive_pull_hash_scope` and it is a config converge (`infra/ansible/scripts/converge.sh site.yml --limit nas --tags nas -e nas_apply_compose=true` — the documented path, and the only one that previews, takes a typed confirm and appends the `deploy-log.jsonl` line) — an **attended** action, on the user's word, through the rollout skill's mechanics; the flag is what actually restarts anything, and without it the role is render-only and still reports success.
+5. **If the loop genuinely cannot keep up**, the knob is `nas_archive_pull_hash_scope` and it is a config converge (`infra/ansible/scripts/converge.sh site.yml --limit nas --tags nas -e nas_apply_compose=true` — the documented path, and the only one that previews, takes a typed confirm and appends the `deploy-log.jsonl` line (no count command: a raw `ansible-playbook` run leaves no row; `converge.sh` is the one writer of `deploy-log.jsonl`)) — an **attended** action, on the user's word, through the rollout skill's mechanics; the flag is what actually restarts anything, and without it the role is render-only and still reports success.
 6. **If DSM is the cause**, let its job finish; nothing in the repo starts or stops it.
-7. **Confirm by outcome, not by the gauge**: the next pass logs `pull complete … failed=0` for every verified channel and `zcrypto_gate_journal_pull_lag_seconds` stays under one engine cycle.
+7. **Confirm by outcome, not by the gauge**: the next pass logs `pull complete … failed=0` for every verified channel (no count command: a per-pass log read; the channels are `infra/nas/pull-entrypoint.sh`'s `--channel` calls) and `zcrypto_gate_journal_pull_lag_seconds` stays under one engine cycle.
 
 ### Retire when
 
@@ -134,7 +134,7 @@ One step of the loop failed and the loop continued; the message names the step �
 
 `reconciled channel unwired …` is a WARNING, so an unwired overlay channel pages nothing while custody stops re-acquiring it. The `hot` channel's ERROR line is its only record — raw `rsync` emits no `pull complete`, so the dead-man never watches it.
 
-A single `verify failed` is not itself a finding: a pull whose copies of the final and its `.sha256` straddled a source-side rebuild of that hour mismatches once; under the deployed `incremental` scope the next pass re-hashes it only if rsync re-sends the parquet, and a parquet rsync leaves alone is re-hashed when its slice rotates round, within 24 uninterrupted cycles. A repeat on the same path, or any failure on a **capture** channel, means the unbackfillable mirror is not advancing.
+A single `verify failed` is not itself a finding: a pull whose copies of the final and its `.sha256` straddled a source-side rebuild of that hour mismatches once; under the deployed `incremental` scope the next pass re-hashes it if rsync re-sends the parquet, and a parquet rsync leaves alone is re-hashed when its slice rotates round, within 24 uninterrupted cycles. A repeat on the same path, or any failure on a **capture** channel, means the unbackfillable mirror is not advancing.
 
 ### What to do
 
@@ -143,15 +143,15 @@ A single `verify failed` is not itself a finding: a pull whose copies of the fin
    ssh nas
    sudo /usr/local/bin/docker logs --since 2h zcrypto-archive-pull | grep -B3 -A3 -E 'ERROR|CRITICAL'
    ```
-   A duration, never a bare clock time. An empty result after a firing alert is a parse or scoping error on your part, not an all-clear.
+   A duration, never a bare clock time (no count command: the `--since` operand is the operator's at the prompt, not a line in the tree). An empty result after a firing alert is a parse or scoping error on your part, not an all-clear.
 2. **`rsync failed`** → name the channel from `source=`. The capture and journal channels reach the VPS on port 10022; the liquidations, panel, reconciled and hot channels reach the ops node on port 22. Each has its own least-privilege key under `/volume1/docker/zcrypto-archive/keys/`, and host-key checking is strict (`StrictHostKeyChecking=yes`, pinned `keys/known_hosts`), so a rebuilt or reinstalled source host fails the pull closed until that file is re-seeded — DSM ships no `ssh-keyscan`, so run `ssh-keyscan -p <port> <host>` from a machine that has one and copy the output in (`infra/nas/README.md`, bootstrap step 4). A permission failure on the far side instead means that host's `rrsync` forced-command entry lost the NAS's public key — a converge of that host's role, not a NAS fix.
-3. **`verify failed` on the same path a second time** (the repeat lands on the next pass only if rsync re-sent the parquet; otherwise when its slice rotates round, within 24 uninterrupted cycles) → decide which copy is wrong before deleting anything. The mirror copy can be re-fetched **only while the source still holds that hour**: capture hosts prune their local segments at 14 days (`capture_retention_days`, `zcrypto-capture-prune` at 03:17). Confirm the source first —
+3. **`verify failed` on the same path a second time** (the repeat lands on the next pass if rsync re-sent the parquet; otherwise when its slice rotates round, within 24 uninterrupted cycles) → decide which copy is wrong before deleting anything. The mirror copy can be re-fetched **only while the source still holds that hour** (no count command: a property of rsync — a pull copies what the source still holds): capture hosts prune their local segments at 14 days (`capture_retention_days`, `zcrypto-capture-prune` at 03:17). Confirm the source first —
    ```
    ssh zcrypto sudo ls -l /var/lib/zcrypto-capture/<BASE>/<QUOTE>/<kind>/<YYYY>/<MM>/<DD>/
    ```
    (`ssh red` for the secondary's tree) — and only then delete the failing file under `/volume1/ZhaoCrypto/capture-segments…` so the next pass re-fetches it. This deletion is necessary because `rsync -a` skips on matching size and mtime: a file corrupted in place is never re-transferred on its own. If the source no longer holds the hour, **do not delete the mirror copy** — it is the only copy left, corrupt or not; treat it as a reconcile question (`infra/runbooks/ops.md`).
 4. **A Python traceback at ERROR** is a defect, not a transient. Capture it, check `docs/reference/fleet-pins.md` for a NAS re-pin in the window, and hand it back — rolling a pin is an attended action through the rollout skill.
-5. **Verify the next pass is clean**, one pull period later: `sudo /usr/local/bin/docker logs --since 2h zcrypto-archive-pull | grep 'pull complete'` shows `failed=0` for every verified channel. Count the lines you got before calling it clean.
+5. **Verify the next pass is clean**, one pull period later: `sudo /usr/local/bin/docker logs --since 2h zcrypto-archive-pull | grep 'pull complete'` shows `failed=0` for every verified channel (no count command: a per-pass log read; the channels are `infra/nas/pull-entrypoint.sh`'s `--channel` calls). Count the lines you got before calling it clean.
 
 ### Retire when
 
@@ -189,10 +189,10 @@ Downstream, if the stall persists: the `.pull-status` file this loop writes ages
    ```
    - `(no series)` / no `up` → the NAS or its Alloy is dark. `Fleet · Alloy dark — NAS` should be firing too; the loop may be perfectly fine and simply unobserved. Go to step 2, then step 5.
    - `up` present, gate-export age climbing past ~2 h → the host and Alloy are alive and the **loop** is what stopped. Go to step 3.
-   - `up` present and gate-export age fresh → the loop is running and only its **log lines** are missing. Go to step 5.
+   - `up` present and gate-export age fresh → the loop is running and only its **log lines** are missing, unless `NAS · archive-pull ERROR logs` paged in the last 3 h — then the pulls themselves may be failing, and the ERROR section above comes first (no count command: an inference from the two rules' exprs; `grafana-query.py` prints `(no series)` for an empty result). Go to step 5.
      `(no series)` is a FAIL of the read, never a zero: it does not distinguish "dark" from "the query never ran" until you have seen at least one of these three return a value.
 2. **Reach the host.** `ssh nas`. If that fails, try `ssh hp` — the ops node is on the same home LAN, so its reachability separates "the NAS is down" from "the LAN or the relay is down" (access paths: `docs/reference/fleet.md`).
-3. **Read the loop's state**, scoped — never an unscoped `docker inspect` on any host in this fleet:
+3. **Read the loop's state**, scoped — never an unscoped `docker inspect` on any host in this fleet (set: the non-comment lines of the non-Markdown files under `infra/`, `.claude/`, `cli/` — the roles, templates, units, hooks and scripts a command runs from — with the counter itself excluded; the Markdown runbooks and skills, where the form appears as the prohibition's own text, are outside it; count: `infra/scripts/count-list.sh engine-env-forms-invoked`; for the unscoped form, no count command: a bare `docker inspect` is what an operator types, and the counter above reads only what the tree runs):
    ```
    sudo /usr/local/bin/docker ps -a --format '{{.Names}} {{.Status}}'
    sudo /usr/local/bin/docker inspect --format '{{.State.Status}} restarts={{.RestartCount}}' zcrypto-archive-pull
@@ -205,9 +205,9 @@ Downstream, if the stall persists: the `.pull-status` file this loop writes ages
    cd /volume1/docker/zcrypto-archive && sudo /usr/local/bin/docker compose restart archive-pull
    ```
    The entrypoint traps TERM/INT, so the stop is graceful. **Know the cost**: a recreate discards `/tmp/gate-cache.json` and buys one cold gate replay, the better part of an hour and growing. A restart is a deliberate act, not a reflex; a converge or an image re-pin is attended and goes through the rollout skill on the user's word.
-5. **Log path only** (loop healthy, lines missing): `sudo /usr/local/bin/docker logs --since 1h grafana-alloy | tail`, then `cd /volume1/docker/zcrypto-archive && sudo /usr/local/bin/docker compose restart alloy`. Confirm by reading `{host="nas", container="archive-pull"}` back in Loki — a non-empty result, not an absent error.
-6. **Confirm by value, then by outcome.** The rule clears when one `pull complete … failed=0` lands: watch for it directly (`sudo /usr/local/bin/docker logs -f zcrypto-archive-pull`), and confirm the capture channels specifically — the dead-man would go green on any single verified channel.
-7. **If the stall ran long, ask whether anything was lost.** Under 14 days, the capture hosts still hold their segments and the next passes catch the mirror up; beyond that, segments were pruned at the source and the loss is permanent. Read it from the reconcile ledger (`infra/runbooks/ops.md#zcrypto-reconcile-residual-gap`) and from `uv run python infra/scripts/continuity.py` over the **pulled** mirror. An hour is only bookable at H+2 h and at the next `:12`/`:42` tick, so a read taken too early answers *pending*, never *clean*. A ledger record a classifier wrote wrongly is corrected on the **writer host** — the ops node, never the NAS copy, which the next pull overwrites — by the procedure in `infra/nas/README.md`, *Correcting the reconcile ledger*.
+5. **Log path only** (loop healthy, lines missing) (no count command: step 1's third branch, an inference from the two rules' exprs): `sudo /usr/local/bin/docker logs --since 1h grafana-alloy | tail`, then `cd /volume1/docker/zcrypto-archive && sudo /usr/local/bin/docker compose restart alloy`. Confirm by reading `{host="nas", container="archive-pull"}` back in Loki — a non-empty result, not an absent error.
+6. **Confirm by value, then by outcome.** The rule clears when one `pull complete … failed=0` lands: watch for it directly (`sudo /usr/local/bin/docker logs -f zcrypto-archive-pull`), and confirm the capture channels specifically — the dead-man would go green on any single verified channel (no count command: `infra/grafana/alerts.yaml`'s `zcrypto-nas-archive-pull-stalled` expr names no channel).
+7. **If the stall ran long, ask whether anything was lost.** Under 14 days, the capture hosts still hold their segments and the next passes catch the mirror up; beyond that, segments were pruned at the source and the loss is permanent. Read it from the reconcile ledger (`infra/runbooks/ops.md#zcrypto-reconcile-residual-gap`) and from `uv run python infra/scripts/continuity.py` over the **pulled** mirror. An hour is only bookable at H+2 h and at the next `:12`/`:42` tick, so a read taken too early answers *pending*, never *clean* (no count command: `SETTLE_HOURS` in `cli/archive/settle.py` and ops' `archive-pull.timer.j2` hold the clock; a ledger fix is an operator act). A ledger record a classifier wrote wrongly is corrected on the **writer host** — the ops node, never the NAS copy, which the next pull overwrites — by the procedure in `infra/nas/README.md`, *Correcting the reconcile ledger*.
 
 ### Retire when
 
@@ -231,9 +231,9 @@ Nothing fired. You are putting a file onto the NAS (`ssh nas`) — or a copy tha
 
 ### What to do
 
-1. **Transfer without the prefix**: `scp <file> nas:/ZhaoCrypto/...`, never `nas:/volume1/ZhaoCrypto/...`. Commands you then run inside an `ssh nas` session keep it — the same file is `/volume1/ZhaoCrypto/...` there.
-2. **Into `hot/`, use the sanctioned program**: `uv run zcrypto data push` from the workstation, which sends that node's authored sets to the configured `push_dest`. Never write through the NFS mount, where a soft-mounted write can corrupt on a timeout.
-3. **A published file is replaced by minting a sibling, never by pushing over it** — a second push of the same name is one of the silent skips above.
+1. **Transfer without the prefix**: `scp <file> nas:/ZhaoCrypto/...`, never `nas:/volume1/ZhaoCrypto/...` (no count command: a transfer is an operator act; the chroot is DSM's, recorded in `infra/nas/README.md`). Commands you then run inside an `ssh nas` session keep it — the same file is `/volume1/ZhaoCrypto/...` there.
+2. **Into `hot/`, use the sanctioned program**: `uv run zcrypto data push` from the workstation, which sends that node's authored sets to the configured `push_dest`. Never write through the NFS mount, where a soft-mounted write can corrupt on a timeout (no count command: a write through the mount leaves no record in the tree).
+3. **A published file is replaced by minting a sibling, never by pushing over it** (no count command: `-no-overwrite` in `infra/ansible/roles/nas/tasks/main.yml` turns a push over it into a skip) — a second push of the same name is one of the silent skips above.
 4. **Confirm by listing the destination, not by the copy's exit status**: `ssh nas ls -l /volume1/ZhaoCrypto/<path>` — over the shell, so with the prefix.
 
 ### Retire when

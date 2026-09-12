@@ -23,9 +23,9 @@ This is the slow-leak alarm, and it is the only one that matters: a leak's one r
 ### What to do
 
 1. **Read how long it has been climbing** — the fleet board's *Daemon RSS growth per day — fleet* panel (602). A steady positive rate over days is a leak; a single step that then plateaued is an allocation that converged and is not going to reach the limit on its own.
-2. **Read what it has been running since** — `docs/reference/fleet-pins.md`'s row names the image and, in its `since` column, the date; `docs/reference/deploy-log.jsonl` has every converge as a machine line. The suspect is the image; the rollback operand is in the same row.
-3. **A leaking capture daemon is restarted, not rolled back, first** — `sudo systemctl restart zcrypto-capture` on the affected host, one host at a time, never both in one window. The restart costs a resubscribe (seconds) and buys the full limit back; the peer host keeps capturing. Then decide on the image with the growth rate in hand.
-4. **If it is the engine**, the restart must land inside the 4-hourly inter-cycle gap like any engine restart (the invariant is in `.claude/rules/fleet-deploys.md`; the gap's floor and the missed-boundary cutoff are in `.claude/skills/zcrypto-rollout-image/SKILL.md` → *Engine converges*). **If it is Alloy** (`integrations/self`), `sudo docker restart grafana-alloy` — the container name is identical on all four hosts, and restarting the container alone touches no other service (a `compose restart` would: on the NAS, Alloy and `archive-pull` share one compose project). On the NAS the binary is `sudo /usr/local/bin/docker restart grafana-alloy`. **If it is the liquidations poller**, it will not be this rule (no limit) — see the leak rule.
+2. **Read what it has been running since** — `docs/reference/fleet-pins.md`'s row names the image and, in its `since` column, the date; `docs/reference/deploy-log.jsonl` has a machine line for every completed `converge.sh` pass since 2026-08-28 whose record was written (no count command: `infra/ansible/scripts/converge.sh` appends it after the pass, and where that write fails it prints the line instead — a pass nobody appended by hand has no row). The suspect is the image; the rollback operand is in the same row.
+3. **A leaking capture daemon is restarted, not rolled back, first** — `sudo systemctl restart zcrypto-capture` on the affected host, one host at a time, never both in one window (set: the capture restarts `deploy-log.jsonl` records — a successful row limited to a capture host or to the `capture_host` group, tagged capture or un-tagged — paired across the two hosts within an hour; count: `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour`). The restart costs a resubscribe (seconds) and buys the full limit back; the peer host keeps capturing. Then decide on the image with the growth rate in hand.
+4. **If it is the engine**, the restart must land inside the 4-hourly inter-cycle gap like any engine restart (set: deploy-log rows whose `tags` include `engine`; count: `infra/scripts/count-list.sh engine-rows-outside-the-gap`) (the invariant is in `.claude/rules/fleet-deploys.md`; the gap's floor and the missed-boundary cutoff are in `.claude/skills/zcrypto-rollout-image/SKILL.md` → *Engine converges*). **If it is Alloy** (`integrations/self`), `sudo docker restart grafana-alloy` — the container name is identical on all four hosts, and restarting the container alone touches no other service (a `compose restart` would: on the NAS, Alloy and `archive-pull` share one compose project). On the NAS the binary is `sudo /usr/local/bin/docker restart grafana-alloy`. **If it is the liquidations poller**, it will not be this rule (no limit) — see the leak rule.
 
 ### Retire when
 
@@ -49,8 +49,8 @@ If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark
 
 ### What to do
 
-1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits well below the bar on every host, and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit.
-2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds, and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`. Steady state sits below the bar on every host (no count command: a live reading the tree does not record), and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit.
+2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds (no count command: `docker restart grafana-alloy` touches that one container, which runs Alloy alone), and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
 3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
 
 ### Retire when
@@ -77,7 +77,7 @@ The bar is provisional: no real leak has ever been measured on this fleet, and h
 
 1. **Look at the shape on panel 602**, not the number. Two steps of decaying size with flat troughs between them is a converging allocation and will stop; equal or growing steps are a leak.
 2. **Note the image and the date from `docs/reference/fleet-pins.md`**, and whether a converge happened in the last day (`docs/reference/deploy-log.jsonl`) — a new image is the first suspect, and the leak page a day after a converge is the one this rule exists for.
-3. **Do nothing else yet.** This is notice, not a fault. The headroom rule owns the decision point; until it fires the only action is to keep the two numbers (rate, image) where the next reader finds them.
+3. **Do nothing else yet.** This is notice, not a fault. The headroom rule owns the decision point; until it fires the only action is to keep the two numbers (rate, image) where the next reader finds them (no count command: an operator's restraint nothing in the tree records).
 
 ### Retire when
 

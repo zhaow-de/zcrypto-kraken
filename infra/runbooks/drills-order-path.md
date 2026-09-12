@@ -8,25 +8,25 @@ Every drill below has the same seven parts: *What this proves* · *Preconditions
 
 ### Standing rules — these bind every drill below
 
-- **Every drill here runs inside an attended probe window**, never beside one. The window's pre-probe checklist, its two arming keys and its own two drills come first, in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window). Only the account owner authors and places a plan, and no funded plan is dropped inside the final 60 minutes before a 4-hourly boundary (00/04/08/12/16/20 UTC). Run `date -u` immediately before.
-- **Never induce inside a published Kraken maintenance window.** Read `curl -fsS https://status.kraken.com/api/v2/scheduled-maintenances.json` at planning time and again immediately before each induction; an empty feed is never evidence the window is clear. Which entries count is the same standing rule in [`drills-telemetry.md`](drills-telemetry.md) and the converge bullet of `.claude/rules/fleet-deploys.md`.
-- **A drill whose instrument is not on the host is `blocked`, never `fail`.** Both instruments are in the tree: the `rest-hold` plan mode (`cli/engine/probeplan.py`'s `MODES`, spec `00108`), an order priced `offset_pct` passive of the touch, deliberately not cancelled on the venue's acknowledgement and resting for its declared `hold_minutes`, which `rest-cancel` cannot give; and Drill B's flatten command (`cli/engine/flatten.py`, spec `00106`), whose procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the engine host is running them is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Each affected drill states its own gap in its *Preconditions*. Never run with a substitute plan mode: an order cancelled a second after it was placed exercises none of what these drills measure. The first live rest-hold order will be a drill's: `docs/open-topics/T0018-phase6-build-sequence.md` records that none has been placed.
-- **An order on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC is invisible to the startup adopt pass, so A1, A2, F2 and G must not rest theirs there.** On those five legs the pass adopts, re-attaches, reconciles and cancels nothing and logs nothing, and it misses the same order after it closes, so a fill that landed while the engine was down is not repaired either ([`engine-procedures.md#adopt-pass-blind-legs`](engine-procedures.md#adopt-pass-blind-legs)). A restart does not clear such an order; Kraken's own page does. Author those four drills' plan on one of the seven legs Kraken spells one way, listed beside the `rest-hold` plan shape in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window); the example there is on BTC/EUR as a shape, not the pair to copy. A run made on one of the five is recorded `blocked` with that reason, never `fail`.
-- **One induction at a time. Revert it and verify the revert by value before the next one starts.** An instrument is never widened: each *Induce* names exactly what to do, and anything heavier is a different act with a different blast radius (the same rule in `drills-telemetry.md`).
-- **The engine's own money guards are not suspended for a drill.** A kill trip during one of these is real: resting orders cancelled, every further intent refused, and nothing continues until a human reads and removes the file. Work [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) when that happens; do not treat it as drill noise.
+- **Every drill here runs inside an attended probe window**, never beside one (no count command: the arm file and the plan file live on the engine host, outside the tree). The window's pre-probe checklist, its two arming keys and its own two drills come first, in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window). Only the account owner authors and places a plan, and no funded plan is dropped inside the final 60 minutes before a 4-hourly boundary (00/04/08/12/16/20 UTC). Run `date -u` immediately before.
+- **Never induce inside a published Kraken maintenance window.** Read `curl -fsS https://status.kraken.com/api/v2/scheduled-maintenances.json` at planning time and again immediately before each induction; an empty feed is never evidence the window is clear (no count command: `converges-inside-a-kraken-window` reads deploy-log rows, and an induction is not one). Which entries count is the same standing rule in [`drills-telemetry.md`](drills-telemetry.md) and the converge bullet of `.claude/rules/fleet-deploys.md`.
+- **A drill whose instrument is not on the host is `blocked`, never `fail`** (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it; the plan modes are `cli/engine/probeplan.py`'s `MODES`). Both instruments are in the tree: the `rest-hold` plan mode (`cli/engine/probeplan.py`'s `MODES`, spec `00108`), an order priced `offset_pct` passive of the touch, deliberately not cancelled on the venue's acknowledgement and resting for its declared `hold_minutes`, which `rest-cancel` cannot give; and Drill B's flatten command (`cli/engine/flatten.py`, spec `00106`), whose procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the engine host is running them is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Each affected drill states its own gap in its *Preconditions*. Never run with a substitute plan mode: an order cancelled a second after it was placed exercises none of what these drills measure. The first live rest-hold order will be a drill's: `docs/open-topics/T0018-phase6-build-sequence.md` records that none has been placed.
+- **An order on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC is invisible to the startup adopt pass, so A1, A2, F2 and G must not rest theirs there.** On those five legs the pass adopts, re-attaches, reconciles and cancels nothing and logs nothing, and it misses the same order after it closes, so a fill that landed while the engine was down is not repaired either ([`engine-procedures.md#adopt-pass-blind-legs`](engine-procedures.md#adopt-pass-blind-legs)). A restart does not clear such an order; Kraken's own page does. Author those four drills' plan on one of the seven legs Kraken spells one way, listed beside the `rest-hold` plan shape in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window); the example there is on BTC/EUR as a shape, not the pair to copy. A run made on one of the five is recorded `blocked` with that reason, never `fail` (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it).
+- **One induction at a time. Revert it and verify the revert by value before the next one starts.** An instrument is never widened (no count command: it lands in a drill-log body, which `tests/test_drill_log.py` does not read): each *Induce* names exactly what to do, and anything heavier is a different act with a different blast radius (the same rule in `drills-telemetry.md`).
+- **The engine's own money guards are not suspended for a drill.** A kill trip during one of these is real: resting orders cancelled, every further intent refused (no count command: the kill-switch tests in `tests/test_engine_execgate.py` and `tests/test_engine_executor.py` hold it), and nothing continues until a human reads and removes the file. Work [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) when that happens; do not treat it as drill noise.
 - **A window that stays armed past six hours pages** [`zcrypto-engine-exec-armed-too-long`](engine.md#zcrypto-engine-exec-armed-too-long) (warning, `metrics`). That is the rule working, not a fault, but a drill held for hours, D above all, is held inside a window that will reach it.
-- **The four statuses are fixed at `pass`, `fail`, `partial`, `blocked`**, and every run gets an entry in `docs/reference/drill-log.md`; that file's own preamble is the entry contract. On this page the *time-to-alert* clause's device timestamp is usually this drill's to carry, D above all; where another drill measures the same route, name that drill and carry none.
+- **The four statuses are fixed at `pass`, `fail`, `partial`, `blocked`**, and every run gets an entry in `docs/reference/drill-log.md` (no count command: a run with no entry leaves nothing in the tree to count); that file's own preamble is the entry contract. On this page the *time-to-alert* clause's device timestamp is usually this drill's to carry, D above all; where another drill measures the same route, name that drill and carry none.
 
 ### How every bound on this page was derived
 
 A bound is derived or it is not written. Nothing below is an estimate. The derivation rules shared with the telemetry tier are in [`drills-telemetry.md`](drills-telemetry.md); these are the ones this page's bounds turn on.
 
 - **A Grafana rule's bound is its own `for`, quoted from `infra/grafana/alerts.yaml`, plus its own group's evaluation interval.** This page names rules from three groups, and the group is a field on each rule in that file: the engine rules are `zcrypto-gate`; `zcrypto-fleet-daemon-restarted`, `zcrypto-alloy-dark-capture-primary`, `zcrypto-fleet-memory-headroom` and `zcrypto-hcio-watchdog` are `zcrypto-fleet`; `zcrypto-capture-all-streams-silent` and `zcrypto-capture-stream-silent` are `zcrypto-capture`.
-- **Every rule group evaluates at 60 s.** The number is a setting in the stack, not in this repo; how to read it from Grafana's provisioning endpoint is `drills-telemetry.md`'s rule. Re-read the interval of the group the rule you are re-deriving belongs to: the three above can move independently.
-- **The engine's exporter is scraped every 60 s**, `scrape_interval` on the `engine_app` job in `infra/ansible/roles/capture/files/config.alloy`, so a gauge whose value changes on the host is at most one scrape old in Grafana Cloud.
-- **Add ~5 minutes of Prometheus staleness wherever the condition cannot go true until the series goes stale**: every rule here that pages by `noDataState: Alerting` once the engine's exporter is gone, and the Alloy route of `zcrypto-engine-dark-with-exposure`.
-- **The gate's own gauges publish only when the gate is evaluated, and that cadence is not constant.** While a plan is running the executor evaluates on every 5-second tick and publishes each verdict; with no plan running it evaluates at engine start and at each 4-hourly boundary. Every kill-switch bound below therefore assumes a plan is resting, which is why E's preconditions demand one: a kill file placed on an idle engine can wait four hours to reach Grafana at all.
-- **A healthchecks.io dead-man's bound is that check's own `timeout` + `grace`.** Only D reaches one, and the numbers for `zcrypto-engine-shadow` are quoted in [`drills-telemetry.md#drill-j-prime`](drills-telemetry.md#drill-j-prime).
+- **Every rule group evaluates at 60 s** (no count command: a stack setting no test pins; `tests/test_infra_alert_rules.py` copies `zcrypto-gate`'s). The number is a setting in the stack, not in this repo; how to read it from Grafana's provisioning endpoint is `drills-telemetry.md`'s rule. Re-read the interval of the group the rule you are re-deriving belongs to: the three above can move independently.
+- **The engine's exporter is scraped every 60 s**, `scrape_interval` on the `engine_app` job in `infra/ansible/roles/capture/files/config.alloy` (no count command: that setting is the number, and no test pins it), so a gauge whose value changes on the host is at most one scrape old in Grafana Cloud.
+- **Add ~5 minutes of Prometheus staleness wherever the condition cannot go true until the series goes stale**: every rule here that pages by `noDataState: Alerting` once the engine's exporter is gone, and the Alloy route of `zcrypto-engine-dark-with-exposure` (no count command: each rule's `noDataState` in `infra/grafana/alerts.yaml` defines the set).
+- **The gate's own gauges publish only when the gate is evaluated, and that cadence is not constant** (no count command: `cli/engine/command.py`'s three `_ExecGauges.update` calls each take a fresh `gate.evaluate`). While a plan is running the executor evaluates on every 5-second tick and publishes each verdict; with no plan running it evaluates at engine start and at each 4-hourly boundary. Every kill-switch bound below therefore assumes a plan is resting, which is why E's preconditions demand one: a kill file placed on an idle engine can wait four hours to reach Grafana at all.
+- **A healthchecks.io dead-man's bound is that check's own `timeout` + `grace`.** Only D reaches one (no count command: the set is this page's seven *Must fire* lists, and no entry reads them), and the numbers for `zcrypto-engine-shadow` are quoted in [`drills-telemetry.md#drill-j-prime`](drills-telemetry.md#drill-j-prime).
 
 <a name="drill-a1"></a>
 
@@ -48,7 +48,7 @@ It does not prove what the venue did with the order across the stop. That is G's
   ```
   `up` reads 1 and the silence gauge reads under 120 s, the threshold `zcrypto-capture-all-streams-silent` itself carries. Anything else and the reboot is postponed: both hosts dark at once is L2 that nothing recovers.
 - **The secondary-first ordering in `docs/reference/fleet.md` § Reboots does not apply and must not be followed here.** That ordering is for a fleet-wide reboot round, where a bricked kernel must land on the expendable host first. This drill reboots the primary alone and the secondary is deliberately left running; rebooting it too would remove the healer.
-- Everything else in that § Reboots bullet list holds in full: ≥ 1 h from any 4h bar boundary, off the hour, in the primary's measured book-traffic trough, and right after a completed engine cycle.
+- Everything else in that § Reboots bullet list holds in full: ≥ 1 h from any 4h bar boundary, off the hour, in the primary's measured book-traffic trough, and right after a completed engine cycle (no count command: a reboot leaves no row in the tree; the deploy log records converges).
 
 ### Induce
 
@@ -56,9 +56,9 @@ The attended reboot of the primary, exactly as `docs/reference/fleet.md` § Rebo
 
 ### Must fire
 
-- [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted) (warning, `metrics`): `changes(process_start_time_seconds{…}[15m]) > 0` with `for: 2m`, and three of that rule's targets live on this host: `capture_app`, `engine_app` and Alloy's own `integrations/self`. It lands ≈2–3 min after the host is back. Expected, named in the entry, never chased.
+- [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted) (warning, `metrics`): `changes(process_start_time_seconds{…}[15m]) > 0` with `for: 2m`, and three of that rule's targets live on this host: `capture_app`, `engine_app` and Alloy's own `integrations/self`. It lands ≈2–3 min after the host is back. Expected, named in the entry, never chased (no count command: it lands in a drill-log body, which `tests/test_drill_log.py` does not read).
 - **Nothing else, on an ~83 s reboot**, each silence derived: [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) needs ~5 min staleness + `for: 5m` + 60 s ≈ 11 min; [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) needs ≈12 min and on A1 has nothing to page about anyway, since no fill landed and its position node reads 0; [`zcrypto-alloy-dark-capture-primary`](observability.md#zcrypto-alloy-dark-capture-primary) needs `for: 10m` plus the same staleness; and both capture-silence rules carry `noDataState: OK`, so a host whose series have gone away leaves them Normal rather than firing.
-- **A reboot long enough to page any of those is a finding about the reboot**, recorded as such, and not a result of this drill.
+- **A reboot long enough to page any of those is a finding about the reboot**, recorded as such, and not a result of this drill (no count command: it lands in a drill-log body, which `tests/test_drill_log.py` does not read).
 
 ### Operator action
 
@@ -68,12 +68,12 @@ The reboot's own verify-by-outcome list in `docs/reference/fleet.md` § Reboots 
    ```
    sudo docker exec zcrypto-engine zcrypto engine exec-status
    ```
-   Expect `level=reduce_only` with `restart_hold` among the reasons. The engine writes that hold unconditionally at every start and nothing clears it but a human.
+   Expect `level=reduce_only` with `restart_hold` among the reasons. The engine writes that hold unconditionally at every start and nothing clears it but a human (no count command: `write_restart_hold` at `cli/engine/execgate.py:220`, called from `command.py:752`; no line under `cli/` removes the file).
 2. **The adopt pass ran and cancelled the opener**:
    ```
    sudo docker logs --since 30m zcrypto-engine | grep -E 'adopted resting order'
    ```
-   A `canceling adopted resting order …` line names the order; a `… is a ledgered reducer -- left resting and re-attached` line means the row was classified a reducer and kept, which on an opener is a finding. No line at all is a finding only once the pair precondition held: on a blind leg the pass logs nothing whatever it found.
+   A `canceling adopted resting order …` line names the order; a `… is a ledgered reducer -- left resting and re-attached` line means the row was classified a reducer and kept, which on an opener is a finding. No line at all is a finding only once the pair precondition held (no count command: the adopt pass's two lines, `cli/engine/executor.py:804,807`): on a blind leg the pass logs nothing whatever it found.
 3. **The ledger**, with the probe window's ledger read: the order's row carries a terminal `state` and `filled_qty 0.0`, and no `fill` lines at all.
 4. **Kraken's own open-orders view**, by hand. The engine's belief and the venue's are two readings; compare them.
 
@@ -114,8 +114,8 @@ A1's set, unchanged: `zcrypto-fleet-daemon-restarted` and nothing else on an ~83
 
 ### Operator action
 
-1. **Read the repair, by value.** In the ledger, the row carries a `reconciled` event with the delta and the venue's total; in the log, `sudo docker logs --since 30m zcrypto-engine | grep -E 'reconciled against the venue'` names both figures. No event and no line is a finding only once the pair precondition held: on a blind leg nothing is compared, written or logged, at step 4 included. Check the pair the plan actually named, record `blocked`, and read Kraken's own trades page for the fill.
-2. **Confirm the repair moved no fill counters**: from the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_fills_total{host="zcrypto"}' 'zcrypto_exec_fees_eur_total{host="zcrypto"}'` against their pre-reboot values. A number, never `(no series)`.
+1. **Read the repair, by value.** In the ledger, the row carries a `reconciled` event with the delta and the venue's total; in the log, `sudo docker logs --since 30m zcrypto-engine | grep -E 'reconciled against the venue'` names both figures. No event and no line is a finding only once the pair precondition held (no count command: the ledger and the log live on the engine host, outside the tree): on a blind leg nothing is compared, written or logged, at step 4 included. Check the pair the plan actually named, record `blocked`, and read Kraken's own trades page for the fill.
+2. **Confirm the repair moved no fill counters**: from the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_fills_total{host="zcrypto"}' 'zcrypto_exec_fees_eur_total{host="zcrypto"}'` against their pre-reboot values. A number, never `(no series)` (no count command: the reading is a live Grafana query taken at drill time).
 3. **Read venue truth** with the probe window's venue-truth read, and Kraken's own positions view beside it. The position is real; decide deliberately whether it stands for D or is closed now.
 4. **A venue figure lower than the ledger's is the dangerous direction and latches the kill switch.** Nothing is repaired, and `sudo cat /var/lib/zcrypto-engine/exec/kill` names the order and both quantities. That is [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped)'s withdrawn-fill path, not a drill outcome to clear and move past.
 
@@ -139,7 +139,7 @@ Entry `A2`: the venue's figure, the ledgered figure, the delta, that the fill co
 
 ### Preconditions
 
-- **B's instrument is the host wrapper, not the command.** `zcrypto engine flatten` is in the tree (spec `00106`), and `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` renders it to `/usr/local/sbin/zcrypto-flatten` on an engine converge; the procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the host has it is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Absent, a run booked against B is `blocked` with that reason, "wrapper not deployed", never "not built" and never `fail`.
+- **B's instrument is the host wrapper, not the command.** `zcrypto engine flatten` is in the tree (spec `00106`), and `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` renders it to `/usr/local/sbin/zcrypto-flatten` on an engine converge; the procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the host has it is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Absent, a run booked against B is `blocked` with that reason, "wrapper not deployed", never "not built" and never `fail` (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it).
 - The subject is a real position and a real balance: A2's end state, or D's, plus a small spot balance. Flattening an already-flat account measures nothing.
 - The window open and attended, with the owner present. This is the one drill whose whole point is a human deciding.
 
@@ -180,14 +180,14 @@ That the one alert nothing else covers actually pages a phone (a non-zero positi
 
 ### Preconditions
 
-- **A2's end state**: a real position open, read by value from the ledger and from venue truth immediately before. A flat account cannot trip this rule and the run would be `blocked`.
+- **A2's end state**: a real position open, read by value from the ledger and from venue truth immediately before. A flat account cannot trip this rule (no count command: its `$A > 0 && $B < 1` condition in `infra/grafana/alerts.yaml` holds it) and the run would be `blocked`.
 - The window attended and the phone in hand; the page arriving is the deliverable, not the rule's internal state.
-- **The telemetry plane read green by value immediately before**, because this rule fires on two routes and only one of them is this drill's:
+- **The telemetry plane read green by value immediately before**, because this rule fires on two routes and only one of them is this drill's (no count command: the rule's `B` node in `infra/grafana/alerts.yaml` carries both; D's *Induce* takes one):
   ```
   uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto"}) or on() vector(0)' 'up{job="engine_app",host="zcrypto"}'
   ```
   Both read 1. A primary whose Alloy is already dark makes the page unattributable, and the run would book a telemetry incident's `activeAt` as its own measurement. An empty result is never a zero.
-- **Never induce this drill by stopping the primary's Alloy.** That is the rule's other route, and the primary's Alloy is not an instrument any drill on either page may touch.
+- **Never induce this drill by stopping the primary's Alloy.** That is the rule's other route, and the primary's Alloy is not an instrument any drill on either page may touch (no count command: the induction lands in a drill-log body, which `tests/test_drill_log.py` does not read).
 
 ### Induce
 
@@ -204,9 +204,9 @@ sudo systemctl stop zcrypto-engine
 **Three pages inside a sixteen-minute hold, on three clocks, and only the second is D's own**, plus two more that arrive only if the hold runs for hours.
 
 - [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) (critical, `metrics`) first, at ≈11 min. It is an instant read of a gauge the stopped container no longer publishes, so it pages by NoData: ~5 min staleness + `for: 5m` + 60 s.
-- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) (critical, `metrics`) at ≈12 min, on the exporter route, the only one this drill induces. Its scrape node reads the scrape's value on a static target, so the `up` series stays present reading 0 within one 60 s scrape of the container going away; + `for: 10m` + 60 s, and no staleness term. On the other route, the primary's Alloy going dark, the same rule takes ≈16 min, derived in that section; the difference between the two is how long the exposure has actually been unwatched. Quote whichever route the run induced.
+- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) (critical, `metrics`) at ≈12 min, on the exporter route, the only one this drill induces (no count command: D's *Induce* stops the engine alone, never the Alloy beside it). Its scrape node reads the scrape's value on a static target, so the `up` series stays present reading 0 within one 60 s scrape of the container going away; + `for: 10m` + 60 s, and no staleness term. On the other route, the primary's Alloy going dark, the same rule takes ≈16 min, derived in that section; the difference between the two is how long the exposure has actually been unwatched. Quote whichever route the run induced.
 - [`zcrypto-engine-exec-not-evaluated`](engine.md#zcrypto-engine-exec-not-evaluated) (warning, `metrics`) at ≈16 min: the gate's last-evaluation stamp goes stale with the container and that rule also pages by NoData, ~5 min + `for: 10m` + 60 s.
-- [`zcrypto-engine-log-dead`](engine.md#zcrypto-engine-log-dead) (critical, `metrics`) only past 6 h: its `[6h]` count window, `for: 0s`, + 60 s. A shorter hold leaves it quiet, and that silence is not a clean bill.
+- [`zcrypto-engine-log-dead`](engine.md#zcrypto-engine-log-dead) (critical, `metrics`) only past 6 h: its `[6h]` count window, `for: 0s`, + 60 s (no count command: that rule's own entry in `infra/grafana/alerts.yaml` holds both). A shorter hold leaves it quiet, and that silence is not a clean bill.
 - The engine's own dead-man `zcrypto-engine-shadow` goes down at its `timeout` + `grace` = 4 h 35 m (quoted in [`drills-telemetry.md#drill-j-prime`](drills-telemetry.md#drill-j-prime)), bringing `zcrypto-hcio-watchdog` ≈7 min behind it.
 - **Two rules stay quiet and prove nothing by it**: `zcrypto-venue-snapshot-stale` and `zcrypto-fleet-memory-headroom` both carry `noDataState: OK`, so a series that has gone away leaves them Normal.
 
@@ -246,14 +246,14 @@ Three things, and the third is the one nothing establishes.
 
 ### Preconditions
 
-- The window open, the engine armed, and **a plan resting**, the `rest-hold` gate in the standing rules. Without a resting order the kill file revokes nothing and only the alert half is exercised.
+- The window open, the engine armed, and **a plan resting**, the `rest-hold` gate in the standing rules. Without a resting order the kill file revokes nothing and only the alert half is exercised (no count command: `cli/engine/executor.py`'s `_poll`, the revoke path, is unreachable with no active intent).
 - **`zcrypto_exec_kill_tripped` reads 0 by value immediately before**:
   ```
   uv run python infra/scripts/grafana-query.py 'zcrypto_exec_kill_tripped{host="zcrypto"}'
   ```
   A kill file already present means the alert is already firing, and the `activeAt` this run reads belongs to an earlier trip. Not 0 ⇒ clear the existing file first (reading it, per [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped)), or record `blocked`.
-- **The plan must be resting when the file lands, and that is a bound, not a preference**: the gate publishes only when it is evaluated (the derivation rules above), so a kill file placed on an idle engine can wait hours to reach Grafana and the measured page time would be an artefact of the cycle clock.
-- **For E′ only**: the phone in hand with an ssh client installed on it. A device with no client is `blocked`; the induction never landed. A device with a client that the access path refuses is E′'s finding, recorded `fail`; that is the question E′ was run to answer.
+- **The plan must be resting when the file lands, and that is a bound, not a preference**: the gate publishes only when it is evaluated (the derivation rules above), so a kill file placed on an idle engine can wait hours to reach Grafana and the measured page time would be an artefact of the cycle clock (no count command: `cli/engine/command.py`'s three `_ExecGauges.update` calls each take a fresh `gate.evaluate`).
+- **For E′ only**: the phone in hand with an ssh client installed on it. A device with no client is `blocked`; the induction never landed (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it). A device with a client that the access path refuses is E′'s finding, recorded `fail`; that is the question E′ was run to answer.
 
 ### Induce
 
@@ -273,7 +273,7 @@ The same placement, made from the phone: an ssh client on the device, the fleet'
 
 ### Must fire
 
-- [`zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) (warning, `metrics`) at ≈7 min. Derived: the executor evaluates the gate on its 5-second tick while a plan is running and publishes the verdict from every evaluation, so the gauge reads 1 within one tick; + one 60 s scrape + `for: 5m` + the 60 s group interval. A value read on a series that is present throughout, so no staleness term applies.
+- [`zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) (warning, `metrics`) at ≈7 min. Derived: the executor evaluates the gate on its 5-second tick while a plan is running and publishes the verdict from every evaluation (no count command: `cli/engine/executor.py`'s `_evaluate` publishes each verdict it reads), so the gauge reads 1 within one tick; + one 60 s scrape + `for: 5m` + the 60 s group interval. A value read on a series that is present throughout, so no staleness term applies.
 - **Nothing else.** `zcrypto-engine-cycle-stale` and `zcrypto-engine-dark-with-exposure` both need the exporter to be gone, and the engine is running and answering throughout this drill.
 - Not a page, but the reading that says the revocation happened: the intent journals `revoked` and its order row reaches a terminal `state`.
 
@@ -320,7 +320,7 @@ The expected sequence, from `cli/engine/executor.py`: on the first tick after 30
   ```
   sudo docker network ls --filter name=zcrypto-engine
   ```
-- **Write the reconnect command down before running the disconnect.** A revert that exists only in your head is one interruption away from a live engine with no venue.
+- **Write the reconnect command down before running the disconnect.** A revert that exists only in your head is one interruption away from a live engine with no venue (no count command: what an operator wrote down before a drill leaves no record the tree reads).
 
 ### Induce
 
@@ -334,10 +334,10 @@ The container is bridge-networked with `127.0.0.1:9102:9102` published (`infra/a
 
 ### Must fire
 
-- **Nothing at all, on a hold under ~11 minutes, and that is a coverage finding, not a quiet fleet.** Every rule that would notice keys on the exporter or on the log stream, and all of them are slower than the entire behaviour this drill measures.
+- **Nothing at all, on a hold under ~11 minutes, and that is a coverage finding, not a quiet fleet.** Every rule that would notice keys on the exporter or on the log stream, and all of them are slower than the entire behaviour this drill measures (no count command: `infra/grafana/alerts.yaml`'s rules on the engine's series are the set, and no entry reads it).
 - Past ≈11 min, [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) (critical, `metrics`): the disconnect removes the published-port endpoint, so the scrape fails and the cycle gauge goes stale, NoData at ~5 min + `for: 5m` + 60 s.
-- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) stays quiet if and only if nothing filled: its position node reads the largest exposure at last sight, which is 0 on a flat account. If the order filled before the socket went, this run has become D on a shorter clock and that page lands at ≈12 min.
-- **The engine's CRITICAL line does not reach Loki while the socket is down**, so [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) cannot fire during the hold. The engine ships its own logs in-process to Grafana Cloud, so with no network the line sits in a bounded in-memory ring and may be evicted before the reconnect. Read it from the host, never from Loki.
+- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) stays quiet while the account is flat: its position node reads the largest exposure at last sight, which is 0 on a flat account. If the order filled before the socket went — or a position left open by A2 is still standing, which these *Preconditions* do not forbid — this run has become D on a shorter clock and that page lands at ≈12 min.
+- **The engine's CRITICAL line does not reach Loki while the socket is down**, so [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) cannot fire during the hold (no count command: `cli/logging/ship.py`'s `LokiShipHandler` is the engine's one route to Loki). The engine ships its own logs in-process to Grafana Cloud, so with no network the line sits in a bounded in-memory ring and may be evicted before the reconnect. Read it from the host, never from Loki.
 
 ### Operator action
 
@@ -348,7 +348,7 @@ The container is bridge-networked with `127.0.0.1:9102:9102` published (`infra/a
    and `sudo docker exec zcrypto-engine zcrypto engine exec-status`.
 2. **Reconnect**: `sudo docker network connect <the network> zcrypto-engine`, then `up{job="engine_app",host="zcrypto"}` back at 1 by value.
 3. **Read Kraken's open orders by hand.** The order may still be resting there and nothing in this engine will cancel it: the intent is terminal, so a hand-placed kill file sweeps nothing.
-4. **Clear it deliberately.** A direct cancel in the Kraken web UI always works. A restart works only on a leg its adopt pass can see; on the five the standing rules name it cancels nothing and says nothing, so a restart taken as the remedy there leaves the order working with no line to tell you. Note the wall-clock time it rested, from the disconnect to the cancel.
+4. **Clear it deliberately.** A direct cancel in the Kraken web UI always works (no count command: the venue's behaviour; the five are `cli/engine/flatten.py`'s `BLIND_ORDER_READ_LEGS`). A restart works only on a leg its adopt pass can see; on the five the standing rules name it cancels nothing and says nothing, so a restart taken as the remedy there leaves the order working with no line to tell you. Note the wall-clock time it rested, from the disconnect to the cancel.
 
 If the property you wanted is "the order dies with the socket", that is re-cancel-on-reconnect, a build item in `T0018`, never an expectation to write against this drill.
 
@@ -368,15 +368,15 @@ Entry `F2`: how long the order rested at the venue, whether the intent journaled
 
 Three things, in the order they can be observed, and the first is unverified in this repo.
 
-1. **What the venue does with a resting GTC order across an engine stop.** `ExecStop` is a compose down and nothing cancels resting openers before the process exits, so the answer is Kraken's, not the engine's, and it is readable only while the engine is down.
-2. That the restart latches the reduce-only hold.
-3. That the adopt pass attaches every matched row first and only then cancels the opener. That ordering is what puts a fill landing during the stop into its own row rather than into nothing, on a leg the pass can see the order at all, which is the pair precondition below.
+1. **What the venue does with a resting GTC order across an engine stop.** `ExecStop` is a compose down and nothing cancels resting openers before the process exits, so the answer is Kraken's, not the engine's, and it is readable only while the engine is down (no count command: `cli/engine/executor.py`'s `_adopt_resting_orders` acts on the first tick after a start).
+2. That the restart latches the reduce-only hold (no count command: `tests/test_engine_command.py::test_engine_startup_latches_the_restart_hold` holds it).
+3. That the adopt pass attaches every matched row before it cancels that row's opener (no count command: `cli/engine/executor.py`'s `_adopt_resting_orders` attaches a row before its own cancel call). That ordering is what puts a fill landing during the stop into its own row rather than into nothing, on a leg the pass can see the order at all, which is the pair precondition below.
 
 **G is the measurement cancel-on-stop is waiting on.** That enhancement is ruled only once G says what the venue actually does, so do not "fix" the behaviour first and then run the drill against the fix.
 
 ### Preconditions
 
-- The window open, the engine armed, a resting plan: the `rest-hold` gate and the blind-leg rule. All three of this drill's deliverables are about the adopt pass, which on the five legs never runs on the order at all, so a plan resting there makes the whole drill `blocked`.
+- The window open, the engine armed, a resting plan: the `rest-hold` gate and the blind-leg rule. All three of this drill's deliverables are about the adopt pass, which on the five legs never runs on the order at all (no count command: the five are `cli/engine/flatten.py`'s `BLIND_ORDER_READ_LEGS`), so a plan resting there makes the whole drill `blocked`.
 - **The stop lands inside the 4-hourly inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC). Run `date -u` first: a stop that kills a running cycle costs that boundary's record and confuses everything this drill measures.
 - No intent in flight beyond the resting one.
 
@@ -421,8 +421,8 @@ uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total
 
 - **1 is the expected value**: the adopt pass's own cancel ack arrives on the external stream and keys back through the row the pass attached.
 - **2 under a fill racing the cancel.** Either value proves Kraken echoes the client order id across a restart, which is the question this reading exists to answer.
-- **0 is recorded as "0, cause undetermined" until two artefacts have been read**: the `canceling adopted resting order` line above and the row's own `events`. A line with no matching cancel event on the row says the cancel was issued and its acknowledgement went nowhere, which has two causes the artefacts do not separate: Kraken did not echo the client order id, or the cancel's ack never reached the external stream — how nautilus routes a strategy-issued cancel on an order tagged external is unmeasured in this repo, and if that is the answer it is an engine-side defect on the live trade path rather than a fact about the venue. No line at all says nothing was cancelled, and on one of the five blind legs there was no cancel to acknowledge, so check the pair the plan actually named before reading a bare "no line" as anything about the venue or the adapter.
-- `(no series)` is a FAIL of the telemetry path and never a zero: both dispositions are registered at engine startup, so the family is present on a healthy engine whatever the counts.
+- **0 is recorded as "0, cause undetermined" until two artefacts have been read**: the `canceling adopted resting order` line above and the row's own `events`. A line with no matching cancel event on the row says the cancel was issued and its acknowledgement went nowhere, which has two causes the artefacts do not separate: Kraken did not echo the client order id, or the cancel's ack never reached the external stream (no count command: both artefacts live on the engine host, outside the tree) — how nautilus routes a strategy-issued cancel on an order tagged external is unmeasured in this repo, and if that is the answer it is an engine-side defect on the live trade path rather than a fact about the venue. No line at all says nothing was cancelled, and on one of the five blind legs there was no cancel to acknowledge, so check the pair the plan actually named before reading a bare "no line" as anything about the venue or the adapter.
+- `(no series)` is a FAIL of the telemetry path and never a zero (no count command: `tests/test_engine_metrics.py::test_external_events_counter_preregisters_both_dispositions` holds it): both dispositions are registered at engine startup, so the family is present on a healthy engine whatever the counts.
 
 ### Retire when
 

@@ -11,8 +11,10 @@ import sys
 SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 CONTRACT = re.compile(
-    r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md|infra/runbooks/README\.md)$"
-)  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient
+    r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md|infra/runbooks/[^/]+\.md)$"
+)  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient.
+# The runbook pages joined on 2026-09-12, once `count-list.sh runbook-universals-without-a-count` read 0 -- the owner's
+# ruling of 2026-09-11 that the test binds them, taken as an instrument first and a gate once the number it reads was 0.
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
 META_OPEN = "export const meta = {"  # the authoring reference's own shape, and the only one read
@@ -109,13 +111,20 @@ def ambient_bytes(path: str, text: str) -> int:
 
 
 def bullets(text: str) -> list[tuple[int, str]]:
-    """Each bullet, nested ones included and fenced code blocks skipped, as its first line number and its text with continuation lines joined."""
+    """Each bullet, nested ones included and fenced blocks skipped, as its first line number and its text with continuation lines joined -- an indented fence keeps its list item open, so a step's prose under its command block is read."""
     out: list[tuple[int, str]] = []
     open_bullet = fenced = False
     for i, line in enumerate(text.split("\n"), 1):
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-            open_bullet = False
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            if fenced:
+                fenced = False
+            else:
+                fenced = True
+                # An INDENTED fence belongs to the open list item -- a step's command block, with the step's
+                # own prose continuing under it. Closing the bullet here would leave that prose unread, which
+                # is a universal the instrument cannot see and the gate cannot refuse.
+                open_bullet = open_bullet and line[:1].isspace()
         elif fenced:
             continue
         elif BULLET.match(line):
