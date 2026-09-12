@@ -71,7 +71,7 @@ The bridgehead runs Alloy **natively** (an apt package, no docker) — the only 
 ### What to do
 
 1. On the bridgehead: `systemctl status alloy` — is the unit running at all?
-2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, and no drift assert catches a bad render before it lands (no count command: the copy task in `infra/ansible/roles/access/tasks/main.yml` carries no `when:`, unlike the digest-gated tasks above it).
+2. `journalctl -u alloy --no-pager -n 100` — a config parse failure is the usual cause here: a hand edit the last converge overwrote, or a credentials rotation that never reached `/etc/default/alloy`. The config copy is ungated — every converge ships it, and no drift assert catches a bad render before it lands (no count command: the copy task in `infra/ansible/roles/access/tasks/main.yml` is ungated by design and its own task name says so; the digest-gated copies the asserts exist for are the other tiers').
 3. `systemctl restart alloy` is the usual fix. If it will not stay up, `sudo grep -c '^GRAFANA_' /etc/default/alloy` — 6 means the credentials file is populated; fewer, or no file, means re-converge (`infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access`) to re-render it. Count that file, never print it — it carries the Grafana Cloud push passwords (no count command: the file is rendered on the bridgehead, and its contents are secrets nothing in the tree reads).
 4. Confirm recovery from the workstation: `uv run python infra/scripts/grafana-query.py 'up{host="zaccess"}'` → `1`.
 

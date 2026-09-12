@@ -148,7 +148,7 @@ c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-tri
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
 
 # The runbook pages take the corpus's universal test (the owner, 2026-09-11): the guard's own bullet reader over the
-# tracked pages, the README aside since the guard reads it under the same rule. It reads 0 and the pages are in the
+# tracked top-level pages, the README aside because its own bullets state the rule rather than an operator's steps. It reads 0 and the pages are in the
 # guard's contract set, so this entry is the number behind a gate rather than an instrument in front of one.
 c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }  # top-level pages only, the set the guard judges
 
