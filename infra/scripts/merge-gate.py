@@ -178,6 +178,14 @@ def _before_anything_that_can_hide(body: str) -> str:
     out: list[str] = []
     for raw in body.splitlines():
         stripped = raw.lstrip()
+        # A comment that OPENS AND CLOSES on its own line hides nothing below it under any parse, and this
+        # repo's own pull-request template ships one above both lines (`## Summary`'s instruction), so breaking
+        # on it refused a body built from the template -- with advice the author could not act on, since the
+        # obstruction sat above the line it told them to move. `<details>` and fences break unconditionally: a
+        # one-line `<details>` can comment out its own closer and leave the element open, which is measured.
+        if stripped.startswith("<!--") and _COMMENT_CLOSE.search(stripped):
+            out.append(raw)
+            continue
         if _FENCE_OPEN.match(raw) or stripped.startswith("<!--") or stripped.startswith("<details"):
             break
         out.append(raw)
@@ -191,6 +199,18 @@ def _hidden_hint(body: str, pattern: re.Pattern[str]) -> str:
         return (
             " — the line is in the body but hidden from the rendered page: an HTML comment (terminated or not), a "
             "fenced block, a `<details>` block, or a quoted line"
+        )
+    return ""
+
+
+def _prefix_hint(body: str, pattern: re.Pattern[str]) -> str:
+    """A clause for the refusal when the line is visible but sits below a fence or a multi-line comment. Without
+    it the gate says the line is missing while the author is looking straight at it."""
+    visible = _as_a_reader_sees_it(body)
+    if pattern.search(visible) and not pattern.search(_as_a_reader_sees_it(_before_anything_that_can_hide(body))):
+        return (
+            " — the line is below a fenced block, a `<details>` block or a multi-line comment; it counts in the "
+            "body's plain prefix, above any of those"
         )
     return ""
 
@@ -240,11 +260,15 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
             return []  # a month of journal entries has nothing for a reviewer to read (docs/reference/ops-journal/README.md)
     body = pr.get("body") or ""
     head = pr.get("headRefOid") or ""
-    m = READ_LINE.search(_as_a_reader_sees_it(body))
+    # The read line is judged in the same plain prefix as the substitution. It costs nothing on a PR that uses
+    # the substitution -- the read line sits above a marker that must be in the prefix anyway -- and it closes
+    # the shape where a `<details>` commenting out its own closer leaves a read claimed on a page that renders it
+    # collapsed. A body opening a fence or a multi-line comment ABOVE its read line is refused, and told which.
+    m = READ_LINE.search(_as_a_reader_sees_it(_before_anything_that_can_hide(body)))
     if not m or m.group(1).strip().startswith("<"):
         return [
             "no 'Read before push by: <model> at <sha>' line in the body: the whole-branch read is unrecorded"
-            + _hidden_hint(body, READ_LINE)
+            + (_hidden_hint(body, READ_LINE) or _prefix_hint(body, READ_LINE))
         ]
     model, sha = m.group(1).strip(), m.group(2)
     family = FLOOR.match(model)

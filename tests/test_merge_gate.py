@@ -277,7 +277,6 @@ def test_a_leftover_placeholder_line_does_not_refuse_the_filled_one():
         ("an unterminated tilde fence", "~~~"),
         ("a tilde fence whose info string carries backticks, which CommonMark allows", "~~~`js`"),
         ("a <details> that comments out its own closer, so the element never closes", "<details><!--</details>-->"),
-        ("a terminated comment on its own line", "<!-- a note -->"),
     ],
 )
 def test_no_delimiter_line_above_the_substitution_leaves_it_counting(shape, above):
@@ -289,6 +288,29 @@ def test_no_delimiter_line_above_the_substitution_leaves_it_counting(shape, abov
         "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
     )
     assert _eval(_pr(body=body), files=["cli/engine/journal.py"]), shape
+
+
+def test_a_one_line_comment_above_the_line_leaves_it_counting():
+    """The repo's own pull-request template ships `<!-- A few sentences mirroring the spec's goal. -->` above both
+    lines, and a comment that opens and closes on one line hides nothing below it under any parse. Breaking the
+    prefix on it refused a template-derived body, and the refusal told the author to move a line that was already
+    where it belonged."""
+    body = (
+        f"## Summary\n\n<!-- A few sentences mirroring the spec's goal. -->\n\n"
+        f"Read before push by: Claude Opus 5 at {TIP}\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
+def test_a_one_line_details_above_the_line_still_refuses():
+    """Not symmetric, and the asymmetry is measured: a one-line `<details>` can comment out its own closer, so
+    the element stays open and everything below renders collapsed."""
+    body = (
+        f"## Summary\n\n<details><!--</details>-->\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"])
 
 
 def test_a_terminated_fence_above_the_line_refuses_it_too():
@@ -366,6 +388,23 @@ def test_a_comment_above_the_read_line_closed_the_html_way_still_records_the_rea
     substitution."""
     body = f"## Summary\n\n<!-- a note --!>\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
     assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
+def test_a_read_line_below_a_details_that_hides_it_is_no_recorded_read():
+    """The hole this closes, measured by the fourth safety read: a one-line `<details>` that comments out its own
+    closer leaves the element open, so the page renders the read line collapsed while a walk shows it. The read
+    line is judged in the plain prefix for the same reason the substitution is."""
+    body = f"## Summary\n\n<details><!--</details>-->\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "plain prefix" in fails[0], fails
+
+
+def test_a_read_line_below_a_fence_is_refused_and_told_why():
+    """The cost of extending the prefix to the read line, stated: a body that opens a fence above its read line
+    is refused, and the refusal names the prefix rather than claiming the line is missing."""
+    body = f"## Summary\n\n```\ngh pr view 1\n```\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "plain prefix" in fails[0], fails
 
 
 def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():
