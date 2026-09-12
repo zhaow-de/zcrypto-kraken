@@ -44,6 +44,56 @@ def test_an_archived_topic_carries_no_ripe_when(path: Path):
     )
 
 
+# --- the archived shape: one Resolution, nothing that reads as pending ----------------------------
+# `.claude/skills/topic-ops/SKILL.md`'s *Closing a topic*: a `partial` topic's `## Done so far` is
+# RENAMED to `## Resolution` and no `## Suggested next steps` survives, because a line under either
+# heading reads as pending whatever it says and an archived file is never reviewed again. These three
+# hold what that rule asks for; the sweep that made them green is this branch.
+
+_HEADING = re.compile(r"^##+ +(.+?)\s*$", re.M)
+
+
+def _headings(path: Path, prefix: str) -> list[str]:
+    """Every heading of this file whose text begins with `prefix` -- a prefix, not an equality, because
+    a section may carry a date or a clause (`## Done so far -- the alert leg (2026-07-26)`)."""
+    return [h for h in _HEADING.findall(path.read_text()) if h.startswith(prefix)]
+
+
+@pytest.mark.parametrize("path", ARCHIVED, ids=lambda p: p.name)
+def test_an_archived_topic_records_how_it_was_disposed_of(path: Path):
+    """An archived topic whose work is done but unrecorded is indistinguishable on inspection from one
+    whose work was never done."""
+    found = _headings(path, "Resolution")
+    assert found, (
+        f"{path.name}: an archived topic carries no `## Resolution` -- it records no commit, PR, spec or "
+        f"measurement that disposed of it, so nothing here distinguishes done from never done"
+    )
+    assert len(found) == 1, (
+        f"{path.name}: {len(found)} headings begin `Resolution` ({found}) -- two of them means a fold left "
+        f"the old section standing beside the new one, and a reader cannot tell which records the close"
+    )
+
+
+@pytest.mark.parametrize("path", ARCHIVED, ids=lambda p: p.name)
+def test_an_archived_topic_carries_no_done_so_far(path: Path):
+    """`Done so far` is the heading of a live partial: its name says the work is unfinished, and the
+    archive holds finished work. At close it is renamed, or folded into the Resolution that exists."""
+    assert not _headings(path, "Done so far"), (
+        f"{path.name}: an archived topic still carries `## Done so far` -- rename it to `## Resolution`, "
+        f"or fold its body into the Resolution already there"
+    )
+
+
+@pytest.mark.parametrize("path", ARCHIVED, ids=lambda p: p.name)
+def test_an_archived_topic_carries_no_suggested_next_steps(path: Path):
+    """A line under this heading reads as pending whatever label it carries, and an archived file is
+    never reviewed again -- so a deferral left there is lost rather than parked."""
+    assert not _headings(path, "Suggested next steps"), (
+        f"{path.name}: an archived topic still carries `## Suggested next steps` -- each bullet is "
+        f"answered in the Resolution, or named there as left open at the close"
+    )
+
+
 # --- every link in the index lands on a file that exists ------------------------------------------
 # A topic's filename is its identity: a sweep that rewrites a link target rather than moving the
 # file leaves a dead pointer here.

@@ -18,7 +18,7 @@ The retro study of 2026-09-04 measured the prose layer as the day's cost: 26 of 
 - Tripwire census at `b655d00e`, `uv run python infra/scripts/prose-tripwire.py`: comment-block 1909, file-prose 183, table-row 98, section 352 (in 51 files), changelog-entry 135 — 2,677 offenders, exit 1. `--since origin/develop` reports 0, so the tool gates new prose while this topic is open.
 - The docs half, measured 2026-09-04 on develop: `docs/iterations-history-phase6.md` 1,232 lines / 620 KB with entries of 1.9–7.5 KB; `docs/reference/fleet-pins.md` 45 lines / 14.5 KB with rows of 1,400–1,500 characters rewritten 38 times; `docs/reference/fleet.md` 80 lines / 20 KB.
 
-## Done so far
+## Resolution
 
 The first `tests/` + `infra/` batch (PR by `zcrypto-bravo`, 2026-09-05): `tests/test_engine_executor.py`, `tests/test_infra_alert_rules.py`, `tests/test_engine_flatten.py` and `infra/grafana/alerts.yaml` under the bar — every block dispositioned against its code, the Python files AST-identical with docstrings stripped, the YAML's non-comment lines and parsed content byte-identical, one whole-branch and three scoped Fable reviews. Twelve sentences that claimed what nothing asserts became T0165, T0166 and T0167. Consciously left: the six sops `vault.yml` files (encrypted; a prose pass never edits them) and the two vaulted-key wrappers whose bodies `tests/test_kraken_fixture_mint.py` pins by sha256. Measured at the batch's tip: the tripwire over `tests infra` 1,501 → 1,413 offenders; `tests/` 16,235 → 15,688 prose lines.
 
@@ -137,6 +137,6 @@ Untouched in the tree, by decision: every Critical and Important was against an 
 - **`cli/trades`** — `backfill.py` (1I, cites a `--mint` flag this command does not define).
 - **`cli/xcheck`** — `binance.py` (1I, drops the `<=` and asserts the fetch returns `limit` candles).
 
-## Suggested next steps
+**The step list this topic carried at its close, kept verbatim — it held no step:**
 
-_(none — every batch landed and every registration has its home above)_
+_(none — every batch landed and every registration has its home above)_ — **ANSWERED:** the batch subsections above are where each batch's landing and each registration's home are recorded, so nothing was owed at the close.

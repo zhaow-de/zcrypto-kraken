@@ -26,7 +26,13 @@ Three further bounds on `_verify_new_files`, worth stating so its coverage is no
 
 - **Why the re-freeze is the cheap moment.** That is when the freeze process can emit per-series `sha256` for free, rather than paying a separate pass later. It is also ripe if [[T0064]]'s out-of-sample work moves from accepted-once to repeated evaluation, since a re-run against silently altered holdout bytes is exactly the failure this guards against.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
+
+All three sub-items are disposed of: the holdout's hashes exist and are committed, the empty-vouched branch fails closed, and path binding is delivered where it can be had without a manifest contract and consciously declined where it cannot. The only thing this topic leaves behind is registered on [[T0132]], which owns the manifest contract that would let the last case be done properly.
+
+**What had landed before the close** — this file's `Done so far`, which the next section's "discharged above" points at:
 
 **The gap the title names is closed, and the fix is bigger than this topic expected — because `_verify_new_files` was never the important consumer.** `_manifest_sha256s` has a second caller: `ObservedReader.read_series` cross-checks `dataset_hash(full)` against the vouched set on EVERY read, but guards with `if vouched and ...`, so an empty set made it a no-op. `vouched_status()` reported the holdout verbatim as `inert (0 vouched hashes)`; it now reports `checked (10 vouched hashes)`. That is a data-at-rest guard on the local copy, which is what this topic actually needed — and it fires on reads, not only on transfers.
 
@@ -47,10 +53,6 @@ Three further bounds on `_verify_new_files`, worth stating so its coverage is no
 **The check is path-BOUND wherever a committed attestation names the path**, which the sidecar does by carrying `relpath` per line. That is strictly stronger than membership and catches the one case membership provably cannot: swap two series inside a set and the multiset of hashes is unchanged, so every membership test passes on both halves. A test constructs exactly that swap, asserts the hash set is identical, and then sees the read refused.
 
 **Sets attested only by their own manifest deliberately stay on membership**, and that is a recorded trade rather than an oversight. Deriving a path per hash needs per-set knowledge of each set's layout, and the manifests speak four incompatible dialects — measured on the live hub, `ohlc-reach`'s `series` is a *list*, and `derivatives-funding`/`derivatives-oi` share one shape while laying files out under different names, so shape alone does not even determine the path. Building a fifth hard-coded reader here is precisely what [[T0132]] exists to stop. The residual — a swap inside a manifest-attested set is invisible at both consumers — is registered there as a named waiting consumer, so the contract landing has something concrete to discharge.
-
-## Resolution
-
-All three sub-items are disposed of: the holdout's hashes exist and are committed, the empty-vouched branch fails closed, and path binding is delivered where it can be had without a manifest contract and consciously declined where it cannot. The only thing this topic leaves behind is registered on [[T0132]], which owns the manifest contract that would let the last case be done properly.
 
 ## Superseded next steps
 

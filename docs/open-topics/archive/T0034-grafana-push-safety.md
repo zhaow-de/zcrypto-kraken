@@ -41,7 +41,9 @@ The git-vs-live divergence is the same class of bug as the deployed-compose drif
 - The live instance now holds exactly the 7 rules in `alerts.yaml`, all `health=ok`.
 
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 - **The mis-point half is closed (2026-07-14).** `infra/scripts/grafana-push.sh` no longer takes the
   stack URL and datasource/folder UIDs as unvalidated required env vars: they now **default to this

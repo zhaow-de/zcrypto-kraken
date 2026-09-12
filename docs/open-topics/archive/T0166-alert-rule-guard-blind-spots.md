@@ -28,6 +28,6 @@ Every item was decided by the owner on 2026-09-05, per item, in an attended sess
 - The ops ERROR rule's selector against the ops log plane: **test** — same commit, `test_the_ops_error_rule_selects_every_container_the_ops_log_plane_can_emit`, deriving the labels from the ops journal keep-regex, Alloy's stream and the poller's `ZCRYPTO_LOG_SERVICE`; KILLED when `liquidations` is dropped from the selector.
 - Every memory-limited job has a headroom leg: **test** — same commit, `test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence`, the limited compose sources pinned by glob and each rendered (host, job) covered or named absent with its reason; KILLED when the engine leg is renamed.
 
-## Suggested next steps
+**The next-steps list carried no bullet** — only this line, kept verbatim, **ANSWERED** in full by the four per-item dispositions above:
 
 _(none remain — see Resolution)_

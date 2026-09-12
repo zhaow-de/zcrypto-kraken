@@ -28,13 +28,6 @@ A stale register does not announce itself. The failure mode is quiet: the go/no-
 - The only topic that ever named the register is resolved and archived (`archive/T0000`), which is why the second sweep has no home today.
 - This is registration, not new research: the sweep itself is a re-fetch of known sources into an existing document shape.
 
-
-## Done so far
-
-- **The routine is registered and its first sweep has run — sweep #1, 2026-08-04** (`docs/reference/kraken-snapshot-register.md`). The register's header now always carries the latest sweep, and a **re-confirmation log** table records each one with its own timestamp, response counts, raw hash and verdict — which is the mechanism this topic existed to create: "re-confirmed, identical" is now distinguishable from "never re-run" by reading one table.
-- **Sweep #1's verdict: UNCHANGED.** All twelve §3 candidates still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases — re-rendered through the same `cli/snapshot/` code and diffed cell-by-cell. Independently re-derived at review, including a fresh live fetch ~61 minutes later that also matched.
-- **A changed raw hash is not a changed fact, and the register now says so.** Kraken's full response moved (1509 → 1429 pairs, 809 → 824 assets) while our basket held; review computed the actual set difference from both archived snapshots — **13 pairs added / 93 removed, 15 assets added / 0 removed** — and confirmed none of the twelve candidates or their assets appear in any changed set. The verdict is therefore read from the rendered table, never the hash; treating hash churn as fact churn would raise a false alarm every month.
-
 ## Resolution
 
 **Resolved 2026-08-04 — the routine has a home, a trigger and a procedure, and every deferral it
@@ -84,3 +77,9 @@ as such in both files and in the skill.
 - **The account fee tier's own re-read**, which had lost its trigger when `T0000` was archived → the
   attended half of the same monthly sweep, recorded in the register's log as confirmed, corrected,
   or *not re-read* — never inherited.
+
+**What had landed before the close:**
+
+- **The routine is registered and its first sweep has run — sweep #1, 2026-08-04** (`docs/reference/kraken-snapshot-register.md`). The register's header now always carries the latest sweep, and a **re-confirmation log** table records each one with its own timestamp, response counts, raw hash and verdict — which is the mechanism this topic existed to create: "re-confirmed, identical" is now distinguishable from "never re-run" by reading one table.
+- **Sweep #1's verdict: UNCHANGED.** All twelve §3 candidates still online and margin-enabled, identical leverage bands, `ordermin`, `costmin` and aliases — re-rendered through the same `cli/snapshot/` code and diffed cell-by-cell. Independently re-derived at review, including a fresh live fetch ~61 minutes later that also matched.
+- **A changed raw hash is not a changed fact, and the register now says so.** Kraken's full response moved (1509 → 1429 pairs, 809 → 824 assets) while our basket held; review computed the actual set difference from both archived snapshots — **13 pairs added / 93 removed, 15 assets added / 0 removed** — and confirmed none of the twelve candidates or their assets appear in any changed set. The verdict is therefore read from the rendered table, never the hash; treating hash churn as fact churn would raise a false alarm every month.

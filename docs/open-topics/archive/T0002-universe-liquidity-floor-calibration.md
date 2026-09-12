@@ -20,12 +20,6 @@ The point-in-time universe file (`docs/universe/point-in-time-universe.md`) is a
 - Live 30d median quote volume (iter-005): BTC €27.8M, ETH €11.5M, SOL €5.4M, XRP €4.0M, ADA €1.30M, LTC €1.25M (pass); LINK €283k, DOGE €501k, DOT €182k, AVAX <€1M (fail). BTC/EUR–ETH/EUR mandatory legs pass comfortably.
 - The finalize-universe machinery + escalation logic are built and tested (iter-005); only the parameters and the cross-quote handling are open.
 
-## Suggested next steps (human decision)
-
-- Calibrate the volume floor, or decide the basket policy: lower the EUR floor; **or** route the thinner alts through their deeper Kraken **USD-quoted** pairs (USD books are deeper than EUR for alts); **or** accept a smaller EUR-only basket (6–8 names); **or** per-quote-currency floors.
-- Make the volume floor quote-currency-aware: convert a BTC-quoted leg's volume to EUR via the BTC/EUR price (or apply a BTC-denominated floor to BTC legs) so ETH/BTC & SOL/BTC are judged on real turnover, not a unit artifact.
-- Re-run `finalize_universe` with the calibrated parameters and re-generate the universe file.
-
 ## Resolution (iter-007, 2026-07-07)
 
 Resolved by **lowering the EUR floor and making the volume metric quote-currency-aware**, grounded in a live EUR-vs-USD-vs-USDT depth + margin-parity + FX/tax analysis (recorded in master-plan §3): USD books are 2–8.5× deeper, but that depth does not bind at ~$10k (a full per-name position is <1% of even the thinnest EUR book) and EUR gives up zero margin capability, while USD adds conversion/FX/§23-tax friction. So:
@@ -34,3 +28,11 @@ Resolved by **lowering the EUR floor and making the volume metric quote-currency
 - **`quote_volume_in_eur`** FX-normalizes the BTC-quoted RV legs (ETH/BTC → €579,964, SOL/BTC → €233,595) via the BTC/EUR daily close, ending the unit mismatch.
 - **Result:** the full §3 target of **12 names** (10 EUR + 2 BTC RV), `escalate=False`. `docs/universe/point-in-time-universe.md` regenerated; findings + the floor decision inserted into master-plan §3.
 - **Deferred (not this topic):** routing thin alts via deeper USD pairs is a pre-registered **scaling trigger** (revisit at ~5–10× this account); USDT ruled out entirely (thinnest venue, MiCA-delisted for EEA, breaks AVAX margin). The spread-cap criterion still awaits the L2 capture daemon.
+
+**Correction (2026-09-12), on the sweep's read of the archive:** "The spread-cap criterion still awaits the L2 capture daemon" is contradicted by the tree: the criterion is live, and calibrated *from* that capture rather than waiting on it — `grep -n 'DEFAULT_MAX_SPREAD_BPS = ' cli/universe/rules.py` → `14:DEFAULT_MAX_SPREAD_BPS = 10.0`, while `cli/costs/spread.py`'s docstring opens *"Captured-spread cost term (spec 00066), calibrated from our own L2 capture (`l2-panel`, spec 00052)"*. The placeholder was retired by `b36e1cdb1` *feat(universe): retire the spread_cap placeholder with a calibrated criterion (T0024, iter-115)*, and the artifact this topic regenerates records the criterion discharged — `grep -n 'Spread-cap criterion' docs/universe/point-in-time-universe.md` → `103:- **Spread-cap criterion** — **DISCHARGED 2026-08-13** by this regeneration (→ **T0024**).` — with `unevaluated_count: 0` and a numeric `spread_bps` on all twelve symbols. The rest of the bullet stands: USD routing is still the pre-registered scaling trigger, USDT still ruled out.
+
+**The steps this topic carried at its close, kept verbatim with what answered each:**
+
+- Calibrate the volume floor, or decide the basket policy: lower the EUR floor; **or** route the thinner alts through their deeper Kraken **USD-quoted** pairs (USD books are deeper than EUR for alts); **or** accept a smaller EUR-only basket (6–8 names); **or** per-quote-currency floors. — **ANSWERED:** the basket-policy call was taken as the floor cut above — `DEFAULT_MIN_MEDIAN_QUOTE_VOLUME = 150_000.0` in `cli/universe/rules.py` (`9495e2d`, *feat(universe): lower liquidity floor to €150k + quote-currency-aware volume*) — with the USD-routing alternative deferred to the pre-registered scaling trigger and USDT ruled out, both as stated in the Deferred bullet above.
+- Make the volume floor quote-currency-aware: convert a BTC-quoted leg's volume to EUR via the BTC/EUR price (or apply a BTC-denominated floor to BTC legs) so ETH/BTC & SOL/BTC are judged on real turnover, not a unit artifact. — **ANSWERED:** `quote_volume_in_eur` lives in `cli/universe/volume.py`, is exported from `cli/universe/__init__.py`, is consumed by `cli/data/rebuild.py`, and is pinned by `tests/test_universe_volume.py`.
+- Re-run `finalize_universe` with the calibrated parameters and re-generate the universe file. — **ANSWERED:** the iter-007 regeneration above, and the same machinery has re-run since — `092b0c809` regenerated `docs/universe/point-in-time-universe.md` on a fresher volume source.

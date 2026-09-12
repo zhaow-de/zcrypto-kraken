@@ -22,7 +22,7 @@ status: resolved
 - The ops-side copy is `deploy:deploy 0777`; the mode asymmetry across hosts is what rsync tried, and failed, to reconcile.
 - This is the only `.bak` in the tree today, so the failure is currently one file wide — but the runbook creates one per correction, so the next correction adds another.
 
-## Done so far
+## Resolution
 
 Resolved 2026-07-17 (iter-101, `feat/ops5-offload`) — all three suggested steps executed, evidence-first:
 

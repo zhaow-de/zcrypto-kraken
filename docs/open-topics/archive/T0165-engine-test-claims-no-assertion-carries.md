@@ -28,6 +28,6 @@ Every item was decided by the owner on 2026-09-05, per item, in an attended sess
 - A test for the running-nautilus gate input: **recorded drop** — the false fixture comment is gone (T0164), and `tests/test_engine_execgate.py` covers the verified-record check.
 - The `-s` blind spot: **test** — `test(engine): the prompt-to-terminal test holds under pytest -s`; fd 1 is pointed at `/dev/null` in the forked child. Proven by mutation under `-s` with the prompt written to stdout: this test KILLED, the base test SURVIVED.
 
-## Suggested next steps
+**What this topic's next-steps section held at its close, kept verbatim:**
 
-_(none remain — see Resolution)_
+_(none remain — see Resolution)_ — **ANSWERED:** no step was left standing at the close; all four items were disposed above in the owner's 2026-09-05 session — two recorded drops (`tests/test_engine_executor.py::test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase` carrying the first, `tests/test_engine_execgate.py` the second) and two tests written (`tests/test_engine_executor.py::test_a_kill_file_landing_during_the_time_box_cancel_refuses_the_fallback_ioc`, and the `-s` case in `tests/test_engine_flatten.py`).

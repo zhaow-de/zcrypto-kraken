@@ -61,6 +61,6 @@ The measured 6 h floor series on `zcrypto-red`, oldest → newest, **none of the
 
 **The rule worth keeping: a floor read must sit ENTIRELY outside the event band — and the band is a RAMP, so measure its width before trusting any clearance.** This generalises past RSS: it is the same defect as reading `count_over_time` on a burst emitter and concluding it is continuous.
 
-## Suggested next steps
+**What this topic's own next-steps section carried at the close, kept verbatim:**
 
 _(none — resolved. The follow-on lesson about window-vs-event alignment is recorded above and in `fleet-pins.md`, where the next person reading a floor will be standing.)_

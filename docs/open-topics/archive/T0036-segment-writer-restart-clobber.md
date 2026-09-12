@@ -69,7 +69,7 @@ mid-hour restart would have cost ~600 s and taken the run to ~0.157 %, failing t
   orphaned data to recover — the losses above are already merged away and unrecoverable.
 
 
-## Done so far
+## Resolution
 
 - **The fix is complete on `fix/t0036-segment-writer-restart-clobber`** — five adversarial
   rounds (10 reproduced criticals across them, every one found by execution), ending in the

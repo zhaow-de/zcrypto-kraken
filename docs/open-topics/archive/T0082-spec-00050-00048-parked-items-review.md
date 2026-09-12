@@ -41,6 +41,6 @@ _(none at open — the review was the work; its findings are the Resolution belo
 
 After this pass nothing in either spec is silently parked: every item is delivered, tracked on a registered topic, revived ([[T0088]]), or explicitly dropped above. One-shot by design — closed in the same pass.
 
-## Suggested next steps
+**The next-steps section this topic carried at its close, kept verbatim:**
 
 _(none — the original single step, the review itself, completed above; no remainder exists)_

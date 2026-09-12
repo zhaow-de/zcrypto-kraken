@@ -20,7 +20,7 @@ The previous whole-journal replay covered this **by accident**: replaying everyt
 - The same reasoning applies to `zcrypto-verify-replay.timer` (03:41 daily, also `Persistent=true`), which was **not** re-scoped by D9 — so it is unaffected today, but any later `--date` scoping of it inherits this gap.
 - Not yet triggered: the ops node has not been offline for more than a day since the change landed.
 
-## Done so far
+## Resolution
 
 Resolved 2026-07-17 (iter-101, `feat/ops5-offload`) by the recommended **watermark** — the only option where the system is correct after an outage without a human remembering anything:
 

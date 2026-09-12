@@ -9,7 +9,7 @@ status: resolved
 Split out of [[T0103]] on 2026-07-28, found by an adversarial review of the counter work. Two classes of real primary silence now leave a ledger record but move **no counter and no alert**:
 
 1. **`unwitnessed` gaps.** A pair whose primary went silent and whose secondary held no `update` row inside the window is ledgered `unwitnessed` and logged at WARNING, deliberately feeding no counter (`open-topics.md`-registered ruling: whenever the fleet was dark those seconds are already booked by `both_streams_silent`, and when it was not, one pair silent on both mirrors cannot be told from a quiet market). But that reasoning only holds **inside** a fleet-dark window. A single pair losing both mirrors while the rest of the fleet is healthy produces a record, a warning, and nothing else — `grep -rn unwitnessed infra/` returns zero hits, and only ERROR-level lines page.
-2. **The remainder inside a real blackout.** Measured on 2026-07-27T07:00: ADA/EUR's `unwitnessed` window is 208.566668 s, and the fleet record booked it 198.820666 s — leaving seconds that reached no counter — **6.821701 s** under the booking that current code applies; see `## Resolution`, which settles which figure applies. See `## Done so far` for why subtracting these two is legitimate even though they were written by different code generations.
+2. **The remainder inside a real blackout.** Measured on 2026-07-27T07:00: ADA/EUR's `unwitnessed` window is 208.566668 s, and the fleet record booked it 198.820666 s — leaving seconds that reached no counter — **6.821701 s** under the booking that current code applies; see `## Resolution`, which settles which figure applies. See the 2026-07-28 measurement record in `## Resolution` for why subtracting these two is legitimate even though they were written by different code generations.
 
 ## Why this matters
 
@@ -23,7 +23,9 @@ It is strictly better than what preceded it: before [[T0103]]'s work these windo
 - **Two figures, both valid, answering different questions** — an earlier revision withdrew them both, which was over-correction. **9.746002 s** is what the booking that actually ran left unbooked for ADA/EUR in that hour. **6.821701 s**, carried in [[T0103]], is what current containing-window booking *would* leave. History versus forward exposure; the decision this topic feeds wants the second.
 - The competing risk is real and is why this is not simply "book it": a per-pair dual-silence with no fleet-wide corroboration is indistinguishable from a thin market, and booking it would move a false positive into a monotone counter that drives the CRITICAL permanent-loss page. `containing_dark_window`'s docstring records the measured basis — across 2026-07-26, all 12 pairs, both mirrors, maximum natural silence was **11.44 s** and there were **zero** windows over the 30 s threshold.
 
-## Done so far
+## Resolution
+
+**What had landed before the close** — the record the Context section above cites, kept as it stood:
 
 **The measurement ran 2026-07-28 against `/var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl` (48 records). It does not answer the question, and why it doesn't is the finding.**
 
@@ -33,8 +35,6 @@ It is strictly better than what preceded it: before [[T0103]]'s work these windo
 - **Why subtracting across the two generations is nonetheless sound.** They measure different kinds of thing. `gaps_unwitnessed` is derived from the raw mirror stamps — where the primary was silent and the secondary held no `update` row — so it measures the outage itself, and no booking-policy change alters it. The fleet record's window is a *booking decision*. Subtracting a booking from a measurement of reality is legitimate; what would not be is subtracting two booking outputs whose definitions changed between them, which is what an earlier revision of this file mistook this for.
 - **[[T0103]] needs no correction.** Its 201.744967 s / 6.821701 s pair is a recomputation under the code as landed, not a ledger read, so the pre-fix provenance of this hour's fleet record does not touch it. An earlier revision here called that pair irreproducible, then withdrew it; both were wrong.
 - **The trigger's premise was wrong, but not in the way this file last said.** It claimed the exposure was "computable from the ledger and the raw mirrors already on disk". For a **post-fix** record it is computable from the ledger *alone* — `stream_windows` records exactly what each stream was booked, so the remainder is `gaps_unwitnessed` minus that. It is only this **pre-fix** record, which lacks the field, that cannot be settled from the ledger. So the raw mirrors are needed for the historical case, not the general one.
-
-## Resolution
 
 **Measured 2026-07-29, decided (a): leave it ledger-only and say so in the counter's HELP.**
 
@@ -59,10 +59,12 @@ A `--detect-only` reconcile over a 400 h window — the full overlap of both mir
 
 **A scare that was not real**: the raw sweep ledger showed 47 of 48 keys duplicated exactly twice, including a counter-bearing record. That was two of my own concurrent sweep processes writing one scratch ledger, not the reconciler double-ledgering. Production was never involved. The exactness of the duplication was the tell.
 
-## Suggested next steps
+**The three next-steps items are discharged by the decision above.** *Measure the exposure before deciding anything* — done: one event in ~15 days, 6.821701 s reaching no counter. *Decide whether an unwitnessed window outside a fleet-dark window should book loss* — decided **(a)**, leave it ledger-only; the earlier note preferring **(b)**, a separate series, was written before the exposure was known, and at 6.8 s in fifteen days a new series is not worth the surface. *State plainly in the counter's HELP which classes of loss it does and does not count* — done, and it still reads that way: `zcrypto_reconcile_residual_gap_seconds_total`'s HELP (`cli/archive/command.py`) calls itself "A FLOOR, not the whole", says the `unwitnessed` state "is deliberately not counted and reaches no counter at all", and puts it "in the ledger and the WARNING log only".
+
+**The steps this topic carried at its close, kept verbatim with what answered each:**
 
 *(All discharged — see `## Resolution`, which decided **(a)**. Retained so the archived file shows the options that were weighed; the recommendation below is superseded.)*
 
-- ~~Measure the exposure before deciding anything~~ — done: 1 event in ~15 days, 6.821701 s reaching no counter.
-- ~~Decide whether an unwitnessed window outside a fleet-dark window should book loss~~ — **decided (a)**: leave it ledger-only. The earlier note preferring (b), a separate series, was written before the exposure was known; at 6.8 s in 15 days a new series is not worth the surface.
-- ~~State plainly in the counter's HELP which classes of loss it does and does not count~~ — done; it now says it is a floor, not the whole.
+- ~~Measure the exposure before deciding anything~~ — done: 1 event in ~15 days, 6.821701 s reaching no counter. — **ANSWERED:** the `--detect-only` reconcile over the 400 h full-mirror overlap measured exactly that: 1 unwitnessed event, ADA/EUR 2026-07-27T07:00, a 208.566668 s window of which 201.744967 s was booked and 6.821701 s (3.2708 %) reached no counter.
+- ~~Decide whether an unwitnessed window outside a fleet-dark window should book loss~~ — **decided (a)**: leave it ledger-only. The earlier note preferring (b), a separate series, was written before the exposure was known; at 6.8 s in 15 days a new series is not worth the surface. — **ANSWERED:** decided **(a)** on that measurement — ledger-only — the competing-risk reason recorded in the paragraphs above and in `containing_dark_window`'s docstring.
+- ~~State plainly in the counter's HELP which classes of loss it does and does not count~~ — done; it now says it is a floor, not the whole. — **ANSWERED:** `cli/archive/command.py`'s `residual_gap_seconds_total` HELP says it counts silence no mirror covered and calls itself "A FLOOR, not the whole", the `unwitnessed` state being "deliberately not counted and reaches no counter at all, living in the ledger and the WARNING log only".

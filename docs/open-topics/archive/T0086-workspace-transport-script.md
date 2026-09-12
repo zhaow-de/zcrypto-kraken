@@ -29,7 +29,7 @@ What the spec above does **not** yet cover for a seamless continue:
 6. **Machine-local caches**: `.venv` → `uv sync` post-step; `~/.cache/pre-commit` regenerates (first gate run is slower).
 7. **Quiet-point discipline**: transfer only with no background agents/workflows mid-flight (running processes do not transfer; their on-disk task state does), and immediately before switching — `/tmp` does not survive a reboot, so the scratchpad copy is only as durable as the destination's uptime.
 
-## Done so far
+## Resolution
 
 **Implemented 2026-07-21 (/zcrypto-auto-exec): `infra/scripts/workspace-transport.sh`** — the spec plus all seven gap items under the owner's rulings: both-repos-clean abort gate (uncommitted + stashes + linked worktrees, both machines), `git bundle` transport of branches **and tags** with destination detach→delete→fetch→checkout alignment, and destination-only branches **mirrored away** — deleted by sha, and only when the commits are contained in one of the source's own local branches; anything else aborts before a byte moves (item 1); `~/.claude/` rsync'd whole minus machine-local runtime/caches — and minus `.credentials.json`, keeping auth material out of the transfer per the item-4 ruling — with the plugins set+versions included (item 2); `~/.claude.json` (item 3); memo scp; scratchpad + `.superpowers` rsync; printed `uv sync` / `data fetch` / `engine seed` post-steps, each verified to exist in the current CLI (items 5–6); the quiet-point + `/tmp`-durability discipline in the header (item 7). `zsh -n` clean. The exclude list was designed from the machine's actual `~/.claude/` layout — and the pre-push review still caught a nested hole the top-level inspection missed: an unanchored `cache/` exclude also matched `plugins/cache/`, the pinned plugin *payloads*, which would have shipped plugin metadata pointing at absent installs — item 2's exact failure. Excludes are now anchored to the top level; two more review catches (a detached-HEAD abort, a reboot-empty scratchpad guard) are in.
 
@@ -52,6 +52,8 @@ What the spec above does **not** yet cover for a seamless continue:
 
 **What is verified by whom**: the owner ran the transport both directions on the pre-review version; the git-alignment path of the post-review version is rehearsed but not yet live-run. The remaining changes are either fail-safe preflight aborts or additive disclosures, and the confirmation gate means nothing destructive happens without the operator seeing it listed first — so the next real switch is the natural live exercise rather than an outstanding risk.
 
-## Suggested next steps
+**The next-steps list carried no step.** Its whole content, kept verbatim — **ANSWERED** by the "What is verified by whom" paragraph above rather than owed to anyone:
 
 _(none — resolved. The next switch exercises the post-review version, including the branch-mirroring path, which the confirmation gate discloses before acting.)_
+
+The 13 review defects closed and this topic resolved in `780472af3`, and the script has stayed in maintenance since (`65542f31d` gave the plan the `.local/` dry-run delete count, `52c540705` made both delete counts print the deletions they count, both 2026-09-04).

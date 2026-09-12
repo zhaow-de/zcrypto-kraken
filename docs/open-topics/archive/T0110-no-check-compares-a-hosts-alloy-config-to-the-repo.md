@@ -60,10 +60,10 @@ The assert runs only when a config is already deployed, so a host that has never
 
 **What it still does not cover**: drift that appears without a converge, and the NAS, whose role writes the config from `{{ playbook_dir }}/../nas/config.alloy` rather than a role `files/` dir. The NAS needs no assert for a different reason than first written here: its config copy is **ungated** — that tier has no `<tier>_alloy_digest` gate at all — so this drift cannot survive a converge there. (The earlier claim, that its apply step recreates the container, is wrong: the apply is flag-gated on `nas_apply_compose=true`, and a render-only converge recreates nothing. Right conclusion, wrong reason — and the wrong reason is the one that gets reused if the NAS ever gains a gate.) A hand-edit on a host also creates drift, which the config header warns against; the next converge catches it.
 
-## Suggested next steps
+**All three steps this topic listed are discharged by the above; they are kept here verbatim with what answered each:**
 
 *(All discharged — see `## Resolution`.)*
 
-- ~~Decide where the check lives~~ — the converge, for the reason recorded above.
-- ~~Implement it, and give it an alert rule if it produces a series~~ — implemented as a converge-time assert; it produces no series, so no rule is owed.
-- ~~Record it in `fleet-deploys.md`~~ — the digest-gate line there already states the requirement; the assert now enforces it rather than relying on the reader.
+- ~~Decide where the check lives~~ — the converge, for the reason recorded above. — **ANSWERED:** the converge is where it lives, and the tree carries it: the drift tasks sit in `infra/ansible/roles/capture/tasks/main.yml` and `infra/ansible/roles/ops/tasks/main.yml` — a remote `stat` with `checksum_algorithm: sha256`, a controller-side `stat` under `delegate_to: localhost`, and an `assert` comparing the two, gated on `<tier>_alloy_digest is not defined` and `stat.exists`.
+- ~~Implement it, and give it an alert rule if it produces a series~~ — implemented as a converge-time assert; it produces no series, so no rule is owed. — **ANSWERED:** implemented as the converge-time assert above, and it publishes nothing — `infra/grafana/alerts.yaml` carries no config-drift rule, so the "no rule is owed" half holds as written.
+- ~~Record it in `fleet-deploys.md`~~ — the digest-gate line there already states the requirement; the assert now enforces it rather than relying on the reader. — **ANSWERED:** recorded where Alloy digests are now run from: `fleet-deploys.md` routes them to `.claude/skills/zcrypto-bump-alloy/SKILL.md`, which states that a `config.alloy` edit must pass the currently-running Alloy digest (`capture_alloy_digest` / `ops_alloy_digest`) "or the drift assert refuses the converge".

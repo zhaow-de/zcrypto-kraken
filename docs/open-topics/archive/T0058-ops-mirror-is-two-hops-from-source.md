@@ -27,7 +27,7 @@ The consequence was originally recorded here as "not incorrectness — a staler 
 - Nothing else consumes the ops mirror on a latency budget today; the panel and both replays are all downstream of the same copy and were already living with it.
 - **The re-measurement (2026-07-17) settled it:** the NAS loop DID settle at **~67 min** (near its 60-min floor — the loop-period win was real), but `source_lag` kept **rising**: 4072 s → 6465 s → **7928 s**. The residual, growing lag is the mirror hop itself, not compute. Combined with the falsified gate claim above, this ruled out threshold re-derivation and both original options (a direct ops pull = a third puller on the capture hosts; a tighter cadence = more transfer against a growing archive) in favour of removing the second hop entirely.
 
-## Done so far
+## Resolution
 
 - **The T0058 consensus, ratified by the owner 2026-07-17** (recorded in full in spec `00054`'s addendum "T0058 pivot — the NFS read path"; decision inputs: the 4072→6465→7928 s lag series, the ~67 min NAS loop, and the review-confirmed gate blindness above):
   1. The NAS exports `/volume1/ZhaoCrypto` **read-only** to the ops node over NFS; ops automounts it at `/mnt/zhao-crypto` (`ro,nfsvers=3,nolock,soft,timeo=100,retrans=3,noatime,nosuid,nodev,noauto,x-systemd.automount,x-systemd.mount-timeout=15` — `timeo` is deciseconds; `ro` makes `soft` categorically safe since the CLI treats an unreadable segment as a loud integrity fact, never as absence).

@@ -44,19 +44,6 @@ The inventory, read from the repo on 2026-08-29 (merge-base `10477297`). Blast: 
 
 The drill methodology proven on 2026-07-27 — fault injection in a throwaway container from the pinned digest, alert-path injection through a synthetic textfile `.prom`, and the caveat that an injected series proves wiring but not timing — is homed in `docs/reference/fleet.md` by [[T0157]]; the attended-window gate on inducing a fault on live capture is in `.claude/rules/fleet-deploys.md`.
 
-## Done so far
-
-- **The monthly reference-data routine is DELIVERED as a runbook section — 2026-08-04, [[T0113]] resolved**: `refdata-sweep-due` in `infra/runbooks/reference-data.md`, driven by a scheduled `#zcrypto` reminder, procedure `/zcrypto-refdata-sweep`. The pre-go/no-go run is an input to the decision and lives in [[T0085]].
-- **The day-2 runbook half is split out as [[T0157]]** (2026-08-29): runbook coverage of every alert, the daily pass, and the homing of this topic's principles all belong there.
-
-## Suggested next steps (superseded — every item is mapped in `## Resolution` below)
-
-- **Define the program** — spec `00105`, written 2026-08-29: the scenario tiers — order-path drills that ride rung 1 (A, B, D, E, F2, G), telemetry drills runnable now in attended windows (C, I, K, O, P, Q, R), and incident-proven scenarios re-verified only when their code changes (F, H, J, L, M, N, T); per scenario the induction instrument, what must fire and within what bound, what the operator does, and what is recorded.
-- **The red button is its own spec and PR** (owner ruling 2026-08-29, recorded in `00105` D4 — ruled whole-account, market orders): a `zcrypto engine flatten` primitive — kill file written first so nothing re-opens, cancel every resting order, close every position to EUR with a bounded taker leg, typed confirmation, journaled — on the live trade path, so Fable-floor review. Drill B runs against the rung-1 probe positions once it exists.
-- **The ops drill log** the master plan names: one record per drill run — scenario, date, host, induction, time-to-alert, channels, operator action, verdict, follow-ups — and each drilled scenario lands as a runbook section, never as report prose.
-- **The Grafana-out-for-hours procedure** (C) needs no event: what to rely on for the duration (the dead-man domain, the daily pass's direct healthchecks.io read, `docker logs` on hosts), which rules are blind on return, and what to re-verify by value.
-- Human item, during any drill window: on the phone's Slack app, confirm a mobile push arrives for one `metrics`-receiver alert and one `logs`-receiver alert; record delivery latency for both in the drill log.
-
 ## Resolution
 
 **Resolved 2026-08-29 by transfer: every item this topic carried now lives in a committed spec or a sibling topic, and the drills themselves execute as spec `00105`'s iteration, not as a topic.** The map, item by item, so nothing is lost:
@@ -79,3 +66,21 @@ The drill methodology proven on 2026-07-27 — fault injection in a throwaway co
 | the refdata routine | delivered 2026-08-04 as `refdata-sweep-due` ([[T0113]]) |
 
 The one open sibling this leaves in place: [[T0027]]'s remaining step — order-state reconciliation across a mid-order reboot — is exactly `00105`'s drills A1/A2/G, and T0027 now names them as its instrument.
+
+**What had landed before the transfer** — the record this topic carried while it was open:
+
+- **The monthly reference-data routine is DELIVERED as a runbook section — 2026-08-04, [[T0113]] resolved**: `refdata-sweep-due` in `infra/runbooks/reference-data.md`, driven by a scheduled `#zcrypto` reminder, procedure `/zcrypto-refdata-sweep`. The pre-go/no-go run is an input to the decision and lives in [[T0085]].
+- **The day-2 runbook half is split out as [[T0157]]** (2026-08-29): runbook coverage of every alert, the daily pass, and the homing of this topic's principles all belong there.
+
+**The steps this topic carried at its close, kept verbatim with what answered each:**
+
+- **Define the program** — spec `00105`, written 2026-08-29: the scenario tiers — order-path drills that ride rung 1 (A, B, D, E, F2, G), telemetry drills runnable now in attended windows (C, I, K, O, P, Q, R), and incident-proven scenarios re-verified only when their code changes (F, H, J, L, M, N, T); per scenario the induction instrument, what must fire and within what bound, what the operator does, and what is recorded. — **ANSWERED:** written and committed as `docs/specs/00105-go-live-drill-program-design.md` with plan `docs/plans/00105-go-live-drill-program.md` — D1 the seven-part PROCEDURE section shape, D2 the drill log, D3 the telemetry tier executed in its iteration, D4 the order-path tier that rides rung 1, D5 the Grafana-dark procedure.
+- **The red button is its own spec and PR** (owner ruling 2026-08-29, recorded in `00105` D4 — ruled whole-account, market orders): a `zcrypto engine flatten` primitive — kill file written first so nothing re-opens, cancel every resting order, close every position to EUR with a bounded taker leg, typed confirmation, journaled — on the live trade path, so Fable-floor review. Drill B runs against the rung-1 probe positions once it exists. — **ANSWERED:** delivered as its own spec and PR, as the ruling required — `docs/specs/00106-engine-flatten-design.md` and `docs/plans/00106-engine-flatten.md`, the primitive in `cli/engine/flatten.py` behind the `flatten` command (`cli/engine/command.py:1743`, `run_flatten`, `--execute`), pinned by `tests/test_engine_flatten.py` and `tests/test_engine_flatten_wrapper.py`. Drill B against the rung-1 probe positions is [[T0158]]'s to run, which is what this bullet itself said.
+- **The ops drill log** the master plan names: one record per drill run — scenario, date, host, induction, time-to-alert, channels, operator action, verdict, follow-ups — and each drilled scenario lands as a runbook section, never as report prose. — **ANSWERED:** `docs/reference/drill-log.md` exists in exactly that labelled-clause shape, its heading shape and date order guarded by `tests/test_drill_log.py`, already carrying the 2026-08-31 telemetry-tier runs (J′, K, O, I, Q-logs, C-ops).
+- **The Grafana-out-for-hours procedure** (C) needs no event: what to rely on for the duration (the dead-man domain, the daily pass's direct healthchecks.io read, `docker logs` on hosts), which rules are blind on return, and what to re-verify by value. — **ANSWERED:** landed as a runbook section rather than report prose — `infra/runbooks/observability.md`'s anchor `grafana-cloud-dark` (line 363) and its `## grafana-cloud-dark — PROCEDURE` section (line 365), specified by `00105` D5.
+
+## Remaining open
+
+*Carried out of the Resolution above by the owner's ruling of 2026-09-12, which permits a historical archived topic to name what is still open in its own section rather than have it read as resolved. This is a workaround for files closed before the rule, not a shape a new topic may take: a topic that closes with a live item still splits that item out before it is archived.*
+
+- Human item, during any drill window: on the phone's Slack app, confirm a mobile push arrives for one `metrics`-receiver alert and one `logs`-receiver alert; record delivery latency for both in the drill log. — **WHAT IS STILL OPEN:** the at-the-time device state for the two receiver drills themselves. Both machine halves are in the drill log — the `metrics` receiver at drill K (rule `activeAt` 08:06:40Z, Slack 08:07:11Z — 31 s) and the `logs` receiver at drill Q-logs (Slack 12:17:16Z — 36 s) — and the device half was taken at the 2026-09-01 `C′-fail` induction: arrival **23:36:04 local = 21:36:04Z**, 11 s from the failing probe, the channel's mobile setting *all messages* and DND *off* at that moment, on healthchecks.io's own Slack integration. [[T0158]] records drill Q as discharged by that same induction; K, I and Q-logs each record the at-the-time DND state as not captured, no one having been at the device when those ran — which is the half this item still asks for.

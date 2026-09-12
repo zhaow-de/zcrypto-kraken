@@ -30,7 +30,7 @@ Dropped from the prose, unasserted:
 - `infra/ansible/roles/access/tasks/main.yml`: the bridgehead relay's socket half is applied by neither its restart handler nor its end-of-role drift assert, so a changed `ListenStream` is written and never applied. The fact itself is stated in archived T0156; what had no live home is its TRIGGER — widen the gate if that value ever changes — and an archived topic is never re-read. `git grep -n ListenStream -- tests/` is empty.
 - `infra/ansible/roles/access/tasks/main.yml`: no alert fires on a caddy-only outage. The cert-expiry rule that probes the edge carries `noDataState: OK` because it treats `zcrypto-alloy-dark-zaccess` as owning "the host is dark", and that rule stays green while Alloy is healthy; spec 00075 D11's rule list — bridgehead dark, WG stale, cert expiry, disk — has no member covering it.
 
-## Done so far
+## Resolution
 
 ### Wave 1 — the topic's own list
 
@@ -117,6 +117,6 @@ The owner dropped 28 of the 52 remaining bullets on 2026-09-06, each read at sou
 
 **Moves nothing deployed.** `tests/test_infra_firewall_template.py` — ansible renders the deployed ruleset from the same template either way, so an include-family divergence moves only the harness's byte-fidelity.
 
-## Suggested next steps
+**The steps this topic carried at its close, kept verbatim:**
 
 _(none — every bullet of this topic is above: asserted, consciously dropped, or registered in \[[T0174]\].)_

@@ -16,11 +16,13 @@ If a pre-registered trial confirms it, the deployable system gets *simpler* (one
 
 Trial 43 (registry, family P1 n=3, adopt): adaptive 1.5366 / fixed-⅓ counterfactual 1.5609 on identical sleeves, cap, costing, and governor (`stage1b_verify.py`, iter-080; decisions log `[iter-080]`). Sleeve correlations B–A2 0.563, A1–A2 0.592 — the win is three-way diversification, robust to removing the weighting entirely.
 
-## Done so far
+## Resolution
 
 - **Trial run — iter-081** (human-ordered, same session as trial 43): pre-registered rule in the decisions log `[iter-081]`, then **registry trial 44 — ADOPT**: Sharpe 1.5609/1.5583 decisive, maxDD 13.57 %, every ratified leg passing (SPA grid max p 0.0060; DSR ≈ 1.0 at n=4; worst-slice pass; stress ×1.5/×2 1.3029/1.2106). The same driver reproduced trial 43 bit-identically before the weight change (cross-check gate).
 - **Fold-in**: trial 44 supersedes trial 43 as the deployable-system candidate; T0018's engine scope now targets record 44 (the adaptive-weighting mechanism is gone from the build).
 
-## Suggested next steps
+**Correction (2026-09-12), on the sweep's read of the archive:** the bullet's present-tense "T0018's engine scope now targets record 44" is contradicted by the tree: the deployable is registry record **47** since 2026-08-16, and T0018 records the supersession itself — `grep -no 'superseded 2026-08-16 by record 47' docs/open-topics/T0018-phase6-build-sequence.md` → `120:superseded 2026-08-16 by record 47`. The re-ratification moved the traded basket to twelve legs and the record id, not the model (measured max absolute difference `0.0`), so the rest of this bullet stands: trial 44 did supersede trial 43, and the adaptive-weighting mechanism is still gone from the build.
+
+**The steps this topic carried at its close, kept verbatim:**
 
 _(none — resolved)_

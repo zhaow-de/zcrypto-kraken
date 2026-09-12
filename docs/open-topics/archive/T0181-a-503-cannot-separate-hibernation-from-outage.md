@@ -34,6 +34,6 @@ The remaining surfaces are left as they stand, deliberately. Two mention a 503 -
 
 **The item the ruling did not reach was removed rather than answered**: the step that said nothing about a `200`, and never warned its reading could be an hour old, no longer exists. Asked why the section needed it, the owner had it deleted — every state it could observe routed onward, so it ended nothing and changed no action, and the four rounds spent making it correctly say nothing were the evidence. No sentence about a `200` is owed anywhere, because there is no step to owe it.
 
-## Suggested next steps
+**The next-steps list carried no step** — only this paragraph, kept verbatim, **ANSWERED** by the ruling above:
 
 _Superseded by the Resolution above._ The decision this section asked for was made; the two arms it laid out are spent, and the surfaces it proposed editing were left alone — one of them deleted outright. Nothing here is owed.

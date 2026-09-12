@@ -39,7 +39,7 @@ Four distinct defects, three of them introduced by spec `00054` Task 1:
 - Nothing was dropping these lines before because **nothing was scraping ops at all** — that is what Task 1 changed. The noise was always there; it only started costing money and hiding signal tonight.
 - The NAS is unaffected and correct: its selectors match its actual container names.
 
-## Done so far
+## Resolution
 
 The infra half — defects 1–3 above, plus the alert gap they implied — is done and **deploy-verified** (commits `8fc7b73`, `357ddb2`, `29370e6`, branch `feat/ops5-offload`):
 

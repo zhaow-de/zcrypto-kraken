@@ -19,7 +19,15 @@ Tick data is the substrate for two master-plan bets: **intraday microstructure f
 - **Not on the Phase-2/3/4 critical path.** Those phases run on the existing 1h/4h/1d canonical dataset; tick data is a Phase-4-microstructure / true-vwap enhancement — hence deferred to a future phase, not a current-phase autonomous miss.
 - The OHLCVT-derived reconstruction (`cli/backfill/`) already emits the 8-field row shape and reconciliation scaffolding (`cli/backfill/reconcile.py`), so a tick→bar aggregator can reuse the same canonical-schema + reconcile pattern (TDD on synthetic tick fixtures, as iter-008 did for OHLCVT).
 
-## Done so far
+## Resolution (2026-07-09, iter-044 open-topics sweep)
+
+The human **confirmed the exit-bar tolerance is acceptable** (via `/research-loop`): the ≥99.5 %-of-intervals reconciliation is met at a **1 % band** (9/10 pairs ≥99.7 %; LTC 99.37 %, dragged only by 2013–2017 sparse data), with the residual a characterized, early-illiquid, cross-source precision property — not aggregation error. So the tick-vs-OHLCVT reconciliation is **complete and accepted**, closing the Phase-1 tick-granularity exit-bar item and delivering the true tick-weighted VWAP.
+
+The one remaining item — **15-minute bars + a tick storage/catalog** — is **not a standalone follow-up**: `cli/tick.ticks_to_bars` is interval-parametric (15m is one argument), and a parse-on-demand model already suffices, so this is folded into the **Bucket-B intraday families** (§5: B1 trend/seasonality, B2 derivatives-positioning) — built there if/when a B-family needs repeated tick/15m access. Nothing autonomously-resolvable remains here.
+
+**Correction (2026-09-12), on the sweep's read of the archive:** the sentence above is contradicted twice over: the 15-minute/tick-storage item did become a standalone topic, `T0012`, and its 15-minute half shipped at iter-085 rather than waiting for a B-family consumer — shown by `head -9 docs/open-topics/archive/T0012-15m-tick-storage-bucket-b.md` → "Split out of **archived T0004**" and by `ls cli/backfill/substrate15m.py docs/specs/00044-15m-substrate-design.md`. The tick-level catalog half was dropped there with its reason, so what this sentence got wrong is the venue, not the outcome. (The pilot commit of this branch named this sentence; it is the 32nd, outside the 31 the annotation pass judged.)
+
+**What had landed before the close:** the tick→bar machinery and the reconciliation runs the acceptance above rests on.
 
 Iteration **iter-039** (spec `docs/specs/00028-tick-reconciliation-design.md`, plan
 `docs/plans/00028-tick-reconciliation.md`) built the tick→bar machinery and **sample-validated it at
@@ -53,9 +61,3 @@ Iteration **iter-042** added the complete-dataset reader + a **full-history** BT
   1088 bars (0.165 %) diverge > 1 %, all in each pair's early-illiquid history. Weakest is LTC/EUR
   (99.37 % within 1 %; 606 of its 611 outliers in 2013–2017, near-clean from 2018). Precision-noise-
   limited at 1e-6 (77–91 %). Table + per-year LTC breakdown in `docs/research/02.phase1-tick-reconciliation-report.md`.
-
-## Resolution (2026-07-09, iter-044 open-topics sweep)
-
-The human **confirmed the exit-bar tolerance is acceptable** (via `/research-loop`): the ≥99.5 %-of-intervals reconciliation is met at a **1 % band** (9/10 pairs ≥99.7 %; LTC 99.37 %, dragged only by 2013–2017 sparse data), with the residual a characterized, early-illiquid, cross-source precision property — not aggregation error. So the tick-vs-OHLCVT reconciliation is **complete and accepted**, closing the Phase-1 tick-granularity exit-bar item and delivering the true tick-weighted VWAP.
-
-The one remaining item — **15-minute bars + a tick storage/catalog** — is **not a standalone follow-up**: `cli/tick.ticks_to_bars` is interval-parametric (15m is one argument), and a parse-on-demand model already suffices, so this is folded into the **Bucket-B intraday families** (§5: B1 trend/seasonality, B2 derivatives-positioning) — built there if/when a B-family needs repeated tick/15m access. Nothing autonomously-resolvable remains here.

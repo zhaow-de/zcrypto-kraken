@@ -17,7 +17,9 @@ Selection currently filters on margin + median quote volume only; a thin-book pa
 
 `spread_cap` is a documented placeholder on all 12 symbols (`docs/universe/point-in-time-universe.md` §Spread cap). The captured-spread data lands with T0014's window (≈ 2026-07-22, after T0003's ≥ 2-week capture + the workstation/NAS sync).
 
-## Done so far
+## Resolution
+
+**What had landed before the close** — the record this topic carried while it was `partial`, kept as it stood:
 
 **Delivered 2026-07-22 (iter-115, spec `00067`).**
 
@@ -30,8 +32,6 @@ Selection currently filters on margin + median quote volume only; a thin-book pa
 
 **The finding that outlasted the criterion — now DISCHARGED (2026-08-08, spec `00085`, [[T0092]]).** As written 2026-07-22 this said the cap could screen only **10 of the 12** selected symbols, because the capture daemon subscribed to EUR-quoted pairs only and `ETH/BTC` / `SOL/BTC` had no L2 at all. Both halves are now false: the legs have been captured since 2026-07-23, the panel ladder went per-quote and the tree was regenerated 2026-08-07 (their `fill_bps_*` columns read 100 % non-null), and `SPREAD_CALIBRATION` carries real rows for both. **The cap now screens 12 of 12** and `unevaluated_count` is 0. `SOL/BTC` sits at 233,595 EUR/day, barely over the volume floor — the blind spot is exactly where the criterion was most wanted. Registered as [[T0092]].
 
-## Resolution
-
 Resolved 2026-08-13 by iter-137's attended universe rebuild — the run this topic's trigger named, and the criterion it stated is met literally.
 
 The artifact `data/universe-20260813/point-in-time-universe.json` carries a computed `spread_cap` record in place of the `pending-capture` placeholder every prior generation held: `max_spread_bps` 10.0, `reference_notional_eur` 1400.0, `source` `cli/costs/spread.py` (mean effective spread at size), **`unevaluated_count: 0`**. All twelve symbols carry a numeric `spread_bps` — the two BTC-quoted legs included, at 1.178 (ETH/BTC) and 1.842 (SOL/BTC), where a null on either would now be the failure signal rather than the expected state after the 2026-08-08 inversion.
@@ -40,7 +40,9 @@ The cap **binds on nothing this run**: the widest spread is DOT/EUR at 4.930 bps
 
 `docs/universe/point-in-time-universe.md` records the same numbers in its own Spread cap section.
 
-## Suggested next steps
+**Both items this topic parked for the next rebuild are discharged by that run.** The confirmation it asked for — the artifact carrying a computed `spread_cap` record instead of `"pending-capture"`, all twelve symbols with a numeric `spread_bps` and `unevaluated_count: 0`, read under the 2026-08-08 inversion where a null on either BTC-quoted leg is the failure signal rather than the expected state — is exactly what iter-137's artifact carried and what `docs/universe/point-in-time-universe.md` §Spread cap records (`max_spread_bps` 10.0, `reference_notional_eur` 1400.0, `unevaluated_count` **0**, widest DOT/EUR at 4.930 bps). The second item needed no separate decision: [[T0092]] resolved 2026-08-08 and is archived (`docs/open-topics/archive/T0092-btc-quoted-universe-legs-have-no-l2-capture.md`), the legs are captured and calibrated, so nothing here was waiting on it.
 
-- **(The remainder)** At the next universe rebuild, confirm the artifact carries the `spread_cap` record instead of `"pending-capture"`, and that **all twelve** symbols — the two BTC-quoted legs included — carry a numeric `spread_bps` with `unevaluated_count: 0`. Then this closes. **This criterion was INVERTED on 2026-08-08:** until spec `00085` it read "confirm the two BTC-quoted legs show `spread_bps: null`", which as of that spec is the failure signal, not the pass signal. A null on either leg now means the calibration did not reach it.
-- **(Settled — was "decide separately")** [[T0092]] resolved 2026-08-08: the legs ARE captured (owner ruled 2026-07-23) and now calibrated, so nothing here waits on it.
+**The steps this topic carried at its close, kept verbatim with what answered each:**
+
+- **(The remainder)** At the next universe rebuild, confirm the artifact carries the `spread_cap` record instead of `"pending-capture"`, and that **all twelve** symbols — the two BTC-quoted legs included — carry a numeric `spread_bps` with `unevaluated_count: 0`. Then this closes. **This criterion was INVERTED on 2026-08-08:** until spec `00085` it read "confirm the two BTC-quoted legs show `spread_bps: null`", which as of that spec is the failure signal, not the pass signal. A null on either leg now means the calibration did not reach it. — **ANSWERED:** iter-137's attended rebuild (2026-08-13) is that next rebuild, and it confirmed the criterion as inverted: the artifact carries a computed `spread_cap` record — `max_spread_bps` 10.0, `reference_notional_eur` 1400.0, `source` `cli/costs/spread.py`, `unevaluated_count` **0** — and all twelve symbols carry a numeric `spread_bps`, the two BTC-quoted legs at 1.178 and 1.842, widest DOT/EUR at 4.930 bps. `docs/universe/point-in-time-universe.md` §Spread cap records the same numbers.
+- **(Settled — was "decide separately")** [[T0092]] resolved 2026-08-08: the legs ARE captured (owner ruled 2026-07-23) and now calibrated, so nothing here waits on it. — **ANSWERED:** [[T0092]] is resolved and archived (`docs/open-topics/archive/T0092-btc-quoted-universe-legs-have-no-l2-capture.md`), so nothing here was waiting on it at the close.

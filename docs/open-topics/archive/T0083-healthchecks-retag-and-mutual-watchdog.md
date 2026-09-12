@@ -30,6 +30,6 @@ A monitoring stack that cannot detect its own outage fails exactly when it matte
 
 Delivered on branch `feat/t0083-healthchecks-watchdog`; converge previewed with `--check --diff`, then applied to the ops node, Alloy recreated so the new env var landed, rules pushed with `grafana-push.sh` (datasource read-back clean, no orphans).
 
-## Suggested next steps
+**The step list this topic carried at its close, kept verbatim — it held no step, only a pointer:**
 
-_(none — resolved. The window also surfaced an unrelated live incident, registered as [[T0089]]: a `copytruncate` logrotate policy wedges docker's log readers, which is why the capture hosts' log plane is dark.)_
+_(none — resolved. The window also surfaced an unrelated live incident, registered as [[T0089]]: a `copytruncate` logrotate policy wedges docker's log readers, which is why the capture hosts' log plane is dark.)_ — **ANSWERED:** nothing was left standing, and the pointer's own object is itself closed — `docs/open-topics/archive/T0089-logrotate-copytruncate-wedges-docker-log-readers.md`, `status: resolved`.

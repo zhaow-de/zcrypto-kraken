@@ -29,7 +29,11 @@ This also interacts with [[T0048]]: three separate defects there are remediated 
 - The two exporter-stale rules use `time() - <last_success_timestamp> > threshold` with `noDataState: Alerting`, so they *do* fire when their own series vanishes — which is why a dead Alloy is partially covered today, and why this is a gap rather than a hole.
 - `zcrypto-alloy-docker-sd-wedged` (added 2026-07-20) explicitly does **not** own this case, and says so inline, to avoid double-paging and to keep its own semantics clean.
 
-## Done so far
+## Resolution (2026-07-21, attended push window)
+
+**Pushed and live-verified.** `grafana-push.sh` ran with the vaulted SA token (dashboards + all rules upserted, the T0034 datasource read-back clean, no orphans); one evaluation cycle later all four rules read `state=inactive, health=ok` (eval 19:35:40Z). Normal state is itself the selector proof: a non-resolving selector — the NAS `{host=""}` above all — would go through the `or on() vector(0)` fallback into pending/firing, so four Normals mean every host's `up` resolves against live data. Severity stood as authored (uniform `critical`; the owner did not overrule at the push). The single PR from `feat/t0079-alloy-dark-rules` delivers the component whole: rules + keep-list pin + this resolution.
+
+**What the branch carried into that push:**
 
 Authored 2026-07-21 by /zcrypto-auto-exec on branch `feat/t0079-alloy-dark-rules` — **branch-ready, deliberately NOT PR'd**: the component includes its push tail, so the single PR opens after the attended push (the loop's landing rule). What landed on the branch:
 
@@ -38,7 +42,3 @@ Authored 2026-07-21 by /zcrypto-auto-exec on branch `feat/t0079-alloy-dark-rules
 - Severity: uniform `critical`/`metrics` for all four — the responder's action is identical on every host; what differs is only what accumulates unseen, which each summary states. (Reversible call made by the loop; overrule at the push if wanted.)
 - The T0048-incident check: these rules would **not** have fired 2026-07-15/16 (Alloy alive, only discovery wedged — `up` kept shipping); the SD-wedged rule owns that case. Stated in the block comment.
 - The keep-list pin: `up` added to the capture required-list in `tests/test_infra_alloy_series.py` (NAS/ops already pinned it); mutation-verified — deleting `up` from the capture keep-regex fails the test.
-
-## Resolution (2026-07-21, attended push window)
-
-**Pushed and live-verified.** `grafana-push.sh` ran with the vaulted SA token (dashboards + all rules upserted, the T0034 datasource read-back clean, no orphans); one evaluation cycle later all four rules read `state=inactive, health=ok` (eval 19:35:40Z). Normal state is itself the selector proof: a non-resolving selector — the NAS `{host=""}` above all — would go through the `or on() vector(0)` fallback into pending/firing, so four Normals mean every host's `up` resolves against live data. Severity stood as authored (uniform `critical`; the owner did not overrule at the push). The single PR from `feat/t0079-alloy-dark-rules` delivers the component whole: rules + keep-list pin + this resolution.

@@ -70,7 +70,33 @@ and an unrelated safety net catches us" bug.
   a *silent* exit-code-0 death. That was a measurement error — `docker inspect .State.ExitCode` on a
   **running** container always reads `0` and says nothing about the previous run. The crash is loud.
 
-## Done so far
+## Resolution
+
+**Resolved 2026-07-27 by drill.** The residual was never a code question — the fix was landed, deployed and regression-tested; what was missing was that the handler for a **rejected** connection attempt had never executed in production. Across the full Loki retention there were zero `attempt [2-9]` lines: every observed reconnect succeeded first try, so passing that test was never passing this one.
+
+A throwaway capture container on the ops node — same pinned digest, real Kraken, isolated data dir, no Loki creds, no dead-man URL — exercised it end to end.
+
+**Both arms of the `except (WebSocketException, OSError, TimeoutError)` branch fired, one of them unprompted:**
+
+- **`WebSocketException`** — Kraken rejected the sandbox's *very first* connect with `server rejected WebSocket connection: HTTP 503`. Nothing induced it. That is this topic's originating fault, arriving on its own within seconds, which says the 503 is more common than production logs suggest: production has simply always succeeded on the retry.
+- **`OSError`** — a `docker network disconnect` produced `[Errno -3] Temporary failure in name resolution` for a sustained blackout.
+
+**What the sustained fault proved**, none of it previously observed:
+
+| behaviour | observed |
+| --- | --- |
+| backoff schedule | `1, 2, 4, 8, 16, 32, 60, 60, 60, 60` — exponential, capped at `_BACKOFF_MAX_SECONDS` |
+| the every-10 ERROR | `WS reconnect still failing after 10 consecutive attempts`, at attempt 10 |
+| **process survival** | `restarts=0` across ~6 min and 15 attempts — the whole claim |
+| recovery | on reconnect: resubscribed and resumed writing without intervention |
+| **data consistency** | book **and** trades `10.parquet` — the hour spanning the fault — both hash-verify against their `.sha256` manifests |
+
+**Why a drill is a legitimate close and not a shortcut.** Waiting on a production 503 meant waiting on Kraken, and the topic had already been half-verified twice on evidence that did not test the handler. The drill reproduces the exact exception types the production code catches, in the production image, against the real venue. What it cannot show is *incidence* — how often Kraken rejects a reconnect in normal operation — but incidence was never this topic's question.
+
+**Trigger retained for the record:** any `attempt [2-9]` line, the `_RECONNECT_ERROR_EVERY` ERROR, or `process_start_time_seconds{job="capture_app"}` jumping while `zcrypto_capture_reconnects_total` resets. Those now indicate a live event worth reading, not an unvalidated code path.
+
+**What had landed before the close, kept verbatim as this topic recorded it:** the code fix, its
+regression tests, the deploy verification read inside the image, and the one round of live evidence:
 
 The code fix landed on branch `fix/t0036-segment-writer-restart-clobber` in the commit
 `fix(capture): survive a rejected WS reconnect attempt (T0035)` — the same commit that carries this
@@ -113,28 +139,3 @@ status flip:
   (`WebSocketException`/`OSError`/`TimeoutError` on a **rejected** attempt) has **never been exercised in
   production**. The nine events are abnormal closures ("no close frame"), not the close-1012 venue restart
   the original trigger named. Re-deferred rather than closed: passing an easier test is not passing this one.
-
-## Resolution
-
-**Resolved 2026-07-27 by drill.** The residual was never a code question — the fix was landed, deployed and regression-tested; what was missing was that the handler for a **rejected** connection attempt had never executed in production. Across the full Loki retention there were zero `attempt [2-9]` lines: every observed reconnect succeeded first try, so passing that test was never passing this one.
-
-A throwaway capture container on the ops node — same pinned digest, real Kraken, isolated data dir, no Loki creds, no dead-man URL — exercised it end to end.
-
-**Both arms of the `except (WebSocketException, OSError, TimeoutError)` branch fired, one of them unprompted:**
-
-- **`WebSocketException`** — Kraken rejected the sandbox's *very first* connect with `server rejected WebSocket connection: HTTP 503`. Nothing induced it. That is this topic's originating fault, arriving on its own within seconds, which says the 503 is more common than production logs suggest: production has simply always succeeded on the retry.
-- **`OSError`** — a `docker network disconnect` produced `[Errno -3] Temporary failure in name resolution` for a sustained blackout.
-
-**What the sustained fault proved**, none of it previously observed:
-
-| behaviour | observed |
-| --- | --- |
-| backoff schedule | `1, 2, 4, 8, 16, 32, 60, 60, 60, 60` — exponential, capped at `_BACKOFF_MAX_SECONDS` |
-| the every-10 ERROR | `WS reconnect still failing after 10 consecutive attempts`, at attempt 10 |
-| **process survival** | `restarts=0` across ~6 min and 15 attempts — the whole claim |
-| recovery | on reconnect: resubscribed and resumed writing without intervention |
-| **data consistency** | book **and** trades `10.parquet` — the hour spanning the fault — both hash-verify against their `.sha256` manifests |
-
-**Why a drill is a legitimate close and not a shortcut.** Waiting on a production 503 meant waiting on Kraken, and the topic had already been half-verified twice on evidence that did not test the handler. The drill reproduces the exact exception types the production code catches, in the production image, against the real venue. What it cannot show is *incidence* — how often Kraken rejects a reconnect in normal operation — but incidence was never this topic's question.
-
-**Trigger retained for the record:** any `attempt [2-9]` line, the `_RECONNECT_ERROR_EVERY` ERROR, or `process_start_time_seconds{job="capture_app"}` jumping while `zcrypto_capture_reconnects_total` resets. Those now indicate a live event worth reading, not an unvalidated code path.

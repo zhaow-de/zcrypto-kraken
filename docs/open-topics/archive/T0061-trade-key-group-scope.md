@@ -17,7 +17,7 @@ The inventory says `zcrypto-red` "must never join engine_host, or the live Krake
 - Boolean-probe evidence from the 2026-07-16 vault re-scoping (commits `4acb7f0`, `8b6d21c`): `zcrypto-red` resolves the trade-key vars (`trade=True`); `zcrypto-ops` and `localhost` do **not** (spec 00051 D10 holds for ops).
 - The move is small — two `!vault` ciphertext blocks relocate verbatim (same vault password; per-value encryption means no decrypt is ever needed) — but it touches the **live trading credential**, so it is human-gated: schedule it into go-live hardening (T0049) or fold it into the next trade-key rotation, when the values are being replaced anyway.
 
-## Done so far — RESOLVED 2026-07-17 (owner present, as the gate required)
+## Resolution — RESOLVED 2026-07-17 (owner present, as the gate required)
 
 The recipe below was executed exactly as written, with one deliberate extension.
 

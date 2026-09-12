@@ -31,7 +31,7 @@ The blindness was structural, not a tuning error. `start_gap` had one production
 - **The daemon logs nothing per message**, so the 275 s of empty log during the outage is *not* independent evidence of data silence (baseline: 0–3 lines in a comparable clean stretch). What it does prove is that no close, reconnect, desync or gap occurred in that window.
 - **Application-level heartbeats are unrecoverable**: `classify()` returned `"heartbeat"` and `_consume` had no branch, so nothing was ever logged at any level. The keepalive argument above is what settles the liveness question instead.
 
-## Done so far
+## Resolution
 
 **Resolved 2026-07-27** by spec `00073`, on branch `feat/t0101-reconnect-silence-accounting`.
 

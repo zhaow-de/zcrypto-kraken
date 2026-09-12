@@ -15,6 +15,15 @@ built on them would have been decorative. CLAUDE.md Rule 4 makes observability p
 follow-up. Verified mechanically: every `zcrypto_*` name the entrypoint emits is matched by the
 regex (checked by parsing both files, not by eye).
 
+**The steps this topic carried at its close, kept verbatim with what answered each** — the titled scope itself stands in `infra/nas/config.alloy`, whose `write_relabel_config` keep list carries `zcrypto_trade_backfill_.*` today beside `zcrypto_gate_.*`, `zcrypto_reconcile_.*` and `zcrypto_archive_pull_.*`:
+
+_(All that remained of THIS topic's titled scope — the keep-regex — is done; see Resolution above.
+The two other sub-items originally listed here were **not** done at close, and an archived file is
+never re-read, so they were split into their own topics rather than stranded here:_
+
+- _the compose `TRADE_BACKFILL_TEXTFILE` line + the missing dashboard/alert/dead-man → [[T0052]];_ — **ANSWERED:** [[T0052]] is `status: resolved` with its own iter-100 Resolution — `zcrypto-trade-backfill-stale` and `zcrypto-trade-backfill-exit-nonzero` in `infra/grafana/alerts.yaml`, a dashboard row, and `TRADE_BACKFILL_TEXTFILE` made explicit beside `RECONCILE_TEXTFILE`/`GATE_TEXTFILE` rather than living only in a shell default. That was in `infra/nas/compose.yaml` at the time; spec `00054` has since moved the overlay writer to the ops node (`a67ddb616`), so the line no longer lives on the NAS at all.
+- _the daily-gate degradation those metrics would have revealed → [[T0053]].)_ — **ANSWERED:** [[T0053]] is `status: resolved` the same day — the UTC day is stamped unconditionally *before* the command runs, so a failing run cannot re-arm the gate, and the metric carries the failure. That step too moved with spec `00054`: it is `infra/ansible/roles/ops/templates/archive-pull.sh.j2` now, not `infra/nas/pull-entrypoint.sh`. Its own residual (`KRAKEN_ALTNAME` versus `capture_pairs`) was split again to [[T0055]], also resolved, rather than left in it.
+
 ## Context — what
 
 Spec `00053` Task 6 added a daily-gated `zcrypto archive backfill-trades` step to
@@ -46,12 +55,3 @@ same way a dropped series always is: silently, with no scrape error to flag it.
   `ARCHIVE_PULL_INTERVAL`/`RECONCILE_WINDOW_HOURS` inline-default pattern already used there.
 - `docs/plans/00053-rest-trade-backfill.md` Task 8 (Closeout) does not mention `config.alloy` or
   `compose.yaml` either — this is a genuine plan gap, not a deferred task.
-
-## Suggested next steps
-
-_(All that remained of THIS topic's titled scope — the keep-regex — is done; see Resolution above.
-The two other sub-items originally listed here were **not** done at close, and an archived file is
-never re-read, so they were split into their own topics rather than stranded here:_
-
-- _the compose `TRADE_BACKFILL_TEXTFILE` line + the missing dashboard/alert/dead-man → [[T0052]];_
-- _the daily-gate degradation those metrics would have revealed → [[T0053]].)_
