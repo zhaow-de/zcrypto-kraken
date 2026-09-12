@@ -57,7 +57,7 @@ A partially completed topic later closes the normal way (see below).
 A topic may be closed only when **all three** hold:
 
 - **Its issue is genuinely disposed of** — *fixed*, *shown to be a non-issue* (a measured refutation is a valid resolution), or *consciously dropped with the reason recorded in the file*;
-- **the file itself records HOW** — a `## Resolution` section (or the `## Done so far` a `partial` topic already carries) naming the commits / PR / spec / measurement that disposed of it, and trimming or explicitly labelling any `## Suggested next steps` that no longer apply; **and**
+- **the file itself records HOW** — a `## Resolution` section naming the commits / PR / spec / measurement that disposed of it. A `partial` topic's `## Done so far` is RENAMED to `## Resolution`, never left under its old heading, and NO `## Suggested next steps` section survives into the archive: a line under either heading reads as pending whatever label it carries, and an archived file is never reviewed again. (The deleted `.claude/rules/open-topics.md` gave that reason and this skill never inherited it; the owner spotted the gap on 2026-09-11.) **and**
 - **it carries no live deferred sub-item** — a remaining "do X when Y" is first split into its own topic (with its `ripe_when:`), because a deferral left inside an archived file is lost.
 
 If only some sub-items are done the topic is `partial`, not resolved (see *Partially completing a topic*). If none are, it stays `open`.
@@ -65,6 +65,8 @@ If only some sub-items are done the topic is `partial`, not resolved (see *Parti
 Write the evidence at close, while it is known: an archived topic whose work is done but **unrecorded** is indistinguishable on inspection from one whose work was never done.
 
 A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved`, **deleting its `ripe_when:` key**, **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`).
+
+When a close owes both a splice and a heading rename — a live sub-item to lift into its own topic and a `## Done so far` to rename — **the splice runs FIRST**: a mention of the section's name inside body prose is the unique anchor's first hit, so renaming first renames the mention and leaves the file with two headings (alex, doing it on T0190).
 
 Delete `ripe_when:` rather than leaving it discharged: `grep -l '^ripe_when:' docs/open-topics/archive/` must stay empty, so that a hit is *by construction* a stranded live deferral rather than something to read through and adjudicate. A closed topic has no trigger — if it still has one, it is not closed. `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in the render's `## Resolved` list, with its link now pointing at the archived path (see Index sync).
 
