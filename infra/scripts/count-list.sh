@@ -100,8 +100,9 @@ c_operator_term_surfaces() { uv run pytest tests/test_internal_terms_not_operato
 
 c_operator_term_allowlist_edits() { git log --oneline -G_WP_CARRIERS -- tests/test_internal_terms_not_operator_visible.py | wc -l; }
 
-# The skip gates under `tests/` the guard finds: one opt-in name over those, and a call or key it cannot reduce refused.
-# The guard is the count; its docstring lists what passes it uncaught -- five binding shapes, two `unittest` forms.
+# The skip gates under `tests/` the guard finds: one opt-in name over those; a computed key, or a call it can neither
+# resolve in this repo nor attribute to a library, refused; a library call attributed, not walked. The guard is the
+# count; its docstring lists what passes it uncaught -- five binding shapes, two `unittest` forms.
 c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || return 2; }
 
 c_topics_without_a_trigger() { grep -L '^ripe_when:' docs/open-topics/T*.md | wc -l; }
