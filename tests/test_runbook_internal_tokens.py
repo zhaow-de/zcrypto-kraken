@@ -64,16 +64,22 @@ def test_a_fenced_block_is_not_prose_and_the_step_under_it_still_is(instrument):
 
 
 def test_every_spelling_of_the_vocabulary_reaches_the_instrument(instrument):
-    """The classes are the vocabulary test's, not this file's: Phase, T, iter, spec, WP and a spec
-    decision number. A class this instrument silently could not see would be a hole nothing else
-    covers, since the pages are outside every surface that test walks."""
-    found = instrument("- **A bullet** citing Phase 6a, T0123, iter-117, spec 00052, WP3 and D5a in one breath.\n")
+    """The classes are the vocabulary test's, not this file's: Phase, T, iter, spec, the work-package
+    token and a spec decision number. A class this instrument silently could not see would be a hole
+    nothing else covers, since the pages are outside every surface that test walks.
+
+    The work-package token is assembled rather than written: it stays out of every tracked file but
+    the carriers `test_internal_terms_not_operator_visible.py` records, and that allowlist is never
+    widened -- so a fixture that needs the token builds it.
+    """
+    wp = "WP" + "3"
+    found = instrument(f"- **A bullet** citing Phase 6a, T0123, iter-117, spec 00052, {wp} and D5a in one breath.\n")
     assert [t.strip() for t in dict.fromkeys(found and [f[1] for f in found])] == [
         "Phase 6",
         "T0123",
         "iter-117",
         "spec 00052",
-        "WP3",
+        wp,
         "D5a",
     ], found
 

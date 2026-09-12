@@ -190,6 +190,52 @@ c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/de
 # grow without a stated reason cannot disagree.
 c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-bytes; }
 
+# --- The W15 candidates that earned an entry --------------------------------------------------------
+# Eleven bullets of the runbook pages declared `(no count command: …)` in the universal pass because the
+# pass added no entries; these ten counts are what they earned (one serves two pages). The other 31
+# candidates stay declarations: a value whose healthy state is non-zero names no finding, a proxy for an
+# operator's keystroke is not the set, and an act nothing records cannot be counted.
+
+# A converge that passed `-e <role>_digest=` with nothing after the `=`: the role reads it as defined and
+# renders a broken image ref. `converge.sh` stores every `-e k=v` it was handed in the row, stripped.
+c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
+
+# The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the
+# `group_vars/all/` copy is read from the workstation by file path. A role naming the key is the finding.
+c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- infra/ansible/roles | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+
+# A write to one of the six gate gauges from outside `_ExecGauges.update`, whose single call is what makes
+# a frozen gauge set indistinguishable from a live one. The awk excises that method's body alone.
+c_gate_gauge_writes_outside_the_publish_call() { { awk '/^    def update\(self, verdict/{i=1;next} i&&(/^    (def |@)/||/^[^ ]/){i=0} !i' cli/engine/command.py; git grep -h -E '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\(' -- cli ':!cli/engine/command.py'; } | grep -cE '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\('; }
+
+# `--delete` anywhere in the archive pull's module: the mirror keeps every day it ever fetched, which is
+# what makes a mismatch count span days and an empty tree mean the pull has never succeeded.
+c_archive_pull_delete_flags() { grep -c -- '--delete' cli/archive/command.py; }
+
+# A deployed `--cache` naming a path outside `/tmp/`: wider than the bullet's "a path both hosts reach",
+# which is the direction that never under-reports the siting the cross-host poisoning rule forbids.
+c_gate_cache_args_outside_tmp() { git grep -nE -- '--cache[ =]/' -- infra cli ':!*.md' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE -- '--cache[ =]/tmp/' | wc -l; }
+
+# A rule whose `folderUID` is a literal rather than `${GRAFANA_ALERT_FOLDER_UID}`: it provisions into
+# another folder AND escapes the push script's orphan prune, which selects by that same field.
+c_alert_rules_without_the_folder_literal() { uv run python -c 'import yaml;print(sum(r.get("folderUID")!="${GRAFANA_ALERT_FOLDER_UID}" for r in yaml.safe_load(open("infra/grafana/alerts.yaml"))["rules"]))'; }
+
+# A verified nautilus version with no adapter-verification record carrying a PASS. Both arming guards read
+# that file, so a version added without its attended record is live money on an uncleared adapter.
+c_verified_versions_without_a_pass_record() { jq -r '.verified_nautilus_versions[]' cli/engine/order-semantics-verified.json | while read -r v; do grep -q PASS "docs/reference/adapter-verification/$v.md" 2>/dev/null || echo "$v"; done | wc -l; }
+
+# A member of the inventory's `engine_host` group other than `zcrypto`: every "primary only" reading on
+# the capture-daemon and hosts pages rests on that group holding one host, and the live trade key with it.
+c_engine_hosts_besides_the_primary() { uv run python -c "import yaml; print(len([h for h in yaml.safe_load(open('infra/ansible/inventory/hosts.yml'))['all']['children']['engine_host']['hosts'] if h != 'zcrypto']))"; }
+
+# `docker inspect <container>` with no `--format`, the form that prints the whole config -- the live Kraken
+# trade key with it on the engine host. Narrower than the bare command an operator types, which nothing records.
+c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[A-Za-z0-9_{}$"-]+ *($|[|;&)>])' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+
+# The pinned leaves the edge renders, one `file /etc/caddy/pinned-leaves/<name>.pem` line per tracked PEM:
+# a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.
+c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
+
 main() {
   wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -232,6 +278,16 @@ main() {
   emit "worktrees" c_worktree_processes
   emit "ambient-bytes" c_ambient_bytes
   emit "merged-prs-without-a-floor-read-30d" c_merged_prs_without_a_floor_read
+  emit "deploy-rows-with-an-empty-digest-var" c_deploy_rows_with_an_empty_digest_var
+  emit "hc-readonly-key-in-a-role" c_hc_readonly_key_in_a_role
+  emit "gate-gauge-writes-outside-the-publish-call" c_gate_gauge_writes_outside_the_publish_call
+  emit "archive-pull-delete-flags" c_archive_pull_delete_flags
+  emit "gate-cache-args-outside-tmp" c_gate_cache_args_outside_tmp
+  emit "alert-rules-without-the-folder-literal" c_alert_rules_without_the_folder_literal
+  emit "verified-versions-without-a-pass-record" c_verified_versions_without_a_pass_record
+  emit "engine-hosts-besides-the-primary" c_engine_hosts_besides_the_primary
+  emit "unscoped-docker-inspects-invoked" c_unscoped_docker_inspects_invoked
+  emit "pinned-leaves-the-edge-renders" c_pinned_leaves_the_edge_renders
 
   local w
   for w in "${wanted[@]}"; do
