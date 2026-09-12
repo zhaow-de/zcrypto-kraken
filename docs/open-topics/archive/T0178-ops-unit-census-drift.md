@@ -1,5 +1,5 @@
 ---
-status: open
+status: resolved
 ---
 
 # Ops unit census drift — how many timers, writers and log sources, restated in file after file and agreeing with nothing
@@ -29,13 +29,48 @@ Measured baselines, so a future pass starts from numbers rather than re-deriving
 
 Corrected on `feat/grafana-keepalive` and NOT part of this topic: `infra/runbooks/ops-node.md`'s timer table and its "five of the seven are `Persistent=true`" sentence, `ops-node.md:5`'s opening timer count, `docs/reference/fleet.md:34`'s ops-timers enumeration, and `infra/ansible/roles/ops/files/config.alloy:66`'s textfile-writer list.
 
-## Suggested next steps
+## Resolution
 
-- Sweep for the CLAIM rather than for any phrase: enumerate the variants first — a numeral, a spelled-out number, a parenthesised list whose length IS the count, a regex whose alternation count is the claim — then grep `infra/`, `docs/` and `.claude/` for each. The instances above were found one at a time by three separate reviews, which is the evidence that a phrase-shaped sweep misses them.
-- Decide per instance whether the count is load-bearing at all. `prose.md` asks first whether a number is needed: "the following timers" needs no count beside it, and a list that names its members carries its own length. The cheapest durable fix for most of these is deleting the number, not maintaining it.
-- Where a count must stay, put the command that measures it in the same sentence, as the measured baselines above do.
-- Consider whether a test can hold the ones that remain — the counts are all derivable from the templates, so an assertion comparing a stated number against a glob would make the next drift a failing test instead of a fourth review round.
+Swept, fixed and partly guarded on the branch that carries this file into the archive.
 
-## Owner
+**The sweep ran by CLAIM, not by phrase**, which the first step asked for: four modalities — a numeral, a
+spelled-out number, a list whose length IS the count, and a count encoded as a pattern (an Alloy relabel regex, a
+unit glob) — over `infra/`, `docs/` and `.claude/`, plus a completeness critic asking what surface or modality
+none of them covered. 66 distinct sites; 15 files changed.
 
-Unassigned. One pass, one author: the failure mode this topic records is precisely a fix applied instance by instance.
+**The six instances above, each by name:**
+
+- `alloy-compose.yaml.j2`'s "four timers' textfiles" and "the four `zcrypto-*.service` units' logs" — numerals
+  deleted; the sentences name their members and the keep-regex is six lines below the second.
+- `ops-node.md:5` carried two counts that had diverged in one sentence. Split: the `docker run` half keeps its
+  five, and the publishing half is now a complement, "all but `grafana-watchdog`". The opening timer count is
+  scoped to the role and says the host shows one more, from `access_ops`.
+- `fleet.md:34` was delivered 2026-09-10 by the fleet-contracts rewrite, as recorded above.
+- `infra/ops/README.md:206` gained the omitted `zcrypto_grafana_keepalive_*`.
+- `grafana-keepalive.timer.j2`'s "no other unit on this host uses" is narrowed to the two roles it was checked
+  against, with the command, and says the host's own OS timers were not part of that check.
+
+**Where a count stayed it carries the command that measures it**; elsewhere the number is gone, because a
+sentence that names its members carries its own length. The baselines above each answer a different question and
+the prose conflated them, which is why several counts were "right" for a question nobody asked.
+
+**One relationship is held by a test**, which is the fourth step's answer: a timer the ops role installs is either
+named in the Alloy journal keep-regex or listed in `tests/test_infra_alloy_series.py` as deliberately unshipped
+with its reason, and the regex may name no unit the role does not install. That one is guarded because it is the
+only remaining count with a consequence beyond prose — a timer missing from that regex ships no journal lines at
+all, silently. Both directions are proved by `infra/scripts/mutate-probe.sh` against the regex.
+
+**Not covered, stated rather than implied:** recurrence. Nothing fails when someone writes a new unheld count
+tomorrow; the textfile-writer census, the catch-up count and the healthcheck-URL claim are prose carrying their
+commands, not assertions. Guarding those would need a prose-count instrument, which is a larger thing than this
+topic, and [[T0183]] rules the same question out of its own criteria for the same reason — a topic that must
+prevent its own recurrence can never close.
+
+**Refused during the sweep, both behaviour changes wearing a census fix's clothes:** widening the production
+journal keep-regex to a wildcard (it would ship two more units' logs to Loki; the regex is byte-identical), and
+substituting a different numeral where the census said to delete one.
+
+**One correction the branch read caught:** the sweep deleted `alerts.yaml`'s "The other three stay at 512m",
+which was correct AND exhaustive — three container Alloys carry that cap. The replacement said "the other
+hosts", which is false for the bridgehead's uncapped apt Alloy. It names its members now. A numeral that is the
+claim is not a numeral to delete, which is the sweep's own rule read from the other side.
