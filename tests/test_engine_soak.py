@@ -2693,6 +2693,38 @@ def test_realized_internals_caps_with_the_configured_caps_not_the_module_default
     )
 
 
+def test_realized_internals_hands_its_config_to_the_builder(monkeypatch):
+    """The other half of the threading. The case above stubs the builder, so dropping `config=cfg` from the build
+    call leaves it green while the rebuild and the builder drift apart again -- which is the whole defect."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0 + k for k in range(n + 1)]
+    fake = _fake_result(
+        n_periods=n,
+        sleeve_B=[0.09] * (n + 1),
+        sleeve_A1=[0.09] * (n + 1),
+        sleeve_A2=[0.09] * (n + 1),
+        multipliers=[1.0] * (n + 1),
+        governed_net=[0.0] * n,
+    )
+    seen = {}
+
+    def recording_builder(*args, **kwargs):
+        seen["config"] = kwargs.get("config")
+        return fake
+
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", recording_builder)
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    cfg = CrossfreqSystemConfig(long_cap=0.05, short_cap=0.10)
+
+    realized_internals([], latest, reader, config=cfg)
+    assert seen["config"] is cfg, "the builder was not handed the config the caps use"
+
+    realized_internals([], latest, reader)
+    assert seen["config"] == CrossfreqSystemConfig(), "with no config the builder gets the default, not None"
+
+
 def test_realized_internals_identity_is_unmeasured_with_no_scored_record(monkeypatch):
     """The rebuild is AVAILABLE and no journaled target was compared against it, so `identity_ok` is
     None: `True` would report spec 00059 D2's window-wide identity holding over zero comparisons, and
