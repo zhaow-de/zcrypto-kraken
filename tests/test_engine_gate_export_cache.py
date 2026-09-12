@@ -120,8 +120,11 @@ def _squash(text: str) -> str:
     `\x1b[1;36m-\x1b[0m\x1b[1;36m-cache\x1b[0m` -- so the literal flag is not a substring of a styled
     panel at all, and the panel word-wraps at COLUMNS, so a phrase can break across lines. Apply this
     to the EXPECTED string as well as the actual one: the assertion stays readable and matches either
-    rendering. The same normalisation already lives in `tests/test_archive_pull.py` and six other
-    modules; this file had a whitespace-only version, which is why CI went red where local runs did not.
+    rendering. Provenance, counted rather than gestured at, because "the same normalisation" was doing
+    the lying: NINE other modules strip ANSI, of which TWO normalise both axes the way this one does,
+    deleting whitespace outright -- `tests/test_archive_pull.py` and `tests/test_panel_command.py`;
+    `tests/test_trades_command.py` is a third variant that collapses runs to a single space instead.
+    This file had a whitespace-only version, which is why CI went red where local runs did not.
 
     Which environments style, measured rather than assumed: `GITHUB_ACTIONS=true` alone does (that is
     what CI trips -- `.github/workflows/coverage.yml` sets no colour variable), and `FORCE_COLOR=1`
@@ -602,7 +605,16 @@ def test_gate_export_emits_cache_metrics(tmp_path, monkeypatch):
 def _gate_export(tmp_path, monkeypatch, *extra: str):
     # Style the output HERE, always: a refusal asserted only against an unstyled panel is colour-lucky,
     # and CI (which styles) is then the first place the difference shows -- as it was.
+    #
+    # FORCE_COLOR alone does not settle it. rich's `Console._detect_color_system` returns None for a
+    # dumb terminal BEFORE it honours forcing, and it counts both `dumb` and `unknown` as dumb, so
+    # under either the panel renders plain and the styling assertion below becomes a false red about
+    # the terminal rather than a true one about the refusal. Measured from a scrubbed environment:
+    # FORCE_COLOR=1 with TERM=dumb or TERM=unknown renders no escapes; with TERM pinned here, an
+    # ambient dumb, unknown or unset TERM all render them. So pin both, and the styled panel is what
+    # every run asserts against -- which is what this helper claims and now delivers.
     monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("TERM", "xterm-256color")
     engine_cfg = _patch_config(monkeypatch, tmp_path)
     _write_success_record(engine_cfg.journal_dir, CYCLE_TS)
     monkeypatch.setattr(concordance, "build_crossfreq_system_fast", _fake_builder(TARGETS))
@@ -631,7 +643,9 @@ def test_gate_export_refuses_cache_and_slice_apart(tmp_path, monkeypatch, extra)
     assert result.exit_code == 2, result.output
     # The forcing above is load-bearing, so it is held: without this line nothing fails when the
     # setenv is removed, and the assertion below silently goes back to testing the unstyled panel.
-    assert _ANSI_SGR.search(result.output), "FORCE_COLOR did not take -- this run is not exercising the styled panel CI produces"
+    assert _ANSI_SGR.search(result.output), (
+        "styling did not take (FORCE_COLOR/TERM) -- this run is not exercising the styled panel CI produces"
+    )
     assert _squash("--cache and --slice go together") in _squash(result.output), result.output
 
 
