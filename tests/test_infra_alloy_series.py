@@ -486,3 +486,63 @@ def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
         f"to the keep-regex of the host that publishes it, or -- if it is not a metric -- to "
         f"NOT_A_PUBLISHED_METRIC with the reason."
     )
+
+
+# --- the ops journal keep-regex is a census too (T0178) -------------------------------------------
+# The same `keep` logic applies to UNITS: the ops Alloy's journal rule drops every unit it does not
+# name, so a timer added to the role without being added to the regex ships no journal lines at all,
+# silently. Prose counts of "the five zcrypto units" drifted across seven files because nothing
+# re-derived them; this asserts the relationship those counts were standing in for.
+_OPS_TIMERS = REPO / "infra/ansible/roles/ops/templates"
+# A unit whose journal is deliberately NOT shipped, with the reason. Both are shell runners whose
+# output is a handful of echoes, not the Python logging the parse stage below the keep rule expects.
+_JOURNAL_NOT_SHIPPED = {
+    "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
+    "zcrypto-grafana-keepalive": "a shell curl loop; same shape, and its silence is what the keepalive alert reads",
+}
+
+
+def _ops_journal_keep_regex() -> str:
+    """The `keep` rule that reads `__journal__systemd_unit`, as written in the file."""
+    text = OPS_ALLOY.read_text()
+    for block in re.findall(r"rule \{(.*?)\n  \}", text, re.S):
+        if "__journal__systemd_unit" in block and 'action        = "keep"' in block:
+            return re.search(r'regex\s*=\s*"(.*?)"\n', block).group(1)
+    raise AssertionError("no journal keep rule found in the ops config.alloy")
+
+
+def _journal_units_kept() -> set[str]:
+    """The units the keep rule admits, read out of its alternation rather than matched as substrings:
+    the regex is written `zcrypto-(archive-pull|verify-replay|...)`, so no full unit name appears in it."""
+    inner = re.search(r"zcrypto-\((.*?)\)", _ops_journal_keep_regex())
+    assert inner, "the journal keep-regex no longer spells its units as one `zcrypto-(a|b|c)` alternation"
+    return {f"zcrypto-{m}" for m in inner.group(1).split("|")}
+
+
+def _installed_units() -> set[str]:
+    return {f"zcrypto-{p.name.removesuffix('.timer.j2')}" for p in _OPS_TIMERS.glob("*.timer.j2")}
+
+
+def test_the_ops_journal_keep_regex_accounts_for_every_unit_the_role_installs():
+    """Every timer unit is named in the keep-regex or excluded here with its reason -- so adding a
+    timer fails this test rather than quietly shipping nothing."""
+    kept = _journal_units_kept()
+    units = sorted(_installed_units())
+    assert units, "no timer templates found -- the glob is broken, not the role empty"
+    unaccounted = [u for u in units if u not in kept and u not in _JOURNAL_NOT_SHIPPED]
+    assert not unaccounted, (
+        f"{unaccounted} are installed by the ops role and neither named in the journal keep-regex nor listed as "
+        f"deliberately unshipped: their journal lines reach no Loki, and nothing else would say so"
+    )
+
+
+def test_the_unshipped_list_holds_no_unit_that_no_longer_exists():
+    """The other direction: an excuse for a deleted unit is a stale reason a reader would trust."""
+    stale = sorted(u for u in _JOURNAL_NOT_SHIPPED if u not in _installed_units())
+    assert not stale, f"{stale} carry a not-shipped reason but the role installs no such timer"
+
+
+def test_the_journal_keep_regex_names_no_unit_the_role_does_not_install():
+    """A name kept in the regex after its unit goes reads as coverage of something that cannot log."""
+    extra = sorted(_journal_units_kept() - _installed_units())
+    assert not extra, f"the keep-regex names {extra}, which the role does not install"

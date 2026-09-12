@@ -4213,7 +4213,7 @@ rules:
       # a shared 0.7 bar with them would page ops on a HEALTHY fleet, at every evaluation. ops took a
       # LARGER CAP rather than a looser bar -- `ops_alloy_memory_limit` is 1g and this leg divides by
       # it -- because ops reads the most journal (reconcile, panel, verify-replay, tape-bars,
-      # liquidations). The other three stay at 512m: the capture hosts already commit most of their
+      # liquidations). The other hosts stay at 512m: the capture hosts already commit most of their
       # RAM in caps, so headroom there is not free the way it is on ops.
       - refId: A
         queryType: ""

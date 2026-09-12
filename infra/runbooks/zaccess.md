@@ -142,7 +142,7 @@ A warning-severity Grafana alert (`zaccess-cert-expiring`): a tracked zaccess en
 
 ### What it means
 
-Two probe timers write `zaccess_tls_not_after_seconds{target=...}`: the bridgehead's own handshakes against each Caddy vhost on `127.0.0.1:443` and writes `target="tmux"`/`target="nas"`; the ops node's handshakes against the NAS admin port and writes `target="nas-dsm"`. `tmux` and `nas` are Caddy-managed — its ACME client renews them well before 14 days out, so either reaching this threshold means renewal has been failing silently. `nas-dsm` is the Synology DSM's own certificate, outside Caddy's control — a DSM-side concern.
+The probe timers write `zaccess_tls_not_after_seconds{target=...}`: the bridgehead's own handshakes against each Caddy vhost on `127.0.0.1:443` and writes `target="tmux"`/`target="nas"`; the ops node's handshakes against the NAS admin port and writes `target="nas-dsm"`. `tmux` and `nas` are Caddy-managed — its ACME client renews them well before 14 days out, so either reaching this threshold means renewal has been failing silently. `nas-dsm` is the Synology DSM's own certificate, outside Caddy's control — a DSM-side concern.
 
 ### What to do
 

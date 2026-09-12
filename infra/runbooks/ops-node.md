@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers run there (`infra/ansible/roles/ops/`), each firing a `Type=oneshot` unit. Five of those units run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`; the two `grafana-*` units are plain scripts. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers run there (`ls infra/ansible/roles/ops/templates/*.timer.j2`), each firing a `Type=oneshot` unit. Five of those units run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`; the two `grafana-*` units are plain scripts. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -227,7 +227,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 
 The load is Alloy plus the timers under `infra/ansible/roles/ops/`; the overlay writer is one of them, not a service beside them. Read the schedules from those templates, or from `systemctl list-timers 'zcrypto-*'` on the host; no list written here is the authority. The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
 
-**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the seven timers are `Persistent=true`, so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
+**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the seven timers are `Persistent=true` (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`), so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
 ### What to do
 
