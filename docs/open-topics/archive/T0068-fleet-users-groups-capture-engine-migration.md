@@ -30,6 +30,8 @@ In the tree: `infra/ansible/roles/base/tasks/main.yml:81` creates the `zcrypto-d
 
 The one deferral this topic carried — record the spec `00057` D5 telemetry residual acceptance — was **honoured, not lost**: [[T0042]] is live (`status: open`) and carries the 2026-07-19 capture-host acceptance including the primary/trade-key case.
 
+**Correction (2026-09-12), on the sweep's read of the archive:** "[[T0042]] is live (`status: open`)" is contradicted by the tree: T0042 is resolved and archived — `head -3 docs/open-topics/archive/T0042-alloy-holds-root-equivalent-docker-access.md` → `---` / `status: resolved` / `---`. The deferral was still honoured rather than lost, and by more than acceptance: that file's Resolution carries the 2026-07-19 capture-host acceptance including the primary/trade-key case, and the topic then closed on 2026-07-26 because specs `00068`/`00069` retired the docker socket fleet-wide — the residual was eliminated, not re-accepted.
+
 *(Recorded 2026-07-20. The work landed at close but the evidence was never written into this file, so the topic read as unstarted — see `.claude/rules/open-topics.md`.)*
 
 **Both steps this topic listed are discharged by the paragraphs above; they are kept here verbatim with what answered each:**

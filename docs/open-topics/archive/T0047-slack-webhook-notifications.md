@@ -28,6 +28,8 @@ Slack is the **sole** notification target for both systems, proven end-to-end be
 
 Cosmetic residue, deliberately accepted: the Grafana receiver keeps its historical name `email` — renaming would require notification-policy edits for zero functional gain. Revisit only if a second receiver ever makes the name genuinely confusing.
 
+**Correction (2026-09-12), on the sweep's read of the archive:** the residue accepted above — the Grafana receiver keeps its historical name `email`, and renaming it would cost "notification-policy edits for zero functional gain" — is contradicted by `infra/scripts/grafana-push.sh` as it now stands. It mints two named receivers: `grep -n 'upsert_slack_integration "zcrypto' infra/scripts/grafana-push.sh` → `143:  upsert_slack_integration "zcrypto-slack-metrics" "metrics" false` and `145:  upsert_slack_integration "zcrypto-slack-logs" "logs" true`. It does edit the notification policy, PUTting the tree back with the default route at `metrics` (`:150`–`:156`). And it deletes the `email`-named integration outright: `grep -n "receiver email" infra/scripts/grafana-push.sh` → `271:    echo "grafana-push: legacy integration zcrypto-slack-webhook (receiver email) deleted" >&2`. The paragraph's own revisit condition — a second receiver — arrived with the metrics/logs split, which the script dates as the cleanup of the pre-2026-07-16 integration.
+
 **What had landed before the close:**
 
 - **The Slack app + webhook exist** (owner, 2026-07-15): app created from the manifest, webhook minted, and the URL delivered pre-encrypted — now vaulted as `slack_webhook_url` in `infra/ansible/group_vars/capture_host/vault.yml` beside the other `grafana_*` secrets (decryption + `hooks.slack.com/services/…` shape verified in-memory).

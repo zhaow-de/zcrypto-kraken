@@ -16,6 +16,15 @@ strictly positive but heavily overlapping). The fixed-window "basket loses to BT
 the basket is a co-equal viable base for A1's finding-1, not a decisive winner. `gated-B1` stays the
 bar-to-beat. B3 (gate × basket) / B4 (basket + short) dynamic variants noted as a follow-up.
 
+**Correction (2026-09-12), on the sweep's read of the archive:** "`gated-B1` stays the bar-to-beat" is
+contradicted by the tree: the frozen benchmark is **B3+vt-dynamic**, adopted by the human on the 2026-07-09
+PR-74 review in supersession of gated-B1, shown by
+`grep -no 'adopt B3+vt-dynamic as the frozen benchmark' docs/research/10.phase4-decisions.md` →
+`138:adopt B3+vt-dynamic as the frozen benchmark`. The sentence held when this topic closed at iter-044; the
+bar moved at iter-055, and `docs/research/00.master-plan.md`'s kill bar and
+`docs/research/12.phase5-system-spec-runbook.md:36` both name B3+vt-dynamic now. Nothing else in this
+paragraph is affected — the verdict, the figures and the window-artifact finding stand.
+
 **The steps this topic carried at its close, kept verbatim with what answered each:**
 
 - Build a `dynamic_inverse_vol_basket(prices_by_asset, *, lookback)` (or extend `inverse_vol_basket` with an alignment mode) that takes per-asset series on a **union** calendar with explicit presence (e.g. `None`/NaN before listing), and for each date weights inverse-vol over assets that are both present and have ≥ `lookback` in-window returns, renormalizing over that day's qualifying set; all-absent/warmup day → flat. — **ANSWERED:** committed as `dynamic_inverse_vol_basket(prices_by_asset: dict[str, list[float | None]], *, lookback: int)` (`cli/benchmark/strategies.py:120`), on the union calendar with explicit absence and each day's set qualified on presence plus warm-up; four callers consume it (`cli/portfolio/builder.py`, `crossfreq_system.py`, `record43_book.py`, `record44_legs.py`).
