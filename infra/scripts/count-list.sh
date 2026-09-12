@@ -234,22 +234,24 @@ c_engine_hosts_besides_the_primary() {
 import yaml
 groups = yaml.safe_load(open("infra/ansible/inventory/hosts.yml"))["all"]["children"]
 groups["engine_host"]  # a KeyError here is the group gone, which must be loud rather than a zero
-members, seen, stack = set(), set(), [("engine_host", groups["engine_host"])]
+members, seen, stack = set(), set(), [("engine_host", None)]
 while stack:  # a host reaches the group through a child group too, and it holds the trade key just the same
-    name, node = stack.pop()
+    name, inline = stack.pop()
     if name in seen:
         continue
     seen.add(name)
-    node = node or groups.get(name) or {}  # a child is EITHER a name defined under all.children (`ops_host: {}`, the idiom here) OR an inline group
-    members |= set(node.get("hosts") or {})
-    stack += [(child, body) for child, body in (node.get("children") or {}).items()]
+    for node in (groups.get(name) or {}, inline or {}):  # a child is a NAME under all.children (`ops_host: {}`) and MAY carry an inline body; read both, never one or the other
+        members |= set(node.get("hosts") or {})
+        stack += list((node.get("children") or {}).items())
 print(len(members - {"zcrypto"}))
 INV
 }
 
 # `docker inspect <container>` with no `--format`, the form that prints the whole config -- the live Kraken
 # trade key with it on the engine host. Each INVOCATION is read, cut at `;`, `&&` or `|`, so an unscoped inspect
-# beside a formatted command counts; a backticked mention in prose has no operand and does not. Narrower than the
+# beside a formatted command counts; a backticked mention in prose has no operand and does not. A WRAPPED
+# invocation whose `--format` sits on the continuation line counts too, over-reporting in the safe direction for a
+# prohibition, since a line-oriented grep cannot see the next line. Narrower than the
 # bare command an operator types at a prompt, which nothing records.
 c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^`;&|][^;&|]*' | grep -vE -- '--format|-f ' | wc -l; }
 
