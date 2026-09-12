@@ -146,7 +146,9 @@ def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
     handler spellings -- `pass`, `continue`, a bare `return` -- and a review showed `logger.warning(...)` walking
     straight past it, so the test is now the property rather than the list: a handler with no `raise` anywhere in
     it swallows, whatever it does instead. A handler that converts the error (`raise _abort(...) from exc`) or
-    re-raises bare is not swallowing.
+    re-raises bare is not swallowing -- nor is one whose only `raise` sits inside an `if`, which this check admits
+    and which drops the refusal on its default path: the same reachability question as the carrier excluded
+    below, and out of scope for the same reason.
 
     One carrier is knowingly out of scope: a `validate_record` inside a branch that cannot be taken -- reachability
     is not a question an `ast` walk of one function answers, and a guard written into a dead branch is a different

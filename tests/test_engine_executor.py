@@ -4412,8 +4412,11 @@ _PARTIAL_FILLS = {_OPENING: [("BTC/EUR", "buy", 0.00332), ("ETH/EUR", "buy", 0.0
 
 
 def _track_snapshots(boundary):
-    """One pair x grid pair, shaped to the no-peek invariant so the fixture is a record the engine
-    could really have written."""
+    """One pair x grid pair, shaped to the no-peek invariant so `validate_record` ACCEPTS the fixture.
+
+    Not a record the writer could have emitted: `content_hash` is a placeholder and `n_bars=400` is declared over
+    a 90-day window, which is 540 bars on the 4h grid. Nothing these cases reach recomputes either. A test that
+    does needs a fixture built by the writer's own arithmetic."""
     midnight = boundary.replace(hour=0, minute=0, second=0, microsecond=0)
     return tuple(
         SnapshotEntry(
