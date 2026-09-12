@@ -28,7 +28,7 @@ CORPUS = (
     REPO / "docs" / "reference" / "fleet-pins.md",
     REPO / ".claude" / "skills" / "zcrypto-grooming" / "references" / "memo-protocol.md",
     *sorted(REPO / p for p in _tracked("infra/runbooks/*.md") if "/" not in p[len("infra/runbooks/") :]),
-)  # the always-loaded guidance, and the contracts the guard reads for universals -- every top-level runbook page among them since 2026-09-11
+)  # the always-loaded guidance, and the contracts the guard reads for universals -- every top-level runbook page among them since 2026-09-12
 
 _ENTRY = re.compile(r'^\s*emit "([^"]+)"', re.MULTILINE)
 _CORPUS_ENTRY = re.compile(r"count: `infra/scripts/count-list\.sh ([a-z0-9-]+)`")
