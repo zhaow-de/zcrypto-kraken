@@ -110,9 +110,10 @@ c_topics_without_a_trigger() { grep -L '^ripe_when:' docs/open-topics/T*.md | wc
 # The bullets and numbered steps of the top-level runbook pages, `infra/runbooks/README.md` aside, whose own bullets
 # state the rule rather than an operator's step: an internal token --
 # `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`, `D<N>` -- inside one is a reference an operator who
-# reached the page from an alert description cannot resolve. A paragraph, a table row and a declaration's why may
-# carry one (a declaration's why is inside its bullet and takes the rule with it); the classes and the path exemption are `tests/test_internal_terms_not_operator_visible.py`'s. One line
-# per bullet, its tokens joined, so the count is bullets to fix and not tokens.
+# reached the page from an alert description cannot resolve. A paragraph and a table row may carry one; a
+# declaration's why is inside its bullet and takes the rule with it. The classes and the path exemption are
+# `tests/test_internal_terms_not_operator_visible.py`'s. One line per bullet, its tokens joined, so the count is
+# bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
@@ -233,15 +234,15 @@ c_engine_hosts_besides_the_primary() {
 import yaml
 groups = yaml.safe_load(open("infra/ansible/inventory/hosts.yml"))["all"]["children"]
 groups["engine_host"]  # a KeyError here is the group gone, which must be loud rather than a zero
-members, seen, stack = set(), set(), ["engine_host"]
+members, seen, stack = set(), set(), [("engine_host", groups["engine_host"])]
 while stack:  # a host reaches the group through a child group too, and it holds the trade key just the same
-    name = stack.pop()
+    name, node = stack.pop()
     if name in seen:
         continue
     seen.add(name)
-    node = groups.get(name) or {}  # a child is written as a NAME defined under all.children (`ops_host: {}`), not inline
+    node = node or groups.get(name) or {}  # a child is EITHER a name defined under all.children (`ops_host: {}`, the idiom here) OR an inline group
     members |= set(node.get("hosts") or {})
-    stack += list(node.get("children") or {})
+    stack += [(child, body) for child, body in (node.get("children") or {}).items()]
 print(len(members - {"zcrypto"}))
 INV
 }
@@ -250,7 +251,7 @@ INV
 # trade key with it on the engine host. Each INVOCATION is read, cut at `;`, `&&` or `|`, so an unscoped inspect
 # beside a formatted command counts; a backticked mention in prose has no operand and does not. Narrower than the
 # bare command an operator types at a prompt, which nothing records.
-c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^\`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^\`;&|][^;&|]*' | grep -vE -- '--format|-f ' | wc -l; }
+c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^`;&|][^;&|]*' | grep -vE -- '--format|-f ' | wc -l; }
 
 # The pinned leaves the edge renders, one `file /etc/caddy/pinned-leaves/<name>.pem` line per tracked PEM:
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.
