@@ -12,6 +12,13 @@ import subprocess
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _tracked(pathspec: str) -> list[str]:
+    """The index's paths, so an untracked scratch page under a judged directory never turns the suite red."""
+    return subprocess.run(["git", "-C", str(REPO), "ls-files", pathspec], capture_output=True, text=True, check=True).stdout.split()
+
+
 SCRIPT = REPO / "infra" / "scripts" / "count-list.sh"
 FEED = REPO / "tests" / "fixtures" / "kraken_scheduled_maintenances.json"
 CORPUS = (
@@ -20,8 +27,8 @@ CORPUS = (
     REPO / "docs" / "reference" / "fleet.md",
     REPO / "docs" / "reference" / "fleet-pins.md",
     REPO / ".claude" / "skills" / "zcrypto-grooming" / "references" / "memo-protocol.md",
-    REPO / "infra" / "runbooks" / "README.md",
-)  # the always-loaded guidance, and the four contracts the guard reads for universals
+    *sorted(REPO / p for p in _tracked("infra/runbooks/*.md") if "/" not in p[len("infra/runbooks/") :]),
+)  # the always-loaded guidance, and the contracts the guard reads for universals -- every top-level runbook page among them since 2026-09-11
 
 _ENTRY = re.compile(r'^\s*emit "([^"]+)"', re.MULTILINE)
 _CORPUS_ENTRY = re.compile(r"count: `infra/scripts/count-list\.sh ([a-z0-9-]+)`")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus and the four contracts name by entry, and a universal with no entry beside it is the finding.
+# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus and the contracts name by entry (the top-level runbook pages among them since 2026-09-11), and a universal with no entry beside it is the finding.
 # Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
@@ -148,8 +148,9 @@ c_runbook_sections_without_a_trigger() { uv run python infra/scripts/runbook-tri
 c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook-triggers.py retire-when; }
 
 # The runbook pages take the corpus's universal test (the owner, 2026-09-11): the guard's own bullet reader over the
-# tracked pages, the README aside since the guard already judges it as a contract. An instrument until it reads 0.
-c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -v '/README\.md$' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }
+# tracked pages, the README aside since the guard reads it under the same rule. It reads 0 and the pages are in the
+# guard's contract set, so this entry is the number behind a gate rather than an instrument in front of one.
+c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }  # top-level pages only, the set the guard judges
 
 # Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
 # restart event per capture host it limits to (the capture_host group is both), and the count is the

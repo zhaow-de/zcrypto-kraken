@@ -11,8 +11,10 @@ import sys
 SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
 CONTRACT = re.compile(
-    r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md|infra/runbooks/README\.md)$"
-)  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient
+    r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md|infra/runbooks/[^/]+\.md)$"
+)  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient.
+# The runbook pages joined on 2026-09-11, when `count-list.sh runbook-universals-without-a-count` reached 0 -- the owner's
+# ruling that the test binds them, taken as an instrument first and a gate once the number it reads was 0.
 SKILL_FILE = re.compile(r"^\.claude/skills/[^/]+/SKILL\.md$")
 WORKFLOW_FILE = re.compile(r"^\.claude/workflows/[^/]+\.js$")
 META_OPEN = "export const meta = {"  # the authoring reference's own shape, and the only one read
