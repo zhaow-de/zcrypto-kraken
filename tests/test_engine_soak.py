@@ -2661,6 +2661,38 @@ def test_realized_internals_identity_holds(monkeypatch):
     assert set(ri.breach_by_cycle) == {scored[0].cycle_ts, scored[1].cycle_ts}
 
 
+def test_realized_internals_caps_with_the_configured_caps_not_the_module_defaults(monkeypatch):
+    """T0186: this rebuild capped with `apply_position_caps(combined)` -- no arguments -- while the builder caps
+    with the config's `long_cap`/`short_cap`. The two agreed by a coincidence of two literals in two modules
+    (0.20/0.10 in `cli/risk/limits.py` and in `CrossfreqSystemConfig`), so the moment either moved or a caller
+    threaded a config through, the rebuild would cap at a different level than the builder, `cap_consistent`
+    would read False, and `soak_report` would void a healthy window with `cap-breach inconsistent`.
+
+    The fixture is built so the two cap levels DISAGREE -- a combined position of 0.09 breaches a 0.05 cap and
+    not the 0.20 default -- because one where they agree passes under the defect and proves nothing. The
+    default-capped control is asserted in the same case, so the disagreement is part of the test rather than a
+    property of the fixture nobody checks."""
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    n = 4
+    h4_ts = [base + timedelta(hours=4 * k) for k in range(n + 1)]
+    closes = [100.0 + k for k in range(n + 1)]
+    B = A1 = A2 = [0.09] * (n + 1)  # combined 0.09 at every row: over a 0.05 cap, under the 0.20 default
+    fake = _fake_result(n_periods=n, sleeve_B=B, sleeve_A1=A1, sleeve_A2=A2, multipliers=[1.0] * (n + 1), governed_net=[0.0] * n)
+    monkeypatch.setattr(soak, "build_crossfreq_system_fast", lambda *a, **kw: fake)
+    latest, reader = _mk_h4_snapshot_record(h4_ts[-1] + timedelta(hours=4), h4_ts, closes)
+    scored = [_mk_scored_record(h4_ts[1] + timedelta(hours=4), {"BTC": fake.final_targets["BTC"][1]})]
+
+    tight = realized_internals(scored, latest, reader, config=CrossfreqSystemConfig(long_cap=0.05, short_cap=0.10))
+    assert tight.available is True, tight.reason
+    assert tight.breach_by_cycle[scored[0].cycle_ts] is True, "a 0.09 position must breach the configured 0.05 cap"
+
+    default = realized_internals(scored, latest, reader)
+    assert default.breach_by_cycle[scored[0].cycle_ts] is False, (
+        "the control: under the module defaults the same position does NOT breach -- which is what makes the "
+        "assertion above a test of the threading rather than of the fixture"
+    )
+
+
 def test_realized_internals_identity_is_unmeasured_with_no_scored_record(monkeypatch):
     """The rebuild is AVAILABLE and no journaled target was compared against it, so `identity_ok` is
     None: `True` would report spec 00059 D2's window-wide identity holding over zero comparisons, and
