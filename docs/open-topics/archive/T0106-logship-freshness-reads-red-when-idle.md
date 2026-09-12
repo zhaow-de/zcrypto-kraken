@@ -35,16 +35,6 @@ The same series is scraped into Grafana Cloud (it is in both capture and ops All
 - Not image-specific, so it says nothing about the candidate digest and is not evidence against the current bake.
 - Deliberately not fixed in-place during the bake it was found in: editing an abort threshold mid-rollout is the guardrail-weakening the unattended rules forbid, and `fleet-deploys.md` is in the refine-round protected set requiring per-edit sign-off.
 
-## Done so far
-
-Fixed in repo 2026-07-28 on `docs/ops-converge-0728-record` — **option (b)**, the recommended one: a separate series rather than a redefinition.
-
-- `cli/logging/ship.py` publishes `last_cycle_at`, stamped on an idle cycle and on a disposed batch, left alone while pushes are retrying. `last_ship_success_at` keeps its exact former meaning, so no existing consumer shifts under it.
-- Seeded at construction, which **eliminates the third state** this topic recorded: the series is present from startup instead of absent until the first ship.
-- `cli/obs/metrics.py` exports `zcrypto_logship_last_cycle_timestamp_seconds`; admitted in the capture **and** ops keep-regexes in the same change.
-- Three tests pin it: an idle cycle advances it while `last_ship_success_at` stays `None`; a retrying cycle does not advance it; both series are exported distinctly.
-- **The open decision is answered by measurement, not judgement**: no Grafana rule reads the old gauge's freshness — before this change, `grep logship infra/grafana/alerts.yaml` returned only the dropped-lines rule (it now also returns the new one added here) — and `tests/test_infra_alert_rules.py`'s exclusion list already records that its staleness is not a fault. Its only consumer was the rollout checklist. A new rule, `zcrypto-logship-worker-stalled` (> 5 min ≈ 300 missed cycles), now carries what that gauge never could.
-
 ## Resolution
 
 **Closed 2026-07-29 when the rollout carrying the gauge reached both hosts.**
@@ -62,9 +52,21 @@ Under the old row that host would have been tripping an abort signal for over ha
 
 Delivered by `sha256:99faf165…ab44` (built from `3540b0bb`): secondary 2026-07-29 00:52:53Z, primary 07:36:13Z. Confirmed arriving in Cloud for both hosts.
 
-## Suggested next steps
+**Both of the steps this topic still listed are in that close.** The rollout skill's abort-signal row reads `zcrypto_logship_last_cycle_timestamp_seconds` (`.claude/skills/zcrypto-rollout-image/SKILL.md`, stale > ~120 s), and the gauge and its rule are live rather than merely committed: `cli/obs/metrics.py` exports the series, and `zcrypto-logship-worker-stalled` in `infra/grafana/alerts.yaml` reads `time() - zcrypto_logship_last_cycle_timestamp_seconds` with its own runbook section.
+
+**What had landed before the close** — the repo fix the rollout above then carried to the hosts:
+
+Fixed in repo 2026-07-28 on `docs/ops-converge-0728-record` — **option (b)**, the recommended one: a separate series rather than a redefinition.
+
+- `cli/logging/ship.py` publishes `last_cycle_at`, stamped on an idle cycle and on a disposed batch, left alone while pushes are retrying. `last_ship_success_at` keeps its exact former meaning, so no existing consumer shifts under it.
+- Seeded at construction, which **eliminates the third state** this topic recorded: the series is present from startup instead of absent until the first ship.
+- `cli/obs/metrics.py` exports `zcrypto_logship_last_cycle_timestamp_seconds`; admitted in the capture **and** ops keep-regexes in the same change.
+- Three tests pin it: an idle cycle advances it while `last_ship_success_at` stays `None`; a retrying cycle does not advance it; both series are exported distinctly.
+- **The open decision is answered by measurement, not judgement**: no Grafana rule reads the old gauge's freshness — before this change, `grep logship infra/grafana/alerts.yaml` returned only the dropped-lines rule (it now also returns the new one added here) — and `tests/test_infra_alert_rules.py`'s exclusion list already records that its staleness is not a fault. Its only consumer was the rollout checklist. A new rule, `zcrypto-logship-worker-stalled` (> 5 min ≈ 300 missed cycles), now carries what that gauge never could.
+
+**The steps this topic carried at its close, kept verbatim with what answered each:**
 
 *(All discharged — see `## Resolution`.)*
 
-- ~~Rewrite the rollout skill's abort-signal row to read `zcrypto_logship_last_cycle_timestamp_seconds`~~ — done 2026-07-29, once the gauge existed on both hosts.
-- ~~Confirm the new gauge and its rule are live~~ — done; the series arrives from both hosts.
+- ~~Rewrite the rollout skill's abort-signal row to read `zcrypto_logship_last_cycle_timestamp_seconds`~~ — done 2026-07-29, once the gauge existed on both hosts. — **ANSWERED:** the row stands rewritten in `.claude/skills/zcrypto-rollout-image/SKILL.md` — the abort table's signal is now `zcrypto_logship_last_cycle_timestamp_seconds`, stale > ~120 s.
+- ~~Confirm the new gauge and its rule are live~~ — done; the series arrives from both hosts. — **ANSWERED:** `cli/obs/metrics.py` exports the gauge from the shipper's `last_cycle_at`, and `infra/grafana/alerts.yaml`'s `zcrypto-logship-worker-stalled` rule reads `time() - zcrypto_logship_last_cycle_timestamp_seconds`, with its runbook anchor in `infra/runbooks/observability.md`.

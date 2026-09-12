@@ -17,10 +17,12 @@ On an **ext4** export, a paged NFS READDIR spanning an htree bucket split can tr
 - No probe has been run yet; the full reasoning lives in [[T0058]] (archived) and above.
 - The reconciler is still detect-only ([[T0039]]), so today's worst case is a polluted soak ledger or a skipped panel hour, not a wrong mint — but the soak analysis is exactly what pins `--min-gap-seconds`, so the pollution matters before the `--mint` flip.
 
-## Done so far
+## Resolution
 
 - **Probed 2026-07-17 (read-only, `mount | grep /volume1`):** `/dev/mapper/cachedev_0 on /volume1 type btrfs (rw,nodev,noatime,ssd,synoacl,space_cache=v2,…)` — **btrfs**, the stable-readdir-cookie case. NFSv3 READDIR against the ops mount is safe from the ext4-hash-collision cookie instability this probe existed to rule out. No client-side workaround needed; the mount options stand as deployed.
 
-## Suggested next steps
+The one step this topic carried was that probe, and running it is what closed the topic: the reading above is the one-line result it expected. Its `ext4` branch — keep the topic open, design a by-name stat re-probe (name lookups bypass readdir cookies entirely) and gate the [[T0039]] `--mint` flip on it — never applied, because the answer was btrfs.
 
-- On the NAS run `mount | grep -w /volume1` (or `df -T /volume1`) and record here whether `/volume1` is **btrfs** or **ext4**. Expected result: one line naming the filesystem type. **btrfs** → record the answer and resolve this topic. **ext4** → keep it open and design a by-name stat re-probe before any absence-derived verdict (name lookups bypass readdir cookies entirely), gating the [[T0039]] `--mint` flip on it.
+**The step this topic carried at its close, kept verbatim with what answered it:**
+
+- On the NAS run `mount | grep -w /volume1` (or `df -T /volume1`) and record here whether `/volume1` is **btrfs** or **ext4**. Expected result: one line naming the filesystem type. **btrfs** → record the answer and resolve this topic. **ext4** → keep it open and design a by-name stat re-probe before any absence-derived verdict (name lookups bypass readdir cookies entirely), gating the [[T0039]] `--mint` flip on it. — **ANSWERED:** run read-only on 2026-07-17; the one line came back `type btrfs` (`/dev/mapper/cachedev_0 on /volume1`), the stable-readdir-cookie case, so the answer was recorded here and the topic resolved. The `ext4` branch — a by-name stat re-probe gating the [[T0039]] `--mint` flip — never applied.

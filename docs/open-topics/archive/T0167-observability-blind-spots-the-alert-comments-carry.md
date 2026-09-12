@@ -33,6 +33,6 @@ Each item decided by the owner on 2026-09-05; commits cited by subject; all four
 
 Pushed live 2026-09-05 10:41Z by `zcrypto-main` with `infra/scripts/grafana-push.sh` from this branch's reviewed tip, ahead of the merge on the owner's word (`fleet-deploys.md`); four dashboards, template byte-identical, rules pushed, datasources verified, no orphans. Read back at 10:42Z: the provisioned rule equals `alerts.yaml` on expression, `for`, threshold, `noDataState`, receiver and title; every rule in the rules API carries `health`, none other than `ok`, none firing; the new rule `inactive` with no `lastError` and no instances, the ops host's last run 23,551 s old against the 172,800 s bar; the reason suffix `_reason_of` reads was live on one `Normal (NoData)` instance — the shape, not the `execErrState: OK` → `(Error)` mapping, which no instance carried at that moment; the live `zcrypto-integrity` board equals `data-integrity-dashboard.json` on every version-free key, panel 302 whole (gridPos aside) with the bar on both sides.
 
-## Suggested next steps
+**What this topic's steps section said at its close, kept verbatim:**
 
 _(none remain — see Resolution)_

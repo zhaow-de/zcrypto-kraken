@@ -20,7 +20,7 @@ gate-export runs inline in the single-threaded archive-pull loop, so its ~8 min 
 - **This topic also carries the gate-export relocation deferral (registered 2026-07-19).** Spec `00054` D6 deliberately kept gate-export on the NAS ("it works … moving it buys latency on a metric nobody is waiting on") and deferred a move "to OPS-6 or later, on its own merits" — but OPS-6 (spec `00056`) closed without scoping it, and the deferral's only home ([[T0033]]) is now archived, leaving it registered nowhere. It lands here because relocation to the ops node (i7-13700 vs the NAS Atom, and out of the single-threaded archive-pull loop entirely) is precisely the **structural remedy** for this topic's cost concern — the two questions are one decision.
 - 2026-07-19 trigger check: journal mirror 108 MB / ~1000 files — both `ripe_when` thresholds (~500 MB / ~5000 files, ~20 min wall) still comfortably unfired.
 
-## Done so far — profiled + root-caused 2026-07-20 (iter-108 sprint, ops node)
+**What had landed before the close** — the 2026-07-20 profiling and root-cause sprint (iter-108, ops node) and the three updates that followed it, kept here as the record the Resolution below rests on:
 
 **The super-linear hypothesis is REFUTED; the real cost is N full strategy rebuilds.**
 
@@ -109,6 +109,8 @@ Both consumers moved together to **21,600 s (6 h)** = ceiling + one worst-case m
 
 **Also settled here:** the standing "emit gate-export duration as a metric" next-step — `zcrypto_gate_export_duration_seconds` is live and populated in production. The residual on execution-environment fingerprinting stays registered as [[T0074]]; nothing else from this topic remains open.
 
-## Suggested next steps
+**The one item this topic still carried as a next step was that same relocation, and it goes with the ruling.** Dropped 2026-07-26: `zcrypto engine gate-export` still runs inline in the NAS archive-pull loop (`infra/nas/pull-entrypoint.sh`, invoked there with `--journal-dir`/`--textfile`/`--cache` and an explicit `--lag-fail-seconds 21600`) and no ops-node role installs or schedules it, so nothing was half-moved and nothing waits on a window.
 
-- **DROPPED 2026-07-26 (owner ruling) — kept as the record of what was weighed, not as pending work.** Relocate gate-export to the ops node (spec `00054` D6's deferred option): run it against ops' own journal mirror and ship `gate.prom` back, or emit it via the ops Alloy textfile collector. Buys a constant ~6.8× and removes the step from the single-threaded archive-pull loop entirely. Attended because it moves a Role-B deliverable across hosts, with its healthcheck + textfile wiring following. Complementary to incremental scoring, not a substitute — it postpones the growth rather than bounding it.
+**The step this topic carried at its close, kept verbatim with what answered it:**
+
+- **DROPPED 2026-07-26 (owner ruling) — kept as the record of what was weighed, not as pending work.** Relocate gate-export to the ops node (spec `00054` D6's deferred option): run it against ops' own journal mirror and ship `gate.prom` back, or emit it via the ops Alloy textfile collector. Buys a constant ~6.8× and removes the step from the single-threaded archive-pull loop entirely. Attended because it moves a Role-B deliverable across hosts, with its healthcheck + textfile wiring following. Complementary to incremental scoring, not a substitute — it postpones the growth rather than bounding it. — **DROPPED:** owner ruling 2026-07-26, recorded above with its measurement — 33.6 s → ~5 s, 0.9% → 0.14% of the hourly pull interval, against an attended cross-host move. Nothing was half-moved: `infra/nas/pull-entrypoint.sh:122` still invokes `zcrypto engine gate-export` inline in the archive-pull loop (`--journal-dir`/`--textfile`/`--cache /tmp/gate-cache.json`/`--slice`/`--lag-fail-seconds 21600`), and no ops-node role installs or schedules it.

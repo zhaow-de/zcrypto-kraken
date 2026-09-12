@@ -15,6 +15,14 @@ So `cli/trades/rest.py` now calls `dump_pair_name` and the dict is gone. **The d
 
 The general lesson, worth more than the fix: **the duplicate map was never the problem — it was the second copy of a fact.** Deleting a copy beats guarding it.
 
+**How the topic's three steps disposed.** The second — reuse the derivation that already existed — is what landed: `cli/trades/rest.py:75` calls `dump_pair_name`, and `KRAKEN_ALTNAME` no longer appears anywhere under `cli/` or `tests/`. The first, a test that the map covers the capture universe, is **overtaken**: there is no map left to cover, and what stands in its place is the never-before-seen-pair case in `tests/test_trades_rest.py` (`XYZ/EUR` derives and issues a request). The third, failing loudly at startup rather than per pair at runtime, is **overtaken** for the same reason and would not have reached the residual anyway — a newly aliased asset derives *wrongly* rather than raising, so a coverage check over `capture_pairs` could not see it; the surface that is left is the two-entry `_ALIAS` table at `cli/backfill/read.py:9`.
+
+**The three steps this topic carried at its close, kept verbatim with what answered each:**
+
+- **(autonomous, cheap — the whole point)** Add a test that `KRAKEN_ALTNAME` covers every pair in the capture universe, so the failure lands in CI at the moment the universe changes, not nightly on the NAS months later. Decide which list is authoritative (the universe file vs the ansible `capture_pairs`) and assert against that one. — **OVERTAKEN:** there is no map left to cover — `KRAKEN_ALTNAME` appears nowhere under `cli/` or `tests/`. What stands in its place is `tests/test_trades_rest.py`'s never-before-seen-pair case, which drives `XYZ/EUR` through derivation and a real request — a check the proposed coverage test could not make.
+- **(autonomous, better if it works)** Check whether `cli/backfill/read.py`'s existing canonical→altname mapping can be reused directly, collapsing the two maps into one. If yes, this topic ends with a deletion rather than an addition. — **ANSWERED:** this is the one that landed. `cli/trades/rest.py:12` imports `dump_pair_name` from `cli/backfill/read.py` (defined at `:12`) and calls it at `:75`; the dict is gone, so the topic did end with a deletion.
+- **(autonomous, alternative)** Fail loudly at startup instead of per-pair at runtime: validate the map against the pairs to be swept before the sweep begins, so the error names the cause ("pair X has no Kraken altname") rather than surfacing as one failing pair among ten. — **OVERTAKEN:** the same deletion removes the object of the validation, and the residual is out of its reach — `_ALIAS = {"BTC": "XBT", "DOGE": "XDG"}` (`cli/backfill/read.py:9`) makes a newly aliased asset derive *wrongly* rather than raise, so a startup coverage check over `capture_pairs` would pass on exactly the case that is left.
+
 ## Context — what
 
 `cli/trades/rest.py::KRAKEN_ALTNAME` maps each canonical pair to its Kraken REST altname (`BTC/EUR → XBTEUR`, `DOGE/EUR → XDGEUR`, …). A pair absent from that map raises `TradeBackfillError` on **every** backfill attempt for it.
@@ -34,9 +42,3 @@ Note the asymmetry that makes it worth closing properly: a pair missing from the
 - The altname mapping is not mechanical — Kraken's names are irregular (`BTC→XBT`, `DOGE→XDG`), so it cannot simply be derived by string munging; the map (or a lookup of Kraken's `AssetPairs`) is genuinely needed.
 - `cli/snapshot/assetpairs.py` and `cli/backfill/read.py` already deal in Kraken altnames (`cli/backfill/read.py` maps canonical → OHLCVT dump altname, including the same `XBT`/`XDG` irregularities) — so a single source of truth may already exist to reuse rather than a second map to maintain.
 - The universe itself lives in `data/universe/point-in-time-universe.json` and is what `capture` defaults its pairs from; `capture_pairs` in ansible is the deployed list.
-
-## Suggested next steps
-
-- **(autonomous, cheap — the whole point)** Add a test that `KRAKEN_ALTNAME` covers every pair in the capture universe, so the failure lands in CI at the moment the universe changes, not nightly on the NAS months later. Decide which list is authoritative (the universe file vs the ansible `capture_pairs`) and assert against that one.
-- **(autonomous, better if it works)** Check whether `cli/backfill/read.py`'s existing canonical→altname mapping can be reused directly, collapsing the two maps into one. If yes, this topic ends with a deletion rather than an addition.
-- **(autonomous, alternative)** Fail loudly at startup instead of per-pair at runtime: validate the map against the pairs to be swept before the sweep begins, so the error names the cause ("pair X has no Kraken altname") rather than surfacing as one failing pair among ten.

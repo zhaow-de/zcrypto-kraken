@@ -22,7 +22,7 @@ It also cost a wrong repair. The gap was attributed on 2026-08-31 to a label mis
 - Measured: 12 of 12 Loki-sourced rules pin `logs`; no Prometheus rule does. Both receivers deliver to the same webhook and channel.
 - Drill N, 2026-09-02: fired 21:24:40Z, cleared ~21:28Z, no resolved notice. `Gate · exporter stale` and `Fleet · healthchecks.io watchdog` both resolved to the same channel within ~1 min on `metrics`.
 
-## Done so far
+## Resolution
 
 The receiver split landed on `fix/loki-dead-men-notify-clear`, in the commit `fix(obs): the eight Loki dead-men pin the receiver that can announce their clear`: the eight dead-men pin `metrics`, the four ERROR-log rules stay on `logs` where T0047's reasoning still holds. The first shape was taken — a third receiver would have bought one templating sentence for the price of a third as-code contact point threaded through two verification loops in `grafana-push.sh`.
 
@@ -32,6 +32,6 @@ A guard landed with it, coupling the two files rather than restating either: `te
 
 **The induction ran 2026-09-05** (drill N, `docs/reference/drill-log.md`): the dead-man fired at 23:20:40Z on 2026-09-04, cleared at 00:04:40Z after the restore, and its RESOLVED notice reached `#zcrypto` at 00:06:11Z, 91 s after the clear — the reading the 2026-09-02 run could not produce on `logs`. `infra/runbooks/drills-telemetry.md`'s standing rule and the runbooks' receiver claims for the two dead-men are re-tensed in the same change.
 
-## Suggested next steps
+**The section that listed next steps listed none — only a caution, and the archive is where it has to survive. Kept verbatim:**
 
-_(none — resolved.)_ **Do not "fix" a silent clear by editing rule expressions.** That was tried and disproved — the attribution and the reading that killed it are in `## Why this matters` above. The receiver, not the expression, decides whether a clear is announced: `alerts.yaml`'s comment beside `nas-archive-pull-stalled` now points at `zcrypto-engine-log-dead`, where that mechanism sits beside the test enforcing it.
+_(none — resolved.)_ **Do not "fix" a silent clear by editing rule expressions.** That was tried and disproved — the attribution and the reading that killed it are in `## Why this matters` above. The receiver, not the expression, decides whether a clear is announced: `alerts.yaml`'s comment beside `nas-archive-pull-stalled` now points at `zcrypto-engine-log-dead`, where that mechanism sits beside the test enforcing it. *(That comment is `infra/grafana/alerts.yaml`'s, in the rule that now pins `receiver: metrics`.)*

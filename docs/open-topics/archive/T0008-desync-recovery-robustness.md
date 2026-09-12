@@ -22,62 +22,6 @@ The ≥7-day clean-run exit bar wants <0.1 % gap time. A recovery path that can 
 - **New observation — the desync *rate* is elevated and volatility-correlated**: ~6/hr in the morning window rising to **~19/hr over 12:00–15:44 UTC** (71 events), concentrated on the high-activity pairs, with occasional bursts of 2–3 re-desyncs within ~150 ms of a fresh snapshot (mild thrash; every one healed). Recovery works; the *frequency* — and its co-moving latency tail — is now the open question. (169 consecutive first-attempt recoveries — 159 desync heals + 10 WS reconnects — are reassuring evidence, not proof; the single-attempt structural risk this topic tracks remains.)
 - **Cross-ref — spec `00050`'s redundant capture materially de-risks this topic's parked remainder (2026-07-17).** A pair left stuck desynced after a failed one-shot resubscribe presents as a *silent stream on one host* — the exact outage shape the reconciler's **whole-window book splice** heals from the second host: both hosts' books are 100 % CRC-valid, and per-connection message loss cannot be microsecond-synchronised across independent connections, so a **host-local** stuck pair is coverable (spec `00050` §Constraints 1 + 4, which calls this out explicitly). This covers the *data-loss* consequence in the canonical archive; the *live recovery-robustness* work below (retry / ack-correlated resubscribe / reconnect escalation) remains this topic's own — a healed archive is not a healed live book.
 
-## Done so far — the desyncs were OUR bug, and it is fixed (2026-07-13)
-
-**The root-cause question this topic carried — *"why do the high-activity pairs fail checksums this
-often — `book.py`'s checksum window vs Kraken's update coalescing at depth-100?"* — is ANSWERED, and
-it was neither Kraken nor the network. It was `book.py`.**
-
-`OrderBook` never pruned to the subscribed depth. Kraken only sends deltas for levels **inside** the
-depth-N window; a level retained beyond it is one Kraken has stopped reporting, so it goes stale (its
-quantity changes, or it is cancelled, and we never hear). When the window later shifts back, that
-stale level re-enters our top-10 as a **phantom** and the checksum fails. The daemon calls that a
-"desync", resubscribes for a fresh snapshot, and immediately begins re-accumulating.
-
-**Measured, on three independent capture hosts** (the primary plus two throwaway hosts in *different*
-datacenters, all running the identical image against the same feed):
-
-| | book size vs Kraken's 100 | CRC failures replaying one real captured hour | with the depth-prune fix |
-|---|---|---|---|
-| primary (Frankfurt) | **810 bids / 468 asks** | **482** | **0** |
-| host B (Frankfurt-2) | 810 / 470 | 117 | **0** |
-| host C (Amsterdam) | 745 / 438 | 398 | **0** |
-
-Two things this proves beyond doubt:
-
-- **It is deterministic and ours.** All three hosts began diverging at the *identical microsecond*
-  (`14:26:12.365460`, and again at `14:59:10.113215`). Loss cannot be microsecond-synchronised across
-  three independent WebSocket connections in two cities — the same message makes every host's book fail.
-- **No data was ever lost.** The archived *rows* are Kraken's wire messages and they are complete:
-  replaying them with the fix yields a **perfect book, zero failures**. Only the *in-memory*
-  reconstruction was wrong. So the archive is sound, and the ~200 "desyncs"/day (and the 0.005 %
-  "gap time" they contributed to the §12 exit bar) were **self-inflicted, not real loss**.
-
-**Fix:** `OrderBook` now takes a required `depth` and prunes each side to it after every
-snapshot/update, keeping the book congruent with Kraken's window (`cli/capture/book.py`). Two TDD
-tests cover it, including the exact phantom-resurfacing scenario. `depth` is deliberately required —
-defaulting it would silently reintroduce this.
-
-**Deployed 2026-07-14** — the depth-prune fix (`71b72e9`, 2026-07-13) rode the T0036 image (`sha256:63708539…`, built 2026-07-14 03:51 UTC), running on both capture hosts since.
-
-## Done so far — the alert leg (2026-07-26)
-
-**This topic's trigger is now evaluated continuously instead of by hand.** Two rules key on it: *Capture · book desync stuck on a pair* (`min_over_time(zcrypto_capture_book_desynced[15m]) > 0.5`, per pair, paging at 20 min) and *Capture · book resubscribe rate re-elevating* (`increase(...[1d]) > 1.5`, per host).
-
-**`min_over_time`, not the `max_over_time` this topic's own `ripe_when` proposed.** `max` fires on *any* desync inside the window, including the transient the daemon self-heals 234/234 times; `min` requires the pair to have been desynced for the entire window, which is the stuck shape — desynced past its single resubscribe — that the topic actually cares about.
-
-**The `> 1` threshold the topic proposed would have misfired**, caught by review before deploy: `increase()` extrapolates to the window edges, so a *single* increment returns ~1.0007 for any nonzero sample offset. One genuine self-healed venue desync would have paged, asserted a re-elevating rate that was not happening, and stayed firing for a full day. Threshold is 1.5.
-
-**Writing the guard test found four more unwatched fault signals**, so the fix generalized:
-
-- `zcrypto_capture_disk_watermark_breached` — the worst of them. A breach makes the book and trade handlers `continue`/`return` past the writers, so incoming L2 and trades are **discarded**, unbackfillable, while the only signal is the same saturated dead-man. Now `critical`.
-- `zcrypto_capture_rows_quarantined_total`, `zcrypto_logship_dropped_lines_total` — measured baseline zero over 7 d, so any nonzero value is a real event.
-- `node_scrape_collector_success` — a failed collector makes its whole family absent, and NoData maps to OK on this fleet, so it silently disarms every rule keyed on those series.
-
-**`zcrypto_capture_reconnects_total` was deliberately NOT alerted**, and the measurement is why: 32–35 reconnects per host per week is baseline, not a fault, so a naive rule would page ~5×/day. [[T0035]]'s trigger is a counter *reset* correlated with a `process_start_time_seconds` jump — that needs the correlation, not a raw count, and stays that topic's work.
-
-**The guard is derived, not hand-listed** — 46 admitted series minus 38 explicit exclusions, each carrying its reason. A hand-list cannot catch the *next* unwatched metric, which is the mechanism that let these sit for two months.
-
 ## The alert leg is drill-validated (2026-07-27)
 
 The alert shipped 2026-07-26 but had never fired, so nothing established it *would*. Injecting `zcrypto_capture_book_desynced{pair="DRILL"} 1` as a `.prom` on the secondary — through the textfile transport built the same day — exercised the whole path:
@@ -120,3 +64,59 @@ The alert shipped 2026-07-26 but had never fired, so nothing established it *wou
 **The alert leg**, shipped 2026-07-26 and drill-validated the same morning, remains the escalation path once the ladder gives up — it is what carries a pair the ladder cannot fix.
 
 **Not deployed by this topic.** Capture-daemon code on the unbackfillable path reaches the fleet only via an image build, the ≥24 h secondary canary bake, then the primary re-pin (`fleet-deploys.md`). Merged and unrolled is the intended state here; the deploy is its own attended step.
+
+**What had landed before the close — the root-cause fix (2026-07-13)**, kept as it was recorded:
+
+**The root-cause question this topic carried — *"why do the high-activity pairs fail checksums this
+often — `book.py`'s checksum window vs Kraken's update coalescing at depth-100?"* — is ANSWERED, and
+it was neither Kraken nor the network. It was `book.py`.**
+
+`OrderBook` never pruned to the subscribed depth. Kraken only sends deltas for levels **inside** the
+depth-N window; a level retained beyond it is one Kraken has stopped reporting, so it goes stale (its
+quantity changes, or it is cancelled, and we never hear). When the window later shifts back, that
+stale level re-enters our top-10 as a **phantom** and the checksum fails. The daemon calls that a
+"desync", resubscribes for a fresh snapshot, and immediately begins re-accumulating.
+
+**Measured, on three independent capture hosts** (the primary plus two throwaway hosts in *different*
+datacenters, all running the identical image against the same feed):
+
+| | book size vs Kraken's 100 | CRC failures replaying one real captured hour | with the depth-prune fix |
+|---|---|---|---|
+| primary (Frankfurt) | **810 bids / 468 asks** | **482** | **0** |
+| host B (Frankfurt-2) | 810 / 470 | 117 | **0** |
+| host C (Amsterdam) | 745 / 438 | 398 | **0** |
+
+Two things this proves beyond doubt:
+
+- **It is deterministic and ours.** All three hosts began diverging at the *identical microsecond*
+  (`14:26:12.365460`, and again at `14:59:10.113215`). Loss cannot be microsecond-synchronised across
+  three independent WebSocket connections in two cities — the same message makes every host's book fail.
+- **No data was ever lost.** The archived *rows* are Kraken's wire messages and they are complete:
+  replaying them with the fix yields a **perfect book, zero failures**. Only the *in-memory*
+  reconstruction was wrong. So the archive is sound, and the ~200 "desyncs"/day (and the 0.005 %
+  "gap time" they contributed to the §12 exit bar) were **self-inflicted, not real loss**.
+
+**Fix:** `OrderBook` now takes a required `depth` and prunes each side to it after every
+snapshot/update, keeping the book congruent with Kraken's window (`cli/capture/book.py`). Two TDD
+tests cover it, including the exact phantom-resurfacing scenario. `depth` is deliberately required —
+defaulting it would silently reintroduce this.
+
+**Deployed 2026-07-14** — the depth-prune fix (`71b72e9`, 2026-07-13) rode the T0036 image (`sha256:63708539…`, built 2026-07-14 03:51 UTC), running on both capture hosts since.
+
+**What had landed before the close — the alert leg (2026-07-26)**, kept as it was recorded:
+
+**This topic's trigger is now evaluated continuously instead of by hand.** Two rules key on it: *Capture · book desync stuck on a pair* (`min_over_time(zcrypto_capture_book_desynced[15m]) > 0.5`, per pair, paging at 20 min) and *Capture · book resubscribe rate re-elevating* (`increase(...[1d]) > 1.5`, per host).
+
+**`min_over_time`, not the `max_over_time` this topic's own `ripe_when` proposed.** `max` fires on *any* desync inside the window, including the transient the daemon self-heals 234/234 times; `min` requires the pair to have been desynced for the entire window, which is the stuck shape — desynced past its single resubscribe — that the topic actually cares about.
+
+**The `> 1` threshold the topic proposed would have misfired**, caught by review before deploy: `increase()` extrapolates to the window edges, so a *single* increment returns ~1.0007 for any nonzero sample offset. One genuine self-healed venue desync would have paged, asserted a re-elevating rate that was not happening, and stayed firing for a full day. Threshold is 1.5.
+
+**Writing the guard test found four more unwatched fault signals**, so the fix generalized:
+
+- `zcrypto_capture_disk_watermark_breached` — the worst of them. A breach makes the book and trade handlers `continue`/`return` past the writers, so incoming L2 and trades are **discarded**, unbackfillable, while the only signal is the same saturated dead-man. Now `critical`.
+- `zcrypto_capture_rows_quarantined_total`, `zcrypto_logship_dropped_lines_total` — measured baseline zero over 7 d, so any nonzero value is a real event.
+- `node_scrape_collector_success` — a failed collector makes its whole family absent, and NoData maps to OK on this fleet, so it silently disarms every rule keyed on those series.
+
+**`zcrypto_capture_reconnects_total` was deliberately NOT alerted**, and the measurement is why: 32–35 reconnects per host per week is baseline, not a fault, so a naive rule would page ~5×/day. [[T0035]]'s trigger is a counter *reset* correlated with a `process_start_time_seconds` jump — that needs the correlation, not a raw count, and stays that topic's work.
+
+**The guard is derived, not hand-listed** — 46 admitted series minus 38 explicit exclusions, each carrying its reason. A hand-list cannot catch the *next* unwatched metric, which is the mechanism that let these sit for two months.

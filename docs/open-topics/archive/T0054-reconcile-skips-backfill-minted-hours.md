@@ -12,6 +12,12 @@ status: resolved
 
 No action, no residual, nothing to re-check at the [[T0039]] flip. Registered and closed the same day it was raised — the check was cheaper than the speculation.
 
+**The steps this topic carried at its close, kept verbatim with what answered each:**
+
+- **(autonomous, first — it may end this topic)** Check whether `already_minted`'s skip in `cli/archive/command.py:538` is scoped per `kind`. If yes: the book path is unaffected, and the only remaining question is whether trades-hour skipping is desirable (it probably is — see above). Record the finding and close or downgrade accordingly. — **ANSWERED:** the Resolution above is that read, and it still holds — `cli/archive/mint.py:28` is `def already_minted(root: Path, pair: str, kind: str, hour: datetime) -> bool:`, and reconcile's two call sites pass the kind explicitly (`cli/archive/command.py:882` for `"book"`, `:987` for `"trades"`; the line numbers have drifted since this bullet was written).
+- **(autonomous, if the skip is NOT per-kind)** Make it per-kind, so a trades-only backfill mint cannot shadow a book hour reconcile would otherwise heal. Books are unbackfillable; a shadowed book heal is the one outcome here that would actually cost data. — **DROPPED:** its antecedent is false — the skip is already per-`kind` at the two call sites above — so there was never anything to build; the outcome this step wanted is the code's existing behaviour.
+- **(process)** Re-read this topic at the [[T0039]] flip — that is the moment the interaction becomes live, and this file is the only place the interaction is written down. — **DROPPED AT THE CLOSE:** the Resolution above already disposed of it — "No action, no residual, nothing to re-check at the [[T0039]] flip" — on the recorded ground that the post-flip skip is the desirable behaviour, REST being the venue's own record.
+
 ## Context — what
 
 Both the reconciler and the trade-backfill (spec `00053`, iter-100) mint into the same `capture-reconciled` overlay, by design — consumers read it reconciled-first via `canonical_segments`, so healed hours are picked up with no consumer change.
@@ -41,9 +47,3 @@ The risk is narrower but real: an hour the backfill minted **for trades** is the
 - The backfill mints only `kind="trades"`; it never touches book hours.
 - The backfill's mint is monotone: it reads the existing overlay hour first (reconciled-first) and unions, so re-minting can never *reduce* an hour. A reconcile that later re-minted the same trades hour from raw mirrors alone, however, could.
 - Discovered while reviewing iter-100; not triggered today because reconcile mints nothing.
-
-## Suggested next steps
-
-- **(autonomous, first — it may end this topic)** Check whether `already_minted`'s skip in `cli/archive/command.py:538` is scoped per `kind`. If yes: the book path is unaffected, and the only remaining question is whether trades-hour skipping is desirable (it probably is — see above). Record the finding and close or downgrade accordingly.
-- **(autonomous, if the skip is NOT per-kind)** Make it per-kind, so a trades-only backfill mint cannot shadow a book hour reconcile would otherwise heal. Books are unbackfillable; a shadowed book heal is the one outcome here that would actually cost data.
-- **(process)** Re-read this topic at the [[T0039]] flip — that is the moment the interaction becomes live, and this file is the only place the interaction is written down.

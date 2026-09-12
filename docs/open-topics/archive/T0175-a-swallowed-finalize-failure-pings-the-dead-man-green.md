@@ -22,7 +22,9 @@ The dead-man is the only external witness of the liquidations poller; a ping aft
 - The failing write must be injected BELOW `_write_part`'s own `except Exception`, never by replacing `_write_part`: a double that replaces the method removes the swallow under study and the `OSError` propagates, which is not what production does. `_replace_durably` — the last statement inside that `try` — is where a read-only or full mount actually fails, and patching it reproduces the swallow at any euid, so no root-skip is needed.
 - One caller today, adjudicated: `cli/liquidations/coinalyze.py:261` inside `_poll_once`. It pings a dead-man after the sweep — `_run`'s `if ok and not watermark.breached and watermark.measurable: ping_healthcheck(...)` — so a silent sweep failure is a false all-clear there. No other call site exists in `cli/`; the two other `git grep` hits are the method's own definition and a comment.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 The code half is resolved by the commits below.
 
@@ -31,7 +33,5 @@ The code half is resolved by the commits below.
 - `_poll_once` logs the lost hours by name and returns False, so `_run`'s gate withholds the ping while every other writer still gets its sweep. The `logger.error` also reaches `zcrypto-ops-error-logs`, so the withhold has a second, independent signal.
 - Guards, each proven by restoring the defect under `infra/scripts/mutate-probe.sh`: the red test (`test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping`), its true positive, the open-hour and crash-leftover report arms, and the caller's withhold.
 - `infra/runbooks/observability.md`'s dead-man map names the third withholding condition — `docs(obs): the dead-man map's liquidations row gains the third condition that now withholds its ping`.
-
-## Resolution
 
 The code half landed on this branch (`## Done so far`). The `zcrypto-liquidations` check's description in healthchecks.io was rewritten by the owner on 2026-09-07 to name the third withholding condition — *or when a finalize sweep left an hour unwritten* — with the Runbook link kept and nothing else on the check touched; read back through the read-only key the way `infra/scripts/ops_daily.py` fetches it, byte-equal to the intended text, grace 600 and status up unchanged; the fixture `tests/fixtures/healthchecks_descriptions.json` carries the same text. Every sub-item is done.

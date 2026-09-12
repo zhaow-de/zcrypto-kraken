@@ -16,7 +16,9 @@ A2's premise survived contact with data (Donchian is genuinely ~1.6–2.5× chea
 
 iter-053: long/flat A2 net-of-cost 1.23–1.33 vs gated-B1 1.047 (point), corrected family SPA p=0.057; short arms cost-killed (margin carry 6.2–8.5 %/yr); A2 holds longs through visible-2026 while gated-B1 sits it out (−0.19 pp-Sharpe slice on 89 periods). 240.parquet (4h) exists for all 10 majors.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 - **4h A2 — done, iter-074** (registry trial_ids 36–39, family-n 34–37; 3 of A=40 remain): the frozen benchmark rebuilt at 4h (time-preserving mapping; noc 1.2128 full / 1.2447 decisive k≥1380), then four long/flat arms under the ratified bar. **Three ADOPT** — (20,50,100)v0.12 at 1.3274, (60,120,240)v0.10 at 1.3017, (60,120,240)v0.12 at **1.3585** — one reject on SPA. Family K=4 multiplicity-corrected p = **0.0145/0.0165** (blocks 30/102): the first family-level significant beat of the frozen bar. Two instrument holds resolved pre-verdict (DSR cross-periodicity units; SPA block/seed robustness — both pre-registered and held). Decisions log `[iter-074]`.
 
@@ -25,6 +27,6 @@ iter-053: long/flat A2 net-of-cost 1.23–1.33 vs gated-B1 1.047 (point), correc
 
 - **Cross-frequency P1 combination trial — done, iter-080** (registry **trial 43**, family P1 n=3, **ADOPT**): governed net-of-cost Sharpe **1.5366** full / 1.5319 decisive, maxDD 13.31 %, every ratified leg passing vs the 4h-rebuilt benchmark (SPA max p 0.0190 over blocks 30/102 × seeds 42/7/1234; DSR ≈ 1.0; benchmark-relative worst-slice pass; ×1.5/×2 stress 1.3008/1.2400). Pre-run adversarial review caught a look-ahead in the daily→4h expansion mapping (fixed + regression-tested before any number; decisions log `[iter-080]`). The combination supersedes record 33 as the deployable-system candidate — Phase-6 scope tracked in T0018.
 
-## Suggested next steps
+**What this topic's next-steps section held at its close, kept verbatim — its pointer names the record now folded into this Resolution:**
 
-_(none — all sub-items done; see Done so far)_
+_(none — all sub-items done; see Done so far)_ — **ANSWERED:** the section's only line, a pointer rather than an action item: the four sub-items it says are done are the ones recorded above — 4h A2 (iter-074, registry trials 36–39), the 2026 probe (iter-065), the breakout-hold/cadence sweep (iter-075, trials 40–42, the A-family budget fully spent at 40/40) and the cross-frequency P1 combination (iter-080, trial 43).

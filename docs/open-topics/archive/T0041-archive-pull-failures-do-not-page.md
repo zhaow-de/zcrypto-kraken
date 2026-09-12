@@ -27,7 +27,7 @@ L2 capture is unbackfillable. The NAS mirror is the durable copy, and `archive-p
 - Confirmed: the seven rules in `infra/grafana/alerts.yaml` are Gate streak-reset / mismatch / journal-pull-lag / exporter-stale, NAS free-space / load, and NAS archive-pull ERROR logs. None is a freshness check on the archive mirror.
 - The ingest stage that sets `level` is in `infra/nas/config.alloy` (`stage.match` on `{container="archive-pull"}`); a non-matching line is passed through unchanged (verified: Loki's regex stage is a no-op on non-match and `stage.output` leaves the entry alone when its source key is unset), so these lines DO reach Loki — they simply arrive without a `level`, and the alert selects on `level`.
 
-## Done so far
+## Resolution
 
 Resolved on 2026-07-14 (folded into the observability commit on `fix/engine-host-split`). The governing principle: **every error path goes through `logging`, so the level label is always present** — plus a dead-man for the case where there is nothing to label.
 

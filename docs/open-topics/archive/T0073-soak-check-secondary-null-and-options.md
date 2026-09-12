@@ -20,15 +20,6 @@ The primary windowed null's overlapping windows share observations, so it unders
 - Only `windowed_null` currently drives every gating verdict and the P&L verdict in `analyze_soak`.
 - The v1 descope decision + rationale are recorded in the phase-6 ledger and the PR #154 description.
 
-## Done so far
-
-Landed in **iter-111** (spec `00061`, PR #159):
-
-- `block_bootstrap_null` is wired into `analyze_soak`. Every metric is judged under **both** nulls and reconciled by the explicit D1 severity rule (identical / adjacent-takes-the-milder / opposite-extremes-`indeterminate (instrument-fragile)` / exactly-one-`n/a`), with each disagreement disclosed verbatim.
-- `--null [windows|block-bootstrap|both]` (default `both`) and `--path [fast|verified]` landed and are threaded through `soak_report`. `--null windows` reproduces the pre-change verdicts, numerics, panel line and disclosures exactly — verified side-by-side against `develop` on the real journal — so the second construction is strictly additive.
-- Tests: the five reconciliation branches, both-nulls-agree on planted-consistent/inconsistent, determinism, the vacuous-band interaction, and the column→construction attribution pinned **positionally** (mutation-tested: swapping the two labels, or attributing a verdict to a construction that never ran, must fail).
-- **First real finding:** on the ops journal mirror `gross` and `net` read windowed `consistent` / bootstrap `weakly-consistent`. The windowed band is 2.25× wider on `gross` (width 0.2899 vs 0.1288), and the same live value sits at the 35.6th percentile under one construction and the 6.5th under the other — the overlapping-window variance understatement, measured rather than assumed.
-
 ## Resolution
 
 **Ruled 2026-08-03 (owner): report-shape item 9 is DROPPED, and it was dropped on a measurement rather than a judgement.** The remainder was never code — it was the definition spec `00058` left open: *which* regime variable is worth conditioning a soak verdict on, and *what would a reader do differently* on seeing it. The answer is none, and the experiment that settles it is the one any regime split performs anyway: halve the window.
@@ -50,6 +41,17 @@ On the 23.17-day realized window (L = 140), split into contiguous halves of L = 
 
 The drop is recorded in `docs/specs/00058-soak-check-oos-report-design.md` with the measurement, so the spec no longer reads as owing a section.
 
-## Suggested next steps
+**No step was left standing at the close** — the secondary null, the `--null`/`--path` options and the severity reconciliation had landed in iter-111 (the record below; `block_bootstrap_null` is wired into `analyze_soak` in `cli/engine/soak.py`, and both options are live in `cli/engine/command.py`), and report-shape item 9 is the drop above.
+
+**What had landed before the close**, kept as it was recorded:
+
+Landed in **iter-111** (spec `00061`, PR #159):
+
+- `block_bootstrap_null` is wired into `analyze_soak`. Every metric is judged under **both** nulls and reconciled by the explicit D1 severity rule (identical / adjacent-takes-the-milder / opposite-extremes-`indeterminate (instrument-fragile)` / exactly-one-`n/a`), with each disagreement disclosed verbatim.
+- `--null [windows|block-bootstrap|both]` (default `both`) and `--path [fast|verified]` landed and are threaded through `soak_report`. `--null windows` reproduces the pre-change verdicts, numerics, panel line and disclosures exactly — verified side-by-side against `develop` on the real journal — so the second construction is strictly additive.
+- Tests: the five reconciliation branches, both-nulls-agree on planted-consistent/inconsistent, determinism, the vacuous-band interaction, and the column→construction attribution pinned **positionally** (mutation-tested: swapping the two labels, or attributing a verdict to a construction that never ran, must fail).
+- **First real finding:** on the ops journal mirror `gross` and `net` read windowed `consistent` / bootstrap `weakly-consistent`. The windowed band is 2.25× wider on `gross` (width 0.2899 vs 0.1288), and the same live value sits at the 35.6th percentile under one construction and the 6.5th under the other — the overlapping-window variance understatement, measured rather than assumed.
+
+**What this topic's steps section said at its close, kept verbatim:**
 
 _(none — resolved. The secondary null, `--null`/`--path` and the severity reconciliation landed in iter-111; report-shape item 9 is dropped with its measurement recorded in spec `00058`.)_

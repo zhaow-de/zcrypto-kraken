@@ -26,14 +26,6 @@ Subtract it naively and the overfill trip's base moves under it: the trip compar
 - **The framework's reconciliation is the only producer, and it cannot reach a running strategy.** Established off upstream `nautilus_trader` at `a52de0f914770b635701ae8961994e0f9b9067db` — the chain is one line with no branches, and it is set out in full in spec 00100 D16. In short: the only Kraken-reachable constructor is `create_reconciliation_fill_voids`, fired when a venue snapshot reports LOWER cumulative filled than the order; it is gated on `allow_fill_decrease`, which only the snapshot generators pass, which only `reconcile_order_with_fills` calls, which at this venue only `reconcile_execution_mass_status` reaches — and that runs inside `perform_startup_reconciliation()`, which `crates/live/src/node/mod.rs` completes BEFORE `start_trader()`. Nothing is subscribed when it publishes. The two periodic checks are off (`open_check_interval_secs` / `position_check_interval_secs` both `None`) and could not reach it anyway: they route through the singular `reconcile_order_report`, which mints a void only for a `Voided` report.
 - **So the surface is the Cache, not an event.** The library applies the void to the order before this process has a strategy at all, and the engine's first and only sight of it is a venue order whose own `filled_qty` has come down.
 
-## Done so far
-
-**The row's terminal `state` was settled first.** `_EXTERNAL_TERMINAL_STATES`, the class-name-keyed map that had no `OrderFillVoided` entry, is deleted; `_on_external_event` reads `cache.order(...).status` through the one `OrderStatus`-keyed map, which is proven total over the library's own closed set and already carried `VOIDED -> "venue_canceled"`. Both row-state paths answer from the venue's own order rather than from an event's name.
-
-The measurements bounded what that bought, and they are what pointed at the quantity: in the ordinary sequence the `VOIDED` entry never fires, because a void that empties a completing fill meets a row already reading `filled` and the completed-row guard suppresses the terminal write. The row misstated a voided complete fill, and it misstated it through the quantity.
-
-One harness landmine was cleared in the same change: a dispatched `OrderFilled` carrying a `position_id` makes a subsequent `OrderFillVoided` raise `Invalid event for order type`, so the fixture stamps that id only on the copy its position arithmetic uses. Without that, no test in this suite could deliver a void at all.
-
 ## Resolution
 
 The quantity is decided and implemented, in the branch commits "the venue withdrawing a fill from a finished order stops being invisible" and "00100 D16 rules on the fill this engine was told to give back". The rule is one sentence: **a withdrawn fill is believed and never reversed — the ledger keeps what it recorded, and the disagreement between it and venue truth latches the kill switch.**
@@ -45,3 +37,11 @@ The quantity is decided and implemented, in the branch commits "the venue withdr
 - **Guarded in both directions on a fixture the withdrawal MOVES**: one closed row on the full quantity and a real `LimitOrder` filled to it, the arms differing only in whether `OrderFillVoided` is applied — so one order reads `VOIDED` at zero and the other `FILLED` at the quantity. The un-voided arm is the true positive (a sweep latching on the mere fact that a row is closed would kill the engine at every boot after any order ever filled), and a third arm makes the ledger write raise, because that write stands in front of the trip. Proven by mutation probe.
 
 The accepted residual, named rather than left implicit: `held` keeps the withdrawn quantity, so an operator who clears the kill switch by hand owns reconciling the ledger. Clearing it is already a human act no code performs.
+
+**What had landed before the close, and what it bought:** the row's terminal `state` was settled first, in the same branch, and the measurements that settled it are what pointed at the quantity above.
+
+**The row's terminal `state` was settled first.** `_EXTERNAL_TERMINAL_STATES`, the class-name-keyed map that had no `OrderFillVoided` entry, is deleted; `_on_external_event` reads `cache.order(...).status` through the one `OrderStatus`-keyed map, which is proven total over the library's own closed set and already carried `VOIDED -> "venue_canceled"`. Both row-state paths answer from the venue's own order rather than from an event's name.
+
+The measurements bounded what that bought, and they are what pointed at the quantity: in the ordinary sequence the `VOIDED` entry never fires, because a void that empties a completing fill meets a row already reading `filled` and the completed-row guard suppresses the terminal write. The row misstated a voided complete fill, and it misstated it through the quantity.
+
+One harness landmine was cleared in the same change: a dispatched `OrderFilled` carrying a `position_id` makes a subsequent `OrderFillVoided` raise `Invalid event for order type`, so the fixture stamps that id only on the copy its position arithmetic uses. Without that, no test in this suite could deliver a void at all.

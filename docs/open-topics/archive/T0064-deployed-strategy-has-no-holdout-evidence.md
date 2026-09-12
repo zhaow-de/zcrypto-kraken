@@ -24,12 +24,12 @@ The one artifact meant to guard against overfitting on the deployed system was s
 - The Phase-6 concordance/tracking gates (specs 00039/00040) compare *execution fidelity* (positions, |Δweight| ≤ 1e-6) and a P&L tracking band — they are **not** out-of-sample strategy validation; they check the engine reproduces the backtest, not that the backtest generalizes.
 - Related: [[T0063]] (the deployable's identity is itself mis-stated in the closeout/runbook body, compounding the "what was actually validated?" confusion).
 
-## Done so far
+## Resolution
+
+**What had landed before the close** — the record this topic carried while it was `partial`, kept as it stood:
 
 - **The realized-OOS-vs-backtest instrument is built** — `zcrypto engine soak-check` (spec/plan `00058`, iter-107, PR #154). It places the deployed strategy's realized shadow-soak behaviour against its backtest expectation on the frozen canonical, net of the disclosed governor-turnover P&L bias (spec `00040` — the null is recast onto the live cost convention so the D4 bias cancels by construction). It self-proves before reporting (reproduces registry record 44's exact diagnostics, journaled==replay identity, null reconciles — VOID on failure), refuses on a degenerate/short window, prints the zero-OOS banner every run, and is vocabulary-locked (never claims validation). Verified end-to-end on the live journal 2026-07-20: all self-tests `ok`, and it correctly refused (L=14 < floor=30 — not enough consecutive clean cycles yet).
 - This closes the **tooling** half of the decision-support sub-item: the substitute-for-the-holdout can now be *read* with real forward data. What remains is running it once the evidence accumulates, plus the human judgment.
-
-## Resolution
 
 **Ruled 2026-08-03 (owner): ACCEPT the limitation, and narrow what the gate claims.** The go/no-go now states in §12 that it certifies **execution** and explicitly does **not** certify **edge**, and names both limitations it inherits — this one, and [[T0125]]'s unrebuildable adoption criterion. The limitation now lives where the decision is actually taken, rather than in a ledger nobody opens at the moment of deciding, which is the gap this topic was opened to close.
 
@@ -49,6 +49,8 @@ So a fresh look could not discriminate, would repeat the degenerate-window failu
 
 *(Operational note, since it will recur: the default `--store-dir` still points at the workstation store, which stays cold by design — the engine's own store lives on the VPS. A workstation run is therefore store-bound and now says so; pass `--store-dir` pointing at a pulled VPS store to read the full window.)*
 
-## Suggested next steps
+**Nothing was left open at the close**, which is what this file's next-steps list said in its own words: the ruling is made and recorded in §12, and the decision-support read was run at full window with its instrument repaired — `cli/engine/soak.py` now classifies what bounded the window (`window_bound`, and `store_bound_cycles` for the cycles the store cost) and says so loudly when it was the store. The holdout budget stays at **0** and a fresh look remains a §12 escalation, deliberately unspent because no available window can discriminate.
+
+**The next-steps section this topic carried at its close, kept verbatim:**
 
 _(none — resolved. The ruling is made and recorded in §12; the decision-support read was run at full window and its instrument repaired. The holdout budget stays at 0 and a fresh look remains a §12 escalation, deliberately unspent because no available window can discriminate.)_

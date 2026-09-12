@@ -17,7 +17,7 @@ Reproducibility + supply-chain hygiene: the merge deletes `feat/role-b-gate-veri
 - NAS `archive-pull` image = `ghcr.io/zhaow-de/zcrypto-capture@sha256:dfda2580…` (branch build).
 - `alloy` = `grafana/alloy@sha256:4f6ddc…`, `docker-socket-proxy` = `ghcr.io/tecnativa/docker-socket-proxy@sha256:1f3a6f…` (upstream digests — keep).
 
-## Done so far
+## Resolution
 
 - **Resolved 2026-07-13.** PR #117 merged; the develop-built `-compat` image was published and the NAS
   compose was re-pinned to `sha256:ec180cde…`, replacing the branch-only `dfda2580` digest. Verified on

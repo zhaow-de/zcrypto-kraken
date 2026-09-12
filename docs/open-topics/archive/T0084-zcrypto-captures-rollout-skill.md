@@ -51,14 +51,9 @@ The previous-good digest is retained locally on **both** capture hosts (confirme
 
 Identical to the Slack T+24h reminder's 7-point checklist (running digest == candidate, `StartedAt` ≥ window with `RestartCount` 0, capture green, dead-man `Result=success`, `dropped_lines_total` 0 + fresh `last_success`, Alloy `remote_storage_samples_failed_total` 0 + `up{job="capture_app"}`==1, `continuity.py` on a *pulled* copy shows no new truncated hours). The skill should emit this checklist as its own gate step, not rely on the ambient reminder.
 
-## Done so far
-
-- **The skill is BUILT** — `.claude/skills/zcrypto-rollout-image/SKILL.md` (branch `feat/t0084-captures-rollout-skill`): five phases encoding the runbook above verbatim-in-substance — preflight with the rollback operand captured up front, secondary converge, the event-coverage bake with the abort-signal table, the 7-point primary gate emitted as the skill's own step, the no-pull rollback, verify-by-outcome with the fleet-pins update.
-- **Owner rulings at build time (2026-07-27):** (1) **the fixed ≥24 h bake is DEPRECATED** — the default gate is the smallest event-coverage window between the two re-pins (with a ≥3-rotation-hour slope floor); `fleet-deploys.md`'s canary language was reconciled in the same change, discharging the shrink step's "reconcile ≥24 h" clause early. (2) Invocation flipped to **user-only** (`disable-model-invocation: true`), overriding this topic's earlier model-invocation note. (3) **Host-touching commands run in the main loop only** — the permission gate blocks ssh-sudo inside dispatched workflows/subagents, observed live when a T0101 investigation strand died on exactly that.
-- The Slack reminder is now scheduled at the **computed gate-open time**, not a fixed T+24 h.
-- **The `fleet-deploys.md` shrink landed early** (owner's word, 2026-07-27, same branch): the rule keeps the law — the never-re-pin invariant, the skip-or-degrade approval gate, pair-add ordering, the engine/reboot/vault sections — and points at the skill for every rollout mechanic; net −601 bytes always-loaded. A cold lossless check classified 9 of 11 removals RELOCATED at equal-or-greater precision and caught the one genuinely shared bullet — pre-stage/stop→start also serves engine and pair-add converges, which the skill's scope excludes — restored as a generic bullet.
-
 ## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 **Resolved 2026-07-28: the skill ran a real rollout end to end, which was this topic's one remaining step** — secondary `zcrypto-red` converged 2026-07-27T23:58:41Z, primary `zcrypto` 2026-07-28T08:04:29Z, an 8 h 06 m event-coverage bake between them. The run *is* the validation (the T0081 pattern), and it found six defects that only an execution could surface; all six landed in `SKILL.md` in the same change.
 
@@ -75,6 +70,13 @@ Identical to the Slack T+24h reminder's 7-point checklist (running digest == can
 
 **Two degradations, each accepted explicitly by the owner at the step rather than noted afterwards**, which is what the skill demands: the prune ran in the weak form (`deleted=0` — the secondary's archive begins on the cutoff date), and one abort row read red and was discounted because the signal, not the image, is broken ([[T0106]], opened by this run).
 
-## Suggested next steps
+**What had landed before that rollout** — the build, and the owner's rulings taken while it was built:
 
-_(none — the skill is built, it has run a real rollout, and that run's corrections are in it. A future rollout that finds more corrections lands them the same way, which is the skill's own instruction rather than an open item here.)_
+- **The skill is BUILT** — `.claude/skills/zcrypto-rollout-image/SKILL.md` (branch `feat/t0084-captures-rollout-skill`): five phases encoding the runbook above verbatim-in-substance — preflight with the rollback operand captured up front, secondary converge, the event-coverage bake with the abort-signal table, the 7-point primary gate emitted as the skill's own step, the no-pull rollback, verify-by-outcome with the fleet-pins update.
+- **Owner rulings at build time (2026-07-27):** (1) **the fixed ≥24 h bake is DEPRECATED** — the default gate is the smallest event-coverage window between the two re-pins (with a ≥3-rotation-hour slope floor); `fleet-deploys.md`'s canary language was reconciled in the same change, discharging the shrink step's "reconcile ≥24 h" clause early. (2) Invocation flipped to **user-only** (`disable-model-invocation: true`), overriding this topic's earlier model-invocation note. (3) **Host-touching commands run in the main loop only** — the permission gate blocks ssh-sudo inside dispatched workflows/subagents, observed live when a T0101 investigation strand died on exactly that.
+- The Slack reminder is now scheduled at the **computed gate-open time**, not a fixed T+24 h.
+- **The `fleet-deploys.md` shrink landed early** (owner's word, 2026-07-27, same branch): the rule keeps the law — the never-re-pin invariant, the skip-or-degrade approval gate, pair-add ordering, the engine/reboot/vault sections — and points at the skill for every rollout mechanic; net −601 bytes always-loaded. A cold lossless check classified 9 of 11 removals RELOCATED at equal-or-greater precision and caught the one genuinely shared bullet — pre-stage/stop→start also serves engine and pair-add converges, which the skill's scope excludes — restored as a generic bullet.
+
+**What this topic's next-steps section held at its close, kept verbatim:**
+
+_(none — the skill is built, it has run a real rollout, and that run's corrections are in it. A future rollout that finds more corrections lands them the same way, which is the skill's own instruction rather than an open item here.)_ — **ANSWERED:** nothing was left pending — `.claude/skills/zcrypto-rollout-image/SKILL.md` exists, the 2026-07-28 rollout recorded above ran it end to end, and that run's six corrections landed in it in the same change.

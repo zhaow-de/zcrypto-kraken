@@ -18,10 +18,6 @@ Phase-4/5 verdicts currently charge Tier-1 maker fees + margin carry but assume 
 
 **First real-fill fee observation (iter-079, 2026-07-10, adapter-verification probe 5)**: taker fee **exactly 0.80 %/side** (€0.08000 on €9.99997, from `TradesHistory`) on the live account at zero 30-day volume, vs the modeled 0.6 %/side; spread cost on BTC/EUR ≈ 0.018 %. Within the pre-registered 2× band for the Stage-6b gate, but the tier discrepancy (fee ladder assumed Tier-1 maker-leaning rates) should be understood in this topic's calibration pass — see `docs/reference/adapter-verification/1.230.0.md` §Observations.
 
-## Done so far
-
-- **The compute home exists** (2026-07-15, iter-098 / spec 00052): the 1-second L2 primitive panel on the ops node (NAS replica) carries per-second `spread`/`spread_bps` and effective-spread-at-size (`fill_bps_{bid,ask}_{100,1k,10k}`) for all 10 pairs over the full capture window — this topic's per-pair/per-session-bucket percentile analysis is now a one-query start over `l2-panel/` (see `docs/reference/data-catalog-full.md` → Live-accruing datasets). First-look medians (whole window, bps): BTC 0.18, ETH 0.83, SOL 1.48, XRP 1.36, LTC 2.60, DOGE 2.97, LINK 3.00, AVAX 3.40, ADA 3.73, DOT 5.33 — coherent with the iter-079 live observation.
-
 ## Resolution (2026-07-22, iter-114, spec `00066`)
 
 **The spread term exists and is charged.** `cli/costs/spread.py` holds a calibrated per-pair table plus `effective_spread_bps()` and `round_trip_cost()` (fee + spread both sides + optional carry), calibrated from `l2-panel` over the **full window** per [[T0071]]'s map — 10 pairs × 315 hourly files, `2026-07-08T13:47:33Z … 2026-07-21T15:59:59Z`, 1,123,509–1,123,514 rows/pair, 0.00 % null rate at every size. Reference: [`captured-spread-calibration.md`](../reference/captured-spread-calibration.md). Span recorded as its measured **13.1 days**, not rounded to the nominal 14 (the panel trails capture by the ~7 h settle watermark).
@@ -39,6 +35,12 @@ How each of the topic's steps disposed:
 
 A second durable finding, recorded in the code, the reference doc and the data catalog: **never quote a median top-of-book spread for BTC/EUR** — it is tick-quantised at €0.10 and sits at one tick 42–58 % of the seconds on complete UTC days, so the median swings ~15 × on a small change in that share (mean ÷ median 11.2×, against 0.9–1.3× for every other pair).
 
-## Suggested next steps
+**What had landed before the close:**
 
-_(none — resolved. The remaining cost-realism work is [[T0090]] (re-quote the record at the realistic stack; decide maker vs taker) and [[T0024]], which reads the same panel window.)_
+- **The compute home exists** (2026-07-15, iter-098 / spec 00052): the 1-second L2 primitive panel on the ops node (NAS replica) carries per-second `spread`/`spread_bps` and effective-spread-at-size (`fill_bps_{bid,ask}_{100,1k,10k}`) for all 10 pairs over the full capture window — this topic's per-pair/per-session-bucket percentile analysis is now a one-query start over `l2-panel/` (see `docs/reference/data-catalog-full.md` → Live-accruing datasets). First-look medians (whole window, bps): BTC 0.18, ETH 0.83, SOL 1.48, XRP 1.36, LTC 2.60, DOGE 2.97, LINK 3.00, AVAX 3.40, ADA 3.73, DOT 5.33 — coherent with the iter-079 live observation.
+
+The topic's next-steps section held **no open item** at the close — only a pointer to the successors it left behind, and both are where it put them: [[T0090]] (re-quote the record at the realistic stack, and decide maker versus taker) is still live, and [[T0024]], which reads the same panel window, has since resolved — its effective-spread cap is `DEFAULT_MAX_SPREAD_BPS = 10.0` in `cli/universe/rules.py`, opt-in per symbol so an unmeasured pair is recorded rather than rejected.
+
+**What this topic's next-steps section carried at its close, kept verbatim with what answered it:**
+
+_(none — resolved. The remaining cost-realism work is [[T0090]] (re-quote the record at the realistic stack; decide maker vs taker) and [[T0024]], which reads the same panel window.)_ — **ANSWERED:** the section held no bullet at all, only that pointer, and both successors are where it left them — [[T0090]] is still live, and [[T0024]] has since resolved, its cap now `DEFAULT_MAX_SPREAD_BPS = 10.0` in `cli/universe/rules.py`, opt-in per symbol.

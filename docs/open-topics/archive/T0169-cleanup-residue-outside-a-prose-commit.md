@@ -58,7 +58,9 @@ A test name is read before its body, a live-host claim in a template is a claim 
 - `docs/reference/multi-agent-protocol.md` stays over the section bar; the only remaining honest candidate is its preamble duplicating `.claude/rules/agent-ops.md`, which is a call for the owner rather than a prose cut.
 - `docs/reference/capture-era-data-hygiene-map.md`'s 2026-09-03 row records an unexplained ~28 s remainder with no registered topic. It survives this pass verbatim; it wants an owner, not an edit.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 On `fix/t0169-cleanup-residue`, each bullet's landing commits are that branch's and every one names its own file in its subject.
 
@@ -93,6 +95,8 @@ On `fix/t0169-cleanup-residue`, each bullet's landing commits are that branch's 
 - **The archive-pull → overlay-writer rename is not owed** (the owner's decision, 2026-09-06): the unit and metric names stay because the alert rules are provisioned against them, and a rename changes nothing an operator acts on. This line is the record.
 - **The Findings bullets that carried an action are closed with the topic** (the owner's word, 2026-09-06): the wanted guards are asserted in this PR's `test(…)` and `fix(engine)` commits, each with its constructed defect and true positive in the commit message — the probe-plan pickup escape (in `cli/engine/executor.py`'s `_pickup`, not `probeplan.py`: a plan whose parse raises `TypeError`, `ValueError` or `OverflowError` is journaled with the class named and deleted; a pathologically deep document's `RecursionError` stays with the tick's catch-all, logged and dropped, a conscious leave since no stable test constructs it) and the boundary row it emits (the Cache read entered through a test-local subclass), the venue-state decimals premise over every basket leg (the price step only — Kraken publishes no lot step to pin the size half against), every offline manifest producer driven through the reader (in `tests/test_data_manifest.py`, where the test the bullet named lives), the two tick-sweep assertions (the corrupt-segment path books one unhealed day, the fixture's live edge, not zero), the panel's six columns, the cost-term quotient against the builder's own turnover, the record-43 margin bound, the funding cadence guard over the whole series, the two OI pins, the REST control test's opt-in gate with an empty answer failing once opted in — and the two stale comments and the probe script's costmin figure are re-worded to what the tree holds. Five were decided rather than built: the upstream-silence assertion message keeps its bare `T0105` (a pointer a reader looks up); the reboot-check and clock-offset helper pair stays duplicated (a refactor of tests that are not broken); the snapshot register's Fee-tab reading convention is cut as obsolete, since the refdata skill reads the account through the API; the protocol page's tick preamble is condensed to the one sentence `agent-ops.md` does not already state; the hygiene map's 28 s remainder is recorded as unexplained and accepted.
 
-## Suggested next steps
+Nothing was left as a next step: every item this topic raised is disposed of above, each with its own landing commit or its recorded decision.
 
-_(none — every item above is under `## Done so far`)_
+**The next-steps section this topic carried at its close, kept verbatim:**
+
+_(none — every item above is under `## Done so far`)_ *(That section is the one this file now carries as `## Resolution`; every item it names still sits above.)*

@@ -25,7 +25,7 @@ Pinned by the planted-corruption tests the topic asked for: `tests/test_registry
 
 *(Recorded 2026-07-20. The work landed at close but the evidence was never written into this file, so the topic read as unstarted — see `.claude/rules/open-topics.md`, which now requires the resolution be recorded here at close for exactly this reason.)*
 
-## Suggested next steps (historical — all landed, see Resolution above)
+**The steps this topic carried at its close, kept verbatim with what answered each:**
 
-- Define `EXPECTED_KEYS = {2: {...}, 3: {...}}` (store-owned + caller fields ± `variant`) and reject any surplus key in `validate_stored_record` with `RegistryCorruptionError` (planted-corruption test: the `"variannt"` forge).
-- Keep loader acceptance for both versions; TDD per the registry conventions.
+- Define `EXPECTED_KEYS = {2: {...}, 3: {...}}` (store-owned + caller fields ± `variant`) and reject any surplus key in `validate_stored_record` with `RegistryCorruptionError` (planted-corruption test: the `"variannt"` forge). — **ANSWERED:** landed as `_EXPECTED_STORED_KEYS` plus the `surplus = sorted(set(rec) - _EXPECTED_STORED_KEYS[version])` rejection in `validate_stored_record`, which raises `RegistryCorruptionError(f"{where}: unknown key(s) {surplus} for schema_version {version}")`; pinned by `tests/test_registry_store.py::test_v3_unknown_key_forge_is_corruption` and `::test_v2_unknown_key_forge_is_corruption`.
+- Keep loader acceptance for both versions; TDD per the registry conventions. — **ANSWERED for the acceptance half:** `_LOADABLE_SCHEMA_VERSIONS` gates the version inside `validate_stored_record` and the unknown-`schema_version` case raises there, with the per-version key sets kept side by side in `_EXPECTED_STORED_KEYS`. The TDD half is unevidenced rather than answered: the implementation and both forge tests landed in one commit (`fb9c66b67`), so their order is not recorded.

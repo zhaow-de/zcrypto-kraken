@@ -21,7 +21,11 @@ The preparation steps fail in the other direction. The engine host mounts no dat
 - **The soak back-seeding has no other home.** A mixed-schema soak window needs the widened legs' store history seeded back before the schema flip, or every pre-boundary cycle in that window reads `store`-bound.
 - **Two post-deploy readings are cosmetic but will be triaged as faults** (measured during iter-139, not predicted): at engine start the startup seed reads the last **pre**-deploy v1 venue record and publishes `zcrypto_venue_instruments_loaded 10` against `_expected 12` until the first post-deploy cycle, up to 4 h — no page, since spec `00089` D6 excludes both from alerting. And the `target_weight` gauge's `asset` label re-keys from `"BTC"` to `"BTC/EUR"`, so every series legend on the Engine board changes at the deploy; no Grafana query breaks, `engine-dashboard.json` filtering only on host.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
+
+**What had landed before the close** — kept here because the archive holds finished work, in the order this topic recorded it:
 
 **All four surfaces converged 2026-08-15/16** (PR #297 payload, digest `419feafc304f`; NAS `-compat` `5f890c26237a` via PR #298). Order held: NAS → ops → secondary capture → primary Alloy → engine. `fleet-pins.md` carries each row's evidence.
 
@@ -35,8 +39,6 @@ The preparation steps fail in the other direction. The engine host mounts no dat
 
 **A fourth finding the deploy surfaced, unrelated to the store:** spec `00089`'s `zcrypto_venue_*` Alloy admission had never reached EITHER capture host since 2026-08-13. The keep-regex is a `keep` action, so those four gauges were being dropped at the Alloy layer while 00089's alert rules evaluated against series that never arrived. Nothing surfaced it — a drift assert refusing a converge did. Shipped config-only to both hosts; verified end to end (`zcrypto_venue_instruments_expected` = 12 in Grafana Cloud, where the same query returned `(no series)` an hour earlier).
 
-## Resolution
-
 **Verified by value at the first schema-2 cycle, 2026-08-16 20:01:43Z.** Every check this topic named was read:
 
 - `cycle-20.json` — `schema_version: 2`, completed inside `[20:00, 20:30]`, **twelve symbol-keyed targets**, `ETH/BTC` and `SOL/BTC` at **exactly `0.0`**. Zero `failed-cycle-*.json` since the converge. Steady state confirmed at the next boundary (`cycle-00.json`, 2026-08-17 00:01:54Z, same shape).
@@ -45,4 +47,4 @@ The preparation steps fail in the other direction. The engine host mounts no dat
 - **The gate advanced THROUGH the schema boundary**: `status 1`, `mismatch_total 0`, `streak_days` **35 → 37**. 2026-08-16 was a genuinely mixed-schema day — cycles 00/04/08/12/16 at schema 1, cycle 20 at schema 2 — and it scored clean. That is spec `00094` D3's straddle case, and the reason each schema must replay and compare in its NATIVE key space: normalizing v1 replay output would have made all five of that day's earlier records a structural mismatch and zeroed the ratified streak the whole deploy order exists to protect.
 - **Replay surface**: `zcrypto_gate_cache_replayed` 11 with `mismatch_total` 0 — the NAS side is replaying across the boundary and accepting both schemas. The ops `verified-replay` timer was **not** separately read; the gate's own status/mismatch/streak is what was measured, and it is the surface that scores.
 
-The three instructions this topic got wrong, and the fourth thing the deploy surfaced, stay under `## Done so far` as the record of what a basket widening actually costs. The two durable imperatives they produced live in `.claude/rules/fleet-deploys.md` § Engine converges — the surface consulted at converge time — so nothing is stranded in this archive.
+The three instructions this topic got wrong, and the fourth thing the deploy surfaced, stay under `## Done so far` as the record of what a basket widening actually costs. The two durable imperatives they produced live in `.claude/rules/fleet-deploys.md` § Engine converges — the surface consulted at converge time — so nothing is stranded in this archive. *\[Pointers corrected 2026-09-12 at the archive sweep: that record sits above in this Resolution — the archived shape carries one `## Resolution` and no `## Done so far`. And `.claude/rules/fleet-deploys.md` has no `§ Engine converges` section: it is a single-heading file of bullets, where line 10 is *A schema-widening deploy converges the readers of the record format before the writer* and line 9 is the engine's inter-cycle-gap rule, while the workstation-only-tooling imperative sits in `CLAUDE.md`'s Secrets section rather than in the rule file. `## Engine converges` is a heading in `.claude/skills/zcrypto-rollout-image/SKILL.md` only. Both imperatives remain on a converge-time surface, so the sentence's claim that nothing is stranded here still holds.\]*

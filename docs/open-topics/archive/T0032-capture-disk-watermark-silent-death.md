@@ -55,7 +55,21 @@ failure mode with **no alerting whatsoever**, and it is **dated**, not hypotheti
 - The daemon is otherwise very lean (measured live): capture uses **102 MiB RAM** and ~24% of one core
   (max 53%) at ~58% of the peak hour's message rate.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
+
+**Resolved 2026-07-30**, on two grounds: the last open sub-item was confirmed clean, and the one residual this topic carried was **refuted** rather than deferred.
+
+**The next-steps list, item by item.** The T+24 h canary reminder was already a standing process rather than this topic's item when this file recorded it, and it still is — though it has moved: the image-converge mechanics left `.claude/rules/fleet-deploys.md` for `.claude/skills/zcrypto-rollout-image/SKILL.md` (commit `f53356ea1`), whose Phase-3 step schedules the Slack reminder at the computed gate-open time. Retention is the sub-item the subsections below discharge: the timer and its unit are still the capture role's (`infra/ansible/roles/capture/files/zcrypto-capture-prune.timer` and `templates/zcrypto-capture-prune.service.j2`), the `.part`/`.held`/`.corrupt` sparing that no live pass could exercise is still pinned offline by `tests/test_capture_prune.py`, and the secondary's first deletion pass — the last open one — is confirmed below. The compound `ENOSPC`-during-an-unmeasurable-probe residual is **dropped**: refuted rather than deferred, for the reason its own subsection gives.
+
+**The steps this topic carried at its close, kept verbatim with what answered each:**
+
+- ~~(process, at the re-pin) schedule the T+24 h canary reminder~~ **(done as standing process, 2026-07-15):** codified in `.claude/rules/fleet-deploys.md` — the reminder is scheduled via the Slack MCP at every secondary re-pin, no longer this topic's item. — **ANSWERED:** the standing process still stands, but it has moved off the file this bullet names: `.claude/rules/fleet-deploys.md` carries no reminder at all now, while `.claude/skills/zcrypto-rollout-image/SKILL.md:43` schedules the Slack reminder (`slack_schedule_message`) at the **computed gate-open time**, carrying the Phase-3 checklist — the image-converge mechanics moved there in commit `f53356ea1`.
+- **Retention: designed, config-implemented, deployed AND proven on the primary (2026-07-23).** Spec `00050` D8's `zcrypto-capture-prune` timer is **live on both hosts** (14-day retention, finals + `.sha256` only, never `.part`/`.held`/`.corrupt`). The primary's first real deletion pass is **verified** (deleted=560, sandboxed `-delete` proven, ring buffer confirmed — see Done so far), so the `≈2026-11-23` disk-fill deadline is dissolved there. **The delete-path property is thereby proven for BOTH hosts**: the prune `.service` is byte-identical across them (`sha256 ee51b6c5…`), same sandbox (`ProtectSystem=strict` + `ReadWritePaths=/var/lib/zcrypto-capture`), same `ext4` fs — nothing host-specific is left to differ. **That last sub-item — the secondary's first deletion pass — is DISCHARGED; its outcome is recorded under Resolution below.** **Recorded stance (explicit, 2026-07-19): the NAS custody mirror is deliberately never pruned** — it is the keep-forever archive (spec `00048` Role A); only the capture-host working copies ring-buffer. — **ANSWERED:** the last sub-item, the secondary's first deletion pass, is confirmed in *The secondary's first deletion pass — confirmed* below — 2026-07-29 03:17:04 UTC, `deleted=120`, cutoff `2026-07-15`, with the 07-30 steady-state pass beside it. The timer and its unit are still the capture role's (`infra/ansible/roles/capture/files/zcrypto-capture-prune.timer` and `templates/zcrypto-capture-prune.service.j2`), and the `.part`/`.held`/`.corrupt` sparing that no live pass could exercise is pinned offline by `tests/test_capture_prune.py`.
+- **(refuted 2026-07-30, see Resolution)** The compound `ENOSPC`-during-an-unmeasurable-probe residual rested on a false premise and is not carried forward. — **DROPPED:** the refutation is *The residual is refuted, not deferred* below, which ends by recording it as a conscious drop with that refutation as its reason.
+
+**What had landed before the close** — the record the subsections below cite, folded into this Resolution when the file was swept into the archived shape:
 
 - **The silent half is fixed.** `_healthcheck_loop` now withholds the dead-man ping while the watermark is
   breached, so a breach **pages** instead of reporting green:
@@ -144,16 +158,6 @@ deletion pass verifies).\]*
 
 
 - **(2026-07-26, spec/plan `00069` T3 — the `/metrics` gauge)** `zcrypto_capture_disk_watermark_breached` (gauge, 0/1, tapped from `watermark.breached`) ships on both capture hosts' `/metrics` endpoints and is admitted by both hosts' Alloy keep-lists. Scrape-verified directly: `curl 127.0.0.1:9101/metrics` on both `zcrypto` and `zcrypto-red` returns `zcrypto_capture_disk_watermark_breached 0.0` (checked 2026-07-26). The alert itself is out of scope here — it lands in the dedicated alerting/dashboards iteration ([[T0020]]).
-
-## Suggested next steps
-
-- ~~(process, at the re-pin) schedule the T+24 h canary reminder~~ **(done as standing process, 2026-07-15):** codified in `.claude/rules/fleet-deploys.md` — the reminder is scheduled via the Slack MCP at every secondary re-pin, no longer this topic's item.
-- **Retention: designed, config-implemented, deployed AND proven on the primary (2026-07-23).** Spec `00050` D8's `zcrypto-capture-prune` timer is **live on both hosts** (14-day retention, finals + `.sha256` only, never `.part`/`.held`/`.corrupt`). The primary's first real deletion pass is **verified** (deleted=560, sandboxed `-delete` proven, ring buffer confirmed — see Done so far), so the `≈2026-11-23` disk-fill deadline is dissolved there. **The delete-path property is thereby proven for BOTH hosts**: the prune `.service` is byte-identical across them (`sha256 ee51b6c5…`), same sandbox (`ProtectSystem=strict` + `ReadWritePaths=/var/lib/zcrypto-capture`), same `ext4` fs — nothing host-specific is left to differ. **That last sub-item — the secondary's first deletion pass — is DISCHARGED; its outcome is recorded under Resolution below.** **Recorded stance (explicit, 2026-07-19): the NAS custody mirror is deliberately never pruned** — it is the keep-forever archive (spec `00048` Role A); only the capture-host working copies ring-buffer.
-- **(refuted 2026-07-30, see Resolution)** The compound `ENOSPC`-during-an-unmeasurable-probe residual rested on a false premise and is not carried forward.
-
-## Resolution
-
-**Resolved 2026-07-30**, on two grounds: the last open sub-item was confirmed clean, and the one residual this topic carried was **refuted** rather than deferred.
 
 ### The secondary's first deletion pass — confirmed
 

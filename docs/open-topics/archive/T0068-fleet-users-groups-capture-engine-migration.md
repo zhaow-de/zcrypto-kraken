@@ -32,7 +32,7 @@ The one deferral this topic carried — record the spec `00057` D5 telemetry res
 
 *(Recorded 2026-07-20. The work landed at close but the evidence was never written into this file, so the topic read as unstarted — see `.claude/rules/open-topics.md`.)*
 
-## Suggested next steps (historical — all landed, see Resolution above)
+**Both steps this topic listed are discharged by the paragraphs above; they are kept here verbatim with what answered each:**
 
-- After [[T0067-fleet-users-groups-ops-migration]] lands, run `superpowers:writing-plans` for the **capture/engine phase**: the `kraken-* → zcrypto-*` renames, the pull-export-key move + Ansible-provisioning, `deploy → zcrypto-deploy`, and the first `zcrypto-alloy` deployment to the capture hosts — sequenced to avoid a capture gap and per the primary/secondary canary discipline (`fleet-deploys.md`).
-- At the `zcrypto` Alloy deploy, write the D5 residual acceptance into the record (extend/annotate `T0042`).
+- After [[T0067-fleet-users-groups-ops-migration]] lands, run `superpowers:writing-plans` for the **capture/engine phase**: the `kraken-* → zcrypto-*` renames, the pull-export-key move + Ansible-provisioning, `deploy → zcrypto-deploy`, and the first `zcrypto-alloy` deployment to the capture hosts — sequenced to avoid a capture gap and per the primary/secondary canary discipline (`fleet-deploys.md`). — **ANSWERED:** the phase ran in full at iter-105 (PR #148) — both renames, the pull-export key move with Ansible provisioning, `deploy → zcrypto-deploy`, and the first `zcrypto-alloy` deployment to both capture hosts, sequenced per `fleet-deploys.md`'s canary discipline with no capture gap; spec `00057` D1 is the ratifying decision.
+- At the `zcrypto` Alloy deploy, write the D5 residual acceptance into the record (extend/annotate `T0042`). — **ANSWERED:** written where this bullet asked for it — [[T0042]]'s 2026-07-19 entry (spec 00057 D5, commit `a15b893`) names both capture VPSes and the primary-as-engine-host trade-key case, with the non-root `zcrypto-alloy` mitigation.

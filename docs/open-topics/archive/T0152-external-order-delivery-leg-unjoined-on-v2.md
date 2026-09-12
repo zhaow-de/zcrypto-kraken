@@ -27,7 +27,9 @@ The fallback if it does not hold is known but is not free: poll the Cache on the
 - **Both label sets are registered eagerly at startup** (`cli/engine/command.py`, the `_EXEC_EXTERNAL_DISPOSITIONS` loop). So the series exists from boot whether or not the observer ever receives anything: `(no series)` means the engine's scrape is down, and **a reading of `0` cannot distinguish a wired observer with nothing to report from an observer that is never called.** This is the mechanism behind the silent failure named above, and it is why only a window containing a KNOWN external order can decide the question.
 - **On v1 the join demonstrably worked against the real venue**, which is what makes the v2 mechanism specifically — not the venue's publish side — the thing in doubt. Reconstructed from the metric's own history (see `## Done so far`): the pre-v2 process counted 12 `unmatched` events mid-life and a further 12 across the 2026-08-26 attended probe window.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 **The two readings this topic owed — the healthy-boot baseline and the join — are both taken, and the alert the baseline would have unblocked is decided below.** The baseline below was read on 2026-08-27 from the metric's own history via `infra/scripts/grafana-query.py` with PromQL `offset`, cross-checked against `process_start_time_seconds{job="engine_app"}` at every point so a counter reset is never mistaken for a delta. The join bullet's provenance is different and is stated there: a live order placed by the owner, read back by event class from Loki. No host was touched by either.
 

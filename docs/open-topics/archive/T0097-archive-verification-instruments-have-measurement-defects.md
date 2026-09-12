@@ -24,13 +24,6 @@ All measured by the audit's verifier agents, each reproduced rather than argued.
 - **`archive verify-replay` runs unwindowed, daily, with a CRITICAL alert.** `infra/ansible/roles/ops/templates/verify-replay.sh.j2:32` passes no `--since` and no `--pair`, so it replays the entire canonical archive every day and `cli/archive/command.py:704` exits 1 on a single failed hour → `ops_verify_replay_exit_code` → `alerts.yaml:943-982`, severity **critical**. One bad hour therefore pages every day, forever. The anchoring rule (`cli/archive/replay.py:139-156`) is quote-aware and correct, but any missing hour breaks a pair's chain until the next snapshot — which arrives only on a reconnect or checksum resubscribe.
 - **A trap to avoid in the obvious fix:** the panel sweep catches `PanelError` at `materialize.py:308` and routes it to `hours_unanchored`, which exits **0**. Any new cross-contamination guard must raise something else, or it becomes a check that reports success.
 
-## Done so far
-
-**Both ripe-now halves landed 2026-07-28** on `fix/t0097-continuity-report-legs` — the two that were safe *before* the statistic is re-pinned, since neither changes what counts as a gap:
-
-- **The derived threshold is printed.** `continuity.py`'s table gained a `thresh_s` column, so a `0.0000%` now sits beside the number that produced it. The point is immediately visible on two streams of the same hour: 5 s spacing derives a 50 s threshold, 30 s spacing derives 300 s — a 6× difference from the data alone, which is exactly the thing an operator could not previously see in order to disbelieve a zero. The TOTAL row deliberately prints no threshold: it is per pair, and averaging thresholds would invent a number.
-- **The empty-window `ZeroDivisionError` is guarded.** `--since` filters per stream long after the empty-tree guard, so a window excluding every hour reached the TOTAL row with nothing to divide by. It now prints `no segments in the requested window` and returns non-zero — and prints **no** `EXIT BAR` line, because nothing was measured and nothing may bank a verdict.
-
 ## Resolution
 
 **Resolved 2026-07-30** (spec `00076`, plan `docs/plans/00076-continuity-instruments.md`; commits `fa5f0fa3` spec, `4d428085` plan, `185475d0` cold-review fold-in + [[T0112]] registration, `f9b2b6ee`, `e174febc`, `b47018e0`, `d5a8e122`, `3b5db799` spec correction, `fecd8c96`, `d1aeb13a`, `148ef443`, `bb49e35a`). All three legs closed:
@@ -45,3 +38,10 @@ All measured by the audit's verifier agents, each reproduced rather than argued.
 **One residual split out before archiving, so no live deferred sub-item remains: [[T0112]]** (registered at the cold review) — `MIN_POOL` protects against exactly ONE outage-scale interval (`n ≥ 10000k − 5000` for k of them); no production stream is within three orders of magnitude of the k=2 regime (BTC/EUR 20,491 intervals of margin, LINK/EUR 10,508, ETH/BTC 2,197, SOL/BTC 898).
 
 The genesis-carve-out sentence this topic's own findings put into `.claude/rules/fleet-deploys.md` is retired on this same branch (protected-file edit, owner sign-off) now that the instrument annotates the genesis hour itself instead of needing an operator-read exception.
+
+**What had landed before the close:**
+
+**Both ripe-now halves landed 2026-07-28** on `fix/t0097-continuity-report-legs` — the two that were safe *before* the statistic is re-pinned, since neither changes what counts as a gap:
+
+- **The derived threshold is printed.** `continuity.py`'s table gained a `thresh_s` column, so a `0.0000%` now sits beside the number that produced it. The point is immediately visible on two streams of the same hour: 5 s spacing derives a 50 s threshold, 30 s spacing derives 300 s — a 6× difference from the data alone, which is exactly the thing an operator could not previously see in order to disbelieve a zero. The TOTAL row deliberately prints no threshold: it is per pair, and averaging thresholds would invent a number.
+- **The empty-window `ZeroDivisionError` is guarded.** `--since` filters per stream long after the empty-tree guard, so a window excluding every hour reached the TOTAL row with nothing to divide by. It now prints `no segments in the requested window` and returns non-zero — and prints **no** `EXIT BAR` line, because nothing was measured and nothing may bank a verdict.

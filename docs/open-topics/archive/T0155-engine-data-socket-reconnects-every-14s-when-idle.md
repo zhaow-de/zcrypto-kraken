@@ -70,7 +70,11 @@ Kraken answers the keepalive with a text payload, which is why the 200 s run loo
 
 **Reproduction** is keyless and local — the data client is public, so no credentials and no IP whitelisting are needed. A data-only `LiveNode` (`exec_enabled=False` never reads credentials) reproduces the loop exactly: 5 timeouts in 70 s at the default.
 
-## Done so far
+## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
+
+**What had landed before the close** — the record the paragraphs below cite as `## Done so far`, folded in here when the file was swept into the archived shape:
 
 - **The option is DECIDED: A.** The topic was opened deferring the choice until the first v2 boundary cycle showed whether the loop affects cycle completion. It does not. `cycle-20.json` records `started_at` 20:01:30.002Z and `completed_at` 20:01:41.862Z (2026-08-26) — 11.86 s against a 30-minute budget — so the reconnect loop is churn and noise, not breakage. The deciding input was read where it lives: `cycle-<HH>.json`'s `completed_at` under `<engine_state_dir>/journal/` on the engine host. Re-read it after any change here.
 - **The decision was challenged and stands, on stronger grounds than it was made.** On 2026-08-27 the option space was searched under the shared-budget constraint — fourteen options across four independent lenses (network layer, capture safety, trade path, operability), every load-bearing claim attacked by a skeptic. Every sentinel-subscription variant (B, one basket leg, one foreign pair, a trades sentinel) measured viable and *equivalent to A on the stakes that matter* — idle draw to ~0, outage draw untouched — while re-arming a 10 s reconnect trigger and placing a standing stream on the order path's socket. Everything else fell: idle above the heartbeat is A in disguise (the text pong refreshes the window); `subscribe_instruments` is not a sentinel (the timer fired 10.0 s after the subscribe); `TUNGSTENITE` changes nothing; log suppression hides the signal; dropping either client breaks the boundary concordance, which reads both clients' cache. The re-decision and its measured basis are **spec `00101`**, which now owns the delivery.
@@ -79,9 +83,6 @@ Kraken answers the keepalive with a text payload, which is why the 200 s run loo
 - **Recorded, not deferred — what Option A does not fix** (spec `00101` D7). Neither is a new topic, per the standing rule, and neither may be dropped silently when this topic closes:
   - **The two-socket outage loop has no adapter knob.** Both sockets' failure backoff (≈ 0.7 → 5 s, ~30 attempts per 150 s each) can still exceed Kraken's ~150 connection attempts per rolling 10 min during a fast-failing outage; A moves the crossing from ≈ T+4.4 min to ≈ T+6.3 min but does not remove it. The adapter surfaces nothing reconnect-shaped, so the only lever is upstream — exposing the reconnect knobs the binary already carries — and it becomes available only when the `nautilus-trader` pin moves (spec `00100` D11 holds it frozen until the engine is armed). Until then the runbook section's stop-the-engine instruction is the standing mitigation.
   - **Rust-side socket lines never reach Loki.** `cli/logging/config.py` ships only the `zcrypto` logger (`_TARGET_LOGGERS = ("zcrypto",)`), so every line the runbook section describes — a real reconnect, a handshake failure, a retry storm — exists only in `docker logs` on the engine host. A `SocketStateChanged` forwarder is measured viable on this wheel, but it is a separate component and the owner's call, not an autonomous one; it is not owed by this topic.
-
-
-## Resolution
 
 **Resolved 2026-08-28 — the trigger fired and the fix is measured on the fleet.** `docs/reference/fleet-pins.md`'s engine row carries `08f6abb379a7`, the `eb6a503a` build that sets `ws_idle_timeout_ms=0` (verified by running the image, not by its tag). The engine took it at 17:18:25Z inside the 16:00–20:00 gap, after the secondary's strong-form bake, and `cycle-20.json` completed at 20:01:42Z inside `[B, B+30 min]` with no failed-cycle sidecar.
 

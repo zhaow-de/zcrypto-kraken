@@ -20,11 +20,9 @@ An Alloy bump is a four-host deploy on infrastructure carrying unbackfillable ca
 - Only the NAS role automates restart-after-recreate; ops and the capture hosts are render-only, so the skill must bake the post-recreate restart in. This discharges [[T0048]]'s residual for **Alloy's own recreations only** — the render-only-host residual for app-container recreations remains its own item.
 - Canary order for a telemetry-only change: NAS/ops first, then capture secondary, then capture primary.
 
-## Done so far
-
-**(2026-07-23) The skill is built and adversarially reviewed** — `.claude/skills/zcrypto-bump-alloy/SKILL.md`, authored from a 5-surface fact survey of the post-00068/00069 tree and corrected by an adversarial review that verified every command against both trees. Its load-bearing content: canary order ops → NAS → capture secondary → capture primary (ordered for verification quality — telemetry-only, so no 24 h bake is owed; the canary rule is capture-image-scoped); the currently-running-capture-digest requirement on capture converges (via `{{.Config.Image}}`, never `{{.Image}}` — measured host-dependent: equal to the pin only under the containerd image store); the render-only reality on ops/capture (`compose up -d` is the operator's step); the empty-`-e`-counts-as-defined footgun; the alert clocks (per-host `Alloy dark` ≈15 m effective, ops raced by the hcio-watchdog at ~10 m); `docs/reference/fleet-pins.md` as the durable digest record for the three hosts whose pins are converge-time-only (deliberately left that way — the skip-when-absent gate is load-bearing, so no repo defaults were added). Prerequisite pinned: PR #191 merged before the first run.
-
 ## Resolution
+
+*Pointer note: this topic's `## Done so far` section was folded into this `## Resolution` when it was archived, so a reference to it elsewhere in this file names this section.*
 
 **Resolved 2026-07-27** by the skill's first real run: Alloy **v1.17.1 → v1.18.0** (`4f6ddc56ffdc` → `491b0578c049`) across all four hosts, in canary order, zero restarts, no protected service touched.
 
@@ -40,3 +38,7 @@ An Alloy bump is a four-host deploy on infrastructure carrying unbackfillable ca
 **The trap the skill exists to prevent was avoided as designed.** Passing each host's currently-running capture digest kept the capture-compose render idempotent — it never appeared in the changed set, so the `restart capture service` handler never fired. On the primary, `--skip-tags engine` kept the engine play out entirely: the live trade engine's `StartedAt` is byte-identical across the whole run.
 
 **No config-language risk, verified rather than assumed.** v1.18.0's two breaking changes are both `otelcol.*` components; the fleet uses only `loki.*` and `prometheus.*`. All three `config.alloy` files were then dry-started against the new binary (`alloy validate`) before any host was touched — worth doing regardless, since the capture config had changed hours earlier.
+
+**What had landed before the close** — the skill itself, folded in from this topic's former `## Done so far`:
+
+**(2026-07-23) The skill is built and adversarially reviewed** — `.claude/skills/zcrypto-bump-alloy/SKILL.md`, authored from a 5-surface fact survey of the post-00068/00069 tree and corrected by an adversarial review that verified every command against both trees. Its load-bearing content: canary order ops → NAS → capture secondary → capture primary (ordered for verification quality — telemetry-only, so no 24 h bake is owed; the canary rule is capture-image-scoped); the currently-running-capture-digest requirement on capture converges (via `{{.Config.Image}}`, never `{{.Image}}` — measured host-dependent: equal to the pin only under the containerd image store); the render-only reality on ops/capture (`compose up -d` is the operator's step); the empty-`-e`-counts-as-defined footgun; the alert clocks (per-host `Alloy dark` ≈15 m effective, ops raced by the hcio-watchdog at ~10 m); `docs/reference/fleet-pins.md` as the durable digest record for the three hosts whose pins are converge-time-only (deliberately left that way — the skip-when-absent gate is load-bearing, so no repo defaults were added). Prerequisite pinned: PR #191 merged before the first run.

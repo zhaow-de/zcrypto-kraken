@@ -45,11 +45,11 @@ The economics this topic was opened on held: one bake carried both deferred item
 
 **The step that would have made it fail silently**, and did have to be run by hand on both hosts: `docker compose up -d` after the converge ([[T0109]]). Before it, the primary's Alloy read host `fda087ea…` against container `e89f00d1…` — the handler had reloaded a stale inode and returned 200. Without that step this roll would have reported green and delivered two of the five.
 
-## Suggested next steps
+**The steps this topic carried at its close, kept verbatim with what answered each:**
 
 *(All discharged — see `## Resolution`. The rollout ran 2026-07-29.)*
 
-- ~~Roll both together, verifying the candidate from the image's own surface~~ — done; revision label, T0102's correlation and T0106's gauge all read from the image.
-- ~~Rewrite the rollout skill's abort-signal row~~ — done ([[T0106]]).
-- ~~Pass `capture_alloy_digest` so the Alloy config installs~~ — done, and followed by the container recreate [[T0109]] showed it also needs.
-- ~~Confirm all five undelivered series arrive in Cloud~~ — done; all five present on both hosts.
+- ~~Roll both together, verifying the candidate from the image's own surface~~ — done; revision label, T0102's correlation and T0106's gauge all read from the image. — **ANSWERED:** the roll recorded above, `sha256:99faf16514e3…ab44` on the secondary then the primary on 2026-07-29 after the 6 h 43 m bake, with both payload items read from the image's own surface: [[T0102]]'s `req_id` correlation (`cli/capture/ws_client.py` threads `req_id` into the subscribe and unsubscribe frames) and [[T0106]]'s `last_cycle_at` gauge.
+- ~~Rewrite the rollout skill's abort-signal row~~ — done ([[T0106]]). — **ANSWERED:** and it still reads that way — `.claude/skills/zcrypto-rollout-image/SKILL.md:50` trips on `zcrypto_logship_last_cycle_timestamp_seconds` "stale > ~120 s", with `~~zcrypto_logship_last_success_timestamp_seconds~~` struck through on the row beneath and the reason given: it stamps only on a successful *non-empty* ship, so it goes stale whenever logging is quiet, which is what healthy looks like.
+- ~~Pass `capture_alloy_digest` so the Alloy config installs~~ — done, and followed by the container recreate [[T0109]] showed it also needs. — **ANSWERED:** the hand-run `docker compose up -d` on both hosts was load-bearing, as the paragraph above records; the flag and its trap now live in the skill at `:110` — `capture_alloy_digest` / `ops_alloy_digest`, and an EMPTY `-e …_digest=` still counts as defined and renders a broken image ref.
+- ~~Confirm all five undelivered series arrive in Cloud~~ — done; all five present on both hosts. — **ANSWERED:** the per-series counts are the table above, and the rules that consume them are committed (`infra/grafana/alerts.yaml`, `zcrypto-capture-resubscribe-failing` among them).
