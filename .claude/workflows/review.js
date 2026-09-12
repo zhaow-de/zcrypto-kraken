@@ -31,15 +31,25 @@ const FINDING = {
   },
   required: ['severity', 'path', 'line', 'claim', 'evidence', 'consequence'],
 }
+const CLAIM = {
+  type: 'object',
+  properties: {
+    claim: { type: 'string', description: 'one claim a commit message makes, in its words' },
+    disposition: { type: 'string', enum: ['re-measured', 'read', 'declined'] },
+    by: { type: 'string', description: 'the command quoted, what was read, or why the range does not rest on it' },
+  },
+  required: ['claim', 'disposition', 'by'],
+}
 const REPORT = {
   type: 'object',
   properties: {
     verdict: { type: 'string', description: 'three sentences at most, including whether the range is pushable' },
     findings: { type: 'array', items: FINDING },
+    messageClaims: { type: 'array', items: CLAIM, description: 'every claim the messages in the range make, each with its disposition' },
     executed: { type: 'array', items: { type: 'string' }, description: 'every command relied on, with its summary line' },
     reportPath: { type: 'string' },
   },
-  required: ['verdict', 'findings', 'executed', 'reportPath'],
+  required: ['verdict', 'findings', 'messageClaims', 'executed', 'reportPath'],
 }
 const VERDICT = {
   type: 'object',
@@ -57,7 +67,7 @@ const readerPrompt = (lens) => `You are one of ${lenses.length} independent read
 
 YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them.
 
-Read \`git diff ${range}\` first, then each commit message; a claim a message makes is re-measured when the range's correctness rests on it — a mutation verdict re-run with the exact strings the message quotes, a number re-derived by a command you quote; a message that names a verdict without the command that produced it has not shown it, so grade that claim unmeasured rather than choosing a probe of your own; a claim about a file the range does not touch is read, not re-run, and the full suite is CI's to run, not yours. A check whose failure would have looked like success — a probe whose failing output nobody read, a grep whose miss prints nothing, an install whose output was suppressed — was not run, whatever the message says. Write a Markdown report to ${reportDir}/${lens.name}.md with \`## Counts\`, \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
+Read \`git diff ${range}\` first, then each commit message; a claim a message makes is re-measured when the range's correctness rests on it — a mutation verdict re-run with the exact strings the message quotes, a number re-derived by a command you quote; a claim about a file the range does not touch is read, not re-run, and the full suite is CI's to run, not yours; a claim you neither re-measured nor read is named with why the range does not rest on it, so a scoped read is distinguishable from a skipped one. A verdict a message names without the command that produced it has not been shown, and a check whose failure would have looked like success — a probe whose failing output nobody read, a grep whose miss prints nothing, an install whose output was suppressed — has not been run, whatever the message says: each is a finding at the commit, Important, never a probe of your own choosing. Write a Markdown report to ${reportDir}/${lens.name}.md with \`## Counts\`, \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line), \`## Claims\` (one row per claim a message makes: re-measured with its command, read with what was read, or declined with why the range does not rest on it) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
 
 const refutePrompt = (f, k) => `You are skeptic ${k + 1} of 2. ${common(`refute-${f.id}-${k + 1}`)}
 
@@ -117,7 +127,7 @@ log(`after refutation: ${count('Critical', standing)} Critical / ${count('Import
 return {
   range,
   tip,
-  lenses: live.map((r) => ({ name: r.lens, verdict: r.verdict, reportPath: r.reportPath, executed: r.executed })),
+  lenses: live.map((r) => ({ name: r.lens, verdict: r.verdict, reportPath: r.reportPath, messageClaims: r.messageClaims, executed: r.executed })),
   droppedLenses: dropped,
   counts: { Critical: count('Critical', standing), Important: count('Important', standing), Minor: count('Minor', standing), refuted: graded.length - standing.length },
   findings: graded,
