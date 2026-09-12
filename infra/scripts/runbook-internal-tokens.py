@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """One line per runbook bullet or numbered step whose prose carries an internal token.
 
+One line per BULLET, its tokens joined -- the count is bullets, as the entry's name and the rule's
+set clause both say, so a bullet carrying three tokens is one finding to fix and not three.
+
     runbook-internal-tokens.py <page>...
 
 prints `path:line token` per hit and exits 0 whether or not it found any: this is an instrument the
@@ -47,8 +50,14 @@ def _load(path: pathlib.Path, name: str) -> types.ModuleType:
 
 
 def hits(text: str, guard: types.ModuleType, vocabulary: types.ModuleType) -> list[tuple[int, str]]:
-    """Every (line, token) a bullet of this page carries, the bullet's line being the item's first."""
-    return [(line, token) for line, bullet in guard.bullets(text) for token in vocabulary._leaks(bullet)]
+    """One (line, tokens) per offending bullet, its line the item's first and its tokens comma-joined
+    in the order they appear, so the caller counts bullets and still reads what each one carries."""
+    found = []
+    for line, bullet in guard.bullets(text):
+        tokens = [token.strip() for token in vocabulary._leaks(bullet)]
+        if tokens:
+            found.append((line, ", ".join(dict.fromkeys(tokens))))
+    return found
 
 
 def main(argv: list[str]) -> int:
@@ -63,8 +72,8 @@ def main(argv: list[str]) -> int:
         except OSError as exc:
             print(f"runbook-internal-tokens: cannot read {path}: {exc.strerror or exc}", file=sys.stderr)
             return 2
-        for line, token in hits(text, guard, vocabulary):
-            print(f"{path}:{line} {token.strip()}")
+        for line, tokens in hits(text, guard, vocabulary):
+            print(f"{path}:{line} {tokens}")
     return 0
 
 

@@ -107,10 +107,12 @@ c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || ret
 
 c_topics_without_a_trigger() { grep -L '^ripe_when:' docs/open-topics/T*.md | wc -l; }
 
-# The bullets and numbered steps of the top-level runbook pages, this list's own README aside: an internal token --
+# The bullets and numbered steps of the top-level runbook pages, `infra/runbooks/README.md` aside, whose own bullets
+# state the rule rather than an operator's step: an internal token --
 # `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`, `D<N>` -- inside one is a reference an operator who
 # reached the page from an alert description cannot resolve. A paragraph, a table row and a declaration's why may
-# carry one; the classes and the path exemption are `tests/test_internal_terms_not_operator_visible.py`'s.
+# carry one (a declaration's why is inside its bullet and takes the rule with it); the classes and the path exemption are `tests/test_internal_terms_not_operator_visible.py`'s. One line
+# per bullet, its tokens joined, so the count is bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
@@ -206,15 +208,15 @@ c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- 
 
 # A write to one of the six gate gauges from outside `_ExecGauges.update`, whose single call is what makes
 # a frozen gauge set indistinguishable from a live one. The awk excises that method's body alone.
-c_gate_gauge_writes_outside_the_publish_call() { { awk '/^    def update\(self, verdict/{i=1;next} i&&(/^    (def |@)/||/^[^ ]/){i=0} !i' cli/engine/command.py; git grep -h -E '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\(' -- cli ':!cli/engine/command.py'; } | grep -cE '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\('; }
+c_gate_gauge_writes_outside_the_publish_call() { [ -f cli/engine/command.py ] || return 2; { awk '/^    def update\(self, verdict/{i=1;next} i&&(/^    (def |@)/||/^[^ ]/){i=0} !i' cli/engine/command.py; git grep -h -E '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\(' -- cli ':!cli/engine/command.py'; } | grep -cE '\.(gate_level|armed|kill_tripped|restart_hold|venue_ok|last_evaluation)\.set\('; }
 
 # `--delete` anywhere in the archive pull's module: the mirror keeps every day it ever fetched, which is
 # what makes a mismatch count span days and an empty tree mean the pull has never succeeded.
-c_archive_pull_delete_flags() { grep -c -- '--delete' cli/archive/command.py; }
+c_archive_pull_delete_flags() { grep -nE -- '--delete' cli/archive/command.py | grep -vE '^[0-9]+:[[:space:]]*#' | wc -l; }
 
 # A deployed `--cache` naming a path outside `/tmp/`: wider than the bullet's "a path both hosts reach",
 # which is the direction that never under-reports the siting the cross-host poisoning rule forbids.
-c_gate_cache_args_outside_tmp() { git grep -nE -- '--cache[ =]/' -- infra cli ':!*.md' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE -- '--cache[ =]/tmp/' | wc -l; }
+c_gate_cache_args_outside_tmp() { git grep -nE -- '--cache[ =]["'"'"'$]?[/$~.]' -- infra cli ':!*.md' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE -- '--cache[ =]["'"'"']?/tmp/' | wc -l; }
 
 # A rule whose `folderUID` is a literal rather than `${GRAFANA_ALERT_FOLDER_UID}`: it provisions into
 # another folder AND escapes the push script's orphan prune, which selects by that same field.
@@ -222,15 +224,26 @@ c_alert_rules_without_the_folder_literal() { uv run python -c 'import yaml;print
 
 # A verified nautilus version with no adapter-verification record carrying a PASS. Both arming guards read
 # that file, so a version added without its attended record is live money on an uncleared adapter.
-c_verified_versions_without_a_pass_record() { jq -r '.verified_nautilus_versions[]' cli/engine/order-semantics-verified.json | while read -r v; do grep -q PASS "docs/reference/adapter-verification/$v.md" 2>/dev/null || echo "$v"; done | wc -l; }
+c_verified_versions_without_a_pass_record() { jq -r '.verified_nautilus_versions[]' cli/engine/order-semantics-verified.json | while read -r v; do grep -qE '\*\*(Verdict: )?PASS\b' "docs/reference/adapter-verification/$v.md" 2>/dev/null || echo "$v"; done | wc -l; }
 
 # A member of the inventory's `engine_host` group other than `zcrypto`: every "primary only" reading on
 # the capture-daemon and hosts pages rests on that group holding one host, and the live trade key with it.
-c_engine_hosts_besides_the_primary() { uv run python -c "import yaml; print(len([h for h in yaml.safe_load(open('infra/ansible/inventory/hosts.yml'))['all']['children']['engine_host']['hosts'] if h != 'zcrypto']))"; }
+c_engine_hosts_besides_the_primary() {
+  uv run python - <<'INV'
+import yaml
+groups = yaml.safe_load(open("infra/ansible/inventory/hosts.yml"))["all"]["children"]
+members, stack = set(), [groups["engine_host"]]
+while stack:  # a host reaches the group through a child group too, and it holds the trade key just the same
+    node = stack.pop()
+    members |= set(node.get("hosts") or {})
+    stack += list((node.get("children") or {}).values())
+print(len(members - {"zcrypto"}))
+INV
+}
 
 # `docker inspect <container>` with no `--format`, the form that prints the whole config -- the live Kraken
 # trade key with it on the engine host. Narrower than the bare command an operator types, which nothing records.
-c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[A-Za-z0-9_{}$"-]+ *($|[|;&)>])' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE -- '--format|-f ' | wc -l; }
 
 # The pinned leaves the edge renders, one `file /etc/caddy/pinned-leaves/<name>.pem` line per tracked PEM:
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.

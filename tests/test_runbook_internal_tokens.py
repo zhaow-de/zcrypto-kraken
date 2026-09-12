@@ -1,5 +1,6 @@
 """`infra/scripts/runbook-internal-tokens.py`: an internal token inside a runbook bullet or numbered
-step is a hit, one in a paragraph is not, and one inside a real path is the operand it looks like."""
+step is a hit, one in a paragraph is not, and one inside a real path is the operand it looks like.
+One line per BULLET, whatever it carries, because the entry counting them is named for bullets."""
 
 import importlib.util
 import pathlib
@@ -74,14 +75,15 @@ def test_every_spelling_of_the_vocabulary_reaches_the_instrument(instrument):
     """
     wp = "WP" + "3"
     found = instrument(f"- **A bullet** citing Phase 6a, T0123, iter-117, spec 00052, {wp} and D5a in one breath.\n")
-    assert [t.strip() for t in dict.fromkeys(found and [f[1] for f in found])] == [
-        "Phase 6",
-        "T0123",
-        "iter-117",
-        "spec 00052",
-        wp,
-        "D5a",
-    ], found
+    assert len(found) == 1, f"one bullet is one line: {found}"
+    assert found[0][1].split(", ") == ["Phase 6", "T0123", "iter-117", "spec 00052", wp, "D5a"], found
+
+
+def test_a_bullet_carrying_several_tokens_is_one_line(instrument):
+    """The count is bullets: three tokens in one step are one finding to fix, and the line still says
+    which three, so the reader does not have to open the page to know."""
+    found = instrument("- **A step** registered as T0123, T0456 and spec 00052.\n")
+    assert found == [(1, "T0123, T0456, spec 00052")], found
 
 
 def test_the_tracked_pages_carry_no_token_in_a_bullet():
