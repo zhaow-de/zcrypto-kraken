@@ -32,7 +32,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0159 — `zcrypto engine flatten` — the red button](T0159-engine-flatten-the-red-button.md) — ripe when: per sub-item, not one trigger — the read-only dry-run and then the first real press follow it in the same attended session; the host wrapper is on the engine host since the 2026-09-01 converge, so both remaining steps wait only on an attended window
 - [T0183 — A reconciliation reports a perfect score when it compared nothing](T0183-reconciliation-reports-perfect-on-an-empty-set.md)
 - [T0184 — The soak report averages a specified HHI sentinel as though it were a measurement](T0184-soak-hhi-aggregate-averages-a-sentinel.md) — ripe when: uv run zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir <a store pulled from the engine host, which has no replica> reports a non-zero realized no-book bar count in its null-reference block, or an hhi verdict other than consistent; on a page carrying NO VERDICT or STORE-BOUND WINDOW a non-zero no-book count still fires the first arm, while a zero count and the verdict cell evaluate nothing
-- [T0186 — The soak report re-caps the book with module defaults while the builder used the configured caps](T0186-soak-recaps-with-default-position-caps.md)
 - [T0190 — Three flags implement the one live-venue opt-in](T0190-live-venue-opt-in-flags-disagree.md) — ripe when: the next branch that adds a venue-reaching test, or any change to `tests/test_live_venue_opt_in.py` — either is a moment someone is already holding this context
 
 ## Resolved
@@ -199,6 +198,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0180 — The prose ratchet's verdict is a tree property, and no gate evaluates it after a rebase or a merge](archive/T0180-ratchet-verdict-is-a-tree-property-no-gate-sees-it.md)
 - [T0181 — A 503 cannot separate a hibernation from a Grafana Cloud outage, and the keep-alive has no second signal](archive/T0181-a-503-cannot-separate-hibernation-from-outage.md)
 - [T0185 — The capture daemon accepts an empty pair list and keeps the dead-man switch green](archive/T0185-capture-accepts-empty-pair-list.md)
+- [T0186 — The soak report re-caps the book with module defaults while the builder used the configured caps](archive/T0186-soak-recaps-with-default-position-caps.md)
 - [T0188 — The soak report's identity check counts a NaN comparison as made and passed](archive/T0188-soak-identity-check-counts-a-nan-comparison-as-passed.md)
 - [T0189 — The prose ratchet converts every cut into silent headroom](archive/T0189-prose-ratchet-converts-each-cut-into-headroom.md)
 - [T0191 — The zero-price refusal's comment inverts the consequence it exists to justify](archive/T0191-flatten-zero-price-comment-inverts-its-own-consequence.md)
