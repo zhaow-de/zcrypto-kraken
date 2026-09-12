@@ -25,6 +25,8 @@ The human **confirmed the exit-bar tolerance is acceptable** (via `/research-loo
 
 The one remaining item — **15-minute bars + a tick storage/catalog** — is **not a standalone follow-up**: `cli/tick.ticks_to_bars` is interval-parametric (15m is one argument), and a parse-on-demand model already suffices, so this is folded into the **Bucket-B intraday families** (§5: B1 trend/seasonality, B2 derivatives-positioning) — built there if/when a B-family needs repeated tick/15m access. Nothing autonomously-resolvable remains here.
 
+**Correction (2026-09-12), on the sweep's read of the archive:** the sentence above is contradicted twice over: the 15-minute/tick-storage item did become a standalone topic, `T0012`, and its 15-minute half shipped at iter-085 rather than waiting for a B-family consumer — shown by `head -9 docs/open-topics/archive/T0012-15m-tick-storage-bucket-b.md` → "Split out of **archived T0004**" and by `ls cli/backfill/substrate15m.py docs/specs/00044-15m-substrate-design.md`. The tick-level catalog half was dropped there with its reason, so what this sentence got wrong is the venue, not the outcome. (The pilot commit of this branch named this sentence; it is the 32nd, outside the 31 the annotation pass judged.)
+
 **What had landed before the close:** the tick→bar machinery and the reconciliation runs the acceptance above rests on.
 
 Iteration **iter-039** (spec `docs/specs/00028-tick-reconciliation-design.md`, plan
