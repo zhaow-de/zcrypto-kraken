@@ -66,64 +66,144 @@ def _is_a_stated_reason(reason: str) -> bool:
 # line-initial fence, or a `-->` in the author's own prose under the template's comment opener, swallowed a real
 # read line and the gate then refused a legitimate PR for the wrong reason. So the body is walked once, in order,
 # with the state a renderer keeps. `<details>` goes with them: collapsed by default is not visible either.
-_FENCE_OPEN = re.compile(r"^(?P<run>`{3,}|~{3,})")
+# A fence opener, CommonMark's shape: at most three spaces of indent, a run of three or more backticks or
+# tildes, and for a backtick fence an info string with no backtick in it (`” ```gh pr view``` ”` is a paragraph,
+# not an opener). The bound matters in both directions -- four spaces is an indented code block, which RENDERS
+# its backticks, and treating it as an opener hid the rest of a body that a reader can see in full.
+_FENCE_OPEN = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,})(?P<info>[^`]*)$")
+_FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
+# An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
+# nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
+_CODE_SPAN = re.compile(r"(?P<ticks>`+)(?:(?!(?P=ticks)).)*(?P=ticks)", re.S)
+# `--!>` closes a comment in every browser, so a body using it renders in full and the gate must agree.
+_COMMENT_CLOSE = re.compile(r"--!?>")
+
+
+def _outside_code_spans(line: str) -> str:
+    """The line with each inline code span blanked to spaces -- same length, so offsets still line up."""
+    return _CODE_SPAN.sub(lambda m: " " * len(m.group(0)), line)
 
 
 def _as_a_reader_sees_it(body: str) -> str:
-    """The body with everything a rendered PR hides removed: comments (terminated or not), fenced blocks (nested
-    or not), `<details>` blocks, and quoted lines."""
+    """The body with everything a rendered PR hides removed: comments (terminated or not, `--!>` included), fenced
+    blocks (nested or not), `<details>` blocks, and quoted lines.
+
+    Two rules keep this close to a renderer without becoming one. A fence is decided on the RAW line, because a
+    renderer settles fences before it ever looks for inline markup. And a comment or `<details>` HIDES what
+    follows it only when it opens the line -- an HTML block -- while one that opens and closes inside a line just
+    takes its own span with it; an unterminated `<!--` in the middle of a sentence renders as text, and treating
+    it as an opener threw away the rest of a body a reader can see in full.
+    """
     visible: list[str] = []
     fence: str | None = None  # the opening run, when inside a fenced block
-    hidden_to_end = False  # an unterminated comment or details block hides the rest of the document
     in_comment = False
     in_details = False
     for raw in body.splitlines():
-        if hidden_to_end:
-            break
         line = raw
         if fence is not None:
-            run = _FENCE_OPEN.match(line.lstrip())
+            run = _FENCE_CLOSE.match(line)
             if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
                 fence = None
             continue
         if in_comment or in_details:
-            closer = "-->" if in_comment else "</details>"
-            if closer not in line:
-                continue
-            line = line.split(closer, 1)[1]
-            in_comment = in_details = False
-        # Comments and details are resolved before fences: inside a fence there is no markup to resolve, and a
-        # fence opener is only an opener when the line is not already hidden.
+            masked = _outside_code_spans(line)
+            if in_comment:
+                m = _COMMENT_CLOSE.search(masked)
+                if not m:
+                    continue
+                line, in_comment = line[m.end() :], False
+            else:
+                at = masked.find("</details>")
+                if at < 0:
+                    continue
+                line, in_details = line[at + len("</details>") :], False
+        opener = _FENCE_OPEN.match(line)
+        if opener:
+            fence = opener.group("run")
+            continue
+        # An inline comment or details element, opened and closed on this line, takes its own span and nothing
+        # more. Code spans are masked so a `<!--` written as prose about this gate is not read as markup.
         while True:
-            if "<!--" in line:
-                before, rest = line.split("<!--", 1)
-                if "-->" in rest:
-                    line = before + rest.split("-->", 1)[1]
-                    continue
-                visible.append(before)
-                in_comment, hidden_to_end = True, False
-                line = None
+            masked = _outside_code_spans(line)
+            pairs = []
+            at = masked.find("<!--")
+            if at >= 0:
+                closer = _COMMENT_CLOSE.search(masked, at)
+                if closer:
+                    pairs.append((at, closer.end()))
+            at = masked.find("<details")
+            if at >= 0:
+                close_at = masked.find("</details>", at)
+                if close_at >= 0:
+                    pairs.append((at, close_at + len("</details>")))
+            if not pairs:
                 break
-            if "<details" in line:
-                before, rest = line.split("<details", 1)
-                if "</details>" in rest:
-                    line = before + rest.split("</details>", 1)[1]
-                    continue
-                visible.append(before)
-                in_details = True
-                line = None
-                break
-            break
-        if line is None:
+            a, b = min(pairs)
+            line = line[:a] + line[b:]
+        # A block-level opener -- first non-space text on the line -- hides every line until its closer, or to the
+        # end of the document when it has none, which is what a renderer does with it.
+        stripped = line.lstrip()
+        if stripped.startswith("<!--"):
+            in_comment = True
             continue
-        run = _FENCE_OPEN.match(line.lstrip())
-        if run:
-            fence = run.group("run")
+        if stripped.startswith("<details"):
+            in_details = True
             continue
-        if line.lstrip().startswith(">"):
+        if stripped.startswith(">"):
             continue
         visible.append(line)
     return "\n".join(visible)
+
+
+def _unterminated_opener(body: str) -> int | None:
+    """The line index where a comment, `<details>` or fence opens and never closes, or None when the body closes
+    everything it opens. Such a construct hides every line after it in the rendered page, and it is the shape a
+    walk imitating a renderer is most likely to disagree about."""
+    fence: str | None = None
+    opened_at: int | None = None
+    in_comment = in_details = False
+    for i, raw in enumerate(body.splitlines()):
+        line = raw
+        if fence is not None:
+            run = _FENCE_CLOSE.match(line)
+            if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
+                fence, opened_at = None, None
+            continue
+        if in_comment or in_details:
+            masked = _outside_code_spans(line)
+            if in_comment:
+                m = _COMMENT_CLOSE.search(masked)
+                if not m:
+                    continue
+                line, in_comment, opened_at = line[m.end() :], False, None
+            else:
+                at = masked.find("</details>")
+                if at < 0:
+                    continue
+                line, in_details, opened_at = line[at + len("</details>") :], False, None
+        opener = _FENCE_OPEN.match(line)
+        if opener:
+            fence, opened_at = opener.group("run"), i
+            continue
+        stripped = _outside_code_spans(line).lstrip()
+        if stripped.startswith("<!--") and not _COMMENT_CLOSE.search(stripped):
+            in_comment, opened_at = True, i
+        elif stripped.startswith("<details") and "</details>" not in stripped:
+            in_details, opened_at = True, i
+    return opened_at
+
+
+def _before_anything_that_can_hide(body: str) -> str:
+    """The body up to an unterminated comment, `<details>` or fence, which hides everything after it.
+
+    Defence in depth for the arm that LIFTS a floor: the walk above tries to be a renderer, and a renderer has
+    more edge cases than a reviewer can enumerate -- two of them got a substitution past an earlier version of
+    it. A terminated construct is left alone, since the walk removes it and the reader sees the rest; it is the
+    unterminated one, where the page and the walk can disagree about everything below, that the line may not sit
+    under.
+    """
+    at = _unterminated_opener(body)
+    return body if at is None else "\n".join(body.splitlines()[:at])
 
 
 def _hidden_hint(body: str, pattern: re.Pattern[str]) -> str:
@@ -132,16 +212,30 @@ def _hidden_hint(body: str, pattern: re.Pattern[str]) -> str:
     if pattern.search(body) and not pattern.search(_as_a_reader_sees_it(body)):
         return (
             " — the line is in the body but hidden from the rendered page: an HTML comment (terminated or not), a "
-            "fenced block, or a quoted line"
+            "fenced block, a `<details>` block, or a quoted line"
         )
     return ""
+
+
+def _substitution_hint(body: str) -> str:
+    """A clause naming which of the two remaining refusals this is: the line sits below something that could have
+    hidden it, or the line is where it should be and its reason is not one."""
+    visible = _as_a_reader_sees_it(body)
+    if not SUBSTITUTE.search(visible):
+        return ""
+    if not SUBSTITUTE.search(_as_a_reader_sees_it(_before_anything_that_can_hide(body))):
+        return (
+            " — the line sits below a comment, a `<details>` block or a fenced block; it counts only in the body's "
+            "plain prefix, which is where `open-pr` puts it, directly under the read line"
+        )
+    return " — the body carries the line, and its reason is the placeholder, a filler token, or too little to be a reason"
 
 
 def _substitution_reason(body: str) -> str | None:
     """The stated reason for substituting Opus for the Fable floor, or None when the body states none a reader
     would accept. Every occurrence is considered, not the first: a leftover placeholder line above a filled one is
     the natural accident once the line is instructed as a template, and it must not refuse the filled one."""
-    for m in SUBSTITUTE.finditer(_as_a_reader_sees_it(body)):
+    for m in SUBSTITUTE.finditer(_as_a_reader_sees_it(_before_anything_that_can_hide(body))):
         if _is_a_stated_reason(m.group(1)):
             return _normalised(m.group(1))
     return None
@@ -189,15 +283,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
             return [
                 f"the read named in the body was by {model!r}, and the PR touches {touched[0]}{more}: the floor there is "
                 f"Claude Fable, or a body line 'Fable floor substituted by Opus: <reason>' saying why it is not available"
-                + (
-                    _hidden_hint(body, SUBSTITUTE)
-                    or (
-                        " — the body carries the line, and its reason is the placeholder, a filler token, or too "
-                        "little to be a reason"
-                        if SUBSTITUTE.search(_as_a_reader_sees_it(body))
-                        else ""
-                    )
-                )
+                + (_hidden_hint(body, SUBSTITUTE) or _substitution_hint(body))
             ]
     if head.startswith(sha):
         return []

@@ -271,6 +271,30 @@ def test_a_leftover_placeholder_line_does_not_refuse_the_filled_one():
     assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
 
 
+def test_the_line_does_not_count_under_an_unterminated_construct():
+    """Defence in depth, with its cost stated: below an UNTERMINATED fence the walk and the rendered page can
+    disagree about everything, so a line there does not lift the floor even when the walk would show it. The
+    refusal says where to put it instead."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "~~~\ngh pr view 1\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n"
+    )
+    fails = _eval(_pr(body=body), files=["cli/engine/journal.py"])
+    assert len(fails) == 1, fails
+
+
+def test_a_closed_fence_above_the_line_leaves_it_counting():
+    """The mirror, and the reason the prefix stops at UNTERMINATED constructs alone: a body that quotes a command
+    above the line is ordinary, and refusing it would buy nothing the walk does not already give."""
+    body = (
+        f"## Summary\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        "```\ngh pr view 1\n```\n\n"
+        "Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == []
+
+
 def test_the_refusal_says_when_the_line_is_there_but_hidden():
     """An author looking straight at the line needs to be told it is invisible, not that it is missing."""
     body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
@@ -282,6 +306,48 @@ def test_the_refusal_distinguishes_a_bad_reason_from_a_missing_line():
     """The other diagnostic: the line is visible and the reason is not one, which is a different fix."""
     fails = _eval(_pr(body=_read_by_opus_with_substitution("TODO")), files=["cli/engine/journal.py"])
     assert len(fails) == 1 and "its reason is the placeholder" in fails[0]
+
+
+@pytest.mark.parametrize(
+    ("shape", "body"),
+    [
+        (
+            "a </details> inside a code span, which the renderer escapes rather than honouring",
+            "## Summary\n\n{read}\n\n<details><summary>why</summary>\n\nthe `</details>` tag closes it\n\n{line}\n</details>\n",
+        ),
+        ("a fence opener whose info string carries <!--", "## Summary\n\n{read}\n\n```<!--\n-->\n{line}\n```\n"),
+        ("a fence opener whose info string carries <details", "## Summary\n\n{read}\n\n```<details\n</details>\n{line}\n```\n"),
+    ],
+)
+def test_a_closer_the_renderer_does_not_honour_does_not_reveal_the_line(shape, body):
+    """The second pass at the walk got past on both: a closer written inside a code span left the hidden state,
+    and a fence opener carrying a comment opened the comment instead of the fence. A renderer settles fences
+    before inline markup exists, and a code span is content — so the walk does too."""
+    filled = body.format(
+        read=f"Read before push by: Claude Opus 5 at {TIP}",
+        line="Fable floor substituted by Opus: the account's Fable limit is reached",
+    )
+    assert _eval(_pr(body=filled), files=["cli/engine/journal.py"]), shape
+
+
+@pytest.mark.parametrize(
+    ("shape", "above"),
+    [
+        ("an inline `<!--` in prose, which renders as text", "the walker treats `<!--` as an opener"),
+        ("an inline `<details>` in prose", "about `<details>` blocks and what they hide"),
+        ("a four-space-indented fence, which is an indented code block", "    ```"),
+        ("a line-initial ```x``` span, whose info string has a backtick", "```gh pr view```"),
+        ("a comment closed with --!>, which every browser honours", "<!-- a note --!>"),
+    ],
+)
+def test_prose_about_the_gate_does_not_refuse_the_pr_it_sits_in(shape, above):
+    """The mirror failure, and the likeliest one on this very branch: a PR body that DISCUSSES comments and fences
+    must not lose the lines below it. Each of these discarded the rest of the body once."""
+    body = (
+        f"## Summary\n\n{above}\n\nRead before push by: Claude Opus 5 at {TIP}\n\n"
+        f"Fable floor substituted by Opus: the account's Fable limit is reached\n\n- [x] done\n"
+    )
+    assert _eval(_pr(body=body), files=["cli/engine/journal.py"]) == [], shape
 
 
 def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():
