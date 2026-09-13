@@ -374,7 +374,6 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
     out: dict[datetime, CycleRecord] = {}
     for path in sorted(Path(journal_dir).glob("*/cycle-*.json")):
         record = from_json(path.read_text())
-        # The filter orders two stamps, so the one field it reads is refused first.
         require_comparable_cycle_ts(record)
         if record.cycle_ts > until:
             # Filter first, validate second: a record this pass discards must not refuse it for a SCHEMA fault.

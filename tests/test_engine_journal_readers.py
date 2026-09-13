@@ -160,7 +160,6 @@ def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
         up: ast.AST = node
         while up in parents:
             up = parents[up]
-            # The handler's OWN statements, not `ast.walk`, which descends into an `if`.
             if isinstance(up, ast.Try) and any(
                 not any(isinstance(st, ast.Raise) for st in handler.body) for handler in up.handlers
             ):
@@ -176,8 +175,9 @@ def test_a_validating_site_does_not_swallow_the_refusal(site):
     passes, continues or returns nothing is a call that reads as a guard and guards nothing."""
     swallowed = _swallowing_try(_sites()[site], "validate_record")
     assert swallowed is None, (
-        f"{site} calls validate_record inside a try whose handler drops the error (line "
-        f"{getattr(swallowed, 'lineno', '?')}) -- the record it refused is then used anyway"
+        f"{site} calls validate_record inside a try whose handler body does not raise (line "
+        f"{getattr(swallowed, 'lineno', '?')}) -- so the record it refused can be used anyway. The check reads "
+        f"the handler's own statements, so a handler that re-raises on every branch of an `if` is flagged too"
     )
 
 
