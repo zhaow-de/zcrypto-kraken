@@ -375,8 +375,10 @@ def test_no_caller_under_cli_caps_without_saying_at_what_level():
                 bare.append(f"{path.relative_to(repo)}:{node.lineno}")
     assert seen >= 9, (
         f"the walk found only {seen} apply_position_caps calls under cli/ -- it found 9 when this was written. "
-        f"Either the walk is broken, and then `not bare` below passes vacuously, or a production call site went "
-        f"away and the floor is what needs lowering: establish which before touching either"
+        f"Three causes, and only one of them makes lowering this floor the right move: the walk is broken, and "
+        f"then `not bare` below passes vacuously; or a call site is still there but no longer MATCHED (aliased, "
+        f"an attribute call, see this test's docstring), and then the floor hides a caller capping at the module "
+        f"defaults; or a production call site genuinely went away, and only then does the floor come down"
     )
     assert not bare, (
         f"these call apply_position_caps without naming both caps: {bare} -- they cap at this module's defaults "
