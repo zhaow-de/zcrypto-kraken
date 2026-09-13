@@ -263,7 +263,7 @@ def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path
     assert str(_store_path(store_dir, "ADA/EUR", 240)) not in str(exc.value)
     # A canonical is hash-attested, so "recast in place" is the wrong instruction there.
     assert "recast the column in place" not in str(exc.value)
-    assert "dataset_hash" in str(exc.value) and "data rebuild ohlc-full" in str(exc.value)
+    assert "dataset_hash" in str(exc.value) and "data rebuild ohlc-full --no-push" in str(exc.value)
     assert not _store_path(store_dir, "ADA/EUR", 240).exists()  # no copy was written to be refused next round
 
 

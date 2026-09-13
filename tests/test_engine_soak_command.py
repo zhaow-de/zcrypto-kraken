@@ -144,8 +144,6 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
     [
         # Readable parquet, no `close` column: the column reads have to be inside the try, not just the open.
         ("no close column", lambda frame: frame.drop("close")),
-        # A close that cannot be a price reached `math.isfinite` in two places, one BEFORE the builders' door,
-        # and escaped as a TypeError.
         ("close column of strings", lambda frame: frame.with_columns(pl.col("close").cast(pl.Utf8))),
         # The sibling column: an epoch-int `ts` is the raw Kraken shape `_row()` writes, and it died in
         # `_fmt_ts` on the last line of `soak_report` -- the whole report lost to a traceback.

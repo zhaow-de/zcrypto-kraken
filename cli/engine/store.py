@@ -127,23 +127,20 @@ def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: i
     `ns`/`ms` and a non-UTC zone all survive a parquet round trip and all break the same join; `to_frame`
     writes exactly this dtype, so no frame this repo wrote is refused.
 
-    The recovery differs by file, which is why the caller says which it handed over. A STORE file carries bars
-    the frozen canonical lacks: a re-seed refuses it, and one forced by deleting it would drop them. A CANONICAL
-    file is hash-attested -- `dataset_hash` is dtype-sensitive and `cli/registry/observed.py` refuses a read
-    whose hash is absent from the manifest's vouched set -- so a recast one is refused; its recovery is a
-    rebuilt set.
+    `frozen` picks between the two recoveries below, which is why the caller says which file it handed over;
+    `cli/registry/observed.py` is where a recast canonical is refused.
     """
     dtype = frame.schema.get("ts")
     if dtype == pl.Datetime("us", "UTC"):
         return
     recovery = (
-        "rebuild the set (`zcrypto data rebuild ohlc-full` mints a correctly typed sibling, promoted into the "
-        "canonical name once verified) rather than recast this file: recasting a canonical changes its "
-        "dtype-sensitive `dataset_hash`, which no command in this tree re-vouches"
+        "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
+        "canonical name) rather than recast this file, whose `dataset_hash` a recast changes and nothing in this "
+        "tree re-vouches"
         if frozen
         else "copy the file aside (outside the dataset root), recast the column "
         'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file, and '
-        "one forced by deleting it would drop every bar the canonical lacks"
+        "one forced by deleting it would drop every bar the canonical lacks that REST no longer reaches"
     )
     raise EngineError(
         f"{fn_name}: {path} types ts as {dtype} for {pair}@{interval}, not the aware "
@@ -250,7 +247,8 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     whatever polars or `math` raises, so `soak-check` aborts naming the file: a store frame the engine cannot
     parse is a broken input, not a degraded metric (T0193). The column reads are inside the try for the same
     reason, and both columns are checked because the return type promises both; `to_frame` writes `close` as
-    Float64 and `ts` as `Datetime("us", "UTC")`, so no frame this repo wrote is refused here.
+    Float64 and a UTC-aware `ts` (`_require_joinable_ts` above owns the exact dtype), so no frame this repo
+    wrote is refused here.
 
     It reads TYPES, never the stamps' values — T0201 carries what that leaves open, and
     `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
