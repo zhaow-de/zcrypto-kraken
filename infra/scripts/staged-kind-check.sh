@@ -5,7 +5,8 @@
 set -euo pipefail
 staged=$(git diff --cached --name-only)
 [ -z "$staged" ] && exit 0
-# The hook sees the index against HEAD, so `git commit --amend` passes it whatever the commit ends up holding.
+# The hook sees the index against HEAD, so `git commit --amend` passes it whatever the commit ends up holding;
+# `guidance-guard.py --range`, which `merge-pr`'s gate runs, refuses the mixed commit at merge.
 # A merge stages the union of the parents' kinds, which the author chose neither of and cannot split, so the
 # merge's own candidate files get a pass -- only those, or a stopped merge admits anything staged beside them.
 mergehead="$(git rev-parse --git-dir)/MERGE_HEAD"

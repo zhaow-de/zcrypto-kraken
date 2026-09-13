@@ -10,6 +10,7 @@ import sys
 
 SKILL = ".claude/skills/zcrypto-refine-rules/SKILL.md"
 CORPUS = re.compile(r"^(CLAUDE\.md|\.claude/rules/[^/]+\.md)$")
+KIND = re.compile(r"^(\.claude/|CLAUDE\.md$)")  # the staged-kind hook's set
 CONTRACT = re.compile(
     r"^(docs/reference/fleet\.md|docs/reference/fleet-pins\.md|\.claude/skills/zcrypto-grooming/references/memo-protocol\.md|infra/runbooks/[^/]+\.md)$"
 )  # read whole by the sessions and skills that act on them: read for universals like the corpus, never counted as ambient.
@@ -229,19 +230,23 @@ def _judged(paths: list[str]) -> list[str]:
 
 
 def range_fails(base: str, head: str) -> list[str]:
-    """Every non-merge commit of base..head judged against its first parent -- the record a rewrite may have lost or doubled, which no commit-msg hook sees."""
+    """Every non-merge commit of base..head judged against its first parent -- the record a rewrite may have lost or doubled, which no commit-msg hook sees -- and refused when it mixes the staged-kind hook's kinds, which an amend lands past that hook."""
     listed = _git("rev-list", "--reverse", "--no-merges", f"{base}..{head}")
     if listed.returncode != 0:
         return [f"cannot list {base}..{head}: {listed.stderr.strip()}"]
     out: list[str] = []
     for commit in listed.stdout.split():
         changed = _git("diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", "--root", commit).stdout.split("\n")
+        message, subject = _clean(_git("log", "-1", "--format=%B", commit).stdout)
+        if len({bool(KIND.match(p)) for p in changed if p}) == 2:
+            out.append(
+                f"{commit[:8]} {subject}: mixes claude-kind files with another kind (one kind per commit; an amend lands the mix past the staged-kind hook)"
+            )
         paths = _judged(changed)
         if not paths:
             continue
         before = {p: t for p in paths if (t := _show(f"{commit}^:{p}")) is not None}
         after = {p: t for p in paths if (t := _show(f"{commit}:{p}")) is not None}
-        message, subject = _clean(_git("log", "-1", "--format=%B", commit).stdout)
         for fail in evaluate(before, after, message, " against its parent"):
             out.append(f"{commit[:8]} {subject}: {fail}")
     return out
