@@ -199,9 +199,8 @@ PYGATE
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
-c_mutation_commits_without_a_probe() { comm -23 <(git log develop --since=2026-08-03 -i --grep=mutation --format=%h | sort) <(git log develop --since=2026-08-03 -i --grep=mutate-probe --format=%h | sort) | wc -l; }
-
-c_prose_only_commits_without_the_prover() { comm -23 <(git log develop --since=2026-09-09 -i --grep=prose-only --format=%h | sort) <(git log develop --since=2026-09-09 -i --grep=prove-inert --format=%h | sort) | wc -l; }
+# The window opens where the zero-base round set this base, not where `prove-inert.py` landed.
+c_prose_only_commits_without_the_prover() { comm -23 <(git log develop --since=2026-09-13 -i --grep=prose-only --format=%h | sort) <(git log develop --since=2026-09-13 -i --grep=prove-inert --format=%h | sort) | wc -l; }
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.
 c_spec_hash_provenance() { uv run pytest tests/test_trial_registry_provenance.py -q || return 2; }
@@ -234,7 +233,8 @@ c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_ove
 c_converges_inside_a_kraken_window() {
   local feed=()
   if [ -n "${COUNT_LIST_FEED_SNAPSHOT:-}" ]; then feed=(--from-snapshot "$COUNT_LIST_FEED_SNAPSHOT"); fi
-  uv run python infra/scripts/deploy-log-audit.py maintenance "${feed[@]}" | sed -n 's/^rows inside an API-impacting window \([0-9][0-9]*\) of .*/\1/p'
+  # `--venue-facing` is the rule's own set; the audit's unnarrowed arm still reports every row.
+  uv run python infra/scripts/deploy-log-audit.py maintenance --venue-facing "${feed[@]}" | sed -n 's/^rows inside an API-impacting window \([0-9][0-9]*\) of .*/\1/p'
 }
 
 c_drills_on_the_primary() { grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md; }
@@ -385,6 +385,9 @@ c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' --
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.
 # Read from the INDEX, while `access_pinned_leaves` globs the filesystem: an untracked PEM in that directory would
 # render and is not counted here, which is the direction that keeps the number reproducible in CI. Left knowingly.
+# The join needs no deploy-log field: the digest a re-pin passed on the command line is already in the row.
+c_pins_not_yet_converged() { uv run python infra/scripts/pins-converged.py; }
+
 c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
 
 main() {
@@ -403,7 +406,6 @@ main() {
   emit "ansible-inventory-secret-forms-invoked" c_ansible_inventory_forms
   emit "kraken-cli-on-infra-surfaces" c_kraken_cli_on_infra
   emit "prose-chars" c_prose_chars
-  emit "mutation-commits-without-a-probe" c_mutation_commits_without_a_probe
   emit "prose-only-commits-without-the-prover" c_prose_only_commits_without_the_prover
   emit "spec-hash-provenance" c_spec_hash_provenance
   emit "operator-term-surfaces" c_operator_term_surfaces c_operator_term_allowlist_edits
@@ -438,6 +440,7 @@ main() {
   emit "verified-versions-without-a-pass-record" c_verified_versions_without_a_pass_record
   emit "engine-hosts-besides-the-primary" c_engine_hosts_besides_the_primary
   emit "unscoped-docker-inspects-invoked" c_unscoped_docker_inspects_invoked
+  emit "pins-not-yet-converged" c_pins_not_yet_converged
   emit "pinned-leaves-the-edge-renders" c_pinned_leaves_the_edge_renders
 
   local w

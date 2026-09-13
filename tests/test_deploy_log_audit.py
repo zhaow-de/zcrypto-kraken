@@ -50,6 +50,27 @@ def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, cap
     assert out == ["rows inside an API-impacting window 1 of 2", "  2026-08-28T23:40:17Z nas Beeks Maintenance"]
 
 
+@pytest.mark.parametrize("host", ["nas", "zaccess"])
+def test_venue_facing_drops_a_host_a_window_cannot_harm(tmp_path, capsys, host):
+    """The unnarrowed arm still reports the row, so the flag narrows the count and hides nothing."""
+    log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host), _row("2026-08-20T01:00:00Z")])
+    assert audit.main(["maintenance", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "rows inside an API-impacting window 1 of 2"
+
+    assert audit.main(["maintenance", "--venue-facing", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    assert capsys.readouterr().out.splitlines() == ["rows inside an API-impacting window 0 of 1 venue-facing"]
+
+
+@pytest.mark.parametrize("host", ["zcrypto", "zcrypto-red", "zcrypto-ops"])
+def test_venue_facing_keeps_every_host_that_speaks_to_the_venue(tmp_path, capsys, host):
+    """The other half: the three hosts whose roles reference Kraken stay in the set."""
+    log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host)])
+    assert audit.main(["maintenance", "--venue-facing", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "rows inside an API-impacting window 1 of 1 venue-facing"
+    assert out[1].endswith(f"{host} Beeks Maintenance")
+
+
 def test_maintenance_counts_none_when_every_row_sits_outside(tmp_path, capsys):
     log = _log(tmp_path, [_row("2026-08-29T03:00:00Z"), _row("2026-09-01T02:00:00Z")])
     assert audit.main(["maintenance", "--log", log, "--from-snapshot", str(FEED)]) == 0
@@ -107,6 +128,7 @@ def test_a_snapshot_reads_back_the_count_the_network_produced(tmp_path, capsys, 
     [
         ["engine-window", "--from-snapshot", str(FEED)],
         ["maintenance", "--snapshot", "written.json", "--from-snapshot", str(FEED)],
+        ["engine-window", "--venue-facing"],
     ],
 )
 def test_the_feed_flags_are_refused_where_they_would_do_nothing(tmp_path, argv):
