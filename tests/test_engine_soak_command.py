@@ -290,6 +290,29 @@ def _ten_leg_canonical(tmp_path):
 _GOOD_RECORD = {"trial_id": 47, "metrics": {"governor_engaged_bars": 1, "cap_breach_bars": 2}}
 
 
+@pytest.mark.parametrize(
+    ("wreck", "says"),
+    [
+        (lambda text: text[:-20], "invalid journal JSON"),  # truncated
+        (lambda text: text.replace('"cycle_ts"', '"cycle_tz"', 1), "required key"),  # a key removed
+        (lambda text: re.sub(r"\+00:00", "", text), "cycle_ts must be timezone-aware"),  # a naive stamp
+    ],
+)
+def test_soak_check_names_the_journaled_cycle_it_cannot_use(tmp_path, monkeypatch, wreck, says):
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    artifact = sorted(journal_dir.rglob("cycle-*.json"))[0]
+    artifact.write_text(wreck(artifact.read_text()))
+
+    result = runner.invoke(app, ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)])
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), repr(result.exception)
+    assert says in result.output and str(artifact) in result.output, result.output
+
+
 def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_path, monkeypatch):
     """The JOURNAL door's version of the store door's aware-stamp check. `validate_record` does not require an
     orderable stamp -- `_refuse_mixed_awareness` says in as many words that a wholly naive record "compares
@@ -379,9 +402,7 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
     ],
 )
 def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write, says):
-    """Absent, unreadable, not JSON, or the wrong shape: each a `SoakError` the command aborts on, naming the file.
-    The default `--registry` is CWD-relative, so the absent case is what running from anywhere but the repo root
-    produces."""
+    """Absent, unreadable, not JSON, or the wrong shape: each a `SoakError` the command aborts on, naming the file."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
