@@ -8,7 +8,7 @@ ripe_when: 'the next change to the store write path (`write_parquet`/`seed_store
 ## Context — what
 
 `cli/ohlc/dataset.py`'s `write_parquet` validates nothing, and `seed_store` copies a canonical through
-`write_parquet(read_parquet(...))`, which validates nothing either. So a non-finite close can be resident in a
+`_require_joinable_ts`, a type door with no value check. So a non-finite close can be resident in a
 store parquet, and the soak report then renders with a dropped tail rather than a refusal.
 
 T0193 closed this input class everywhere it was a traceback: `_validate_grid` refuses a non-finite close at the

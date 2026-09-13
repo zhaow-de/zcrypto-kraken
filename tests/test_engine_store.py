@@ -264,6 +264,7 @@ def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path
     # A canonical is hash-attested, so "recast in place" is the wrong instruction there.
     assert "recast the column in place" not in str(exc.value)
     assert "dataset_hash" in str(exc.value) and "data rebuild ohlc-full --no-push" in str(exc.value)
+    assert "then promote the verified sibling into the canonical name" in str(exc.value)
     assert not _store_path(store_dir, "ADA/EUR", 240).exists()  # no copy was written to be refused next round
 
 
@@ -293,7 +294,8 @@ def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, re
 
     assert reader in str(exc.value) and str(path) in str(exc.value)
     # Pinned because the earlier wording here pinned a data-loss instruction.
-    assert "recast the column in place" in str(exc.value) and "copy the file aside" in str(exc.value)
+    assert 'recast the column in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`)' in str(exc.value)
+    assert "copy the file aside (outside the dataset root)" in str(exc.value)
     assert "a re-seed refuses this file" in str(exc.value)
     assert (
         "drops every bar the canonical lacks unless the re-seed's seam holds -- six shared stamps into the canonical "
@@ -328,3 +330,40 @@ def test_refresh_store_zero_overlap_is_distinct_error(tmp_path):
     msg = str(exc.value)
     assert "catastrophically stale" in msg
     assert "mismatch" not in msg  # distinct from the overlap-mismatch guard
+
+
+@pytest.mark.parametrize("reader", ["refresh_store", "seed_store"])
+@pytest.mark.parametrize("wreck", ["corrupt bytes", "close of strings"])
+def test_the_store_readers_refuse_a_frame_they_cannot_read_or_price(tmp_path, reader, wreck):
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+    _write_full_universe(store_dir, _canonical_rows)
+    path = _store_path(store_dir, "ADA/EUR", 240)
+    if wreck == "corrupt bytes":
+        path.write_bytes(b"not a parquet file")
+    else:
+        write_parquet(read_parquet(path).with_columns(pl.col("close").cast(pl.Utf8)), path)
+
+    with pytest.raises(EngineError) as exc:
+        if reader == "refresh_store":
+            refresh_store(store_dir, pairs={"ADA/EUR": "ADAEUR"}, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+        else:
+            seed_store(store_dir, canonical_dir, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+
+    assert reader in str(exc.value) and str(path) in str(exc.value)
+    assert ("cannot read" if wreck == "corrupt bytes" else "types close as") in str(exc.value)
+
+
+def test_seed_store_refuses_a_canonical_it_cannot_read_before_copying_it(tmp_path):
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+    broken = _store_path(canonical_dir, "ADA/EUR", 240)
+    broken.write_bytes(b"not a parquet file")
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+
+    assert "cannot read" in str(exc.value) and str(broken) in str(exc.value)
+    assert not _store_path(store_dir, "ADA/EUR", 240).exists()

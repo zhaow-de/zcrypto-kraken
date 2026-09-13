@@ -119,8 +119,15 @@ def _reconcile(
     return overlap_bars, len(replaced_ts), merged
 
 
+def _read_frame(path: Path, pair: str, interval: int, fn_name: str) -> pl.DataFrame:
+    try:
+        return read_parquet(path)
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise EngineError(f"{fn_name}: cannot read {path} for {pair}@{interval} — {exc}") from exc
+
+
 def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: int, fn_name: str, *, frozen: bool) -> None:
-    """Refuse a `ts` column `seam_overlap` cannot join, before it gets there.
+    """Refuse a `ts` column `seam_overlap` cannot join, and a `close` no reader can take as a price, before either gets there.
 
     Anything but `Datetime("us", "UTC")` raises a bare `SchemaError` at the join, past `run_cycle`'s
     `except OHLCError` and both commands' `except EngineError` (T0193). The equality is exact because
@@ -132,6 +139,13 @@ def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: i
     """
     dtype = frame.schema.get("ts")
     if dtype == pl.Datetime("us", "UTC"):
+        close = frame.schema.get("close")
+        if close is None:
+            raise EngineError(f"{fn_name}: {path} has no close column for {pair}@{interval}")
+        if not close.is_numeric():
+            raise EngineError(
+                f"{fn_name}: {path} types close as {close} for {pair}@{interval}, not a number a reader can take as a price"
+            )
         return
     recovery = (
         "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
@@ -169,11 +183,11 @@ def seed_store(
             if not store_existed:
                 # The canonical is checked BEFORE it is copied: a refused copy left in the store is a file the
                 # next run refuses again, naming a path the operator never broke.
-                canonical_frame = read_parquet(canonical_path)
+                canonical_frame = _read_frame(canonical_path, pair, interval, "seed_store")
                 _require_joinable_ts(canonical_frame, canonical_path, pair, interval, "seed_store", frozen=True)
                 write_parquet(canonical_frame, store_path)
 
-            store_frame = read_parquet(store_path)
+            store_frame = _read_frame(store_path, pair, interval, "seed_store")
             _require_joinable_ts(store_frame, store_path, pair, interval, "seed_store", frozen=False)
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
@@ -218,7 +232,7 @@ def refresh_store(
     for pair, pair_key in pairs.items():
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
-            store_frame = read_parquet(store_path)
+            store_frame = _read_frame(store_path, pair, interval, "refresh_store")
             # An `EngineError` rather than the loop's retried `OHLCError`: a dtype-broken file is not a
             # transport error and every retry re-reads the same column.
             _require_joinable_ts(store_frame, store_path, pair, interval, "refresh_store", frozen=False)

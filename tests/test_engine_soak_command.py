@@ -2,6 +2,7 @@
 canonical dir wired, so the command's plumbing runs without the heavy real canonical build."""
 
 import json
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -112,12 +113,7 @@ def _report_field(out: str, label: str) -> str:
 
 
 def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatch):
-    """T0193 at the CLI. `read_store_series` WAS a bare
-    `pl.read_parquet`, so a corrupt frame left the report as a `polars.exceptions.ComputeError` — past
-    `soak_report`'s `except SoakError` and past this command's handler — and reached the operator as a traceback.
-    The reader refuses it as an `EngineError` now, so the abort is the command's own. Asserting on the ABSENCE of
-    a class is what the first version of this test did, and `ComputeError` satisfied `not isinstance(..., OHLCError)`
-    while escaping: the assertion is on the message the operator reads."""
+    """T0193 at the CLI: the assertion is on the message the operator reads, not on the absence of a class."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
@@ -317,7 +313,7 @@ def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_p
     assert result.exception is None or isinstance(result.exception, SystemExit), (
         f"a naive journaled stamp reached the operator unhandled: {result.exception!r}"
     )
-    assert "cycle_ts must be timezone-aware" in result.output, result.output
+    assert "cycle_ts must be timezone-aware" in result.output and str(artifact) in result.output, result.output
 
 
 def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants(tmp_path, monkeypatch):
@@ -343,6 +339,10 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
     assert result.exit_code == 0, result.output
     assert "read_store_series" not in result.output, result.output
     assert "no realized series available" in result.output, result.output
+    # T0201's `ripe_when` is evaluated against these two rendered fields.
+    assert re.search(r"window_bound\s*: store", result.output) and re.search(
+        r"store last bar\s*: 2026-07-16T08:37:00\+00:00", result.output
+    ), result.output
 
 
 @pytest.mark.parametrize(
@@ -379,10 +379,9 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
     ],
 )
 def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write, says):
-    """`instrument_self_check` enters the registry unguarded, and only the MISS was typed: absent, unreadable,
-    not JSON, or present with the wrong shape each reached the operator as a raw traceback with no report. The
-    default `--registry` is CWD-relative, so the absent case is what running the command from anywhere but the
-    repo root produces. Each is a `SoakError` now, which the command aborts on with the file named."""
+    """Absent, unreadable, not JSON, or the wrong shape: each a `SoakError` the command aborts on, naming the file.
+    The default `--registry` is CWD-relative, so the absent case is what running from anywhere but the repo root
+    produces."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}

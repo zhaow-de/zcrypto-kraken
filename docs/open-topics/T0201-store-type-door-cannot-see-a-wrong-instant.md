@@ -12,12 +12,11 @@ ripe_when: 'a soak-check run renders `window_bound : store` with a `store last b
 no boundary at all, and the report renders `no realized series available` with `window_bound : store` and
 `store last bar : 2026-07-16T08:37:00+00:00` — at **rc 0**.
 `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
-pins exactly that.
+pins that whole render, the two `ripe_when` fields included.
 
 ## Why this matters
 
-It is the one shape of broken store input T0193 leaves degrading rather than refusing, and it is the shape a
-reader cannot tell from a legitimately short store: both render the same line. The door cannot close it — the
+It is the one shape of broken store input T0193 leaves degrading rather than refusing. The door cannot close it — the
 grid's alignment is a value question, and refusing on it from a type check would need the reader to know the
 grid's origin, which is not the frame's to state.
 

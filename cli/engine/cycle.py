@@ -176,7 +176,7 @@ def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
     # `utcoffset() is None`, not `tzinfo is None`: the weaker spelling let `astimezone` re-read a None-offset
     # stamp as LOCAL time and hand it back aware, silently shifting the boundary every reader then trusts.
     # Same predicate as the journal and store doors and as `_aware_clock` below; `cli/engine/execgate.py:148-152`
-    # records the rule. Reproducing the old shift needs a host offset that is a multiple of 4h
+    # records the rule. Reproducing the old shift needs a non-zero host offset that is a multiple of 4h
     # (`TZ=Asia/Shanghai`); elsewhere the grid check below caught it, blaming the boundary.
     if not isinstance(cycle_ts, datetime) or cycle_ts.utcoffset() is None:
         raise EngineError(

@@ -7,8 +7,9 @@ ripe_when: 'either arm: the quarterly canonical dump is republished (a foreign-t
 
 ## Context — what
 
-T0193's twelfth read walked every reader of a parquet on this file family and found exactly one join left
-undoored: `cli/ohlc/reach.py:88`, over the CANONICAL root. Its caller is `cli/data/rebuild.py`, whose command
+T0193's twelfth read walked every reader of a parquet on this file family and found one join a command reaches
+left undoored: `cli/ohlc/reach.py:88`, over the CANONICAL root (two more, in `cli/tick/reconcile.py` and
+`cli/backfill/reconcile.py`, no command reaches today). Its caller is `cli/data/rebuild.py`, whose command
 handlers catch `ConfigError` / `DataSyncError` / `ManifestError` — none of which a polars `SchemaError` is — so
 a canonical frame whose `ts` column is typed anything but `Datetime("us", "UTC")` reaches the operator as a raw
 traceback out of `zcrypto data rebuild ohlc-reach`.

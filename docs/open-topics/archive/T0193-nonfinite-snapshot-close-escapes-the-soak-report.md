@@ -41,7 +41,7 @@ it, which made `realized_internals`' own docstring false.
 **The fix is the second suggested step, and it made the first moot.** `_validate_grid` — the door BOTH builders
 enter — now refuses a close that is not `None` and not a finite positive number, in the wording the verified path's
 guards use with the grid, asset and bar index prefixed -- `finite positive` is the shared fragment, not the whole
-message, so a grep for either guard's full sentence finds only its own site. A non-finite close therefore raises `PortfolioError`, the net catches it, and the
+message. A non-finite close therefore raises `PortfolioError`, the net catches it, and the
 run degrades with a reason that names grid, asset, bar index and value. The fast path used to refuse this input
 by an accident of exact rational arithmetic and the verified path by a written guard; they agree by design now.
 
@@ -72,12 +72,9 @@ now too. Both are pinned by CLI cases and by probes.
 
 A NaN CAN reach the store: `write_parquet` validates nothing, and a store parquet carrying one produces a
 rendered report with a dropped tail rather than a refusal. The fixture attempt that suggested otherwise hit
-`to_frame`'s refusal on the REST parse, not the writer's, and `seed_store` copies a canonical through
-`write_parquet(read_parquet(...))`, which validates nothing either. **Named, not registered** (the freeze, and
-the owner's rule to resolve in place): that silent tail-drop is a different defect from this topic's traceback,
-on the same input class, and refusing at the store's write is a capture-adjacent change with its own blast
-radius.
+`to_frame`'s refusal on the REST parse, not the writer's. **Registered as T0199:** the silent tail-drop is a
+different defect from this topic's traceback on the same input class.
 
-**Not done, and not this topic's:** `journal.py`'s snapshot metadata still carries no finiteness claim about the
+**Not done, and not this topic's — T0200:** `journal.py`'s snapshot metadata still carries no finiteness claim about the
 data behind a `content_hash`, so a snapshot whose NaN was hashed in at write time is refused at the READ rather
 than at the write. Refusing at the write is a capture-path change with its own blast radius.

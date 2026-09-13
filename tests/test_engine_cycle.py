@@ -186,9 +186,9 @@ class _NoOffset(tzinfo):  # a tzinfo, not a concrete zone: `utcoffset` answers N
     ("shape", "stamp"),
     [
         # The spelling `tzinfo is None` admitted this: `astimezone` then re-read it as LOCAL time and returned
-        # an aware value. SILENTLY where the host's offset is a multiple of 4h -- elsewhere the grid check
+        # an aware value. SILENTLY where the host's offset is non-zero and a multiple of 4h -- elsewhere the grid check
         # refused it while blaming the boundary, so the harm does not reproduce on every host
-        # (`cli/engine/cycle.py`'s own comment names the two TZs). It is why the door checks `utcoffset()`.
+        # (`cli/engine/cycle.py`'s own comment names the TZ). It is why the door checks `utcoffset()`.
         ("aware with a tzinfo whose utcoffset is None", datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset())),
         ("not a datetime", "2026-07-10T08:00:00+00:00"),
     ],

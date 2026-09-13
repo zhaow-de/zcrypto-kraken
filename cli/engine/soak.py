@@ -733,8 +733,7 @@ def _instrument_expectations(registry_path: Path) -> dict[str, int]:
     """`governor_engaged_bars`/`cap_breach_bars` from record 47's metrics -- the ratified deployable-system
     trial (`docs/reference/trial-registry.jsonl`) the frozen engine build must reproduce exactly."""
     record = _load_registry_record(registry_path, 47)
-    # The wrong SHAPE left here as a bare KeyError or ValueError past every handler; the expectation this check
-    # rests on is worth a typed refusal naming the field.
+    # The wrong SHAPE left here past every handler: `soak_check`'s net is `(EngineError, PortfolioError)` alone.
     try:
         metrics = record["metrics"]
         return {
@@ -1000,9 +999,6 @@ def self_tests(
             identity_ok, identity_msg = identity_self_check(newest, snapshot_reader, path=path)
             messages.append(f"identity: {identity_msg}")
         except (EngineError, PortfolioError) as exc:
-            # PortfolioError too: the builder refuses a corrupt grid with one, `PortfolioError` is not an
-            # `EngineError`, and this replay reads the same snapshots `realized_internals` does -- so without it
-            # a non-finite close degraded there and escaped HERE, past the soak command's own handler (T0193).
             identity_ok = None
             messages.append(f"identity: skipped, replay failed: {exc}")
 
@@ -1732,7 +1728,10 @@ def soak_report(
         # where `nxt.cycle_ts > now` raised a bare TypeError. Aborting here costs the whole report over one bad
         # artifact anywhere under `journal_dir`, and that is deliberate: nothing `run_cycle` wrote can trip it
         # (`cycle._normalize_cycle_ts` normalizes through `astimezone`), so what does is hand-edited.
-        require_comparable_cycle_ts(record)
+        try:
+            require_comparable_cycle_ts(record)
+        except EngineJournalError as exc:
+            raise SoakError(f"the journaled cycle {artifact}: {exc}") from exc
         records.append(record)
     if not records:
         void_reasons = ["no journaled cycles found"]
