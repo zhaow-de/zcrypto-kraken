@@ -7,7 +7,7 @@
 - Spec: `docs/specs/<serial_no>-<topic>-design.md`
 - Plan: `docs/plans/<serial_no>-<feature>.md`
 
-Read before push by: <model> at <sha>
+Read before push by: <Claude Opus|Claude Fable> at <sha>
 
 <!--
 Add sections below as the change warrants — scale to complexity, mirror the spec.
