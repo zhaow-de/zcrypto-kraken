@@ -497,6 +497,16 @@ _JOURNAL_NOT_SHIPPED = {
 }
 
 
+def _ops_journal_keep_block() -> str:
+    """The whole `keep` rule, not just its regex: the separator and the source_labels decide what value the regex
+    is matched against, and either one changing makes the rule match nothing."""
+    text = OPS_ALLOY.read_text()
+    for block in re.findall(r"rule \{(.*?)\n  \}", text, re.S):
+        if "__journal__systemd_unit" in block and 'action        = "keep"' in block:
+            return block
+    raise AssertionError("no journal keep rule found in the ops config.alloy")
+
+
 def _ops_journal_keep_regex() -> str:
     """The `keep` rule that reads `__journal__systemd_unit`, as written in the file."""
     text = OPS_ALLOY.read_text()
@@ -517,8 +527,13 @@ def _journal_units_kept() -> set[str]:
 def _installed_units() -> set[str]:
     """Both install idioms: `templates/*.timer.j2` rendered, and `files/*.timer` copied, which is how the capture
     and engine roles install theirs. A timer added the other way was invisible to this guard."""
+    # The two idioms name their files differently: a template is `archive-pull.timer.j2` and takes the prefix,
+    # a copied file is already `zcrypto-capture-prune.timer` and must not. Prefixing both produced
+    # `zcrypto-zcrypto-…`, which matched no regex entry, so the guard went green with a phantom unit kept and the
+    # real unit's journal dropped.
     units = {f"zcrypto-{p.name.removesuffix('.timer.j2')}" for p in (_OPS_ROLE / "templates").glob("*.timer.j2")}
-    units |= {f"zcrypto-{p.name.removesuffix('.timer')}" for p in (_OPS_ROLE / "files").glob("*.timer")}
+    units |= {p.name.removesuffix(".timer") for p in (_OPS_ROLE / "files").glob("*.timer")}
+    assert all(not u.startswith("zcrypto-zcrypto-") for u in units), f"double-prefixed unit name: {sorted(units)}"
     return units
 
 
@@ -546,8 +561,19 @@ def test_a_unit_listed_as_unshipped_is_not_in_the_keep_regex():
 
 def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container():
     """Only the alternation was read, so the rest of the production rule could break green -- including the arm
-    that admits Alloy's own journald-driver stream, whose loss is invisible until nobody notices Alloy is dark."""
+    that admits Alloy's own journald-driver stream. `zcrypto-ops-log-pipeline-dead` pages on that stream's
+    silence after 6 h, so the loss is not invisible -- but a test that fails at once beats a dead-man that
+    fires a quarter of a day later, on a fleet whose other rules read the series it carries."""
     regex = _ops_journal_keep_regex()
+    rule = _ops_journal_keep_block()
+    assert 'separator     = ";"' in rule, (
+        f"the keep rule's separator is no longer `;`, so the `unit;container` values it matches are not the ones "
+        f"the regex is written for and the rule matches nothing: {rule!r}"
+    )
+    assert '["__journal__systemd_unit", "__journal_container_name"]' in rule, (
+        f"the keep rule's source_labels changed, so the two halves of the joined value swap and the regex's unit "
+        f"arm no longer lines up with the unit: {rule!r}"
+    )
     assert regex.endswith(";.*|.*;grafana-alloy"), (
         f"the keep rule no longer ends with the unit-arm separator and Alloy's own stream: {regex!r}"
     )
