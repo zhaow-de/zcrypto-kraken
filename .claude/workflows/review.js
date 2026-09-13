@@ -103,7 +103,7 @@ const findings = [...union.values()].sort((a, b) => RANK[b.severity] - RANK[a.se
 const count = (sev, list) => list.filter((f) => f.severity === sev).length
 log(`union over ${live.length} lenses: ${count('Critical', findings)} Critical / ${count('Important', findings)} Important / ${count('Minor', findings)} Minor`)
 
-// --- Refute: one skeptic per Critical and Important; a finding dies when the skeptic refutes it with a reproduction ------
+// --- Refute: one skeptic per Critical and Important; a finding dies when the skeptic refutes it ------
 phase('Refute')
 const graded = (
   await parallel(
