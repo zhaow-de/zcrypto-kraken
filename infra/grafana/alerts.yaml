@@ -4214,9 +4214,9 @@ rules:
       # LARGER CAP rather than a looser bar -- `ops_alloy_memory_limit` is 1g and this leg divides by
       # it -- because ops reads the most journal (reconcile, panel, verify-replay, tape-bars,
       # liquidations). The capture pair and the NAS -- this leg's own `host=~` -- stay at 512m: the
-      # CAPTURE hosts already commit most of their RAM in caps, so headroom is not free there; the NAS
-      # caps Alloy alone and is small rather than committed. The bridgehead runs Alloy from apt with no
-      # container cap, which is why it is outside the leg.
+      # CAPTURE hosts already commit most of their RAM in caps, so headroom is not free there, and the
+      # NAS's Alloy measured 0.1441-0.1561 of its 512m over 24 h, nowhere near the ceiling. The
+      # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
