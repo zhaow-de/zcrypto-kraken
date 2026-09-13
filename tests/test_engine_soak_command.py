@@ -18,6 +18,7 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
 from cli.engine.store import GRID_INTERVALS
 from cli.ohlc.dataset import to_frame, write_parquet
+from cli.ohlc.errors import OHLCError
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 runner = CliRunner()
@@ -90,6 +91,26 @@ def _report_field(out: str, label: str) -> str:
     matched = [line for line in out.splitlines() if line.strip().startswith(label)]
     assert len(matched) == 1, f"{label!r} matched {len(matched)} lines in:\n{out}"
     return matched[0].split(":", 1)[1].strip()
+
+
+def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatch):
+    """T0193's symptom at the CLI. `cli/ohlc/dataset.py` refuses a corrupt frame with `OHLCError`, which is not
+    an `EngineError`, so it escaped this command's handler and reached the operator as a traceback. A NaN cannot
+    get there — the store WRITER refuses one — but an unparseable value in a file on disk can."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    parquet = next(store_dir.rglob("*.parquet"))
+    parquet.write_bytes(b"not a parquet file")
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, OHLCError), "the store's refusal reached the operator unhandled"
 
 
 def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatch):

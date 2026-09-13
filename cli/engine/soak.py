@@ -962,7 +962,10 @@ def self_tests(
         try:
             identity_ok, identity_msg = identity_self_check(newest, snapshot_reader, path=path)
             messages.append(f"identity: {identity_msg}")
-        except EngineError as exc:
+        except (EngineError, PortfolioError) as exc:
+            # PortfolioError too: the builder refuses a corrupt grid with one, `PortfolioError` is not an
+            # `EngineError`, and this replay reads the same snapshots `realized_internals` does -- so without it
+            # a non-finite close degraded there and escaped HERE, past the soak command's own handler (T0193).
             identity_ok = None
             messages.append(f"identity: skipped, replay failed: {exc}")
 
