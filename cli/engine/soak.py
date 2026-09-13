@@ -697,6 +697,11 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
     with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
     was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
     CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
+    # `n` is bound BEFORE the loop: a decode error comes out of the iterator's first `__next__`, so a handler
+    # interpolating the loop variable raised `UnboundLocalError` instead of the refusal it was added to make --
+    # the arm never reached by a test, while the JSONDecodeError arm beside it earned every probe's verdict.
+    # 0 therefore means "before any line was read"; a positive n is the line that failed.
+    n = 0
     try:
         with registry_path.open() as f:
             for n, line in enumerate(f, 1):
@@ -704,12 +709,17 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
                 if not line:
                     continue
                 record = json.loads(line)
+                # A line that is valid JSON but not an OBJECT has no `.get`, and that `AttributeError` escaped
+                # one level above the metrics wrap that would have caught it.
+                if not isinstance(record, dict):
+                    raise SoakError(f"the trial registry {registry_path} line {n} is not a JSON object: {record!r}")
                 if record.get("trial_id") == trial_id:
                     return record
     except OSError as exc:
         raise SoakError(f"cannot read the trial registry {registry_path}: {exc}") from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SoakError(f"the trial registry {registry_path} is not JSONL at line {n}: {exc}") from exc
+        where = f"line {n}" if n else "before its first line"
+        raise SoakError(f"the trial registry {registry_path} is not JSONL at {where}: {exc}") from exc
     raise SoakError(f"no trial_id={trial_id} record in {registry_path}")
 
 

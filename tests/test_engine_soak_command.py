@@ -161,6 +161,50 @@ def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp
     assert "read_store_series" in result.output, result.output
 
 
+@pytest.mark.parametrize(
+    ("shape", "wreck"),
+    [
+        ("epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
+        # Aware vs merely-a-datetime: this one satisfies `isinstance(stamp, datetime)` and used to die in
+        # `select_model_inputs`' `sorted()`, comparing naive against aware, past every handler.
+        ("tz-naive datetimes", lambda frame: frame.with_columns(pl.col("ts").dt.replace_time_zone(None))),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_canonical_leg_whose_stamps_are_unusable(tmp_path, monkeypatch, shape, wreck):
+    """The CANONICAL leg of the same door. The store-leg cases above reach `realized_series`; this reaches
+    `_load_canonical` through `build_null`, a different caller and a different crash site."""
+    from cli.engine.store import _store_path
+    from cli.ohlc.dataset import read_parquet
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    canonical = _ten_leg_canonical(tmp_path)
+    leg = _store_path(canonical, "ADA/EUR", 240)
+    write_parquet(wreck(read_parquet(leg)), leg)
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(canonical),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "is not an aware datetime" in result.output, result.output
+
+
 def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, monkeypatch):
     """The second door T0193's input class left by, and the one this branch itself opened. `build_null` enters the
     portfolio builders, whose new front door refuses a non-finite close with a `PortfolioError` -- not an
@@ -251,6 +295,11 @@ _GOOD_RECORD = {"trial_id": 47, "metrics": {"governor_engaged_bars": 1, "cap_bre
                 json.dumps({"trial_id": 47, "metrics": {"governor_engaged_bars": "many", "cap_breach_bars": 2}}) + "\n"
             ),
         ),
+        # The arm that formatted the loop variable of the loop whose FIRST `__next__` raises: this used to exit
+        # `UnboundLocalError` out of the handler added to prevent a traceback, and no test reached it.
+        ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe{\x00b\x00a\x00d\x00")),
+        # Valid JSON, not an object: `.get` on a list escaped one level ABOVE the metrics wrap.
+        ("a line that is valid JSON but not an object", lambda p: p.write_text("[1, 2, 3]\n")),
     ],
 )
 def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write):

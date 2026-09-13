@@ -222,9 +222,11 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     frame this repo wrote.
 
     A non-finite close is NOT refused here: spec 00059 D7 wants a `nan` in the store dropped as a tail and one
-    in a journaled snapshot degraded with a reason, so only a value that cannot be a price at all -- a string, a
-    bool, anything `math.isfinite` would raise on -- is refused, and it is refused HERE because this is the one
-    door both the store and the frozen canonical enter."""
+    in a journaled snapshot degraded with a reason. What is refused is anything outside `int`/`float`, which is
+    WIDER than "anything `math.isfinite` would raise on": a `Decimal` has `__float__`, so `math.isfinite` accepts
+    it and this door does not. Nothing in the tree writes such a column, and the narrower rule would have to
+    carry a conversion this reader has no business making. It is refused HERE because this is the one door both
+    the store and the frozen canonical enter."""
     path = _store_path(store_dir, symbol, interval)
     try:
         frame = read_parquet(path)
@@ -232,8 +234,13 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     except (OSError, pl.exceptions.PolarsError) as exc:
         raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
     for k, stamp in enumerate(stamps):
-        if not isinstance(stamp, datetime):
-            raise EngineError(f"read_store_series: {path} ts[{k}] for {symbol}@{interval} is not a datetime: {stamp!r}")
+        # Aware, not merely a datetime: a NAIVE one satisfies `isinstance` and then dies in
+        # `select_model_inputs`' `sorted()` comparing it against an aware boundary -- the same crash site an
+        # epoch int reaches, so checking the annotation's type and not the type the code needs closed one
+        # spelling of this and left the other. `to_frame` writes `Datetime("us", "UTC")`, so no frame this repo
+        # wrote is refused.
+        if not isinstance(stamp, datetime) or stamp.tzinfo is None or stamp.utcoffset() is None:
+            raise EngineError(f"read_store_series: {path} ts[{k}] for {symbol}@{interval} is not an aware datetime: {stamp!r}")
     for k, close in enumerate(closes):
         if close is not None and (isinstance(close, bool) or not isinstance(close, (int, float))):
             raise EngineError(f"read_store_series: {path} close[{k}] for {symbol}@{interval} is not a number: {close!r}")
