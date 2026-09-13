@@ -812,6 +812,7 @@ def realized_internals(
     snapshot_reader,
     *,
     tol: float = 1e-6,
+    config: CrossfreqSystemConfig | None = None,
 ) -> RealizedInternals:
     """Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
     snapshots, whose 240 history reaches every earlier scored cycle's decision row. That row is the index k where
@@ -821,10 +822,11 @@ def realized_internals(
     `identity_ok` is spec 00059 D2's window-wide check that the rebuilt row equals the journaled `final_targets` to `tol`, and
     refuses on a non-finite `diff` (spec 00113 D2). Breach is read from the pre-cap sleeves -- `final_targets = mult * limited` is
     in-cap by construction and never shows one -- and stops at the per-asset caps, mirroring the builder's own `cap_breach_bars`."""
+    cfg = config if config is not None else CrossfreqSystemConfig()
     try:
         validate_record(latest_record)
         daily_ts, daily_prices, h4_ts, h4_prices = _assemble_latest_grids(latest_record, snapshot_reader)
-        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
+        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=cfg)
     except (EngineError, PortfolioError) as exc:
         return RealizedInternals(
             available=False,
@@ -847,7 +849,9 @@ def realized_internals(
         a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n_rows)]
         for a in assets
     }
-    capped = apply_position_caps(combined)
+    # The same caps the builder above was handed: `apply_position_caps`' keyword defaults equal
+    # `CrossfreqSystemConfig`'s field defaults, so a bare call agreed with the builder by coincidence (T0186).
+    capped = apply_position_caps(combined, long_cap=cfg.long_cap, short_cap=cfg.short_cap)
     breach = [any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) for k in range(n_rows)]
 
     mult_by_cycle: dict[datetime, float] = {}

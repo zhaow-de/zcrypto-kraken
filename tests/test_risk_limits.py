@@ -346,3 +346,41 @@ def test_margin_floor_invalid_floor(floor):
 def test_margin_floor_floor_of_one_accepted():
     out = apply_margin_floor({"BTC": [3.0]}, floor=1.0)  # t = 1, s = 2/3 -> L' = 2.0 -> m = 1.0 -> level 1.0
     assert margin_level({"BTC": out["BTC"][0]}) == pytest.approx(1.0, abs=1e-12)
+
+
+# --- no production caller leans on the keyword defaults (T0186) -----------------------------------
+# The defaults stay, because the cases above are what documents them and removing them would push the same two
+# literals into every one of those cases. What goes is the way a call site could look correct while ignoring the
+# configured caps: `realized_internals` capped with a bare call for months and agreed with the builder only
+# because `apply_position_caps`' defaults and `CrossfreqSystemConfig`'s field defaults happen to be the same two
+# numbers. This is the decision T0186's third step asked for, as a check rather than a sentence.
+
+
+def test_no_caller_under_cli_caps_without_saying_at_what_level():
+    """A bare `apply_position_caps(x)` under `cli/` is refused: the caps a call site uses have to be the ones its
+    config carries, stated at the call. Only `cli/` is walked, and only a bare `apply_position_caps(...)` name:
+    an aliased import or a `**kwargs` splat is outside it."""
+    import ast
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parent.parent
+    bare: list[str] = []
+    seen = 0
+    for path in sorted((repo / "cli").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "apply_position_caps"):
+                continue
+            seen += 1
+            if {kw.arg for kw in node.keywords} < {"long_cap", "short_cap"}:
+                bare.append(f"{path.relative_to(repo)}:{node.lineno}")
+    assert seen >= 9, (
+        f"the walk found only {seen} apply_position_caps calls under cli/ -- it found 9 when this was written. "
+        f"Three causes, and only one of them makes lowering this floor the right move: the walk is broken, and "
+        f"then `not bare` below passes vacuously; or a call site is still there but no longer MATCHED (aliased, "
+        f"an attribute call, see this test's docstring), and then the floor hides a caller capping at the module "
+        f"defaults; or a production call site genuinely went away, and only then does the floor come down"
+    )
+    assert not bare, (
+        f"these call apply_position_caps without naming both caps: {bare} -- they cap at this module's defaults "
+        f"while their own config may say otherwise, which is the disagreement that voids a soak window"
+    )
