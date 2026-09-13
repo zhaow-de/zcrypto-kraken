@@ -849,12 +849,8 @@ def realized_internals(
         a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n_rows)]
         for a in assets
     }
-    # The SAME caps the builder above used, threaded rather than defaulted (T0186). `apply_position_caps`'
-    # keyword defaults happen to equal `CrossfreqSystemConfig`'s field defaults, so a bare call agreed with the
-    # builder by coincidence of two literals in two modules -- and the moment either moved, or a caller threaded
-    # a config through, this rebuild would cap at a different level, `cap_consistent` would read False, and
-    # `soak_report` would append `cap-breach inconsistent` to `void_reasons`: a healthy window voided by a
-    # disagreement the report manufactured, on the instrument the go-live decision reads.
+    # The same caps the builder above was handed: `apply_position_caps`' keyword defaults equal
+    # `CrossfreqSystemConfig`'s field defaults, so a bare call agreed with the builder by coincidence (T0186).
     capped = apply_position_caps(combined, long_cap=cfg.long_cap, short_cap=cfg.short_cap)
     breach = [any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) for k in range(n_rows)]
 

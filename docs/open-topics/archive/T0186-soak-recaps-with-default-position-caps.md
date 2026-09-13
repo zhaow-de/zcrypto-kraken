@@ -6,7 +6,7 @@ status: resolved
 
 ## Context — what
 
-`cli/engine/soak.py` rebuilds the combined book twice to cross-check the builder against itself. One of those rebuilds still caps it with `apply_position_caps(combined)` — no cap arguments: `realized_internals`. `apply_position_caps` (`cli/risk/limits.py`) defaults `long_cap=0.20, short_cap=0.10`. The builder caps the same book with `long_cap=c.long_cap, short_cap=c.short_cap` off `CrossfreqSystemConfig`, whose own field defaults are those same two literals.
+`cli/engine/soak.py` rebuilds the combined book twice to cross-check the builder against itself. One of those rebuilds capped it with `apply_position_caps(combined)` — no cap arguments: `realized_internals`. `apply_position_caps` (`cli/risk/limits.py`) defaults `long_cap=0.20, short_cap=0.10`. The builder caps the same book with `long_cap=c.long_cap, short_cap=c.short_cap` off `CrossfreqSystemConfig`, whose own field defaults are those same two literals.
 
 So that rebuild and the builder agree by a coincidence of two independent defaults, not by construction. Every other call site in the tree states the caps explicitly — `cli/portfolio/builder.py`, `cli/portfolio/crossfreq_system.py`, `cli/portfolio/record43_book.py`, `cli/engine/cycle.py`, `cli/engine/feeders.py`, and now `soak.py`'s own `_net_live_from_result`; `realized_internals` is the one site left.
 

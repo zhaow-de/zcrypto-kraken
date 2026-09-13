@@ -358,18 +358,24 @@ def test_margin_floor_floor_of_one_accepted():
 
 def test_no_caller_under_cli_caps_without_saying_at_what_level():
     """A bare `apply_position_caps(x)` under `cli/` is refused: the caps a call site uses have to be the ones its
-    config carries, stated at the call. The tests in this file are the exception and are not walked."""
+    config carries, stated at the call. Only `cli/` is walked: nothing under `tests/` is."""
     import ast
     from pathlib import Path
 
     repo = Path(__file__).resolve().parent.parent
     bare: list[str] = []
+    seen = 0
     for path in sorted((repo / "cli").rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "apply_position_caps"):
                 continue
+            seen += 1
             if {kw.arg for kw in node.keywords} < {"long_cap", "short_cap"}:
                 bare.append(f"{path.relative_to(repo)}:{node.lineno}")
+    assert seen >= 9, (
+        f"the walk found only {seen} apply_position_caps calls under cli/ -- it found 9 when this was written, so "
+        f"a lower number means the walk is broken, not the tree clean, and `not bare` below would pass vacuously"
+    )
     assert not bare, (
         f"these call apply_position_caps without naming both caps: {bare} -- they cap at this module's defaults "
         f"while their own config may say otherwise, which is the disagreement that voids a soak window"
