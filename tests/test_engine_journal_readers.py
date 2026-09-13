@@ -181,6 +181,25 @@ def test_a_validating_site_does_not_swallow_the_refusal(site):
     )
 
 
+@pytest.mark.parametrize(
+    ("shape", "handler", "swallows"),
+    [
+        ("a bare pass", "pass", True),
+        ("a log and drop", 'logger.warning("dropped")', True),
+        ("a raise reached only inside an if", "if strict:\n            raise", True),
+        ("a bare re-raise", "raise", False),
+        ("a converted error", "raise _abort('x') from exc", False),
+    ],
+)
+def test_the_swallow_check_reads_the_handlers_own_statements(shape, handler, swallows):
+    """The check itself, on handlers built here rather than on a reader that happens to have one. The
+    conditional-raise row is why it reads `handler.body` and not `ast.walk(handler)`: walking descends into the
+    `if`, so that handler counted as raising while dropping the refusal on its other path."""
+    src = f"def f():\n    try:\n        validate_record(r)\n    except Exception as exc:\n        {handler}\n"
+    fn = ast.parse(src).body[0]
+    assert (_swallowing_try(fn, "validate_record") is not None) is swallows, shape
+
+
 def test_the_walk_sees_every_call_form_the_tree_uses():
     """The walk matches a bare `from_json(...)`. An attribute call (`journal.from_json(...)`) or an aliased import
     would be invisible to it, so the walk's completeness is asserted here rather than assumed from house style."""
