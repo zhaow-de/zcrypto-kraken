@@ -577,7 +577,7 @@ def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container(
     assert regex.endswith(";.*|.*;grafana-alloy"), (
         f"the keep rule no longer ends with the unit-arm separator and Alloy's own stream: {regex!r}"
     )
-    assert "\\.service;" in regex or "\\.service;" in regex.replace("\\\\", "\\"), (
+    assert "\\.service;" in regex, (
         f"the unit arm no longer anchors on `.service;`, so the `unit;container` join is not what it was: {regex!r}"
     )
 

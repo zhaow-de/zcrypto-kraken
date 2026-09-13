@@ -46,8 +46,8 @@ none of them covered. 66 distinct sites; 15 files changed.
   deleted; the sentences name their members and the keep-regex is six lines below the second.
 - `ops-node.md:5` carried two counts that had diverged in one sentence. **The split landed 2026-09-11** (`the
   ops-node page counts its own units`), before this branch: the `docker run` half keeps its five and the
-  publishing half became a complement, "all but `grafana-watchdog`". What this branch added is the third
-  sentence — the opening timer count scoped to the role, saying the host shows one more, from `access_ops`.
+  publishing half became a complement, "all but `grafana-watchdog`". What this branch added is two clauses on
+  the opening timer count — scoping it to the role, and saying the host shows one more, from `access_ops`.
 - `fleet.md:34` was delivered 2026-09-10 by the fleet-contracts rewrite, as recorded above.
 - `infra/ops/README.md:206` gained the omitted `zcrypto_grafana_keepalive_*`.
 - `grafana-keepalive.timer.j2`'s "no other unit on this host uses" is narrowed to the two roles it was checked
