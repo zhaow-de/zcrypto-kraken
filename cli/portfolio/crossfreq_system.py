@@ -175,11 +175,10 @@ def _validate_grid(name: str, prices: dict[str, list[float | None]], ts: list[da
         series = prices[asset]
         if not isinstance(series, list) or len(series) != len(ts):
             raise PortfolioError(f"{name}_prices[{asset!r}] must be a list of length {len(ts)} (one close per stamp)")
-        # A close VALUE, which this front door never tested. `None` is a gap and stays legal; a NaN used to reach
-        # the fast path's rolling statistics and die there on `float.as_integer_ratio()` with a ValueError no
-        # caller catches, while the verified path refused it downstream in its own written guard (T0193). Both
-        # paths enter here, so refusing here is what makes them agree -- and a bool passes every isinstance check
-        # an int does.
+        # A NaN used to reach the fast path's rolling statistics and die there on `float.as_integer_ratio()`
+        # with a ValueError no caller catches, while the verified path refused it downstream in its own written
+        # guard (T0193). Both paths enter here, so refusing here is what makes them agree -- and a bool passes
+        # every isinstance check an int does, which nothing on the fast path below this door catches.
         for k, close in enumerate(series):
             if close is None:
                 continue

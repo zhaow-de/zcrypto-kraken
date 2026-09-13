@@ -30,15 +30,18 @@ The neighbouring question is where the refusal should live at all. `_validate_gr
 name — a rebuild that cannot be performed because snapshots are "absent/corrupt" — and rules that the two
 internals metrics read `n/a` with a stated reason while the five weight metrics still gate, because a missing
 rebuild degrades the fingerprint and does not invalidate them. That premise was checked against the tree rather
-than taken: the five come from the realized and null series, built from the store and the records' targets, not
-from this rebuild, so a corrupt journaled snapshot does not reach them.
+than taken: the five come from the realized and null series -- the realized half from the records and the store
+(`realized_series(records, store_dir, ...)`), the null half from the frozen canonical
+(`build_null(canonical_dir, ...)`), a separate root in `soak_report`'s own signature -- not from this rebuild, so
+a corrupt journaled snapshot does not reach them.
 
 So the defect was never the degradation. It was that this input class ESCAPED the degrade net instead of entering
 it, which made `realized_internals`' own docstring false.
 
 **The fix is the second suggested step, and it made the first moot.** `_validate_grid` — the door BOTH builders
-enter — now refuses a close that is not `None` and not a finite positive number, with the message the verified
-path's own guard already used. A non-finite close therefore raises `PortfolioError`, the net catches it, and the
+enter — now refuses a close that is not `None` and not a finite positive number, in the wording the verified path's
+guards use with the grid, asset and bar index prefixed -- `finite positive` is the shared fragment, not the whole
+message, so a grep for either guard's full sentence finds only its own site. A non-finite close therefore raises `PortfolioError`, the net catches it, and the
 run degrades with a reason that names grid, asset, bar index and value. The fast path used to refuse this input
 by an accident of exact rational arithmetic and the verified path by a written guard; they agree by design now.
 
@@ -47,9 +50,10 @@ of both grids — against both builders, the rest of the class beside them (`inf
 a string), and a `None` gap as the control that keeps the refusal honest. Both arms are probed by
 `infra/scripts/mutate-probe.sh`.
 
-The soak-level case is built on the ten-leg fixture, because a single-pair record trips the asset-set check
-before any value is read, and the NaN is hashed INTO the record rather than injected after it: injecting after
-trips the assembler's content-hash check first, which is a different refusal with its own handling.
+The soak-level case is built on the ten-leg fixture, because a single-pair record at `schema_version=2` is refused by
+`select_model_inputs` before any value is read (`_validate_grid`'s own asset-set arm is what a schema-1 record
+trips), and the NaN is hashed INTO the record rather than injected after it: injecting one over a real close
+afterwards trips the assembler's content-hash check first, which is a different refusal with its own handling.
 
 **The escape had more than one exit, and the branch read found the rest.** The front door stops the builder
 dying on the value, but `soak_report` then calls `self_tests` over the same record and reader: inside it

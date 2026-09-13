@@ -638,30 +638,33 @@ def test_fast_path_full_history_equivalence():
 
 
 # --- a close VALUE is refused at the door both builders enter (T0193) -----------------------------
-# The front door checked shape and never a value, so a NaN reached the fast path's rolling statistics and died on
-# `float.as_integer_ratio()` with a ValueError no caller catches. The verified path refused the same input
-# downstream with a written message, so the two paths disagreed by accident.
+# `record(corrupt, ..., result=result)` below reuses the CLEAN build on purpose: `record()` would otherwise call
+# `build(corrupt)` and raise inside fixture setup instead of at the call under test.
 
 
 @pytest.mark.parametrize("grid", ["daily", "h4"])
 @pytest.mark.parametrize("where", ["first", "middle", "last"])
 @pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
 def test_a_non_finite_close_is_refused_by_both_builders(grid, where, builder):
-    """The six placements T0193 measured, against both paths: every one refuses with a written PortfolioError."""
+    """The six placements T0193 measured."""
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
     prices = d_prices if grid == "daily" else h_prices
     n = len(d_ts) if grid == "daily" else len(h_ts)
     idx = {"first": 0, "middle": n // 2, "last": n - 1}[where]
     prices["AAA"] = list(prices["AAA"])
     prices["AAA"][idx] = float("nan")
-    with pytest.raises(PortfolioError, match="finite positive"):
+    # The grid axis is pinned by the message, not by the fixture: matching `finite positive` alone would pass
+    # whichever grid the refusal named.
+    with pytest.raises(PortfolioError, match=rf"{grid}_prices\['AAA'\]\[{idx}\]"):
         builder(d_prices, d_ts, h_prices, h_ts, config=CFG2)
 
 
 @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), 0.0, -1.0, True, "100.0"])
 def test_the_refusal_covers_the_rest_of_the_class(bad):
-    """A bool passes every isinstance check an int does, and zero and negative closes are the same defect one
-    step on: the verified path's own guard already refuses all of them."""
+    """The rest of the class. Downstream guards refuse all six on the VERIFIED path -- a bool by
+    `cli/features/_validate.py`, not by the price loop at `cli/alpha/a1.py:202`, which admits a finite `int`
+    greater than zero -- but on the FAST path nothing below this door refuses a bool, so its
+    `isinstance(close, bool)` clause is not redundant with anything."""
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
     d_prices["AAA"] = list(d_prices["AAA"])
     d_prices["AAA"][3] = bad
@@ -670,7 +673,7 @@ def test_the_refusal_covers_the_rest_of_the_class(bad):
 
 
 def test_a_gap_is_still_legal():
-    """`None` is a gap, not a corrupt value, and the control that keeps the refusal honest."""
+    """The control that keeps the refusal honest."""
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
     d_prices["AAA"] = list(d_prices["AAA"])
     d_prices["AAA"][3] = None

@@ -2829,17 +2829,15 @@ def test_realized_internals_unavailable_degrades():
 
 
 def test_a_non_finite_snapshot_close_degrades_with_a_reason_rather_than_escaping():
-    """T0193. A NaN close reached the fast builder's rolling statistics and escaped as a ValueError, past this
-    function's `except (EngineError, PortfolioError)` and past the soak command's `except EngineError`.
+    """T0193. Spec 00059 D7 applies as written once the builder's front door refuses the value, and the reason
+    names the corrupt bar -- asserted here by asset and index, not by the phrase alone.
 
-    The builder's front door refuses it now, so spec 00059 D7 applies as written and the reason names the corrupt
-    bar. The ten-leg fixture is what makes this non-vacuous: a single-pair record trips the asset-set check first
-    and never reaches a value."""
+    The ten-leg fixture is what makes this non-vacuous: a single-pair record is refused by `select_model_inputs`
+    before any value is read."""
     clean = basket_fixture.grids()
     result = basket_fixture.build(clean)
-    # The NaN goes in BEFORE the record is built, so its snapshot hash covers it -- which is the only way a
-    # corrupt close reaches the builder at all: injecting one after the fact trips the assembler's hash check
-    # first, and that refusal is a different defect with its own handling.
+    # The NaN goes in BEFORE the record is built, so its snapshot hash covers it. Injecting one over a real
+    # close afterwards trips the assembler's hash check instead -- a different refusal, with its own handling.
     corrupt = basket_fixture.grids()
     ts, by_symbol = corrupt[240]
     by_symbol["ADA/EUR"] = list(by_symbol["ADA/EUR"])
@@ -2851,6 +2849,8 @@ def test_a_non_finite_snapshot_close_degrades_with_a_reason_rather_than_escaping
     assert ri.available is False
     assert "finite positive" in ri.reason, ri.reason
     assert "nan" in ri.reason.lower(), ri.reason
+    assert "ADA" in ri.reason, ri.reason
+    assert f"[{len(ts) // 2}]" in ri.reason, ri.reason
 
 
 def test_realized_internals_degrades_on_builder_portfolio_error():
