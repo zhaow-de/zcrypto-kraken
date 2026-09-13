@@ -248,6 +248,23 @@ def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path
     assert H4_START + timedelta(hours=4 * 13) not in ts  # bar 13 (interval end > now) dropped
 
 
+def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path):
+    """The copy branch: with no store file, `seed_store` copies the canonical and then reads it, so the frame
+    the door refuses is one it created a line earlier. Naming the store path there would print a symptom and
+    send the operator to re-copy the same canonical -- the culprit has to be the one named."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+    broken = _store_path(canonical_dir, "ADA/EUR", 240)
+    write_parquet(read_parquet(broken).with_columns(pl.col("ts").cast(pl.Datetime("ns", "UTC"))), broken)
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+
+    assert str(broken) in str(exc.value)
+    assert str(_store_path(store_dir, "ADA/EUR", 240)) not in str(exc.value)
+
+
 # Each survives a `write_parquet`/`read_parquet` round trip and each then raises the same `SchemaError` at the
 # same join, so the door's equality has to be exact: `ns` is what a pandas/pyarrow-written file carries.
 @pytest.mark.parametrize(
@@ -256,7 +273,8 @@ def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path
 )
 @pytest.mark.parametrize("reader", ["refresh_store", "seed_store"])
 def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, reader, dtype):
-    """The cycle leg's share of T0193, on BOTH readers that join. A `ts` column typed anything but
+    """T0193's share for the two readers that JOIN -- `refresh_store` on the cycle path and `seed_store` on the
+    workstation's `engine seed`, which `run_cycle` never calls. A `ts` column typed anything but
     `Datetime("us", "UTC")` cannot be joined against the REST frame's: polars raises a bare `SchemaError` from
     `seam_overlap`, which `run_cycle`'s `except OHLCError` and both commands' `except EngineError` let past, so
     the operator got a traceback. `read_store_series`' door cannot cover it -- the frame meets the join first --
@@ -279,9 +297,12 @@ def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, re
             seed_store(store_dir, canonical_dir, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
 
     assert reader in str(exc.value) and str(path) in str(exc.value)
-    # The recovery has to be one that works: seeding over the file re-reads the same column, so the `rm` is
-    # named. Nothing in the tree rewrites a dtype-broken store file.
-    assert "remove the file" in str(exc.value) and "rm" in str(exc.value)
+    # The recovery has to be one that WORKS and loses nothing: a re-seed cannot repair this file (the canonical
+    # is copied only where a store file is absent) and on a 4h leg drops every bar the frozen canonical lacks,
+    # so the message names the in-place recast and the copy-aside instead. Pinned because the earlier wording
+    # here pinned a data-loss instruction.
+    assert "recast the column in place" in str(exc.value) and "copy the file aside" in str(exc.value)
+    assert "re-seed" in str(exc.value) and "cannot repair" in str(exc.value)
 
 
 def test_refresh_store_overlap_mismatch_raises(tmp_path):

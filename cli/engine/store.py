@@ -131,15 +131,22 @@ def _require_joinable_ts(frame: pl.DataFrame, store_path: Path, pair: str, inter
     the likeliest foreign store file of all. `to_frame` writes exactly this dtype, so no frame this repo wrote
     is refused.
 
-    The recovery names the `rm` first: `seed_store` copies the canonical only where a store file is ABSENT, so
-    seeding over a dtype-broken file re-reads and re-joins it rather than repairing it.
+    The recovery it names is the IN-PLACE recast, and an earlier version of this door naming `rm` + re-seed
+    instead was a data-loss instruction: `data/ohlc-full` is frozen at the quarterly dump and Kraken's REST
+    window is 720 bars, so on the real geometry a 4h leg carries ~965 bars the canonical lacks and ~273 that
+    exist in no other source -- measured, following `rm` + re-seed there destroys them and then aborts on a
+    window shortfall rather than repairing anything, leaving the engine to abort at every boundary. A recast
+    keeps every row (also measured). `rm` + re-seed is the fallback only for a leg the canonical plus the REST
+    window can still rebuild, which today is the daily grid and not the 4h one. The recast is the operator's to
+    run, not this reader's: `data/` is unversioned and a tool that rewrites it has no undo.
     """
     dtype = frame.schema.get("ts")
     if dtype != pl.Datetime("us", "UTC"):
         raise EngineError(
             f"{fn_name}: {store_path} types ts as {dtype} for {pair}@{interval}, not the aware "
-            f'`Datetime("us", "UTC")` every reader joins on -- remove the file and re-seed it '
-            "(`rm` it, then `zcrypto engine seed`); seeding over it re-reads the same column"
+            f'`Datetime("us", "UTC")` every reader joins on -- copy the file aside, then recast the column in '
+            'place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed cannot repair it and '
+            "on a 4h leg would drop every bar the frozen canonical lacks"
         )
 
 
@@ -159,12 +166,14 @@ def seed_store(
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
             store_existed = store_path.exists()
+            canonical_path = _store_path(canonical_dir, pair, interval)
             if not store_existed:
-                canonical_path = _store_path(canonical_dir, pair, interval)
                 write_parquet(read_parquet(canonical_path), store_path)
 
             store_frame = read_parquet(store_path)
-            _require_joinable_ts(store_frame, store_path, pair, interval, "seed_store")
+            # The door names the CANONICAL on the copy branch: the frame was copied in a line ago, so the store
+            # file is a symptom and re-copying it would refuse again, with the culprit never printed.
+            _require_joinable_ts(store_frame, store_path if store_existed else canonical_path, pair, interval, "seed_store")
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             overlap_bars, replaced, merged = _reconcile(
