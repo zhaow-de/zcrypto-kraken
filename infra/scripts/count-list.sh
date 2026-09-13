@@ -76,15 +76,125 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
-# The journal month PR is exempt from the read (docs/reference/ops-journal/README.md) and is left out; a
-# line naming a model below the floor counts as no read, the same as the gate reads it. The line may sit
-# anywhere in the body: jq's "m" flag is dot-all, not line anchoring, so the anchor is a literal newline.
-# COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
+# This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: three reads found three
+# divergences in the jq that tried to, each in a different direction, and a counter that disagrees with the gate
+# about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
+# journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
+# the change-index-row exception all come from there, and a change to the gate moves this count by construction.
+# The window starts where that arm landed, which `git log -S 'Claude (Opus|Fable)' -- infra/scripts/merge-gate.py`
+# names; a PR merged before it breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead
+# of the network, for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs
+# cannot run, so a row failing ONLY on a sha mismatch is counted rather than excused.
+READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
 c_merged_prs_without_a_floor_read() {
-  local prs
+  local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
-  else prs="$(timeout 60 gh pr list --state merged --base develop --limit 200 --json body,mergedAt,headRefName)" || return 2; fi
-  printf '%s' "$prs" | jq '[.[] | select(.mergedAt >= (now - 2592000 | todate)) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}") | not)] | length'
+  else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 \
+    --json number,body,mergedAt,headRefName,headRefOid,files,changedFiles)" || return 2; fi
+  floor="$(printf '%s' "$prs" | jq -r --arg since "$READ_LINE_RULE_SINCE" '[(now - 2592000 | todate), $since] | max')" || return 2
+  # A saturated fetch cannot answer. If the OLDEST row fetched is still inside the window, rows below it were
+  # never fetched and the count would silently under-report -- 204 PRs sat in the window against a --limit 200,
+  # which is how this read 184 and called it a measurement. An unknowable count is an error, never a number.
+  oldest="$(printf '%s' "$prs" | jq -r '[.[] | .mergedAt] | min // "none"')" || return 2
+  # `gh pr list` prints `[]` and exits 0 for a base branch that does not exist or a token that cannot see PRs.
+  if [ "$oldest" = "none" ]; then
+    echo "count-list: the merged-PR fetch returned no rows at all -- check the base branch and the token" >&2
+    return 2
+  fi
+  if [ "$oldest" \> "$floor" ]; then
+    echo "count-list: the merged-PR fetch is saturated -- its oldest row ($oldest) is inside the window ($floor), so rows are missing" >&2
+    return 2
+  fi
+  # The PR JSON goes in a FILE, not on stdin: the heredoc below IS this python's stdin, so a pipe into it is
+  # silently discarded and `json.load(sys.stdin)` reads the script's own remaining bytes.
+  local rows
+  rows="$(mktemp)" || return 2
+  printf '%s' "$prs" > "$rows" || { rm -f "$rows"; return 2; }
+  COUNT_LIST_FLOOR="$floor" python3 - "$(dirname "$0")/merge-gate.py" "$rows" <<'PYGATE'
+import importlib.util, json, os, pathlib, subprocess, sys
+
+spec = importlib.util.spec_from_file_location("merge_gate", sys.argv[1])
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+offline = bool(os.environ.get("COUNT_LIST_PRS_SNAPSHOT"))
+floor = os.environ["COUNT_LIST_FLOOR"]
+
+heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_text()) if os.environ.get(
+    "COUNT_LIST_HEADS_SNAPSHOT") else None
+
+
+def head_commit(pr):
+    """The one exception `read_line_fails` needs a network read for: a head that is the change-index row commit
+    over the tip the body names. Asked for only by a row that fails on nothing else. COUNT_LIST_HEADS_SNAPSHOT
+    names a recorded `{oid: commit}` map so this branch can be driven without the network -- without it the
+    snapshot path returns None and this arm is unkillable, which is how it shipped uncovered once."""
+    oid = pr.get("headRefOid") or ""
+    if heads is not None:
+        return heads.get(oid)
+    if offline:
+        return None
+    done = subprocess.run(
+        ["gh", "api", f"repos/{gate.REPO}/commits/{oid}"],
+        capture_output=True, text=True, timeout=60,
+    )
+    return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+
+files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]).read_text()) if os.environ.get(
+    "COUNT_LIST_FILES_SNAPSHOT") else None
+
+
+def file_paths(pr):
+    """The gate's view of the PR's files, which is NOT what `gh pr list --json files` returns: that gives the
+    first page in the endpoint's own order, so a PR whose only Fable path falls outside it reads as touching
+    none. `changedFiles` is the exact test for that -- it is not truncated, and comparing it to the row's length
+    needs no belief about what a page holds. An ABSENT list stays None rather than becoming `[]`:
+    `read_line_fails` has two refusals that fire only on None, and turning it into an empty list reports
+    'touched nothing' and makes both unreachable.
+
+    COUNT_LIST_FILES_SNAPSHOT names a recorded `{number: [path]}` map so the re-fetch below can be driven
+    without the network, because an arm no test can reach is an arm no probe can kill -- which is how the
+    head-commit arm beside it shipped uncovered once."""
+    rows = pr.get("files")
+    if rows is None:
+        return None
+    paths = [f.get("path") for f in rows]
+    total = pr.get("changedFiles")
+    if total is None or len(paths) >= total:
+        return paths
+    if files_snapshot is not None:
+        return files_snapshot.get(str(pr.get("number")), paths)
+    done = subprocess.run(
+        ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", ".[].filename"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if done.returncode != 0:
+        # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
+        print(
+            f"count-list: PR #{pr.get('number')} returned {len(paths)} of {total} files and the rest could not "
+            f"be fetched -- the Fable-path arm cannot be decided: {done.stderr.strip()[:200]}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    # `splitlines()` where the gate splits on whitespace: a path containing a space survives here and is
+    # fragmented there. Unreachable today and this is the correcter form, so the gate is the one to change.
+    return [line for line in done.stdout.splitlines() if line.strip()]
+
+
+count = 0
+for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
+    if (pr.get("mergedAt") or "") < floor:
+        continue
+    files = file_paths(pr)
+    fails = gate.read_line_fails(pr, None, files)
+    if fails and all("not the head" in f for f in fails):
+        fails = gate.read_line_fails(pr, head_commit(pr), files)
+    if fails:
+        count += 1
+print(count)
+PYGATE
+  local rc=$?
+  rm -f "$rows"
+  return "$rc"
 }
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }

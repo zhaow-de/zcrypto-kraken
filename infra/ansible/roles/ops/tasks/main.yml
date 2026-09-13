@@ -569,9 +569,9 @@
     # The silent re-arm is the recorded trap: this task's enable-and-start turns the panel timer
     # back on after the operator stopped it, so a converge inside a panel-regeneration window fires
     # a materialize against a half-rebuilt tree. `-e ops_panel_timer_hold=true` drops ONLY
-    # panel-materialize from the loop, leaving it stopped for the length of that window; the two
+    # panel-materialize from the loop, leaving it stopped for the length of that window; the
     # replay timers are unaffected, and so is tape-bars: it writes a different tree and reads
-    # nothing the panel rebuild touches. Opt-in: an ordinary converge still arms all four.
+    # nothing the panel rebuild touches. Opt-in: an ordinary converge still arms them all.
     - name: enable + start the replay + panel + tape-bars timers
       ansible.builtin.systemd_service:
         name: "zcrypto-{{ item }}.timer"
@@ -587,10 +587,10 @@
       # not-found here stays a genuine failure.
       #
       # COARSER than the engine role's, and the difference is worth knowing: `ops_unit_install`
-      # aggregates an 8-item loop, so in CHECK MODE any changed unit template -- even a mode or
-      # comment edit to an existing timer -- suppresses this preview for all four timers, hiding
-      # e.g. a manually-stopped verify-replay the real run would restart. Safe (real runs are never
-      # gated) but the preview under-reports in a wider window than "first install".
+      # aggregates the whole render loop above, so in CHECK MODE any changed unit template -- even a
+      # mode or comment edit to an existing timer -- suppresses this preview for every timer this task
+      # enables, hiding e.g. a manually-stopped verify-replay the real run would restart. Safe (real
+      # runs are never gated) but the preview under-reports in a wider window than "first install".
       when: not (ansible_check_mode and ops_unit_install is changed)
 
 # Deliberately OUTSIDE the digest gate above: this script consumes no image reference (it drives

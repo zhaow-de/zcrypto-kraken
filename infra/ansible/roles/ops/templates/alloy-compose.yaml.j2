@@ -75,9 +75,9 @@ services:
       # RW: the remote_write WAL + Loki log positions must survive container replacement, or a
       # redeploy re-ships the retained log backlog into the ingest quota (00043).
       - ./alloy-data:/var/lib/alloy
-      # The four timers' textfiles (OPS-3/OPS-4), read-only -- Alloy only ever reads them.
+      # The timers' textfiles (OPS-3/OPS-4), read-only -- Alloy only ever reads them.
       - "{{ ops_textfile_dir }}:/textfile:ro"
-      # The host's persistent journal, for loki.source.journal (config.alloy): the four
+      # The host's persistent journal, for loki.source.journal (config.alloy): the
       # zcrypto-*.service units' logs (including the orchestration scripts' host-side lines, which
       # exist in NO container log) AND Alloy's own journald-driver stream (00068 D6) -- there is no
       # docker-socket path left on this host to carry either. The `group_add` gid above is what
@@ -102,7 +102,7 @@ services:
           # threads is ample for a metrics/logs shipper.
           cpus: "2.0"
     # journald, not json-file (00068 D6): Alloy's own logs now reach Grafana Cloud through the
-    # same journal + `loki.source.journal` pipeline (config.alloy) that already carries the four
+    # same journal + `loki.source.journal` pipeline (config.alloy) that already carries the
     # zcrypto-*.service units' lines -- so its stdout has no json.log to rotate any more, and
     # rotation is the host journal's job instead.
     logging:

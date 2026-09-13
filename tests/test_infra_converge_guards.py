@@ -1570,7 +1570,7 @@ NOTHING_CHANGED = _unit_install([False] * 8)
     ("check_mode", "register", "expected", "why"),
     [
         (True, FIRST_INSTALL, False, "first install under --check: no unit was written, so skip"),
-        (True, ONE_EDITED, False, "one PRE-EXISTING unit edited: the guard skips all four previews anyway"),
+        (True, ONE_EDITED, False, "one PRE-EXISTING unit edited: the guard skips every preview anyway"),
         (True, NOTHING_CHANGED, True, "nothing changed under --check: every unit exists, so preview the enable"),
         (False, ONE_EDITED, True, "REAL run: the render already wrote the units — never skip"),
     ],
