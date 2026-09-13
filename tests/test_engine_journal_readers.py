@@ -171,8 +171,9 @@ def _swallowing_try(fn: ast.AST, callee: str) -> ast.Try | None:
     "site", sorted(k for k, v in READERS.items() if v == "validates"), ids=lambda v: v[1] if isinstance(v, tuple) else v
 )
 def test_a_validating_site_does_not_swallow_the_refusal(site):
-    """`validates` has to mean the refusal reaches the caller. A `validate_record` inside a `try` whose handler
-    passes, continues or returns nothing is a call that reads as a guard and guards nothing."""
+    """`validates` has to mean the refusal reaches the caller: a `validate_record` inside a `try` whose handler
+    body does not raise is a call that reads as a guard and guards nothing. The predicate, and why it is the
+    handler's own statements rather than a list of handler spellings, is `_swallowing_try`'s docstring."""
     swallowed = _swallowing_try(_sites()[site], "validate_record")
     assert swallowed is None, (
         f"{site} calls validate_record inside a try whose handler body does not raise (line "
