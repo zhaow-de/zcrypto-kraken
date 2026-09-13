@@ -391,7 +391,11 @@ def _previous_success(journal_dir: Path, cycle_ts: datetime) -> tuple[datetime |
         return None, None
     # Normalized to the current symbol key space: a schema-1 predecessor is base-keyed, and an
     # un-normalized read makes every delta below a from-flat rebalance (symbol_keyed_targets).
-    return best[0], symbol_keyed_targets(from_json(best[1].read_text()))
+    # A validation failure must RAISE, never come back as no predecessor: the caller reads `None` as "first
+    # cycle, the book starts flat", so degrading here turns every delta into a full buy (T0194).
+    record = from_json(best[1].read_text())
+    validate_record(record)
+    return best[0], symbol_keyed_targets(record)
 
 
 def _append_orders(

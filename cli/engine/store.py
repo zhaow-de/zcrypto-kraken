@@ -235,11 +235,13 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
         raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
     for k, stamp in enumerate(stamps):
         # Aware, not merely a datetime: a NAIVE one satisfies `isinstance` and then dies in
-        # `select_model_inputs`' `sorted()` comparing it against an aware boundary -- the same crash site an
+        # `select_model_inputs`' `sorted()` comparing it against an aware boundary. `utcoffset() is None` is the
+        # whole test -- it covers a missing tzinfo AND a tzinfo that returns None, so a `tzinfo is None` clause
+        # beside it says nothing extra -- the same crash site an
         # epoch int reaches, so checking the annotation's type and not the type the code needs closed one
         # spelling of this and left the other. `to_frame` writes `Datetime("us", "UTC")`, so no frame this repo
         # wrote is refused.
-        if not isinstance(stamp, datetime) or stamp.tzinfo is None or stamp.utcoffset() is None:
+        if not isinstance(stamp, datetime) or stamp.utcoffset() is None:
             raise EngineError(f"read_store_series: {path} ts[{k}] for {symbol}@{interval} is not an aware datetime: {stamp!r}")
     for k, close in enumerate(closes):
         if close is not None and (isinstance(close, bool) or not isinstance(close, (int, float))):

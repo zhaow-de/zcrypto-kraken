@@ -15,7 +15,14 @@ import numpy as np
 from cli.engine.concordance import HashMismatchError, replay_cycle
 from cli.engine.cycle import _MODEL_SYMBOLS, _expand_to_basket, select_model_inputs, symbol_keyed_targets
 from cli.engine.errors import EngineError, EngineJournalError
-from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
+from cli.engine.journal import (
+    CycleRecord,
+    SnapshotEntry,
+    from_json,
+    require_comparable_cycle_ts,
+    snapshot_content_hash,
+    validate_record,
+)
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
 from cli.portfolio.crossfreq_system import apply_whole_book_limits
@@ -697,10 +704,11 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
     with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
     was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
     CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
-    # `n` is bound BEFORE the loop: a decode error comes out of the iterator's first `__next__`, so a handler
-    # interpolating the loop variable raised `UnboundLocalError` instead of the refusal it was added to make --
-    # the arm never reached by a test, while the JSONDecodeError arm beside it earned every probe's verdict.
-    # 0 therefore means "before any line was read"; a positive n is the line that failed.
+    # `n` is bound BEFORE the loop, because a decode error comes out of the iterator's first `__next__` and a
+    # handler interpolating the loop variable raised `UnboundLocalError` instead of the refusal it was added to
+    # make. It is used by the JSON arm ALONE: for a decode error `n` is not the bad byte's line -- the reader
+    # fills a buffer, so the raise lands at a chunk boundary (measured: 500 good lines with the corruption on
+    # 501 reported "line 414") -- and a number that misdirects the operator is worse than no number.
     n = 0
     try:
         with registry_path.open() as f:
@@ -717,9 +725,10 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
                     return record
     except OSError as exc:
         raise SoakError(f"cannot read the trial registry {registry_path}: {exc}") from exc
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        where = f"line {n}" if n else "before its first line"
-        raise SoakError(f"the trial registry {registry_path} is not JSONL at {where}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise SoakError(f"the trial registry {registry_path} is not valid UTF-8: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SoakError(f"the trial registry {registry_path} is not JSONL at line {n}: {exc}") from exc
     raise SoakError(f"no trial_id={trial_id} record in {registry_path}")
 
 
@@ -838,6 +847,7 @@ def realized_internals(
     snapshot_reader,
     *,
     tol: float = 1e-6,
+    config: CrossfreqSystemConfig | None = None,
 ) -> RealizedInternals:
     """Recover each SCORED cycle's governor multiplier and cap-breach flag from ONE rebuild over `latest_record`'s own
     snapshots, whose 240 history reaches every earlier scored cycle's decision row. That row is the index k where
@@ -847,10 +857,11 @@ def realized_internals(
     `identity_ok` is spec 00059 D2's window-wide check that the rebuilt row equals the journaled `final_targets` to `tol`, and
     refuses on a non-finite `diff` (spec 00113 D2). Breach is read from the pre-cap sleeves -- `final_targets = mult * limited` is
     in-cap by construction and never shows one -- and stops at the per-asset caps, mirroring the builder's own `cap_breach_bars`."""
+    cfg = config if config is not None else CrossfreqSystemConfig()
     try:
         validate_record(latest_record)
         daily_ts, daily_prices, h4_ts, h4_prices = _assemble_latest_grids(latest_record, snapshot_reader)
-        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts)
+        result = build_crossfreq_system_fast(daily_prices, daily_ts, h4_prices, h4_ts, config=cfg)
     except (EngineError, PortfolioError) as exc:
         return RealizedInternals(
             available=False,
@@ -873,7 +884,9 @@ def realized_internals(
         a: [third * sleeves["B"][a][k] + third * sleeves["A1"][a][k] + third * sleeves["A2"][a][k] for k in range(n_rows)]
         for a in assets
     }
-    capped = apply_position_caps(combined)
+    # The same caps the builder above was handed: `apply_position_caps`' keyword defaults equal
+    # `CrossfreqSystemConfig`'s field defaults, so a bare call agreed with the builder by coincidence (T0186).
+    capped = apply_position_caps(combined, long_cap=cfg.long_cap, short_cap=cfg.short_cap)
     breach = [any(abs(capped[a][k] - combined[a][k]) > 1e-15 for a in assets) for k in range(n_rows)]
 
     mult_by_cycle: dict[datetime, float] = {}
@@ -1706,15 +1719,25 @@ def soak_report(
     from cli.engine.command import _journal_artifacts, _snapshot_reader
 
     arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
-    # `read_text` on a path the glob found can still fail -- a directory where a record belongs, non-UTF-8 bytes
-    # -- and did so past every handler, on the read that feeds the whole report.
+    # Two refusals on one loop, from the two topics that met here. The READ can fail on a path the glob found
+    # -- a directory where a record belongs, non-UTF-8 bytes -- and did so past every handler (T0193); and
+    # `realized_series` consumes all of these, not just the comparison spec 00113 hardened, so every record is
+    # validated here and 00113's arm stays the last line (T0194).
     records = []
     for _, artifact in arts:
         try:
             text = artifact.read_text()
         except (OSError, UnicodeDecodeError) as exc:
             raise SoakError(f"cannot read the journaled cycle {artifact}: {exc}") from exc
-        records.append(from_json(text))
+        record = from_json(text)
+        validate_record(record)
+        # And the stamp must be orderable against an AWARE boundary, which `validate_record` does not require:
+        # `_refuse_mixed_awareness` says in as many words that a WHOLLY naive record "compares consistently" and
+        # is left alone -- true among the record's own stamps, false against the aware `now` this path supplies,
+        # where `nxt.cycle_ts > now` raised a bare TypeError. This is the door T0194 built for exactly that, on
+        # the other caller; it belongs on this one too (T0193).
+        require_comparable_cycle_ts(record)
+        records.append(record)
     if not records:
         void_reasons = ["no journaled cycles found"]
         text = render_report(None, None, None, None, void_reasons=void_reasons, band=band, null_mode=null_mode, path=path)
