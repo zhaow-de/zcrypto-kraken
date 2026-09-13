@@ -53,8 +53,8 @@ from cli.engine.venue import read_system_status
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
-from cli.ohlc.errors import OHLCError
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
+from cli.portfolio.errors import PortfolioError
 
 logger = get_logger("engine.command")
 
@@ -1100,9 +1100,10 @@ def soak_check(
             null_mode=null_mode,
             path=path,
         )
-    # OHLCError too: the store and snapshot readers refuse corrupt frame data with it, and it is not an
-    # `EngineError`, so a non-finite close in the store reached the operator as a traceback from here (T0193).
-    except (EngineError, OHLCError) as exc:
+    # PortfolioError too: `build_null` and the identity replay enter the portfolio builders, whose front door
+    # refuses a non-finite close with a `PortfolioError`, which is not an `EngineError` and so walked past both
+    # this handler and `soak_report`'s own `except SoakError` (T0193).
+    except (EngineError, PortfolioError) as exc:
         raise _abort(str(exc)) from exc
 
     typer.echo(text)

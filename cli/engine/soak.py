@@ -946,7 +946,8 @@ def self_tests(
     path: str = "fast",
 ) -> SelfTestReport:
     """Identity replays the NEWEST record, the journaled cycle closest to the live edge; no records at all, or
-    a replay raising `EngineError`, skips it (`identity_ok=None`) rather than failing it. `path` (spec 00061
+    a replay raising `EngineError` or `PortfolioError`, skips it (`identity_ok=None`) rather than failing it --
+    the builders refuse a corrupt grid with the second, which is not an `EngineError`. `path` (spec 00061
     D5) reaches `identity_self_check` only -- `instrument_self_check` always reproduces record 47 via the
     fast path."""
     messages: list[str] = []

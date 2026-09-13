@@ -59,9 +59,24 @@ afterwards trips the assembler's content-hash check first, which is a different 
 dying on the value, but `soak_report` then calls `self_tests` over the same record and reader: inside it
 `identity_self_check` replays the same snapshots, the builder refuses with `PortfolioError`, and that handler
 caught `EngineError` alone — which `PortfolioError` is not. So the first fix degraded one path while the very
-next call still escaped. Both classes are caught there now. A corrupt store frame was a third exit, by
-`OHLCError` past the command's own handler, and is caught at that boundary. A NaN cannot reach the STORE at all,
-which the attempt to fixture one proved: the store writer refuses it.
+next call still escaped. Both classes are caught there now.
+
+Two more exits, and the enumeration above was wrong about both until the second read measured them through the
+CLI. A corrupt store frame does NOT raise `OHLCError`: `read_store_series` was a bare `pl.read_parquet`, so it
+escaped as `polars.exceptions.ComputeError` past `soak_report`'s `except SoakError` and past the command's
+handler — `OHLCError` is raised only by `to_frame`, `reach.py` and `fetch.py`, none of which this path calls, so
+the arm added for it was dead. The reader refuses an unreadable frame as an `EngineError` now, which the command
+already aborts on. And a non-finite close in the frozen CANONICAL raises `PortfolioError` out of `build_null` —
+raised by this branch's own front door — which walked past the same two handlers; the command catches that class
+now too. Both are pinned by CLI cases and by probes.
+
+A NaN CAN reach the store: `write_parquet` validates nothing, and a store parquet carrying one produces a
+rendered report with a dropped tail rather than a refusal. The fixture attempt that suggested otherwise hit
+`to_frame`'s refusal on the REST parse, not the writer's, and `seed_store` copies a canonical through
+`write_parquet(read_parquet(...))`, which validates nothing either. **Named, not registered** (the freeze, and
+the owner's rule to resolve in place): that silent tail-drop is a different defect from this topic's traceback,
+on the same input class, and refusing at the store's write is a capture-adjacent change with its own blast
+radius.
 
 **Not done, and not this topic's:** `journal.py`'s snapshot metadata still carries no finiteness claim about the
 data behind a `content_hash`, so a snapshot whose NaN was hashed in at write time is refused at the READ rather

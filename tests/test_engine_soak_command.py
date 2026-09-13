@@ -18,7 +18,6 @@ from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash
 from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
 from cli.engine.store import GRID_INTERVALS
 from cli.ohlc.dataset import to_frame, write_parquet
-from cli.ohlc.errors import OHLCError
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 runner = CliRunner()
@@ -94,9 +93,12 @@ def _report_field(out: str, label: str) -> str:
 
 
 def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatch):
-    """T0193's symptom at the CLI. `cli/ohlc/dataset.py` refuses a corrupt frame with `OHLCError`, which is not
-    an `EngineError`, so it escaped this command's handler and reached the operator as a traceback. A NaN cannot
-    get there — the store WRITER refuses one — but an unparseable value in a file on disk can."""
+    """T0193's symptom at the CLI, and the version of this test that measures it. `read_store_series` is a bare
+    `pl.read_parquet`, so a corrupt frame used to leave the report as a `polars.exceptions.ComputeError` — past
+    `soak_report`'s `except SoakError` and past this command's handler — and reached the operator as a traceback.
+    The reader refuses it as an `EngineError` now, so the abort is the command's own. Asserting on the ABSENCE of
+    a class is what the first version of this test did, and `ComputeError` satisfied `not isinstance(..., OHLCError)`
+    while escaping: the assertion is on the message the operator reads."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
@@ -110,7 +112,65 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
     )
 
     assert result.exit_code != 0
-    assert not isinstance(result.exception, OHLCError), "the store's refusal reached the operator unhandled"
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the store's refusal reached the operator unhandled: {result.exception!r}"
+    )
+    assert "cannot read" in result.output and "not a parquet" not in result.output, result.output
+
+
+def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, monkeypatch):
+    """The second door T0193's input class left by, and the one this branch itself opened. `build_null` enters the
+    portfolio builders, whose new front door refuses a non-finite close with a `PortfolioError` -- not an
+    `EngineError`, so it walked past `soak_report`'s `except SoakError` AND the command's handler and reached the
+    operator as a traceback, exit 1, no report. The handler catches that class now."""
+    import basket_fixture
+    import polars as pl
+
+    from cli.engine.store import _store_path
+    from cli.ohlc.dataset import read_parquet
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+
+    # A canonical `_load_canonical` accepts: the ten `/EUR` model legs on both grids, through the real writer.
+    canonical = tmp_path / "canonical"
+    grids = basket_fixture.grids()
+    for interval in GRID_INTERVALS:
+        ts, by_symbol = grids[interval]
+        for symbol, series in by_symbol.items():
+            if symbol.endswith("/EUR"):
+                rows = [[int(t.timestamp()), *([str(c)] * 5), "1.0", 1] for t, c in zip(ts, series)]
+                write_parquet(to_frame(rows), _store_path(canonical, symbol, interval))
+
+    leg = _store_path(canonical, "ADA/EUR", 240)
+    frame = read_parquet(leg)
+    mid = frame.height // 2
+    write_parquet(
+        frame.with_columns(pl.when(pl.int_range(pl.len()) == mid).then(float("nan")).otherwise(pl.col("close")).alias("close")),
+        leg,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(canonical),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the builder's refusal reached the operator unhandled: {result.exception!r}"
+    )
+    assert "finite positive" in result.output and "ADA" in result.output, result.output
 
 
 def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatch):

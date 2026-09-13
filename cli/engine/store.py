@@ -206,5 +206,12 @@ def refresh_store(
 
 
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
-    frame = read_parquet(_store_path(store_dir, symbol, interval))
+    """A corrupt or unreadable frame is refused as an `EngineError`, not as whatever polars raises: the readers
+    above this one degrade on `EngineError` and the soak command aborts on it, while a bare
+    `polars.exceptions.ComputeError` walks past both and reaches the operator as a traceback (T0193)."""
+    path = _store_path(store_dir, symbol, interval)
+    try:
+        frame = read_parquet(path)
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
     return frame["ts"].to_list(), frame["close"].to_list()

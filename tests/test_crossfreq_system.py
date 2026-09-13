@@ -638,8 +638,6 @@ def test_fast_path_full_history_equivalence():
 
 
 # --- a close VALUE is refused at the door both builders enter (T0193) -----------------------------
-# `record(corrupt, ..., result=result)` below reuses the CLEAN build on purpose: `record()` would otherwise call
-# `build(corrupt)` and raise inside fixture setup instead of at the call under test.
 
 
 @pytest.mark.parametrize("grid", ["daily", "h4"])
@@ -661,10 +659,11 @@ def test_a_non_finite_close_is_refused_by_both_builders(grid, where, builder):
 
 @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), 0.0, -1.0, True, "100.0"])
 def test_the_refusal_covers_the_rest_of_the_class(bad):
-    """The rest of the class. Downstream guards refuse all six on the VERIFIED path -- a bool by
-    `cli/features/_validate.py`, not by the price loop at `cli/alpha/a1.py:202`, which admits a finite `int`
-    greater than zero -- but on the FAST path nothing below this door refuses a bool, so its
-    `isinstance(close, bool)` clause is not redundant with anything."""
+    """The rest of the class, and why two clauses of this door are load-bearing rather than belt-and-braces.
+    The VERIFIED path refuses all six downstream -- a bool at `cli/features/_validate.py`, the rest at
+    `cli/benchmark/strategies.py` -- so a reader could take the whole loop for a duplicate. The FAST path,
+    measured with this loop disabled: `True` and `-1.0` BUILD A RESULT, and `0.0` dies as a ZeroDivisionError.
+    So `isinstance(close, bool)` and `close <= 0` each stop a silent wrong number here and nowhere else."""
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
     d_prices["AAA"] = list(d_prices["AAA"])
     d_prices["AAA"][3] = bad
