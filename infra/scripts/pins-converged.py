@@ -15,7 +15,8 @@ import subprocess
 import sys
 
 DIGEST = re.compile(r"\b([0-9a-f]{12})[0-9a-f]*\b")
-CELL_DIGEST = re.compile(r"`([0-9a-f]{12})`")
+CELL_DIGEST = re.compile(r"`([0-9a-f]{12})[0-9a-f]*`")
+DIGEST_HEADER = "digest"
 
 
 def repo_root() -> pathlib.Path:
@@ -27,9 +28,11 @@ def repo_root() -> pathlib.Path:
 
 
 def converged_digests(log_path: pathlib.Path) -> set[str]:
-    """Every 12-hex prefix any row passed as an extra var or committed as a pin.
+    """Every 12-hex prefix a SUCCESSFUL converge was handed on the command line.
 
-    Matched on the digest, not the var's name: the name differs per role, so a name list would rot.
+    Two exclusions a reader would otherwise undo. `rc != 0`: `converge.sh` records a refused run exactly like a
+    pass. `committed_pins`: it is read from `host_vars` at record time, so it lands in the row whatever the run
+    deployed. Matched on the digest, not the var's name, which differs per role.
     """
     out: set[str] = set()
     for n, line in enumerate(log_path.read_text().splitlines(), 1):
@@ -40,22 +43,36 @@ def converged_digests(log_path: pathlib.Path) -> set[str]:
         except json.JSONDecodeError as exc:
             print(f"pins-converged: {log_path} is not JSONL at line {n}: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
-        blob = json.dumps(row.get("extra_vars") or {}) + " " + json.dumps(row.get("committed_pins") or {})
-        out.update(m.group(1) for m in DIGEST.finditer(blob))
+        if row.get("rc") != 0:
+            continue
+        out.update(m.group(1) for m in DIGEST.finditer(json.dumps(row.get("extra_vars") or {})))
     return out
 
 
 def unconverged_pins(pins_path: pathlib.Path, seen: set[str]) -> list[tuple[str, str, str]]:
-    rows = []
+    """A table whose digest header this cannot find is an error, not an empty answer: a hand edit must not take
+    every row out of the count silently."""
+    rows: list[tuple[str, str, str]] = []
+    digest_col: int | None = None
+    scanned = 0
     for line in pins_path.read_text().splitlines():
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 4:
+        if digest_col is None or DIGEST_HEADER in cells[digest_col].lower():
+            found = [k for k, c in enumerate(cells) if DIGEST_HEADER in c.lower()]
+            if found:
+                digest_col = found[0]
+                continue
+        if digest_col is None or len(cells) <= max(digest_col, 1):
             continue
-        m = CELL_DIGEST.search(cells[2])
+        scanned += 1
+        m = CELL_DIGEST.search(cells[digest_col])
         if m and m.group(1) not in seen:
             rows.append((cells[0], cells[1], m.group(1)))
+    if digest_col is None or not scanned:
+        print(f"pins-converged: no digest column found in {pins_path} -- the table's shape changed", file=sys.stderr)
+        raise SystemExit(2)
     return rows
 
 

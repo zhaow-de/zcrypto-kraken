@@ -50,6 +50,20 @@ def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, cap
     assert out == ["rows inside an API-impacting window 1 of 2", "  2026-08-28T23:40:17Z nas Beeks Maintenance"]
 
 
+def test_the_venue_facing_derivation_still_holds():
+    """The constant is hand-maintained and rests on this set; nothing else would notice it going stale."""
+    roles = pathlib.Path(__file__).resolve().parents[1] / "infra" / "ansible" / "roles"
+    speaks = {
+        d.name
+        for d in roles.iterdir()
+        if d.is_dir() and any("kraken" in f.read_text(errors="ignore").lower() for f in d.rglob("*") if f.is_file())
+    }
+    assert speaks == {"capture", "engine", "ops"}, (
+        f"the roles referencing Kraken are now {sorted(speaks)}; `NO_VENUE_EXPOSURE` "
+        f"({sorted(audit.NO_VENUE_EXPOSURE)}) rests on that set and must be re-judged"
+    )
+
+
 @pytest.mark.parametrize("host", ["nas", "zaccess"])
 def test_venue_facing_drops_a_host_a_window_cannot_harm(tmp_path, capsys, host):
     """The unnarrowed arm still reports the row, so the flag narrows the count and hides nothing."""

@@ -56,13 +56,35 @@ def test_the_hook_refuses_only_a_mixed_kind(tmp_path, staged, rc):
         assert "split the commit" in done.stdout
 
 
-def test_a_merge_in_progress_is_exempt(tmp_path):
-    """The same staged set that fails above passes while MERGE_HEAD is present."""
+def _stopped_merge(repo: Path) -> None:
+    """A real divergence, so the merge's candidate set is exactly the two files the cases stage."""
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    run("checkout", "-q", "-b", "theirs")
+    _stage(repo, ".claude/skills/x/SKILL.md")
+    run("commit", "-qm", "claude side")
+    run("checkout", "-q", "-")
+    _stage(repo, "cli/thing.py")
+    run("commit", "-qm", "code side")
+    theirs = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "theirs"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    (repo / ".git" / "MERGE_HEAD").write_text(theirs + "\n")
+
+
+def test_a_merge_exempts_its_own_files(tmp_path):
+    """The mixed set a merge itself stages passes: the author chose neither side, and splitting is impossible."""
     repo = _repo(tmp_path)
+    _stopped_merge(repo)
     _stage(repo, ".claude/skills/x/SKILL.md", "cli/thing.py")
-    assert _run(repo).returncode == 1  # the control: without MERGE_HEAD this exact set is refused
-
-    head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-    (repo / ".git" / "MERGE_HEAD").write_text(head + "\n")
-
     assert _run(repo).returncode == 0
+
+
+def test_a_merge_does_not_exempt_files_neither_parent_touched(tmp_path):
+    """The hole the narrowing closes: a mixed pair the merge never touched would otherwise ride the exemption."""
+    repo = _repo(tmp_path)
+    _stopped_merge(repo)
+    _stage(repo, ".claude/skills/x/SKILL.md", "cli/thing.py")  # the merge's own, excused
+    _stage(repo, ".claude/other.json", "cli/unrelated.py")  # neither parent's, still judged
+    done = _run(repo)
+    assert done.returncode == 1
+    assert "split the commit" in done.stdout
