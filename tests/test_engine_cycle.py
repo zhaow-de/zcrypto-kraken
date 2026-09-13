@@ -186,16 +186,20 @@ class _NoOffset(tzinfo):  # a tzinfo, not a concrete zone: `utcoffset` answers N
     ("shape", "stamp"),
     [
         # The spelling `tzinfo is None` admitted this: `astimezone` then re-read it as LOCAL time and returned
-        # an aware value, so on any host but a UTC one the journaled boundary was silently shifted. It is why
-        # the write door checks `utcoffset()`, the predicate the journal and store doors also use.
+        # an aware value. SILENTLY where the host's offset is a multiple of 4h -- elsewhere the grid check
+        # refused it while blaming the boundary, so the harm does not reproduce on every host
+        # (`cli/engine/cycle.py`'s own comment names the two TZs). It is why the door checks `utcoffset()`.
         ("aware with a tzinfo whose utcoffset is None", datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset())),
         ("not a datetime", "2026-07-10T08:00:00+00:00"),
     ],
 )
 def test_the_write_door_refuses_a_cycle_ts_it_cannot_order(shape, stamp):
-    """The TWO shapes `_normalize_cycle_ts` newly refuses, and the only two nothing drove: a plainly naive stamp
-    and the non-UTC conversion half have been pinned since `run_cycle` itself, by `test_naive_cycle_ts_rejected`
-    and `test_aware_non_utc_cycle_ts_normalized` below, which reach this door through `run_cycle`."""
+    """The two shapes nothing drove. Only the first is newly REFUSED -- the `isinstance` half predates the branch
+    and is merely newly driven -- and neither of the door's other two behaviours needs a case here: a plainly
+    naive stamp and the non-UTC conversion are pinned by `test_naive_cycle_ts_rejected` and
+    `test_aware_non_utc_cycle_ts_normalized` below, which reach this door through `run_cycle`. Those two cannot
+    tell the two spellings apart, though (a naive stamp has `tzinfo is None` too, and `+02:00` passes either),
+    so this case is the predicate's only guard -- trimming it leaves the spelling unpinned."""
     with pytest.raises(EngineError, match="cycle_ts must be an aware datetime"):
         cycle._normalize_cycle_ts(stamp)
 

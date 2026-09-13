@@ -244,10 +244,11 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
         # Aware, not merely a datetime: a NAIVE stamp satisfies `isinstance` and then dies on the canonical leg
         # in `select_model_inputs`' `sorted()`, ordered against the other legs' aware stamps -- the same crash
         # site an epoch int reaches, so checking the annotation's type rather than the type the code needs closed
-        # one spelling and left the other. On the cycle leg a naive LAST stamp does not crash -- `_stale_pairs`
-        # judges `ts[-1] != expected[interval]`, and `!=` across an awareness mix is silently True, so the pair
-        # reads as stale; a naive stamp earlier in the series passes that check and dies in `_union_align`'s
-        # `sorted()` instead. `utcoffset() is None` is the whole test: Python's own definition of naive subsumes
+        # one spelling and left the other. The cycle leg does not crash: a polars `Datetime` column carries its
+        # zone in the DTYPE, so a frame's stamps are all naive or all aware, and `_stale_pairs` then judges
+        # `ts[-1] != expected[interval]` on every leg -- `!=` across an awareness mix is silently True, so the
+        # pair reads as stale and the cycle fails on staleness rather than on a comparison.
+        # `utcoffset() is None` is the whole test: Python's own definition of naive subsumes
         # `tzinfo is None` (`cli/engine/execgate.py:148-152` records the rule). `to_frame` writes
         # `Datetime("us", "UTC")`, so no frame this repo wrote is refused.
         if not isinstance(stamp, datetime) or stamp.utcoffset() is None:
