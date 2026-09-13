@@ -58,17 +58,42 @@ def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floor(tmp_path):
-    """A Fable line on the body's third line is a read; a Haiku line at the top is not; the journal PR is left out; no line counts."""
+    """A Fable line on the body's third line is a read; a Haiku line at the top is not; the journal PR is left out
+    while it carries journal files ALONE; no line counts. Every row carries the `headRefOid` and `files` the gate
+    reads, because the counter now calls `read_line_fails` rather than restating it: a row missing either is a
+    violation there, which is the right answer for a real fetch and a fixture bug in a snapshot."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "22ac48df1111111111111111111111111111abcd"
     line = "Read before push by: Claude Fable 5.1 at 22ac48df"
+    journal = [{"path": "docs/reference/ops-journal/2026-09.md"}]
     prs = [
-        {"headRefName": "feat/a", "mergedAt": stamp, "body": f"## Summary\n\n{line}\n\n- [x] done"},
-        {"headRefName": "feat/b", "mergedAt": stamp, "body": "Read before push by: Claude Haiku 4.5 at 22ac48df\n"},
-        {"headRefName": "ops-journal", "mergedAt": stamp, "body": "## 2026-09\n"},
-        {"headRefName": "feat/c", "mergedAt": stamp, "body": "## Summary\n"},
+        {
+            "headRefName": "feat/a",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": f"## Summary\n\n{line}\n\n- [x] done",
+        },
+        {
+            "headRefName": "feat/b",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "Read before push by: Claude Haiku 4.5 at 22ac48df\n",
+        },
+        {"headRefName": "ops-journal", "mergedAt": stamp, "headRefOid": head, "files": journal, "body": "## 2026-09\n"},
+        # The journal exemption is scoped, not by branch name: one non-journal file and the read line is owed.
+        {
+            "headRefName": "ops-journal",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": journal + [{"path": "cli/x.py"}],
+            "body": "## 2026-09\n",
+        },
+        {"headRefName": "feat/c", "mergedAt": stamp, "headRefOid": head, "files": [], "body": "## Summary\n"},
         # Older than the window on purpose: it is BELOW the floor, so it is not counted, and its presence is what
         # tells the counter the fetch reached past the window rather than stopping inside it.
-        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "body": "## Summary\n"},
+        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": head, "files": [], "body": "## Summary\n"},
     ]
     snapshot = tmp_path / "prs.json"
     snapshot.write_text(json.dumps(prs))
@@ -80,21 +105,62 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
         env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
         timeout=120,
     )
-    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t2\n", done.stdout + done.stderr
+    assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t3\n", done.stdout + done.stderr
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
-    """`merge-gate.py`'s floor is `re.I` and its spacing is `: *` / ` +at +`. This jq was neither, so a body the
-    gate passes was booked as a violation — a counter and a gate disagreeing about the same rule. The fold is the
-    MODEL's only: the gate's READ_LINE is case-sensitive, so the third row's lowercase PREFIX is no read there and
-    counts here, which a whole-pattern `"i"` flag silently admitted."""
+    """One rule, one implementation. Three jq attempts to restate `merge-gate.py`'s arm each diverged in a
+    different direction — case, line anchoring, an invented floor divergence — so the counter calls
+    `read_line_fails` now and these rows pin the shapes those attempts got wrong: a lowercase MODEL is a read
+    (only FLOOR is `re.I`), a lowercase PREFIX is not, a tail after the sha is not (the gate's line ends there),
+    and an Opus read on a Fable path is not without the substitution line."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
     prs = [
-        {"headRefName": "feat/lower", "mergedAt": stamp, "body": "Read before push by: claude opus at abcdef1234567\n"},
-        {"headRefName": "feat/spaced", "mergedAt": stamp, "body": "Read before push by:  Claude Fable 5.1  at  abcdef1234567\n"},
-        {"headRefName": "feat/prefix", "mergedAt": stamp, "body": "read before push by: Claude Opus at abcdef1234567\n"},
-        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "body": "## Summary\n"},
+        {
+            "headRefName": "feat/lower",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "Read before push by: claude opus at abcdef1234567\n",
+        },
+        {
+            "headRefName": "feat/spaced",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "Read before push by:  Claude Fable 5.1  at  abcdef1234567\n",
+        },
+        {
+            "headRefName": "feat/prefix",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "read before push by: Claude Opus at abcdef1234567\n",
+        },
+        {
+            "headRefName": "feat/tail",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "Read before push by: Claude Opus at abcdef1234567 (tip)\n",
+        },
+        {
+            "headRefName": "feat/fable-path",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [{"path": "cli/engine/soak.py"}],
+            "body": "Read before push by: Claude Opus at abcdef1234567\n",
+        },
+        {
+            "headRefName": "feat/substituted",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [{"path": "cli/engine/soak.py"}],
+            "body": "Read before push by: Claude Opus at abcdef1234567\n\nFable floor substituted by Opus: the account's Fable quota is exhausted.\n",
+        },
+        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": head, "files": [], "body": "## Summary\n"},
     ]
     snapshot = tmp_path / "prs.json"
     snapshot.write_text(json.dumps(prs))
@@ -104,6 +170,47 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
         capture_output=True,
         text=True,
         env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
+        timeout=120,
+    )
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t3"), done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_the_change_index_row_commit_is_the_one_head_the_read_line_need_not_cover(tmp_path):
+    """The gate admits exactly one commit past the tip a read line names: a single-parent commit whose only file
+    is the change index, which `open-pr` pushes after the read. The counter has to admit it too or it books every
+    PR that used the exception. This arm needs the head COMMIT, not just its oid, so it was unkillable while the
+    snapshot path could only return None -- `COUNT_LIST_HEADS_SNAPSHOT` is why it is killable now."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    read, head, other = "abcdef1234567", "99887766554433221100ffeeddccbbaa99887766", "0011223344556677889900aabbccddeeff001122"
+    body = f"Read before push by: Claude Opus at {read}\n"
+    prs = [
+        {"headRefName": "feat/index-row", "mergedAt": stamp, "headRefOid": head, "files": [], "body": body},
+        {"headRefName": "feat/other-commit", "mergedAt": stamp, "headRefOid": other, "files": [], "body": body},
+        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": head, "files": [], "body": "## Summary\n"},
+    ]
+    heads = {
+        # One parent, and the change index alone: the exception.
+        head: {"parents": [{"sha": read + "0" * (40 - len(read))}], "files": [{"filename": "docs/reference/change-index.md"}]},
+        # One parent, but a second file: not the exception, so the read line does not cover this head.
+        other: {
+            "parents": [{"sha": read + "0" * (40 - len(read))}],
+            "files": [{"filename": "docs/reference/change-index.md"}, {"filename": "cli/x.py"}],
+        },
+    }
+    snapshot, head_snapshot = tmp_path / "prs.json", tmp_path / "heads.json"
+    snapshot.write_text(json.dumps(prs))
+    head_snapshot.write_text(json.dumps(heads))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "COUNT_LIST_PRS_SNAPSHOT": str(snapshot),
+            "COUNT_LIST_HEADS_SNAPSHOT": str(head_snapshot),
+        },
         timeout=120,
     )
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr

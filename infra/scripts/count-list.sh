@@ -76,23 +76,21 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
-# The journal month PR is exempt from the read (docs/reference/ops-journal/README.md) and is left out; a
-# line naming a model below the floor counts as no read, the same as the gate reads it. The line may sit
-# anywhere in the body: jq's "m" flag is dot-all, not line anchoring, so the anchor is a literal newline.
-# COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
-# The jq below is merge-gate.py's `Claude (Opus|Fable)` arm; the window starts where that arm landed, which
-# `git log -S 'Claude (Opus|Fable)' -- infra/scripts/merge-gate.py` names. A PR merged before it breaks no rule.
-# The case fold is scoped to the MODEL, `(?i:...)`, not to the whole pattern: the gate's READ_LINE carries `re.M`
-# alone and only FLOOR is `re.I`, so a body reading `read before push by:` is unrecorded there and must be here.
-# Two divergences that remain, both making this OVER-count rather than miss: the gate's line ends at the sha
-# (`*$`) while this allows a tail, and it searches the floor anywhere in the captured model while this requires
-# the model to start with `Claude`. The `ops-journal` skip below is also broader than gate 8, which exempts a
-# month PR only while it carries journal files alone -- `gh pr list --json` returns no file list to scope it by.
+# This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: three reads found three
+# divergences in the jq that tried to, each in a different direction, and a counter that disagrees with the gate
+# about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
+# journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
+# the change-index-row exception all come from there, and a change to the gate moves this count by construction.
+# The window starts where that arm landed, which `git log -S 'Claude (Opus|Fable)' -- infra/scripts/merge-gate.py`
+# names; a PR merged before it breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead
+# of the network, for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs
+# cannot run, so a row failing ONLY on a sha mismatch is counted rather than excused.
 READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
-  else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 --json body,mergedAt,headRefName)" || return 2; fi
+  else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 \
+    --json number,body,mergedAt,headRefName,headRefOid,files)" || return 2; fi
   floor="$(printf '%s' "$prs" | jq -r --arg since "$READ_LINE_RULE_SINCE" '[(now - 2592000 | todate), $since] | max')" || return 2
   # A saturated fetch cannot answer. If the OLDEST row fetched is still inside the window, rows below it were
   # never fetched and the count would silently under-report -- 204 PRs sat in the window against a --limit 200,
@@ -107,7 +105,55 @@ c_merged_prs_without_a_floor_read() {
     echo "count-list: the merged-PR fetch is saturated -- its oldest row ($oldest) is inside the window ($floor), so rows are missing" >&2
     return 2
   fi
-  printf '%s' "$prs" | jq --arg floor "$floor" '[.[] | select(.mergedAt >= $floor) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: *(?i:Claude (Opus|Fable))\\b.* +at +[0-9a-f]{7,}") | not)] | length'
+  # The PR JSON goes in a FILE, not on stdin: the heredoc below IS this python's stdin, so a pipe into it is
+  # silently discarded and `json.load(sys.stdin)` reads the script's own remaining bytes.
+  local rows
+  rows="$(mktemp)" || return 2
+  printf '%s' "$prs" > "$rows" || { rm -f "$rows"; return 2; }
+  COUNT_LIST_FLOOR="$floor" python3 - "$(dirname "$0")/merge-gate.py" "$rows" <<'PYGATE'
+import importlib.util, json, os, pathlib, subprocess, sys
+
+spec = importlib.util.spec_from_file_location("merge_gate", sys.argv[1])
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+offline = bool(os.environ.get("COUNT_LIST_PRS_SNAPSHOT"))
+floor = os.environ["COUNT_LIST_FLOOR"]
+
+heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_text()) if os.environ.get(
+    "COUNT_LIST_HEADS_SNAPSHOT") else None
+
+
+def head_commit(pr):
+    """The one exception `read_line_fails` needs a network read for: a head that is the change-index row commit
+    over the tip the body names. Asked for only by a row that fails on nothing else. COUNT_LIST_HEADS_SNAPSHOT
+    names a recorded `{oid: commit}` map so this branch can be driven without the network -- without it the
+    snapshot path returns None and this arm is unkillable, which is how it shipped uncovered once."""
+    oid = pr.get("headRefOid") or ""
+    if heads is not None:
+        return heads.get(oid)
+    if offline:
+        return None
+    done = subprocess.run(
+        ["gh", "api", f"repos/{gate.REPO}/commits/{oid}"],
+        capture_output=True, text=True, timeout=60,
+    )
+    return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+
+count = 0
+for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
+    if (pr.get("mergedAt") or "") < floor:
+        continue
+    files = [f.get("path") for f in pr.get("files") or []]
+    fails = gate.read_line_fails(pr, None, files)
+    if fails and all("not the head" in f for f in fails):
+        fails = gate.read_line_fails(pr, head_commit(pr), files)
+    if fails:
+        count += 1
+print(count)
+PYGATE
+  local rc=$?
+  rm -f "$rows"
+  return "$rc"
 }
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
