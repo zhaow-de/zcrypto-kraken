@@ -217,6 +217,53 @@ def test_the_change_index_row_commit_is_the_one_head_the_read_line_need_not_cove
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_path):
+    """`gh pr list --json files` returns the first page only, so a PR whose Fable path falls outside it reads as
+    touching none — the counter would book it compliant where the gate refuses it. `changedFiles` is the exact
+    truncation test, and the re-fetch has to happen BEFORE `read_line_fails` sees the list. The row below carries
+    an Opus read, two innocuous paths and `changedFiles: 3`; the recorded full list adds `cli/engine/soak.py`, so
+    it must count. Without the re-fetch it reads as touching nothing and does not."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    prs = [
+        {
+            "number": 4242,
+            "headRefName": "feat/truncated",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "changedFiles": 3,
+            "files": [{"path": "docs/a.md"}, {"path": "docs/b.md"}],
+            "body": "Read before push by: Claude Opus at abcdef1234567\n",
+        },
+        {
+            "number": 4243,
+            "headRefName": "feat/old",
+            "mergedAt": "2026-01-01T00:00:00Z",
+            "headRefOid": head,
+            "changedFiles": 0,
+            "files": [],
+            "body": "## Summary\n",
+        },
+    ]
+    snapshot, files_snapshot = tmp_path / "prs.json", tmp_path / "files.json"
+    snapshot.write_text(json.dumps(prs))
+    files_snapshot.write_text(json.dumps({"4242": ["docs/a.md", "docs/b.md", "cli/engine/soak.py"]}))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "COUNT_LIST_PRS_SNAPSHOT": str(snapshot),
+            "COUNT_LIST_FILES_SNAPSHOT": str(files_snapshot),
+        },
+        timeout=120,
+    )
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_row_with_no_file_list_is_counted_rather_than_read_as_touching_nothing(tmp_path):
     """`read_line_fails` has two refusals that fire only when `files` is None — the ops-journal exemption cannot
     be scoped, and the Fable paths cannot be checked. Mapping an ABSENT list to `[]` reports "touched nothing"

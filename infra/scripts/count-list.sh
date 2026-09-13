@@ -90,7 +90,7 @@ c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
   else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 \
-    --json number,body,mergedAt,headRefName,headRefOid,files)" || return 2; fi
+    --json number,body,mergedAt,headRefName,headRefOid,files,changedFiles)" || return 2; fi
   floor="$(printf '%s' "$prs" | jq -r --arg since "$READ_LINE_RULE_SINCE" '[(now - 2592000 | todate), $since] | max')" || return 2
   # A saturated fetch cannot answer. If the OLDEST row fetched is still inside the window, rows below it were
   # never fetched and the count would silently under-report -- 204 PRs sat in the window against a --limit 200,
@@ -139,30 +139,44 @@ def head_commit(pr):
     )
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
 
-GH_PAGE = 100  # `gh pr list --json files` truncates each row at one page; the gate paginates.
+files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]).read_text()) if os.environ.get(
+    "COUNT_LIST_FILES_SNAPSHOT") else None
 
 
 def file_paths(pr):
-    """The gate's view of the PR's files, which is NOT what `gh pr list --json files` returns: that truncates
-    each row at 100 paths, alphabetically, so a PR whose only Fable path sorts into the tail reads as touching
-    none. A row at exactly the page size is therefore re-fetched from the paginated endpoint. An ABSENT list
-    stays None rather than becoming `[]` -- `read_line_fails` has two refusals that fire only on None, and
-    turning it into an empty list reports 'touched nothing' and makes both unreachable."""
+    """The gate's view of the PR's files, which is NOT what `gh pr list --json files` returns: that gives the
+    first page in the endpoint's own order, so a PR whose only Fable path falls outside it reads as touching
+    none. `changedFiles` is the exact test for that -- it is not truncated, and comparing it to the row's length
+    needs no belief about what a page holds. An ABSENT list stays None rather than becoming `[]`:
+    `read_line_fails` has two refusals that fire only on None, and turning it into an empty list reports
+    'touched nothing' and makes both unreachable.
+
+    COUNT_LIST_FILES_SNAPSHOT names a recorded `{number: [path]}` map so the re-fetch below can be driven
+    without the network, because an arm no test can reach is an arm no probe can kill -- which is how the
+    head-commit arm beside it shipped uncovered once."""
     rows = pr.get("files")
     if rows is None:
         return None
     paths = [f.get("path") for f in rows]
-    if len(paths) < GH_PAGE or offline:
+    total = pr.get("changedFiles")
+    if total is None or len(paths) >= total:
         return paths
+    if files_snapshot is not None:
+        return files_snapshot.get(str(pr.get("number")), paths)
     done = subprocess.run(
         ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", ".[].filename"],
         capture_output=True, text=True, timeout=120,
     )
     if done.returncode != 0:
-        raise SystemExit(
-            f"count-list: PR #{pr.get('number')} returned exactly {GH_PAGE} files, the page size, and the full "
-            f"list could not be fetched -- the Fable-path arm cannot be decided: {done.stderr.strip()[:200]}"
+        # `return 2`, not 1: this entry's other refusals exit 2, and `emit` reads 1 as a zero COUNT.
+        print(
+            f"count-list: PR #{pr.get('number')} returned {len(paths)} of {total} files and the rest could not "
+            f"be fetched -- the Fable-path arm cannot be decided: {done.stderr.strip()[:200]}",
+            file=sys.stderr,
         )
+        raise SystemExit(2)
+    # `splitlines()` where the gate splits on whitespace: a path containing a space survives here and is
+    # fragmented there. Unreachable today and this is the correcter form, so the gate is the one to change.
     return [line for line in done.stdout.splitlines() if line.strip()]
 
 
