@@ -28,5 +28,6 @@ whatever wrote it, and `ns`-typed parquet is what pandas and pyarrow produce.
 
 - Call `_require_joinable_ts` (or a `cli/ohlc/`-local twin, since importing from `cli/engine/` inverts the
   dependency) before `reach.py`'s join, and widen `rebuild.py`'s handler to the class it raises.
-- The message has to name the canonical path and a recovery that works: an in-place recast keeps every row,
-  which is the lesson T0193's own door learned the hard way.
+- The message has to name the canonical path and a recovery that works: a rebuilt set (`data rebuild ohlc-full`
+  mints a correctly typed sibling), never a recast in place, which invalidates the canonical's `dataset_hash` —
+  the frozen arm of T0193's door says the same.

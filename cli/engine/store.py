@@ -128,20 +128,22 @@ def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: i
     writes exactly this dtype, so no frame this repo wrote is refused.
 
     The recovery differs by file, which is why the caller says which it handed over. A STORE file carries bars
-    the frozen canonical lacks, so a re-seed drops them. A CANONICAL file is hash-attested -- `dataset_hash` is
-    dtype-sensitive and `cli/registry/observed.py` refuses a read whose hash is absent from the manifest's
-    vouched set -- so recasting one needs re-attesting.
+    the frozen canonical lacks: a re-seed refuses it, and one forced by deleting it would drop them. A CANONICAL
+    file is hash-attested -- `dataset_hash` is dtype-sensitive and `cli/registry/observed.py` refuses a read
+    whose hash is absent from the manifest's vouched set -- so a recast one is refused; its recovery is a
+    rebuilt set.
     """
     dtype = frame.schema.get("ts")
     if dtype == pl.Datetime("us", "UTC"):
         return
     recovery = (
-        'fetch a dump typed `Datetime("us", "UTC")`: recasting a canonical changes its dtype-sensitive '
-        "`dataset_hash`, which no command in this tree re-vouches"
+        "rebuild the set (`zcrypto data rebuild ohlc-full` mints a correctly typed sibling, promoted into the "
+        "canonical name once verified) rather than recast this file: recasting a canonical changes its "
+        "dtype-sensitive `dataset_hash`, which no command in this tree re-vouches"
         if frozen
         else "copy the file aside (outside the dataset root), recast the column "
-        'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file and '
-        "on a 4h leg would drop every bar the canonical lacks"
+        'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file, and '
+        "one forced by deleting it would drop every bar the canonical lacks"
     )
     raise EngineError(
         f"{fn_name}: {path} types ts as {dtype} for {pair}@{interval}, not the aware "
@@ -247,7 +249,8 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     """A frame this function cannot turn into a price series is refused as an `EngineError` rather than as
     whatever polars or `math` raises, so `soak-check` aborts naming the file: a store frame the engine cannot
     parse is a broken input, not a degraded metric (T0193). The column reads are inside the try for the same
-    reason, and both columns are checked because the return type promises both.
+    reason, and both columns are checked because the return type promises both; `to_frame` writes `close` as
+    Float64 and `ts` as `Datetime("us", "UTC")`, so no frame this repo wrote is refused here.
 
     It reads TYPES, never the stamps' values — T0201 carries what that leaves open, and
     `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
