@@ -89,7 +89,7 @@ def _set_clause(entry: str) -> str:
 
 
 def test_the_three_clauses_state_the_ref_window_and_exclusions_their_counters_read():
-    """The counters are pinned above; the clauses are the side that drifted, so they are pinned too."""
+    """The counters' arms and windows have their own tests; the clauses are the side that drifted, so they are pinned too."""
     probe = _set_clause("probe-verdicts-without-the-script")
     prose = _set_clause("prose-only-commits-without-the-prover")
     merged = _set_clause("merged-prs-without-a-floor-read-30d")
@@ -100,22 +100,57 @@ def test_the_three_clauses_state_the_ref_window_and_exclusions_their_counters_re
     assert re.match(r"PRs merged into `develop` in the last 30 days and since `READ_LINE_RULE_SINCE`", merged), merged
 
 
+def test_the_merged_pr_floor_is_the_later_of_thirty_days_and_the_read_line_instant():
+    fn = re.search(r"c_merged_prs_without_a_floor_read\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
+    assert fn, "the entry's function is gone or renamed"
+    floor = (
+        r"""^\s*floor="\$\(printf '%s' "\$prs" \| jq -r --arg since "\$READ_LINE_RULE_SINCE" """
+        r"""'\[\(now - 2592000 \| todate\), \$since\] \| max'\)" \|\| return 2$"""
+    )
+    assert re.search(floor, fn.group(0), re.M), (
+        "the window no longer starts at the later of the 30 days and the instant the clause names"
+    )
+
+
 def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
     """The reason is at the constants; this refuses a window inlined with `=` or a space through any of git's date
     flags -- the five in `git log --help` plus `--max-age`/`--min-age` from `git rev-list --help`."""
-    constant = re.compile(r"^\s*(?:readonly |export |local |declare -r )?([A-Z_]*RULE_SINCE)=(['\"]?)([^'\"\s]+)\2", re.M)
-    for spelling in (
-        'X_RULE_SINCE="2026-09-13"',
-        "  X_RULE_SINCE='2026-09-13'",
-        "export X_RULE_SINCE=2026-09-13",
-        '    readonly X_RULE_SINCE="2026-09-13"',
+    constant = re.compile(
+        r"^\s*(?:(?:readonly|export|local|declare|typeset)(?:\s+-[A-Za-z]+)*\s+)?([A-Z_]*RULE_SINCE)=(\"[^\"]*\"|'[^']*'|\S+)",
+        re.M,
+    )
+
+    def _unquote(raw: str) -> str:
+        return raw[1:-1] if len(raw) > 1 and raw[:1] in "\"'" and raw[-1:] == raw[:1] else raw
+
+    def seen(text: str) -> list[tuple[str, str]]:
+        return [(m.group(1), _unquote(m.group(2))) for m in constant.finditer(text)]
+
+    for spelling, value in (
+        ('X_RULE_SINCE="2026-09-13"', "2026-09-13"),
+        ("  X_RULE_SINCE='2026-09-13'", "2026-09-13"),
+        ("export X_RULE_SINCE=2026-09-13", "2026-09-13"),
+        ('    readonly X_RULE_SINCE="2026-09-13"', "2026-09-13"),
+        ('X_RULE_SINCE="1 week ago"', "1 week ago"),
+        ("  local -r X_RULE_SINCE='3 days ago'", "3 days ago"),
+        # `typeset -a` is the only declaration keyword tracked shell here writes, and never without a flag: a
+        # keyword the guard reads only bare is a keyword it cannot read.
+        ("typeset -r X_RULE_SINCE=yesterday", "yesterday"),
+        ('declare -rx X_RULE_SINCE="2026-09-13"', "2026-09-13"),
+        ("readonly\tX_RULE_SINCE=2026-09-13", "2026-09-13"),
     ):
-        assert constant.search(spelling), f"the guard no longer sees {spelling!r}"
-    since = [(m.group(1), m.group(3)) for m in constant.finditer(SCRIPT.read_text())]
+        assert seen(spelling) == [("X_RULE_SINCE", value)], f"the guard no longer sees {spelling!r} as it is written"
+    code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
+    since = seen(code)
     assert since, "no RULE_SINCE constant found -- the windows moved somewhere this test cannot see"
+    # A spelling the pattern cannot parse drops its window out of `since` unchecked, and the assert above catches
+    # only the case where EVERY constant vanished. The counts have to agree, so an unreadable spelling fails
+    # instead of hiding.
+    assert len(re.findall(r"[A-Z_]*RULE_SINCE=", code)) == len(since), (
+        f"a RULE_SINCE assignment is spelled in a way this test cannot read: {since}"
+    )
     for name, value in since:
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
-    code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
     window = re.compile(r"--(?:since|after|until|before|since-as-filter|max-age|min-age)[= ](?!['\"]?\$)[^ ]+")
     for spelling in (
         "--since=2026-09-13",
