@@ -101,6 +101,11 @@ TABLE: dict[str, dict[str, Standin]] = {
         "FlakyFetch": Standin(OURS, "cli.ohlc.fetch.fetch_ohlc, the fetch_fn run_cycle is called with", ()),
         "SettleFetch": Standin(OURS, "cli.ohlc.fetch.fetch_ohlc, the fetch_fn run_cycle is called with", ()),
         "SteppingClock": Standin(OURS, "the now-callable cli.engine.cycle.run_cycle is built with", ()),
+        "_NoOffset": Standin(
+            NOT_A_STANDIN,
+            "a real datetime.tzinfo subclass whose utcoffset answers None, used as an input value",
+            (),
+        ),
         "_fake_builder": Standin(OURS, _BUILDER, ()),
         "_sleeve_result": Standin(OURS, _BUILDER_RESULT, ()),
     },
@@ -177,6 +182,11 @@ TABLE: dict[str, dict[str, Standin]] = {
         ),
     },
     "test_engine_node.py": {
+        "_NoOffsetZone": Standin(
+            NOT_A_STANDIN,
+            "a real datetime.tzinfo subclass whose utcoffset answers None, used as an input value",
+            (),
+        ),
         "RecordingBuilder": Standin(
             LIBRARY, "nautilus_trader.live.LiveNodeBuilder", ("test_every_builder_call_exists_on_the_library", _OFFERS_NODE)
         ),

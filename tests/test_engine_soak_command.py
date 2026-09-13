@@ -2,10 +2,12 @@
 canonical dir wired, so the command's plumbing runs without the heavy real canonical build."""
 
 import json
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import polars as pl
 import pytest
 from typer.testing import CliRunner
 
@@ -17,7 +19,7 @@ from cli.engine.cycle import _MODEL_SYMBOLS
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
 from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
 from cli.engine.store import GRID_INTERVALS
-from cli.ohlc.dataset import to_frame, write_parquet
+from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 runner = CliRunner()
@@ -108,6 +110,359 @@ def _report_field(out: str, label: str) -> str:
     matched = [line for line in out.splitlines() if line.strip().startswith(label)]
     assert len(matched) == 1, f"{label!r} matched {len(matched)} lines in:\n{out}"
     return matched[0].split(":", 1)[1].strip()
+
+
+def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatch):
+    """T0193 at the CLI: the assertion is on the message the operator reads, not on the absence of a class."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    parquet = next(store_dir.rglob("*.parquet"))
+    parquet.write_bytes(b"not a parquet file")
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the store's refusal reached the operator unhandled: {result.exception!r}"
+    )
+    # The operator's line, polars' own sentence included: `read_store_series: cannot read <path> for
+    # BTC/EUR@240 — parquet: File out of specification: The file must end with PAR1`.
+    assert "read_store_series: cannot read" in result.output, result.output
+
+
+@pytest.mark.parametrize(
+    ("shape", "wreck"),
+    [
+        # Readable parquet, no `close` column: the column reads have to be inside the try, not just the open.
+        ("no close column", lambda frame: frame.drop("close")),
+        ("close column of strings", lambda frame: frame.with_columns(pl.col("close").cast(pl.Utf8))),
+        # The sibling column: an epoch-int `ts` is the raw Kraken shape `_row()` writes, and it died in
+        # `_fmt_ts` on the last line of `soak_report` -- the whole report lost to a traceback.
+        ("ts column of epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp_path, monkeypatch, shape, wreck):
+    """Both frames are READABLE -- neither is the corrupt-bytes case above -- and both used to reach the operator
+    as a traceback from inside a helper. `read_store_series` refuses each as an `EngineError`, which is what the
+    command aborts on, and it refuses them at the one door both the store and the frozen canonical enter."""
+    from cli.ohlc.dataset import read_parquet
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    parquet = next(store_dir.rglob("*.parquet"))
+    write_parquet(wreck(read_parquet(parquet)), parquet)
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "read_store_series" in result.output, result.output
+
+
+@pytest.mark.parametrize(
+    ("shape", "wreck"),
+    [
+        ("epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
+        # Aware vs merely-a-datetime: this satisfies `isinstance` and died in `select_model_inputs`' `sorted()`.
+        ("tz-naive datetimes", lambda frame: frame.with_columns(pl.col("ts").dt.replace_time_zone(None))),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_canonical_leg_whose_stamps_are_unusable(tmp_path, monkeypatch, shape, wreck):
+    """The CANONICAL leg of the same door. The store-leg cases above reach `realized_series`; this reaches
+    `_load_canonical` through `build_null`, a different caller and a different crash site."""
+    from cli.engine.store import _store_path
+    from cli.ohlc.dataset import read_parquet
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    canonical = _ten_leg_canonical(tmp_path)
+    leg = _store_path(canonical, "ADA/EUR", 240)
+    write_parquet(wreck(read_parquet(leg)), leg)
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(canonical),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "is not an aware datetime" in result.output, result.output
+
+
+def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, monkeypatch):
+    """The second door this input class leaves by. `build_null` enters the
+    portfolio builders, whose new front door refuses a non-finite close with a `PortfolioError` -- not an
+    `EngineError`, so it walked past `soak_report`'s `except SoakError` AND the command's handler and reached the
+    operator as a traceback, exit 1, no report. The handler catches that class now."""
+    import basket_fixture
+
+    from cli.engine.store import _store_path
+    from cli.ohlc.dataset import read_parquet
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+
+    # A canonical `_load_canonical` accepts: the ten `/EUR` model legs on both grids, through the real writer.
+    canonical = tmp_path / "canonical"
+    grids = basket_fixture.grids()
+    for interval in GRID_INTERVALS:
+        ts, by_symbol = grids[interval]
+        for symbol, series in by_symbol.items():
+            if symbol.endswith("/EUR"):
+                rows = [[int(t.timestamp()), *([str(c)] * 5), "1.0", 1] for t, c in zip(ts, series)]
+                write_parquet(to_frame(rows), _store_path(canonical, symbol, interval))
+
+    leg = _store_path(canonical, "ADA/EUR", 240)
+    frame = read_parquet(leg)
+    mid = frame.height // 2
+    write_parquet(
+        frame.with_columns(pl.when(pl.int_range(pl.len()) == mid).then(float("nan")).otherwise(pl.col("close")).alias("close")),
+        leg,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(canonical),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"the builder's refusal reached the operator unhandled: {result.exception!r}"
+    )
+    assert "finite positive" in result.output and "ADA" in result.output, result.output
+
+
+def _ten_leg_canonical(tmp_path):
+    """The ten `/EUR` model legs on both grids, through the real writer. Without a canonical
+    `instrument_self_check` returns early on `canonical absent` and NEVER READS THE REGISTRY -- which is how a
+    first pass at these cases reported every shape clean while reaching none of them."""
+    import basket_fixture
+
+    from cli.engine.store import _store_path
+
+    canonical = tmp_path / "canonical"
+    grids = basket_fixture.grids()
+    for interval in GRID_INTERVALS:
+        ts, by_symbol = grids[interval]
+        for symbol, series in by_symbol.items():
+            if symbol.endswith("/EUR"):
+                rows = [[int(t.timestamp()), *([str(c)] * 5), "1.0", 1] for t, c in zip(ts, series)]
+                write_parquet(to_frame(rows), _store_path(canonical, symbol, interval))
+    return canonical
+
+
+_GOOD_RECORD = {"trial_id": 47, "metrics": {"governor_engaged_bars": 1, "cap_breach_bars": 2}}
+
+
+@pytest.mark.parametrize(
+    ("wreck", "says"),
+    [
+        (lambda text: text[:-20], "invalid journal JSON"),  # truncated
+        (lambda text: text.replace('"cycle_ts"', '"cycle_tz"', 1), "required key"),  # a key removed
+        (lambda text: re.sub(r"\+00:00", "", text), "cycle_ts must be timezone-aware"),  # a naive stamp
+    ],
+)
+def test_soak_check_names_the_journaled_cycle_it_cannot_use(tmp_path, monkeypatch, wreck, says):
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    artifact = sorted(journal_dir.rglob("cycle-*.json"))[0]
+    artifact.write_text(wreck(artifact.read_text()))
+
+    result = runner.invoke(app, ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)])
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), repr(result.exception)
+    assert says in result.output and str(artifact) in result.output, result.output
+
+
+def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_path, monkeypatch):
+    """The JOURNAL door's version of the store door's aware-stamp check. `validate_record` does not require an
+    orderable stamp -- `_refuse_mixed_awareness` says in as many words that a wholly naive record "compares
+    consistently" and is left alone, which is true among the record's own stamps and false against the aware
+    boundary this path supplies, where `nxt.cycle_ts > now` raised a bare TypeError with no report."""
+    import re
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    artifact = sorted(journal_dir.rglob("cycle-*.json"))[0]
+    artifact.write_text(re.sub(r"\+00:00", "", artifact.read_text()))
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"a naive journaled stamp reached the operator unhandled: {result.exception!r}"
+    )
+    assert "cycle_ts must be timezone-aware" in result.output and str(artifact) in result.output, result.output
+
+
+def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants(tmp_path, monkeypatch):
+    """What the store door does NOT promise (T0201), pinned so its docstring cannot go stale. The door reads
+    TYPES: a frame typed `Datetime("us", "UTC")` whose stamps are simply the WRONG instants passes it, and the
+    realized leg then finds no boundary at all -- rc 0, `no realized series available`, no refusal anywhere.
+    That is a value question a type door cannot answer, so it is read off the report instead."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    parquet = next(store_dir.rglob("*.parquet"))
+    frame = read_parquet(parquet)
+    # 37 minutes: off the 4h grid by an amount no rounding reaches, with the dtype and the awareness intact.
+    write_parquet(frame.with_columns((pl.col("ts") + pl.duration(minutes=37)).alias("ts")), parquet)
+    assert read_parquet(parquet).schema["ts"] == pl.Datetime("us", "UTC")
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "read_store_series" not in result.output, result.output
+    assert "no realized series available" in result.output, result.output
+    # T0201's `ripe_when` is evaluated against these two rendered fields.
+    assert re.search(r"window_bound\s*: store", result.output) and re.search(
+        r"store last bar\s*: 2026-07-16T08:37:00\+00:00", result.output
+    ), result.output
+
+
+@pytest.mark.parametrize(
+    ("shape", "write", "says"),
+    [
+        ("absent", None, "cannot read the trial registry"),
+        ("a directory", lambda p: p.mkdir(), "cannot read the trial registry"),
+        ("not JSONL", lambda p: p.write_text('{"trial_id": 47, bad}\n'), "is not JSONL at line 1"),
+        (
+            "record 47 with no metrics",
+            lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": None}) + "\n"),
+            "carries no usable metrics",
+        ),
+        (
+            "a metric absent",
+            lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": {"cap_breach_bars": 2}}) + "\n"),
+            "carries no usable metrics",
+        ),
+        (
+            "a metric that is not a number",
+            lambda p: p.write_text(
+                json.dumps({"trial_id": 47, "metrics": {"governor_engaged_bars": "many", "cap_breach_bars": 2}}) + "\n"
+            ),
+            "carries no usable metrics",
+        ),
+        # The decode error comes out of the iterator's FIRST `__next__`, before `n` is bound. Its
+        # wording is pinned below, including that it claims NO line: for a decode error `n` is a chunk boundary
+        # rather than the bad byte's line. Putting `{n}` itself back is already fatal -- measured, it exits
+        # `UnboundLocalError`, which the exception-type assertion below refuses -- but a plausible LITERAL line
+        # number survived every assertion this file had before the `says` column, which is why the column is here.
+        ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe{\x00b\x00a\x00d\x00"), "is not valid UTF-8"),
+        # Valid JSON, not an object: `.get` on a list escaped one level ABOVE the metrics wrap.
+        ("a line that is valid JSON but not an object", lambda p: p.write_text("[1, 2, 3]\n"), "line 1 is not a JSON object"),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write, says):
+    """Absent, unreadable, not JSON, or the wrong shape: each a `SoakError` the command aborts on, naming the file."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    registry = tmp_path / "registry.jsonl"
+    if write is not None:
+        write(registry)
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(_ten_leg_canonical(tmp_path)),
+            "--registry",
+            str(registry),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert str(registry) in result.output, result.output
+    assert says in result.output, result.output
+    if says == "is not valid UTF-8":
+        assert "at line" not in result.output, result.output
+
+
+@pytest.mark.parametrize(
+    ("shape", "wreck"),
+    [
+        ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe\x00bad")),
+        ("a directory where a record belongs", lambda p: (p.unlink(), p.mkdir())),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_journaled_cycle_it_cannot_read(tmp_path, monkeypatch, shape, wreck):
+    """The read that feeds the whole report: `read_text` on a path the glob found can still fail, and did so
+    past every handler."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    wreck(next(journal_dir.rglob("cycle-*.json")))
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "cannot read the journaled cycle" in result.output, result.output
 
 
 def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatch):
@@ -462,8 +817,8 @@ def test_soak_check_short_null_reason_does_not_fire_on_an_empty_realized_window(
 
 def test_soak_report_degrades_when_the_canonical_is_missing_a_leg(tmp_path, monkeypatch):
     """State (a): a canonical carrying only the leg `_canonical_present` probes. Nothing is stubbed, so
-    the real `_load_canonical` probe runs -- without it the run dies on a `FileNotFoundError` out of
-    `read_store_series`, which is neither a SoakError nor an EngineError and reaches no handler at all."""
+    the real `_load_canonical` probe runs -- without it the run ends on `read_store_series`' own `EngineError`,
+    which the command aborts on, instead of this function's `SoakError` naming the legs that are absent."""
     _patch_config(monkeypatch, tmp_path)
     journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
     canonical = tmp_path / "canonical"

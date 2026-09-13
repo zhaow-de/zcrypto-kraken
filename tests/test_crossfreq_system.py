@@ -635,3 +635,45 @@ def test_fast_path_full_history_equivalence():
     )
     assert round(max_dd(fast.governed_net), 4) == round(max_dd(verified.governed_net), 4)
     assert round(max_dd(fast.ungoverned_net), 4) == round(max_dd(verified.ungoverned_net), 4)
+
+
+# --- a close VALUE is refused at the door both builders enter (T0193) -----------------------------
+
+
+@pytest.mark.parametrize("grid", ["daily", "h4"])
+@pytest.mark.parametrize("where", ["first", "middle", "last"])
+@pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
+def test_a_non_finite_close_is_refused_by_both_builders(grid, where, builder):
+    """The six placements T0193 measured."""
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
+    prices = d_prices if grid == "daily" else h_prices
+    n = len(d_ts) if grid == "daily" else len(h_ts)
+    idx = {"first": 0, "middle": n // 2, "last": n - 1}[where]
+    prices["AAA"] = list(prices["AAA"])
+    prices["AAA"][idx] = float("nan")
+    # The grid axis is pinned by the message, not by the fixture: matching `finite positive` alone would pass
+    # whichever grid the refusal named.
+    with pytest.raises(PortfolioError, match=rf"{grid}_prices\['AAA'\]\[{idx}\]"):
+        builder(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), 0.0, -1.0, True, "100.0"])
+def test_the_refusal_covers_the_rest_of_the_class(bad):
+    """The rest of the class, and why two clauses of this door are load-bearing rather than belt-and-braces.
+    The VERIFIED path refuses all six downstream -- a bool at `cli/features/_validate.py`, the rest at
+    `cli/benchmark/strategies.py` -- so a reader could take the whole loop for a duplicate. The FAST path,
+    measured with this loop disabled: `True` and `-1.0` BUILD A RESULT, and `0.0` dies as a ZeroDivisionError.
+    So `isinstance(close, bool)` and `close <= 0` each stop a silent wrong number here and nowhere else."""
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
+    d_prices["AAA"] = list(d_prices["AAA"])
+    d_prices["AAA"][3] = bad
+    with pytest.raises(PortfolioError, match="finite positive"):
+        build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts, config=CFG2)
+
+
+def test_a_gap_is_still_legal():
+    """The control that keeps the refusal honest."""
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(40)
+    d_prices["AAA"] = list(d_prices["AAA"])
+    d_prices["AAA"][3] = None
+    build_crossfreq_system_fast(d_prices, d_ts, h_prices, h_ts, config=CFG2)

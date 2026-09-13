@@ -173,7 +173,12 @@ def _limits_bound(result) -> bool:
 
 
 def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
-    if not isinstance(cycle_ts, datetime) or cycle_ts.tzinfo is None:
+    # `utcoffset() is None`, not `tzinfo is None`: the weaker spelling let `astimezone` re-read a None-offset
+    # stamp as LOCAL time and hand it back aware, silently shifting the boundary every reader then trusts.
+    # Same predicate as the journal and store doors and as `_aware_clock` below; `cli/engine/execgate.py:148-152`
+    # records the rule. Reproducing the old shift needs a non-zero host offset that is a multiple of 4h
+    # (`TZ=Asia/Shanghai`); elsewhere the grid check below caught it, blaming the boundary.
+    if not isinstance(cycle_ts, datetime) or cycle_ts.utcoffset() is None:
         raise EngineError(
             f"cycle_ts must be an aware datetime, got {cycle_ts!r} -- a naive/aware mix makes "
             "validate_record's != checks silently always-true"
@@ -187,7 +192,9 @@ def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
 def _aware_clock(clock):
     def read() -> datetime:
         now = clock()
-        if not isinstance(now, datetime) or now.tzinfo is None:
+        # `utcoffset()`, not `tzinfo`, for `_normalize_cycle_ts`'s reason above: this reading becomes
+        # `started_at`, `completed_at` and the refresh deadline.
+        if not isinstance(now, datetime) or now.utcoffset() is None:
             raise EngineError(f"clock must return an aware-UTC datetime, got {now!r}")
         return now.astimezone(timezone.utc)
 

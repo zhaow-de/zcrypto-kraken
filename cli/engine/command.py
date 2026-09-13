@@ -54,6 +54,7 @@ from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
+from cli.portfolio.errors import PortfolioError
 
 logger = get_logger("engine.command")
 
@@ -1099,7 +1100,11 @@ def soak_check(
             null_mode=null_mode,
             path=path,
         )
-    except EngineError as exc:
+    # PortfolioError too, and this is the last net for it: `build_null` and `instrument_self_check` enter the
+    # portfolio builders unguarded, whose front door refuses a non-finite close with a `PortfolioError`, which
+    # is not an `EngineError` and so walked past `soak_report`'s own `except SoakError` and past here. The
+    # identity replay enters them too but is caught a frame earlier, in `self_tests` (T0193).
+    except (EngineError, PortfolioError) as exc:
         raise _abort(str(exc)) from exc
 
     typer.echo(text)

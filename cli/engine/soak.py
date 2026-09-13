@@ -15,7 +15,14 @@ import numpy as np
 from cli.engine.concordance import HashMismatchError, replay_cycle
 from cli.engine.cycle import _MODEL_SYMBOLS, _expand_to_basket, select_model_inputs, symbol_keyed_targets
 from cli.engine.errors import EngineError, EngineJournalError
-from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash, validate_record
+from cli.engine.journal import (
+    CycleRecord,
+    SnapshotEntry,
+    from_json,
+    require_comparable_cycle_ts,
+    snapshot_content_hash,
+    validate_record,
+)
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
 from cli.portfolio.crossfreq_system import apply_whole_book_limits
@@ -353,8 +360,9 @@ def _load_canonical(
 ) -> tuple[dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], list[datetime]]:
     """The canonical's daily and 4h MODEL panels -- `select_model_inputs`' ten base-keyed `/EUR` legs on their own calendar
     (spec 00094 D2), the grid the live engine itself builds on -- read here so `build_null` and `instrument_self_check`
-    cannot drift apart. Only the ten are READ, and the probe below covers exactly those: `read_store_series` is a bare
-    `read_parquet`, so an unprobed missing leg raises `FileNotFoundError`, which no handler degrades into a refusal."""
+    cannot drift apart. Only the ten are READ, and the probe below covers exactly those: `read_store_series` refuses an
+    unreadable leg as an `EngineError`, which `soak-check` ABORTS on, so an unprobed missing leg would end the run with
+    that reader's message instead of this function's `SoakError` naming which legs are absent."""
     missing = [
         f"{symbol}@{interval}"
         for symbol in _MODEL_SYMBOLS
@@ -692,25 +700,48 @@ class SelfTestReport:
 
 
 def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
-    with registry_path.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            record = json.loads(line)
-            if record.get("trial_id") == trial_id:
-                return record
+    """A registry this function cannot read is a `SoakError`, which is an `EngineError`, so `soak-check` aborts
+    with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
+    was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
+    CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
+    # `n` belongs to the JSON arm ALONE. The UTF-8 arm claims no line, because for a decode error `n` is not the
+    # bad byte's line: the reader fills a buffer, so the raise lands at a chunk boundary, and a number that
+    # misdirects the operator is worse than no number.
+    try:
+        with registry_path.open() as f:
+            for n, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                # A line that is valid JSON but not an OBJECT has no `.get`, and that `AttributeError` escaped
+                # one level above the metrics wrap that would have caught it.
+                if not isinstance(record, dict):
+                    raise SoakError(f"the trial registry {registry_path} line {n} is not a JSON object: {record!r}")
+                if record.get("trial_id") == trial_id:
+                    return record
+    except OSError as exc:
+        raise SoakError(f"cannot read the trial registry {registry_path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise SoakError(f"the trial registry {registry_path} is not valid UTF-8: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SoakError(f"the trial registry {registry_path} is not JSONL at line {n}: {exc}") from exc
     raise SoakError(f"no trial_id={trial_id} record in {registry_path}")
 
 
 def _instrument_expectations(registry_path: Path) -> dict[str, int]:
     """`governor_engaged_bars`/`cap_breach_bars` from record 47's metrics -- the ratified deployable-system
     trial (`docs/reference/trial-registry.jsonl`) the frozen engine build must reproduce exactly."""
-    metrics = _load_registry_record(registry_path, 47)["metrics"]
-    return {
-        "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
-        "cap_breach_bars": int(metrics["cap_breach_bars"]),
-    }
+    record = _load_registry_record(registry_path, 47)
+    # The wrong SHAPE left here past every handler: `soak_check`'s net is `(EngineError, PortfolioError)` alone.
+    try:
+        metrics = record["metrics"]
+        return {
+            "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
+            "cap_breach_bars": int(metrics["cap_breach_bars"]),
+        }
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SoakError(f"record 47 in {registry_path} carries no usable metrics: {exc!r}") from exc
 
 
 def instrument_self_check(
@@ -950,7 +981,8 @@ def self_tests(
     path: str = "fast",
 ) -> SelfTestReport:
     """Identity replays the NEWEST record, the journaled cycle closest to the live edge; no records at all, or
-    a replay raising `EngineError`, skips it (`identity_ok=None`) rather than failing it. `path` (spec 00061
+    a replay raising `EngineError` or `PortfolioError`, skips it (`identity_ok=None`) rather than failing it --
+    the builders refuse a corrupt grid with the second, which is not an `EngineError`. `path` (spec 00061
     D5) reaches `identity_self_check` only -- `instrument_self_check` always reproduces record 47 via the
     fast path."""
     messages: list[str] = []
@@ -966,7 +998,7 @@ def self_tests(
         try:
             identity_ok, identity_msg = identity_self_check(newest, snapshot_reader, path=path)
             messages.append(f"identity: {identity_msg}")
-        except EngineError as exc:
+        except (EngineError, PortfolioError) as exc:
             identity_ok = None
             messages.append(f"identity: skipped, replay failed: {exc}")
 
@@ -1680,12 +1712,26 @@ def soak_report(
     from cli.engine.command import _journal_artifacts, _snapshot_reader
 
     arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
-    # `realized_series` consumes all of these, not just the comparison spec 00113 hardened, so they are
-    # validated here and 00113's arm stays the last line (T0194).
+    # The READ can fail on a path the glob found -- a directory where a record belongs, non-UTF-8 bytes -- past
+    # every handler. Validating every record here does not retire `realized_internals`' `if not
+    # math.isfinite(diff)`: that diff's other operand is the rebuilt row, which passes through no validator.
     records = []
-    for _, p in arts:
-        record = from_json(p.read_text())
-        validate_record(record)
+    for _, artifact in arts:
+        try:
+            text = artifact.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SoakError(f"cannot read the journaled cycle {artifact}: {exc}") from exc
+        # `validate_record` does not require an orderable stamp: `_refuse_mixed_awareness` leaves a WHOLLY naive
+        # record alone as "compares consistently", which is false against the aware `now` this path supplies,
+        # where `nxt.cycle_ts > now` raised a bare TypeError. Aborting here costs the whole report over one bad
+        # artifact anywhere under `journal_dir`, and that is deliberate: no stamp `run_cycle` wrote can trip it
+        # (`cycle._normalize_cycle_ts` normalizes through `astimezone`); a truncated artifact is an interrupted write.
+        try:
+            record = from_json(text)
+            validate_record(record)
+            require_comparable_cycle_ts(record)
+        except EngineJournalError as exc:
+            raise SoakError(f"the journaled cycle {artifact}: {exc}") from exc
         records.append(record)
     if not records:
         void_reasons = ["no journaled cycles found"]

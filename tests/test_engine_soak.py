@@ -2892,6 +2892,61 @@ def test_realized_internals_unavailable_degrades():
     assert ri.identity_ok is False and ri.cap_consistent is False
 
 
+def test_a_non_finite_snapshot_close_degrades_with_a_reason_rather_than_escaping():
+    """T0193. Spec 00059 D7 applies as written once the builder's front door refuses the value, and the reason
+    names the corrupt bar -- asserted here by asset and index, not by the phrase alone.
+
+    The ten-leg fixture is what makes this non-vacuous: a single-pair record at `schema_version=2` is refused by
+    `select_model_inputs` before any value is read (at `schema_version=1` it is `_validate_grid`'s asset-set arm
+    instead, which is `test_realized_internals_degrades_on_builder_portfolio_error`'s subject)."""
+    clean = basket_fixture.grids()
+    result = basket_fixture.build(clean)
+    # The NaN goes in BEFORE the record is built, so its snapshot hash covers it. Injecting one over a real
+    # close afterwards trips the assembler's hash check instead -- a different refusal, with its own handling.
+    corrupt = basket_fixture.grids()
+    ts, by_symbol = corrupt[240]
+    by_symbol["ADA/EUR"] = list(by_symbol["ADA/EUR"])
+    by_symbol["ADA/EUR"][len(ts) // 2] = float("nan")
+    latest = basket_fixture.record(corrupt, schema_version=2, result=result)
+
+    ri = realized_internals([], latest, basket_fixture.reader(corrupt))
+
+    assert ri.available is False
+    assert "finite positive" in ri.reason, ri.reason
+    assert "nan" in ri.reason.lower(), ri.reason
+    assert "ADA" in ri.reason, ri.reason
+    assert f"[{len(ts) // 2}]" in ri.reason, ri.reason
+
+
+def test_self_tests_skips_the_identity_replay_when_the_builder_refuses_the_record(monkeypatch):
+    """The other half of T0193's Critical, through the REAL `identity_self_check`. `soak_report` degrades
+    `realized_internals` and then calls `self_tests` over the same record and reader; the replay enters the same
+    builders, which refuse a non-finite close with a `PortfolioError` -- not an `EngineError`. So the fix that
+    made one path degrade left the very next call escaping past the soak command's handler. Only
+    `instrument_self_check` is stubbed here: it reads the real canonical, and it is not the subject."""
+    monkeypatch.setattr(soak, "instrument_self_check", lambda canonical_dir, registry_path, config=None: (True, "instrument ok"))
+    result = basket_fixture.build(basket_fixture.grids())
+    corrupt = basket_fixture.grids()
+    ts, by_symbol = corrupt[240]
+    by_symbol["ADA/EUR"] = list(by_symbol["ADA/EUR"])
+    by_symbol["ADA/EUR"][len(ts) // 2] = float("nan")
+    latest = basket_fixture.record(corrupt, schema_version=2, result=result)
+
+    report = soak.self_tests(
+        [latest],
+        types.SimpleNamespace(net_live=[0.01], reconcile_ok=True),
+        realized=types.SimpleNamespace(implausible=False, gross=[0.1], chain_ok=True),
+        canonical_dir=Path("data/ohlc-full"),
+        registry_path=Path("docs/reference/trial-registry.jsonl"),
+        snapshot_reader=basket_fixture.reader(corrupt),
+    )
+
+    assert report.identity_ok is None
+    skipped = [m for m in report.messages if m.startswith("identity: skipped, replay failed:")]
+    assert len(skipped) == 1, report.messages
+    assert "finite positive" in skipped[0] and "ADA" in skipped[0], skipped[0]
+
+
 def test_realized_internals_degrades_on_builder_portfolio_error():
     """A single-pair (BTC-only) snapshot satisfies validate_record and _assemble_latest_grids, but
     the REAL builder's default 10-asset universe doesn't match -- _validate_grid raises
@@ -3142,8 +3197,9 @@ def test_realized_internals_spans_the_schema_boundary_with_a_v2_latest():
 def test_load_canonical_reads_only_the_ten_legs_the_model_uses(tmp_path):
     """`_canonical_present` probes BTC/EUR alone, so a canonical tree carrying the ten EUR legs and
     no `/BTC` legs reads "present". If `_load_canonical` then READ all twelve, the run would abort on
-    a FileNotFoundError out of `read_store_series` -- not a SoakError, so nothing degrades it into a
-    refusal. The two extra reads could never contribute anyway: the contraction discards them."""
+    `read_store_series`' `EngineError` for a leg that is simply absent, rather than on the `SoakError` that
+    names which legs are missing. The two extra reads could never contribute anyway: the contraction
+    discards them."""
     canonical = tmp_path / "canonical"
     ts = {1440: [datetime(2026, 7, 1, tzinfo=UTC) + timedelta(days=i) for i in range(4)]}
     ts[240] = [datetime(2026, 7, 1, tzinfo=UTC) + timedelta(hours=4 * i) for i in range(4)]

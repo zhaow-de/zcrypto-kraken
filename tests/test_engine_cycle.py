@@ -3,7 +3,7 @@ import math
 import shutil
 import types
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -169,6 +169,45 @@ def _adversarial_venue_state() -> VenueState:
 
 
 # --- happy path ----------------------------------------------------------------------------------
+
+
+class _NoOffset(tzinfo):  # a tzinfo, not a concrete zone: `utcoffset` answers None
+    def utcoffset(self, dt):
+        return None
+
+    def dst(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return "NoOffset"
+
+
+@pytest.mark.parametrize(
+    ("shape", "stamp"),
+    [
+        # The spelling `tzinfo is None` admitted this: `astimezone` then re-read it as LOCAL time and returned
+        # an aware value. SILENTLY where the host's offset is non-zero and a multiple of 4h -- elsewhere the grid check
+        # refused it while blaming the boundary, so the harm does not reproduce on every host
+        # (`cli/engine/cycle.py`'s own comment names the TZ). It is why the door checks `utcoffset()`.
+        ("aware with a tzinfo whose utcoffset is None", datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset())),
+        ("not a datetime", "2026-07-10T08:00:00+00:00"),
+    ],
+)
+def test_the_write_door_refuses_a_cycle_ts_it_cannot_order(shape, stamp):
+    """The door's other refusals and its conversion are pinned below, through `run_cycle`, by
+    `test_naive_cycle_ts_rejected`, `test_aware_non_utc_cycle_ts_normalized` and `test_off_grid_cycle_ts_rejected`.
+    None of the three can tell the two awareness spellings apart, though -- a naive stamp has `tzinfo is None`
+    too, and `+02:00` passes either -- so measured, the first case here is the predicate's only guard: trimming
+    it leaves the spelling unpinned."""
+    with pytest.raises(EngineError, match="cycle_ts must be an aware datetime"):
+        cycle._normalize_cycle_ts(stamp)
+
+
+def test_the_clock_door_refuses_a_reading_whose_tzinfo_has_no_offset():
+    """`_aware_clock` is the same door on the other input: its reading becomes `started_at`, `completed_at` and
+    the 25-minute refresh deadline, so the weak spelling would have shifted all three by the host's offset."""
+    with pytest.raises(EngineError, match="clock must return an aware-UTC datetime"):
+        cycle._aware_clock(lambda: datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset()))()
 
 
 def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):

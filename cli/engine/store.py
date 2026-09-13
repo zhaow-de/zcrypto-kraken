@@ -119,6 +119,50 @@ def _reconcile(
     return overlap_bars, len(replaced_ts), merged
 
 
+def _read_frame(path: Path, pair: str, interval: int, fn_name: str) -> pl.DataFrame:
+    try:
+        return read_parquet(path)
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise EngineError(f"{fn_name}: cannot read {path} for {pair}@{interval} — {exc}") from exc
+
+
+def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: int, fn_name: str, *, frozen: bool) -> None:
+    """Refuse a `ts` column `seam_overlap` cannot join, and a `close` no reader can take as a price, before either gets there.
+
+    Anything but `Datetime("us", "UTC")` raises a bare `SchemaError` at the join, past `run_cycle`'s
+    `except OHLCError` and both commands' `except EngineError` (T0193). The equality is exact because
+    `ns`/`ms` and a non-UTC zone all survive a parquet round trip and all break the same join; `to_frame`
+    writes exactly this dtype, so no frame this repo wrote is refused.
+
+    `frozen` picks between the two recoveries below, which is why the caller says which file it handed over;
+    `cli/registry/observed.py` is where a recast canonical is refused.
+    """
+    dtype = frame.schema.get("ts")
+    if dtype == pl.Datetime("us", "UTC"):
+        close = frame.schema.get("close")
+        if close is None:
+            raise EngineError(f"{fn_name}: {path} has no close column for {pair}@{interval}")
+        if not close.is_numeric():
+            raise EngineError(
+                f"{fn_name}: {path} types close as {close} for {pair}@{interval}, not a number a reader can take as a price"
+            )
+        return
+    recovery = (
+        "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
+        "canonical name) rather than recast this file, whose `dataset_hash` a recast changes and nothing in this "
+        "tree re-vouches"
+        if frozen
+        else "copy the file aside (outside the dataset root), recast the column "
+        'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file, and '
+        "one forced by deleting it drops every bar the canonical lacks unless the re-seed's seam holds -- six shared "
+        "stamps into the canonical and every shared close equal"
+    )
+    raise EngineError(
+        f"{fn_name}: {path} types ts as {dtype} for {pair}@{interval}, not the aware "
+        f'`Datetime("us", "UTC")` every reader joins on -- {recovery}'
+    )
+
+
 def seed_store(
     store_dir: Path,
     canonical_dir: Path,
@@ -135,11 +179,16 @@ def seed_store(
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
             store_existed = store_path.exists()
+            canonical_path = _store_path(canonical_dir, pair, interval)
             if not store_existed:
-                canonical_path = _store_path(canonical_dir, pair, interval)
-                write_parquet(read_parquet(canonical_path), store_path)
+                # The canonical is checked BEFORE it is copied: a refused copy left in the store is a file the
+                # next run refuses again, naming a path the operator never broke.
+                canonical_frame = _read_frame(canonical_path, pair, interval, "seed_store")
+                _require_joinable_ts(canonical_frame, canonical_path, pair, interval, "seed_store", frozen=True)
+                write_parquet(canonical_frame, store_path)
 
-            store_frame = read_parquet(store_path)
+            store_frame = _read_frame(store_path, pair, interval, "seed_store")
+            _require_joinable_ts(store_frame, store_path, pair, interval, "seed_store", frozen=False)
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             overlap_bars, replaced, merged = _reconcile(
@@ -150,7 +199,7 @@ def seed_store(
                 interval=interval,
                 min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
-                shortfall_hint="REST window no longer reaches the tail — use the quarterly OHLCVT dump",
+                shortfall_hint="use the quarterly OHLCVT dump",
                 mismatch_hint="this is a fresh canonical copy, so a disagreement with REST is a data-integrity error",
             )
             appended = merged.height - store_frame.height
@@ -183,7 +232,10 @@ def refresh_store(
     for pair, pair_key in pairs.items():
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
-            store_frame = read_parquet(store_path)
+            store_frame = _read_frame(store_path, pair, interval, "refresh_store")
+            # An `EngineError` rather than the loop's retried `OHLCError`: a dtype-broken file is not a
+            # transport error and every retry re-reads the same column.
+            _require_joinable_ts(store_frame, store_path, pair, interval, "refresh_store", frozen=False)
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             _, _, merged = _reconcile(
@@ -206,5 +258,36 @@ def refresh_store(
 
 
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
-    frame = read_parquet(_store_path(store_dir, symbol, interval))
-    return frame["ts"].to_list(), frame["close"].to_list()
+    """A frame this function cannot turn into a price series is refused as an `EngineError` rather than as
+    whatever polars or `math` raises, so `soak-check` aborts naming the file: a store frame the engine cannot
+    parse is a broken input, not a degraded metric (T0193). The column reads are inside the try for the same
+    reason, and both columns are checked because the return type promises both; `to_frame` writes `close` as
+    Float64 and a UTC-aware `ts` (`_require_joinable_ts` above owns the exact dtype), so no frame this repo
+    wrote is refused here.
+
+    It reads TYPES, never the stamps' values — T0201 carries what that leaves open, and
+    `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
+    drives it.
+
+    A non-finite close is NOT refused here. Spec 00059 D7 rules only the rebuild-unavailable case (the two
+    internals metrics read `n/a` with a reason rather than voiding the run); no decision rules on a store `nan`,
+    and what the code does with one is T0199's subject. What is refused is anything outside `int`/`float`, which is wider than
+    "anything `math.isfinite` would raise on" — a `Decimal` has `__float__`, so `math.isfinite` takes it and
+    this door does not, and the narrower rule would need a conversion this reader has no business making."""
+    path = _store_path(store_dir, symbol, interval)
+    try:
+        frame = read_parquet(path)
+        stamps, closes = frame["ts"].to_list(), frame["close"].to_list()
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
+    for k, stamp in enumerate(stamps):
+        # Aware, not merely a datetime: a naive stamp satisfies `isinstance` and then dies on the canonical leg
+        # in `select_model_inputs`' `sorted()`, ordered against the other legs' aware stamps -- the same site an
+        # epoch int reaches. `utcoffset() is None` is the whole test, Python's own definition of naive
+        # (`cli/engine/execgate.py:148-152` records the rule).
+        if not isinstance(stamp, datetime) or stamp.utcoffset() is None:
+            raise EngineError(f"read_store_series: {path} ts[{k}] for {symbol}@{interval} is not an aware datetime: {stamp!r}")
+    for k, close in enumerate(closes):
+        if close is not None and (isinstance(close, bool) or not isinstance(close, (int, float))):
+            raise EngineError(f"read_store_series: {path} close[{k}] for {symbol}@{interval} is not a number: {close!r}")
+    return stamps, closes

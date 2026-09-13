@@ -175,6 +175,13 @@ def _validate_grid(name: str, prices: dict[str, list[float | None]], ts: list[da
         series = prices[asset]
         if not isinstance(series, list) or len(series) != len(ts):
             raise PortfolioError(f"{name}_prices[{asset!r}] must be a list of length {len(ts)} (one close per stamp)")
+        # Both builders enter here, so refusing here is what makes them agree -- and a bool passes every isinstance
+        # check an int does, which nothing on the fast path below catches.
+        for k, close in enumerate(series):
+            if close is None:
+                continue
+            if isinstance(close, bool) or not isinstance(close, (int, float)) or not math.isfinite(close) or close <= 0:
+                raise PortfolioError(f"{name}_prices[{asset!r}][{k}] must be None or a finite positive number, got {close!r}")
 
 
 def _dummy_close(series: list[float | None]) -> float | None:
