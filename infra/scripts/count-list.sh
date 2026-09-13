@@ -102,7 +102,7 @@ c_merged_prs_without_a_floor_read() {
     echo "count-list: the merged-PR fetch is saturated -- its oldest row ($oldest) is inside the window ($floor), so rows are missing" >&2
     return 2
   fi
-  printf '%s' "$prs" | jq --arg floor "$floor" '[.[] | select(.mergedAt >= $floor) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: Claude (Opus|Fable)\\b.* at [0-9a-f]{7,}") | not)] | length'
+  printf '%s' "$prs" | jq --arg floor "$floor" '[.[] | select(.mergedAt >= $floor) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: *Claude (Opus|Fable)\\b.* +at +[0-9a-f]{7,}"; "i") | not)] | length'
 }
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
