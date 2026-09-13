@@ -139,11 +139,38 @@ def head_commit(pr):
     )
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
 
+GH_PAGE = 100  # `gh pr list --json files` truncates each row at one page; the gate paginates.
+
+
+def file_paths(pr):
+    """The gate's view of the PR's files, which is NOT what `gh pr list --json files` returns: that truncates
+    each row at 100 paths, alphabetically, so a PR whose only Fable path sorts into the tail reads as touching
+    none. A row at exactly the page size is therefore re-fetched from the paginated endpoint. An ABSENT list
+    stays None rather than becoming `[]` -- `read_line_fails` has two refusals that fire only on None, and
+    turning it into an empty list reports 'touched nothing' and makes both unreachable."""
+    rows = pr.get("files")
+    if rows is None:
+        return None
+    paths = [f.get("path") for f in rows]
+    if len(paths) < GH_PAGE or offline:
+        return paths
+    done = subprocess.run(
+        ["gh", "api", "--paginate", f"repos/{gate.REPO}/pulls/{pr.get('number')}/files", "--jq", ".[].filename"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if done.returncode != 0:
+        raise SystemExit(
+            f"count-list: PR #{pr.get('number')} returned exactly {GH_PAGE} files, the page size, and the full "
+            f"list could not be fetched -- the Fable-path arm cannot be decided: {done.stderr.strip()[:200]}"
+        )
+    return [line for line in done.stdout.splitlines() if line.strip()]
+
+
 count = 0
 for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     if (pr.get("mergedAt") or "") < floor:
         continue
-    files = [f.get("path") for f in pr.get("files") or []]
+    files = file_paths(pr)
     fails = gate.read_line_fails(pr, None, files)
     if fails and all("not the head" in f for f in fails):
         fails = gate.read_line_fails(pr, head_commit(pr), files)

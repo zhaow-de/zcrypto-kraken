@@ -217,6 +217,36 @@ def test_the_change_index_row_commit_is_the_one_head_the_read_line_need_not_cove
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_row_with_no_file_list_is_counted_rather_than_read_as_touching_nothing(tmp_path):
+    """`read_line_fails` has two refusals that fire only when `files` is None — the ops-journal exemption cannot
+    be scoped, and the Fable paths cannot be checked. Mapping an ABSENT list to `[]` reports "touched nothing"
+    and makes both unreachable, which books an Opus read on a Fable path compliant. The row below carries an
+    Opus read and no `files` key at all, so it must count."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "abcdef1234567aaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    prs = [
+        {
+            "headRefName": "feat/no-files",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "body": "Read before push by: Claude Opus at abcdef1234567\n",
+        },
+        {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": head, "files": [], "body": "## Summary\n"},
+    ]
+    snapshot = tmp_path / "prs.json"
+    snapshot.write_text(json.dumps(prs))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
+        timeout=120,
+    )
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_an_empty_pr_fetch_is_an_error_rather_than_perfect_compliance(tmp_path):
     """An empty fetch used to print 0, which reads as every merged PR carrying its read line."""
     snapshot = tmp_path / "prs.json"
