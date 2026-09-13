@@ -407,6 +407,28 @@ def test_a_read_line_below_a_fence_is_refused_and_told_why():
     assert len(fails) == 1 and "plain prefix" in fails[0], fails
 
 
+@pytest.mark.parametrize(
+    "model",
+    ["Claude Opus or Claude Fable", "Claude Fable or Claude Opus", "Claude Opus, Claude Fable", "Claude Opus 5 or anyone"],
+)
+def test_a_read_line_naming_two_readers_records_no_read(model):
+    """The template's placeholder minus its markers is exactly this shape, and the floor matched its prefix."""
+    body = f"## Summary\n\nRead before push by: {model} at {TIP}\n\n- [x] done\n"
+    fails = _eval(_pr(body=body), files=["cli/costs/schedule.py"])
+    assert len(fails) == 1 and "more than one reader" in fails[0], fails
+
+
+def test_the_template_as_shipped_records_no_read():
+    """A minimal edit of the placeholder must not produce a line the gate accepts, so the shipped line and its
+    marker-stripped form are both refused."""
+    template = (pathlib.Path(__file__).resolve().parents[1] / ".github" / "pull_request_template.md").read_text()
+    line = next(ln for ln in template.splitlines() if ln.startswith("Read before push by:"))
+    stripped = line.replace("<model — ", "").replace(">", "").replace("<sha", TIP)
+    for candidate in (line, stripped):
+        fails = _eval(_pr(body=f"## Summary\n\n{candidate}\n\n- [x] done\n"), files=["cli/costs/schedule.py"])
+        assert fails, f"the gate accepted the template's read line: {candidate!r}"
+
+
 def test_a_read_line_a_reader_cannot_see_is_no_recorded_read():
     """The same stripping applies to the read line: a read claimed inside a comment is a read nobody can check."""
     body = f"## Summary\n\n<!--\nRead before push by: Claude Fable 5.1 at {TIP}\n-->\n\n- [x] done\n"
@@ -481,7 +503,7 @@ def test_the_range_mode_s_refusals_are_prefixed_with_the_commit_and_a_run_failur
 
     monkeypatch.setattr(gate.subprocess, "run", fake_run)
     assert gate.branch_growth("develop", "feat/x", "b" * 40) == [
-        "a commit fails the guidance guard against its parent — 1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes"
+        "a commit fails the guidance guard's range walk — 1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes"
     ]
 
 

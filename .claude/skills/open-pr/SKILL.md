@@ -31,7 +31,7 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 
 1. `## Summary` — one or two sentences mirroring the spec's goal.
 2. `## Spec / Plan` — links to the `docs/specs/…` and `docs/plans/…` that produced the PR (`N/A — <reason>` if there was none).
-3. `Read before push by: <model> at <sha>` — one line naming the agent that read the whole branch before push, a different agent from the author, and the tip it read — the `review` workflow run over `develop..HEAD` before the push, `re-review` over the fix range before the push that carries the fixes; `merge-pr`'s gate refuses a body whose sha is not the PR head, so a commit pushed after the read takes a read of the delta and an updated line — except Step 4's change-index row commit, the one commit the gate admits past the named tip. When the read is Opus and the PR touches a `--fable-paths` path, a second line goes directly below this one — `Fable floor substituted by Opus: <reason>` — whose reason the gate refuses when it is the placeholder, a filler token, or too little to be a reason, and which it reads as a reader sees it — a line inside a comment, a fenced block, a `<details>` block or a quote does not count, and an unterminated comment or fence hides everything after it.
+3. `Read before push by: Claude Opus at <sha>` (or `Claude Fable`; the gate's floor matches the `Claude` prefix, and a body that drops it is refused) — one line naming the agent that read the whole branch before push, a different agent from the author, and the tip it read — the `review` workflow run over `develop..HEAD` before the push, `re-review` over the fix range before the push that carries the fixes; `merge-pr`'s gate refuses a body whose sha is not the PR head, so a commit pushed after the read takes a read of the delta and an updated line — except Step 4's change-index row commit, the one commit the gate admits past the named tip. When the read is Opus and the PR touches a `--fable-paths` path, a second line goes directly below this one — `Fable floor substituted by Opus: <reason>` — whose reason the gate refuses when it is the placeholder, a filler token, or too little to be a reason, and which it reads as a reader sees it — a line inside a comment, a fenced block, a `<details>` block or a quote does not count, and an unterminated comment or fence hides everything after it.
 4. `## Guidance changes` — when `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` prints a line, that output verbatim under this heading, one commit per line; omitted when it prints nothing.
 5. the flexible middle (below),
 6. `## Checklist`.
@@ -77,7 +77,7 @@ Iterations are zero-padded to three digits (`iter-007`), several keys of one kin
 `gh pr edit --body/--title` **silently no-ops** in this repo (a Projects-classic GraphQL deprecation aborts the mutation while exiting 0). Update via REST instead, and always verify the edit persisted — never trust the exit code:
 
 ```bash
-gh api "repos/zhaow-de/zcrypto-kraken/pulls/<N>" -X PATCH -f body="$(cat body.md)"
+gh api repos/zhaow-de/zcrypto-kraken/pulls/<N> -X PATCH --input body.json   # {"body": "..."}
 gh pr view <N> --json body -q .body | head   # confirm the new content is live
 ```
 

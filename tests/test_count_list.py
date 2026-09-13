@@ -45,6 +45,126 @@ def _develop_resolves() -> bool:
     return done.returncode == 0
 
 
+def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
+    """The reason is at the function."""
+    fn = re.search(r"c_probe_verdicts_without_the_script\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
+    assert fn, "the entry's function is gone or renamed"
+    # The arm parsed as a line, not searched as a substring: `tests/test_config_selectors_are_parsed.py` refuses
+    # `in` over a hand-edited infra file, and the anchored shape is the stronger claim anyway.
+    left = re.search(r"^\s*comm -23 <\(git log (?P<opts>[^|]*?)--format=%h \| sort\)", fn.group(0), re.M)
+    assert left, "the left arm is no longer the first `comm -23 <(git log ...)` line of the function"
+    assert re.fullmatch(
+        r'develop HEAD --since="\$since" --grep=\'control proven\' --grep=KILLED --grep=SURVIVED ', left.group("opts")
+    ), left.group("opts")
+    assert re.search(r'^\s*since="\$\(git log develop HEAD --reverse ', fn.group(0), re.M), (
+        "the anchor reads a different ref from the arms"
+    )
+    right = r'^\s*<\(git log develop HEAD --since="\$since" --grep=mutate-probe --format=%h \| sort\) \| wc -l$'
+    assert re.search(right, fn.group(0), re.M), "the right arm no longer excuses exactly a commit naming the script"
+
+
+def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_states():
+    """The clause is CLAUDE.md's; this pins both arms to it, exclusions included."""
+    fn = re.search(r"c_prose_only_commits_without_the_prover\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
+    assert fn, "the entry's function is gone or renamed"
+    left = (
+        r"^\s*comm -23 <\(git log develop HEAD --since=\"\$PROSE_ONLY_RULE_SINCE\" --no-merges --format='%h %s' "
+        r"-i --grep=prose-only \| grep -v ' claude\(' \| cut -d' ' -f1 \| sort\) \\$"
+    )
+    right = (
+        r"^\s*<\(git log develop HEAD --since=\"\$PROSE_ONLY_RULE_SINCE\" --no-merges -i --grep=prove-inert "
+        r"--grep=prose-only-commits-without-the-prover --format=%h \| sort\) \| wc -l$"
+    )
+    assert re.search(left, fn.group(0), re.M), "the left arm no longer reads as the clause states"
+    assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
+
+
+def _set_clause(entry: str) -> str:
+    """The `(set: …; count: …)` clause of the CLAUDE.md bullet naming `entry`, parsed out of its line."""
+    tail = re.compile(r"count-list\.sh " + re.escape(entry) + r"`\)")
+    line = next(l for l in (REPO / "CLAUDE.md").read_text().splitlines() if tail.search(l))
+    m = re.search(r"\(set: (?P<set>.*?); count: `infra/scripts/count-list\.sh " + re.escape(entry) + r"`\)", line)
+    assert m, f"the bullet naming {entry} has no `(set: …; count: …)` clause"
+    return m.group("set")
+
+
+def test_the_three_clauses_state_the_ref_window_and_exclusions_their_counters_read():
+    """The counters' arms and windows have their own tests; the clauses are the side that drifted, so they are pinned too."""
+    probe = _set_clause("probe-verdicts-without-the-script")
+    prose = _set_clause("prose-only-commits-without-the-prover")
+    merged = _set_clause("merged-prs-without-a-floor-read-30d")
+    assert re.match(r"commits on `develop`, and on the branch being read, since ", probe), probe
+    assert re.match(r"non-merge commits on `develop`, and on the branch being read, since ", prose), prose
+    assert re.search(r"carries `KILLED`, `SURVIVED` or `control proven` .*? without naming `mutate-probe`$", probe), probe
+    assert re.search(r" — a `claude\(` commit, or one naming this entry, discusses the rule and is out$", prose), prose
+    assert re.match(r"PRs merged into `develop` in the last 30 days and since `READ_LINE_RULE_SINCE`", merged), merged
+
+
+def test_the_merged_pr_floor_is_the_later_of_thirty_days_and_the_read_line_instant():
+    fn = re.search(r"c_merged_prs_without_a_floor_read\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
+    assert fn, "the entry's function is gone or renamed"
+    floor = (
+        r"""^\s*floor="\$\(printf '%s' "\$prs" \| jq -r --arg since "\$READ_LINE_RULE_SINCE" """
+        r"""'\[\(now - 2592000 \| todate\), \$since\] \| max'\)" \|\| return 2$"""
+    )
+    assert re.search(floor, fn.group(0), re.M), (
+        "the window no longer starts at the later of the 30 days and the instant the clause names"
+    )
+
+
+def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
+    """The reason is at the constants; this refuses a window inlined with `=` or a space through any of git's date
+    flags -- the five in `git log --help` plus `--max-age`/`--min-age` from `git rev-list --help`."""
+    constant = re.compile(
+        r"^\s*(?:(?:readonly|export|local|declare|typeset)(?:\s+-[A-Za-z]+)*\s+)?([A-Z_]*RULE_SINCE)=(\"[^\"]*\"|'[^']*'|\S+)",
+        re.M,
+    )
+
+    def _unquote(raw: str) -> str:
+        return raw[1:-1] if len(raw) > 1 and raw[:1] in "\"'" and raw[-1:] == raw[:1] else raw
+
+    def seen(text: str) -> list[tuple[str, str]]:
+        return [(m.group(1), _unquote(m.group(2))) for m in constant.finditer(text)]
+
+    for spelling, value in (
+        ('X_RULE_SINCE="2026-09-13"', "2026-09-13"),
+        ("  X_RULE_SINCE='2026-09-13'", "2026-09-13"),
+        ("export X_RULE_SINCE=2026-09-13", "2026-09-13"),
+        ('    readonly X_RULE_SINCE="2026-09-13"', "2026-09-13"),
+        ('X_RULE_SINCE="1 week ago"', "1 week ago"),
+        ("  local -r X_RULE_SINCE='3 days ago'", "3 days ago"),
+        ("typeset -r X_RULE_SINCE=yesterday", "yesterday"),
+        ('declare -rx X_RULE_SINCE="2026-09-13"', "2026-09-13"),
+        ("readonly\tX_RULE_SINCE=2026-09-13", "2026-09-13"),
+    ):
+        assert seen(spelling) == [("X_RULE_SINCE", value)], f"the guard no longer sees {spelling!r} as it is written"
+    code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
+    since = seen(code)
+    assert since, "no RULE_SINCE constant found -- the windows moved somewhere this test cannot see"
+    # A spelling the pattern cannot parse drops its window out of `since` unchecked, and the assert above catches
+    # only the case where EVERY constant vanished. The counts have to agree, so an unreadable spelling fails
+    # instead of hiding.
+    assert len(re.findall(r"[A-Z_]*RULE_SINCE=", code)) == len(since), (
+        f"a RULE_SINCE assignment is spelled in a way this test cannot read: {since}"
+    )
+    for name, value in since:
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
+    window = re.compile(r"--(?:since|after|until|before|since-as-filter|max-age|min-age)[= ](?!['\"]?\$)[^ ]+")
+    for spelling in (
+        "--since=2026-09-13",
+        "--after=2027-01-01",
+        "--until='2026-09-13'",
+        "--since=yesterday",
+        '--before="1 day ago"',
+        "--since 2026-09-13",
+        "--since-as-filter=2026-09-13",
+        "--max-age=1757000000",
+    ):
+        assert window.search(spelling), f"the guard no longer sees {spelling!r}"
+    inlined = window.findall(code)
+    assert inlined == [], f"a window is inlined instead of naming its RULE_SINCE: {inlined}"
+
+
 def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own():
     """A corpus count names an entry that exists, and an entry the corpus does not name is one of the four -- a universal whose count is not run here is the finding."""
     names = _ENTRY.findall(SCRIPT.read_text())

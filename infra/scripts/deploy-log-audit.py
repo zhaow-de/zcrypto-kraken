@@ -78,11 +78,21 @@ def write_snapshot(path: str, maintenances: list[dict]) -> None:
     pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def run_maintenance(rows: list[dict], windows: list[dict]) -> int:
+# Hosts whose converge touches nothing that speaks to the venue; re-judged by
+# `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds`.
+NO_VENUE_EXPOSURE = frozenset({"nas", "zaccess"})
+
+
+def run_maintenance(rows: list[dict], windows: list[dict], *, venue_facing_only: bool = False) -> int:
+    considered = [row for row in rows if not (venue_facing_only and row.get("limit", "") in NO_VENUE_EXPOSURE)]
     hits = [
-        (row["ts"], row.get("limit", ""), window["name"]) for row in rows for window in windows if inside_window(row["ts"], window)
+        (row["ts"], row.get("limit", ""), window["name"])
+        for row in considered
+        for window in windows
+        if inside_window(row["ts"], window)
     ]
-    print(f"rows inside an API-impacting window {len(hits)} of {len(rows)}")
+    scope = " venue-facing" if venue_facing_only else ""
+    print(f"rows inside an API-impacting window {len(hits)} of {len(considered)}{scope}")
     for stamp, limit, name in hits:
         print(f"  {stamp} {limit} {name}")
     return EXIT_OK
@@ -102,12 +112,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log", default=str(DEPLOY_LOG), help="the deploy log to read (default: the tracked one)")
     parser.add_argument("--snapshot", help="write the fetched windows here, so a later count keeps this run's coverage")
     parser.add_argument("--from-snapshot", dest="from_snapshot", help="read the windows from this file instead of the network")
+    parser.add_argument(
+        "--venue-facing",
+        dest="venue_facing",
+        action="store_true",
+        help=f"count only rows whose host has venue exposure (excludes {', '.join(sorted(NO_VENUE_EXPOSURE))})",
+    )
     args = parser.parse_args(argv)
 
     rows = load_rows(pathlib.Path(args.log))
     if args.arm == "engine-window":
-        if args.snapshot or args.from_snapshot:
-            parser.error("--snapshot and --from-snapshot belong to the maintenance arm; this one reads no feed")
+        if args.snapshot or args.from_snapshot or args.venue_facing:
+            parser.error("--snapshot, --from-snapshot and --venue-facing belong to the maintenance arm")
         return run_engine_window(rows)
 
     if args.snapshot and args.from_snapshot:
@@ -122,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_FEED_UNREACHABLE
         if args.snapshot:
             write_snapshot(args.snapshot, maintenances)
-    return run_maintenance(rows, api_impacting(maintenances))
+    return run_maintenance(rows, api_impacting(maintenances), venue_facing_only=args.venue_facing)
 
 
 if __name__ == "__main__":

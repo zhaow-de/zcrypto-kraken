@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -525,3 +526,27 @@ def test_a_steps_prose_under_its_own_command_block_is_still_the_step(tmp_path):
     proc = subprocess.run([sys.executable, str(_SCRIPT), "--uncounted", str(page)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.splitlines() == [f"{page}:1 never"]
+
+
+def test_the_range_mode_refuses_a_commit_that_mixes_kinds(tmp_path):
+    """An amend stages one kind while the commit keeps the other; the staged-kind hook sees the index alone."""
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    (repo / ".claude" / "fixture.txt").write_text("x\n")
+    _git(repo, "add", ".claude/fixture.txt")
+    _git(repo, "commit", "-q", "-m", "claude(fixture): one kind")
+    (repo / "README.md").write_text("# readme, amended in\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-q", "--amend", "--no-edit")
+    mixed = _git(repo, "rev-parse", "--short=8", "HEAD").stdout.strip()
+    refused = _run(repo, "", "--range", f"{base}..HEAD")
+    assert refused.returncode == 1 and f"{mixed} claude(fixture): one kind: mixes claude-kind files" in refused.stdout, (
+        refused.stdout + refused.stderr
+    )
+
+
+def test_the_range_mode_reads_the_kind_set_the_hook_reads():
+    hook = (pathlib.Path(__file__).resolve().parents[1] / "infra" / "scripts" / "staged-kind-check.sh").read_text()
+    pattern = re.search(r"^claude=\$\(grep -cE '([^']+)' <<<", hook, re.M)
+    assert pattern, "the hook no longer classifies with one grep -cE pattern"
+    assert guard.KIND.pattern == pattern.group(1)

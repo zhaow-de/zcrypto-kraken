@@ -86,6 +86,10 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # of the network, for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs
 # cannot run, so a row failing ONLY on a sha mismatch is counted rather than excused.
 READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
+# A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
+# the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
+# empty set in the morning. `tests/test_count_list.py` refuses any RULE_SINCE that is not an instant.
+PROSE_ONLY_RULE_SINCE="2026-09-13T00:00:00Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
@@ -199,9 +203,27 @@ PYGATE
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
-c_mutation_commits_without_a_probe() { comm -23 <(git log develop --since=2026-08-03 -i --grep=mutation --format=%h | sort) <(git log develop --since=2026-08-03 -i --grep=mutate-probe --format=%h | sort) | wc -l; }
+c_prose_only_commits_without_the_prover() {
+  comm -23 <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
+           <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --grep=prose-only-commits-without-the-prover --format=%h | sort) | wc -l
+}
 
-c_prose_only_commits_without_the_prover() { comm -23 <(git log develop --since=2026-09-09 -i --grep=prose-only --format=%h | sort) <(git log develop --since=2026-09-09 -i --grep=prove-inert --format=%h | sort) | wc -l; }
+# A commit that records a probe verdict without naming the script. The left arm is the union of the script's
+# three verdict words, case-sensitive: `-i` readmits plain English ("survived ten tasks"), and `control proven`
+# alone misses a paraphrased record ("mutating it away SURVIVED").
+#
+# Anchor and arms read `develop HEAD`: develop's history plus the branch being read, so a violation is caught
+# where it can still be reworded. A window anchored on one ref and measured on another can miss the set entirely.
+c_probe_verdicts_without_the_script() {
+  local since
+  since="$(git log develop HEAD --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
+  if [ -z "$since" ]; then
+    echo "count-list: no commit adds the probe-block clause to CLAUDE.md, so this count has no window" >&2
+    return 2
+  fi
+  comm -23 <(git log develop HEAD --since="$since" --grep='control proven' --grep=KILLED --grep=SURVIVED --format=%h | sort) \
+           <(git log develop HEAD --since="$since" --grep=mutate-probe --format=%h | sort) | wc -l
+}
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.
 c_spec_hash_provenance() { uv run pytest tests/test_trial_registry_provenance.py -q || return 2; }
@@ -234,7 +256,8 @@ c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_ove
 c_converges_inside_a_kraken_window() {
   local feed=()
   if [ -n "${COUNT_LIST_FEED_SNAPSHOT:-}" ]; then feed=(--from-snapshot "$COUNT_LIST_FEED_SNAPSHOT"); fi
-  uv run python infra/scripts/deploy-log-audit.py maintenance "${feed[@]}" | sed -n 's/^rows inside an API-impacting window \([0-9][0-9]*\) of .*/\1/p'
+  # `--venue-facing` is the rule's own set; the audit's unnarrowed arm still reports every row.
+  uv run python infra/scripts/deploy-log-audit.py maintenance --venue-facing "${feed[@]}" | sed -n 's/^rows inside an API-impacting window \([0-9][0-9]*\) of .*/\1/p'
 }
 
 c_drills_on_the_primary() { grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md; }
@@ -387,6 +410,8 @@ c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' --
 # render and is not counted here, which is the direction that keeps the number reproducible in CI. Left knowingly.
 c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
 
+c_pins_not_yet_converged() { uv run python infra/scripts/pins-converged.py; }
+
 main() {
   wanted=("$@")
   cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -403,8 +428,8 @@ main() {
   emit "ansible-inventory-secret-forms-invoked" c_ansible_inventory_forms
   emit "kraken-cli-on-infra-surfaces" c_kraken_cli_on_infra
   emit "prose-chars" c_prose_chars
-  emit "mutation-commits-without-a-probe" c_mutation_commits_without_a_probe
   emit "prose-only-commits-without-the-prover" c_prose_only_commits_without_the_prover
+  emit "probe-verdicts-without-the-script" c_probe_verdicts_without_the_script
   emit "spec-hash-provenance" c_spec_hash_provenance
   emit "operator-term-surfaces" c_operator_term_surfaces c_operator_term_allowlist_edits
   emit "skip-gate-contract" c_skip_gate_contract
@@ -438,6 +463,7 @@ main() {
   emit "verified-versions-without-a-pass-record" c_verified_versions_without_a_pass_record
   emit "engine-hosts-besides-the-primary" c_engine_hosts_besides_the_primary
   emit "unscoped-docker-inspects-invoked" c_unscoped_docker_inspects_invoked
+  emit "pins-not-yet-converged" c_pins_not_yet_converged
   emit "pinned-leaves-the-edge-renders" c_pinned_leaves_the_edge_renders
 
   local w
