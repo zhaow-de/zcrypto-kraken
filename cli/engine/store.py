@@ -140,7 +140,8 @@ def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: i
         if frozen
         else "copy the file aside (outside the dataset root), recast the column "
         'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file, and '
-        "one forced by deleting it drops every bar the canonical lacks unless REST still reaches six bars into the canonical"
+        "one forced by deleting it drops every bar the canonical lacks unless the re-seed's seam holds -- six shared "
+        "stamps into the canonical and every shared close equal"
     )
     raise EngineError(
         f"{fn_name}: {path} types ts as {dtype} for {pair}@{interval}, not the aware "
@@ -184,7 +185,7 @@ def seed_store(
                 interval=interval,
                 min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
-                shortfall_hint="REST window no longer reaches the tail — use the quarterly OHLCVT dump",
+                shortfall_hint="use the quarterly OHLCVT dump",
                 mismatch_hint="this is a fresh canonical copy, so a disagreement with REST is a data-integrity error",
             )
             appended = merged.height - store_frame.height
