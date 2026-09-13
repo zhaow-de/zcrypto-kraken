@@ -59,14 +59,15 @@ def test_the_hook_refuses_only_a_mixed_kind(tmp_path, staged, rc):
 
 
 def _stopped_merge(repo: Path) -> None:
-    """A real divergence, so the merge's candidate set is exactly the two files the cases stage."""
+    """Both kinds arrive from THEIRS, so each is new against HEAD and a staged set of the two is really mixed.
+
+    Committing one of them on our side instead is what made the first version of this vacuous: the file matched
+    HEAD, so staging it staged nothing and the set was single-kind whatever the hook did."""
     run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
     run("checkout", "-q", "-b", "theirs")
-    _stage(repo, ".claude/fixture.txt")
-    run("commit", "-qm", "claude side")
+    _stage(repo, ".claude/fixture.txt", "cli/thing.py")
+    run("commit", "-qm", "both kinds on their side")
     run("checkout", "-q", "-")
-    _stage(repo, "cli/thing.py")
-    run("commit", "-qm", "code side")
     theirs = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "theirs"], check=True, capture_output=True, text=True
     ).stdout.strip()
@@ -74,11 +75,16 @@ def _stopped_merge(repo: Path) -> None:
 
 
 def test_a_merge_exempts_its_own_files(tmp_path):
-    """The mixed set a merge itself stages passes: the author chose neither side, and splitting is impossible."""
+    """The mixed set a merge itself stages passes: the author chose neither side, and splitting is impossible.
+
+    Asserted against the arm's absence too, because a single-kind staged set would pass either way."""
     repo = _repo(tmp_path)
     _stopped_merge(repo)
     _stage(repo, ".claude/fixture.txt", "cli/thing.py")
     assert _run(repo).returncode == 0
+
+    (repo / ".git" / "MERGE_HEAD").unlink()
+    assert _run(repo).returncode == 1, "the staged set must be one the hook refuses without the exemption"
 
 
 def test_a_merge_does_not_exempt_files_neither_parent_touched(tmp_path):
@@ -86,7 +92,7 @@ def test_a_merge_does_not_exempt_files_neither_parent_touched(tmp_path):
     repo = _repo(tmp_path)
     _stopped_merge(repo)
     _stage(repo, ".claude/fixture.txt", "cli/thing.py")  # the merge's own, excused
-    _stage(repo, ".claude/other.json", "cli/unrelated.py")  # neither parent's, still judged
+    _stage(repo, ".claude/other.json", "cli/unrelated.py")  # neither side's, still judged
     done = _run(repo)
     assert done.returncode == 1
     assert "split the commit" in done.stdout

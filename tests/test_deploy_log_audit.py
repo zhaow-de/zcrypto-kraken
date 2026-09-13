@@ -52,14 +52,19 @@ def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, cap
 
 def test_the_venue_facing_derivation_still_holds():
     """The constant is hand-maintained and rests on this set; nothing else would notice it going stale."""
-    roles = pathlib.Path(__file__).resolve().parents[1] / "infra" / "ansible" / "roles"
+    infra = pathlib.Path(__file__).resolve().parents[1] / "infra"
+    # `infra/nas/` and `infra/ops/` are walked beside the roles: a role renders a payload from outside its own
+    # directory, so a roles-only walk cannot see what it exonerates -- the NAS's is `infra/nas/compose.yaml`.
+    walked = [infra / "ansible" / "roles", infra / "nas", infra / "ops"]
     speaks = {
         d.name
-        for d in roles.iterdir()
+        for root in walked
+        if root.is_dir()
+        for d in ([root] if root.name != "roles" else list(root.iterdir()))
         if d.is_dir() and any("kraken" in f.read_text(errors="ignore").lower() for f in d.rglob("*") if f.is_file())
     }
     assert speaks == {"capture", "engine", "ops"}, (
-        f"the roles referencing Kraken are now {sorted(speaks)}; `NO_VENUE_EXPOSURE` "
+        f"the Kraken-referencing payloads are now {sorted(speaks)}; `NO_VENUE_EXPOSURE` "
         f"({sorted(audit.NO_VENUE_EXPOSURE)}) rests on that set and must be re-judged"
     )
 

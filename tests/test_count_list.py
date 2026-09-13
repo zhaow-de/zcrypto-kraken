@@ -45,6 +45,17 @@ def _develop_resolves() -> bool:
     return done.returncode == 0
 
 
+def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
+    """A bare verdict WORD is a proxy, which is what this entry replaced: `KILLED`/`SURVIVED` matched
+    case-insensitively reads 178 over thirty days against 71 for the rule's spelling, most of the difference
+    plain English. `control proven` is printed by `mutate-probe.sh` and by nothing that writes prose."""
+    fn = re.search(r"c_probe_verdicts_without_the_script\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
+    assert fn, "the entry's function is gone or renamed"
+    body = fn.group(0)
+    assert "--grep='control proven'" in body, "the left arm no longer greps the script's own verdict wording"
+    assert "-i" not in body.split("--grep=mutate-probe")[0], "a case-insensitive left arm readmits prose"
+
+
 def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
     """`git log --since=<bare date>` is approxidate: the missing time comes from the RUN's clock, so a bare date
     slides the window through the day and a morning run reads 0 over an empty set."""

@@ -211,10 +211,14 @@ c_prose_only_commits_without_the_prover() {
            <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --format=%h | sort) | wc -l
 }
 
-# A commit that records a probe verdict (`KILLED`/`SURVIVED`, which only `mutate-probe.sh` prints) without
-# naming the script. Unlike the word-proxy this replaced, the set IS the rule: a verdict with no script named is
-# exactly the violation, and a commit that ran no probe is not in it. The window is the commit that added the
-# clause, found by `-S` over `CLAUDE.md`, so no commit is judged by a rule that postdates it.
+# A commit that records a probe verdict without naming the script. The predicate is `control proven`, the
+# script's own verdict wording: `KILLED`/`SURVIVED` matched case-insensitively is a WORD proxy of the kind this
+# replaced -- 178 hits over thirty days against 71 for the rule's own spelling, 107 of them plain English
+# ("survived ten tasks"). `control proven` reads 100 and no prose says it.
+#
+# Anchor and both arms read HEAD, not `develop` like the entries above: a window anchored on one ref and
+# measured on another intersects to nothing, which is how this read 0 over an empty set. On a branch it judges
+# the branch, which is where a violation can still be reworded.
 c_probe_verdicts_without_the_script() {
   local since
   since="$(git log --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
@@ -222,8 +226,8 @@ c_probe_verdicts_without_the_script() {
     echo "count-list: no commit adds the probe-block clause to CLAUDE.md, so this count has no window" >&2
     return 2
   fi
-  comm -23 <(git log develop --since="$since" -i --grep='KILLED\|SURVIVED' --format=%h | sort) \
-           <(git log develop --since="$since" -i --grep=mutate-probe --format=%h | sort) | wc -l
+  comm -23 <(git log --since="$since" --grep='control proven' --format=%h | sort) \
+           <(git log --since="$since" --grep=mutate-probe --format=%h | sort) | wc -l
 }
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.
@@ -409,10 +413,10 @@ c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' --
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.
 # Read from the INDEX, while `access_pinned_leaves` globs the filesystem: an untracked PEM in that directory would
 # render and is not counted here, which is the direction that keeps the number reproducible in CI. Left knowingly.
+c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
+
 # The join needs no deploy-log field: the digest a re-pin passed on the command line is already in the row.
 c_pins_not_yet_converged() { uv run python infra/scripts/pins-converged.py; }
-
-c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
 
 main() {
   wanted=("$@")
