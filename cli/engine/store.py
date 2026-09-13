@@ -119,6 +119,30 @@ def _reconcile(
     return overlap_bars, len(replaced_ts), merged
 
 
+def _require_joinable_ts(frame: pl.DataFrame, store_path: Path, pair: str, interval: int, fn_name: str) -> None:
+    """The door both store readers that JOIN need, before `seam_overlap` gets the frame.
+
+    A `ts` column typed anything but `Datetime("us", "UTC")` cannot be joined against the REST frame's, and
+    polars says so with a bare `SchemaError` -- past `run_cycle`'s `except OHLCError` and past both commands'
+    `except EngineError`, so the operator got a traceback where every other broken-store input aborts naming
+    the file (T0193). The equality is exact on purpose: measured, `Datetime("ns", "UTC")`,
+    `Datetime("ms", "UTC")` and `Datetime("us", "Europe/Berlin")` all survive a parquet round trip and all
+    raise the same `SchemaError` at the same join, and `ns` is what a pandas/pyarrow-written file carries --
+    the likeliest foreign store file of all. `to_frame` writes exactly this dtype, so no frame this repo wrote
+    is refused.
+
+    The recovery names the `rm` first: `seed_store` copies the canonical only where a store file is ABSENT, so
+    seeding over a dtype-broken file re-reads and re-joins it rather than repairing it.
+    """
+    dtype = frame.schema.get("ts")
+    if dtype != pl.Datetime("us", "UTC"):
+        raise EngineError(
+            f"{fn_name}: {store_path} types ts as {dtype} for {pair}@{interval}, not the aware "
+            f'`Datetime("us", "UTC")` every reader joins on -- remove the file and re-seed it '
+            "(`rm` it, then `zcrypto engine seed`); seeding over it re-reads the same column"
+        )
+
+
 def seed_store(
     store_dir: Path,
     canonical_dir: Path,
@@ -140,6 +164,7 @@ def seed_store(
                 write_parquet(read_parquet(canonical_path), store_path)
 
             store_frame = read_parquet(store_path)
+            _require_joinable_ts(store_frame, store_path, pair, interval, "seed_store")
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             overlap_bars, replaced, merged = _reconcile(
@@ -184,19 +209,9 @@ def refresh_store(
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
             store_frame = read_parquet(store_path)
-            # The cycle leg's own door, and it has to be HERE rather than in `read_store_series`: this frame
-            # meets `seam_overlap`'s `join(on="ts")` first, and polars refuses to join a naive `ts` column
-            # against the REST frame's UTC one with a bare `SchemaError` -- past `run_cycle`'s
-            # `except OHLCError`, so the operator gets a traceback where every other broken-store input on this
-            # branch now gets an abort naming the file (T0193). `to_frame` types the column
-            # `Datetime("us", "UTC")`, so no frame this repo wrote is refused; a re-seed is the recovery, which
-            # is why this aborts rather than retrying like a transport error.
-            ts_dtype = store_frame.schema.get("ts")
-            if not isinstance(ts_dtype, pl.Datetime) or ts_dtype.time_zone is None:
-                raise EngineError(
-                    f"refresh_store: {store_path} types ts as {ts_dtype} for {pair}@{interval}, not an "
-                    'aware `Datetime("us", "UTC")` -- re-seed it with `zcrypto engine seed`'
-                )
+            # An `EngineError` rather than the loop's retried `OHLCError`: a dtype-broken file is not a
+            # transport error and every retry re-reads the same column.
+            _require_joinable_ts(store_frame, store_path, pair, interval, "refresh_store")
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             _, _, merged = _reconcile(

@@ -248,28 +248,40 @@ def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path
     assert H4_START + timedelta(hours=4 * 13) not in ts  # bar 13 (interval end > now) dropped
 
 
-def test_refresh_store_refuses_a_naive_ts_column_before_the_seam_join(tmp_path):
-    """The cycle leg's share of T0193. A store frame whose `ts` is typed without a zone cannot be joined
-    against the REST frame's UTC column: polars raises a bare `SchemaError` from `seam_overlap`, which
-    `run_cycle`'s `except OHLCError` does not catch, so the operator got a traceback while every other
-    broken-store input on this branch gets an abort naming the file. `read_store_series`' door cannot cover
-    it -- this frame meets the join first."""
+# Each survives a `write_parquet`/`read_parquet` round trip and each then raises the same `SchemaError` at the
+# same join, so the door's equality has to be exact: `ns` is what a pandas/pyarrow-written file carries.
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Datetime("us", None), pl.Datetime("ns", "UTC"), pl.Datetime("ms", "UTC"), pl.Datetime("us", "Europe/Berlin")],
+)
+@pytest.mark.parametrize("reader", ["refresh_store", "seed_store"])
+def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, reader, dtype):
+    """The cycle leg's share of T0193, on BOTH readers that join. A `ts` column typed anything but
+    `Datetime("us", "UTC")` cannot be joined against the REST frame's: polars raises a bare `SchemaError` from
+    `seam_overlap`, which `run_cycle`'s `except OHLCError` and both commands' `except EngineError` let past, so
+    the operator got a traceback. `read_store_series`' door cannot cover it -- the frame meets the join first --
+    and `seed_store` needs its own because it is the recovery this refusal names."""
+    canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
-    path = _store_path(store_dir, "BTC/EUR", 1440)
-    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), path)
-    write_parquet(read_parquet(path).with_columns(pl.col("ts").dt.replace_time_zone(None)), path)
-    assert read_parquet(path).schema["ts"].time_zone is None  # the input the door is about
+    # A whole seeded universe, so `seed_store` reaches the broken file by reading it rather than by failing to
+    # find a canonical to copy: its loop covers every pair and grid, and it copies only where a store file is
+    # absent -- which is also why seeding cannot repair this input.
+    _write_full_universe(canonical_dir, _canonical_rows)
+    _write_full_universe(store_dir, _canonical_rows)
+    path = _store_path(store_dir, "ADA/EUR", 240)
+    write_parquet(read_parquet(path).with_columns(pl.col("ts").cast(dtype)), path)
+    assert read_parquet(path).schema["ts"] == dtype  # the round trip preserves it, which is why the door is needed
 
     with pytest.raises(EngineError) as exc:
-        refresh_store(
-            store_dir,
-            pairs={"BTC/EUR": "XXBTZEUR"},
-            fetch_fn=lambda pk, iv: _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 3),
-            clock=lambda: FAR_FUTURE,
-        )
+        if reader == "refresh_store":
+            refresh_store(store_dir, pairs={"ADA/EUR": "ADAEUR"}, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
+        else:
+            seed_store(store_dir, canonical_dir, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
 
-    assert str(path) in str(exc.value)
-    assert "not an" in str(exc.value) and "zcrypto engine seed" in str(exc.value)
+    assert reader in str(exc.value) and str(path) in str(exc.value)
+    # The recovery has to be one that works: seeding over the file re-reads the same column, so the `rm` is
+    # named. Nothing in the tree rewrites a dtype-broken store file.
+    assert "remove the file" in str(exc.value) and "rm" in str(exc.value)
 
 
 def test_refresh_store_overlap_mismatch_raises(tmp_path):
