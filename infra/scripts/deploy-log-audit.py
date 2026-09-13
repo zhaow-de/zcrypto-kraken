@@ -78,8 +78,8 @@ def write_snapshot(path: str, maintenances: list[dict]) -> None:
     pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-# Hosts whose converge touches nothing that speaks to the venue: `grep -rli kraken infra/ansible/roles/*/`
-# names `capture`, `engine` and `ops`, and the NAS play runs the `nas` role alone.
+# Hosts whose converge touches nothing that speaks to the venue; re-judged by
+# `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds`.
 NO_VENUE_EXPOSURE = frozenset({"nas", "zaccess"})
 
 

@@ -59,6 +59,8 @@ def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
     assert re.search(r'^\s*since="\$\(git log develop HEAD --reverse ', fn.group(0), re.M), (
         "the anchor reads a different ref from the arms"
     )
+    right = r'^\s*<\(git log develop HEAD --since="\$since" --grep=mutate-probe --format=%h \| sort\) \| wc -l$'
+    assert re.search(right, fn.group(0), re.M), "the right arm no longer excuses exactly a commit naming the script"
 
 
 def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_states():
@@ -86,20 +88,30 @@ def _set_clause(entry: str) -> str:
     return m.group("set")
 
 
-def test_the_two_clauses_state_the_ref_and_exclusions_their_counters_read():
+def test_the_three_clauses_state_the_ref_window_and_exclusions_their_counters_read():
     """The counters are pinned above; the clauses are the side that drifted, so they are pinned too."""
     probe = _set_clause("probe-verdicts-without-the-script")
     prose = _set_clause("prose-only-commits-without-the-prover")
-    for clause in (probe, prose):
-        assert re.match(r"commits on `develop`, and on the branch being read, since ", clause), clause
+    merged = _set_clause("merged-prs-without-a-floor-read-30d")
+    assert re.match(r"commits on `develop`, and on the branch being read, since ", probe), probe
+    assert re.match(r"non-merge commits on `develop`, and on the branch being read, since ", prose), prose
     assert re.search(r"carries `KILLED`, `SURVIVED` or `control proven` .*? without naming `mutate-probe`$", probe), probe
     assert re.search(r" — a `claude\(` commit, or one naming this entry, discusses the rule and is out$", prose), prose
+    assert re.match(r"PRs merged into `develop` in the last 30 days and since `READ_LINE_RULE_SINCE`", merged), merged
 
 
 def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
     """The reason is at the constants; this refuses a window inlined with `=` or a space through any of git's date
     flags -- the five in `git log --help` plus `--max-age`/`--min-age` from `git rev-list --help`."""
-    since = re.findall(r"^([A-Z_]*RULE_SINCE)=\"([^\"]+)\"", SCRIPT.read_text(), re.MULTILINE)
+    constant = re.compile(r"^\s*(?:readonly |export |local |declare -r )?([A-Z_]*RULE_SINCE)=(['\"]?)([^'\"\s]+)\2", re.M)
+    for spelling in (
+        'X_RULE_SINCE="2026-09-13"',
+        "  X_RULE_SINCE='2026-09-13'",
+        "export X_RULE_SINCE=2026-09-13",
+        '    readonly X_RULE_SINCE="2026-09-13"',
+    ):
+        assert constant.search(spelling), f"the guard no longer sees {spelling!r}"
+    since = [(m.group(1), m.group(3)) for m in constant.finditer(SCRIPT.read_text())]
     assert since, "no RULE_SINCE constant found -- the windows moved somewhere this test cannot see"
     for name, value in since:
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
@@ -115,7 +127,7 @@ def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
         "--since-as-filter=2026-09-13",
         "--max-age=1757000000",
     ):
-        assert window.search(spelling), f"the guard no longer sees {spelling!r}"  # the guard's own breadth
+        assert window.search(spelling), f"the guard no longer sees {spelling!r}"
     inlined = window.findall(code)
     assert inlined == [], f"a window is inlined instead of naming its RULE_SINCE: {inlined}"
 

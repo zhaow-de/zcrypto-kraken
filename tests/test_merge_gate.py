@@ -419,8 +419,7 @@ def test_a_read_line_naming_two_readers_records_no_read(model):
 
 
 def test_the_template_as_shipped_records_no_read():
-    """The template<->gate relation was asserted by hand in two commit messages and broke twice; this holds it.
-    A minimal edit of the placeholder must not produce a line the gate accepts, so the shipped line and its
+    """A minimal edit of the placeholder must not produce a line the gate accepts, so the shipped line and its
     marker-stripped form are both refused."""
     template = (pathlib.Path(__file__).resolve().parents[1] / ".github" / "pull_request_template.md").read_text()
     line = next(ln for ln in template.splitlines() if ln.startswith("Read before push by:"))

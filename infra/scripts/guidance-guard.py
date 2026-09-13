@@ -230,7 +230,7 @@ def _judged(paths: list[str]) -> list[str]:
 
 
 def range_fails(base: str, head: str) -> list[str]:
-    """Every non-merge commit of base..head judged against its first parent -- the record a rewrite may have lost or doubled, which no commit-msg hook sees -- and refused when it mixes the staged-kind hook's kinds, which an amend lands past that hook."""
+    """Every non-merge commit of base..head judged against its first parent -- the record a rewrite may have lost or doubled, which no commit-msg hook sees -- and for one kind per commit."""
     listed = _git("rev-list", "--reverse", "--no-merges", f"{base}..{head}")
     if listed.returncode != 0:
         return [f"cannot list {base}..{head}: {listed.stderr.strip()}"]

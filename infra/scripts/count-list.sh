@@ -203,9 +203,6 @@ PYGATE
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
-# The window opens where the zero-base round set this base (`PROSE_ONLY_RULE_SINCE`, which says why it is an
-# instant). A `claude(` commit, or one naming this entry, is out of the set: both discuss the rule, neither
-# claims a diff.
 c_prose_only_commits_without_the_prover() {
   comm -23 <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
            <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --grep=prose-only-commits-without-the-prover --format=%h | sort) | wc -l

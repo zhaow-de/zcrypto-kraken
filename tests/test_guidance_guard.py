@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -542,3 +543,10 @@ def test_the_range_mode_refuses_a_commit_that_mixes_kinds(tmp_path):
     assert refused.returncode == 1 and f"{mixed} claude(fixture): one kind: mixes claude-kind files" in refused.stdout, (
         refused.stdout + refused.stderr
     )
+
+
+def test_the_range_mode_reads_the_kind_set_the_hook_reads():
+    hook = (pathlib.Path(__file__).resolve().parents[1] / "infra" / "scripts" / "staged-kind-check.sh").read_text()
+    pattern = re.search(r"^claude=\$\(grep -cE '([^']+)' <<<", hook, re.M)
+    assert pattern, "the hook no longer classifies with one grep -cE pattern"
+    assert guard.KIND.pattern == pattern.group(1)

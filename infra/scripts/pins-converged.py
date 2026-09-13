@@ -60,10 +60,11 @@ def converged_digests(log_path: pathlib.Path, groups: dict[str, set[str]]) -> di
     """Each 12-hex prefix a successful converge was handed, mapped to the hosts it ran on.
 
     `rc != 0` is out: `converge.sh` records a pass whatever its `rc`, so an interrupted one (the log's `rc 99`)
-    lands like a clean one. An extra var counts on any run. `committed_pins` counts only on a run that applied
-    the rendered stack (`-e nas_apply_compose=true`): the field is read from `host_vars/<limit>/vars.yml` at
-    record time, and the nas role's `compose up -d` and restarts are flag-gated, so a render-only run lands the
-    pin in the row having restarted nothing. Matched on the digest, not the var's name, which differs per role.
+    lands like a clean one. An extra var counts on any such run. `committed_pins` counts only on a run that
+    applied the rendered stack (`-e nas_apply_compose=true`, the nas role or `all` in its tags, or un-tagged): the field is read
+    from `host_vars/<limit>/vars.yml` at record time, and the nas role's `compose up -d` and restarts are
+    flag-gated, so a render-only run lands the pin in the row having restarted nothing. Matched on the digest,
+    not the var's name, which differs per role.
     """
     out: dict[str, set[str]] = {}
     for n, line in enumerate(log_path.read_text().splitlines(), 1):
@@ -78,7 +79,8 @@ def converged_digests(log_path: pathlib.Path, groups: dict[str, set[str]]) -> di
             continue
         extra = row.get("extra_vars") or {}
         payloads = [extra]
-        if extra.get("nas_apply_compose") in (True, "true"):
+        tags = [t for t in str(row.get("tags") or "").split(",") if t]
+        if extra.get("nas_apply_compose") in (True, "true") and (not tags or {"nas", "all"} & set(tags)):
             payloads.append(row.get("committed_pins") or {})
         for m in DIGEST.finditer(json.dumps(payloads)):
             out.setdefault(m.group(1), set()).update(_hosts(str(row.get("limit", "")), groups))

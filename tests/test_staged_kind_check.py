@@ -86,6 +86,27 @@ def test_a_merge_exempts_its_own_files(tmp_path):
     assert _run(repo).returncode == 1, "the staged set must be one the hook refuses without the exemption"
 
 
+def test_a_merge_does_not_exempt_a_pair_only_our_side_touched(tmp_path):
+    """A mixed pair from our own history, staged by hand during a stopped merge, is the author's, not the merge's."""
+    repo = _repo(tmp_path)
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    run("checkout", "-q", "-b", "theirs", base)
+    _stage(repo, "docs/other.md")
+    run("commit", "-qm", "theirs touches one other file")
+    run("checkout", "-q", "-")
+    _stage(repo, ".claude/ours.txt", "cli/ours.py")
+    run("commit", "-qm", "our side touched both kinds since the base")
+    theirs = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "theirs"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    (repo / ".git" / "MERGE_HEAD").write_text(theirs + "\n")
+    for path in (".claude/ours.txt", "cli/ours.py"):  # edited again and staged by hand, inside the stopped merge
+        (repo / path).write_text("edited during the merge\n")
+    run("add", ".claude/ours.txt", "cli/ours.py")
+    assert _run(repo).returncode == 1
+
+
 def test_an_octopus_merge_exempts_every_heads_files(tmp_path):
     """`MERGE_HEAD` carries one line per merged head; read as one, the arm is a git fatal and rc 128."""
     repo = _repo(tmp_path)
