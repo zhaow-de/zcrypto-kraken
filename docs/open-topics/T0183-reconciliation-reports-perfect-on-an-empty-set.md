@@ -1,5 +1,6 @@
 ---
 status: partial
+ripe_when: 'T0187 is resolved: ls docs/open-topics/archive/T0187-*.md succeeds'
 ---
 
 # A reconciliation reports a perfect score when it compared nothing

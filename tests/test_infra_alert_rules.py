@@ -1323,7 +1323,7 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
         "nas": REPO / "infra/nas/compose.yaml",
     }
     caps = {h: _compose_alloy_limit_bytes(p) for h, p in others.items()}
-    assert len(set(caps.values())) == 1, f"the three shared-cap hosts no longer share a cap: {caps} -- split the leg"
+    assert len(set(caps.values())) == 1, f"the shared-cap hosts no longer share a cap: {caps} -- split the leg"
     shared = next(iter(caps.values()))
     assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
         f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"

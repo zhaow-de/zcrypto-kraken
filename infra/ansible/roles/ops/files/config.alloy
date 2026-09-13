@@ -208,7 +208,7 @@ prometheus.remote_write "grafana" {
 
 // ---- Logs: the host journal -- the zcrypto systemd jobs AND Alloy's own container -------------
 // Two unrelated sources share this one journal reader (00068 D6, the docker-socket residual
-// retired): the five zcrypto-*.service units (archive-pull half-hourly since T0058,
+// retired): the zcrypto-*.service units (archive-pull half-hourly since T0058,
 // panel-materialize + tape-bars hourly, verify-replay + verified-replay daily) run their work as an ephemeral
 // `docker run --rm` ATTACHED to the unit (T0060) -- so all container stdout/stderr flows through
 // the script into the unit's journal, alongside the orchestration script's OWN lines (including
@@ -219,7 +219,7 @@ prometheus.remote_write "grafana" {
 // instead, so the journal is their only transport too now. "Lossless" for the attached-container
 // case is bounded upstream by journald's own per-service rate limit (Debian default
 // RateLimitBurst=10000 per RateLimitIntervalSec=30s), which drops lines before Alloy ever sees
-// them. All five units now emit orders of magnitude less than that. The verify-replay sweep
+// them. All of these units now emit orders of magnitude less than that. The verify-replay sweep
 // used to be the exception -- it replayed the WHOLE archive and logged a line per hour, which
 // put it on course to cross the burst around 2026-08-14 and drop the tail of a (pair, hour)-
 // SORTED stream: the last pairs in sort order, all of their hours, plus both summary lines.
@@ -238,7 +238,7 @@ loki.relabel "journal_units" {
   // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
   forward_to = []
 
-  // KEEP the five zcrypto units' journal lines (source 1: __journal__systemd_unit) OR Alloy's own
+  // KEEP the zcrypto units' journal lines (source 1: __journal__systemd_unit) OR Alloy's own
   // journald-driver stream (source 2: __journal_container_name = grafana-alloy, the container_name
   // the alloy compose service sets) -- everything else on the host journal (sshd, cron, dockerd,
   // ...) stays local.
@@ -249,7 +249,7 @@ loki.relabel "journal_units" {
     action        = "keep"
   }
 
-  // Unit name minus ".service" -> the `container` label. For the five zcrypto units this yields
+  // Unit name minus ".service" -> the `container` label. For the zcrypto units this yields
   // e.g. "zcrypto-archive-pull" -- the label loki.process "parse" below's
   // `{container=~"zcrypto-.*"}` selector keys on, so these streams get parsed (level label, app
   // timestamp) with no selector change. Alloy's journald-driver entries carry
@@ -303,7 +303,8 @@ loki.source.journal "zcrypto_units" {
 }
 
 // Parse ONCE, here at ingest -- never at query time. Two stages: our Python services' own
-// timestamped log line (the five zcrypto-*.service units), and Alloy's own logfmt output.
+// timestamped log line (the zcrypto-*.service units the keep rule above admits), and Alloy's own
+// logfmt output.
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
 

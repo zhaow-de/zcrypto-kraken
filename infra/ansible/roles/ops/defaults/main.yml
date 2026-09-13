@@ -50,8 +50,8 @@ ops_hot_group: zcrypto-hot
 # role). Added to ops_hot_group only when it already exists, so this role never creates it.
 ops_research_user: zhaow
 
-# node-exporter-style textfile-collector dir the replay/archive-pull/panel timers publish their
-# .prom files into.
+# node-exporter-style textfile-collector dir the timers publish their .prom files into --
+# `grep -rl ops_textfile_dir infra/ansible/roles/*/templates/*.sh.j2` names the writers.
 ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 
 # The nightly verify-replay checkpoint (spec 00078 D9): the per-hour raw facts that let the sweep
@@ -61,8 +61,9 @@ ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 # Deleting it costs one full re-verification.
 ops_verify_replay_state_subdir: verify-replay-state
 
-# healthchecks.io dead-man ping URLs, one per timer. Empty means the ping is simply skipped
-# (mirroring the CLI's optional `ping_healthcheck` semantics).
+# healthchecks.io dead-man ping URLs, one per timer that pings -- not every timer has one
+# (`grep -l healthcheck_url infra/ansible/roles/ops/templates/*.sh.j2`). Empty means the ping is
+# simply skipped (mirroring the CLI's optional `ping_healthcheck` semantics).
 ops_verify_replay_healthcheck_url: ""
 ops_verified_replay_healthcheck_url: ""
 
@@ -89,7 +90,7 @@ ops_panel_healthcheck_url: ""
 
 # --- Alloy (spec 00054 D1/D7): the ops node's telemetry stack. D1 is an ORDERING constraint --
 # this lands, and its series are confirmed in Grafana, BEFORE the overlay writer moves here
-# (plan 00054 Task 3 gates Task 7). Without it the node's four textfiles reach nobody, and moving
+# (plan 00054 Task 3 gates Task 7). Without it the node's textfiles reach nobody, and moving
 # the writer onto an unobservable host would be T0052's defect one level up.
 ops_alloy_dir: /etc/zcrypto-ops/alloy
 # Alloy's container memory cap on THIS host. 1g, not the 512m the other three run: measured
