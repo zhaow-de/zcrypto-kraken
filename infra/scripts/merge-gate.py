@@ -251,8 +251,10 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
     return sorted(p for p in files if any(p == g or (g.endswith("/") and p.startswith(g)) for g in FABLE_PATHS))
 
 
-def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None) -> list[str]:
-    """The read is at the floor and names the head, or the head is the one change-index row commit past the tip it names."""
+def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None) -> list[str]:
+    """The read is at the floor and names the head, or the head is the one change-index row commit past the tip it
+    names, or the head's tree is the tree the named tip carries -- a message amend, which the reader's read of that
+    tree covers."""
     if pr.get("headRefName") == "ops-journal":
         if files is None:
             return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
@@ -298,13 +300,21 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
         files = [f.get("filename") for f in head_commit.get("files") or []]
         if len(parents) == 1 and parents[0].startswith(sha) and files == [INDEX]:
             return []
+        head_tree = ((head_commit.get("commit") or {}).get("tree") or {}).get("sha")
+        read_tree = ((read_commit or {}).get("commit") or {}).get("tree", {}).get("sha") if read_commit else None
+        if head_tree and read_tree and head_tree == read_tree:
+            return []
     return [
         f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
     ]
 
 
 def evaluate(
-    pr: dict, head_commit: dict | None = None, files: list[str] | None = None, branch_growth: list[str] | None = None
+    pr: dict,
+    head_commit: dict | None = None,
+    files: list[str] | None = None,
+    branch_growth: list[str] | None = None,
+    read_commit: dict | None = None,
 ) -> list[str]:
     """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run."""
     fails: list[str] = []
@@ -337,7 +347,7 @@ def evaluate(
         fails.append("no CI checks reported yet — wait for coverage.yml to register")
     if "- [ ]" in body:
         fails.append("PR description has unchecked checklist item(s) (- [ ])")
-    fails.extend(read_line_fails(pr, head_commit, files))
+    fails.extend(read_line_fails(pr, head_commit, files, read_commit))
     if branch_growth is None:
         fails.append(
             "the branch's ambient growth was not checked commit by commit: `guidance-guard.py --range <base>..<head>` did not run"
@@ -386,9 +396,11 @@ def main(argv: list[str]) -> int:
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
+    read_commit = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
-    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head))
+        read_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}"))
+    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit)
     if fails:
         print("GATE FAILED:")
         for fail in fails:

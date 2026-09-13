@@ -24,8 +24,8 @@ def _load(path: pathlib.Path, name: str):
 gate = _load(_SCRIPT, "merge_gate")
 
 
-def _eval(pr, head_commit=None, files=None, branch_growth=()):
-    return gate.evaluate(pr, head_commit, files, list(branch_growth))
+def _eval(pr, head_commit=None, files=None, branch_growth=(), read_commit=None):
+    return gate.evaluate(pr, head_commit, files, list(branch_growth), read_commit)
 
 
 TIP = "6f02667280cfbd7b76cb39d3139a5f865d995c61"
@@ -66,6 +66,24 @@ def test_a_read_at_the_head_passes():
 def test_the_one_row_commit_past_the_read_passes():
     pr = _pr(body=_stale_body())
     assert _eval(pr, _head([PREV], [gate.INDEX])) == []
+
+
+def _tree(commit: dict, tree: str) -> dict:
+    return {**commit, "commit": {"tree": {"sha": tree}}}
+
+
+def test_an_amend_that_kept_the_tree_the_read_graded_passes():
+    pr = _pr(body=_stale_body())
+    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
+    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40)) == []
+
+
+def test_a_head_whose_tree_differs_from_the_read_tips_fails(monkeypatch):
+    pr = _pr(body=_stale_body())
+    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
+    fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40))
+    assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
+    assert len(_eval(pr, head)) == 1  # the read tip's commit not fetched: no tree to compare, so no pass
 
 
 def test_a_row_commit_that_also_touches_another_file_fails():
