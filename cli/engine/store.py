@@ -140,7 +140,7 @@ def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: i
         if frozen
         else "copy the file aside (outside the dataset root), recast the column "
         'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file, and '
-        "one forced by deleting it would drop every bar the canonical lacks that REST no longer reaches"
+        "one forced by deleting it drops every bar the canonical lacks unless REST still reaches six bars into the canonical"
     )
     raise EngineError(
         f"{fn_name}: {path} types ts as {dtype} for {pair}@{interval}, not the aware "

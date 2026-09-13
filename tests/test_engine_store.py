@@ -295,6 +295,7 @@ def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, re
     # Pinned because the earlier wording here pinned a data-loss instruction.
     assert "recast the column in place" in str(exc.value) and "copy the file aside" in str(exc.value)
     assert "a re-seed refuses this file" in str(exc.value)
+    assert "drops every bar the canonical lacks unless REST still reaches six bars" in str(exc.value)
 
 
 def test_refresh_store_overlap_mismatch_raises(tmp_path):
