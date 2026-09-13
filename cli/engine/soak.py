@@ -704,12 +704,12 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
     with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
     was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
     CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
-    # `n` is bound BEFORE the loop, because a decode error comes out of the iterator's first `__next__` and a
-    # handler interpolating the loop variable raised `UnboundLocalError` instead of the refusal it was added to
-    # make. It is used by the JSON arm ALONE: for a decode error `n` is not the bad byte's line -- the reader
-    # fills a buffer, so the raise lands at a chunk boundary (measured: 500 good lines with the corruption on
-    # 501 reported "line 414") -- and a number that misdirects the operator is worse than no number.
-    n = 0
+    # `n` belongs to the JSON arm ALONE, and needs no pre-binding there: `json.loads` can only raise after a
+    # line has been read, so `n` is always bound when that arm runs. The UTF-8 arm claims no line, because for
+    # a decode error `n` is not the bad byte's line -- the reader fills a buffer, so the raise lands at a chunk
+    # boundary (measured: 500 good lines with the corruption on 501 reported "line 414", which is where a
+    # 79-byte line falls) -- and a number that misdirects the operator is worse than no number. An earlier
+    # version formatted `n` on BOTH arms and exited `UnboundLocalError` on the decode one.
     try:
         with registry_path.open() as f:
             for n, line in enumerate(f, 1):
@@ -1722,7 +1722,9 @@ def soak_report(
     # Two refusals on one loop, from the two topics that met here. The READ can fail on a path the glob found
     # -- a directory where a record belongs, non-UTF-8 bytes -- and did so past every handler (T0193); and
     # `realized_series` consumes all of these, not just the comparison spec 00113 hardened, so every record is
-    # validated here and 00113's arm stays the last line (T0194).
+    # validated here -- which does not retire that spec's arm, `realized_internals`' `if not
+    # math.isfinite(diff)` over `abs(row[a] - value)`: the diff's other operand is the REBUILT row, which is no
+    # record and passes through no validator (T0194).
     records = []
     for _, artifact in arts:
         try:

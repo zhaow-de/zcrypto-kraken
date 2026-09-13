@@ -97,7 +97,9 @@ def require_comparable_cycle_ts(record: CycleRecord) -> None:
     """
     if not isinstance(record.cycle_ts, datetime):
         raise EngineJournalError(f"cycle_ts must be a datetime, got {record.cycle_ts!r}")
-    if record.cycle_ts.tzinfo is None or record.cycle_ts.utcoffset() is None:
+    # `utcoffset() is None` alone: Python's own definition of naive subsumes `tzinfo is None`, the rule
+    # `cli/engine/execgate.py:148-152` already records. Same redundancy, same reason, as the store door's.
+    if record.cycle_ts.utcoffset() is None:
         raise EngineJournalError(f"cycle_ts must be timezone-aware to order against a boundary, got {record.cycle_ts!r}")
 
 

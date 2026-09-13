@@ -326,27 +326,40 @@ def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_p
 
 
 @pytest.mark.parametrize(
-    ("shape", "write"),
+    ("shape", "write", "says"),
     [
-        ("absent", None),
-        ("a directory", lambda p: p.mkdir()),
-        ("not JSONL", lambda p: p.write_text('{"trial_id": 47, bad}\n')),
-        ("record 47 with no metrics", lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": None}) + "\n")),
-        ("a metric absent", lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": {"cap_breach_bars": 2}}) + "\n")),
+        ("absent", None, "cannot read the trial registry"),
+        ("a directory", lambda p: p.mkdir(), "cannot read the trial registry"),
+        ("not JSONL", lambda p: p.write_text('{"trial_id": 47, bad}\n'), "is not JSONL at line 1"),
+        (
+            "record 47 with no metrics",
+            lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": None}) + "\n"),
+            "carries no usable metrics",
+        ),
+        (
+            "a metric absent",
+            lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": {"cap_breach_bars": 2}}) + "\n"),
+            "carries no usable metrics",
+        ),
         (
             "a metric that is not a number",
             lambda p: p.write_text(
                 json.dumps({"trial_id": 47, "metrics": {"governor_engaged_bars": "many", "cap_breach_bars": 2}}) + "\n"
             ),
+            "carries no usable metrics",
         ),
         # The arm that formatted the loop variable of the loop whose FIRST `__next__` raises: this used to exit
-        # `UnboundLocalError` out of the handler added to prevent a traceback, and no test reached it.
-        ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe{\x00b\x00a\x00d\x00")),
+        # `UnboundLocalError` out of the handler added to prevent a traceback, and no test reached it. Its
+        # wording is pinned below, including that it claims NO line: for a decode error `n` is a chunk boundary
+        # rather than the bad byte's line. Putting `{n}` itself back is already fatal -- measured, it exits
+        # `UnboundLocalError`, which the exception-type assertion below refuses -- but a plausible LITERAL line
+        # number survived every assertion this file had before the `says` column, which is why the column is here.
+        ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe{\x00b\x00a\x00d\x00"), "is not valid UTF-8"),
         # Valid JSON, not an object: `.get` on a list escaped one level ABOVE the metrics wrap.
-        ("a line that is valid JSON but not an object", lambda p: p.write_text("[1, 2, 3]\n")),
+        ("a line that is valid JSON but not an object", lambda p: p.write_text("[1, 2, 3]\n"), "line 1 is not a JSON object"),
     ],
 )
-def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write):
+def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write, says):
     """`instrument_self_check` enters the registry unguarded, and only the MISS was typed: absent, unreadable,
     not JSON, or present with the wrong shape each reached the operator as a raw traceback with no report. The
     default `--registry` is CWD-relative, so the absent case is what running the command from anywhere but the
@@ -379,7 +392,12 @@ def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeyp
     assert result.exception is None or isinstance(result.exception, SystemExit), (
         f"{shape} reached the operator unhandled: {result.exception!r}"
     )
-    assert "registry" in result.output and str(registry) in result.output, result.output
+    assert str(registry) in result.output, result.output
+    # The WORDING, not just the file: each arm has to say the thing that is actually wrong, and the UTF-8 arm
+    # must not claim a line number it cannot know.
+    assert says in result.output, result.output
+    if says == "is not valid UTF-8":
+        assert "at line" not in result.output, result.output
 
 
 @pytest.mark.parametrize(
