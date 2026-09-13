@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import polars as pl
 import pytest
 from typer.testing import CliRunner
 
@@ -118,13 +119,48 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
     assert "cannot read" in result.output and "not a parquet" not in result.output, result.output
 
 
+@pytest.mark.parametrize(
+    ("shape", "wreck"),
+    [
+        # Readable parquet, no `close` column: the first version of the fix wrapped only `read_parquet`, so the
+        # two column reads sat outside the try and this escaped as polars' ColumnNotFoundError.
+        ("no close column", lambda frame: frame.drop("close")),
+        # A close that cannot be a price at all reached `math.isfinite` in two places -- `realized_series` and
+        # `_basket_complete_index`, the second BEFORE the builders' front door -- and escaped as a TypeError.
+        ("close column of strings", lambda frame: frame.with_columns(pl.col("close").cast(pl.Utf8))),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp_path, monkeypatch, shape, wreck):
+    """Both frames are READABLE -- neither is the corrupt-bytes case above -- and both used to reach the operator
+    as a traceback from inside a helper. `read_store_series` refuses each as an `EngineError`, which is what the
+    command aborts on, and it refuses them at the one door both the store and the frozen canonical enter."""
+    from cli.ohlc.dataset import read_parquet
+
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    parquet = next(store_dir.rglob("*.parquet"))
+    write_parquet(wreck(read_parquet(parquet)), parquet)
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "read_store_series" in result.output, result.output
+
+
 def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, monkeypatch):
     """The second door T0193's input class left by, and the one this branch itself opened. `build_null` enters the
     portfolio builders, whose new front door refuses a non-finite close with a `PortfolioError` -- not an
     `EngineError`, so it walked past `soak_report`'s `except SoakError` AND the command's handler and reached the
     operator as a traceback, exit 1, no report. The handler catches that class now."""
     import basket_fixture
-    import polars as pl
 
     from cli.engine.store import _store_path
     from cli.ohlc.dataset import read_parquet

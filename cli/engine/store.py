@@ -206,12 +206,24 @@ def refresh_store(
 
 
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
-    """A corrupt or unreadable frame is refused as an `EngineError`, not as whatever polars raises: the readers
-    above this one degrade on `EngineError` and the soak command aborts on it, while a bare
-    `polars.exceptions.ComputeError` walks past both and reaches the operator as a traceback (T0193)."""
+    """A frame this function cannot turn into a price series is refused as an `EngineError`, not as whatever
+    polars or `math` raises: the readers above this one degrade on `EngineError` and the soak command aborts on
+    it, while a bare `ColumnNotFoundError` or a `TypeError` out of `math.isfinite` walks past both and reaches
+    the operator as a traceback (T0193).
+
+    The COLUMN reads are inside the try for that reason -- a readable parquet without a `close` column is the
+    same defect as an unreadable one, and `command._snapshot_reader` already wraps both lines for the journal.
+    A non-finite close is NOT refused here: spec 00059 D7 wants a `nan` in the store dropped as a tail and one
+    in a journaled snapshot degraded with a reason, so only a value that cannot be a price at all -- a string, a
+    bool, anything `math.isfinite` would raise on -- is refused, and it is refused HERE because this is the one
+    door both the store and the frozen canonical enter."""
     path = _store_path(store_dir, symbol, interval)
     try:
         frame = read_parquet(path)
+        stamps, closes = frame["ts"].to_list(), frame["close"].to_list()
     except (OSError, pl.exceptions.PolarsError) as exc:
         raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
-    return frame["ts"].to_list(), frame["close"].to_list()
+    for k, close in enumerate(closes):
+        if close is not None and (isinstance(close, bool) or not isinstance(close, (int, float))):
+            raise EngineError(f"read_store_series: {path} close[{k}] for {symbol}@{interval} is not a number: {close!r}")
+    return stamps, closes
