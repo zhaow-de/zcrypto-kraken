@@ -693,25 +693,40 @@ class SelfTestReport:
 
 
 def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
-    with registry_path.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            record = json.loads(line)
-            if record.get("trial_id") == trial_id:
-                return record
+    """A registry this function cannot read is a `SoakError`, which is an `EngineError`, so `soak-check` aborts
+    with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
+    was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
+    CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
+    try:
+        with registry_path.open() as f:
+            for n, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                if record.get("trial_id") == trial_id:
+                    return record
+    except OSError as exc:
+        raise SoakError(f"cannot read the trial registry {registry_path}: {exc}") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SoakError(f"the trial registry {registry_path} is not JSONL at line {n}: {exc}") from exc
     raise SoakError(f"no trial_id={trial_id} record in {registry_path}")
 
 
 def _instrument_expectations(registry_path: Path) -> dict[str, int]:
     """`governor_engaged_bars`/`cap_breach_bars` from record 47's metrics -- the ratified deployable-system
     trial (`docs/reference/trial-registry.jsonl`) the frozen engine build must reproduce exactly."""
-    metrics = _load_registry_record(registry_path, 47)["metrics"]
-    return {
-        "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
-        "cap_breach_bars": int(metrics["cap_breach_bars"]),
-    }
+    record = _load_registry_record(registry_path, 47)
+    # A record that is present but the wrong SHAPE used to leave here as a bare KeyError or ValueError, past
+    # every handler; the expectation this whole check rests on is worth a typed refusal naming the field.
+    try:
+        metrics = record["metrics"]
+        return {
+            "governor_engaged_bars": int(metrics["governor_engaged_bars"]),
+            "cap_breach_bars": int(metrics["cap_breach_bars"]),
+        }
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SoakError(f"record 47 in {registry_path} carries no usable metrics: {exc!r}") from exc
 
 
 def instrument_self_check(
@@ -1681,7 +1696,15 @@ def soak_report(
     from cli.engine.command import _journal_artifacts, _snapshot_reader
 
     arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
-    records = [from_json(p.read_text()) for _, p in arts]
+    # `read_text` on a path the glob found can still fail -- a directory where a record belongs, non-UTF-8 bytes
+    # -- and did so past every handler, on the read that feeds the whole report.
+    records = []
+    for _, artifact in arts:
+        try:
+            text = artifact.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SoakError(f"cannot read the journaled cycle {artifact}: {exc}") from exc
+        records.append(from_json(text))
     if not records:
         void_reasons = ["no journaled cycles found"]
         text = render_report(None, None, None, None, void_reasons=void_reasons, band=band, null_mode=null_mode, path=path)

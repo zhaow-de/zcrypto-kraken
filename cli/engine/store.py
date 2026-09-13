@@ -214,6 +214,13 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
 
     The COLUMN reads are inside the try for that reason -- a readable parquet without a `close` column is the
     same defect as an unreadable one, and `command._snapshot_reader` already wraps both lines for the journal.
+    BOTH columns are checked, because the return type promises both: a `ts` this function hands back as an epoch
+    int rather than a `datetime` dies much later and much worse -- in `_fmt_ts` inside `render_report`, on the
+    LAST line of `soak_report`, so the operator gets a traceback instead of the report the whole run produced --
+    or, on the canonical leg, in `select_model_inputs`' `sorted()`. Every legitimate writer goes through
+    `to_frame`, which types `ts` as `Datetime("UTC")` and `close` as `Float64`, so neither check can refuse a
+    frame this repo wrote.
+
     A non-finite close is NOT refused here: spec 00059 D7 wants a `nan` in the store dropped as a tail and one
     in a journaled snapshot degraded with a reason, so only a value that cannot be a price at all -- a string, a
     bool, anything `math.isfinite` would raise on -- is refused, and it is refused HERE because this is the one
@@ -224,6 +231,9 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
         stamps, closes = frame["ts"].to_list(), frame["close"].to_list()
     except (OSError, pl.exceptions.PolarsError) as exc:
         raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
+    for k, stamp in enumerate(stamps):
+        if not isinstance(stamp, datetime):
+            raise EngineError(f"read_store_series: {path} ts[{k}] for {symbol}@{interval} is not a datetime: {stamp!r}")
     for k, close in enumerate(closes):
         if close is not None and (isinstance(close, bool) or not isinstance(close, (int, float))):
             raise EngineError(f"read_store_series: {path} close[{k}] for {symbol}@{interval} is not a number: {close!r}")

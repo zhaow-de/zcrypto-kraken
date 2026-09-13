@@ -130,6 +130,10 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
         # A close that cannot be a price at all reached `math.isfinite` in two places -- `realized_series` and
         # `_basket_complete_index`, the second BEFORE the builders' front door -- and escaped as a TypeError.
         ("close column of strings", lambda frame: frame.with_columns(pl.col("close").cast(pl.Utf8))),
+        # The SIBLING column on the same line. An epoch-int `ts` is the raw Kraken shape `_row()` writes before
+        # `to_frame` converts it, and it used to die in `_fmt_ts` inside `render_report` -- on the LAST line of
+        # `soak_report`, so the operator lost the whole report to a traceback.
+        ("ts column of epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
     ],
 )
 def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp_path, monkeypatch, shape, wreck):
@@ -209,6 +213,108 @@ def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, mon
         f"the builder's refusal reached the operator unhandled: {result.exception!r}"
     )
     assert "finite positive" in result.output and "ADA" in result.output, result.output
+
+
+def _ten_leg_canonical(tmp_path):
+    """The ten `/EUR` model legs on both grids, through the real writer. Without a canonical
+    `instrument_self_check` returns early on `canonical absent` and NEVER READS THE REGISTRY -- which is how a
+    first pass at these cases reported every shape clean while reaching none of them."""
+    import basket_fixture
+
+    from cli.engine.store import _store_path
+
+    canonical = tmp_path / "canonical"
+    grids = basket_fixture.grids()
+    for interval in GRID_INTERVALS:
+        ts, by_symbol = grids[interval]
+        for symbol, series in by_symbol.items():
+            if symbol.endswith("/EUR"):
+                rows = [[int(t.timestamp()), *([str(c)] * 5), "1.0", 1] for t, c in zip(ts, series)]
+                write_parquet(to_frame(rows), _store_path(canonical, symbol, interval))
+    return canonical
+
+
+_GOOD_RECORD = {"trial_id": 47, "metrics": {"governor_engaged_bars": 1, "cap_breach_bars": 2}}
+
+
+@pytest.mark.parametrize(
+    ("shape", "write"),
+    [
+        ("absent", None),
+        ("a directory", lambda p: p.mkdir()),
+        ("not JSONL", lambda p: p.write_text('{"trial_id": 47, bad}\n')),
+        ("record 47 with no metrics", lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": None}) + "\n")),
+        ("a metric absent", lambda p: p.write_text(json.dumps({"trial_id": 47, "metrics": {"cap_breach_bars": 2}}) + "\n")),
+        (
+            "a metric that is not a number",
+            lambda p: p.write_text(
+                json.dumps({"trial_id": 47, "metrics": {"governor_engaged_bars": "many", "cap_breach_bars": 2}}) + "\n"
+            ),
+        ),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeypatch, shape, write):
+    """`instrument_self_check` enters the registry unguarded, and only the MISS was typed: absent, unreadable,
+    not JSON, or present with the wrong shape each reached the operator as a raw traceback with no report. The
+    default `--registry` is CWD-relative, so the absent case is what running the command from anywhere but the
+    repo root produces. Each is a `SoakError` now, which the command aborts on with the file named."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    registry = tmp_path / "registry.jsonl"
+    if write is not None:
+        write(registry)
+
+    result = runner.invoke(
+        app,
+        [
+            "engine",
+            "soak-check",
+            "--journal-dir",
+            str(journal_dir),
+            "--store-dir",
+            str(store_dir),
+            "--canonical-dir",
+            str(_ten_leg_canonical(tmp_path)),
+            "--registry",
+            str(registry),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "registry" in result.output and str(registry) in result.output, result.output
+
+
+@pytest.mark.parametrize(
+    ("shape", "wreck"),
+    [
+        ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe\x00bad")),
+        ("a directory where a record belongs", lambda p: (p.unlink(), p.mkdir())),
+    ],
+)
+def test_soak_check_aborts_cleanly_on_a_journaled_cycle_it_cannot_read(tmp_path, monkeypatch, shape, wreck):
+    """The read that feeds the whole report: `read_text` on a path the glob found can still fail, and did so
+    past every handler."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    wreck(next(journal_dir.rglob("cycle-*.json")))
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"{shape} reached the operator unhandled: {result.exception!r}"
+    )
+    assert "cannot read the journaled cycle" in result.output, result.output
 
 
 def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatch):
