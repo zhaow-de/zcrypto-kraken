@@ -1738,6 +1738,13 @@ def soak_report(
         # is left alone -- true among the record's own stamps, false against the aware `now` this path supplies,
         # where `nxt.cycle_ts > now` raised a bare TypeError. This is the door T0194 built for exactly that, on
         # the other caller; it belongs on this one too (T0193).
+        #
+        # It aborts the WHOLE report over one bad artifact anywhere under `journal_dir`, before
+        # `select_clean_segment` narrows to the window. Safe, because nothing `run_cycle` wrote can trip it:
+        # `cycle._normalize_cycle_ts` has refused a naive `cycle_ts` at write time since that function's first
+        # commit. `tests/test_engine_journal.py`'s wholly-naive `_V1_GOLDEN_JSON`, whose comment calls it real on
+        # disk, is no counter-example -- `to_json` stamps with `isoformat()`, so a written record carries the
+        # `+00:00` that golden lacks. A hand-edited record CAN trip it, and aborting is then the point.
         require_comparable_cycle_ts(record)
         records.append(record)
     if not records:
