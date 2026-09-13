@@ -374,9 +374,9 @@ def test_no_caller_under_cli_caps_without_saying_at_what_level():
             if {kw.arg for kw in node.keywords} < {"long_cap", "short_cap"}:
                 bare.append(f"{path.relative_to(repo)}:{node.lineno}")
     assert seen >= 9, (
-        f"the walk found only {seen} apply_position_caps calls under cli/ -- it found 9 when this was written, so "
-        f"`not bare` below would pass vacuously. Either the walk is broken or a production call site went away: "
-        f"check which before lowering this floor"
+        f"the walk found only {seen} apply_position_caps calls under cli/ -- it found 9 when this was written. "
+        f"Either the walk is broken, and then `not bare` below passes vacuously, or a production call site went "
+        f"away and the floor is what needs lowering: establish which before touching either"
     )
     assert not bare, (
         f"these call apply_position_caps without naming both caps: {bare} -- they cap at this module's defaults "
