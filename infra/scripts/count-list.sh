@@ -80,9 +80,10 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # line naming a model below the floor counts as no read, the same as the gate reads it. The line may sit
 # anywhere in the body: jq's "m" flag is dot-all, not line anchoring, so the anchor is a literal newline.
 # COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
-# merge-gate.py's `Claude (Opus|Fable)` arm landed at 600b364d1, and the jq below is that arm -- not the PR
-# template's earlier `<model>` line (1736d7b96, three hours before), which asked for no such spelling.
-READ_LINE_RULE_SINCE="2026-09-10T15:08:02Z"
+# The jq below is merge-gate.py's `Claude (Opus|Fable)` arm, which landed at 4b222d85e -- not the PR template's
+# earlier `<model>` line, which asked for no such spelling. `git log -S 'Claude (Opus|Fable)' -- merge-gate.py`
+# names the commit.
+READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2

@@ -489,10 +489,8 @@ def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
 
 
 # --- the ops journal keep-regex is a census too (T0178) -------------------------------------------
-# A timer added to the role and not to the keep-regex ships no journal lines at all, silently.
-_OPS_TIMERS = REPO / "infra/ansible/roles/ops/templates"
-# Deliberately unshipped, with the reason: both are shell runners, and the parse stage below the keep
-# rule reads the Python logging shape.
+_OPS_ROLE = REPO / "infra/ansible/roles/ops"
+# Deliberately unshipped: the parse stage below the keep rule reads the Python logging shape.
 _JOURNAL_NOT_SHIPPED = {
     "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
     "zcrypto-grafana-keepalive": "a shell curl loop; same shape, and its silence is what the keepalive alert reads",
@@ -517,7 +515,11 @@ def _journal_units_kept() -> set[str]:
 
 
 def _installed_units() -> set[str]:
-    return {f"zcrypto-{p.name.removesuffix('.timer.j2')}" for p in _OPS_TIMERS.glob("*.timer.j2")}
+    """Both install idioms: `templates/*.timer.j2` rendered, and `files/*.timer` copied, which is how the capture
+    and engine roles install theirs. A timer added the other way was invisible to this guard."""
+    units = {f"zcrypto-{p.name.removesuffix('.timer.j2')}" for p in (_OPS_ROLE / "templates").glob("*.timer.j2")}
+    units |= {f"zcrypto-{p.name.removesuffix('.timer')}" for p in (_OPS_ROLE / "files").glob("*.timer")}
+    return units
 
 
 def test_the_ops_journal_keep_regex_accounts_for_every_unit_the_role_installs():
@@ -529,6 +531,28 @@ def test_the_ops_journal_keep_regex_accounts_for_every_unit_the_role_installs():
     assert not unaccounted, (
         f"{unaccounted} are installed by the ops role and neither named in the journal keep-regex nor listed as "
         f"deliberately unshipped: their journal lines reach no Loki, and nothing else would say so"
+    )
+
+
+def test_a_unit_listed_as_unshipped_is_not_in_the_keep_regex():
+    """The two categories are alternatives, not a free choice: shipping a unit this file calls deliberately
+    unshipped passed green, because nothing said the regex may not name it."""
+    both = sorted(_journal_units_kept() & set(_JOURNAL_NOT_SHIPPED))
+    assert not both, (
+        f"{both} are named in the keep-regex AND listed here as deliberately unshipped -- one of the two is a "
+        f"lie; if their journal should ship now, delete the row and its reason"
+    )
+
+
+def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container():
+    """Only the alternation was read, so the rest of the production rule could break green -- including the arm
+    that admits Alloy's own journald-driver stream, whose loss is invisible until nobody notices Alloy is dark."""
+    regex = _ops_journal_keep_regex()
+    assert regex.endswith(";.*|.*;grafana-alloy"), (
+        f"the keep rule no longer ends with the unit-arm separator and Alloy's own stream: {regex!r}"
+    )
+    assert "\\.service;" in regex or "\\.service;" in regex.replace("\\\\", "\\"), (
+        f"the unit arm no longer anchors on `.service;`, so the `unit;container` join is not what it was: {regex!r}"
     )
 
 
