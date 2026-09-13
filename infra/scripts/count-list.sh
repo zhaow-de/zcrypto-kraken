@@ -82,6 +82,12 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test.
 # The jq below is merge-gate.py's `Claude (Opus|Fable)` arm; the window starts where that arm landed, which
 # `git log -S 'Claude (Opus|Fable)' -- infra/scripts/merge-gate.py` names. A PR merged before it breaks no rule.
+# The case fold is scoped to the MODEL, `(?i:...)`, not to the whole pattern: the gate's READ_LINE carries `re.M`
+# alone and only FLOOR is `re.I`, so a body reading `read before push by:` is unrecorded there and must be here.
+# Two divergences that remain, both making this OVER-count rather than miss: the gate's line ends at the sha
+# (`*$`) while this allows a tail, and it searches the floor anywhere in the captured model while this requires
+# the model to start with `Claude`. The `ops-journal` skip below is also broader than gate 8, which exempts a
+# month PR only while it carries journal files alone -- `gh pr list --json` returns no file list to scope it by.
 READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
@@ -101,7 +107,7 @@ c_merged_prs_without_a_floor_read() {
     echo "count-list: the merged-PR fetch is saturated -- its oldest row ($oldest) is inside the window ($floor), so rows are missing" >&2
     return 2
   fi
-  printf '%s' "$prs" | jq --arg floor "$floor" '[.[] | select(.mergedAt >= $floor) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: *Claude (Opus|Fable)\\b.* +at +[0-9a-f]{7,}"; "i") | not)] | length'
+  printf '%s' "$prs" | jq --arg floor "$floor" '[.[] | select(.mergedAt >= $floor) | select(.headRefName != "ops-journal") | select((.body // "") | test("(^|\n)Read before push by: *(?i:Claude (Opus|Fable))\\b.* +at +[0-9a-f]{7,}") | not)] | length'
 }
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }

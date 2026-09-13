@@ -86,11 +86,14 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
     """`merge-gate.py`'s floor is `re.I` and its spacing is `: *` / ` +at +`. This jq was neither, so a body the
-    gate passes was booked as a violation — a counter and a gate disagreeing about the same rule."""
+    gate passes was booked as a violation — a counter and a gate disagreeing about the same rule. The fold is the
+    MODEL's only: the gate's READ_LINE is case-sensitive, so the third row's lowercase PREFIX is no read there and
+    counts here, which a whole-pattern `"i"` flag silently admitted."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     prs = [
         {"headRefName": "feat/lower", "mergedAt": stamp, "body": "Read before push by: claude opus at abcdef1234567\n"},
         {"headRefName": "feat/spaced", "mergedAt": stamp, "body": "Read before push by:  Claude Fable 5.1  at  abcdef1234567\n"},
+        {"headRefName": "feat/prefix", "mergedAt": stamp, "body": "read before push by: Claude Opus at abcdef1234567\n"},
         {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "body": "## Summary\n"},
     ]
     snapshot = tmp_path / "prs.json"
@@ -103,7 +106,7 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
         env={**os.environ, "COUNT_LIST_PRS_SNAPSHOT": str(snapshot)},
         timeout=120,
     )
-    assert done.returncode == 0 and done.stdout.strip().endswith("\t0"), done.stdout + done.stderr
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")

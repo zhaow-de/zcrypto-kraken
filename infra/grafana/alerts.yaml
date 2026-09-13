@@ -4215,7 +4215,10 @@ rules:
       # it -- because ops reads the most journal (reconcile, panel, verify-replay, tape-bars,
       # liquidations). The capture pair and the NAS -- this leg's own `host=~` -- stay at 512m: the
       # CAPTURE hosts already commit most of their RAM in caps, so headroom is not free there, and the
-      # NAS's Alloy measured 0.1441-0.1561 of its 512m over 24 h, nowhere near the ceiling. The
+      # NAS's Alloy measured 0.1441-0.1561 of its 512m over 24 h on 2026-08-28, nowhere near the
+      # ceiling -- re-measure with
+      # `max_over_time(process_resident_memory_bytes{host="nas", job="integrations/self"}[24h]) / 536870912`
+      # before reading a higher value as staleness rather than growth. The
       # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
       - refId: A
         queryType: ""

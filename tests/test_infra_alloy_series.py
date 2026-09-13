@@ -497,23 +497,22 @@ _JOURNAL_NOT_SHIPPED = {
 }
 
 
-def _ops_journal_keep_block() -> str:
+def _journal_keep_block(config: Path) -> str:
     """The whole `keep` rule, not just its regex: the separator and the source_labels decide what value the regex
     is matched against, and either one changing makes the rule match nothing."""
-    text = OPS_ALLOY.read_text()
-    for block in re.findall(r"rule \{(.*?)\n  \}", text, re.S):
+    for block in re.findall(r"rule \{(.*?)\n  \}", config.read_text(), re.S):
         if "__journal__systemd_unit" in block and 'action        = "keep"' in block:
             return block
-    raise AssertionError("no journal keep rule found in the ops config.alloy")
+    raise AssertionError(f"no journal keep rule found in {config}")
+
+
+def _ops_journal_keep_block() -> str:
+    return _journal_keep_block(OPS_ALLOY)
 
 
 def _ops_journal_keep_regex() -> str:
     """The `keep` rule that reads `__journal__systemd_unit`, as written in the file."""
-    text = OPS_ALLOY.read_text()
-    for block in re.findall(r"rule \{(.*?)\n  \}", text, re.S):
-        if "__journal__systemd_unit" in block and 'action        = "keep"' in block:
-            return re.search(r'regex\s*=\s*"(.*?)"\n', block).group(1)
-    raise AssertionError("no journal keep rule found in the ops config.alloy")
+    return re.search(r'regex\s*=\s*"(.*?)"\n', _ops_journal_keep_block()).group(1)
 
 
 def _journal_units_kept() -> set[str]:
@@ -559,13 +558,17 @@ def test_a_unit_listed_as_unshipped_is_not_in_the_keep_regex():
     )
 
 
-def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container():
+@pytest.mark.parametrize("config", [OPS_ALLOY, CAPTURE_ALLOY], ids=["ops", "capture"])
+def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container(config):
     """Only the alternation was read, so the rest of the production rule could break green -- including the arm
     that admits Alloy's own journald-driver stream. `zcrypto-ops-log-pipeline-dead` pages on that stream's
     silence after 6 h, so the loss is not invisible -- but a test that fails at once beats a dead-man that
-    fires a quarter of a day later, on a fleet whose other rules read the series it carries."""
-    regex = _ops_journal_keep_regex()
-    rule = _ops_journal_keep_block()
+    fires a quarter of a day later, on a fleet whose other rules read the series it carries.
+
+    Both hosts, because the capture pair's rule is the ops rule's twin field for field and was read by nothing:
+    the two mutations below killed on ops and survived there."""
+    rule = _journal_keep_block(config)
+    regex = re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1)
     assert 'separator     = ";"' in rule, (
         f"the keep rule's separator is no longer `;`, so the `unit;container` values it matches are not the ones "
         f"the regex is written for and the rule matches nothing: {rule!r}"
