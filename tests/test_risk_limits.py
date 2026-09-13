@@ -358,7 +358,8 @@ def test_margin_floor_floor_of_one_accepted():
 
 def test_no_caller_under_cli_caps_without_saying_at_what_level():
     """A bare `apply_position_caps(x)` under `cli/` is refused: the caps a call site uses have to be the ones its
-    config carries, stated at the call. Only `cli/` is walked: nothing under `tests/` is."""
+    config carries, stated at the call. Only `cli/` is walked, and only a bare `apply_position_caps(...)` name:
+    an aliased import or a `**kwargs` splat is outside it."""
     import ast
     from pathlib import Path
 
