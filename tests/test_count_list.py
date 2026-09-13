@@ -46,16 +46,19 @@ def _develop_resolves() -> bool:
 
 
 def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
-    """A bare verdict WORD is a proxy, which is what this entry replaced: `KILLED`/`SURVIVED` matched
-    case-insensitively reads 178 over thirty days against 71 for the rule's spelling, most of the difference
-    plain English. `control proven` is printed by `mutate-probe.sh` and by nothing that writes prose."""
+    """The reason is at the function; this refuses `-i`, a single word, and one ref for the anchor and another for the arms."""
     fn = re.search(r"c_probe_verdicts_without_the_script\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
     assert fn, "the entry's function is gone or renamed"
     # The arm parsed as a line, not searched as a substring: `tests/test_config_selectors_are_parsed.py` refuses
     # `in` over a hand-edited infra file, and the anchored shape is the stronger claim anyway.
     left = re.search(r"^\s*comm -23 <\(git log (?P<opts>[^|]*?)--format=%h \| sort\)", fn.group(0), re.M)
     assert left, "the left arm is no longer the first `comm -23 <(git log ...)` line of the function"
-    assert re.fullmatch(r'--since="\$since" --grep=\'control proven\' ', left.group("opts")), left.group("opts")
+    assert re.fullmatch(
+        r'develop HEAD --since="\$since" --grep=\'control proven\' --grep=KILLED --grep=SURVIVED ', left.group("opts")
+    ), left.group("opts")
+    assert re.search(r'^\s*since="\$\(git log develop HEAD --reverse ', fn.group(0), re.M), (
+        "the anchor reads a different ref from the arms"
+    )
 
 
 def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
@@ -65,8 +68,14 @@ def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
     for name, value in since:
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
     code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
-    window = re.compile(r"--(?:since|after|until|before)=['\"]?\d[^ ]*")
-    for spelling in ("--since=2026-09-13", "--after=2027-01-01", "--until='2026-09-13'", '--before="2026-01-01T00:00:00Z"'):
+    window = re.compile(r"--(?:since|after|until|before)=(?!['\"]?\$)[^ ]+")
+    for spelling in (
+        "--since=2026-09-13",
+        "--after=2027-01-01",
+        "--until='2026-09-13'",
+        "--since=yesterday",
+        '--before="1 day ago"',
+    ):
         assert window.search(spelling), f"the guard no longer sees {spelling!r}"  # the guard's own breadth
     inlined = window.findall(code)
     assert inlined == [], f"a window is inlined instead of naming its RULE_SINCE: {inlined}"

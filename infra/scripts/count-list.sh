@@ -204,29 +204,28 @@ PYGATE
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
 # The window opens where the zero-base round set this base (`PROSE_ONLY_RULE_SINCE`, which says why it is an
-# instant). A `claude(` commit is out of the set: a corpus edit discusses the rule, it does not claim a diff.
+# instant). A `claude(` commit, or one naming this entry, is out of the set: both discuss the rule, neither
+# claims a diff.
 c_prose_only_commits_without_the_prover() {
-  comm -23 <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
-           <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --format=%h | sort) | wc -l
+  comm -23 <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
+           <(git log develop HEAD --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --grep=prose-only-commits-without-the-prover --format=%h | sort) | wc -l
 }
 
-# A commit that records a probe verdict without naming the script. The predicate is `control proven`, the
-# script's own verdict wording: `KILLED`/`SURVIVED` matched case-insensitively is a WORD proxy of the kind this
-# replaced -- 178 hits over thirty days against 71 for the rule's own spelling, 107 of them plain English
-# ("survived ten tasks"). `control proven` reads 100 and no prose says it.
+# A commit that records a probe verdict without naming the script. The left arm is the union of the script's
+# three verdict words, case-sensitive: `-i` readmits plain English ("survived ten tasks"), and `control proven`
+# alone misses a paraphrased record ("mutating it away SURVIVED").
 #
-# Anchor and both arms read HEAD, not `develop` like the entries above: a window anchored on one ref and
-# measured on another intersects to nothing, which is how this read 0 over an empty set. On a branch it judges
-# the branch, which is where a violation can still be reworded.
+# Anchor and arms read `develop HEAD`: develop's history plus the branch being read, so a violation is caught
+# where it can still be reworded. A window anchored on one ref and measured on another can miss the set entirely.
 c_probe_verdicts_without_the_script() {
   local since
-  since="$(git log --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
+  since="$(git log develop HEAD --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
   if [ -z "$since" ]; then
     echo "count-list: no commit adds the probe-block clause to CLAUDE.md, so this count has no window" >&2
     return 2
   fi
-  comm -23 <(git log --since="$since" --grep='control proven' --format=%h | sort) \
-           <(git log --since="$since" --grep=mutate-probe --format=%h | sort) | wc -l
+  comm -23 <(git log develop HEAD --since="$since" --grep='control proven' --grep=KILLED --grep=SURVIVED --format=%h | sort) \
+           <(git log develop HEAD --since="$since" --grep=mutate-probe --format=%h | sort) | wc -l
 }
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.

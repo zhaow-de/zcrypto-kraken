@@ -5,15 +5,18 @@
 set -euo pipefail
 staged=$(git diff --cached --name-only)
 [ -z "$staged" ] && exit 0
-# A merge stages the union of both parents' kinds, which the author chose neither of, and splitting it is not a
-# thing you can do -- the hook is about AUTHORING the two kinds together. Only the merge's OWN candidate files
-# get that pass: during a stopped merge anything can be staged, so exempting the whole set would turn a visible
-# `SKIP=staged-kind` into an invisible one.
+# The hook sees the index against HEAD, so `git commit --amend` passes it whatever the commit ends up holding.
+# A merge stages the union of the parents' kinds, which the author chose neither of and cannot split, so the
+# merge's own candidate files get a pass -- only those, or a stopped merge admits anything staged beside them.
 mergehead="$(git rev-parse --git-dir)/MERGE_HEAD"
 if [ -f "$mergehead" ]; then
-    theirs="$(cat "$mergehead")"
-    base="$(git merge-base HEAD "$theirs")"
-    candidates="$( { git diff --name-only "$base" HEAD; git diff --name-only "$base" "$theirs"; } | sort -u)"
+    candidates=""
+    while read -r theirs; do  # one line per merged head
+        base="$(git merge-base HEAD "$theirs")"
+        candidates="$candidates$(git diff --name-only "$base" HEAD; git diff --name-only "$base" "$theirs")
+"
+    done < "$mergehead"
+    candidates="$(printf '%s' "$candidates" | sed '/^$/d' | sort -u)"
     staged="$(comm -23 <(printf '%s\n' "$staged" | sort -u) <(printf '%s\n' "$candidates"))"
     [ -z "$staged" ] && exit 0
 fi

@@ -1,9 +1,4 @@
-"""`infra/scripts/staged-kind-check.sh` — the one-kind-per-commit hook, which had no test.
-
-It is the hook the `.pre-commit-config.yaml` comment calls "the P6 trigger" (the rule was violated five times
-while written down), and its merge arm was added because a merge stages both parents' kinds and the author chose
-neither — the case where the documented `SKIP=staged-kind` escape was being used routinely instead.
-"""
+"""`infra/scripts/staged-kind-check.sh` — the one-kind-per-commit hook."""
 
 from __future__ import annotations
 
@@ -58,20 +53,24 @@ def test_the_hook_refuses_only_a_mixed_kind(tmp_path, staged, rc):
         assert "split the commit" in done.stdout
 
 
-def _stopped_merge(repo: Path) -> None:
+def _stopped_merge(repo: Path, heads: int = 1) -> None:
     """Both kinds arrive from THEIRS, so each is new against HEAD and a staged set of the two is really mixed.
 
     Committing one of them on our side instead is what made the first version of this vacuous: the file matched
     HEAD, so staging it staged nothing and the set was single-kind whatever the hook did."""
     run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
-    run("checkout", "-q", "-b", "theirs")
-    _stage(repo, ".claude/fixture.txt", "cli/thing.py")
-    run("commit", "-qm", "both kinds on their side")
-    run("checkout", "-q", "-")
-    theirs = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "theirs"], check=True, capture_output=True, text=True
-    ).stdout.strip()
-    (repo / ".git" / "MERGE_HEAD").write_text(theirs + "\n")
+    shas = []
+    for n in range(heads):
+        run("checkout", "-q", "-b", f"theirs{n}")
+        _stage(repo, f".claude/fixture{n}.txt", f"cli/thing{n}.py")
+        run("commit", "-qm", "both kinds on their side")
+        run("checkout", "-q", "-")
+        shas.append(
+            subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", f"theirs{n}"], check=True, capture_output=True, text=True
+            ).stdout.strip()
+        )
+    (repo / ".git" / "MERGE_HEAD").write_text("".join(sha + "\n" for sha in shas))
 
 
 def test_a_merge_exempts_its_own_files(tmp_path):
@@ -80,18 +79,26 @@ def test_a_merge_exempts_its_own_files(tmp_path):
     Asserted against the arm's absence too, because a single-kind staged set would pass either way."""
     repo = _repo(tmp_path)
     _stopped_merge(repo)
-    _stage(repo, ".claude/fixture.txt", "cli/thing.py")
+    _stage(repo, ".claude/fixture0.txt", "cli/thing0.py")
     assert _run(repo).returncode == 0
 
     (repo / ".git" / "MERGE_HEAD").unlink()
     assert _run(repo).returncode == 1, "the staged set must be one the hook refuses without the exemption"
 
 
+def test_an_octopus_merge_exempts_every_heads_files(tmp_path):
+    """`MERGE_HEAD` carries one line per merged head; read as one, the arm is a git fatal and rc 128."""
+    repo = _repo(tmp_path)
+    _stopped_merge(repo, heads=2)
+    _stage(repo, ".claude/fixture0.txt", "cli/thing0.py", ".claude/fixture1.txt", "cli/thing1.py")
+    assert _run(repo).returncode == 0
+
+
 def test_a_merge_does_not_exempt_files_neither_parent_touched(tmp_path):
     """The hole the narrowing closes: a mixed pair the merge never touched would otherwise ride the exemption."""
     repo = _repo(tmp_path)
     _stopped_merge(repo)
-    _stage(repo, ".claude/fixture.txt", "cli/thing.py")  # the merge's own, excused
+    _stage(repo, ".claude/fixture0.txt", "cli/thing0.py")  # the merge's own, excused
     _stage(repo, ".claude/other.json", "cli/unrelated.py")  # neither side's, still judged
     done = _run(repo)
     assert done.returncode == 1

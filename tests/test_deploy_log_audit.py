@@ -9,6 +9,7 @@ import sys
 import urllib.error
 
 import pytest
+import yaml
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "infra" / "scripts" / "deploy-log-audit.py"
@@ -53,20 +54,22 @@ def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, cap
 def test_the_venue_facing_derivation_still_holds():
     """The constant is hand-maintained and rests on this set; nothing else would notice it going stale."""
     infra = pathlib.Path(__file__).resolve().parents[1] / "infra"
-    # `infra/nas/` and `infra/ops/` are walked beside the roles: a role renders a payload from outside its own
-    # directory, so a roles-only walk cannot see what it exonerates -- the NAS's is `infra/nas/compose.yaml`.
-    walked = [infra / "ansible" / "roles", infra / "nas", infra / "ops"]
+    # The excluded hosts' payloads are rendered from outside their roles: the NAS compose stack, and the files
+    # the `access` role copies to the bridgehead. `infra/docker/` builds the image the NAS runs and names Kraken;
+    # what exonerates the NAS is the entrypoint override, asserted below, not that image.
+    payloads = {d.name: d for d in (infra / "ansible" / "roles").iterdir() if d.is_dir()}
+    payloads |= {"nas-stack": infra / "nas", "access-files": infra / "ansible" / "files"}
     speaks = {
-        d.name
-        for root in walked
-        if root.is_dir()
-        for d in ([root] if root.name != "roles" else list(root.iterdir()))
-        if d.is_dir() and any("kraken" in f.read_text(errors="ignore").lower() for f in d.rglob("*") if f.is_file())
+        name
+        for name, d in payloads.items()
+        if any("kraken" in f.read_text(errors="ignore").lower() for f in d.rglob("*") if f.is_file())
     }
     assert speaks == {"capture", "engine", "ops"}, (
         f"the Kraken-referencing payloads are now {sorted(speaks)}; `NO_VENUE_EXPOSURE` "
         f"({sorted(audit.NO_VENUE_EXPOSURE)}) rests on that set and must be re-judged"
     )
+    stack = yaml.safe_load((infra / "nas" / "compose.yaml").read_text())
+    assert stack["services"]["archive-pull"]["entrypoint"] == ["/opt/pull-entrypoint.sh"]
 
 
 @pytest.mark.parametrize("host", ["nas", "zaccess"])
@@ -82,7 +85,6 @@ def test_venue_facing_drops_a_host_a_window_cannot_harm(tmp_path, capsys, host):
 
 @pytest.mark.parametrize("host", ["zcrypto", "zcrypto-red", "zcrypto-ops"])
 def test_venue_facing_keeps_every_host_that_speaks_to_the_venue(tmp_path, capsys, host):
-    """The other half: the three hosts whose roles reference Kraken stay in the set."""
     log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host)])
     assert audit.main(["maintenance", "--venue-facing", "--log", log, "--from-snapshot", str(FEED)]) == 0
     out = capsys.readouterr().out.splitlines()

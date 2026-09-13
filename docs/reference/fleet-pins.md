@@ -6,7 +6,7 @@ The current pin and rollback operand of every service — a state file: a row is
 
 Reading rules:
 
-- `infra/ansible/scripts/converge.sh` appends one line per run to `deploy-log.jsonl`, whatever its `rc` — a refused run is recorded too beside this file (`tests/test_converge_sh.py`); a row's digest is re-trued from that line, not from memory, and its `since` is read off the container.
+- `infra/ansible/scripts/converge.sh` appends one line per real pass to `deploy-log.jsonl` beside this file, whatever that pass's `rc` — an interrupted pass is recorded, a preview or an aborted confirm is not (`tests/test_converge_sh.py`); a row's digest is re-trued from that line, not from memory, and its `since` is read off the container.
 - A running pin is read from the container, `docker inspect <name> --format '{{.Config.Image}}'` — never `.Image`, which is host-dependent under classic storage, and never the compose file, which has pinned one image while the container ran another (set: the non-comment lines of the non-Markdown files under `infra/`, `cli/` and `.claude/` whose `docker inspect` format reads `.Image`, the counter excluded; count: `infra/scripts/count-list.sh inspect-reads-of-dot-image`).
 - Capture, engine, ops and the NAS archive-pull share the image repo `ghcr.io/zhaow-de/zcrypto-capture` with independent digests: a row is matched by its service cell, not by the repo.
 

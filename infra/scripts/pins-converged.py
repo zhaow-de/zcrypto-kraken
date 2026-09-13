@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Pin rows of `fleet-pins.md` whose digest no deploy-log row records.
+"""(Pin, host) pairs of `fleet-pins.md` that no deploy-log row on that host converged.
 
-The set is the rows whose digest column carries a 12-hex prefix; a version pin (the second table) has no digest
-to match and is converged by another path. A non-zero count is a pin recorded as live that no successful
-converge in the log was handed.
+The set is the rows whose digest column carries a 12-hex prefix and whose `since` falls inside the log's span; a
+version pin (the second table) has no digest to match and is converged by another path.
 """
 
 from __future__ import annotations
@@ -27,14 +26,17 @@ def repo_root() -> pathlib.Path:
     return pathlib.Path(done.stdout.strip())
 
 
-def converged_digests(log_path: pathlib.Path) -> set[str]:
-    """Every 12-hex prefix a SUCCESSFUL converge was handed on the command line.
+def converged_digests(log_path: pathlib.Path) -> tuple[dict[str, set[str]], str]:
+    """Each 12-hex prefix a successful converge was handed on the command line, with the hosts it ran on, and
+    the log's first stamp.
 
-    Two exclusions a reader would otherwise undo. `rc != 0`: `converge.sh` records a refused run exactly like a
-    pass. `committed_pins`: it is read from `host_vars` at record time, so it lands in the row whatever the run
-    deployed. Matched on the digest, not the var's name, which differs per role.
+    Two exclusions a reader would otherwise undo. `rc != 0`: `converge.sh` records a pass whatever its `rc`, so
+    an interrupted one (the log's `rc 99`) lands like a clean one. `committed_pins`: it is read from `host_vars`
+    at record time, so it lands in the row whatever the run deployed. Matched on the digest, not the var's name,
+    which differs per role.
     """
-    out: set[str] = set()
+    out: dict[str, set[str]] = {}
+    first = ""
     for n, line in enumerate(log_path.read_text().splitlines(), 1):
         if not line.strip():
             continue
@@ -43,14 +45,20 @@ def converged_digests(log_path: pathlib.Path) -> set[str]:
         except json.JSONDecodeError as exc:
             print(f"pins-converged: {log_path} is not JSONL at line {n}: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
+        stamp = str(row.get("ts", ""))
+        first = min(first, stamp) if first else stamp
         if row.get("rc") != 0:
             continue
-        out.update(m.group(1) for m in DIGEST.finditer(json.dumps(row.get("extra_vars") or {})))
-    return out
+        for m in DIGEST.finditer(json.dumps(row.get("extra_vars") or {})):
+            out.setdefault(m.group(1), set()).add(str(row.get("limit", "")))
+    return out, first
 
 
-def unconverged_pins(pins_path: pathlib.Path, seen: set[str]) -> list[tuple[str, str, str]]:
-    """Every column is found by its header, and a header row without a digest column (the version-pin table)
+def unconverged_pins(pins_path: pathlib.Path, evidence: dict[str, set[str]], log_start: str) -> list[tuple[str, str, str]]:
+    """One (pin, host) per host the row names that no successful row on that host evidences. A row whose `since`
+    predates the log's first stamp is named on stderr and left out: the log cannot speak for it either way.
+
+    Every column is found by its header, and a header row without a digest column (the version-pin table)
     turns the lookup off until the next header. A file with no digest header at all is an error, not an empty
     answer: a hand edit must not take every row out of the count silently."""
     rows: list[tuple[str, str, str]] = []
@@ -70,6 +78,7 @@ def unconverged_pins(pins_path: pathlib.Path, seen: set[str]) -> list[tuple[str,
                     "digest": digest[0],
                     "service": next((k for k, c in enumerate(cells) if c in ("service", "package")), 0),
                     "host": cells.index("host"),
+                    "since": next((k for k, c in enumerate(cells) if c.startswith("since")), -1),
                 }
             )
             continue
@@ -77,8 +86,18 @@ def unconverged_pins(pins_path: pathlib.Path, seen: set[str]) -> list[tuple[str,
             continue
         scanned += 1
         m = CELL_DIGEST.search(raw[cols["digest"]])
-        if m and m.group(1) not in seen:
-            rows.append((raw[cols["service"]], raw[cols["host"]], m.group(1)))
+        if not m:
+            continue
+        since = raw[cols["since"]][:10] if cols["since"] >= 0 else ""
+        if since and log_start and since < log_start[:10]:
+            print(
+                f"pins-converged: {raw[cols['service']]} since {since} predates the log's first row ({log_start[:10]}); not in the set",
+                file=sys.stderr,
+            )
+            continue
+        for host in (h.strip() for h in raw[cols["host"]].split(",")):
+            if host not in evidence.get(m.group(1), set()):
+                rows.append((raw[cols["service"]], host, m.group(1)))
     if not scanned:
         print(f"pins-converged: no digest column found in {pins_path} -- the table's shape changed", file=sys.stderr)
         raise SystemExit(2)
@@ -87,11 +106,11 @@ def unconverged_pins(pins_path: pathlib.Path, seen: set[str]) -> list[tuple[str,
 
 def main() -> int:
     root = repo_root()
-    seen = converged_digests(root / "docs/reference/deploy-log.jsonl")
-    owed = unconverged_pins(root / "docs/reference/fleet-pins.md", seen)
+    evidence, log_start = converged_digests(root / "docs/reference/deploy-log.jsonl")
+    owed = unconverged_pins(root / "docs/reference/fleet-pins.md", evidence, log_start)
     print(len(owed))
     for service, host, digest in owed:
-        print(f"  {service} on {host}: {digest} is pinned and no deploy-log row converged it", file=sys.stderr)
+        print(f"  {service} on {host}: {digest} is pinned and no deploy-log row on {host} converged it", file=sys.stderr)
     return 0
 
 
