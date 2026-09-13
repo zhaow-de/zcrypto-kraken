@@ -297,16 +297,18 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_change_index_row_commit_is_the_one_head_the_read_line_need_not_cover(tmp_path):
-    """The gate admits exactly one commit past the tip a read line names: a single-parent commit whose only file
-    is the change index, which `open-pr` pushes after the read. The counter has to admit it too or it books every
+    """The gate admits past the tip a read line names a single-parent commit whose only file is the change index,
+    which `open-pr` pushes after the read. The counter has to admit it too or it books every
     PR that used the exception. This arm needs the head COMMIT, not just its oid, so it was unkillable while the
     snapshot path could only return None -- `COUNT_LIST_HEADS_SNAPSHOT` is why it is killable now."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     read, head, other = "abcdef1234567", "99887766554433221100ffeeddccbbaa99887766", "0011223344556677889900aabbccddeeff001122"
     body = f"Read before push by: Claude Opus at {read}\n"
+    amended = "aa00bb11cc22dd33ee44ff5566778899aabbccdd"
     prs = [
         {"headRefName": "feat/index-row", "mergedAt": stamp, "headRefOid": head, "files": [], "body": body},
         {"headRefName": "feat/other-commit", "mergedAt": stamp, "headRefOid": other, "files": [], "body": body},
+        {"headRefName": "feat/amended", "mergedAt": stamp, "headRefOid": amended, "files": [], "body": body},
         {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": head, "files": [], "body": "## Summary\n"},
     ]
     heads = {
@@ -317,6 +319,13 @@ def test_the_change_index_row_commit_is_the_one_head_the_read_line_need_not_cove
             "parents": [{"sha": read + "0" * (40 - len(read))}],
             "files": [{"filename": "docs/reference/change-index.md"}, {"filename": "cli/x.py"}],
         },
+        # A message amend: another file in the diff against its parent, but the tree the read graded.
+        amended: {
+            "parents": [{"sha": read + "0" * (40 - len(read))}],
+            "files": [{"filename": "cli/x.py"}],
+            "commit": {"tree": {"sha": "t" * 40}},
+        },
+        read + "0" * (40 - len(read)): {"commit": {"tree": {"sha": "t" * 40}}},
     }
     snapshot, head_snapshot = tmp_path / "prs.json", tmp_path / "heads.json"
     snapshot.write_text(json.dumps(prs))

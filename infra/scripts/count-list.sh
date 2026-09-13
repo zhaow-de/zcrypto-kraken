@@ -127,21 +127,28 @@ heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_te
     "COUNT_LIST_HEADS_SNAPSHOT") else None
 
 
-def head_commit(pr):
-    """The one exception `read_line_fails` needs a network read for: a head that is the change-index row commit
-    over the tip the body names. Asked for only by a row that fails on nothing else. COUNT_LIST_HEADS_SNAPSHOT
-    names a recorded `{oid: commit}` map so this branch can be driven without the network -- without it the
-    snapshot path returns None and this arm is unkillable, which is how it shipped uncovered once."""
-    oid = pr.get("headRefOid") or ""
+def commit_of(sha):
+    """The two exceptions `read_line_fails` needs a network read for -- a head that is the change-index row commit
+    over the tip the body names, or a head whose tree is that tip's -- asked for only by a row that fails on
+    nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map so this branch can be driven
+    without the network -- without it the snapshot path returns None and this arm is unkillable, which is how it
+    shipped uncovered once."""
+    if not sha:
+        return None
     if heads is not None:
-        return heads.get(oid)
+        return next((c for oid, c in heads.items() if oid.startswith(sha)), None)
     if offline:
         return None
     done = subprocess.run(
-        ["gh", "api", f"repos/{gate.REPO}/commits/{oid}"],
+        ["gh", "api", f"repos/{gate.REPO}/commits/{sha}"],
         capture_output=True, text=True, timeout=60,
     )
     return json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+
+
+def read_sha(pr):
+    m = gate.READ_LINE.search(gate._as_a_reader_sees_it(pr.get("body") or ""))
+    return m.group(2) if m else ""
 
 files_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_FILES_SNAPSHOT"]).read_text()) if os.environ.get(
     "COUNT_LIST_FILES_SNAPSHOT") else None
@@ -191,7 +198,7 @@ for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     files = file_paths(pr)
     fails = gate.read_line_fails(pr, None, files)
     if fails and all("not the head" in f for f in fails):
-        fails = gate.read_line_fails(pr, head_commit(pr), files)
+        fails = gate.read_line_fails(pr, commit_of(pr.get("headRefOid")), files, commit_of(read_sha(pr)))
     if fails:
         count += 1
 print(count)

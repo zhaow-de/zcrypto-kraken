@@ -1,4 +1,5 @@
-"""merge-gate.py: the read line must be at the floor and name the head, with exactly two exceptions -- the one change-index row commit past the tip it names, and the ops-journal month PR."""
+"""merge-gate.py: the read line must be at the floor and name the head, with exactly three exceptions -- the change-index
+row commit past the tip it names, a head whose tree is that tip's tree, and the ops-journal month PR."""
 
 from __future__ import annotations
 

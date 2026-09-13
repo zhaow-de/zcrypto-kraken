@@ -253,8 +253,7 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
 
 def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None) -> list[str]:
     """The read is at the floor and names the head, or the head is the one change-index row commit past the tip it
-    names, or the head's tree is the tree the named tip carries -- a message amend, which the reader's read of that
-    tree covers."""
+    names, or the head's tree is the named tip's tree (a message amend)."""
     if pr.get("headRefName") == "ops-journal":
         if files is None:
             return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]
@@ -399,7 +398,10 @@ def main(argv: list[str]) -> int:
     read_commit = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
-        read_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}"))
+        try:
+            read_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}"))
+        except subprocess.CalledProcessError:
+            read_commit = None  # a tip GitHub never saw: no tree to compare, and the arm below says which head is covered
     fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit)
     if fails:
         print("GATE FAILED:")
