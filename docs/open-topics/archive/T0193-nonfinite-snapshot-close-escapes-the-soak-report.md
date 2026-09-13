@@ -51,6 +51,14 @@ The soak-level case is built on the ten-leg fixture, because a single-pair recor
 before any value is read, and the NaN is hashed INTO the record rather than injected after it: injecting after
 trips the assembler's content-hash check first, which is a different refusal with its own handling.
 
+**The escape had more than one exit, and the branch read found the rest.** The front door stops the builder
+dying on the value, but `soak_report` then calls `self_tests` over the same record and reader: inside it
+`identity_self_check` replays the same snapshots, the builder refuses with `PortfolioError`, and that handler
+caught `EngineError` alone — which `PortfolioError` is not. So the first fix degraded one path while the very
+next call still escaped. Both classes are caught there now. A corrupt store frame was a third exit, by
+`OHLCError` past the command's own handler, and is caught at that boundary. A NaN cannot reach the STORE at all,
+which the attempt to fixture one proved: the store writer refuses it.
+
 **Not done, and not this topic's:** `journal.py`'s snapshot metadata still carries no finiteness claim about the
 data behind a `content_hash`, so a snapshot whose NaN was hashed in at write time is refused at the READ rather
 than at the write. Refusing at the write is a capture-path change with its own blast radius.
