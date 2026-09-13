@@ -9,6 +9,7 @@ import sys
 import urllib.error
 
 import pytest
+import yaml
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "infra" / "scripts" / "deploy-log-audit.py"
@@ -48,6 +49,74 @@ def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, cap
     assert audit.main(["maintenance", "--log", log, "--from-snapshot", str(FEED)]) == 0
     out = capsys.readouterr().out.splitlines()
     assert out == ["rows inside an API-impacting window 1 of 2", "  2026-08-28T23:40:17Z nas Beeks Maintenance"]
+
+
+def test_the_venue_facing_derivation_still_holds():
+    """The constant is hand-maintained and rests on this set; nothing else would notice it going stale."""
+    infra = pathlib.Path(__file__).resolve().parents[1] / "infra"
+    # The excluded hosts' payloads are rendered from outside their roles: the NAS compose stack, and the files
+    # the `access` role copies to the bridgehead. `infra/docker/` builds the image the NAS runs and names Kraken;
+    # what exonerates the NAS is the entrypoint override, asserted below, not that image.
+    payloads = {d.name: d for d in (infra / "ansible" / "roles").iterdir() if d.is_dir()}
+    payloads |= {"nas-stack": infra / "nas", "access-files": infra / "ansible" / "files"}
+    # ... and the vars rendered onto them: each excluded host's host_vars, plus the group_vars of its groups and their ancestors.
+    inventory = yaml.safe_load((infra / "ansible" / "inventory" / "hosts.yml").read_text())
+    members: dict[str, set[str]] = {}
+
+    def collect(name: str, node: dict) -> None:
+        members.setdefault(name, set()).update((node or {}).get("hosts") or {})
+        for child, sub in ((node or {}).get("children") or {}).items():
+            members.setdefault(name, set()).add(f"group:{child}")
+            collect(child, sub)
+
+    def groups_of(host: str) -> set[str]:
+        found = {g for g, m in members.items() if host in m}
+        while True:
+            parents = {g for g, m in members.items() if any(f"group:{d}" in m for d in found)} - found
+            if not parents:
+                return found
+            found |= parents
+
+    for name, node in inventory.items():
+        collect(name, node)
+    for host in audit.NO_VENUE_EXPOSURE:
+        payloads[f"vars:{host}"] = infra / "ansible" / "host_vars" / host
+        for group in groups_of(host):
+            if (infra / "ansible" / "group_vars" / group).is_dir():
+                payloads[f"vars:{group}"] = infra / "ansible" / "group_vars" / group
+    walked = {name for name, d in payloads.items() if name.startswith("vars:") and d.is_dir()}
+    assert {f"vars:{h}" for h in audit.NO_VENUE_EXPOSURE} | {"vars:all"} <= walked, walked
+    speaks = {
+        name
+        for name, d in payloads.items()
+        if any("kraken" in f.read_text(errors="ignore").lower() for f in d.rglob("*") if f.is_file())
+    }
+    assert speaks == {"capture", "engine", "ops"}, (
+        f"the Kraken-referencing payloads are now {sorted(speaks)}; `NO_VENUE_EXPOSURE` "
+        f"({sorted(audit.NO_VENUE_EXPOSURE)}) rests on that set and must be re-judged"
+    )
+    stack = yaml.safe_load((infra / "nas" / "compose.yaml").read_text())
+    assert stack["services"]["archive-pull"]["entrypoint"] == ["/opt/pull-entrypoint.sh"]
+
+
+@pytest.mark.parametrize("host", ["nas", "zaccess"])
+def test_venue_facing_drops_a_host_a_window_cannot_harm(tmp_path, capsys, host):
+    """The unnarrowed arm still reports the row, so the flag narrows the count and hides nothing."""
+    log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host), _row("2026-08-20T01:00:00Z")])
+    assert audit.main(["maintenance", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "rows inside an API-impacting window 1 of 2"
+
+    assert audit.main(["maintenance", "--venue-facing", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    assert capsys.readouterr().out.splitlines() == ["rows inside an API-impacting window 0 of 1 venue-facing"]
+
+
+@pytest.mark.parametrize("host", ["zcrypto", "zcrypto-red", "zcrypto-ops"])
+def test_venue_facing_keeps_every_host_that_speaks_to_the_venue(tmp_path, capsys, host):
+    log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host)])
+    assert audit.main(["maintenance", "--venue-facing", "--log", log, "--from-snapshot", str(FEED)]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "rows inside an API-impacting window 1 of 1 venue-facing"
+    assert out[1].endswith(f"{host} Beeks Maintenance")
 
 
 def test_maintenance_counts_none_when_every_row_sits_outside(tmp_path, capsys):
@@ -107,6 +176,7 @@ def test_a_snapshot_reads_back_the_count_the_network_produced(tmp_path, capsys, 
     [
         ["engine-window", "--from-snapshot", str(FEED)],
         ["maintenance", "--snapshot", "written.json", "--from-snapshot", str(FEED)],
+        ["engine-window", "--venue-facing"],
     ],
 )
 def test_the_feed_flags_are_refused_where_they_would_do_nothing(tmp_path, argv):
