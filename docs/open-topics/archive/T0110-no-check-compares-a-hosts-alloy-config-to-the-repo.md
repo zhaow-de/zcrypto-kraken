@@ -44,7 +44,7 @@ Two tasks in the `capture` and `ops` roles, **deliberately outside** `when: <tie
 - `stat` the deployed `conf/config.alloy` with `checksum_algorithm: sha256`
 - compare it against the repo file's checksum, read by `stat` **on the controller** (`delegate_to: localhost`)
 
-The assert runs only when a config is already deployed, so a host that has never had Alloy passes and its first real deploy creates one. Its `fail_msg` names the remedy — re-run passing the digest, then recreate the container.
+The assert runs only when a config is already deployed, so a host that has never had Alloy passes and its first real deploy creates one. Its `fail_msg` names the remedy — re-run passing the digest, then recreate the container. **Correction (2026-09-12, T0179):** the recreate clause was wrong for a config drift and is gone from both roles — the re-run's copy notifies a handler that reloads a running Alloy, and a stopped one reads the new file at its next start. The recreate remains the remedy for a rotated credential only.
 
 **Proven in both directions against the live ops host**, because a check that only ever passes is the defect it exists to catch:
 
