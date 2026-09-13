@@ -112,7 +112,7 @@ def _report_field(out: str, label: str) -> str:
 
 
 def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatch):
-    """T0193's symptom at the CLI, and the version of this test that measures it. `read_store_series` WAS a bare
+    """T0193 at the CLI. `read_store_series` WAS a bare
     `pl.read_parquet`, so a corrupt frame left the report as a `polars.exceptions.ComputeError` — past
     `soak_report`'s `except SoakError` and past this command's handler — and reached the operator as a traceback.
     The reader refuses it as an `EngineError` now, so the abort is the command's own. Asserting on the ABSENCE of
@@ -142,15 +142,12 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
 @pytest.mark.parametrize(
     ("shape", "wreck"),
     [
-        # Readable parquet, no `close` column: the first version of the fix wrapped only `read_parquet`, so the
-        # two column reads sat outside the try and this escaped as polars' ColumnNotFoundError.
+        # Readable parquet, no `close` column: the column reads have to be inside the try, not just the open.
         ("no close column", lambda frame: frame.drop("close")),
-        # A close that cannot be a price at all reached `math.isfinite` in two places -- `realized_series` and
-        # `_basket_complete_index`, the second BEFORE the builders' front door -- and escaped as a TypeError.
+        # A close that cannot be a price reaches `math.isfinite` in two places, one BEFORE the builders' door.
         ("close column of strings", lambda frame: frame.with_columns(pl.col("close").cast(pl.Utf8))),
-        # The SIBLING column on the same line. An epoch-int `ts` is the raw Kraken shape `_row()` writes before
-        # `to_frame` converts it, and it used to die in `_fmt_ts` inside `render_report` -- on the LAST line of
-        # `soak_report`, so the operator lost the whole report to a traceback.
+        # The sibling column: an epoch-int `ts` is the raw Kraken shape `_row()` writes, and it dies in
+        # `_fmt_ts` on the last line of `soak_report` -- the whole report lost to a traceback.
         ("ts column of epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
     ],
 )
@@ -183,8 +180,7 @@ def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp
     ("shape", "wreck"),
     [
         ("epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
-        # Aware vs merely-a-datetime: this one satisfies `isinstance(stamp, datetime)` and used to die in
-        # `select_model_inputs`' `sorted()`, comparing naive against aware, past every handler.
+        # Aware vs merely-a-datetime: this satisfies `isinstance` and dies in `select_model_inputs`' `sorted()`.
         ("tz-naive datetimes", lambda frame: frame.with_columns(pl.col("ts").dt.replace_time_zone(None))),
     ],
 )
@@ -224,7 +220,7 @@ def test_soak_check_aborts_cleanly_on_a_canonical_leg_whose_stamps_are_unusable(
 
 
 def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, monkeypatch):
-    """The second door T0193's input class left by, and the one this branch itself opened. `build_null` enters the
+    """The second door this input class leaves by. `build_null` enters the
     portfolio builders, whose new front door refuses a non-finite close with a `PortfolioError` -- not an
     `EngineError`, so it walked past `soak_report`'s `except SoakError` AND the command's handler and reached the
     operator as a traceback, exit 1, no report. The handler catches that class now."""
@@ -326,7 +322,7 @@ def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_p
 
 
 def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants(tmp_path, monkeypatch):
-    """What the store door does NOT promise, pinned so the docstring saying so cannot go stale. The door reads
+    """What the store door does NOT promise (T0201), pinned so its docstring cannot go stale. The door reads
     TYPES: a frame typed `Datetime("us", "UTC")` whose stamps are simply the WRONG instants passes it, and the
     realized leg then finds no boundary at all -- rc 0, `no realized series available`, no refusal anywhere.
     That is a value question a type door cannot answer, so it is read off the report instead."""
@@ -373,8 +369,7 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
             ),
             "carries no usable metrics",
         ),
-        # The arm that formatted the loop variable of the loop whose FIRST `__next__` raises: this used to exit
-        # `UnboundLocalError` out of the handler added to prevent a traceback, and no test reached it. Its
+        # The decode error comes out of the iterator's FIRST `__next__`, before `n` is bound. Its
         # wording is pinned below, including that it claims NO line: for a decode error `n` is a chunk boundary
         # rather than the bad byte's line. Putting `{n}` itself back is already fatal -- measured, it exits
         # `UnboundLocalError`, which the exception-type assertion below refuses -- but a plausible LITERAL line

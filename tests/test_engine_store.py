@@ -249,9 +249,7 @@ def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path
 
 
 def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path):
-    """The copy branch: with no store file, `seed_store` copies the canonical and then reads it, so the frame
-    the door refuses is one it created a line earlier. Naming the store path there would print a symptom and
-    send the operator to re-copy the same canonical -- the culprit has to be the one named."""
+    """The canonical is checked before it is copied, so no broken copy is left for the next run to refuse."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -263,6 +261,10 @@ def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path
 
     assert str(broken) in str(exc.value)
     assert str(_store_path(store_dir, "ADA/EUR", 240)) not in str(exc.value)
+    # A canonical is hash-attested, so "recast in place" is the wrong instruction there.
+    assert "recast the column in place" not in str(exc.value)
+    assert "dataset_hash" in str(exc.value) and "fetch a dump" in str(exc.value)
+    assert not _store_path(store_dir, "ADA/EUR", 240).exists()  # no copy was written to be refused next round
 
 
 # Each survives a `write_parquet`/`read_parquet` round trip and each then raises the same `SchemaError` at the
@@ -273,17 +275,10 @@ def test_seed_store_names_the_canonical_when_the_copy_is_what_is_broken(tmp_path
 )
 @pytest.mark.parametrize("reader", ["refresh_store", "seed_store"])
 def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, reader, dtype):
-    """T0193's share for the two readers that JOIN -- `refresh_store` on the cycle path and `seed_store` on the
-    workstation's `engine seed`, which `run_cycle` never calls. A `ts` column typed anything but
-    `Datetime("us", "UTC")` cannot be joined against the REST frame's: polars raises a bare `SchemaError` from
-    `seam_overlap`, which `run_cycle`'s `except OHLCError` and both commands' `except EngineError` let past, so
-    the operator got a traceback. `read_store_series`' door cannot cover it -- the frame meets the join first --
-    and `seed_store` needs its own because it is the recovery this refusal names."""
+    """Both readers that join. `read_store_series`' door cannot cover this: the frame meets the join first."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
-    # A whole seeded universe, so `seed_store` reaches the broken file by reading it rather than by failing to
-    # find a canonical to copy: its loop covers every pair and grid, and it copies only where a store file is
-    # absent -- which is also why seeding cannot repair this input.
+    # A whole seeded universe, so `seed_store` reaches the broken file by READING it, not by failing to copy.
     _write_full_universe(canonical_dir, _canonical_rows)
     _write_full_universe(store_dir, _canonical_rows)
     path = _store_path(store_dir, "ADA/EUR", 240)
@@ -297,12 +292,9 @@ def test_the_store_readers_that_join_refuse_an_unjoinable_ts_column(tmp_path, re
             seed_store(store_dir, canonical_dir, fetch_fn=_good_fetch_fn, clock=lambda: FAR_FUTURE)
 
     assert reader in str(exc.value) and str(path) in str(exc.value)
-    # The recovery has to be one that WORKS and loses nothing: a re-seed cannot repair this file (the canonical
-    # is copied only where a store file is absent) and on a 4h leg drops every bar the frozen canonical lacks,
-    # so the message names the in-place recast and the copy-aside instead. Pinned because the earlier wording
-    # here pinned a data-loss instruction.
+    # Pinned because the earlier wording here pinned a data-loss instruction.
     assert "recast the column in place" in str(exc.value) and "copy the file aside" in str(exc.value)
-    assert "re-seed" in str(exc.value) and "cannot repair" in str(exc.value)
+    assert "a re-seed refuses this file" in str(exc.value)
 
 
 def test_refresh_store_overlap_mismatch_raises(tmp_path):

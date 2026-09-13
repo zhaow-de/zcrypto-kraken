@@ -733,8 +733,8 @@ def _instrument_expectations(registry_path: Path) -> dict[str, int]:
     """`governor_engaged_bars`/`cap_breach_bars` from record 47's metrics -- the ratified deployable-system
     trial (`docs/reference/trial-registry.jsonl`) the frozen engine build must reproduce exactly."""
     record = _load_registry_record(registry_path, 47)
-    # A record that is present but the wrong SHAPE used to leave here as a bare KeyError or ValueError, past
-    # every handler; the expectation this whole check rests on is worth a typed refusal naming the field.
+    # The wrong SHAPE left here as a bare KeyError or ValueError past every handler; the expectation this check
+    # rests on is worth a typed refusal naming the field.
     try:
         metrics = record["metrics"]
         return {
@@ -1716,12 +1716,9 @@ def soak_report(
     from cli.engine.command import _journal_artifacts, _snapshot_reader
 
     arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
-    # Two refusals on one loop, from the two topics that met here. The READ can fail on a path the glob found
-    # -- a directory where a record belongs, non-UTF-8 bytes -- and did so past every handler (T0193); and
-    # `realized_series` consumes all of these, not just the comparison spec 00113 hardened, so every record is
-    # validated here -- which does not retire that spec's arm, `realized_internals`' `if not
-    # math.isfinite(diff)` over `abs(row[a] - value)`: the diff's other operand is the REBUILT row, which is no
-    # record and passes through no validator (T0194).
+    # The READ can fail on a path the glob found -- a directory where a record belongs, non-UTF-8 bytes -- past
+    # every handler. Validating every record here does not retire `realized_internals`' `if not
+    # math.isfinite(diff)`: that diff's other operand is the rebuilt row, which passes through no validator.
     records = []
     for _, artifact in arts:
         try:
@@ -1730,17 +1727,11 @@ def soak_report(
             raise SoakError(f"cannot read the journaled cycle {artifact}: {exc}") from exc
         record = from_json(text)
         validate_record(record)
-        # And the stamp must be orderable against an AWARE boundary, which `validate_record` does not require:
-        # `_refuse_mixed_awareness` says in as many words that a WHOLLY naive record "compares consistently" and
-        # is left alone -- true among the record's own stamps, false against the aware `now` this path supplies,
-        # where `nxt.cycle_ts > now` raised a bare TypeError. This is the door T0194 built for exactly that, on
-        # the other caller; it belongs on this one too (T0193).
-        #
-        # It aborts the WHOLE report over one bad artifact anywhere under `journal_dir`, before
-        # `select_clean_segment` narrows to the window. Safe, because nothing `run_cycle` wrote can trip it:
-        # `cycle._normalize_cycle_ts` refuses a stamp it cannot order and normalizes the rest through
-        # `astimezone`, so a journaled `cycle_ts` is aware UTC by construction. What CAN trip it is a
-        # hand-written or hand-edited record, and aborting is then the point.
+        # `validate_record` does not require an orderable stamp: `_refuse_mixed_awareness` leaves a WHOLLY naive
+        # record alone as "compares consistently", which is false against the aware `now` this path supplies,
+        # where `nxt.cycle_ts > now` raised a bare TypeError. Aborting here costs the whole report over one bad
+        # artifact anywhere under `journal_dir`, and that is deliberate: nothing `run_cycle` wrote can trip it
+        # (`cycle._normalize_cycle_ts` normalizes through `astimezone`), so what does is hand-edited.
         require_comparable_cycle_ts(record)
         records.append(record)
     if not records:

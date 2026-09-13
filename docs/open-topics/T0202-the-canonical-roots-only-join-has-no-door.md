@@ -20,7 +20,7 @@ file. The store side is closed — `_require_joinable_ts` in `cli/engine/store.p
 ## Why this matters
 
 Lower stakes than the store readers and worth saying so: this is a workstation-only command, not the live trade
-path, and every canonical file under `data/` today is `Datetime("us", "UTC")` (118 of 118, measured). What makes
+path, and every parquet under `data/` today is `Datetime("us", "UTC")` (128 of 128, measured — every root under `data/`). What makes
 it worth registering rather than dropping is the arrival path — a republished quarterly dump is written by
 whatever wrote it, and `ns`-typed parquet is what pandas and pyarrow produce.
 

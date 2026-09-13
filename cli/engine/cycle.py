@@ -173,14 +173,11 @@ def _limits_bound(result) -> bool:
 
 
 def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
-    # `utcoffset() is None`, not `tzinfo is None`: the weaker spelling admitted a tzinfo whose `utcoffset`
-    # returns None, and `astimezone` below then re-read that stamp as LOCAL time and handed it back aware --
-    # a silent shift by the host's offset where a refusal belongs, and every reader downstream trusts this
-    # value to be the boundary it claims. Silent only where that offset is a multiple of 4h: measured, an 08:00
-    # stamp becomes `00:00+00:00` under `TZ=Asia/Shanghai` (on-grid, accepted) and `06:00+00:00` under
-    # `TZ=Europe/Berlin`, which the grid check below refused while blaming the boundary rather than the offset
-    # -- so reproducing the old behaviour needs the first TZ, not any non-UTC one. Same predicate as the journal
-    # store doors, and as `_aware_clock` below (`cli/engine/execgate.py:148-152` records the rule).
+    # `utcoffset() is None`, not `tzinfo is None`: the weaker spelling let `astimezone` re-read a None-offset
+    # stamp as LOCAL time and hand it back aware, silently shifting the boundary every reader then trusts.
+    # Same predicate as the journal and store doors and as `_aware_clock` below; `cli/engine/execgate.py:148-152`
+    # records the rule. Reproducing the old shift needs a host offset that is a multiple of 4h
+    # (`TZ=Asia/Shanghai`); elsewhere the grid check below caught it, blaming the boundary.
     if not isinstance(cycle_ts, datetime) or cycle_ts.utcoffset() is None:
         raise EngineError(
             f"cycle_ts must be an aware datetime, got {cycle_ts!r} -- a naive/aware mix makes "
@@ -195,9 +192,8 @@ def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
 def _aware_clock(clock):
     def read() -> datetime:
         now = clock()
-        # `utcoffset()`, not `tzinfo`, for the reason `_normalize_cycle_ts` above states: the weak spelling lets
-        # `astimezone` re-read a None-offset stamp as local time, and this value becomes `started_at` and the
-        # refresh deadline.
+        # `utcoffset()`, not `tzinfo`, for `_normalize_cycle_ts`'s reason above: this reading becomes
+        # `started_at`, `completed_at` and the refresh deadline.
         if not isinstance(now, datetime) or now.utcoffset() is None:
             raise EngineError(f"clock must return an aware-UTC datetime, got {now!r}")
         return now.astimezone(timezone.utc)
