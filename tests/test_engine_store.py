@@ -2,6 +2,7 @@ import importlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 import cli.engine.store as store_module
@@ -16,7 +17,7 @@ from cli.engine.store import (
     refresh_store,
     seed_store,
 )
-from cli.ohlc.dataset import to_frame, write_parquet
+from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 
 DAILY_START = datetime(2026, 7, 1, tzinfo=timezone.utc)
 H4_START = datetime(2026, 7, 1, tzinfo=timezone.utc)
@@ -245,6 +246,30 @@ def test_refresh_store_drop_rule_keeps_boundary_exact_drops_in_progress(tmp_path
     ts, _ = read_store_series(store_dir, "BTC/EUR", 240)
     assert ts[-1] == H4_START + timedelta(hours=4 * 12)  # boundary-exact bar 12 kept
     assert H4_START + timedelta(hours=4 * 13) not in ts  # bar 13 (interval end > now) dropped
+
+
+def test_refresh_store_refuses_a_naive_ts_column_before_the_seam_join(tmp_path):
+    """The cycle leg's share of T0193. A store frame whose `ts` is typed without a zone cannot be joined
+    against the REST frame's UTC column: polars raises a bare `SchemaError` from `seam_overlap`, which
+    `run_cycle`'s `except OHLCError` does not catch, so the operator got a traceback while every other
+    broken-store input on this branch gets an abort naming the file. `read_store_series`' door cannot cover
+    it -- this frame meets the join first."""
+    store_dir = tmp_path / "store"
+    path = _store_path(store_dir, "BTC/EUR", 1440)
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), path)
+    write_parquet(read_parquet(path).with_columns(pl.col("ts").dt.replace_time_zone(None)), path)
+    assert read_parquet(path).schema["ts"].time_zone is None  # the input the door is about
+
+    with pytest.raises(EngineError) as exc:
+        refresh_store(
+            store_dir,
+            pairs={"BTC/EUR": "XXBTZEUR"},
+            fetch_fn=lambda pk, iv: _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 3),
+            clock=lambda: FAR_FUTURE,
+        )
+
+    assert str(path) in str(exc.value)
+    assert "not an" in str(exc.value) and "zcrypto engine seed" in str(exc.value)
 
 
 def test_refresh_store_overlap_mismatch_raises(tmp_path):

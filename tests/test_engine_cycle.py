@@ -194,12 +194,11 @@ class _NoOffset(tzinfo):  # a tzinfo, not a concrete zone: `utcoffset` answers N
     ],
 )
 def test_the_write_door_refuses_a_cycle_ts_it_cannot_order(shape, stamp):
-    """The two shapes nothing drove. Only the first is newly REFUSED -- the `isinstance` half predates the branch
-    and is merely newly driven -- and neither of the door's other two behaviours needs a case here: a plainly
-    naive stamp and the non-UTC conversion are pinned by `test_naive_cycle_ts_rejected` and
-    `test_aware_non_utc_cycle_ts_normalized` below, which reach this door through `run_cycle`. Those two cannot
-    tell the two spellings apart, though (a naive stamp has `tzinfo is None` too, and `+02:00` passes either),
-    so this case is the predicate's only guard -- trimming it leaves the spelling unpinned."""
+    """The door's other refusals and its conversion are pinned below, through `run_cycle`, by
+    `test_naive_cycle_ts_rejected`, `test_aware_non_utc_cycle_ts_normalized` and `test_off_grid_cycle_ts_rejected`.
+    None of the three can tell the two awareness spellings apart, though -- a naive stamp has `tzinfo is None`
+    too, and `+02:00` passes either -- so measured, the first case here is the predicate's only guard: trimming
+    it leaves the spelling unpinned."""
     with pytest.raises(EngineError, match="cycle_ts must be an aware datetime"):
         cycle._normalize_cycle_ts(stamp)
 

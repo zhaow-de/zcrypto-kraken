@@ -184,6 +184,19 @@ def refresh_store(
         for interval in GRID_INTERVALS:
             store_path = _store_path(store_dir, pair, interval)
             store_frame = read_parquet(store_path)
+            # The cycle leg's own door, and it has to be HERE rather than in `read_store_series`: this frame
+            # meets `seam_overlap`'s `join(on="ts")` first, and polars refuses to join a naive `ts` column
+            # against the REST frame's UTC one with a bare `SchemaError` -- past `run_cycle`'s
+            # `except OHLCError`, so the operator gets a traceback where every other broken-store input on this
+            # branch now gets an abort naming the file (T0193). `to_frame` types the column
+            # `Datetime("us", "UTC")`, so no frame this repo wrote is refused; a re-seed is the recovery, which
+            # is why this aborts rather than retrying like a transport error.
+            ts_dtype = store_frame.schema.get("ts")
+            if not isinstance(ts_dtype, pl.Datetime) or ts_dtype.time_zone is None:
+                raise EngineError(
+                    f"refresh_store: {store_path} types ts as {ts_dtype} for {pair}@{interval}, not an "
+                    'aware `Datetime("us", "UTC")` -- re-seed it with `zcrypto engine seed`'
+                )
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
 
             _, _, merged = _reconcile(
@@ -244,11 +257,9 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
         # Aware, not merely a datetime: a NAIVE stamp satisfies `isinstance` and then dies on the canonical leg
         # in `select_model_inputs`' `sorted()`, ordered against the other legs' aware stamps -- the same crash
         # site an epoch int reaches, so checking the annotation's type rather than the type the code needs closed
-        # one spelling and left the other. The cycle leg does not crash: a polars `Datetime` column carries its
-        # zone in the DTYPE, so a frame's stamps are all naive or all aware, and `_stale_pairs` then judges
-        # `ts[-1] != expected[interval]` on every leg -- `!=` across an awareness mix is silently True, so the
-        # pair reads as stale and the cycle fails on staleness rather than on a comparison.
-        # `utcoffset() is None` is the whole test: Python's own definition of naive subsumes
+        # one spelling and left the other. (The cycle leg is not this door's business and three attempts to say
+        # what it does here were each wrong: `refresh_store`'s own door above covers it, before the join that
+        # actually breaks.) `utcoffset() is None` is the whole test: Python's own definition of naive subsumes
         # `tzinfo is None` (`cli/engine/execgate.py:148-152` records the rule). `to_frame` writes
         # `Datetime("us", "UTC")`, so no frame this repo wrote is refused.
         if not isinstance(stamp, datetime) or stamp.utcoffset() is None:
