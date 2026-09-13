@@ -1,23 +1,30 @@
 export const meta = {
   name: 're-review',
-  description: 'Read a fix range against a prior review: each prior finding closed at its class, left, or open',
-  whenToUse: 'After the fixes a review asked for, before push. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], left, grading, reportDir, model?}',
+  description: 'The single-lens read of a fix range: each open Critical or Important closed at its class, left, or open',
+  whenToUse: 'After the fixes a read asked for, after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, worktree, left?, reported?, drive?, model?}',
   phases: [
-    { title: 'Re-read', detail: 'one reader over the fix range with the prior findings' },
-    { title: 'Refute', detail: 'two independent skeptics per Critical and Important, new or reopened' },
+    { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
+    { title: 'Refute', detail: 'one skeptic per Critical and Important, new or reopened' },
   ],
 }
 
 // --- inputs ------------------------------------------------------------------------------------
-const { repo, range, tip, prior, left, grading, reportDir, model } = args || {}
-if (!repo || !range || !tip || !Array.isArray(prior) || !grading || !reportDir) {
-  throw new Error('args: {repo, range, tip, prior: [{id, severity, path, line, claim}], left, grading, reportDir, model?}')
+const { repo, range, tip, prior, reportDir, worktree, left, reported, drive, model } = args || {}
+if (!repo || !range || !tip || !Array.isArray(prior) || !reportDir || !worktree) {
+  throw new Error('args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, worktree, left?, reported?, drive?, model?}')
 }
 for (const p of prior) {
   if (!Number.isInteger(p.id) || !p.severity || !p.path || !Number.isInteger(p.line) || !p.claim) throw new Error(`prior finding needs integer id, severity, path, integer line, claim: ${JSON.stringify(p)}`)
+  if (!['Critical', 'Important'].includes(p.severity)) throw new Error(`prior #${p.id} is ${p.severity}: a Minor is never a prior -- pass it in \`reported\` as context, fixed or left with its reason`)
   if (/\n/.test(p.claim)) throw new Error(`prior finding ${p.id}: claim is one line -- the full text stays in the prior review's report, which the reader can open`)
 }
 if (left && !/#\d+/.test(left)) throw new Error('left names each consciously-left prior by id (#<id>) with its reason')
+if (drive && drive.length > 400) throw new Error('drive is one sentence naming what the standing brief does not cover; a re-measurement list is not a drive')
+
+// --- shared with pre-read.js and review.js; tests/test_review_workflows.py holds the three copies equal ---
+const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, or prose that, acted on as written, breaks something no test stops. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
+const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
+const COMMON = `Run every git command with \`-C ${repo}\`. READ-ONLY in that checkout: no edits, no commits, no checkout, no stash. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there, and never create, remove or check out a worktree. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
 
 // --- schemas -----------------------------------------------------------------------------------
 const FINDING = {
@@ -26,9 +33,9 @@ const FINDING = {
     severity: { type: 'string', enum: ['Critical', 'Important', 'Minor'] },
     path: { type: 'string', description: 'repo-relative path, or a commit sha for a message finding' },
     line: { type: 'integer', description: '1-based line, 0 when the finding has no line' },
-    claim: { type: 'string' },
-    evidence: { type: 'string' },
-    consequence: { type: 'string' },
+    claim: { type: 'string', description: 'one sentence, the defect as a claim' },
+    evidence: { type: 'string', description: 'what was run or read, and what it showed' },
+    consequence: { type: 'string', description: 'what goes wrong if the claim stands' },
   },
   required: ['severity', 'path', 'line', 'claim', 'evidence', 'consequence'],
 }
@@ -41,26 +48,16 @@ const PRIOR = {
   },
   required: ['id', 'status', 'by'],
 }
-const CLAIM = {
-  type: 'object',
-  properties: {
-    claim: { type: 'string', description: 'one claim a commit message makes, in its words' },
-    disposition: { type: 'string', enum: ['re-measured', 'read', 'declined'] },
-    by: { type: 'string', description: 'the command quoted, what was read, or why the range does not rest on it' },
-  },
-  required: ['claim', 'disposition', 'by'],
-}
 const REPORT = {
   type: 'object',
   properties: {
-    verdict: { type: 'string' },
+    verdict: { type: 'string', description: 'three sentences at most' },
     prior: { type: 'array', items: PRIOR, description: 'one entry per prior finding, every id accounted for' },
-    findings: { type: 'array', items: FINDING, description: 'new findings only' },
-    messageClaims: { type: 'array', items: CLAIM, description: 'every claim the messages in the range make, each with its disposition' },
-    executed: { type: 'array', items: { type: 'string' } },
+    findings: { type: 'array', items: FINDING, description: 'new findings in the range; a Minor is listed, never carried forward' },
+    executed: { type: 'array', items: { type: 'string' }, description: 'every command relied on, with its summary line' },
     reportPath: { type: 'string' },
   },
-  required: ['verdict', 'prior', 'findings', 'messageClaims', 'executed', 'reportPath'],
+  required: ['verdict', 'prior', 'findings', 'executed', 'reportPath'],
 }
 const VERDICT = {
   type: 'object',
@@ -69,37 +66,36 @@ const VERDICT = {
 }
 
 // --- prompts -----------------------------------------------------------------------------------
-const common = (label) => `Repo: ${repo}, range \`${range}\`, tip \`${tip}\`. Run every git command with \`-C ${repo}\`. READ-ONLY in that checkout: no edits, no commits, no checkout, no stash. To re-run a mutation probe (infra/scripts/mutate-probe.sh refuses a dirty tree and restores by \`git checkout --\`), use a detached worktree of your own at the tip — \`git -C ${repo} worktree add --detach ${reportDir}/wt-${label} ${tip}\` — knowing that its first \`uv run\` builds the worktree its own environment, and remove it with \`git worktree remove --force\` before you finish. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\` or \`ansible-inventory\`. Grading: ${grading}`
-
 const priorList = prior.map((p) => `- #${p.id} [${p.severity}] ${p.path}:${p.line} — ${p.claim}`).join('\n')
-const readerPrompt = `You are the scoped second reader, a different agent from the author, of the fix commits \`git log ${range}\`. ${common('re-read')}
+const readerPrompt = `You are the scoped second reader, a different agent from the author, of the fix commits \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${COMMON} ${SCOPE} Grading: ${GRADING}
 
-The prior review's findings, which these commits answer:
+The prior read's open findings, which these commits answer:
 ${priorList}
 
 What the author names as consciously left, each by prior id with its reason (the reason is a claim this read rests on: check it against the tree): ${left || 'nothing'}
+Minors the prior read reported, fixed or left with their reasons — context, not priors: ${reported || 'none'}
 
-Read \`git diff ${range}\` first, then each commit message; a claim a message makes is re-measured when the range's correctness rests on it — a mutation verdict re-run with the exact strings the message quotes, a number re-derived by a command you quote; a claim about a file the range does not touch is read, not re-run, and the full suite is CI's to run, not yours; a claim you neither re-measured nor read is named with why the range does not rest on it, so a scoped read is distinguishable from a skipped one. A verdict a message names without the command that produced it has not been shown, and a check whose failure would have looked like success — a probe whose failing output nobody read, a grep whose miss prints nothing, an install whose output was suppressed — has not been run, whatever the message says: each is a finding at the commit, graded as the grading above grades a claim that does not reproduce (Important where it is silent), never a probe of your own choosing. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of — the sibling spellings, the other carriers of the same claim, the other branches of the same condition — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself — a wrong number, a dangling reference, a sentence that contradicts its own file — say that instead, and say why nothing else carries it; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree; a left whose reason does not hold is open, the reason's failure being why), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, not again under findings, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding. Write a Markdown report to ${reportDir}/re-review.md with \`## Counts\`, \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\`, \`## Claims\` (one row per claim a message makes: re-measured with its command, read with what was read, or declined with why the range does not rest on it) and \`## Executed\`, then return the structured output; the report and the structure must agree.`
+The pre-read has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
-const refutePrompt = (f, k) => `You are skeptic ${k + 1} of 2. ${common(`refute-${f.id}-${k + 1}`)}
+Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of — the sibling spellings, the other carriers of the same claim, the other branches of the same condition — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-read, not a row for the next read. Write a Markdown report to ${reportDir}/re-review.md with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
+
+const refutePrompt = (f) => `You are the skeptic. ${COMMON} ${SCOPE}
 
 A reader graded this ${f.severity}: at \`${f.path}:${f.line}\` — ${f.claim}
 Its evidence: ${f.evidence}
 Its consequence: ${f.consequence}
 
-${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip. Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
+${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')
-const opts = (label, phaseName) => ({ label, phase: phaseName, agentType: 'general-purpose', ...(model ? { model } : {}) })
-const report = await agent(readerPrompt, { ...opts('re-read', 'Re-read'), schema: REPORT })
+const opts = (label, phaseName, effort) => ({ label, phase: phaseName, agentType: 'general-purpose', effort, ...(model ? { model } : {}) })
+const report = await agent(readerPrompt, { ...opts('re-read', 'Re-read', 'high'), schema: REPORT })
 if (!report) throw new Error('the reader returned nothing')
 const known = new Set(prior.map((p) => p.id))
 const unknown = report.prior.filter((p) => !known.has(p.id)).map((p) => p.id)
 if (unknown.length) log(`the reader's table names ids the caller never passed, ignored: ${unknown.join(', ')}`)
 const seen = new Set()
-const doubled = report.prior.filter((p) => known.has(p.id)).map((p) => p.id).filter((id, i, ids) => ids.indexOf(id) !== i)
-if (doubled.length) log(`the reader's table lists a prior twice, the first row kept: ${[...new Set(doubled)].join(', ')}`)
 report.prior = report.prior.filter((p) => known.has(p.id) && !seen.has(p.id) && seen.add(p.id))  // one row per prior id, the first wins
 const accounted = new Set(report.prior.map((p) => p.id))
 const unaccounted = prior.map((p) => p.id).filter((id) => !accounted.has(id))
@@ -107,29 +103,28 @@ if (unaccounted.length) log(`prior findings the reader did not account for: ${un
 const open = [...report.prior.filter((p) => p.status === 'open').map((p) => p.id), ...unaccounted]
 const RANK = { Critical: 3, Important: 2, Minor: 1 }
 const byId = new Map(prior.map((p) => [p.id, p]))
-// A reopened prior goes to the skeptics as the reader's reason it is open -- a standing sibling, a left reason that fails -- not as the instance first graded, which the fix may well have answered.
+// A reopened prior goes to the skeptic as the reader's reason it is open -- a standing sibling, a left reason that fails -- not as the instance first graded, which the fix may well have answered.
 const reopened = open.filter((id) => byId.has(id)).map((id) => { const why = (report.prior.find((p) => p.id === id) || { by: 'no reason given: the reader\'s table did not account for this prior, so nothing here says why it stands' }).by; return { ...byId.get(id), claim: `prior #${id} stands open`, evidence: why, consequence: 'the prior finding stands', priorId: id, firstGrading: byId.get(id).claim } })
 const findings = [...report.findings, ...reopened].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((f, i) => ({ ...f, id: i + 1 }))
 const count = (sev, list) => list.filter((f) => f.severity === sev).length
-const claimsOf = (kind) => report.messageClaims.filter((c) => c.disposition === kind).length
-log(`prior: ${report.prior.filter((p) => p.status === 'closed').length} closed, ${report.prior.filter((p) => p.status === 'left').length} left, ${open.length} open; new: ${count('Critical', report.findings)} Critical / ${count('Important', report.findings)} Important / ${count('Minor', report.findings)} Minor, plus ${reopened.length} reopened; message claims: ${claimsOf('re-measured')} re-measured, ${claimsOf('read')} read, ${claimsOf('declined')} declined`)
+log(`prior: ${report.prior.filter((p) => p.status === 'closed').length} closed, ${report.prior.filter((p) => p.status === 'left').length} left, ${open.length} open; new: ${count('Critical', report.findings)} Critical / ${count('Important', report.findings)} Important / ${count('Minor', report.findings)} Minor, plus ${reopened.length} reopened`)
 
-// --- Refute the Criticals and Importants, new or reopened -----------------------------------------------------
+// --- Refute the Criticals and Importants, new or reopened: one skeptic each ---------------------------
 phase('Refute')
 const graded = (
   await parallel(
     findings.map((f) => () =>
       f.severity === 'Minor'
-        ? Promise.resolve({ ...f, refuted: false, skeptics: [] })
-        : parallel([0, 1].map((k) => () => agent(refutePrompt(f, k), { ...opts(`refute:${f.id}.${k + 1}`, 'Refute'), schema: VERDICT }))).then((vs) => {
-            const skeptics = vs.filter(Boolean)
-            if (skeptics.length < 2) log(`finding ${f.id}: ${2 - skeptics.length} skeptic(s) returned nothing; it stands unrefuted`)
-            return { ...f, refuted: skeptics.length === 2 && skeptics.every((v) => v.refuted), skeptics, skepticsMissing: 2 - skeptics.length }
+        ? Promise.resolve({ ...f, refuted: false, skeptic: null })
+        : agent(refutePrompt(f), { ...opts(`refute:${f.id}`, 'Refute', 'medium'), schema: VERDICT }).then((v) => {
+            if (!v) log(`finding ${f.id}: the skeptic returned nothing; it stands unrefuted`)
+            return { ...f, refuted: Boolean(v && v.refuted), skeptic: v }
           }),
     ),
   )
 ).filter(Boolean)
 const standing = graded.filter((f) => !f.refuted)
+log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
 return {
   range,
@@ -138,7 +133,6 @@ return {
   reportPath: report.reportPath,
   executed: report.executed,
   prior: report.prior,
-  messageClaims: report.messageClaims,
   unaccounted,
   open,
   counts: { Critical: count('Critical', standing), Important: count('Important', standing), Minor: count('Minor', standing), refuted: graded.length - standing.length },
