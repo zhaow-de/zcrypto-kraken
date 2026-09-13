@@ -1724,8 +1724,8 @@ def soak_report(
         # `validate_record` does not require an orderable stamp: `_refuse_mixed_awareness` leaves a WHOLLY naive
         # record alone as "compares consistently", which is false against the aware `now` this path supplies,
         # where `nxt.cycle_ts > now` raised a bare TypeError. Aborting here costs the whole report over one bad
-        # artifact anywhere under `journal_dir`, and that is deliberate: nothing `run_cycle` wrote can trip it
-        # (`cycle._normalize_cycle_ts` normalizes through `astimezone`), so what does is hand-edited.
+        # artifact anywhere under `journal_dir`, and that is deliberate: no stamp `run_cycle` wrote can trip it
+        # (`cycle._normalize_cycle_ts` normalizes through `astimezone`); a truncated artifact is an interrupted write.
         try:
             record = from_json(text)
             validate_record(record)
