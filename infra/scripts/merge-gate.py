@@ -351,7 +351,7 @@ def _gh(*args: str) -> str:
 
 
 def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
-    """Fetch both branches, then judge every commit past the merge base against its parent through the guard's range mode; each refusal of a commit names it, and a branch that cannot be fetched, based or judged is one refusal, never a crash."""
+    """Fetch both branches, then judge every commit past the merge base through the guard's range mode; each refusal of a commit names it, and a branch that cannot be fetched, based or judged is one refusal, never a crash."""
     try:
         subprocess.run(
             ["git", "fetch", "-q", "origin", base_ref, head_ref], check=True, capture_output=True, text=True, timeout=120
@@ -371,7 +371,7 @@ def branch_growth(base_ref: str, head_ref: str, head: str) -> list[str]:
         return []
     refusals = [line[4:] for line in done.stdout.splitlines() if line.startswith("  - ")]
     if refusals:
-        return [f"a commit fails the guidance guard against its parent — {r}" for r in refusals]
+        return [f"a commit fails the guidance guard's range walk — {r}" for r in refusals]
     return [f"the branch could not be checked commit by commit: {(done.stdout + done.stderr).strip()}"]
 
 

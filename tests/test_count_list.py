@@ -46,7 +46,7 @@ def _develop_resolves() -> bool:
 
 
 def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
-    """The reason is at the function; this refuses `-i`, a single word, and one ref for the anchor and another for the arms."""
+    """The reason is at the function."""
     fn = re.search(r"c_probe_verdicts_without_the_script\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
     assert fn, "the entry's function is gone or renamed"
     # The arm parsed as a line, not searched as a substring: `tests/test_config_selectors_are_parsed.py` refuses
@@ -61,20 +61,59 @@ def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
     )
 
 
+def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_states():
+    """The clause is CLAUDE.md's; this pins both arms to it, exclusions included."""
+    fn = re.search(r"c_prose_only_commits_without_the_prover\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
+    assert fn, "the entry's function is gone or renamed"
+    left = (
+        r"^\s*comm -23 <\(git log develop HEAD --since=\"\$PROSE_ONLY_RULE_SINCE\" --no-merges --format='%h %s' "
+        r"-i --grep=prose-only \| grep -v ' claude\(' \| cut -d' ' -f1 \| sort\) \\$"
+    )
+    right = (
+        r"^\s*<\(git log develop HEAD --since=\"\$PROSE_ONLY_RULE_SINCE\" --no-merges -i --grep=prove-inert "
+        r"--grep=prose-only-commits-without-the-prover --format=%h \| sort\) \| wc -l$"
+    )
+    assert re.search(left, fn.group(0), re.M), "the left arm no longer reads as the clause states"
+    assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
+
+
+def _set_clause(entry: str) -> str:
+    """The `(set: …; count: …)` clause of the CLAUDE.md bullet naming `entry`, parsed out of its line."""
+    tail = re.compile(r"count-list\.sh " + re.escape(entry) + r"`\)")
+    line = next(l for l in (REPO / "CLAUDE.md").read_text().splitlines() if tail.search(l))
+    m = re.search(r"\(set: (?P<set>.*?); count: `infra/scripts/count-list\.sh " + re.escape(entry) + r"`\)", line)
+    assert m, f"the bullet naming {entry} has no `(set: …; count: …)` clause"
+    return m.group("set")
+
+
+def test_the_two_clauses_state_the_ref_and_exclusions_their_counters_read():
+    """The counters are pinned above; the clauses are the side that drifted, so they are pinned too."""
+    probe = _set_clause("probe-verdicts-without-the-script")
+    prose = _set_clause("prose-only-commits-without-the-prover")
+    for clause in (probe, prose):
+        assert re.match(r"commits on `develop`, and on the branch being read, since ", clause), clause
+    assert re.search(r"carries `KILLED`, `SURVIVED` or `control proven` .*? without naming `mutate-probe`$", probe), probe
+    assert re.search(r" — a `claude\(` commit, or one naming this entry, discusses the rule and is out$", prose), prose
+
+
 def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
-    """The reason is at the constants; this refuses any window that is not one of them, in any git spelling."""
+    """The reason is at the constants; this refuses a window inlined with `=` or a space through any of git's date
+    flags -- the five in `git log --help` plus `--max-age`/`--min-age` from `git rev-list --help`."""
     since = re.findall(r"^([A-Z_]*RULE_SINCE)=\"([^\"]+)\"", SCRIPT.read_text(), re.MULTILINE)
     assert since, "no RULE_SINCE constant found -- the windows moved somewhere this test cannot see"
     for name, value in since:
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
     code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
-    window = re.compile(r"--(?:since|after|until|before)=(?!['\"]?\$)[^ ]+")
+    window = re.compile(r"--(?:since|after|until|before|since-as-filter|max-age|min-age)[= ](?!['\"]?\$)[^ ]+")
     for spelling in (
         "--since=2026-09-13",
         "--after=2027-01-01",
         "--until='2026-09-13'",
         "--since=yesterday",
         '--before="1 day ago"',
+        "--since 2026-09-13",
+        "--since-as-filter=2026-09-13",
+        "--max-age=1757000000",
     ):
         assert window.search(spelling), f"the guard no longer sees {spelling!r}"  # the guard's own breadth
     inlined = window.findall(code)

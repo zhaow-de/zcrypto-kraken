@@ -504,7 +504,7 @@ def test_the_range_mode_s_refusals_are_prefixed_with_the_commit_and_a_run_failur
 
     monkeypatch.setattr(gate.subprocess, "run", fake_run)
     assert gate.branch_growth("develop", "feat/x", "b" * 40) == [
-        "a commit fails the guidance guard against its parent — 1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes"
+        "a commit fails the guidance guard's range walk — 1a2b3c4d claude(rules): x: the always-loaded guidance grows by 40 bytes"
     ]
 
 

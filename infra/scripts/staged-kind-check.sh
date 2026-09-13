@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # claude-kind files (.claude/, CLAUDE.md) never share a commit with another kind
 # Stage by explicit path, one kind per commit.
-# Deliberate exception: SKIP=staged-kind git commit ...
 set -euo pipefail
 staged=$(git diff --cached --name-only)
 [ -z "$staged" ] && exit 0
 # The hook sees the index against HEAD, so `git commit --amend` passes it whatever the commit ends up holding;
-# `guidance-guard.py --range`, which `merge-pr`'s gate runs, refuses the mixed commit at merge.
+# `guidance-guard.py --range`, which `merge-pr`'s gate runs, refuses the mixed commit at merge however it was made --
+# an amend or a `SKIP=staged-kind` commit.
 # A merge stages the union of the parents' kinds, which the author chose neither of and cannot split, so the
 # merge's own candidate files get a pass -- only those, or a stopped merge admits anything staged beside them.
 mergehead="$(git rev-parse --git-dir)/MERGE_HEAD"

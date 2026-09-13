@@ -59,6 +59,33 @@ def test_the_venue_facing_derivation_still_holds():
     # what exonerates the NAS is the entrypoint override, asserted below, not that image.
     payloads = {d.name: d for d in (infra / "ansible" / "roles").iterdir() if d.is_dir()}
     payloads |= {"nas-stack": infra / "nas", "access-files": infra / "ansible" / "files"}
+    # ... and the vars rendered onto them: each excluded host's host_vars, plus the group_vars of its groups and their ancestors.
+    inventory = yaml.safe_load((infra / "ansible" / "inventory" / "hosts.yml").read_text())
+    members: dict[str, set[str]] = {}
+
+    def collect(name: str, node: dict) -> None:
+        members.setdefault(name, set()).update((node or {}).get("hosts") or {})
+        for child, sub in ((node or {}).get("children") or {}).items():
+            members.setdefault(name, set()).add(f"group:{child}")
+            collect(child, sub)
+
+    def groups_of(host: str) -> set[str]:
+        found = {g for g, m in members.items() if host in m}
+        while True:
+            parents = {g for g, m in members.items() if any(f"group:{d}" in m for d in found)} - found
+            if not parents:
+                return found
+            found |= parents
+
+    for name, node in inventory.items():
+        collect(name, node)
+    for host in audit.NO_VENUE_EXPOSURE:
+        payloads[f"vars:{host}"] = infra / "ansible" / "host_vars" / host
+        for group in groups_of(host):
+            if (infra / "ansible" / "group_vars" / group).is_dir():
+                payloads[f"vars:{group}"] = infra / "ansible" / "group_vars" / group
+    walked = {name for name, d in payloads.items() if name.startswith("vars:") and d.is_dir()}
+    assert {f"vars:{h}" for h in audit.NO_VENUE_EXPOSURE} | {"vars:all"} <= walked, walked
     speaks = {
         name
         for name, d in payloads.items()
