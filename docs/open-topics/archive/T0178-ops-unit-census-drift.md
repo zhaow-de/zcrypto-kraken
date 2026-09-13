@@ -33,18 +33,21 @@ Corrected on `feat/grafana-keepalive` and NOT part of this topic: `infra/runbook
 
 Swept, fixed and partly guarded on the branch that carries this file into the archive.
 
-**The sweep ran by CLAIM, not by phrase**, which the first step asked for: four modalities — a numeral, a
+**The sweep ran by CLAIM, not by phrase**, which the sweep-by-claim step asked for: four modalities — a numeral, a
 spelled-out number, a list whose length IS the count, and a count encoded as a pattern (an Alloy relabel regex, a
-unit glob) — over `infra/`, `docs/` and `.claude/`, plus a completeness critic asking what surface or modality
+unit glob) — over `infra/`, `docs/` and `.claude/` but NOT `docs/specs/`, `docs/plans/` or
+`docs/open-topics/archive/`, which record what was true when they were written, plus a completeness critic
+asking what surface or modality
 none of them covered. 66 distinct sites; 15 files changed.
 
 **The six instances above, each by name:**
 
 - `alloy-compose.yaml.j2`'s "four timers' textfiles" and "the four `zcrypto-*.service` units' logs" — numerals
   deleted; the sentences name their members and the keep-regex is six lines below the second.
-- `ops-node.md:5` carried two counts that had diverged in one sentence. Split: the `docker run` half keeps its
-  five, and the publishing half is now a complement, "all but `grafana-watchdog`". The opening timer count is
-  scoped to the role and says the host shows one more, from `access_ops`.
+- `ops-node.md:5` carried two counts that had diverged in one sentence. **The split landed 2026-09-11** (`the
+  ops-node page counts its own units`), before this branch: the `docker run` half keeps its five and the
+  publishing half became a complement, "all but `grafana-watchdog`". What this branch added is the third
+  sentence — the opening timer count scoped to the role, saying the host shows one more, from `access_ops`.
 - `fleet.md:34` was delivered 2026-09-10 by the fleet-contracts rewrite, as recorded above.
 - `infra/ops/README.md:206` gained the omitted `zcrypto_grafana_keepalive_*`.
 - `grafana-keepalive.timer.j2`'s "no other unit on this host uses" is narrowed to the two roles it was checked
@@ -54,7 +57,7 @@ none of them covered. 66 distinct sites; 15 files changed.
 sentence that names its members carries its own length. The baselines above each answer a different question and
 the prose conflated them, which is why several counts were "right" for a question nobody asked.
 
-**One relationship is held by a test**, which is the fourth step's answer: a timer the ops role installs is either
+**One relationship is held by a test**, which is the can-a-test-hold-them step's answer: a timer the ops role installs is either
 named in the Alloy journal keep-regex or listed in `tests/test_infra_alloy_series.py` as deliberately unshipped
 with its reason, and the regex may name no unit the role does not install. That one is guarded because it is the
 only remaining count with a consequence beyond prose — a timer missing from that regex ships no journal lines at
