@@ -15,6 +15,7 @@
       "Bash(gh pr view:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh pr list:*)",
+      "Bash(gh api repos/zhaow-de/zcrypto-kraken/pulls/:*)",
       "Bash(git fetch:*)",
       "Bash(git ls-remote:*)",
       "Bash(kraken ticker:*)",
