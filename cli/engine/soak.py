@@ -353,8 +353,9 @@ def _load_canonical(
 ) -> tuple[dict[str, list[float | None]], list[datetime], dict[str, list[float | None]], list[datetime]]:
     """The canonical's daily and 4h MODEL panels -- `select_model_inputs`' ten base-keyed `/EUR` legs on their own calendar
     (spec 00094 D2), the grid the live engine itself builds on -- read here so `build_null` and `instrument_self_check`
-    cannot drift apart. Only the ten are READ, and the probe below covers exactly those: `read_store_series` is a bare
-    `read_parquet`, so an unprobed missing leg raises `FileNotFoundError`, which no handler degrades into a refusal."""
+    cannot drift apart. Only the ten are READ, and the probe below covers exactly those: `read_store_series` refuses an
+    unreadable leg as an `EngineError`, which `soak-check` ABORTS on, so an unprobed missing leg would end the run with
+    that reader's message instead of this function's `SoakError` naming which legs are absent."""
     missing = [
         f"{symbol}@{interval}"
         for symbol in _MODEL_SYMBOLS

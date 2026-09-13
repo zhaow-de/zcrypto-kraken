@@ -207,9 +207,10 @@ def refresh_store(
 
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
     """A frame this function cannot turn into a price series is refused as an `EngineError`, not as whatever
-    polars or `math` raises: the readers above this one degrade on `EngineError` and the soak command aborts on
-    it, while a bare `ColumnNotFoundError` or a `TypeError` out of `math.isfinite` walks past both and reaches
-    the operator as a traceback (T0193).
+    polars or `math` raises, so that `soak-check` ABORTS on it with a message naming the file -- nothing between
+    here and the command degrades it, and that is the intended reading: a store frame the engine cannot parse is
+    not a degraded metric, it is a broken input. A bare `ColumnNotFoundError` or a `TypeError` out of
+    `math.isfinite` would instead reach the operator as a traceback (T0193).
 
     The COLUMN reads are inside the try for that reason -- a readable parquet without a `close` column is the
     same defect as an unreadable one, and `command._snapshot_reader` already wraps both lines for the journal.

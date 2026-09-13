@@ -94,8 +94,8 @@ def _report_field(out: str, label: str) -> str:
 
 
 def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatch):
-    """T0193's symptom at the CLI, and the version of this test that measures it. `read_store_series` is a bare
-    `pl.read_parquet`, so a corrupt frame used to leave the report as a `polars.exceptions.ComputeError` — past
+    """T0193's symptom at the CLI, and the version of this test that measures it. `read_store_series` WAS a bare
+    `pl.read_parquet`, so a corrupt frame left the report as a `polars.exceptions.ComputeError` — past
     `soak_report`'s `except SoakError` and past this command's handler — and reached the operator as a traceback.
     The reader refuses it as an `EngineError` now, so the abort is the command's own. Asserting on the ABSENCE of
     a class is what the first version of this test did, and `ComputeError` satisfied `not isinstance(..., OHLCError)`
@@ -116,7 +116,9 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
     assert result.exception is None or isinstance(result.exception, SystemExit), (
         f"the store's refusal reached the operator unhandled: {result.exception!r}"
     )
-    assert "cannot read" in result.output and "not a parquet" not in result.output, result.output
+    # The operator's line, polars' own sentence included: `read_store_series: cannot read <path> for
+    # BTC/EUR@240 — parquet: File out of specification: The file must end with PAR1`.
+    assert "read_store_series: cannot read" in result.output, result.output
 
 
 @pytest.mark.parametrize(
@@ -561,8 +563,8 @@ def test_soak_check_short_null_reason_does_not_fire_on_an_empty_realized_window(
 
 def test_soak_report_degrades_when_the_canonical_is_missing_a_leg(tmp_path, monkeypatch):
     """State (a): a canonical carrying only the leg `_canonical_present` probes. Nothing is stubbed, so
-    the real `_load_canonical` probe runs -- without it the run dies on a `FileNotFoundError` out of
-    `read_store_series`, which is neither a SoakError nor an EngineError and reaches no handler at all."""
+    the real `_load_canonical` probe runs -- without it the run ends on `read_store_series`' own `EngineError`,
+    which the command aborts on, instead of this function's `SoakError` naming the legs that are absent."""
     _patch_config(monkeypatch, tmp_path)
     journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
     canonical = tmp_path / "canonical"
