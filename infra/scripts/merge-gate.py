@@ -276,6 +276,10 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None)
         return [
             f"the read named in the body was by {model!r}; the floor is Claude Opus, and Claude Fable where the PR touches {', '.join(FABLE_PATHS)}"
         ]
+    # One reader. The template's placeholder names both floors; strip its markers and `Claude Opus or Claude
+    # Fable` still matches the prefix, so a body that was never filled in would pass naming nobody.
+    if len(FLOOR.findall(model)) > 1 or re.search(r"\bor\b", model):
+        return [f"the read line names more than one reader ({model!r}): it records who read the branch, one model"]
     if family.group(1).lower() == "opus":
         if files is None:
             return ["the PR's file list was not fetched, so the paths that need a Fable read cannot be checked"]

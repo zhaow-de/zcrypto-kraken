@@ -203,9 +203,8 @@ PYGATE
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
-# The window opens where the zero-base round set this base, as a full instant: `--since=<bare date>` is
-# approxidate and fills the missing time from the run's clock, so a bare date slides the window through the day.
-# A `claude(` commit is out of the set -- a corpus edit discusses the rule, it does not claim a diff is inert.
+# The window opens where the zero-base round set this base (`PROSE_ONLY_RULE_SINCE`, which says why it is an
+# instant). A `claude(` commit is out of the set: a corpus edit discusses the rule, it does not claim a diff.
 c_prose_only_commits_without_the_prover() {
   comm -23 <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
            <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --format=%h | sort) | wc -l
@@ -415,7 +414,6 @@ c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' --
 # render and is not counted here, which is the direction that keeps the number reproducible in CI. Left knowingly.
 c_pinned_leaves_the_edge_renders() { git ls-files ':(glob)infra/ansible/roles/access/files/pinned-leaves/*.pem' | wc -l; }
 
-# The join needs no deploy-log field: the digest a re-pin passed on the command line is already in the row.
 c_pins_not_yet_converged() { uv run python infra/scripts/pins-converged.py; }
 
 main() {

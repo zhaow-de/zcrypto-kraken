@@ -51,20 +51,25 @@ def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
     plain English. `control proven` is printed by `mutate-probe.sh` and by nothing that writes prose."""
     fn = re.search(r"c_probe_verdicts_without_the_script\(\) \{.*?\n\}", SCRIPT.read_text(), re.S)
     assert fn, "the entry's function is gone or renamed"
-    body = fn.group(0)
-    assert "--grep='control proven'" in body, "the left arm no longer greps the script's own verdict wording"
-    assert "-i" not in body.split("--grep=mutate-probe")[0], "a case-insensitive left arm readmits prose"
+    # The arm parsed as a line, not searched as a substring: `tests/test_config_selectors_are_parsed.py` refuses
+    # `in` over a hand-edited infra file, and the anchored shape is the stronger claim anyway.
+    left = re.search(r"^\s*comm -23 <\(git log (?P<opts>[^|]*?)--format=%h \| sort\)", fn.group(0), re.M)
+    assert left, "the left arm is no longer the first `comm -23 <(git log ...)` line of the function"
+    assert re.fullmatch(r'--since="\$since" --grep=\'control proven\' ', left.group("opts")), left.group("opts")
 
 
 def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
-    """`git log --since=<bare date>` is approxidate: the missing time comes from the RUN's clock, so a bare date
-    slides the window through the day and a morning run reads 0 over an empty set."""
+    """The reason is at the constants; this refuses any window that is not one of them, in any git spelling."""
     since = re.findall(r"^([A-Z_]*RULE_SINCE)=\"([^\"]+)\"", SCRIPT.read_text(), re.MULTILINE)
     assert since, "no RULE_SINCE constant found -- the windows moved somewhere this test cannot see"
     for name, value in since:
         assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
     code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
-    assert "--since=2026-" not in code, "a window is inlined instead of naming its RULE_SINCE"
+    window = re.compile(r"--(?:since|after|until|before)=['\"]?\d[^ ]*")
+    for spelling in ("--since=2026-09-13", "--after=2027-01-01", "--until='2026-09-13'", '--before="2026-01-01T00:00:00Z"'):
+        assert window.search(spelling), f"the guard no longer sees {spelling!r}"  # the guard's own breadth
+    inlined = window.findall(code)
+    assert inlined == [], f"a window is inlined instead of naming its RULE_SINCE: {inlined}"
 
 
 def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own():

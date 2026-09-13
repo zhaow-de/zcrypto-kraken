@@ -72,6 +72,17 @@ def test_a_table_whose_digest_column_moved_is_still_read(tmp_path):
     assert pins.unconverged_pins(path, pins.converged_digests(log)) == []
 
 
+def test_a_reordered_table_names_the_right_host_on_the_row_it_owes(tmp_path):
+    """The columns the stderr line prints are found by header too, or the reordered table names the wrong host."""
+    log = _log(tmp_path, [{"ts": "x", "rc": 0}])
+    path = tmp_path / "fleet-pins.md"
+    path.write_text(
+        "# pins\n\n| service | digest (sha256, first 12) | host | since (UTC) |\n| --- | --- | --- | --- |\n"
+        "| engine | `ac6172b9ffb2` | zcrypto | 2026-09-04 |\n"
+    )
+    assert pins.unconverged_pins(path, pins.converged_digests(log)) == [("engine", "zcrypto", "ac6172b9ffb2")]
+
+
 def test_a_table_with_no_digest_column_exits_2_rather_than_counting_zero(tmp_path):
     """The silent failure: a hand edit taking every row out of the count."""
     log = _log(tmp_path, [{"ts": "x", "rc": 0}])

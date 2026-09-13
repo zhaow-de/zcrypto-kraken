@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Pin rows of `fleet-pins.md` whose digest no deploy-log row records.
 
-The set is the rows that CARRY a digest: the third cell holds a 12-hex prefix for an image pin and a version
-string for a package pin (alloy's v-string twin, agentboard), and a version pin is converged by a path with no
-digest to match. A non-zero count is a pin recorded as live that no converge in the log produced.
+The set is the rows whose digest column carries a 12-hex prefix; a version pin (the second table) has no digest
+to match and is converged by another path. A non-zero count is a pin recorded as live that no successful
+converge in the log was handed.
 """
 
 from __future__ import annotations
@@ -50,27 +50,36 @@ def converged_digests(log_path: pathlib.Path) -> set[str]:
 
 
 def unconverged_pins(pins_path: pathlib.Path, seen: set[str]) -> list[tuple[str, str, str]]:
-    """A table whose digest header this cannot find is an error, not an empty answer: a hand edit must not take
-    every row out of the count silently."""
+    """Every column is found by its header, and a header row without a digest column (the version-pin table)
+    turns the lookup off until the next header. A file with no digest header at all is an error, not an empty
+    answer: a hand edit must not take every row out of the count silently."""
     rows: list[tuple[str, str, str]] = []
-    digest_col: int | None = None
+    cols: dict[str, int] | None = None
     scanned = 0
     for line in pins_path.read_text().splitlines():
         if not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if digest_col is None or DIGEST_HEADER in cells[digest_col].lower():
-            found = [k for k, c in enumerate(cells) if DIGEST_HEADER in c.lower()]
-            if found:
-                digest_col = found[0]
-                continue
-        if digest_col is None or len(cells) <= max(digest_col, 1):
+        cells = [c.strip().lower() for c in line.strip("|").split("|")]
+        raw = [c.strip() for c in line.strip("|").split("|")]
+        if any(c == "host" for c in cells):  # a header row: both tables carry a host column
+            digest = [k for k, c in enumerate(cells) if DIGEST_HEADER in c]
+            cols = (
+                None
+                if not digest
+                else {
+                    "digest": digest[0],
+                    "service": next((k for k, c in enumerate(cells) if c in ("service", "package")), 0),
+                    "host": cells.index("host"),
+                }
+            )
+            continue
+        if cols is None or len(raw) <= max(cols.values()) or set(raw) <= {"---", ""}:
             continue
         scanned += 1
-        m = CELL_DIGEST.search(cells[digest_col])
+        m = CELL_DIGEST.search(raw[cols["digest"]])
         if m and m.group(1) not in seen:
-            rows.append((cells[0], cells[1], m.group(1)))
-    if digest_col is None or not scanned:
+            rows.append((raw[cols["service"]], raw[cols["host"]], m.group(1)))
+    if not scanned:
         print(f"pins-converged: no digest column found in {pins_path} -- the table's shape changed", file=sys.stderr)
         raise SystemExit(2)
     return rows
