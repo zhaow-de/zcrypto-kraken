@@ -58,19 +58,37 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
         cycle_ts = base + timedelta(hours=4 * k)
         last_ts = cycle_ts - timedelta(hours=4)
         upto = [t for t in labels if t <= last_ts]
+        # The first cycle's window is one bar, which the writer refuses: widened to two and hashed over exactly
+        # the window the entry declares.
+        h4_ts = upto if len(upto) > 1 else [last_ts - timedelta(hours=4), last_ts]
         h4 = SnapshotEntry(
             pair=asset,
             grid="240",
-            n_bars=len(upto),
-            first_ts=upto[0],
+            n_bars=len(h4_ts),
+            first_ts=h4_ts[0],
             last_ts=last_ts,
-            content_hash=snapshot_content_hash(upto, [closes_by_label[t] for t in upto]),
+            # The invented stamp has no close of its own: fall back to the EARLIEST in the fixture, never
+            # `labels[-1]`, which prices a past bar with the newest close the fixture holds.
+            content_hash=snapshot_content_hash(h4_ts, [closes_by_label.get(x, closes_by_label[labels[0]]) for x in h4_ts]),
             path="p240",
+        )
+        # Both grids per pair, since the soak's read now validates; the realized numbers come from the store, so
+        # the daily entry is inert here.
+        midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_last = midnight - timedelta(days=1)
+        d1 = SnapshotEntry(
+            pair=asset,
+            grid="1440",
+            n_bars=2,
+            first_ts=daily_last - timedelta(days=1),
+            last_ts=daily_last,
+            content_hash="d" * 64,
+            path="p1440",
         )
         record = CycleRecord(
             schema_version=1,
             cycle_ts=cycle_ts,
-            snapshots=(h4,),
+            snapshots=(h4, d1),
             final_targets={asset: 1.0},
             started_at=cycle_ts,
             completed_at=cycle_ts + timedelta(minutes=1),
@@ -790,17 +808,23 @@ def _mk_straddling_journal_and_store(tmp_path: Path) -> tuple[Path, Path]:
         upto = [i for i, t in enumerate(labels) if t <= last_ts]
         sub_ts = [labels[i] for i in upto]
         schema = 1 if k < 2 else 2
+        # As above: both grids, the daily one on its own boundary, a two-bar floor on the 4h window.
+        midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_last = midnight - timedelta(days=1)
+        h4_ts = sub_ts if len(sub_ts) > 1 else [last_ts - timedelta(hours=4), last_ts]
+        h4_closes = [prices["BTC/EUR"][upto[j]] if j < len(upto) else prices["BTC/EUR"][upto[-1]] for j in range(len(h4_ts))]
         snaps = tuple(
             SnapshotEntry(
                 pair=pair,
-                grid="240",
-                n_bars=len(sub_ts),
-                first_ts=sub_ts[0],
-                last_ts=last_ts,
-                content_hash=snapshot_content_hash(sub_ts, [prices["BTC/EUR"][i] for i in upto]),
-                path=f"p240-{pair.replace('/', '-')}",
+                grid=grid,
+                n_bars=len(h4_ts) if grid == "240" else 2,
+                first_ts=h4_ts[0] if grid == "240" else daily_last - timedelta(days=1),
+                last_ts=last_ts if grid == "240" else daily_last,
+                content_hash=(snapshot_content_hash(h4_ts, h4_closes) if grid == "240" else "d" * 64),
+                path=f"p{grid}-{pair.replace('/', '-')}",
             )
             for pair in (("BTC",) if schema == 1 else ("BTC/EUR", "ETH/BTC"))
+            for grid in ("240", "1440")
         )
         record = CycleRecord(
             schema_version=schema,
