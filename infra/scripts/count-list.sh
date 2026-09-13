@@ -128,11 +128,10 @@ heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_te
 
 
 def commit_of(sha):
-    """The two exceptions `read_line_fails` needs a network read for -- a head that is the change-index row commit
+    """The two exceptions `read_line_fails` needs a commit object for -- a head that is the change-index row commit
     over the tip the body names, or a head whose tree is that tip's -- asked for only by a row that fails on
-    nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map so this branch can be driven
-    without the network -- without it the snapshot path returns None and this arm is unkillable, which is how it
-    shipped uncovered once."""
+    nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map, keyed by full oid and matched by
+    prefix since a body names a short sha, so this arm can be driven without the network."""
     if not sha:
         return None
     if heads is not None:

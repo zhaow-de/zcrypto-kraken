@@ -296,11 +296,11 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
-def test_the_change_index_row_commit_is_the_one_head_the_read_line_need_not_cover(tmp_path):
-    """The gate admits past the tip a read line names a single-parent commit whose only file is the change index,
-    which `open-pr` pushes after the read. The counter has to admit it too or it books every
-    PR that used the exception. This arm needs the head COMMIT, not just its oid, so it was unkillable while the
-    snapshot path could only return None -- `COUNT_LIST_HEADS_SNAPSHOT` is why it is killable now."""
+def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not_cover(tmp_path):
+    """The gate admits two heads past the tip a read line names -- the single-parent commit whose only file is the
+    change index, which `open-pr` pushes after the read, and a head whose tree is that tip's -- and the counter has
+    to admit both or it books every PR that used either. `COUNT_LIST_HEADS_SNAPSHOT` stands in for the commit
+    objects both arms need."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     read, head, other = "abcdef1234567", "99887766554433221100ffeeddccbbaa99887766", "0011223344556677889900aabbccddeeff001122"
     body = f"Read before push by: Claude Opus at {read}\n"

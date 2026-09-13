@@ -401,7 +401,7 @@ def main(argv: list[str]) -> int:
         try:
             read_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}"))
         except subprocess.CalledProcessError:
-            read_commit = None  # a tip GitHub never saw: no tree to compare, and the arm below says which head is covered
+            read_commit = None  # a tip GitHub never saw, or a fetch that failed: no tree to compare, so read_line_fails names the head the read does not cover
     fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit)
     if fails:
         print("GATE FAILED:")
