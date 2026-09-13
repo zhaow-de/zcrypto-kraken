@@ -704,10 +704,9 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
     with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
     was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
     CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
-    # `n` belongs to the JSON arm ALONE. The UTF-8 arm claims no line, because for a decode error `n` is not
-    # the bad byte's line -- the reader fills a buffer, so the raise lands at a chunk boundary (measured: 500
-    # good lines with the corruption on 501 reported "line 414", which is where a 79-byte line falls) -- and a
-    # number that misdirects the operator is worse than no number.
+    # `n` belongs to the JSON arm ALONE. The UTF-8 arm claims no line, because for a decode error `n` is not the
+    # bad byte's line: the reader fills a buffer, so the raise lands at a chunk boundary, and a number that
+    # misdirects the operator is worse than no number.
     try:
         with registry_path.open() as f:
             for n, line in enumerate(f, 1):

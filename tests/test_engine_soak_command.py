@@ -345,7 +345,6 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
         ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
     )
 
-    # The door passed it: no refusal, and the command exits 0 with a report.
     assert result.exit_code == 0, result.output
     assert "read_store_series" not in result.output, result.output
     assert "no realized series available" in result.output, result.output

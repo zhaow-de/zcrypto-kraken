@@ -192,7 +192,10 @@ def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
 def _aware_clock(clock):
     def read() -> datetime:
         now = clock()
-        if not isinstance(now, datetime) or now.tzinfo is None:
+        # `utcoffset()`, not `tzinfo`, for the reason `_normalize_cycle_ts` above states: the weak spelling lets
+        # `astimezone` re-read a None-offset stamp as local time, and this value becomes `started_at` and the
+        # refresh deadline.
+        if not isinstance(now, datetime) or now.utcoffset() is None:
             raise EngineError(f"clock must return an aware-UTC datetime, got {now!r}")
         return now.astimezone(timezone.utc)
 

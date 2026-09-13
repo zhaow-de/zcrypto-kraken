@@ -76,7 +76,9 @@ def _utc_now() -> datetime:
 
 
 def _require_aware(now: datetime) -> datetime:
-    if not isinstance(now, datetime) or now.tzinfo is None:
+    # `utcoffset()`, not `tzinfo`: `cli/engine/cycle.py`'s `_normalize_cycle_ts` states the reason, and the
+    # boundaries this returns are what every cycle is timed against.
+    if not isinstance(now, datetime) or now.utcoffset() is None:
         raise EngineError(f"now must be an aware datetime, got {now!r}")
     return now.astimezone(timezone.utc)
 

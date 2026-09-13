@@ -13,7 +13,7 @@ import signal
 import subprocess
 import sys
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -41,6 +41,17 @@ def _config(tmp_path: Path, **overrides) -> EngineConfig:
 
 
 # --- next_boundary / most_recent_boundary -------------------------------------------------------
+
+
+class _NoOffsetZone(tzinfo):  # a complete tzinfo, not a stand-in: `utcoffset` answers None, as tzinfo allows
+    def utcoffset(self, dt):
+        return None
+
+    def dst(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return "NoOffset"
 
 
 def test_next_boundary_mid_window():
@@ -82,6 +93,14 @@ def test_most_recent_boundary_on_exact_boundary_is_itself():
 def test_most_recent_boundary_rejects_naive():
     with pytest.raises(EngineError, match="aware"):
         most_recent_boundary(datetime(2026, 7, 10, 9, 30))
+
+
+def test_most_recent_boundary_rejects_a_stamp_whose_tzinfo_has_no_offset():
+    """`tzinfo is not None` is not the same question as aware: a tzinfo may answer None from `utcoffset`, and
+    the weak spelling let such a stamp through to `astimezone`, which re-read it as LOCAL time -- shifting
+    every boundary this returns by the host's offset."""
+    with pytest.raises(EngineError, match="aware"):
+        most_recent_boundary(datetime(2026, 7, 10, 9, 30, tzinfo=_NoOffsetZone()))
 
 
 # --- startup_action -----------------------------------------------------------------------------

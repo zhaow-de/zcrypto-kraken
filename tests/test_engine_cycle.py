@@ -185,26 +185,26 @@ class _NoOffset(tzinfo):  # a tzinfo, not a concrete zone: `utcoffset` answers N
 @pytest.mark.parametrize(
     ("shape", "stamp"),
     [
-        ("naive", datetime(2026, 7, 10, 8, 0)),
-        # The spelling `tzinfo is None` admitted: `astimezone` then re-read it as LOCAL time and returned an
-        # aware value, so on any host but a UTC one the journaled boundary was silently shifted. This case is
-        # why the write door checks `utcoffset()`, the predicate the journal and store doors also use.
+        # The spelling `tzinfo is None` admitted this: `astimezone` then re-read it as LOCAL time and returned
+        # an aware value, so on any host but a UTC one the journaled boundary was silently shifted. It is why
+        # the write door checks `utcoffset()`, the predicate the journal and store doors also use.
         ("aware with a tzinfo whose utcoffset is None", datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset())),
         ("not a datetime", "2026-07-10T08:00:00+00:00"),
     ],
 )
 def test_the_write_door_refuses_a_cycle_ts_it_cannot_order(shape, stamp):
-    """`_normalize_cycle_ts` is the only place a `cycle_ts` becomes the boundary every reader then trusts, and
-    nothing drove its refusals. Each shape must raise rather than normalize."""
+    """The TWO shapes `_normalize_cycle_ts` newly refuses, and the only two nothing drove: a plainly naive stamp
+    and the non-UTC conversion half have been pinned since `run_cycle` itself, by `test_naive_cycle_ts_rejected`
+    and `test_aware_non_utc_cycle_ts_normalized` below, which reach this door through `run_cycle`."""
     with pytest.raises(EngineError, match="cycle_ts must be an aware datetime"):
         cycle._normalize_cycle_ts(stamp)
 
 
-def test_the_write_door_normalizes_an_aware_stamp_to_utc():
-    """The other half: a legitimate non-UTC stamp is CONVERTED, not refused -- which is why the refusal above
-    has to be a refusal and not a conversion of something whose offset nobody knows."""
-    got = cycle._normalize_cycle_ts(datetime(2026, 7, 10, 17, 0, tzinfo=timezone(timedelta(hours=9))))
-    assert got == CYCLE_TS and got.tzinfo is timezone.utc
+def test_the_clock_door_refuses_a_reading_whose_tzinfo_has_no_offset():
+    """`_aware_clock` is the same door on the other input: its reading becomes `started_at`, `completed_at` and
+    the 25-minute refresh deadline, so the weak spelling would have shifted all three by the host's offset."""
+    with pytest.raises(EngineError, match="clock must return an aware-UTC datetime"):
+        cycle._aware_clock(lambda: datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset()))()
 
 
 def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):

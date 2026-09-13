@@ -101,6 +101,14 @@ TABLE: dict[str, dict[str, Standin]] = {
         "FlakyFetch": Standin(OURS, "cli.ohlc.fetch.fetch_ohlc, the fetch_fn run_cycle is called with", ()),
         "SettleFetch": Standin(OURS, "cli.ohlc.fetch.fetch_ohlc, the fetch_fn run_cycle is called with", ()),
         "SteppingClock": Standin(OURS, "the now-callable cli.engine.cycle.run_cycle is built with", ()),
+        # A COMPLETE tzinfo, not a stand-in for one: `utcoffset` returning None is a documented tzinfo
+        # answer, and the only way to build a datetime that passes `tzinfo is not None` and is still naive
+        # by Python's own definition -- the input `_normalize_cycle_ts` has to refuse.
+        "_NoOffset": Standin(
+            NOT_A_STANDIN,
+            "a real datetime.tzinfo subclass whose utcoffset answers None, used as an input value",
+            (),
+        ),
         "_fake_builder": Standin(OURS, _BUILDER, ()),
         "_sleeve_result": Standin(OURS, _BUILDER_RESULT, ()),
     },
@@ -177,6 +185,13 @@ TABLE: dict[str, dict[str, Standin]] = {
         ),
     },
     "test_engine_node.py": {
+        # The twin of `test_engine_cycle.py`'s `_NoOffset`, on the other door: a complete tzinfo, not a
+        # stand-in for one.
+        "_NoOffsetZone": Standin(
+            NOT_A_STANDIN,
+            "a real datetime.tzinfo subclass whose utcoffset answers None, used as an input value",
+            (),
+        ),
         "RecordingBuilder": Standin(
             LIBRARY, "nautilus_trader.live.LiveNodeBuilder", ("test_every_builder_call_exists_on_the_library", _OFFERS_NODE)
         ),
