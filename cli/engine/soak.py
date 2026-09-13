@@ -704,12 +704,10 @@ def _load_registry_record(registry_path: Path, trial_id: int) -> dict:
     with a message naming the file. The MISS was already typed; the file being absent, unreadable or not JSON
     was not, and reached the operator as a raw traceback out of `self_tests` -- the default `--registry` is
     CWD-relative, so the absent case is what running the command from anywhere but the repo root produces."""
-    # `n` belongs to the JSON arm ALONE, and needs no pre-binding there: `json.loads` can only raise after a
-    # line has been read, so `n` is always bound when that arm runs. The UTF-8 arm claims no line, because for
-    # a decode error `n` is not the bad byte's line -- the reader fills a buffer, so the raise lands at a chunk
-    # boundary (measured: 500 good lines with the corruption on 501 reported "line 414", which is where a
-    # 79-byte line falls) -- and a number that misdirects the operator is worse than no number. An earlier
-    # version formatted `n` on BOTH arms and exited `UnboundLocalError` on the decode one.
+    # `n` belongs to the JSON arm ALONE. The UTF-8 arm claims no line, because for a decode error `n` is not
+    # the bad byte's line -- the reader fills a buffer, so the raise lands at a chunk boundary (measured: 500
+    # good lines with the corruption on 501 reported "line 414", which is where a 79-byte line falls) -- and a
+    # number that misdirects the operator is worse than no number.
     try:
         with registry_path.open() as f:
             for n, line in enumerate(f, 1):
@@ -1741,10 +1739,9 @@ def soak_report(
         #
         # It aborts the WHOLE report over one bad artifact anywhere under `journal_dir`, before
         # `select_clean_segment` narrows to the window. Safe, because nothing `run_cycle` wrote can trip it:
-        # `cycle._normalize_cycle_ts` has refused a naive `cycle_ts` at write time since that function's first
-        # commit. `tests/test_engine_journal.py`'s wholly-naive `_V1_GOLDEN_JSON`, whose comment calls it real on
-        # disk, is no counter-example -- `to_json` stamps with `isoformat()`, so a written record carries the
-        # `+00:00` that golden lacks. A hand-edited record CAN trip it, and aborting is then the point.
+        # `cycle._normalize_cycle_ts` refuses a stamp it cannot order and normalizes the rest through
+        # `astimezone`, so a journaled `cycle_ts` is aware UTC by construction. What CAN trip it is a
+        # hand-written or hand-edited record, and aborting is then the point.
         require_comparable_cycle_ts(record)
         records.append(record)
     if not records:

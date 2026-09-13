@@ -221,10 +221,12 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     `to_frame`, which types `ts` as `Datetime("UTC")` and `close` as `Float64`, so neither check can refuse a
     frame this repo wrote.
 
-    The door reads TYPES, never the stamps' VALUES: measured, a frame typed `Datetime("us", "UTC")` whose stamps
-    sit 37 minutes off the 4-hour grid passes here and the store leg then renders `no realized series available`
-    at rc 0 -- which this reader cannot tell from a legitimately short store, so it is read off the report's
-    coverage line rather than refused here.
+    The door reads TYPES, never the stamps' VALUES: a frame typed `Datetime("us", "UTC")` whose stamps are the
+    WRONG instants passes here, and the realized leg then finds no boundary and renders `no realized series
+    available` at rc 0 --
+    `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
+    drives exactly that. This reader cannot tell it from a legitimately short store, so it is read off the
+    window block's `window_bound` and `store last bar` lines rather than refused here.
 
     A non-finite close is NOT refused here: spec 00059 D7 wants a `nan` in the store dropped as a tail and one
     in a journaled snapshot degraded with a reason. What is refused is anything outside `int`/`float`, which is
@@ -239,11 +241,13 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     except (OSError, pl.exceptions.PolarsError) as exc:
         raise EngineError(f"read_store_series: cannot read {path} for {symbol}@{interval} — {exc}") from exc
     for k, stamp in enumerate(stamps):
-        # Aware, not merely a datetime: a NAIVE stamp satisfies `isinstance` and then dies in
-        # `select_model_inputs`' `sorted()`, comparing against an aware boundary -- the same crash site an epoch
-        # int reaches, so checking the annotation's type rather than the type the code needs closed one spelling
-        # and left the other. `utcoffset() is None` is the whole test: it is Python's own definition of naive
-        # and subsumes `tzinfo is None` (`cli/engine/execgate.py:148-152` records the rule). `to_frame` writes
+        # Aware, not merely a datetime: a NAIVE stamp satisfies `isinstance` and then dies on the canonical leg
+        # in `select_model_inputs`' `sorted()`, ordered against the other legs' aware stamps -- the same crash
+        # site an epoch int reaches, so checking the annotation's type rather than the type the code needs closed
+        # one spelling and left the other. On the CYCLE leg it does not crash at all: `_stale_pairs` judges
+        # `ts[-1] != expected[interval]`, and `!=` across an awareness mix is silently True, so the pair reads
+        # as stale. `utcoffset() is None` is the whole test: it is Python's own definition of naive and subsumes
+        # `tzinfo is None` (`cli/engine/execgate.py:148-152` records the rule). `to_frame` writes
         # `Datetime("us", "UTC")`, so no frame this repo wrote is refused.
         if not isinstance(stamp, datetime) or stamp.utcoffset() is None:
             raise EngineError(f"read_store_series: {path} ts[{k}] for {symbol}@{interval} is not an aware datetime: {stamp!r}")

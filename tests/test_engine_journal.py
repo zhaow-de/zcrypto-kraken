@@ -247,9 +247,15 @@ def test_from_json_missing_key():
 
 # --- schema 2 (spec 00094): the v1 golden compatibility pin --------------------------------------
 
-# Captured with `to_json` from the code as it stood BEFORE schema 2 existed -- a real v1 record on
-# disk, byte for byte. Regenerating it from current code would prove nothing about compatibility:
-# it must stay exactly as captured.
+# Captured with `to_json` from the code as it stood BEFORE schema 2 existed, and it must stay exactly as
+# captured: regenerating it from current code would prove nothing about compatibility.
+#
+# It is not, however, a record `run_cycle` WROTE, whatever its shape suggests: every stamp here is offsetless,
+# `to_json` has stamped with `isoformat()` since the journal's first commit (`225462314`), and
+# `cycle._normalize_cycle_ts` hands the writer an aware UTC value -- so an engine write carries `+00:00`. This
+# is a v1-era record built in a test. It matters because `cli/engine/soak.py`'s journal door refuses a naive
+# `cycle_ts`, and a reader who took this comment for engine output would read that refusal as rejecting real
+# history.
 _V1_GOLDEN_JSON = (
     '{"builder_path": "fast", "code_version": "1.4.2+fast", "completed_at": "2026-07-10T08:03:12", '
     '"cycle_ts": "2026-07-10T08:00:00", "final_targets": {"BTC": 0.1373, "ETH": -0.0621}, "schema_version": 1, '
@@ -287,7 +293,7 @@ _GOLDEN_ETH_1440_CLOSES = [2100.25, 2101.25, None, 2103.25]
 def test_v1_golden_round_trips_byte_identically():
     restored = from_json(_V1_GOLDEN_JSON)
     assert to_json(restored) == _V1_GOLDEN_JSON
-    validate_record(restored)  # a real v1 record must still validate post-change
+    validate_record(restored)  # a v1 record must still validate post-change
 
 
 def test_v1_golden_hash_stability():

@@ -173,7 +173,12 @@ def _limits_bound(result) -> bool:
 
 
 def _normalize_cycle_ts(cycle_ts: datetime) -> datetime:
-    if not isinstance(cycle_ts, datetime) or cycle_ts.tzinfo is None:
+    # `utcoffset() is None`, not `tzinfo is None`: the weaker spelling admitted a tzinfo whose `utcoffset`
+    # returns None, and `astimezone` below then re-read that stamp as LOCAL time and handed it back aware --
+    # a silent shift by the host's offset where a refusal belongs, and every reader downstream trusts this
+    # value to be the boundary it claims. Same predicate as the journal and store doors
+    # (`cli/engine/execgate.py:148-152` records the rule).
+    if not isinstance(cycle_ts, datetime) or cycle_ts.utcoffset() is None:
         raise EngineError(
             f"cycle_ts must be an aware datetime, got {cycle_ts!r} -- a naive/aware mix makes "
             "validate_record's != checks silently always-true"

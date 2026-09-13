@@ -3,7 +3,7 @@ import math
 import shutil
 import types
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -169,6 +169,42 @@ def _adversarial_venue_state() -> VenueState:
 
 
 # --- happy path ----------------------------------------------------------------------------------
+
+
+class _NoOffset(tzinfo):  # a tzinfo, not a concrete zone: `utcoffset` answers None
+    def utcoffset(self, dt):
+        return None
+
+    def dst(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return "NoOffset"
+
+
+@pytest.mark.parametrize(
+    ("shape", "stamp"),
+    [
+        ("naive", datetime(2026, 7, 10, 8, 0)),
+        # The spelling `tzinfo is None` admitted: `astimezone` then re-read it as LOCAL time and returned an
+        # aware value, so on any host but a UTC one the journaled boundary was silently shifted. This case is
+        # why the write door checks `utcoffset()`, the predicate the journal and store doors also use.
+        ("aware with a tzinfo whose utcoffset is None", datetime(2026, 7, 10, 8, 0, tzinfo=_NoOffset())),
+        ("not a datetime", "2026-07-10T08:00:00+00:00"),
+    ],
+)
+def test_the_write_door_refuses_a_cycle_ts_it_cannot_order(shape, stamp):
+    """`_normalize_cycle_ts` is the only place a `cycle_ts` becomes the boundary every reader then trusts, and
+    nothing drove its refusals. Each shape must raise rather than normalize."""
+    with pytest.raises(EngineError, match="cycle_ts must be an aware datetime"):
+        cycle._normalize_cycle_ts(stamp)
+
+
+def test_the_write_door_normalizes_an_aware_stamp_to_utc():
+    """The other half: a legitimate non-UTC stamp is CONVERTED, not refused -- which is why the refusal above
+    has to be a refusal and not a conversion of something whose offset nobody knows."""
+    got = cycle._normalize_cycle_ts(datetime(2026, 7, 10, 17, 0, tzinfo=timezone(timedelta(hours=9))))
+    assert got == CYCLE_TS and got.tzinfo is timezone.utc
 
 
 def test_happy_path_writes_validated_success_record(tmp_path, monkeypatch):

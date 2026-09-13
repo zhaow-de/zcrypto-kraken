@@ -18,7 +18,7 @@ from cli.engine.cycle import _MODEL_SYMBOLS
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json
 from cli.engine.soak import NullSystem, RealizedInternals, SelfTestReport
 from cli.engine.store import GRID_INTERVALS
-from cli.ohlc.dataset import to_frame, write_parquet
+from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 
 runner = CliRunner()
@@ -325,6 +325,32 @@ def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_p
     assert "cycle_ts must be timezone-aware" in result.output, result.output
 
 
+def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants(tmp_path, monkeypatch):
+    """What the store door does NOT promise, pinned so the docstring saying so cannot go stale. The door reads
+    TYPES: a frame typed `Datetime("us", "UTC")` whose stamps are simply the WRONG instants passes it, and the
+    realized leg then finds no boundary at all -- rc 0, `no realized series available`, no refusal anywhere.
+    That is a value question a type door cannot answer, so it is read off the report instead."""
+    _patch_config(monkeypatch, tmp_path)
+    d = datetime(2026, 7, 16, tzinfo=UTC)
+    closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes)
+    parquet = next(store_dir.rglob("*.parquet"))
+    frame = read_parquet(parquet)
+    # 37 minutes: off the 4h grid by an amount no rounding reaches, with the dtype and the awareness intact.
+    write_parquet(frame.with_columns((pl.col("ts") + pl.duration(minutes=37)).alias("ts")), parquet)
+    assert read_parquet(parquet).schema["ts"] == pl.Datetime("us", "UTC")
+
+    result = runner.invoke(
+        app,
+        ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
+    )
+
+    # The door passed it: no refusal, and the command exits 0 with a report.
+    assert result.exit_code == 0, result.output
+    assert "read_store_series" not in result.output, result.output
+    assert "no realized series available" in result.output, result.output
+
+
 @pytest.mark.parametrize(
     ("shape", "write", "says"),
     [
@@ -393,8 +419,6 @@ def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeyp
         f"{shape} reached the operator unhandled: {result.exception!r}"
     )
     assert str(registry) in result.output, result.output
-    # The WORDING, not just the file: each arm has to say the thing that is actually wrong, and the UTF-8 arm
-    # must not claim a line number it cannot know.
     assert says in result.output, result.output
     if says == "is not valid UTF-8":
         assert "at line" not in result.output, result.output
