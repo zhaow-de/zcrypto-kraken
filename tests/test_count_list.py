@@ -133,8 +133,6 @@ def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
         ('    readonly X_RULE_SINCE="2026-09-13"', "2026-09-13"),
         ('X_RULE_SINCE="1 week ago"', "1 week ago"),
         ("  local -r X_RULE_SINCE='3 days ago'", "3 days ago"),
-        # `typeset -a` is the only declaration keyword tracked shell here writes, and never without a flag: a
-        # keyword the guard reads only bare is a keyword it cannot read.
         ("typeset -r X_RULE_SINCE=yesterday", "yesterday"),
         ('declare -rx X_RULE_SINCE="2026-09-13"', "2026-09-13"),
         ("readonly\tX_RULE_SINCE=2026-09-13", "2026-09-13"),
