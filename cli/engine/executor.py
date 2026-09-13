@@ -374,13 +374,13 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
     out: dict[datetime, CycleRecord] = {}
     for path in sorted(Path(journal_dir).glob("*/cycle-*.json")):
         record = from_json(path.read_text())
-        # The filter orders two stamps, so the one field it reads is refused first -- with this module's own
-        # error, which the caller handles, rather than the TypeError a naive stamp raised straight past it.
+        # The filter orders two stamps, so the one field it reads is refused first.
         require_comparable_cycle_ts(record)
         if record.cycle_ts > until:
             # Filter first, validate second: a record this pass discards must not refuse it for a SCHEMA fault.
             # Validating above the filter let one invalid artifact from any week -- including one no pass will
             # ever score -- refuse every later scoring pass, and the refusal lands as a WARNING with no alert
+            # behind it.
             continue
         # `_stage` reads final, closes and nav straight out of these on the live trade path, so the read's own
         # guarantee is not enough here and a refusal propagates (T0194).
