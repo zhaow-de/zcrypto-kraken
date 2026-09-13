@@ -56,8 +56,8 @@ class CycleRecord:
 
 
 def _as_positive_float(value: object) -> float:
-    """Coerce a journaled `nav` at READ time, since several callers read a record without ever calling `validate_record`,
-    and refuse a bool -- it passes every isinstance check an int does, so `"nav": true` would score a whole cycle at NAV=1."""
+    """Coerce a journaled `nav` at READ time and refuse a bool -- it passes every isinstance check an int does, so
+    `"nav": true` would score a whole cycle at NAV=1."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EngineJournalError(f"nav must be a number, got {value!r}")
     out = float(value)
@@ -87,6 +87,48 @@ def _is_symbol_key(key: str) -> bool:
     return "/" in key
 
 
+def require_comparable_cycle_ts(record: CycleRecord) -> None:
+    """Refuse a record whose `cycle_ts` cannot be ordered against an aware boundary.
+
+    A caller that FILTERS by `cycle_ts` before validating -- which `executor._cycle_records_through` does, so one
+    invalid artifact outside the window cannot refuse a pass that never reads it -- orders two stamps before
+    `validate_record` has seen either. Without this the ordering raised TypeError out of the reader, past the
+    `except EngineError` its caller holds, which is the escape `_refuse_mixed_awareness` exists to stop.
+    """
+    if not isinstance(record.cycle_ts, datetime):
+        raise EngineJournalError(f"cycle_ts must be a datetime, got {record.cycle_ts!r}")
+    if record.cycle_ts.tzinfo is None or record.cycle_ts.utcoffset() is None:
+        raise EngineJournalError(f"cycle_ts must be timezone-aware to order against a boundary, got {record.cycle_ts!r}")
+
+
+def _refuse_mixed_awareness(record: CycleRecord) -> None:
+    """Refuse a record that mixes naive and aware stamps, before anything orders two of them.
+
+    `>=` and `>` on such a mix raise TypeError -- not this module's error, so a caller catching
+    EngineJournalError gets a traceback instead of the refusal it handles -- and the no-peek `!=` checks read
+    silently always-true on it, which is the hazard `cli/engine/cycle.py`'s docstring warns about. A wholly
+    naive record still compares consistently and is left to the checks below.
+    """
+    stamps: list[tuple[str, datetime]] = [("cycle_ts", record.cycle_ts)]
+    for field in ("started_at", "completed_at"):
+        value = getattr(record, field)
+        if isinstance(value, datetime):
+            stamps.append((field, value))
+    if isinstance(record.snapshots, tuple):
+        for entry in record.snapshots:
+            if isinstance(entry, SnapshotEntry):
+                for field in ("first_ts", "last_ts"):
+                    value = getattr(entry, field)
+                    if isinstance(value, datetime):
+                        stamps.append((f"{entry.pair} {entry.grid} {field}", value))
+    aware = {name for name, value in stamps if value.tzinfo is not None and value.utcoffset() is not None}
+    naive = {name for name, value in stamps if name not in aware}
+    if aware and naive:
+        raise EngineJournalError(
+            f"record mixes timezone-aware and naive stamps, which cannot be compared: aware {sorted(aware)}, naive {sorted(naive)}"
+        )
+
+
 def validate_record(record: CycleRecord) -> None:
     """Raise EngineJournalError on any schema violation or on a snapshot that peeks -- the node must have
     dropped Kraken REST's trailing in-progress candle. Wrong keying for the record's schema is refused over
@@ -97,6 +139,7 @@ def validate_record(record: CycleRecord) -> None:
         )
     if not isinstance(record.cycle_ts, datetime):
         raise EngineJournalError(f"cycle_ts must be a datetime, got {record.cycle_ts!r}")
+    _refuse_mixed_awareness(record)
     if not isinstance(record.snapshots, tuple) or not record.snapshots:
         raise EngineJournalError("snapshots must be a non-empty tuple of SnapshotEntry")
 
@@ -265,7 +308,7 @@ def from_json(s: str) -> CycleRecord:
             builder_path=payload["builder_path"],
             # .get, not [...]: a record written before these keys existed lacks them, and raising on the absence would
             # take the journal's consumers down over its own upgrade. dict() coerces as final_targets does, so a truncated
-            # artifact whose closes is a list or a scalar raises here -- several callers never call validate_record.
+            # artifact whose closes is a list or a scalar raises at the read rather than downstream.
             closes=dict(raw) if (raw := payload.get("closes")) is not None else None,
             nav=None if (rawn := payload.get("nav")) is None else _as_positive_float(rawn),
             held=dict(rawh) if (rawh := payload.get("held")) is not None else None,

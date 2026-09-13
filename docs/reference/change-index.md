@@ -322,3 +322,4 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #500 | 2026-09-11 | fix(engine): T0198 — the re-verification slice is the run counter | — | — | T0198 |
 | #508 | 2026-09-13 | fix(capture): the Alloy drift refusal says what the re-run does | — | — | T0179 |
 | #510 | 2026-09-13 | fix(soak): T0186 — the rebuild caps at the configured level | — | — | T0186 |
+| #511 | 2026-09-13 | fix(engine): T0194 — every journal reader validates per caller | — | — | T0194 |

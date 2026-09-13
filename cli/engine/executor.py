@@ -47,7 +47,7 @@ from cli.engine.execledger import (
 )
 from cli.engine.feeders import CycleStages
 from cli.engine.instruments import EUR_CODES, INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
-from cli.engine.journal import CycleRecord, from_json
+from cli.engine.journal import CycleRecord, from_json, require_comparable_cycle_ts, validate_record
 from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent, ProbePlanError, parse_plan, plan_refusals
 from cli.engine.store import BASKET
 from cli.engine.tracking import extract_fills, realized_drift
@@ -374,8 +374,17 @@ def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime,
     out: dict[datetime, CycleRecord] = {}
     for path in sorted(Path(journal_dir).glob("*/cycle-*.json")):
         record = from_json(path.read_text())
-        if record.cycle_ts <= until:
-            out[record.cycle_ts] = record
+        require_comparable_cycle_ts(record)
+        if record.cycle_ts > until:
+            # Filter first, validate second: a record this pass discards must not refuse it for a SCHEMA fault.
+            # Validating above the filter let one invalid artifact from any week -- including one no pass will
+            # ever score -- refuse every later scoring pass, and the refusal lands as a WARNING with no alert
+            # behind it.
+            continue
+        # `_stage` reads final, closes and nav straight out of these on the live trade path, so the read's own
+        # guarantee is not enough here and a refusal propagates (T0194).
+        validate_record(record)
+        out[record.cycle_ts] = record
     return out
 
 

@@ -1680,7 +1680,13 @@ def soak_report(
     from cli.engine.command import _journal_artifacts, _snapshot_reader
 
     arts = _journal_artifacts(journal_dir, "*", "cycle-*.json")
-    records = [from_json(p.read_text()) for _, p in arts]
+    # `realized_series` consumes all of these, not just the comparison spec 00113 hardened, so they are
+    # validated here and 00113's arm stays the last line (T0194).
+    records = []
+    for _, p in arts:
+        record = from_json(p.read_text())
+        validate_record(record)
+        records.append(record)
     if not records:
         void_reasons = ["no journaled cycles found"]
         text = render_report(None, None, None, None, void_reasons=void_reasons, band=band, null_mode=null_mode, path=path)

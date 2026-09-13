@@ -44,7 +44,7 @@ from cli.engine.gate_cache import (
     save_cache,
 )
 from cli.engine.instruments import INSTRUMENT_IDS, _floor_to_step
-from cli.engine.journal import CycleRecord, SnapshotEntry, from_json
+from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, validate_record
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
 from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, seed_store
@@ -1222,7 +1222,11 @@ def _window_records(journal_root: Path, since: str | None, until: str | None) ->
         if (since_day is not None and boundary.date() < since_day) or (until_day is not None and boundary.date() > until_day):
             continue
         try:
-            records.append(from_json(path.read_text()))
+            record = from_json(path.read_text())
+            # `from_json` leaves keying, the no-peek invariant and finiteness to the caller (T0194); the abort
+            # below is why this reader cannot take them on trust.
+            validate_record(record)
+            records.append(record)
         except EngineJournalError as exc:
             raise _abort(
                 f"unreadable cycle record {path}: {exc} -- every number here aggregates the whole window, so "
