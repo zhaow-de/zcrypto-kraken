@@ -45,6 +45,17 @@ def _develop_resolves() -> bool:
     return done.returncode == 0
 
 
+def test_every_rule_window_is_a_full_instant_and_not_a_bare_date():
+    """`git log --since=<bare date>` is approxidate: the missing time comes from the RUN's clock, so a bare date
+    slides the window through the day and a morning run reads 0 over an empty set."""
+    since = re.findall(r"^([A-Z_]*RULE_SINCE)=\"([^\"]+)\"", SCRIPT.read_text(), re.MULTILINE)
+    assert since, "no RULE_SINCE constant found -- the windows moved somewhere this test cannot see"
+    for name, value in since:
+        assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value), f"{name}={value!r} is not an instant"
+    code = "\n".join(line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
+    assert "--since=2026-" not in code, "a window is inlined instead of naming its RULE_SINCE"
+
+
 def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own():
     """A corpus count names an entry that exists, and an entry the corpus does not name is one of the four -- a universal whose count is not run here is the finding."""
     names = _ENTRY.findall(SCRIPT.read_text())

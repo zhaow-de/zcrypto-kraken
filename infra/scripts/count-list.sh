@@ -86,6 +86,10 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # of the network, for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs
 # cannot run, so a row failing ONLY on a sha mismatch is counted rather than excused.
 READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
+# A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
+# the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
+# empty set in the morning. `tests/test_count_list.py` refuses any RULE_SINCE that is not an instant.
+PROSE_ONLY_RULE_SINCE="2026-09-13T00:00:00Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
@@ -199,8 +203,28 @@ PYGATE
 
 c_kraken_cli_on_infra() { git grep -c kraken-cli -- infra cli ':!*.md' ':!infra/scripts/count-list.sh' | wc -l; }
 
-# The window opens where the zero-base round set this base, not where `prove-inert.py` landed.
-c_prose_only_commits_without_the_prover() { comm -23 <(git log develop --since=2026-09-13 -i --grep=prose-only --format=%h | sort) <(git log develop --since=2026-09-13 -i --grep=prove-inert --format=%h | sort) | wc -l; }
+# The window opens where the zero-base round set this base, as a full instant: `--since=<bare date>` is
+# approxidate and fills the missing time from the run's clock, so a bare date slides the window through the day.
+# A `claude(` commit is out of the set -- a corpus edit discusses the rule, it does not claim a diff is inert.
+c_prose_only_commits_without_the_prover() {
+  comm -23 <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges --format='%h %s' -i --grep=prose-only | grep -v ' claude(' | cut -d' ' -f1 | sort) \
+           <(git log develop --since="$PROSE_ONLY_RULE_SINCE" --no-merges -i --grep=prove-inert --format=%h | sort) | wc -l
+}
+
+# A commit that records a probe verdict (`KILLED`/`SURVIVED`, which only `mutate-probe.sh` prints) without
+# naming the script. Unlike the word-proxy this replaced, the set IS the rule: a verdict with no script named is
+# exactly the violation, and a commit that ran no probe is not in it. The window is the commit that added the
+# clause, found by `-S` over `CLAUDE.md`, so no commit is judged by a rule that postdates it.
+c_probe_verdicts_without_the_script() {
+  local since
+  since="$(git log --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
+  if [ -z "$since" ]; then
+    echo "count-list: no commit adds the probe-block clause to CLAUDE.md, so this count has no window" >&2
+    return 2
+  fi
+  comm -23 <(git log develop --since="$since" -i --grep='KILLED\|SURVIVED' --format=%h | sort) \
+           <(git log develop --since="$since" -i --grep=mutate-probe --format=%h | sort) | wc -l
+}
 
 # A failing suite is an error, never a zero count: its output still carries a "N passed" summary.
 c_spec_hash_provenance() { uv run pytest tests/test_trial_registry_provenance.py -q || return 2; }
@@ -407,6 +431,7 @@ main() {
   emit "kraken-cli-on-infra-surfaces" c_kraken_cli_on_infra
   emit "prose-chars" c_prose_chars
   emit "prose-only-commits-without-the-prover" c_prose_only_commits_without_the_prover
+  emit "probe-verdicts-without-the-script" c_probe_verdicts_without_the_script
   emit "spec-hash-provenance" c_spec_hash_provenance
   emit "operator-term-surfaces" c_operator_term_surfaces c_operator_term_allowlist_edits
   emit "skip-gate-contract" c_skip_gate_contract
