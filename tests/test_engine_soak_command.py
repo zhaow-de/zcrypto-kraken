@@ -1,5 +1,6 @@
-"""CLI tests for `zcrypto engine soak-check` (spec 00058): a short synthetic journal + store with NO
-canonical dir wired, so the command's plumbing runs without the heavy real canonical build."""
+"""CLI tests for `zcrypto engine soak-check` (specs 00058 and 00059): a short synthetic journal and
+store, with the canonical absent, stubbed at `_canonical_present`, or written as the ten `/EUR` legs
+-- never the heavy real canonical build."""
 
 import json
 import re
@@ -314,8 +315,8 @@ def test_soak_check_names_the_journaled_cycle_it_cannot_use(tmp_path, monkeypatc
 def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_path, monkeypatch):
     """The JOURNAL door's version of the store door's aware-stamp check. `validate_record` does not require an
     orderable stamp -- `_refuse_mixed_awareness` says in as many words that a wholly naive record "compares
-    consistently" and is left alone, which is true among the record's own stamps and false against the aware
-    boundary this path supplies, where `nxt.cycle_ts > now` is a bare TypeError with no report."""
+    consistently", which is true among the record's own stamps and false against the aware boundary this path
+    supplies, so `require_comparable_cycle_ts` refuses it at the read and the run aborts naming the artifact."""
     import re
 
     _patch_config(monkeypatch, tmp_path)
@@ -392,7 +393,6 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
         # A decode error claims NO line: `n` is unbound before the iterator's first `__next__`, and once bound
         # it marks a chunk boundary rather than the bad byte's line. Pinned below by `at line` being absent.
         ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe{\x00b\x00a\x00d\x00"), "is not valid UTF-8"),
-        # Valid JSON, not an object: `.get` on a list escaped one level ABOVE the metrics wrap.
         ("a line that is valid JSON but not an object", lambda p: p.write_text("[1, 2, 3]\n"), "line 1 is not a JSON object"),
     ],
 )

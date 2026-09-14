@@ -258,7 +258,7 @@ def test_deletes_the_whole_day_never_a_partial(tmp_path):
 
 # --- The systemd wiring ------------------------------------------------------------------------
 # The script above is only correct if the unit invokes it the way it expects. A mismatch here is
-# near-silent: the timer fires nightly, the oneshot fails, the journal grows, and the only thing
+# near-silent: the timer fires nightly, the oneshot fails, the journal grows, and the first thing
 # that notices is the staleness alert on `_last_run_timestamp_seconds` (`infra/grafana/alerts.yaml`),
 # a day later.
 
