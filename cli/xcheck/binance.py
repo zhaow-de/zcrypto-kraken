@@ -144,9 +144,7 @@ def render_markdown(report: dict) -> str:
         f"- Min close corr: {min_close_corr}",
         f"- Max abs rel diff overall: {max_abs_rel_diff}",
         "",
-        "_Recent-window check: the most recent ≤ 1000 daily candles per pair (Binance single-page "
-        "limit); Binance EUR history reaches ~2020, so full-overlap cross-check via startTime pagination "
-        "is a deferred follow-up._",
+        "_Recent-window check: the most recent ≤ 1000 daily candles per pair (Binance single-page limit)._",
     ]
 
     if report["skipped"]:
