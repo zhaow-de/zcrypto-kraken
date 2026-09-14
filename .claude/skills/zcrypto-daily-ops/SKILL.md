@@ -70,8 +70,12 @@ Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the
   unevaluated.
 - **another topic's resolution** — run the check the trigger carries (`ls docs/open-topics/archive/T0187-*.md`).
 - **an alert** — the report already says whether it fired; a trigger naming one is answered by the section you have just read.
+- **a file being touched** — `git -C <main checkout> log --name-only --since=<the last journal entry's date> --format= develop`
+  against the paths the trigger names in backticks. Report it only when one of them is in that list: a
+  standing line saying a topic waits is wallpaper within a week, and the daily pass is the backstop here,
+  not the primary reader — `open-pr`'s rider clause is what keeps these from being written at all.
 
-A milestone, an evaluation statement or an activity is not this pass's to decide: name it unevaluated rather than guessing. A fired trigger goes into the journal entry's `follow-ups` line by serial (`follow-ups none` stays the all-clear form) and is handed to `zcrypto-marco`; the topic itself is edited by whoever takes the work, through `topic-ops`.
+A milestone or an evaluation statement is not this pass's to decide: name it unevaluated rather than guessing. A fired trigger goes into the journal entry's `follow-ups` line by serial (`follow-ups none` stays the all-clear form) and is handed to `zcrypto-marco`; the topic itself is edited by whoever takes the work, through `topic-ops`.
 
 ## 6. Rewrite any dead-man description the report faults
 
