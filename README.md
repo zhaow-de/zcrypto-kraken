@@ -17,6 +17,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
+    - [Nightly data-gated tests (systemd user unit)](#nightly-data-gated-tests-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas)
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
@@ -138,6 +139,18 @@ cp infra/systemd/zcrypto-engine-shadow.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
+```
+
+#### Nightly data-gated tests (systemd user unit)<a name="nightly-data-gated-tests-systemd-user-unit"></a>
+
+`infra/systemd/zcrypto-data-gated-tests.service` and `.timer` are a systemd **user**-unit pair that runs the whole test suite nightly (02:30 UTC, `Persistent=true`) from a checkout where `data/` is present — the tests CI skips for want of local data run for real here — through `infra/scripts/data-gated-run.py`, which writes `.local/data-gated-runs/<UTC stamp>.json` and `latest.json` (counts, failing ids, the git sha, an `ok` flag a run without a summary line never earns). The daily operations pass reads `latest.json` and reports a missing, stale (older than 26 h) or failed result. Fill in the service's `<repo>`/`<uv>` placeholders (absolute paths), enable lingering, then:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp infra/systemd/zcrypto-data-gated-tests.service infra/systemd/zcrypto-data-gated-tests.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now zcrypto-data-gated-tests.timer
+systemctl --user list-timers zcrypto-data-gated-tests.timer   # confirm the next fire
 ```
 
 #### VPS journal pull and daily gate ops — retired (moved to the NAS)<a name="vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas"></a>
