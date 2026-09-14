@@ -100,14 +100,15 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
 
     `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines. The read line must
     be plainly visible, so it is judged without them; a checklist item inside either is an item GitHub renders and
-    counts, so gate 6 is judged with them -- as the page renders them. Quote markers come off BEFORE the walk, so a
-    fence or a comment inside a blockquote is still a fence or a comment, while a quoted line inside a fence that
-    opened UNQUOTED stays literal code; and a `<details>` or `<summary>` line,
-    opening or closing, opens an HTML block that runs to the next blank line (CommonMark block condition 6), inside
-    which nothing is markdown, so a box written there is literal text and not counted.
+    counts, so gate 6 is judged with them -- as the page renders them. A fence or comment opened inside a blockquote
+    hides what follows it until its closer or the blockquote's end, whichever comes first, since neither takes lazy
+    continuation; a quoted line inside a fence that opened UNQUOTED is literal content; and a `<details>` or
+    `<summary>` line, opening or closing, opens an HTML block that runs to the next blank line (CommonMark block
+    condition 6), inside which nothing is markdown, so a box written there is literal text and not counted.
 
-    Two rules keep this close to a renderer without becoming one. A fence is decided on the RAW line, because a
-    renderer settles fences before it ever looks for inline markup. And a comment or `<details>` HIDES what
+    Two rules keep this close to a renderer without becoming one. A fence is decided before any inline markup is
+    masked, because a renderer settles fences first -- and, under `keep_collapsed`, on the line with its quote
+    markers already off, since a fence written inside a blockquote is still a fence. And a comment or `<details>` HIDES what
     follows it only when it opens the line -- an HTML block -- while one that opens and closes inside a line just
     takes its own span with it; an unterminated `<!--` in the middle of a sentence renders as text, and treating
     it as an opener threw away the rest of a body a reader can see in full.
@@ -117,11 +118,13 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     in_comment = False
     in_details = False
     html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to the blank line
-    fence_quoted = False  # keep_collapsed only: the open fence began on a quoted line
+    quoted_open = False  # keep_collapsed only: the open fence or comment began on a quoted line
     for raw in body.splitlines():
-        # A fence opened inside a blockquote closes on a quoted line; one opened outside it treats a quoted line as
-        # literal code -- so markers come off inside a fence only when the fence itself was opened quoted.
-        line = _QUOTE_MARKERS.sub("", raw) if keep_collapsed and (fence is None or fence_quoted) else raw
+        # A fence or comment opened inside a blockquote takes no lazy continuation, so the first unquoted line
+        # ends the blockquote and closes it; one opened outside a quote treats a quoted line as literal content.
+        if keep_collapsed and quoted_open and not raw.lstrip().startswith(">"):
+            fence, in_comment, quoted_open = None, False, False
+        line = _QUOTE_MARKERS.sub("", raw) if keep_collapsed and (fence is None or quoted_open) else raw
         if html_block:
             if not line.strip():
                 html_block = False
@@ -129,7 +132,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         if fence is not None:
             run = _FENCE_CLOSE.match(line)
             if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
-                fence = None
+                fence, quoted_open = None, False
             continue
         if in_comment or in_details:
             # Inside a comment BLOCK a renderer parses no markdown, so a `-->` written in backticks still
@@ -140,7 +143,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
                 m = _COMMENT_CLOSE.search(masked)
                 if not m:
                     continue
-                line, in_comment = line[m.end() :], False
+                line, in_comment, quoted_open = line[m.end() :], False, False
             else:
                 at = masked.find("</details>")
                 if at < 0:
@@ -149,7 +152,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         opener = _FENCE_OPEN.match(line)
         if opener:
             fence = opener.group("run") or opener.group("trun")
-            fence_quoted = raw.lstrip().startswith(">")
+            quoted_open = keep_collapsed and raw.lstrip().startswith(">")
             continue
         # An inline comment or details element, opened and closed on this line, takes its own span and nothing
         # more. Code spans are masked so a `<!--` written as prose about this gate is not read as markup.
@@ -175,6 +178,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         stripped = line.lstrip()
         if stripped.startswith("<!--"):
             in_comment = True
+            quoted_open = keep_collapsed and raw.lstrip().startswith(">")
             continue
         if keep_collapsed and _HTML_BLOCK_TAG.match(stripped):
             html_block = True

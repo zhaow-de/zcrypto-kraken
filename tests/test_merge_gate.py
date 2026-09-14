@@ -691,3 +691,16 @@ def test_a_quoted_fence_or_comment_is_still_code() -> None:
 def test_a_quoted_fence_inside_a_fence_does_not_close_it() -> None:
     """Fence content is literal: a `> ```` line inside an open fence is code, not a quoted fence closing the block."""
     assert not _boxed("```\n> ```\n- [ ] still inside the fence\n```")
+
+
+def test_a_quoted_fence_or_comment_ends_with_its_blockquote() -> None:
+    """Neither takes lazy continuation, so the blockquote's end closes it and a box after it is a rendered box."""
+    assert (
+        _boxed("> ```\n> code\n\n- [ ] real") and _boxed("> <!--\n> hidden\n\n- [ ] real") and _boxed("> ```\n> code\n- [ ] real")
+    )
+    assert not _boxed("> ```\n> - [ ] in quoted code\n\n> more quote")
+
+
+def test_a_quoted_fence_closed_by_an_unquoted_fence_line_opens_a_new_fence() -> None:
+    """The unquoted line ends the blockquote and starts a top-level fence that runs on, so nothing after it is a box."""
+    assert not _boxed("> ```\n```\n- [ ] after")
