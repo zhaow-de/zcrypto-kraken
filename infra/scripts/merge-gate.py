@@ -95,6 +95,7 @@ def _at_depth(raw: str, depth: int) -> str:
 
 
 _HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)\b")
+_OPENERS = ("<!--", "<details", "</details", "<summary", "</summary")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
 _CODE_SPAN = re.compile(r"(?P<ticks>`+)(?:(?!(?P=ticks)).)*(?P=ticks)", re.S)
@@ -207,13 +208,15 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         # end of the document when it has none; opened on a quoted line, it ends with the blockquote instead.
         stripped = line.lstrip()
         # An HTML block or comment admits at most three columns of indent (CommonMark, the bound `_FENCE_OPEN` spells
-        # as `{0,3}`); four, or a tab, is an indented code block on the page, literal, hiding nothing and drawing no box.
-        if (
-            keep_collapsed
-            and stripped.startswith(("<!--", "<details", "</details", "<summary", "</summary"))
-            and len(line[: len(line) - len(stripped)].expandtabs(4)) > 3
-        ):
-            continue
+        # as `{0,3}`); four is an indented code block on the page, literal, hiding nothing and drawing no box. The
+        # indent is measured as the page measures it: tabs expanded from the line's own start, so a tab after a quote
+        # marker reaches column four from the marker's end, and only spaces count -- `lstrip()` would take a
+        # non-breaking space, which is content.
+        if keep_collapsed and stripped.startswith(_OPENERS):
+            content = _QUOTE_MARKERS.sub("", raw.expandtabs(4))
+            bare = content.lstrip(" ")
+            if not bare.startswith(_OPENERS) or len(content) - len(bare) > 3:
+                continue
         if stripped.startswith("<!--"):
             in_comment = True
             open_depth = depth

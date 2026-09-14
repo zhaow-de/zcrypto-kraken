@@ -744,3 +744,10 @@ def test_an_html_block_or_comment_admits_at_most_three_columns_of_indent() -> No
     assert not _boxed("## Checklist\n\n   <details>\n- [ ] unchecked")
     assert _boxed("## Checklist\n\n    <details>\n- [ ] unchecked") and _boxed("## Checklist\n\n\t<details>\n- [ ] unchecked")
     assert _boxed("## Checklist\n\n    <!--\n- [ ] unchecked") and _boxed("- notes\n    <details>\n- [ ] unchecked")
+
+
+def test_an_openers_indent_is_measured_as_the_page_measures_it() -> None:
+    """A tab after a quote marker expands from the marker's end, so it is a block; a non-breaking space is content, not
+    indent, so it opens nothing and the box after it is drawn."""
+    assert not _boxed("## C\n\n> \t<details>\n> - [ ] x") and not _boxed("## C\n\n>\t<details>\n> - [ ] x")
+    assert _boxed("## C\n\n\u00a0<details>\n- [ ] x")
