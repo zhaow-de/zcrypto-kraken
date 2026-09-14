@@ -1,6 +1,6 @@
 # The memo protocol — `.local/memo.md`
 
-**One writer:** a payload session sends `zcrypto-marco` the exact text and where it goes; marco writes, and records the `sha256 · lines · bytes` chain in `.local/coordination.md`. The memo lives in the main checkout under `.local/`: sweep it with `infra/scripts/sweep.sh`, from that checkout.
+**One writer:** a payload session sends `zcrypto-marco` the exact text and where it goes; marco writes, and records the `sha256 · lines · bytes` chain in `.local/coordination.md`. The memo lives in the main checkout under `.local/`, which `infra/scripts/sweep.sh` reads from any checkout.
 
 The single source of truth for the memo's data model, tooling discipline and mechanical procedures. Loaded by `/zcrypto-grooming` (the owner — its interactive flow is `../SKILL.md`) and by `/zcrypto-auto-exec` (full path: `.claude/skills/zcrypto-grooming/references/memo-protocol.md`). The human gates below attach to the operations themselves, not to whichever skill loaded this file.
 

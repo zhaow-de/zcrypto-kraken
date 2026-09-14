@@ -14,7 +14,7 @@
 
 - Python is pinned to 3.14 (`.python-version`); PEP 758 makes `except ValueError, IndexError:` valid syntax — do not flag it or "fix" it in review.
 - The commit gate is `uv run pre-commit run -a`; a run that rewrites files reports Failed and leaves the rewrites unstaged — re-run until clean, then stage what it rewrote.
-- A tree sweep that must see `.local/` runs `infra/scripts/sweep.sh` from the main checkout: a bare `grep` honours `.gitignore` and reports clean over files it did not open.
+- A tree sweep that must see `.local/` runs `infra/scripts/sweep.sh`: a bare `grep` honours `.gitignore` and reports clean over files it did not open.
 
 ## Secrets
 

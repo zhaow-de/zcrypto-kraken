@@ -22,7 +22,7 @@ const PROSE = {
   type: 'object',
   properties: {
     site: { type: 'string', description: 'path:line at the tip' },
-    survives: { type: 'string', enum: ['trim', 'cut'] },
+    survives: { type: 'string', enum: ['trim', 'cut', 'fix'] },
     correct: { type: 'boolean', description: 'false when a claim in it is false of the tree' },
     duplicateOf: { type: 'string', description: 'path:line of the sibling that already carries the claim, or empty' },
     ship: { type: 'string', description: 'the text to ship, verbatim — empty when cut' },
@@ -78,7 +78,7 @@ const prompt = `You are the pre-reader of \`git log ${range}\` at tip \`${tip}\`
 
 Four things, each against the tree at the tip, none on trust:
 
-1. PROSE. Every comment, docstring, topic sentence and operator-facing string the range adds or changes — graded as it stands at the tip in the whole docstring or comment block a hunk lands in, plus the module docstring of each touched file, not the added lines alone, because a phrase per commit accretes into repetition. Three questions per site: would a reader do something differently without it (name what)? Is every claim in it correct against the code and data? Does the same claim already stand in the same file, in an error string, in the rule or topic it cites, or in the range's commit messages (quote the sibling with path:line)? A durable file holds STATE and DECISIONS; an EVENT — what was measured, read, found or corrected — goes to the commit message, never into the code; an operator-facing string may carry an instruction and the one reason that stops the wrong move. Return a row ONLY for a site that needs a change — trim or cut, or a claim that is false of the tree — with the text to ship, verbatim; a site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
+1. PROSE. Every comment, docstring, topic sentence and operator-facing string the range adds or changes — graded as it stands at the tip in the whole docstring or comment block a hunk lands in, plus the module docstring of each touched file, not the added lines alone, because a phrase per commit accretes into repetition. Three questions per site: would a reader do something differently without it (name what)? Is every claim in it correct against the code and data? Does the same claim already stand in the same file, in an error string, in the rule or topic it cites, or in the range's commit messages (quote the sibling with path:line)? A durable file holds STATE and DECISIONS; an EVENT — what was measured, read, found or corrected — goes to the commit message, never into the code; an operator-facing string may carry an instruction and the one reason that stops the wrong move. Return a row ONLY for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` when the length stands and a claim in it does not — with the text to ship, verbatim; a site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
 
 2. CLAIMS. Every claim a commit message in the range makes that a command can check — a number, a count, a grep verdict, a citation, a "none left" — re-run with the command the message quotes (or the obvious one when it quotes none) and compared. A claim that does not reproduce is disposition does-not-reproduce with what the command printed.
 
@@ -92,5 +92,5 @@ phase('Pre-read')
 const report = await agent(prompt, { label: 'pre-read', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
 if (!report) throw new Error('the pre-reader returned nothing')
 const n = (list, pred) => list.filter(pred).length
-log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => !p.correct)} incorrect; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
+log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => !p.correct)} incorrect; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
 return report
