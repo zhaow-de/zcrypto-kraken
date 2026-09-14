@@ -775,6 +775,16 @@ def test_a_box_behind_an_over_indented_quote_marker_still_counts() -> None:
 
 
 def test_an_unknown_tag_hides_nothing_under_gate_6() -> None:
-    """`<detailsx>` misses the block regex's word boundary, and the closer-terminated `<details` arm is the read line's
+    """`<detailsx>` is a spelling the block regex declines, and the closer-terminated `<details` arm is the read line's
     alone, so under gate 6 the tag is content and the box past the blank line is counted, as the page draws it."""
     assert _boxed("## C\n\n<detailsx>\n\n- [ ] real")
+
+
+def test_a_tag_condition_6_does_not_open_hides_nothing_under_gate_6() -> None:
+    """`<details-foo> text` is a paragraph on the page -- condition 6 wants a space, a tab, `>`, `/>` or the line's
+    end after the tag name -- and the box on the next line interrupts it, so gate 6 counts it; `<details>` and
+    `<details open>` still open the block that hides theirs."""
+    assert _boxed("## C\n\n<details-foo> text\n- [ ] real")
+    assert _boxed("<summary-x> text\n- [ ] real")
+    assert not _boxed("<details>\n- [ ] literal\n</details>")
+    assert not _boxed("<details open>\n- [ ] literal\n</details>")

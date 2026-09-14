@@ -101,7 +101,9 @@ def _at_depth(raw: str, depth: int) -> str:
     return re.sub(rf"^(?: {{0,3}}> ?){{{depth}}}", "", raw)
 
 
-_HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)\b")
+# What CommonMark's condition 6 admits after the tag name; `\b` would open a block on `<details-x> text`, a paragraph.
+_TAG_END = r"(?=[ \t>]|/>|$)"
+_HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)" + _TAG_END)
 _OPENERS = ("<!--", "<details", "</details", "<summary", "</summary")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
@@ -234,8 +236,10 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
             html_block, html_depth = True, depth
             continue
         if stripped.startswith("<details") and not keep_collapsed:
-            # Gate 6's mode is excluded: the arm above took every tag the block regex knows, so all that could fall
-            # here is `<details` plus a word character -- content on the page, whose box gate 6 must still count.
+            # Gate 6's mode is excluded: the arm above took every `<details`-prefixed spelling condition 6 opens a
+            # block on, so what falls here -- `<detailsx>` alone on its line, `<details-x> text` -- is a block that
+            # ends at the next blank line or a paragraph, never something a closer ends, and a box below it is one
+            # gate 6 must count.
             in_details = True
             continue
         if stripped.startswith(">") and not keep_collapsed:
