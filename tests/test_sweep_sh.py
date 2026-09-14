@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 
@@ -185,3 +186,30 @@ def test_a_dangling_symlink_is_named_not_dropped(tmp_path):
     subprocess.run(["git", "-C", str(repo), "add", "cli/gone.py"], check=True, capture_output=True)
     done = _sweep(repo, "-l", "NEEDLE")
     assert "gone.py" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
+
+
+def test_flags_without_a_pattern_are_an_error(tmp_path):
+    done = _sweep(_repo(tmp_path), "-l")
+    assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_pattern_that_a_flag_carries_is_still_a_pattern(tmp_path):
+    """Every argument here begins with `-`, so only the flags that carry a pattern can tell this from a typo."""
+    done = _sweep(_repo(tmp_path), "-l", "--regexp=NEEDLE")
+    assert done.returncode == 0 and ".local/memo.md" in done.stdout, done.stdout + done.stderr
+
+
+def test_a_non_regular_entry_under_the_ledger_is_named(tmp_path):
+    """The git half names these shapes; the ledger half must not filter them out before the loop sees them."""
+    repo = _repo(tmp_path)
+    (repo / ".local" / "dangling").symlink_to("/nonexistent/never-here.md")
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert "dangling" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_fifo_under_the_ledger_is_named(tmp_path):
+    """`[ -e ]` rather than `[ -d ]` is what reaches a fifo or socket: neither is a directory nor a link."""
+    repo = _repo(tmp_path)
+    os.mkfifo(repo / ".local" / "pipe")
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert "pipe" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
