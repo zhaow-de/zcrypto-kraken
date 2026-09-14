@@ -1553,6 +1553,15 @@ def test_the_last_sweep_date_is_read_from_the_real_register_not_a_fixture_shaped
     assert found.isoformat() in rows[-1], (found, rows[-1])
 
 
+def test_the_real_registers_newest_log_row_is_the_one_its_header_names():
+    """The `**Fetched at:**` header is rewritten in the same sweep step that appends the row, so a newest
+    row `_LOG_ROW` skips -- `|  #3`, `| Sweep 3` -- makes the previous row answer and the two disagree."""
+    text = ops_daily.REGISTER.read_text()
+    header = re.search(r"^\*\*Fetched at:\*\* (\d{4}-\d{2}-\d{2})T", text, re.MULTILINE)
+    assert header is not None, "the register's `**Fetched at:**` header is gone"
+    assert ops_daily.last_sweep_date(ops_daily.REGISTER) == date.fromisoformat(header.group(1))
+
+
 def test_the_last_row_of_the_log_wins_and_tables_outside_it_are_ignored(tmp_path):
     register = _register(
         tmp_path, ("#0 (Phase 0, iter-002)", "2026-07-07T03:29:00+00:00"), ("#1 (monthly, 2026-08-04)", "2026-08-04T10:40:09+00:00")

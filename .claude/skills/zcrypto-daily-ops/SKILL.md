@@ -6,10 +6,6 @@ disable-model-invocation: false
 
 # zcrypto-daily-ops
 
-## What this is
-
-The proactive half of day-2 operations. Alerts fire at you; this pass goes looking. It reads what fired, what the logs said, whether the dead-men are alive and their descriptions still resolve, whether the fleet's own series are present and fresh, what was deployed, and which reminders are due — then follows the runbook for anything that fired, fixes what it may, and leaves a journal entry so a quiet day is distinguishable from a day nobody looked.
-
 **Every ssh/sudo step runs in the main loop, never in a dispatched subagent** — the permission gate blocks it there and the step dies where nobody sees the prompt.
 
 ## 1. Read
@@ -57,7 +53,7 @@ The verdict tiles' own PromQL is among what the report's fleet checks already ra
 
 ## 5. Evaluate the due reminders
 
-The report's `## Reminders` section is the trigger — an **OWED** line is work, not decoration: open the section it names (`reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`) and do it. The sweep's due-ness is computed from the register's last re-confirmation row plus the monthly cadence; the healable line says only whether the counter moved in the window — the count itself is still that section's step 1, from the ledger.
+The report's `## Reminders` section is the trigger — an **OWED** line is work, not decoration: open the section it names (`reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`) and do it. The healable line says only whether the counter moved in the window — the count itself is still that section's step 1, from the ledger.
 
 **Slack's scheduled message is a convenience ping, never the check.** Its scheduling cannot be listed or verified from this side, so "no message arrived" means nothing and a message that did arrive adds nothing the report did not already say. A reminder source the report could not read is exit 2, like any other.
 
@@ -68,7 +64,7 @@ Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the
 - **a date** — compare with today, unless the trigger's own text says the date is a handle for a check this
   pass cannot run: `T0150` names the oldest `cycle-<HH>.json` on the engine host as its test, so it is named
   unevaluated.
-- **another topic's resolution** — run the check the trigger carries (`ls docs/open-topics/archive/T0187-*.md`).
+- **another topic's resolution** — run the check the trigger carries.
 - **an alert** — the report already says whether it fired; a trigger naming one is answered by the section you have just read.
 - **a file being touched** — `git -C <main checkout> log --name-only --since=<the last journal entry's date> --format= develop`
   against the paths the trigger names in backticks. Report it only when one of them is in that list: a
@@ -103,7 +99,7 @@ A scheduled message fires once. Schedule tomorrow's trigger before finishing, th
 
 **With no Slack tool, the entry says so AND the re-trigger goes to a carrier that outlives the session**: hand it to `zcrypto-marco` for the memo queue, the way 5b hands a fired trigger, or schedule a routine through `/schedule`; the entry names which. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
 
-**The recovery, because this is not terminal**: MCP tools bind at session start, and a plugin reload (`/reload-plugins`) re-binds them into the running session — try that before deferring the Slack half. Failing that, the Slack half is safely run late: post the entry's paragraph and schedule the trigger from the next session, then re-true the entry. That is what 2026-08-30 did.
+**The recovery, because this is not terminal**: MCP tools bind at session start, and a plugin reload (`/reload-plugins`) re-binds them into the running session — try that before deferring the Slack half. Failing that, the Slack half is safely run late: post the entry's paragraph and schedule the trigger from the next session, then re-true the entry.
 
 ## Failure modes — catch yourself
 

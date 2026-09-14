@@ -41,7 +41,7 @@ status: open   # one of: open | partial | resolved
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
-**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit — an anchor whose first occurrence sits inside body prose deletes whole sections silently. A splice — a section moved, merged or removed — is an edit and takes the same anchor count and heading-set check; after any rebase touching the index, re-render it — `uv run python infra/scripts/topics-index.py` — and let the frontmatter test compare.
+**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit: the frontmatter test holds the required sections, not every heading. Run it after any section edit or splice (a section moved, merged or removed is an edit and takes the same anchor count); after any rebase touching the index, re-render it — `uv run python infra/scripts/topics-index.py` — and let the frontmatter test compare.
 
 ## Partially completing a topic
 
@@ -63,7 +63,7 @@ A partially completed topic later closes the normal way (see below).
 A topic may be closed only when **all three** hold:
 
 - **Its issue is genuinely disposed of** — *fixed*, *shown to be a non-issue* (a measured refutation is a valid resolution), or *consciously dropped with the reason recorded in the file*;
-- **the file itself records HOW** — a `## Resolution` section naming the commits / PR / spec / measurement that disposed of it. A `partial` topic's `## Done so far` is RENAMED to `## Resolution` — its name says the work is unfinished, and the archive holds finished work — and NO `## Suggested next steps` section survives into the archive: a line under that heading reads as pending whatever it says. **and**
+- **the file itself records HOW** — a `## Resolution` section naming the commits / PR / spec / measurement that disposed of it; a `partial` topic's `## Done so far` is renamed to it and no `## Suggested next steps` survives (`tests/test_open_topics_frontmatter.py` refuses either heading in `archive/`); **and**
 - **it carries no live deferred sub-item** — a remaining "do X when Y" is first split into its own topic (with its `ripe_when:`), because a deferral left inside an archived file is lost.
 
 If only some sub-items are done the topic is `partial`, not resolved (see *Partially completing a topic*). If none are, it stays `open`.

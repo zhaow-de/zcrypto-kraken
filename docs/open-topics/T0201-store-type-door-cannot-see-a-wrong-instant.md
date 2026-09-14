@@ -20,6 +20,10 @@ It is the one shape of broken store input T0193 leaves degrading rather than ref
 grid's alignment is a value question, and refusing on it from a type check would need the reader to know the
 grid's origin, which is not the frame's to state.
 
+## Findings so far
+
+Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
+
 ## Suggested next steps
 
 - The cheapest honest fix is on the REPORT, not the door: `store last bar` already prints the stamp, so the

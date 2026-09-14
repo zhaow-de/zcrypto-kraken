@@ -35,7 +35,7 @@ Fixes that introduce defects are what makes these loops long, and the rate does 
 ## Constraints
 
 - A guard is unproven until the defect it names is constructed and seen to trip it, on a fixture where defect and correct behaviour differ; assert on what the defect moves, not on a headline.
-- A sentence you add earns its place — a reader acts differently for it, and it is correct; what is true now belongs in the file, what happened belongs in the commit message. `Phase <N>`, `T<NNNN>`, `iter-<N>` and `spec <NNNNN>` stay off operator-read surfaces (`tests/test_internal_terms_not_operator_visible.py` walks them).
+- A sentence you add earns its place — a reader acts differently for it, and it is correct; what is true now belongs in the file, what happened belongs in the commit message. Internal terms stay off operator-read surfaces — `tests/test_internal_terms_not_operator_visible.py` walks them and names the tokens.
 - Edit with surgical, uniquely-anchored replacements and verify each landed (`grep` the new text) **inside the block you meant** — a unique anchor pins where text goes, not what encloses it; for a block-structured file (a rules YAML, a function body) assert the enclosing block, not only the count.
 - Stage by explicit path, one commit-type's file kind per commit; `.claude/**` never shares a commit with `docs/`.
 - Commit trailer: `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`.

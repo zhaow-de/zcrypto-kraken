@@ -23,6 +23,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto data`](#zcrypto-data)
   - [`zcrypto research`](#zcrypto-research)
   - [`zcrypto tick`](#zcrypto-tick)
+  - [`zcrypto snapshot`](#zcrypto-snapshot)
 - [Configuration](#configuration)
   - [`[zcrypto]`: dataset paths](#zcrypto-dataset-paths)
   - [`[zcrypto.engine]`: shadow-engine settings](#zcryptoengine-shadow-engine-settings)
@@ -367,6 +368,20 @@ zcrypto tick materialize <PRIMARY_ROOT> <OUT_ROOT> --reconciled-root <PATH> [OPT
 The sweep publishes each settled day whose tape is measurably heal-complete (per-pair `trade_id` contiguity — an absent hour means a quiet hour, not a hole), skips days that already have a final, and isolates a failing day into the error list rather than aborting the pair. One line reports `days_written`, `days_skipped`, `days_unsettled`, `days_unhealed`, `days_gap` (settled, unpublished days that have fallen outside the re-scan window — permanent gaps), `rows`, and `errors`; each failure is then named on stderr as `pair`, day and message. Exits **1** if any day failed, else **0**.
 
 A run against a fresh archive reports `days_unsettled` for its newest day (or two) and publishes nothing for it — that is the settle gate working, not a failure. The live-edge day is likewise held back until a later segment exists to prove its tail is not truncated.
+
+### `zcrypto snapshot`<a name="zcrypto-snapshot"></a>
+
+The reference-data sweep's automated half: re-fetches Kraken's public `Assets` and `AssetPairs` endpoints, archives the raw snapshot, renders the register's tables from it, and refuses on an identity change in a selected pair.
+
+```bash
+zcrypto snapshot sweep [OPTIONS]
+```
+
+| Option | Description |
+| -- | -- |
+| `--snapshots-dir <PATH>` | Where the raw snapshot is archived, as `kraken-refdata-<UTC stamp>.json` (default `data/snapshots`). |
+
+Every fetch precedes the write, so a transport failure leaves no snapshot behind. The run prints the snapshot it judged, then `REFUSALS:` — a selected pair gone, no longer `online`, or renamed — and `ANNOUNCED DELISTINGS:` with each one's dates, then the rendered tables for the diff against the committed register. An announced delisting is reported and does not fail the run; a refusal exits `1`, with the snapshot already archived as the evidence.
 
 ## Configuration<a name="configuration"></a>
 

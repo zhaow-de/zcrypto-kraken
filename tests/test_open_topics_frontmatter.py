@@ -94,6 +94,31 @@ def test_an_archived_topic_carries_no_suggested_next_steps(path: Path):
     )
 
 
+# --- the live shape: the four sections `.claude/skills/topic-ops/SKILL.md`'s *Required file shape* lists,
+# and `## Done so far` on a partial alone -----------------------------------------------------------------
+
+_LIVE_SECTIONS = ("Context — what", "Why this matters", "Findings so far", "Suggested next steps")
+
+
+@pytest.mark.parametrize("path", OPEN_TOPICS, ids=lambda p: p.name)
+def test_a_live_topic_carries_the_four_sections(path: Path):
+    """A section edit anchored on a string whose first occurrence sits inside body prose deletes whole
+    sections silently, and the heading set is what shows it."""
+    missing = [s for s in _LIVE_SECTIONS if not _headings(path, s)]
+    assert not missing, f"{path.name}: no heading begins {missing} -- a live topic carries all of {_LIVE_SECTIONS}"
+
+
+@pytest.mark.parametrize("path", OPEN_TOPICS, ids=lambda p: p.name)
+def test_done_so_far_marks_a_partial_and_nothing_else(path: Path):
+    """`Done so far` records what landed: a `partial` without one records nothing, and an `open` topic with
+    one is status drift -- work landed and the frontmatter did not follow."""
+    status = yaml.safe_load(_frontmatter(path))["status"]
+    found = _headings(path, "Done so far")
+    assert bool(found) == (status == "partial"), (
+        f"{path.name}: status={status!r} with {len(found)} `Done so far` heading(s) -- a partial carries one, any other status none"
+    )
+
+
 # --- every link in the index lands on a file that exists ------------------------------------------
 # A topic's filename is its identity: a sweep that rewrites a link target rather than moving the
 # file leaves a dead pointer here.

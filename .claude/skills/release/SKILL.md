@@ -1,13 +1,10 @@
 ---
 name: release
 description: Cut a release — bump the version on develop, open a PR into main, merge it, push the v<version> tag, create the GitHub Release, and back-merge main into develop
-disable-model-invocation: false
 allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
 ---
 
 > **Unrun, and three steps are broken as written** — read `docs/open-topics/T0203-the-release-skill-has-never-run-and-three-steps-are-broken.md` first and fix as you go: this skill is refined on the first real release, not before.
-
-Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and creates the GitHub Release directly from this skill. After the release is published, the skill back-merges `main` into `develop` to keep them in lock-step.
 
 ## Context
 
@@ -25,7 +22,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
    git fetch origin main
    ```
 
-   Check for drift — if `main` has commits not on `develop`, a release or hotfix landed on `main` without being back-merged. Releasing now would re-introduce conflicts (version files, `CHANGELOG.md`, files modified-on-main but deleted-on-develop).
+   Check for drift — a commit on `main` that is not on `develop` will conflict in the release PR:
 
    ```bash
    git log develop..origin/main --oneline
@@ -55,9 +52,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
    cz bump --yes --changelog --files-only
    ```
 
-   This updates the `version_files` (`pyproject.toml` and the README `Version` badge), bumps `.cz.toml`, and writes the raw commit list to `CHANGELOG.md`. With `--files-only` it does **not** commit or tag — the skill makes one commit and creates the `v<version>` tag in step 9, after the changelog is rewritten (step 8) and `uv.lock` is refreshed (step 5).
-
-   > Prerequisite: commitizen must be configured — this repo's `.cz.toml` sets `version_files` for `pyproject.toml` and the README `Version` badge. Set it up before running `/release` if missing.
+   This updates the `version_files` (`pyproject.toml` and the README `Version` badge), bumps `.cz.toml`, and writes the raw commit list to `CHANGELOG.md`.
 
 5. **Refresh `uv.lock` to record the new version**:
    ```bash
@@ -95,8 +90,6 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
 
    Read the PR data from `/tmp/release_pr_data_${CLAUDE_SESSION_ID}.json` and follow the format and guidelines in [changelog-format.md](changelog-format.md). Replace the raw commit list `cz bump` wrote into `CHANGELOG.md` with the user-friendly section for the new version at the top, and **preserve all previous version sections below it**.
 
-   This new-version section is also the GitHub Release description: step 16 extracts it back out **from the tag** (`git show v<VERSION>:CHANGELOG.md`) when publishing, so it never needs to live in the repo as a separate file.
-
 9. **Commit the release and create the tag**:
    ```bash
    VERSION=$(cz version --project)
@@ -105,7 +98,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
    git tag "v$VERSION"
    ```
 
-   One commit carries the version bump, changelog, and refreshed lockfile; the `v<version>` tag points at it. Remember `VERSION` for the remaining steps.
+   Remember `VERSION` for the remaining steps.
 
 10. **Push the release branch**:
     ```bash
@@ -114,7 +107,7 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
 
 11. **Create the PR** with `gh pr create` targeting `main`, using the description template from [pr-description.md](pr-description.md) (fill in `{version}` with `VERSION`). Include flags `--base main`, `--title "Release v<VERSION>"`, `--assignee @me`, and pass the filled template via `--body-file` (or `--body`).
 
-12. **Store the PR number and URL** from the output of step 11. The PR URL ends in the number (e.g. `.../pull/63` means PR number `63`).
+12. **Store the PR number and URL** from the output of step 11.
 
 13. **Return to develop**:
     ```bash
@@ -198,12 +191,11 @@ Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and
 
     Both `git branch -d` calls succeed because each branch is fully integrated via its merge commit (the release branch into `main` via PR step 14; the back-merge branch into `develop` via PR step 17). If either ever errors "not fully merged" while its PR shows merged and the remote head is gone, the work is integrated — `git branch -D` is then safe.
 
-19. **Report success** with the release PR URL, the GitHub Release URL (printed by step 16), and the back-merge PR URL. The Release description is the new version's changelog section; the full history lives in `CHANGELOG.md`.
+19. **Report success** with the release PR URL, the GitHub Release URL (printed by step 16), and the back-merge PR URL.
 
 ## Notes
 
 - If any step fails, stop and report the error to the user.
-- The `--yes` flag on `cz bump` auto-confirms the version bump.
 - Auto-merge in steps 14 and 17 uses `--merge` — never switch to `--squash` or `--rebase`, which would lose the bump-commit-tagged invariant on `main`.
 - Do not use composite commands — they always force a permission request from the user.
 - You are already in the repo folder — do not `cd` first (redundant, and can cause a composite command).

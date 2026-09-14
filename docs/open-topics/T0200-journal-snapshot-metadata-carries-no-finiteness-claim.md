@@ -22,6 +22,10 @@ frame, it can re-fetch, and it has not yet published a target. By the time a rea
 history and every later reader pays the same cost again. The asymmetry is the T0193 class one level up — the
 value door exists, it is just on the wrong side of the write.
 
+## Findings so far
+
+Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
+
 ## Suggested next steps
 
 - Enumerate what a write-time claim would cost: `snapshot_content_hash` already walks the closes, so the check
