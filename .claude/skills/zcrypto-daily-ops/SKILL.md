@@ -89,7 +89,7 @@ The report's `## Dead-men` section prints one `- description:` line per **defect
 
 ## 7. Write the journal entry
 
-Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. Commit.
+Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. An action left prepared, or a finding the pass could not clear, is recorded in the entry AND routed where work lives — a decision to a `T<NNNN>` through `topic-ops`, a doing handed to `zcrypto-marco` for the memo queue — and the entry names where it went; the journal is not a backlog. Commit.
 
 At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review and no word while the PR carries journal files alone — a month of all-clear entries has nothing a second reader could check, and a gate there is a place the routine stalls; `merge-pr`'s gate holds the exemption to exactly that, so a PR that also carries a script or a role fix takes the read like any other.
 
@@ -99,16 +99,15 @@ The entry's paragraph, to `#zcrypto`. If no Slack tool is reachable, say so in t
 
 ## 9. Re-arm tomorrow
 
-A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does.
+A scheduled message fires once. Schedule tomorrow's trigger before finishing, the way `refdata-sweep-due` does. **The Slack message is the convenience; the named hand-off is the trigger** — the pass is re-armed only when something that outlives this session carries tomorrow's.
 
-**With no Slack tool, the chain stops here and the entry must say so** — the next pass has nothing to trigger it. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
+**With no Slack tool, the entry says so AND the re-trigger goes to a carrier that outlives the session**: hand it to `zcrypto-marco` for the memo queue, the way 5b hands a fired trigger, or schedule a routine through `/schedule`; the entry names which. A session-local scheduler is not a substitute: it dies with the session, and this reminder has to outlive it.
 
-**The recovery, because this is not terminal**: MCP tools bind at SESSION START, so enabling a Slack connector mid-pass does nothing for the pass in flight — a NEW session gets them. The Slack half is safely run late: post the entry's paragraph and schedule the trigger from the next session, then re-true the entry. That is what 2026-08-30 did.
+**The recovery, because this is not terminal**: MCP tools bind at session start, and a plugin reload (`/reload-plugins`) re-binds them into the running session — try that before deferring the Slack half. Failing that, the Slack half is safely run late: post the entry's paragraph and schedule the trigger from the next session, then re-true the entry. That is what 2026-08-30 did.
 
 ## Failure modes — catch yourself
 
 | The impulse | The reality |
 |---|---|
-| "No series came back, so it is zero" | `(no series)` is a FAIL. An empty query is not an observation. |
 | "Nothing fired, so there is nothing to write" | The all-clear entry is the product. A missing entry reads as a day nobody looked. |
 | "I will restart Alloy on the capture host, it is only telemetry" | The capture pair's Alloy goes through `zcrypto-bump-alloy`, attended. |
