@@ -41,7 +41,7 @@ status: open   # one of: open | partial | resolved
 
 A `partial` topic carries a `## Done so far` section between `## Findings so far` and `## Suggested next steps`, recording what landed (link commits/PRs/spec). Its `## Suggested next steps` then lists only the still-open remainder.
 
-**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside. The frontmatter test holds the heading set — run it after any section edit or splice (a section moved, merged or removed is an edit and takes the same anchor count); after any rebase touching the index, re-render it — `uv run python infra/scripts/topics-index.py` — and let the frontmatter test compare.
+**Edit mechanics — every section replacement**: anchor on a string verified UNIQUE in the file (`grep -c` it first) — **and name the section that ENCLOSES it**: uniqueness pins WHERE text lands, never WHAT it lands inside — and compare the heading set (`grep '^#'`) before and after the edit: the frontmatter test holds the required sections, not every heading. Run it after any section edit or splice (a section moved, merged or removed is an edit and takes the same anchor count); after any rebase touching the index, re-render it — `uv run python infra/scripts/topics-index.py` — and let the frontmatter test compare.
 
 ## Partially completing a topic
 
