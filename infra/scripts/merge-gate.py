@@ -233,7 +233,9 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         if keep_collapsed and _HTML_BLOCK_TAG.match(stripped):
             html_block, html_depth = True, depth
             continue
-        if stripped.startswith("<details"):
+        if stripped.startswith("<details") and not keep_collapsed:
+            # Gate 6's mode is excluded: the arm above took every tag the block regex knows, so all that could fall
+            # here is `<details` plus a word character -- content on the page, whose box gate 6 must still count.
             in_details = True
             continue
         if stripped.startswith(">") and not keep_collapsed:

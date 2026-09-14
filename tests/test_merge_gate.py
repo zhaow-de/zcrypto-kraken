@@ -772,3 +772,9 @@ def test_a_box_behind_an_over_indented_quote_marker_still_counts() -> None:
     opens nothing and the box behind it counts, so the gate is loud where the page shows code and never silent
     where it draws the box."""
     assert _boxed("- item\n    > - [ ] x") and _boxed("- item\n    > > - [ ] x")
+
+
+def test_an_unknown_tag_hides_nothing_under_gate_6() -> None:
+    """`<detailsx>` misses the block regex's word boundary, and the closer-terminated `<details` arm is the read line's
+    alone, so under gate 6 the tag is content and the box past the blank line is counted, as the page draws it."""
+    assert _boxed("## C\n\n<detailsx>\n\n- [ ] real")
