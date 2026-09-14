@@ -63,3 +63,42 @@ def test_it_runs_from_a_subdirectory(tmp_path):
     repo = _repo(tmp_path)
     done = subprocess.run(["bash", str(SCRIPT), "-l", "NEEDLE"], cwd=repo / "cli", capture_output=True, text=True)
     assert sorted(done.stdout.split()) == [".local/memo.md", "cli/thing.py"], done.stdout + done.stderr
+
+
+def test_a_worktree_sweeps_the_main_checkouts_local(tmp_path):
+    """`.local/` is per-checkout, and a linked worktree's carries nothing but the tracked `.gitignore` — only the main checkout's holds the memo."""
+    repo = _repo(tmp_path)
+    wt = tmp_path / "wt"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(wt)], check=True, capture_output=True)
+    done = subprocess.run(["bash", str(SCRIPT), "-l", "NEEDLE"], cwd=wt, capture_output=True, text=True)
+    assert sorted(done.stdout.split()) == [str(repo / ".local" / "memo.md"), "cli/thing.py"], done.stdout + done.stderr
+
+
+def test_a_tracked_file_deleted_in_the_worktree_keeps_the_rc_contract(tmp_path):
+    """`git ls-files` reads the index, and grep exits 2 over a missing path however many hits it printed."""
+    repo = _repo(tmp_path)
+    (repo / "cli" / "gone.py").write_text("NEEDLE in a doomed file\n")
+    subprocess.run(["git", "-C", str(repo), "add", "cli/gone.py"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "doomed"], check=True, capture_output=True)
+    (repo / "cli" / "gone.py").unlink()
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stderr == "" and "gone.py" not in done.stdout, done.stdout + done.stderr
+
+
+def test_nothing_to_search_is_an_error_not_a_clean(tmp_path):
+    """rc 1 means the pattern is absent; a sweep that opened no file at all must not say that."""
+    repo = tmp_path / "bare"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "develop"], check=True, capture_output=True)
+    done = _sweep(repo, "NEEDLE")
+    assert done.returncode == 2 and "no files to search" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_tracked_file_under_local_is_swept_once(tmp_path):
+    """This repo tracks `.local/.gitignore`, so both halves of the list would otherwise hand grep one file twice."""
+    repo = _repo(tmp_path)
+    subprocess.run(["git", "-C", str(repo), "add", "-f", ".local/memo.md"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "tracked under .local"], check=True, capture_output=True)
+    done = _sweep(repo, "NEEDLE")
+    assert done.stdout.count(".local/memo.md:") == 1, done.stdout + done.stderr
