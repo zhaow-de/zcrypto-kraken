@@ -79,8 +79,13 @@ def _is_a_stated_reason(reason: str) -> bool:
 _FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
-_UNCHECKED_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
-_QUOTE_MARKERS = re.compile(r"^(?: {0,3}> ?)+")  # a marker may be indented at most three spaces, and only spaces
+# `(?:> *)*` admits a box behind a quote marker the walk left in place -- one indented four or more columns, which
+# is nested content inside a list item and indented code outside one; the walk tracks no list, so such a marker
+# hides nothing and its box still counts: loud where the page shows code, never silent where it draws the box.
+_UNCHECKED_BOX = re.compile(r"^\s*(?:> *)*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
+# A marker may be indented at most three spaces, and only spaces, measured from column 0: this walk tracks no list
+# item, so a marker further in opens nothing (see `_UNCHECKED_BOX` for what it still counts).
+_QUOTE_MARKERS = re.compile(r"^(?: {0,3}> ?)+")
 
 
 def _quote_depth(raw: str) -> int:
@@ -136,8 +141,9 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         # A fence, comment or HTML block opened inside a blockquote takes no lazy continuation, so the first line
         # at a lesser quote depth ends the blockquote and closes it; a fence opened outside a quote treats a quoted
         # line as literal content.
-        # Under keep_collapsed every derivation works on the line with tabs expanded from its own start, which is
-        # the column the page counts from, so a tab after a quote marker measures as the page measures it.
+        # Under keep_collapsed every derivation that measures a column works on the line with tabs expanded from
+        # its own start, which is the column the page counts from, so a tab after a quote marker measures as the
+        # page measures it; inside an unquoted fence the line is literal content and is read raw.
         src = raw.expandtabs(4) if keep_collapsed else raw
         depth = _quote_depth(src) if keep_collapsed else 0
         if open_depth and depth < open_depth:
@@ -228,8 +234,8 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         if stripped.startswith("<details"):
             in_details = True
             continue
-        if stripped.startswith(">"):
-            continue
+        if stripped.startswith(">") and not keep_collapsed:
+            continue  # the read line must be plainly visible, and a quoted line is not
         visible.append(line)
     return "\n".join(visible)
 

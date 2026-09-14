@@ -762,5 +762,13 @@ def test_a_quote_marker_is_indented_at_most_three_spaces() -> None:
 
 
 def test_a_tab_after_a_quote_marker_before_a_fence_is_a_fence() -> None:
-    """The fence bound is three columns measured after the marker, as the page measures it."""
+    """A tab expands from the line's start, so after a quote marker it stops two columns in and opens a fence; at
+    the line's own start it reaches column four, which is an indented code block, and the box after it is drawn."""
     assert not _boxed("> \t```\n> - [ ] x\n> ```") and _boxed("\t```\n- [ ] x\n```")
+
+
+def test_a_box_behind_an_over_indented_quote_marker_still_counts() -> None:
+    """Four spaces before `>` is a list item's nested content or indented code, and the walk tracks no list; the marker
+    opens nothing and the box behind it counts, so the gate is loud where the page shows code and never silent
+    where it draws the box."""
+    assert _boxed("- item\n    > - [ ] x") and _boxed("- item\n    > > - [ ] x") and _boxed("    > <details>\n> - [ ] x")
