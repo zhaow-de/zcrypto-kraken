@@ -14,7 +14,7 @@ Read `{UNION}` — only its Minor blocks concern you — then {SPEC} (the bindin
 
 Before committing, `grep` the pair for every value you changed, and re-run every `--collect-only` a touched filter affects. Stage by explicit path; `Co-Authored-By: <your own model, exactly as your system prompt names it> <noreply@anthropic.com>`; `uv run pre-commit run -a` until clean; never `--no-verify`. Do not push.
 
-Report `{OUT}`: `## Folded`, `## Left` (key + reason) and `## Spec amendments` (quoted before/after, or `none`) — counts derived by re-reading it. Final message: the commit hash and the two counts. Run everything as plain blocking commands; background nothing; no subagents; do not end your turn before the commit exists.
+Report `{OUT}`: `## Folded`, `## Left` (key + reason) and `## Spec amendments` (quoted before/after, or `none`) — counts derived by re-reading it. Final message: the commit hash and the two counts. Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`); do not end your turn before the commit exists.
 
 ## exec
 
@@ -40,7 +40,7 @@ Report `{OUT}` in the shape below, preceded by an `## Executed` table — one ro
 
 {COMMON}
 
-Run everything as plain blocking commands; background nothing; no subagents. Do not end your turn before the report exists.
+Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`). Do not end your turn before the report exists.
 
 ## blind
 
@@ -52,7 +52,7 @@ The implementer of each task will see ONLY that task's text plus the plan's Glob
 
 {COMMON}
 
-Read-only: change nothing in the tree. Run everything as plain blocking commands; background nothing; no subagents. Do not end your turn before the report exists.
+Read-only: change nothing in the tree. Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`). Do not end your turn before the report exists.
 
 ## scoped
 
@@ -64,4 +64,4 @@ Your subject is the fix and nothing else: (1) did each hunk close the finding it
 
 {COMMON}
 
-Read-only. Run everything as plain blocking commands; background nothing; no subagents. Do not end your turn before the report exists.
+Read-only. Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`). Do not end your turn before the report exists.

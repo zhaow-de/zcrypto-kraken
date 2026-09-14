@@ -30,4 +30,4 @@ Every REFUTED claim is a finding in `{OUT}` in the shape below; the Scenario is 
 
 {COMMON}
 
-Read-only: change nothing in the tree; a scratch interpreter and `--collect-only` are the only execution you perform. Run everything as plain blocking commands; background nothing; no subagents. Do not end your turn before both files exist.
+Read-only: change nothing in the tree; a scratch interpreter and `--collect-only` are the only execution you perform. Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`). Do not end your turn before both files exist.

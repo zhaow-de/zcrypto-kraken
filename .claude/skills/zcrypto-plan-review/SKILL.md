@@ -58,7 +58,7 @@ Then remove `{EXEC_WT}` (the floor's command) and hand off to `superpowers:subag
 
 - Agent tool, `model` named explicitly on every dispatch; the two lenses in one message, everything else one at a time — the fixer, the sweep and the executability pass all write.
 - The dispatch prompt is two lines: the rendered prompt's path, "read it first — it is your complete instructions", and the output path. Everything else lives in the file.
-- Every rendered prompt ends with: run everything as plain blocking commands, background nothing, no subagents, and — for writers — do not end the turn before the commit exists. A writer whose final message says it is *waiting* is stranded: check `git status`, then resume the same agent — a fresh twin re-does the work — with numbered foreground steps ending at the commit.
+- Every rendered prompt ends with: run everything as plain blocking commands, background nothing, no subagents, no agent tools, and — for writers — do not end the turn before the commit exists. A writer whose final message says it is *waiting* is stranded: check `git status`, then resume the same agent — a fresh twin re-does the work — with numbered foreground steps ending at the commit.
 - **Re-count every number in a dispatch prompt, a registration, or a ledger line against its list before sending** — orchestrator text is the one artefact no reviewer reads.
 
 ## Failure modes — catch yourself
