@@ -57,7 +57,7 @@ What each gate covers:
 
 Gate 6 reads a box's state, never its text: a `- [x]` checked with a false `N/A` reason passes it. For every checked box whose claim no gate arm reads, verify the claim against the branch, the `N/A` reason above all — its condition is the whole claim:
 
-- **Change-index row.** Gate 10 reads a key in the branch name only; a key in the title or the body's `## Spec / Plan` section owes a row by the same grammar (`open-pr` Step 4): `gh pr view <number> --json title -q .title | grep -oiE '\biter-[0-9]{1,3}\b|\b[0-9]{5}\b|\bT[0-9]{4}\b'`, and the section read for a serial or a topic; then `grep -n "^| #<number> " docs/reference/change-index.md`. A key without a row, or an `N/A` beside a key, is a STOP.
+- **Change-index row.** Gate 10 reads a key in the branch name only; a key in the title or the body's `## Spec / Plan` section owes a row by the same grammar (`open-pr` Step 4): `gh pr view <number> --json title -q .title | grep -oE '\biter-[0-9]{1,3}\b|\b[0-9]{5}\b|\b[Tt][0-9]{4}\b'`, and the section read for a serial or a topic; then `grep -n "^| #<number> " docs/reference/change-index.md`. A key without a row, or an `N/A` beside a key, is a STOP.
 - **README `## Usage`.** `gh pr diff <number> --name-only | grep '^cli/'` — a CLI file in the diff with the box checked as not applicable takes a read of `README.md`'s `## Usage` against the option change.
 - **Tests pass.** Gate 5 reads the run itself; nothing to add.
 
