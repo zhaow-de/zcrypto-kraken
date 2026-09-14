@@ -53,6 +53,14 @@ What each gate covers:
 
 **If any gate fails:** report which one and why, ask the user to resolve it manually (update the branch, fix CI, get the review, check the boxes), then **STOP**. Do not merge.
 
+## Step 2b — Read the checked boxes (STOP on a false claim)
+
+Gate 6 reads a box's state, never its text: a `- [x]` checked with a false `N/A` reason passes it. For every checked box whose claim no gate arm reads, verify the claim against the branch, the `N/A` reason above all — its condition is the whole claim:
+
+- **Change-index row.** Gate 10 reads a key in the branch name only; a key in the title or the body's `## Spec / Plan` section owes a row by the same grammar (`open-pr` Step 4): `gh pr view <number> --json title -q .title | grep -oiE '\biter-[0-9]{1,3}\b|\b[0-9]{5}\b|\bT[0-9]{4}\b'`, and the section read for a serial or a topic; then `grep -n "^| #<number> " docs/reference/change-index.md`. A key without a row, or an `N/A` beside a key, is a STOP.
+- **README `## Usage`.** `gh pr diff <number> --name-only | grep '^cli/'` — a CLI file in the diff with the box checked as not applicable takes a read of `README.md`'s `## Usage` against the option change.
+- **Tests pass.** Gate 5 reads the run itself; nothing to add.
+
 ## Step 3 — Merge
 
 ```bash
@@ -61,20 +69,20 @@ gh pr merge <number> --merge --delete-branch
 
 `--merge` creates a merge commit, which preserves per-commit history and the `Co-Authored-By:` trailers; `--delete-branch` deletes the remote head branch as part of the merge. The explicit method flag makes the command non-interactive.
 
-## Step 4 — Sync develop (STOP on a dirty worktree)
+## Step 4 — Sync develop (never through a dirty worktree)
 
 ```bash
 git status --porcelain
+git branch --show-current
 ```
 
-If that prints **anything**, the worktree is dirty: **STOP**. Tell the user to stash/commit first — the PR is already merged, so local cleanup is just deferred; do not switch branches. Otherwise:
+On `develop` with a clean tree, `git pull --ff-only`; not a fast-forward is a STOP (never a local merge commit). On `<headRefName>` with a clean tree, `git checkout develop` first — that branch is yours, no peer holds it. Otherwise — a dirty tree, or a branch a peer session may hold in the shared checkout — do not switch; move the ref without touching the worktree:
 
 ```bash
-git checkout develop
-git pull --ff-only
+git fetch origin develop:develop
 ```
 
-If the pull is not a fast-forward, STOP and report (don't create a merge commit locally).
+A refspec without `+` fast-forwards a branch that is not checked out and refuses anything else, the current branch included: a refusal is a STOP and a report, never a `+` or a `--force`. This line stands in wherever the pull cannot run — never nothing: `git fetch --all --prune` alone advances `origin/develop` and leaves the local `develop` at the pre-merge commit, the red one the PR may have existed to fix.
 
 ## Step 5 — Delete the local branch
 
@@ -82,7 +90,7 @@ If the pull is not a fast-forward, STOP and report (don't create a merge commit 
 git branch -d <headRefName>
 ```
 
-Run git from the repo root. You switched to `develop` in Step 4, so you're not on the branch being deleted. Because the PR merged with a merge commit (Step 3), the branch is fully integrated and `-d` succeeds. (If `-d` ever errors "not fully merged" **and** the PR shows merged **and** the remote branch is gone, the work IS integrated — `git branch -D <headRefName>` is then safe.)
+Run git from the repo root. `-d` needs only that the current branch is another one; when Step 4 left you on `<headRefName>` (a dirty tree), the delete waits with the switch. Because the PR merged with a merge commit (Step 3), the branch is fully integrated and `-d` succeeds. (If `-d` ever errors "not fully merged" **and** the PR shows merged **and** the remote branch is gone, the work IS integrated — `git branch -D <headRefName>` is then safe.)
 
 ## Step 6 — Confirm the remote branch is gone
 
@@ -106,4 +114,4 @@ Updates every remote and drops local remote-tracking refs whose upstream branch 
 
 ## Report
 
-Summarize: PR merged (or which gate stopped you), develop synced (or dirty-worktree stop), local + remote branch deleted, prune done.
+Summarize: PR merged (or which gate or box stopped you), develop synced (pull, or the `develop:develop` fetch, or the refusal that deferred it), local + remote branch deleted, prune done.
