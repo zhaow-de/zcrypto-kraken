@@ -176,3 +176,12 @@ def test_an_untracked_nested_checkout_is_named_not_dropped(tmp_path):
     subprocess.run(["git", "-C", str(repo / "vendor"), "init", "-q", "-b", "develop"], check=True, capture_output=True)
     done = _sweep(repo, "-l", "NEEDLE")
     assert "vendor" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_dangling_symlink_is_named_not_dropped(tmp_path):
+    """A broken link satisfies neither the regular-file test nor the directory test, and silence is the one answer this script may not give."""
+    repo = _repo(tmp_path)
+    (repo / "cli" / "gone.py").symlink_to("/nonexistent/never-here.py")
+    subprocess.run(["git", "-C", str(repo), "add", "cli/gone.py"], check=True, capture_output=True)
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert "gone.py" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr

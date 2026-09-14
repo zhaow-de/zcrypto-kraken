@@ -9,8 +9,8 @@
 # the silent clean this script exists to end.
 # Usage: infra/scripts/sweep.sh [grep flags] <pattern>   rc: 0 a hit, 1 none, 2 an error.
 set -euo pipefail
-# With no argument at all grep takes the first path as its pattern and answers rc 0 over the matches that
-# regex happens to make -- the rc this script reserves for a hit, over a question nobody asked.
+# With no argument at all grep takes the first path as its pattern and answers whatever rc that accidental
+# regex earns -- a hit or a clean, never the error this is.
 [ $# -gt 0 ] || { echo "sweep: usage: sweep.sh [grep flags] <pattern>" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
@@ -27,9 +27,11 @@ mapfile -d '' -t listed < <(git ls-files -z --deduplicate --cached --others --ex
 files=()
 for f in ${listed[@]+"${listed[@]}"}; do
   if [ -f "$f" ]; then files+=("$f")
-  # An untracked nested checkout is listed as the bare directory, so dropping it silently would answer
-  # "absent" over files nobody opened -- say it instead.
-  elif [ -d "$f" ]; then echo "sweep: $f is a directory, not swept -- an untracked nested checkout is one entry" >&2
+  # A nested checkout and a submodule arrive as a bare directory, a dangling link satisfies no test at all,
+  # and a link to a directory would otherwise be reported as a checkout: one band, named not dropped, because
+  # silence here answers "absent" over content nobody opened. A path merely gone from the worktree is the
+  # exception -- it is in the index alone and has nothing to miss.
+  elif [ -d "$f" ] || [ -L "$f" ]; then echo "sweep: $f is not a regular file, not swept" >&2
   fi
 done
 [ "${#files[@]}" -gt 0 ] || { echo "sweep: no files to search under $PWD" >&2; exit 2; }
