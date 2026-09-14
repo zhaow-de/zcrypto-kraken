@@ -44,7 +44,7 @@ VOCABULARY = re.compile(
       | \biter-\d+             # iter-117
       | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
       | \bWP\d                 # work-package tokens
-      | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (the rule names them; this
+      | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (CLAUDE.md's guards bullet names them; this
                                # enforces it). The optional letter is NOT cosmetic: `\bD\d{1,2}\b`
                                # cannot match `D5a`, because there is no word boundary between `5`
                                # and `a` — so every lettered decision escaped the guard entirely,
