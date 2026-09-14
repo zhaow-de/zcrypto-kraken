@@ -608,3 +608,183 @@ def test_the_branch_key_grammar_mirrors_the_tests_grammar() -> None:
             + rng.choice(["", "-tail", "/more"])
         )
         assert bool(gate.BRANCH_KEY.search(branch)) == any(_keys(branch)), branch
+
+
+def test_evaluate_carries_the_index_row_arm() -> None:
+    """Wired into `evaluate`, not merely defined: unwiring it leaves every other case in this file green."""
+    fails = _eval(_pr(number=99999, headRefName="docs/t0210-register-the-thing"))
+    assert any("change-index" in f for f in fails), fails
+
+
+def test_an_unchecked_box_quoted_in_a_code_span_is_not_a_box() -> None:
+    """The marker inside a code span renders as text; the old substring test read it as an open item."""
+    body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\nthe gate parses `- [ ]` items\n\n- [x] done\n"
+    assert not [f for f in _eval(_pr(body=body)) if "checklist" in f]
+
+
+def test_an_unchecked_box_in_a_fenced_block_is_not_a_box() -> None:
+    """A fenced block is code to a reader, so a list marker inside it is not a checklist item."""
+    body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n```\n- [ ] not a box\n```\n\n- [x] done\n"
+    assert not [f for f in _eval(_pr(body=body)) if "checklist" in f]
+
+
+def test_a_real_unchecked_box_still_fails() -> None:
+    """The two exemptions above must not have widened into ignoring the box the arm exists to catch."""
+    body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [ ] not done\n"
+    assert [f for f in _eval(_pr(body=body)) if "checklist" in f]
+
+
+def _boxed(body: str) -> bool:
+    return any(
+        "checklist" in f for f in _eval(_pr(body=f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n{body}\n"))
+    )
+
+
+def test_a_real_box_inside_details_is_still_a_box() -> None:
+    """GitHub renders a task list inside `<details>`; hiding it was the read-line rule leaking into gate 6."""
+    assert _boxed("<details>\n<summary>later</summary>\n\n- [ ] real\n\n</details>")
+
+
+def test_a_real_box_on_a_quoted_line_is_still_a_box() -> None:
+    """A blockquote is visible on the page, so a box inside it counts, its marker stripped before the match."""
+    assert _boxed("> - [ ] real") and _boxed("> > - [ ] nested quote")
+
+
+def test_the_star_and_numbered_spellings_are_boxes() -> None:
+    """The arm widened past `- [ ]` to every list marker CommonMark renders; nothing pinned the widening."""
+    assert _boxed("* [ ] real") and _boxed("+ [ ] real") and _boxed("1. [ ] real") and _boxed("1) [ ] real")
+
+
+def test_a_nested_box_is_a_box() -> None:
+    assert _boxed("- outer\n  - [ ] inner")
+
+
+def test_a_marker_that_is_only_text_is_not_a_box() -> None:
+    """A code span at the line's start, and a list item whose content is a code span, both render as text."""
+    assert not _boxed("`- [ ]` is the marker") and not _boxed("- `[ ]` is the marker's text")
+
+
+def test_a_box_inside_a_details_html_block_is_literal_text() -> None:
+    """With no blank line after `<summary>`, CommonMark keeps the HTML block open, and GitHub draws no box there."""
+    assert not _boxed("<details>\n<summary>later</summary>\n- [ ] literal\n</details>")
+    assert _boxed("<details>\n<summary>later</summary>\n\n- [ ] real\n\n</details>")
+
+
+def test_a_box_right_after_a_closing_details_tag_is_literal_text() -> None:
+    """The closing tag opens an HTML block of its own, to the next blank line."""
+    assert not _boxed("<details>\n\n- [x] done\n\n</details>\n- [ ] literal") and _boxed(
+        "<details>\n\n- [x] done\n\n</details>\n\n- [ ] real"
+    )
+
+
+def test_a_quoted_fence_or_comment_is_still_code() -> None:
+    """A fenced block or an HTML comment inside a blockquote renders as code or nothing, never as a task item --
+    while a plain quoted box in the same body is still a box, so this case fails in both directions."""
+    assert (
+        not _boxed("> ```\n> - [ ] in quoted code\n> ```")
+        and not _boxed("> <!--\n> - [ ] in quoted comment\n> -->")
+        and not _boxed("> > ```\n> > - [ ] nested\n> > ```")
+    )
+    assert _boxed("> ```\n> - [ ] in quoted code\n> ```\n\n> - [ ] real")
+
+
+def test_a_quoted_fence_inside_a_fence_does_not_close_it() -> None:
+    """Fence content is literal: a `> ```` line inside an open fence is code, not a quoted fence closing the block."""
+    assert not _boxed("```\n> ```\n- [ ] still inside the fence\n```")
+
+
+def test_a_quoted_fence_or_comment_ends_with_its_blockquote() -> None:
+    """Neither takes lazy continuation, so the blockquote's end closes it and a box after it is a rendered box."""
+    assert (
+        _boxed("> ```\n> code\n\n- [ ] real") and _boxed("> <!--\n> hidden\n\n- [ ] real") and _boxed("> ```\n> code\n- [ ] real")
+    )
+    assert not _boxed("> ```\n> - [ ] in quoted code\n\n> more quote")
+
+
+def test_a_quoted_fence_closed_by_an_unquoted_fence_line_opens_a_new_fence() -> None:
+    """The unquoted line ends the blockquote and starts a top-level fence that runs on, so nothing after it is a box."""
+    assert not _boxed("> ```\n```\n- [ ] after")
+
+
+def test_a_quoted_html_block_ends_with_its_blockquote() -> None:
+    """An HTML block takes no lazy continuation either, so the blockquote's end closes it and a box after it counts."""
+    assert _boxed("> <details>\n- [ ] real") and not _boxed("> <details>\n> - [ ] literal")
+
+
+def test_a_construct_two_quotes_deep_is_closed_by_a_line_one_quote_deep() -> None:
+    """A blockquote ends at the first line with fewer markers than it opened with, not only at an unquoted line."""
+    assert _boxed("> > ```\n> - [ ] real") and _boxed("> > <!--\n> - [ ] real")
+    assert not _boxed("> > ```\n> > - [ ] in code\n> more") and _boxed("> > ```\n> > - [ ] in code\n> > ```\n> > - [ ] later")
+
+
+def test_a_quote_marker_alone_is_content_to_an_unquoted_html_block() -> None:
+    """A `>`-only line is blank inside a quoted block and content inside an unquoted one, so each is measured at its own depth."""
+    assert (
+        not _boxed("<details>\n>\n- [ ] box") and _boxed("> <details>\n>\n> - [ ] x") and not _boxed("> <details>\n> >\n> - [ ] x")
+    )
+
+
+def test_a_deeper_quoted_fence_line_inside_a_quoted_fence_is_content() -> None:
+    """A fence opened one quote deep is closed by a one-quote line, not by a two-quote one, which is code to it."""
+    assert not _boxed("> ```\n> > ```\n> - [ ] after") and _boxed("> ```\n> ```\n> - [ ] after")
+
+
+def test_the_tail_of_a_block_comments_closing_line_is_not_a_box() -> None:
+    """The line carrying `-->` is the HTML block's last line, so a marker after it is raw text on the page, not a task
+    item; on the next line it is a box again."""
+    assert (
+        not _boxed("<!--\nhidden\n--> - [ ] box")
+        and not _boxed("> <!--\n> hidden\n> --> - [ ] box")
+        and _boxed("<!--\nhidden\n-->\n- [ ] box")
+    )
+
+
+def test_an_html_block_or_comment_admits_at_most_three_columns_of_indent() -> None:
+    """Four spaces, or a tab at the line's start, before the opener is an indented code block on the page, and a box
+    after it is drawn."""
+    assert not _boxed("## Checklist\n\n   <details>\n- [ ] unchecked")
+    assert _boxed("## Checklist\n\n    <details>\n- [ ] unchecked") and _boxed("## Checklist\n\n\t<details>\n- [ ] unchecked")
+    assert _boxed("## Checklist\n\n    <!--\n- [ ] unchecked") and _boxed("- notes\n    <details>\n- [ ] unchecked")
+
+
+def test_an_openers_indent_is_measured_as_the_page_measures_it() -> None:
+    """A tab after a quote marker expands from the line's start, so it stops two columns past the marker and opens a
+    block; a non-breaking space is content, not indent, so it opens nothing and the box after it is drawn."""
+    assert not _boxed("## C\n\n> \t<details>\n> - [ ] x") and not _boxed("## C\n\n>\t<details>\n> - [ ] x")
+    assert _boxed("## C\n\n\u00a0<details>\n- [ ] x")
+
+
+def test_a_quote_marker_is_indented_at_most_three_spaces() -> None:
+    """Four spaces, a tab or a non-breaking space before `>` make the line code or a paragraph, not a quote, so a
+    `<details>` there opens nothing and the quoted box on the next line is drawn; three spaces still quote."""
+    assert _boxed("    > <details>\n> - [ ] x") and _boxed("\t> <details>\n> - [ ] x") and _boxed("\u00a0> <details>\n> - [ ] x")
+    assert not _boxed("   > <details>\n> - [ ] x") and _boxed("   > - [ ] x")
+
+
+def test_a_tab_after_a_quote_marker_before_a_fence_is_a_fence() -> None:
+    """A tab expands from the line's start, so after a quote marker it stops two columns in and opens a fence; at
+    the line's own start it reaches column four, which is an indented code block, and the box after it is drawn."""
+    assert not _boxed("> \t```\n> - [ ] x\n> ```") and _boxed("\t```\n- [ ] x\n```")
+
+
+def test_a_box_behind_an_over_indented_quote_marker_still_counts() -> None:
+    """Four spaces before `>` is a list item's nested content or indented code, and the walk tracks no list; the marker
+    opens nothing and the box behind it counts, so the gate is loud where the page shows code and never silent
+    where it draws the box."""
+    assert _boxed("- item\n    > - [ ] x") and _boxed("- item\n    > > - [ ] x")
+
+
+def test_an_unknown_tag_hides_nothing_under_gate_6() -> None:
+    """`<detailsx>` is a spelling the block regex declines, and the closer-terminated `<details` arm is the read line's
+    alone, so under gate 6 the tag is content and the box past the blank line is counted, as the page draws it."""
+    assert _boxed("## C\n\n<detailsx>\n\n- [ ] real")
+
+
+def test_a_tag_condition_6_does_not_open_hides_nothing_under_gate_6() -> None:
+    """`<details-foo> text` is a paragraph on the page -- condition 6 wants a space, a tab, `>`, `/>` or the line's
+    end after the tag name -- and the box on the next line interrupts it, so gate 6 counts it; `<details>` and
+    `<details open>` still open the block that hides theirs."""
+    assert _boxed("## C\n\n<details-foo> text\n- [ ] real")
+    assert _boxed("<summary-x> text\n- [ ] real")
+    assert not _boxed("<details>\n- [ ] literal\n</details>")
+    assert not _boxed("<details open>\n- [ ] literal\n</details>")

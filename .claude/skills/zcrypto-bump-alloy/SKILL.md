@@ -18,7 +18,7 @@ The codified Alloy image bump. Four hosts run digest-pinned `grafana/alloy` cont
 
 ## Standing cautions (they all transfer)
 
-- Converges via `infra/ansible/scripts/converge.sh`: never wrapped in `timeout` — `.claude/rules/fleet-deploys.md`'s, restated here because this is where the command is typed — and the script itself refuses a missing `--limit`; the mechanics are the *Shared converge mechanics* block below.
+- Converges via `infra/ansible/scripts/converge.sh`: never wrapped in `timeout` — `.claude/rules/fleet-deploys.md`'s, restated here because this is where the command is typed; the mechanics are the *Shared converge mechanics* block below.
 - Timeout-guard every network command; an empty filtered query is not an absent event — verify by positive trace.
 - `converge.sh` appends every real pass to `docs/reference/deploy-log.jsonl` — the Alloy digest you passed is on record the moment the pass returns; the `fleet-pins.md` row at closeout is re-trued from that line, never re-typed.
 - NAS docker is `/usr/local/bin/docker` (not on sudo's PATH); the NAS play refuses on a non-UTC clock (`tags: [always]` guard).
@@ -49,9 +49,11 @@ This block is duplicated verbatim in `zcrypto-rollout-image` and `zcrypto-bump-a
 
 (`up{host="hp"}` returns silence, not an error — query the Cloud label column only.)
 
+A fifth Alloy runs on `zaccess` as an apt-followed deb — no digest, no pins row, outside this canary order (`docs/reference/fleet.md`'s Hosts bullet; `infra/runbooks/zaccess.md`'s `zaccess-alloy-converge`) — but inside Step 0's config-compatibility question, since the next `apt upgrade` hands it whatever upstream shipped; `Fleet · Alloy dark — Edge` is its detector.
+
 ## Step 0 — resolve the release, the digest, and the current baseline
 
-1. Newest release: `timeout 30 gh api repos/grafana/alloy/releases/latest -q '.tag_name + " " + .published_at'`. **Read its release notes** (and any skipped intermediate versions') for config-language breaking changes/deprecations — the notes name the deprecation; only a dry-start against the real binary shows whether OUR configs trip it. If the notes flag config-language changes, dry-start the new image against each of the three `config.alloy` files (NAS `infra/nas/`, ops `roles/ops/files/`, capture `roles/capture/files/`) before touching any host, supplying dummy values for the `sys.env(...)` secrets.
+1. Newest release: `timeout 30 gh api repos/grafana/alloy/releases/latest -q '.tag_name + " " + .published_at'`. **Read its release notes** (and any skipped intermediate versions') for config-language breaking changes/deprecations — the notes name the deprecation; only a dry-start against the real binary shows whether OUR configs trip it. If the notes flag config-language changes, dry-start the new image against each of the four `config.alloy` files (NAS `infra/nas/`, ops `roles/ops/files/`, capture `roles/capture/files/`, access `roles/access/files/`) before touching any host, supplying dummy values for the `sys.env(...)` secrets.
 2. Resolve the tag to its **multi-arch index digest**: `timeout 60 docker buildx imagetools inspect grafana/alloy:<tag>` → the top-level `Digest:` line (`sha256:…`). That full-index form is the pin (the current NAS pin is the same shape).
 3. Record the **current baseline** before changing anything — the deployed digests live only on the hosts for 3 of 4 (per-converge extra-vars, no repo default): `docker inspect grafana-alloy --format '{{.Config.Image}}'` on `hp`, `nas`, `red`, `zcrypto` — into `docs/reference/fleet-pins.md` (the durable record the *next* bump diffs against, and the rollback reference for this one). **Always `.Config.Image` (the `repo@sha256:…` compose asked for), never `.Image`** — the latter equals the pinned digest only under docker's containerd image store (the capture VPSes), and is the local config-blob ID under classic storage (the NAS): a host-dependent trap.
 

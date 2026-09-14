@@ -30,6 +30,7 @@ One block per finding, nothing else under a `###`. Copy this heading **literally
 ```
 
 - Origin is a claim about PROVENANCE, and `git blame` on the line you quote settles it — use it rather than guessing: `in-original` means the line predates every fix commit on this branch; `last-fix` means the commit named in the prior fix report wrote it; `earlier-fix` means an older fix did. Measured on one run, reviewers guessing without checking were right once in sixteen. If you are given no prior fix report and cannot run `git blame`, say so in the finding rather than defaulting — a wrong origin makes the loop's own damage look like the author's.
+- The origin bracket holds exactly one of the three words and nothing else — a hash, a note or a second word makes the heading unparseable, and the finding vanishes from the count while the count line still prints; the severity bracket is read forgivingly, the origin bracket is not.
 - Write `<path>:<line>` exactly as the file is named in the tree — two reports naming one line the same way are clustered; two ways of naming it are two findings.
 - Nothing is "noted" or "worth mentioning" outside a finding block; a remark that is not a finding is not written.
 

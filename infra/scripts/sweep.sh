@@ -17,12 +17,18 @@ set -euo pipefail
 # here: a flag outside it, a long spelling of one inside it (`--after-context 3`), or one clustered into
 # `-lm 5`, still reads its operand as a pattern and passes. An attached `-eNEEDLE` is refused although grep
 # accepts it -- a loud refusal naming the spelling that works, which is the recoverable error of the two.
+# A pattern flag records the pattern from its OPERAND: `sweep.sh -e` supplies none, and grep would then bind the script's own `--` as the regex.
 pattern=0
-skip=0
+skip=0     # the next word is a flag's operand, to be stepped over
+carries=0  # ...and that operand is the pattern, so a dangling `-e` never records one
 for a in "$@"; do
-  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  if [ "$skip" -eq 1 ]; then
+    skip=0
+    if [ "$carries" -eq 1 ]; then pattern=1; carries=0; fi
+    continue
+  fi
   case "$a" in
-    -e|-f|--regexp|--file) pattern=1; skip=1 ;;
+    -e|-f|--regexp|--file) skip=1; carries=1 ;;
     --regexp=*|--file=*) pattern=1 ;;
     -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
     -*) ;;

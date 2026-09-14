@@ -2,7 +2,6 @@
 name: zcrypto-grooming
 description: Drain and groom .local/memo.md together with the user. Bare /zcrypto-grooming runs the full three-step flow; an argument ("T9999 is done", "T9999 is partially done", "T9999 registered — insert into queue", "iter-290 (PR #1332) has been merged") applies one mechanical queue procedure.
 disable-model-invocation: true
-model: claude-fable-5
 allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Skill, Bash(git log:*), Bash(git show:*), Bash(git diff:*), Bash(git add:*), Bash(git commit:*), Bash(gh pr list:*), Bash(gh pr view:*), Bash(date:*), Bash(uv run pre-commit:*)
 ---
 
@@ -51,9 +50,9 @@ A drop the user gives without a reason is recorded as decision + dates only — 
 ### Step 2 — pre-cleanup: reconcile the queue against reality
 
 1. Read `last-grooming-section-at` from the memo frontmatter. Absent **or not a parseable timestamp** (a placeholder counts as absent) → agree a baseline with the user and set the key.
-2. Queue empty → skip this and the matching step (nothing can match; say so). Otherwise collect what landed since then: merged PRs (`gh pr list --state merged --search "merged:>TS"`), commits (`git log --since=TS --oneline develop`), and open-topics moves (`docs/open-topics/README.md`'s Resolved / Partially-done deltas, plus `archive/` — note `--diff-filter=A` there counts relocations as adds, so the index deltas and PR list are the reliable signal).
+2. Queue empty → skip this and the matching step (nothing can match; say so). Otherwise collect what landed since then: merged PRs (`gh pr list --state merged --base develop --limit 400 --json number,title,mergedAt --jq 'sort_by(.mergedAt)'`, keeping the rows whose `mergedAt` is after TS — the fetch is saturated when its oldest row is itself after TS: rows below it went unfetched, so raise the limit and run again rather than reconcile against a truncated list), commits (`git log --since=TS --oneline develop`), and open-topics moves (`docs/open-topics/README.md`'s Resolved / Partially-done deltas, plus `archive/` — note `--diff-filter=A` there counts relocations as adds, so the index deltas and PR list are the reliable signal).
 3. If the queue holds narrative status prose rather than discrete items, the same rule applies at block level: a block describing only finished work moves into `DONE ITEMS` **entire, never summarized-with-the-original-left-behind** — the purge gate disposes of it on confirmation; a mixed block keeps only its open remainder in the queue. **After grooming, the milestone contains only open work.** Then match against every `WORK-ITEMS QUEUE` item:
-   - **fully resolved** → mark done with citations + timestamp, **move** the whole item to `DONE ITEMS`;
+   - **fully resolved** → mark done with citations + timestamp, **move** the whole item to `DONE ITEMS` — read back with the grep the protocol's *done* procedure prescribes;
    - **partially resolved** → append one very short cited, timestamped note in place;
    - **fully open** → don't touch.
 4. Then `DONE ITEMS` — all of it, including items staged by earlier ad-hoc invocations. **Empty → say so and move on**; the gate exists for content, not ceremony. Otherwise: display every item **numbered**; re-verify each against its citations (open the cited PR / commit / topic — a citation is a claim, and this run checks it); ask for **one batch confirmation**; purge everything confirmed. A negative answer is not the end of the step — discuss the disputed items until each is clear; an item the discussion reveals **not** actually done moves **back to `WORK-ITEMS QUEUE`** (with a note on what remains), and only the confirmed remainder is purged. **End state: `DONE ITEMS` contains no item.**

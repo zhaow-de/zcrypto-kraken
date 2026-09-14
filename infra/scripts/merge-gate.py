@@ -78,6 +78,33 @@ def _is_a_stated_reason(reason: str) -> bool:
 # declined a tilde opener that a renderer honours, and everything below it counted as body.
 _FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
+# A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
+# `(?:> *)*` admits a box behind a quote marker the walk left in place -- one the marker regex declines: indented four
+# or more columns, which is a list item's nested content or indented code, or set off by a character that is content
+# rather than indent, which is a paragraph. The walk tracks no list, so such a marker hides nothing and its box still
+# counts: loud wherever the page draws no box there, never silent where it draws one.
+_UNCHECKED_BOX = re.compile(r"^\s*(?:> *)*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
+# A marker may be indented at most three spaces, and only spaces -- the first from column 0, a nested one from the end
+# of the marker containing it, as the page measures each: this walk tracks no list item, so a marker further in opens
+# nothing (see `_UNCHECKED_BOX` for what it still counts).
+_QUOTE_MARKERS = re.compile(r"^(?: {0,3}> ?)+")
+
+
+def _quote_depth(raw: str) -> int:
+    """How many blockquotes a line sits in, by its leading markers."""
+    m = _QUOTE_MARKERS.match(raw)
+    return m.group(0).count(">") if m else 0
+
+
+def _at_depth(raw: str, depth: int) -> str:
+    """The line as the blockquote `depth` levels deep sees it: that many markers, and the indent before them, off."""
+    return re.sub(rf"^(?: {{0,3}}> ?){{{depth}}}", "", raw)
+
+
+# What CommonMark's condition 6 admits after the tag name; `\b` would open a block on `<details-x> text`, a paragraph.
+_TAG_END = r"(?=[ \t>]|/>|$)"
+_HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)" + _TAG_END)
+_OPENERS = ("<!--", "<details", "</details", "<summary", "</summary")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
 _CODE_SPAN = re.compile(r"(?P<ticks>`+)(?:(?!(?P=ticks)).)*(?P=ticks)", re.S)
@@ -90,26 +117,61 @@ def _outside_code_spans(line: str) -> str:
     return _CODE_SPAN.sub(lambda m: " " * len(m.group(0)), line)
 
 
-def _as_a_reader_sees_it(body: str) -> str:
+def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     """The body with everything a rendered PR hides removed: comments (terminated or not, `--!>` included), fenced
     blocks (nested or not), `<details>` blocks, and quoted lines.
 
-    Two rules keep this close to a renderer without becoming one. A fence is decided on the RAW line, because a
-    renderer settles fences before it ever looks for inline markup. And a comment or `<details>` HIDES what
-    follows it only when it opens the line -- an HTML block -- while one that opens and closes inside a line just
-    takes its own span with it; an unterminated `<!--` in the middle of a sentence renders as text, and treating
-    it as an opener threw away the rest of a body a reader can see in full.
+    `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines. The read line must
+    be plainly visible, so it is judged without them; a checklist item inside either is an item GitHub renders and
+    counts, so gate 6 is judged with them -- as the page renders them. A `<details>` or `<summary>` line, opening or
+    closing, opens an HTML block that runs to the next blank line (CommonMark block condition 6) -- blank at the
+    quote depth the block opened under, so a `>`-only line is content to an unquoted block -- and inside it nothing
+    is markdown, so a box written there is literal text and not counted.
+
+    Two rules keep this close to a renderer without becoming one. A fence is decided before any inline markup is
+    masked, because a renderer settles fences first -- and, under `keep_collapsed`, on the line with its quote
+    markers off, since a fence inside a blockquote is still a fence. And a comment or `<details>` HIDES what
+    follows it only when it opens the line and closes on a later one -- an HTML block; treating an unterminated
+    `<!--` in the middle of a sentence as an opener threw away the rest of a body a reader can see in full.
     """
     visible: list[str] = []
     fence: str | None = None  # the opening run, when inside a fenced block
     in_comment = False
     in_details = False
+    html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to its blank line
+    open_depth = 0  # keep_collapsed only: the quote depth the open fence or comment began at; 0 when not quoted
+    html_depth = 0  # keep_collapsed only: the same for the open HTML block
     for raw in body.splitlines():
-        line = raw
+        # A fence, comment or HTML block opened inside a blockquote takes no lazy continuation, so the first line
+        # at a lesser quote depth ends the blockquote and closes it; a fence opened outside a quote treats a quoted
+        # line as literal content.
+        # Under keep_collapsed every derivation that measures a column works on the line with tabs expanded from
+        # its own start, which is the column the page counts from, so a tab after a quote marker measures as the
+        # page measures it; inside an unquoted fence the line is literal content and is read raw.
+        src = raw.expandtabs(4) if keep_collapsed else raw
+        depth = _quote_depth(src) if keep_collapsed else 0
+        if open_depth and depth < open_depth:
+            fence, in_comment, open_depth = None, False, 0
+        # Every closer is read at the depth its construct opened under: a quoted fence sees a deeper-quoted line as
+        # literal content, and nothing open sees every depth, so an opener is found wherever it sits.
+        if not keep_collapsed or (fence is not None and not open_depth):
+            line = raw
+        elif open_depth:
+            line = _at_depth(src, open_depth)
+        else:
+            line = _QUOTE_MARKERS.sub("", src)
+        if html_block:
+            if html_depth and depth < html_depth:
+                html_block, html_depth = False, 0  # the blockquote ended: this line is read
+            elif not _at_depth(src, html_depth).strip():
+                html_block, html_depth = False, 0
+                continue
+            else:
+                continue
         if fence is not None:
             run = _FENCE_CLOSE.match(line)
             if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
-                fence = None
+                fence, open_depth = None, 0
             continue
         if in_comment or in_details:
             # Inside a comment BLOCK a renderer parses no markdown, so a `-->` written in backticks still
@@ -120,7 +182,12 @@ def _as_a_reader_sees_it(body: str) -> str:
                 m = _COMMENT_CLOSE.search(masked)
                 if not m:
                     continue
-                line, in_comment = line[m.end() :], False
+                if keep_collapsed:
+                    # The closing line is the HTML block's last line: what follows `-->` on it is raw text a reader can
+                    # see, never a list item, so gate 6 does not read it while the read line's walk still does.
+                    in_comment, open_depth = False, 0
+                    continue
+                line, in_comment, open_depth = line[m.end() :], False, 0
             else:
                 at = masked.find("</details>")
                 if at < 0:
@@ -129,6 +196,7 @@ def _as_a_reader_sees_it(body: str) -> str:
         opener = _FENCE_OPEN.match(line)
         if opener:
             fence = opener.group("run") or opener.group("trun")
+            open_depth = depth
             continue
         # An inline comment or details element, opened and closed on this line, takes its own span and nothing
         # more. Code spans are masked so a `<!--` written as prose about this gate is not read as markup.
@@ -150,15 +218,31 @@ def _as_a_reader_sees_it(body: str) -> str:
             a, b = min(pairs)
             line = line[:a] + line[b:]
         # A block-level opener -- first non-space text on the line -- hides every line until its closer, or to the
-        # end of the document when it has none, which is what a renderer does with it.
+        # end of the document when it has none; opened on a quoted line, it ends with the blockquote instead.
         stripped = line.lstrip()
+        # An HTML block or comment admits at most three columns of indent (CommonMark, the bound `_FENCE_OPEN` spells
+        # as `{0,3}`); four is an indented code block on the page, literal, hiding nothing and drawing no box. `line`
+        # already has its tabs expanded and its markers off; only spaces are stripped here, since `lstrip()` would
+        # take a non-breaking space, which is content.
+        if keep_collapsed and stripped.startswith(_OPENERS):
+            bare = line.lstrip(" ")
+            if not bare.startswith(_OPENERS) or len(line) - len(bare) > 3:
+                continue
         if stripped.startswith("<!--"):
             in_comment = True
+            open_depth = depth
             continue
-        if stripped.startswith("<details"):
+        if keep_collapsed and _HTML_BLOCK_TAG.match(stripped):
+            html_block, html_depth = True, depth
+            continue
+        if stripped.startswith("<details") and not keep_collapsed:
+            # Gate 6's mode is excluded: the arm above took every `<details`-prefixed spelling condition 6 opens a
+            # block on, so what falls here -- `<detailsx>` alone on its line, `<details-x> text` -- is a block that
+            # ends at the next blank line or a paragraph, never something a closer ends, and a box below it is one
+            # gate 6 must count.
             in_details = True
             continue
-        if stripped.startswith(">"):
+        if stripped.startswith(">") and not keep_collapsed:
             continue
         visible.append(line)
     return "\n".join(visible)
@@ -367,8 +451,10 @@ def evaluate(
         fails.append(f"{len(pending)} CI check(s) still running — wait; nothing else blocks a merge on pending")
     if not rollup:
         fails.append("no CI checks reported yet — wait for coverage.yml to register")
-    if "- [ ]" in body:
-        fails.append("PR description has unchecked checklist item(s) (- [ ])")
+    if _UNCHECKED_BOX.search(_as_a_reader_sees_it(body, keep_collapsed=True)):
+        fails.append(
+            "PR description has unchecked checklist item(s): a `- [ ]`, `* [ ]` or `1. [ ]` box, inside `<details>` or a quote too"
+        )
     fails.extend(read_line_fails(pr, head_commit, files, read_commit))
     fails.extend(index_row_fails(pr))
     if branch_growth is None:

@@ -11,8 +11,8 @@ Run this at the start of every `zcrypto-marco` session (the coordinator session)
 ## Startup
 
 1. Read `docs/reference/multi-agent-protocol.md`, then `.local/memo.md` (the backlog authority — `.claude/skills/zcrypto-grooming/references/memo-protocol.md` governs its edits), then `.local/coordination.md` (the session table; create it from the template below if absent).
-2. `ListAgents`. Reconcile the table against what is actually alive: names, busy/idle, and any rename the owner reported.
-3. Install the tick only on the owner's word — it is off by default, and the coordination table's `tick installed` line records which: `CronCreate` with `cron: "7 * * * *"`, `recurring: true`, and the prompt below verbatim. A cron field is in the PROCESS's zone — UTC on this workstation (`date -u` and `date` agree), whatever zone the owner reads — so a one-shot read is written in UTC and never converted; every spoken time keeps its `Z`. Record the job id in the coordination table. It expires after seven days — the table's `tick installed` line is the reminder.
+2. `ListAgents`. Reconcile the table against what is actually alive: names, busy/idle, and any rename the owner reported. Then `CronList`, reconciled against the table's `tick installed:` line — the job lives only in the session that created it and is gone when that process exits, so a resume can carry a table that names a job the listing no longer holds: correct that line to `NONE (lost at <event>)` in the same edit, and re-install only through step 3, on the owner's word.
+3. Install the tick only on the owner's word — it is off by default, and the coordination table's `tick installed` line records which: `CronCreate` with `cron: "7 * * * *"`, `recurring: true`, and the prompt below verbatim. A cron field is in the PROCESS's zone — UTC on this workstation (`date -u` and `date` agree), whatever zone the owner reads — so a one-shot read is written in UTC and never converted; every spoken time keeps its `Z`. Record the job id in the coordination table. It expires after seven days and does not outlive the session that created it — the table's `tick installed` line is the reminder, and step 2's `CronList` reconcile is what catches the loss.
 4. Report the reconciled table to the owner in one message, and wait for an instruction. Main assigns nothing on its own initiative at startup.
 
 ## The tick prompt
@@ -24,14 +24,23 @@ Run this at the start of every `zcrypto-marco` session (the coordinator session)
 ```markdown
 # Coordination — session table (gitignored, main writes only)
 
-tick installed: <ISO-8601 UTC> · job id: <id> · expires: <ISO-8601 UTC>
-last tick: <ISO-8601 UTC>
+Live state only: a row is the session's current state and a block below the table lives while its assignment is in flight; history is the memo's.
+
+**Standing rulings**
+- <one line per ruling of the owner's that binds assignments; none yet>
+
+tick installed: NONE
+last tick: —
 
 | session | status | branch | topic / spec | warm context | last report | session URLs |
 |---|---|---|---|---|---|---|
 | zcrypto-alex | idle | — | — | — | — | — |
 | zcrypto-bravo | idle | — | — | — | — | — |
-| zcrypto-zebra | owner's — never assigned | — | — | — | — | — |
+| zcrypto-zebra | owner's — assigned only when the owner names it in | — | — | — | — | — |
+
+Memo chain carried by main: <sha256> · <lines> · <bytes> (<ISO-8601 UTC> — <coverage>)
 ```
+
+`tick installed:` is `NONE` — `NONE (lost at <event>)` after step 2 finds the id gone — until step 3 installs the job, and then `<ISO-8601 UTC> · job id: <id> · expires: <ISO-8601 UTC>`. The chain line is filled from the memo as read — `sha256sum .local/memo.md | cut -c1-64`, `wc -l`, `wc -c` — and rewritten after every memo write; the protocol's count over it is 1 when they match.
 
 `session URLs` is a **list, appended, never replaced**: one session holds several `https://claude.ai/code/session_…` URLs over its life, so attributing a commit to a session means matching every URL the session has held. A payload session names its URL in its start report; after the fact it is read off the branch — `git log -1 --format='%(trailers:key=Claude-Session,valueonly)' <branch>`. The reconcile in step 2 appends a URL the list does not already hold. No rule hangs on it.

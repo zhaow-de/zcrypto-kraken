@@ -1,8 +1,11 @@
 """Internal development vocabulary must not reach a surface an operator sees at runtime (T0096).
 
 The surface list is this file's own parametrisations and walkers, restated nowhere else: a
-second copy drifts. `WP<N>` is different -- memo-private, banned from every git-tracked file
-outright, enforced by the last test in this file.
+second copy drifts. A new surface an operator reads at runtime -- a unit description, an alert
+summary, a notification template, a `fail_msg` -- joins this file's parametrisations or walkers in
+the change that creates it. `WP<N>` is different -- memo-private, banned from every git-tracked file
+outright, enforced by the last test in this file; widening its allowlist, `_WP_CARRIERS`, is a
+different act from adding a surface and is refused.
 
 Every non-docstring string literal in the scanned packages is checked, not just the ones lexically
 inside a `raise`/`echo`: a message built into a variable and echoed later
@@ -41,7 +44,7 @@ VOCABULARY = re.compile(
       | \biter-\d+             # iter-117
       | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
       | \bWP\d                 # work-package tokens
-      | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (the rule names them; this
+      | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (CLAUDE.md's guards bullet names them; this
                                # enforces it). The optional letter is NOT cosmetic: `\bD\d{1,2}\b`
                                # cannot match `D5a`, because there is no word boundary between `5`
                                # and `a` — so every lettered decision escaped the guard entirely,
