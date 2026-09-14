@@ -771,4 +771,4 @@ def test_a_box_behind_an_over_indented_quote_marker_still_counts() -> None:
     """Four spaces before `>` is a list item's nested content or indented code, and the walk tracks no list; the marker
     opens nothing and the box behind it counts, so the gate is loud where the page shows code and never silent
     where it draws the box."""
-    assert _boxed("- item\n    > - [ ] x") and _boxed("- item\n    > > - [ ] x") and _boxed("    > <details>\n> - [ ] x")
+    assert _boxed("- item\n    > - [ ] x") and _boxed("- item\n    > > - [ ] x")

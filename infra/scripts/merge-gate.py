@@ -79,12 +79,14 @@ def _is_a_stated_reason(reason: str) -> bool:
 _FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
-# `(?:> *)*` admits a box behind a quote marker the walk left in place -- one indented four or more columns, which
-# is nested content inside a list item and indented code outside one; the walk tracks no list, so such a marker
-# hides nothing and its box still counts: loud where the page shows code, never silent where it draws the box.
+# `(?:> *)*` admits a box behind a quote marker the walk left in place -- one the marker regex declines: indented four
+# or more columns, which is a list item's nested content or indented code, or set off by a character that is content
+# rather than indent, which is a paragraph. The walk tracks no list, so such a marker hides nothing and its box still
+# counts: loud wherever the page draws no box there, never silent where it draws one.
 _UNCHECKED_BOX = re.compile(r"^\s*(?:> *)*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
-# A marker may be indented at most three spaces, and only spaces, measured from column 0: this walk tracks no list
-# item, so a marker further in opens nothing (see `_UNCHECKED_BOX` for what it still counts).
+# A marker may be indented at most three spaces, and only spaces -- the first from column 0, a nested one from the end
+# of the marker containing it, as the page measures each: this walk tracks no list item, so a marker further in opens
+# nothing (see `_UNCHECKED_BOX` for what it still counts).
 _QUOTE_MARKERS = re.compile(r"^(?: {0,3}> ?)+")
 
 
@@ -235,7 +237,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
             in_details = True
             continue
         if stripped.startswith(">") and not keep_collapsed:
-            continue  # the read line must be plainly visible, and a quoted line is not
+            continue
         visible.append(line)
     return "\n".join(visible)
 
