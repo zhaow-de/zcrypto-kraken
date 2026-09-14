@@ -10,13 +10,22 @@
 # Usage: infra/scripts/sweep.sh [grep flags] <pattern>   rc: 0 a hit, 1 none, 2 an error.
 set -euo pipefail
 # Given no pattern -- none at all, or flags alone -- grep takes the first path as its regex and answers
-# whatever that earns, a hit or a clean, never the error this is. A pattern is a bare argument, or one a
-# spelled-out `-e`/`-f`/`--regexp`/`--file` carries. Two shapes this cannot judge, both left: an attached
-# `-eNEEDLE` reads as a bare flag and is refused though grep accepts it, and the operand of a flag that
-# takes one (`--include '*.py'`) reads as a pattern and passes. Refusing loudly is the recoverable half.
+# whatever that earns, a hit or a clean, never the error this is. Deciding this needs grep's option table:
+# `--include '*.py'` has a bare operand that is not a pattern, so the flags below that take one consume it.
+# The table is the short list anyone sweeping would reach for, not all of grep's; a flag outside it that
+# takes an operand reads that operand as a pattern and passes. An attached `-eNEEDLE` is refused although
+# grep accepts it -- a loud refusal naming the spelling that works, which is the recoverable error of the two.
 pattern=0
+skip=0
 for a in "$@"; do
-  case "$a" in -e|-f|--regexp|--file|--regexp=*|--file=*) pattern=1 ;; -*) ;; *) pattern=1 ;; esac
+  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  case "$a" in
+    -e|-f|--regexp|--file) pattern=1; skip=1 ;;
+    --regexp=*|--file=*) pattern=1 ;;
+    -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--color|--colour|--group-separator) skip=1 ;;
+    -*) ;;
+    *) pattern=1 ;;
+  esac
 done
 [ "$pattern" -eq 1 ] || { echo "sweep: no pattern in '$*' -- a pattern is a bare word, or follows -e/-f as its own word; usage: sweep.sh [grep flags] <pattern>" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"

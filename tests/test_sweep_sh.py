@@ -213,3 +213,17 @@ def test_a_fifo_under_the_ledger_is_named(tmp_path):
     os.mkfifo(repo / ".local" / "pipe")
     done = _sweep(repo, "-l", "NEEDLE")
     assert "pipe" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_flags_operand_is_not_a_pattern(tmp_path):
+    """`--include '*.py'` carries a bare operand that grep consumes, so counting it as the pattern is the silent clean."""
+    done = _sweep(_repo(tmp_path), "-l", "--include", "*.py")
+    assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
+
+
+def test_the_word_form_the_refusal_advertises_works(tmp_path):
+    """`-e` is the recovery the refusal names, and the only way to sweep for a pattern that begins with a dash."""
+    repo = _repo(tmp_path)
+    (repo / "cli" / "dashed.py").write_text("a -NEEDLE here\n")
+    done = _sweep(repo, "-l", "-e", "-NEEDLE")
+    assert done.returncode == 0 and "cli/dashed.py" in done.stdout, done.stdout + done.stderr
