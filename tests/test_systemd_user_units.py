@@ -3,9 +3,10 @@
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
 units are filled in by hand (`<repo>`, `<uv>`), so the render here is a substitution, and what is
 checked is that every placeholder a unit carries is named in its header's `Placeholders:` line, that
-nothing angle-bracketed survives the render, and that the directives a timer-driven oneshot needs sit
-in the section systemd reads them from -- a `Persistent=` under `[Unit]` is silently ignored. Not
-checked: `systemd-analyze verify`, which needs a user manager CI does not run."""
+no `<...>` token of any spelling survives the render, and that the directives a timer-driven oneshot
+needs sit in the section systemd reads them from -- a `Persistent=` under `[Unit]` is silently
+ignored. Not checked: `systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off
+disk and refuses the example paths this render fills in."""
 
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ REGISTERED = {
 }
 # The placeholders a header may name, with the absolute paths the render fills them with.
 KNOWN = {"<repo>": "/home/you/Projects/zcrypto-kraken", "<uv>": "/home/you/.local/bin/uv"}
-_PLACEHOLDER = re.compile(r"<[a-z]+>")
+_PLACEHOLDER = re.compile(r"<[^<>\s]+>")
 
 
 def units() -> list[Path]:
@@ -93,7 +94,7 @@ def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
         assert service.get("ExecStart", "").startswith(KNOWN["<uv>"] + " run "), f"{unit.name}: ExecStart must run through <uv>"
     else:
         timer = parsed.get("[Timer]", {})
-        assert "OnCalendar" in timer, f"{unit.name}: no OnCalendar= under [Timer]"
+        assert timer.get("OnCalendar"), f"{unit.name}: no OnCalendar= with a value under [Timer]"
         assert timer.get("Persistent") == "true", f"{unit.name}: Persistent=true must sit under [Timer], where systemd reads it"
         assert (UNITS / timer.get("Unit", "")).is_file(), f"{unit.name}: Unit= must name a service beside it"
         assert parsed.get("[Install]", {}).get("WantedBy") == "timers.target", f"{unit.name}: a timer is wanted by timers.target"
@@ -101,7 +102,8 @@ def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
 
 def test_the_data_gated_service_is_a_oneshot_the_timer_owns():
     """Enabled through its timer alone: an [Install] section on the service would let `enable` start
-    the whole suite at every login, and a non-oneshot would let the timer overlap a run still going."""
+    the whole suite at every login, and a non-oneshot would go active the moment pytest forked, so
+    the timer's trigger and a hand `systemctl start` would stop reporting the suite's own result."""
     service = directives(render((UNITS / "zcrypto-data-gated-tests.service").read_text()))
     timer = directives(render((UNITS / "zcrypto-data-gated-tests.timer").read_text()))
     assert service["[Service]"]["Type"] == "oneshot"
