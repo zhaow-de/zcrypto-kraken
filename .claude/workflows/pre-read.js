@@ -53,8 +53,8 @@ const PROBE = {
 const WALK = {
   type: 'object',
   properties: {
-    fix: { type: 'string', description: 'what the commit says it fixed' },
-    siblingsLeft: { type: 'array', items: { type: 'string' }, description: 'path:line of each carrier of the same defect the fix did not touch' },
+    fix: { type: 'string', description: 'what the commit says it fixed, and in one sentence the invariant the fix restores' },
+    siblingsLeft: { type: 'array', items: { type: 'string' }, description: 'path:line of each text carrier of the same defect the fix did not touch, and each input or state category the fix still admits' },
   },
   required: ['fix', 'siblingsLeft'],
 }
