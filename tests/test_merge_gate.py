@@ -715,3 +715,10 @@ def test_a_construct_two_quotes_deep_is_closed_by_a_line_one_quote_deep() -> Non
     """A blockquote ends at the first line with fewer markers than it opened with, not only at an unquoted line."""
     assert _boxed("> > ```\n> - [ ] real") and _boxed("> > <!--\n> - [ ] real")
     assert not _boxed("> > ```\n> > - [ ] in code\n> more") and _boxed("> > ```\n> > - [ ] in code\n> > ```\n> > - [ ] later")
+
+
+def test_a_quote_marker_alone_is_content_to_an_unquoted_html_block() -> None:
+    """A `>`-only line is blank inside a quoted block and content inside an unquoted one, so each is measured at its own depth."""
+    assert (
+        not _boxed("<details>\n>\n- [ ] box") and _boxed("> <details>\n>\n> - [ ] x") and not _boxed("> <details>\n> >\n> - [ ] x")
+    )

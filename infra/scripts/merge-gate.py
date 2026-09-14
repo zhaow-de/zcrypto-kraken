@@ -84,9 +84,7 @@ _QUOTE_MARKERS = re.compile(r"^\s*(?:> ?)+")
 
 
 def _quote_depth(raw: str) -> int:
-    """How many blockquotes a line sits in: a line with fewer markers than an open construct began with ends that
-    construct's blockquote, and the construct with it, since a fence, a comment and an HTML block take no lazy
-    continuation."""
+    """How many blockquotes a line sits in, by its leading markers."""
     m = _QUOTE_MARKERS.match(raw)
     return m.group(0).count(">") if m else 0
 
@@ -110,7 +108,8 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
 
     `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines. The read line must
     be plainly visible, so it is judged without them; a checklist item inside either is an item GitHub renders and
-    counts, so gate 6 is judged with them -- as the page renders them. A fence or comment opened inside a blockquote
+    counts, so gate 6 is judged with them -- as the page renders them. A fence, comment or HTML block opened inside a
+    blockquote
     hides what follows it until its closer or the first line at a lesser quote depth -- the blockquote's end --
     whichever comes first, since none of the three takes lazy continuation; a quoted line inside a fence that opened UNQUOTED is literal content; and a `<details>` or
     `<summary>` line, opening or closing, opens an HTML block that runs to the next blank line (CommonMark block
@@ -141,7 +140,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         if html_block:
             if html_depth and depth < html_depth:
                 html_block, html_depth = False, 0  # the blockquote ended: this line is read
-            elif not line.strip():
+            elif not re.sub(rf"^\s*(?:> ?){{{html_depth}}}", "", raw).strip():
                 html_block, html_depth = False, 0
                 continue
             else:
