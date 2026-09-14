@@ -32,7 +32,7 @@ Two goals, by work type:
 
 ## The work loop (one item)
 
-1. **Re-read `.local/memo.md`.** The memo contract — data model, the read-guard tooling discipline (Edit/Write tools only, read-before and read-back-after every write), item formats, and the ad-hoc procedures — is **`.claude/skills/zcrypto-grooming/references/memo-protocol.md`**. Read it once per run before the first memo write; its definitions govern.
+1. **Re-read `.local/memo.md`.** The memo contract — data model, the read-guard tooling discipline (the Edit tool once the memo exists -- the hook refuses a `Write` of it -- read-before and read-back-after every write), item formats, and the ad-hoc procedures — is **`.claude/skills/zcrypto-grooming/references/memo-protocol.md`**. Read it once per run before the first memo write; its definitions govern.
 2. **Pick the topmost `WORK-ITEMS QUEUE` item** whose `DependsOn:` — its own **and its milestone's** — is satisfied (trigger fired, prerequisites done) and whose work is inside the boundary. Skip a blocked or attended item with a one-line note and take the next. Queue empty or fully blocked → sweep the open topics' `ripe_when:` triggers; still nothing → manufacture non-budget work (harden harnesses, data QA, robustness re-analysis) per the research constraints below.
 3. **Execute the item by draining its T-topic's sub-items** (decomposition rule above). Ceremony scales with the design question: design-open → full spec/plan/SDD flow; **design-settled** (the deciding ruling or topic PREDATES this run — a loop may not author the decision and claim it in the same run) → branch + TDD + mandatory review, no committed spec. **An iteration's serial is minted when the branch is cut** — `docs/reference/change-index.md`'s highest `iter` plus one, and `open-pr` refuses any other. Research-type items follow the full §12 iteration flow. All repo conventions hold — PRs into `develop`, created and edited through `open-pr`. Before the push, the reads CLAUDE.md's PR bullet names run over `develop..HEAD`; the `Read before push by:` line goes into the body through `open-pr`, and `merge-pr` merges when green.
 4. **Bookkeep through the protocol's ad-hoc procedures.** Topic resolved → *done*; partially resolved → *partially done* (the landing rule when the remainder is the attended tail); new topic → register per `topic-ops`, then *insert* — through `zcrypto-marco` in the multi-session setup.
@@ -68,7 +68,7 @@ Measurement bugs produce plausible numbers — *artifacts asserting untruths*. S
 | The impulse | The reality |
 |---|---|
 | Resolve the topic, move on without the grooming bookkeeping | The item isn't done until the queue reflects it and the memo was re-read. |
-| Edit the memo via a shell heredoc | Bypasses the read-guard. Edit/Write tools only. |
+| Edit the memo via a shell heredoc | Bypasses the read-guard. The Edit tool, under the hook. |
 | Squeeze one more item past the time-gate | Stop at the gate; hand back the summary. |
 | Peek at the holdout / expand a budget / touch production "just this once" | Named park triggers. Park and continue. |
 | "Correct" a doc by appending the retraction below the old text | The retracted claim still reads first, and more confidently. Rewrite the narrative — the durable file must read correctly cold. |
