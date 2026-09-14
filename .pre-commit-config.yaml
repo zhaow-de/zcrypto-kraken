@@ -80,15 +80,13 @@ repos:
 
   # shellcheck over the bash and POSIX-sh scripts under infra/: the commit hooks, the fleet's units and
   # the operator scripts. A finding is fixed in the script; a `# shellcheck disable=` stays only on the
-  # one line it is wrong for, with the reason beside it. Out of the pattern: `zcrypto-tmux.zsh`, and out
-  # by name `workspace-transport.sh`, zsh by shebang -- shellcheck has no zsh dialect and refuses the
-  # file whole (SC1071); the agent shell is bash, so neither is a script this gate is for.
+  # one line it is wrong for, with the reason beside it. Out of the pattern by extension: the two zsh
+  # scripts -- shellcheck has no zsh dialect and refuses one whole (SC1071); the agent shell is bash.
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1-1
     hooks:
       - id: shellcheck
         files: '^infra/.*\.sh$'
-        exclude: '^infra/scripts/workspace-transport\.sh$'
 
   # Local (not the upstream hook repo) so there is ONE ansible-lint version: the one pinned in
   # pyproject/uv.lock, which dependabot's `uv` ecosystem already tracks. The upstream repo would add
