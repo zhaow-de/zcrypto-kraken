@@ -1,7 +1,6 @@
 ---
 name: open-pr
 description: Use when creating a GitHub pull request or editing a PR title or body — load BEFORE running gh pr create or any PR-body edit.
-disable-model-invocation: false
 ---
 
 # open-pr
@@ -98,4 +97,4 @@ A stale body matters: the `/merge-pr` gate parses it for unchecked `- [ ]` items
 
 ## Target branch
 
-Feature and iteration PRs target **`develop`**. Release PRs are opened by the `/release` skill from a `release/<timestamp>` branch **into `main`**, titled `Release v<major>.<minor>.<patch>` — you don't write those by hand.
+Feature and iteration PRs target **`develop`**; release PRs are the `release` skill's.
