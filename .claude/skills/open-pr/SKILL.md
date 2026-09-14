@@ -8,7 +8,7 @@ disable-model-invocation: false
 
 ## Step 0 — the gate
 
-A PR delivers **one completed, nameable component**. Before anything below: (1) name the component from durable state — branch name, spec serial, memo queue item, `T<NNNN>` topic; cannot name it → stop, report the branch ready-or-not instead. (2) Confirm the component is complete — topic `resolved`, or `partial` with the remainder registered. (3) The word — `zcrypto-marco`'s by delegation in the multi-session setup, the user's explicit say-so for a single attended session; a `/zcrypto-auto-exec` run opens at item completion. A green commit is not a reason; a different component is not a reason to reuse this PR.
+A PR delivers **one completed, nameable component**. Before anything below: (1) name the component from durable state — branch name, spec serial, memo queue item, `T<NNNN>` topic; cannot name it → stop, report the branch ready-or-not instead. (2) Confirm the component is complete — topic `resolved`, or `partial` with the remainder registered. (3) The word — `zcrypto-marco`'s by delegation in the multi-session setup, the user's explicit say-so for a single attended session; a `/zcrypto-auto-exec` run opens at item completion. A green commit is not a reason; a different component is not a reason to reuse this PR. The ban on a second PR is on the one that follows the merge: a change that lands while the branch is open is a commit on it, not a follow-up. The one case a second component rides an open PR is an owner-directed fold-in, named under `## Changes` with the owner's word — never under `## Out of scope`.
 
 ## Title (iteration PRs)
 

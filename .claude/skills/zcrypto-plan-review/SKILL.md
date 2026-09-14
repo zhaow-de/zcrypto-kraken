@@ -12,6 +12,7 @@ The gate between a committed plan and its execution. Every step below exists bec
 ## Inputs and derived state
 
 - `{SPEC}`, `{PLAN}`: the paths given, else the pair `git log develop..HEAD --name-only --diff-filter=A --format= -- docs/specs docs/plans` lists (exactly one pair, or stop and ask); rendered absolute.
+- **Before round 1**: a spec with no `## The measured basis` — what was measured, with the command — is handed back rather than reviewed; the contract pin then confirms the premises instead of discovering them.
 - `{TOPIC_LINE}`: ` Then read {WORKTREE}/docs/open-topics/T<NNNN>-*.md — the topic this pair delivers.` when a topic is given, else empty.
 - `{WORKTREE}`: the absolute path of the checkout the branch lives in; `{BRANCH}`: its name; `{REPORT_DIR}`: `{WORKTREE}/.tmp/plan-review/<serial>/` (gitignored — create it). **Every path token is rendered absolute** — a subagent's cwd resets between commands, and a relative path in a prompt naming two roots resolves against whichever the last command left.
 - `{BLAST_RADIUS}`: two or three lines naming what costs something if this pair is wrong — what ships to production, what a paged operator acts on, what a number would change. Write them before anything is dispatched; every reviewer is told everything else is Minor by construction.
@@ -64,12 +65,11 @@ Then remove `{EXEC_WT}` (the floor's command) and hand off to `superpowers:subag
 
 | The impulse | The reality |
 |---|---|
-| "The union is clean, so the pair is clean" | The union is the loop's own verdict. The floor passes are the measurement. |
 | "The reviewer's summary says 0/1/6" | The body says 0/2/6. `union.py`'s line is the count. |
 | "Two reviewers agreed it is Important" | One said Critical. Max severity; agreement is not a re-grade. |
 | "This Minor was skipped with a good reason two rounds ago" | A skip is not closed. It was re-adjudicated this round, or it was not reviewed. |
 | "The fix looks right, dispatch the next round" | A fix is a hypothesis; the next union is its first measurement. |
-| "One more round will clear it" | Three rounds with a Critical left is a design verdict. Fix it as new work, let the floor run, re-derive what survives. |
+| "One more round will clear it" | Three rounds with a Critical left is a design verdict: fix it as new work, let the floor run, re-derive what survives. |
 | "The pin is expensive, the docstring says who calls it" | The docstring names the callers the author meant. The pin found the one they did not. |
 | "The blind gate came back clean, skip the executability pass" | The gate reads. Three Importants in one pair were findable only by running. |
 | "I will just tighten the lens prompt for this round" | The instrument is patched between pairs, never inside a loop. |

@@ -79,6 +79,5 @@ Set `last-grooming-section-at:` to now (UTC, ISO-8601) — full runs only; seman
 | Rewriting the whole file for tidiness | Not version-controlled — whatever a rewrite silently drops is gone for good. Anchored edits. |
 | Ad-hoc argument, but NEW IDEAS looks messy | Out of scope. Mention it; the user can invoke the full flow. |
 | Purging DONE ITEMS as items arrive there | Purge happens once — after the numbered display and the batch confirmation. |
-| Copying a memo paragraph into a T-topic | Paraphrase. The memo is private; topics are git-tracked. |
 | Changing a T-topic's *status* without re-rendering `docs/open-topics/README.md` | The index is rendered from the topic files — `topic-ops`'s index sync, `uv run python infra/scripts/topics-index.py`; the frontmatter test refuses a stale render. |
 | Moving a *summary* to DONE ITEMS while the item's text stays in the queue | Move the WHOLE item — a groomed milestone carries no done work. |

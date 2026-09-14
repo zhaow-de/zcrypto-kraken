@@ -18,7 +18,7 @@ PRs handled by this skill **always merge with a merge commit** (`--merge`) — n
 - The user confirms a PR is reviewed/ready and asks to merge it and/or clean up local branches.
 - Finishing a Claude-authored PR after the user's review.
 
-**Not for:** opening/creating PRs; deciding *how* to finish a branch (see superpowers:finishing-a-development-branch); merging into `main` (release-only — use the `/release` skill) (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`).
+**Not for:** opening/creating PRs; deciding *how* to finish a branch (see superpowers:finishing-a-development-branch); merging into `main` (release-only — use the `/release` skill).
 
 ## Step 1 — Identify the PR
 
@@ -46,7 +46,7 @@ What each gate covers:
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` comes back empty and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
 5. **No failing and no still-running CI** — the gate blocks both: `develop` requires the **`Full test suite`** check (`.github/settings.yml`), so GitHub now refuses a red or unfinished run by itself — this evaluator is defense in depth, not the only gate, and it still catches what GitHub does not: an unchecked checklist, a wrong base, a draft. Do not relax it on the strength of the branch rule; the rule lives in a file one PR can change. `coverage.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. CI is the only place the whole suite runs (`.github/workflows/coverage.yml`; the `Full test suite` context in `.github/settings.yml`).
 6. **Checklist complete** — the PR description has no unchecked `- [ ]` task-list items (GitHub does not enforce these, so the gate parses the body).
-7. **The whole-branch read covers the head** — the body's `Read before push by: <model> at <sha>` line names a model and a sha that is the PR head; a line missing, still carrying the `<model>` placeholder, or naming an earlier tip fails. A commit pushed after the read moves the head off the line, so the delta is read (the `re-review` workflow over the fix range) or the branch re-read (`review`) and the line updated before merge. Two heads are admitted past the named tip, both checked on the REST commit objects: `open-pr`'s change-index row commit — a single non-merge commit whose only file is `docs/reference/change-index.md` — and a head whose tree is the named tip's tree, a message amend, since the reader read that tree. The floor is mechanical too: the line's model must be Claude Opus or Claude Fable, and Fable when any file of the PR is under a path `uv run python infra/scripts/merge-gate.py --fable-paths` prints — the script's tuple is the list's one copy — and the file list is the paginated REST `pulls/<n>/files` endpoint, so no file is unseen. The FABLE half is liftable and the Opus floor is not: a body line `Fable floor substituted by Opus: <reason>` admits an Opus read on those paths, the reason required and checked: refused when it is the placeholder (escaped or not), a filler token, or too little to be a reason — the bar is distinct characters after unescaping and NFKC, so a brief honest answer in any script passes — and refused when the rendered page hides the line, inside a comment terminated or not, a fenced block, a `<details>` block or a quote. The gate reads the body as a reader sees it, and says which of the two happened rather than reporting the line as missing.
+7. **The whole-branch read covers the head** — the body's `Read before push by: <model> at <sha>` line names a model at the floor and a sha that is the PR head; a line missing, still carrying the `<model>` placeholder, or naming an earlier tip fails, and a commit pushed after the read takes a delta read (`re-review`) or a re-read (`review`) with the line updated. The line's full contract — the floor, the two heads admitted past the named tip, the substitution and the bar its reason clears — is `open-pr`'s Body item 3, which writes it. The gate reads the body as a reader sees it, and reports a line the rendered page hides, or a reason that is not one, as that rather than as a missing line.
 8. **The `ops-journal` month PR is exempt from gate 7** — its README declares the month PR outside the pre-push read; a head branch named `ops-journal` whose every file is under `docs/reference/ops-journal/` skips the read-line arm; one carrying any other file takes every arm, floor included.
 9. **Every commit of the branch states its ambient growth** — the gate fetches the base and head branches and runs `infra/scripts/guidance-guard.py --range <merge-base>..<head>`, which judges each non-merge commit against its parent: the check the commit-msg hook cannot make under a rewrite, where a reworded amend or a squash lands a lost or doubled `Ambient grows by` line. A branch whose commits predate the guard carries no lines: the mode names each of them that grows the set, and the author rewords it with its line before the merge; a universal the mode refuses at an intermediate commit takes a rebase that edits that commit. The same walk refuses a non-merge commit that mixes claude-kind files with another kind: the `staged-kind` hook sees the index, and an amend lands the mix past it. A head branch gone from origin, or no merge base, is reported as this arm's failure, never a crash.
 
@@ -58,7 +58,7 @@ What each gate covers:
 gh pr merge <number> --merge --delete-branch
 ```
 
-`--merge` creates a merge commit (this skill's only method — never `--squash`, never `--rebase`); `--delete-branch` deletes the remote head branch as part of the merge. The explicit method flag makes the command non-interactive.
+`--merge` creates a merge commit, which preserves per-commit history and the `Co-Authored-By:` trailers; `--delete-branch` deletes the remote head branch as part of the merge. The explicit method flag makes the command non-interactive.
 
 ## Step 4 — Sync develop (STOP on a dirty worktree)
 
@@ -106,15 +106,3 @@ Updates every remote and drops local remote-tracking refs whose upstream branch 
 ## Report
 
 Summarize: PR merged (or which gate stopped you), develop synced (or dirty-worktree stop), local + remote branch deleted, prune done.
-
-## Common mistakes
-
-| Mistake | Fix |
-|---|---|
-| Merging and letting GitHub reject if not ready | Run the Step 2 gate FIRST; stop + ask on any failure |
-| Treating `mergeable=UNKNOWN` as ready | GitHub is still computing — wait and re-run |
-| Forgetting the checklist (GitHub doesn't enforce task lists) | Parse the PR body for `- [ ]` |
-| Squashing or rebasing the merge | Always `--merge` (merge commit) — preserves per-commit history and `Co-Authored-By:` trailers |
-| `git checkout develop` on a dirty worktree | `git status --porcelain` first; stop if dirty |
-| Assuming `--delete-branch` always worked | Verify with `git ls-remote`; warn + delete if still there |
-| `git remote prune origin` only | `git fetch --all --prune` (all remotes, fetch + prune) |

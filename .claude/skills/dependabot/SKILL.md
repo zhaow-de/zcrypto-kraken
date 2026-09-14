@@ -175,28 +175,6 @@ Only pause for user input when:
 4. **CI failures unrelated to the PR's changes** (e.g. infra flake, pre-existing test that was passing on develop before this branch was opened).
 5. **A PR's base branch is not `develop`** (likely `.github/dependabot.yml` `target-branch` misconfigured — surface and stop).
 
-## Key commands reference
-
-```bash
-# List all open PRs (filter for dependabot/ head branches in the output)
-gh pr list
-
-# View one PR's head branch, base and title. The rollup here is orientation, never the gate (§2d).
-gh pr view <number> --json statusCheckRollup,headRefName,baseRefName,title
-
-# Check out a PR's head branch by number
-gh pr checkout <number>
-
-# Merge with squash + delete head branch
-gh pr merge <number> --squash --delete-branch
-
-# CI status snapshot for a SPECIFIC commit — the only safe form after a force push.
-gh api "repos/zhaow-de/zcrypto-kraken/commits/<sha>/check-runs" \
-  -q '.check_runs[] | "\(.name): \(.status)/\(.conclusion // "-")  head=\(.head_sha[0:8])"'
-
-# The rollup is never the gate inside this loop — see §2d.
-```
-
 ## Notes
 
 - **`main` is PR-only** (branch protection enforces); it advances only via `/release` (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). Dependabot PRs target `develop`.

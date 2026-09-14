@@ -45,6 +45,8 @@ Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action a
 
 **The host comes from the report's `Alert.hosts`, never from the step.** One runbook body serves all four Alloy hosts, and the same restart is routine on ops and attended on the capture pair. **A rule firing on several hosts is classified once PER HOST** — the report names every host with a firing instance, the tier can differ between them, and the silence the capture runbook prescribes is created and deleted per host too.
 
+**Done is an outcome, never a merge.** A fix whose effect needs a converge is not done when it merges: the entry names it as owed to an attended converge.
+
 **Autonomous** — everything read-only, wherever it runs; telemetry-only actions on **ops, the NAS or zaccess only** (restart Alloy, re-arm a timer); and a code fix taken the normal way — fix branch, tests, subagent review, PR, merged on CI green — **when the fix is off the protected paths**.
 
 **Prepared, then the user's word** — any restart or converge of a capture daemon or the engine; anything touching the venue account (the arm file, the kill file, orders); deleting data; running `grafana-push.sh` after a merged rule fix, since it changes what pages; and a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges. **Deploying any fix to a host is a converge — always attended.**
@@ -58,6 +60,16 @@ The verdict tiles' own PromQL is among what the report's fleet checks already ra
 The report's `## Reminders` section is the trigger — an **OWED** line is work, not decoration: open the section it names (`reference-data.md#refdata-sweep-due`, `ops.md#healable-threshold-rederivation-due`) and do it. The sweep's due-ness is computed from the register's last re-confirmation row plus the monthly cadence; the healable line says only whether the counter moved in the window — the count itself is still that section's step 1, from the ledger.
 
 **Slack's scheduled message is a convenience ping, never the check.** Its scheduling cannot be listed or verified from this side, so "no message arrived" means nothing and a message that did arrive adds nothing the report did not already say. A reminder source the report could not read is exit 2, like any other.
+
+## 5b. Evaluate the live topics' triggers
+
+Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the rendered index carries each live topic's trigger — and run the one check each trigger names, for the three shapes this pass can decide from repo state and its own reading:
+
+- **a date** — compare with today (`T0150`: "not before 2026-10-25").
+- **another topic's resolution** — run the check the trigger carries (`ls docs/open-topics/archive/T0187-*.md`).
+- **an alert** — the report already says whether it fired; a trigger naming one is answered by the section you have just read.
+
+A milestone, an evaluation statement or an activity is not this pass's to decide: name it unevaluated rather than guessing. A fired trigger goes into the journal entry's `follow-ups` line by serial (`follow-ups none` stays the all-clear form) and is handed to `zcrypto-marco`; the topic itself is edited by whoever takes the work, through `topic-ops`.
 
 ## 6. Rewrite any dead-man description the report faults
 
@@ -91,9 +103,6 @@ A scheduled message fires once. Schedule tomorrow's trigger before finishing, th
 
 | The impulse | The reality |
 |---|---|
-| "The runbook says restart the daemon, so restart it" | The tier governs, not the runbook. Classify first; `prepared` stops you. |
 | "No series came back, so it is zero" | `(no series)` is a FAIL. An empty query is not an observation. |
 | "Nothing fired, so there is nothing to write" | The all-clear entry is the product. A missing entry reads as a day nobody looked. |
-| "The classifier errored, I will judge it myself" | An unrunnable classifier is a prepared action. |
-| "Exit 2, but the rest of the report looks fine" | Exit 2 means something was not seen. Report it first. |
 | "I will restart Alloy on the capture host, it is only telemetry" | The capture pair's Alloy goes through `zcrypto-bump-alloy`, attended. |
