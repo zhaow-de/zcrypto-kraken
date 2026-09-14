@@ -80,7 +80,7 @@ _FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
 _UNCHECKED_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
-_QUOTE_MARKERS = re.compile(r"^\s*(?:> ?)+")
+_QUOTE_MARKERS = re.compile(r"^(?: {0,3}> ?)+")  # a marker may be indented at most three spaces, and only spaces
 
 
 def _quote_depth(raw: str) -> int:
@@ -91,7 +91,7 @@ def _quote_depth(raw: str) -> int:
 
 def _at_depth(raw: str, depth: int) -> str:
     """The line as the blockquote `depth` levels deep sees it: that many markers, and the indent before them, off."""
-    return re.sub(rf"^\s*(?:> ?){{{depth}}}", "", raw)
+    return re.sub(rf"^(?: {{0,3}}> ?){{{depth}}}", "", raw)
 
 
 _HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)\b")
@@ -136,7 +136,10 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         # A fence, comment or HTML block opened inside a blockquote takes no lazy continuation, so the first line
         # at a lesser quote depth ends the blockquote and closes it; a fence opened outside a quote treats a quoted
         # line as literal content.
-        depth = _quote_depth(raw) if keep_collapsed else 0
+        # Under keep_collapsed every derivation works on the line with tabs expanded from its own start, which is
+        # the column the page counts from, so a tab after a quote marker measures as the page measures it.
+        src = raw.expandtabs(4) if keep_collapsed else raw
+        depth = _quote_depth(src) if keep_collapsed else 0
         if open_depth and depth < open_depth:
             fence, in_comment, open_depth = None, False, 0
         # Every closer is read at the depth its construct opened under: a quoted fence sees a deeper-quoted line as
@@ -144,13 +147,13 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         if not keep_collapsed or (fence is not None and not open_depth):
             line = raw
         elif open_depth:
-            line = _at_depth(raw, open_depth)
+            line = _at_depth(src, open_depth)
         else:
-            line = _QUOTE_MARKERS.sub("", raw)
+            line = _QUOTE_MARKERS.sub("", src)
         if html_block:
             if html_depth and depth < html_depth:
                 html_block, html_depth = False, 0  # the blockquote ended: this line is read
-            elif not _at_depth(raw, html_depth).strip():
+            elif not _at_depth(src, html_depth).strip():
                 html_block, html_depth = False, 0
                 continue
             else:
@@ -208,14 +211,12 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         # end of the document when it has none; opened on a quoted line, it ends with the blockquote instead.
         stripped = line.lstrip()
         # An HTML block or comment admits at most three columns of indent (CommonMark, the bound `_FENCE_OPEN` spells
-        # as `{0,3}`); four is an indented code block on the page, literal, hiding nothing and drawing no box. The
-        # indent is measured as the page measures it: tabs expanded from the line's own start, so a tab after a quote
-        # marker reaches column four from the marker's end, and only spaces count -- `lstrip()` would take a
-        # non-breaking space, which is content.
+        # as `{0,3}`); four is an indented code block on the page, literal, hiding nothing and drawing no box. `line`
+        # already has its tabs expanded and its markers off; only spaces are stripped here, since `lstrip()` would
+        # take a non-breaking space, which is content.
         if keep_collapsed and stripped.startswith(_OPENERS):
-            content = _QUOTE_MARKERS.sub("", raw.expandtabs(4))
-            bare = content.lstrip(" ")
-            if not bare.startswith(_OPENERS) or len(content) - len(bare) > 3:
+            bare = line.lstrip(" ")
+            if not bare.startswith(_OPENERS) or len(line) - len(bare) > 3:
                 continue
         if stripped.startswith("<!--"):
             in_comment = True
