@@ -93,7 +93,6 @@ def test_a_structured_cap_is_embedded_verbatim():
 
 
 def test_the_rendered_table_shows_the_spread_and_names_uncaptured_symbols():
-    """D3: the null must be legible in the artifact a human reads, not only in the JSON."""
     file = build_universe_file(
         _sel([_entry("BTC/EUR", spread_bps=0.428), _entry("ETH/BTC", spread_bps=None)]),
         as_of="2026-07-22",
@@ -118,17 +117,14 @@ def test_the_rendered_cap_section_states_the_cap_and_the_unscreened_count():
     md = render_markdown(file)
     assert "10.0" in md and "1,400" in md
     assert "1 of 2 symbols" in md
-    # The unscreened symbols are NAMED, not explained: hardcoding "because they are BTC-quoted"
-    # would assert it of any future EUR pair missing from the calibration table (T0024 review).
+    # The unscreened symbols are named, not explained: "because they are BTC-quoted" would be
+    # asserted of any future EUR pair missing from the calibration table.
     cap_section = md.split("## Spread cap")[1].split("## Provenance")[0]
     assert "ETH/BTC" in cap_section
     assert "EUR-quoted only" not in md
 
 
 def test_the_cap_section_says_so_when_every_symbol_was_screened():
-    """The zero-null branch is unreachable today but becomes live the day the calibration covers
-    every pair -- which is exactly why it is pinned. Shipping it untested would repeat this
-    function's own earlier defect: a render branch no producer could reach, shipped uncovered."""
     file = build_universe_file(
         _sel([_entry("BTC/EUR", spread_bps=0.428)]),
         as_of="2026-07-22",
@@ -142,16 +138,14 @@ def test_the_cap_section_says_so_when_every_symbol_was_screened():
 
 
 def test_the_placeholder_still_renders_without_the_structured_keys():
-    """The legacy path must not require the four keys the structured record carries."""
     file = build_universe_file(_sel([_entry("BTC/EUR", spread_bps=None)]), as_of="2026-07-22", params={}, provenance={})
     md = render_markdown(file)
     assert "pending-capture" in md
 
 
 def test_the_placeholder_path_does_not_claim_symbols_are_uncaptured():
-    """On the placeholder path the criterion never ran, so every row is null -- including symbols
-    with hundreds of captured hours. Rendering those as "not screened"/"not captured" would assert
-    something false about the capture set rather than about the criterion (T0024 review)."""
+    """On the placeholder path the criterion never ran, so every row is null, captured symbols
+    included; "not screened" or "not captured" there would be a false claim about the capture set."""
     file = build_universe_file(_sel([_entry("BTC/EUR", spread_bps=None)]), as_of="2026-07-22", params={}, provenance={})
     md = render_markdown(file)
     assert "not screened" not in md and "not captured" not in md

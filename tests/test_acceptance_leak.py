@@ -12,9 +12,9 @@ def _mean_leak(*, label_horizon, embargo):
 
 
 def test_embargo_removes_the_injected_leak():
-    # Without purge/embargo the 1-NN-by-index predictor picks an overlapping-label boundary neighbor -> fake
-    # OOS skill (the leak, ~23). With label_horizon=H (purge before) + embargo=H (purge after) the H boundary
-    # indices on both sides are removed -> nearest train >= H away -> no overlap -> ~0. The harness catches it.
+    # Unpurged, the 1-NN-by-index probe's nearest train neighbour sits inside the label overlap and a
+    # signal-free series shows OOS skill; label_horizon=H drops the H indices before each test block
+    # and embargo=H the H after, so every neighbour is > H away and Cov(y_i, y_j) = 0.
     leaked = _mean_leak(label_horizon=0, embargo=0)
     purged = _mean_leak(label_horizon=H, embargo=H)
     assert leaked > 5.0
