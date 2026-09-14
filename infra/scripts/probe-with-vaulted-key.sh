@@ -22,6 +22,7 @@ venv_python="$repo/.venv/bin/python"
 [ -f "$harness" ] || { echo "refusing: $harness is missing" >&2; exit 2; }
 [ -x "$venv_python" ] || { echo "refusing: $venv_python is missing -- run 'uv sync'" >&2; exit 2; }
 
+# shellcheck disable=SC2016  # the program handed to -c is Python, quoted verbatim: the backticks are in its comments and nothing in it expands
 exec "$venv_python" -I -c '
 import os, subprocess, sys
 

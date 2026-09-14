@@ -398,7 +398,7 @@ class TestTheVaultedKeyWrappersHaveFixedTargets:
     # If canonicalisation is ever added to relieve that, strip ONLY above the anchor and leave the
     # quoted interpreter payload byte for byte: in that region a `#` is data and an apostrophe ends
     # the string, so the dropping rule earns the same adversarial read as the guard it serves.
-    _PROBE_BODY_SHA256 = "7b4e19d8a370ea794167b2f86f73ea1f45cc9cc63d792cb839747bacfac7ad8c"
+    _PROBE_BODY_SHA256 = "4da2220556241a901f1b3782585437cd7249f6f6f11f2406b385c0640631d957"
 
     def _src(self, name: str) -> str:
         return (_REPO / "infra" / "scripts" / name).read_text()

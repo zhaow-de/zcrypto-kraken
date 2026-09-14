@@ -3,13 +3,13 @@
 # check runs through grafana-query.py; each prints PASS/FAIL; exit 0 iff all pass. "(no series)" is a
 # FAIL, never a zero — an empty query is not an absent event.
 set -uo pipefail   # deliberately NOT -e: a failed query is a FAIL result, not a crash
-QUERY="${ZCRYPTO_GRAFANA_QUERY:-uv run python infra/scripts/grafana-query.py}"
+read -ra QUERY <<<"${ZCRYPTO_GRAFANA_QUERY:-uv run python infra/scripts/grafana-query.py}"
 fails=0
 
 # check <name> <promql> <mode: zero|under> [limit]
 check() {
   local name="$1" q="$2" mode="$3" limit="${4:-0}" out vals bad
-  if ! out=$(timeout 60 $QUERY "$q" 2>&1); then
+  if ! out=$(timeout 60 "${QUERY[@]}" "$q" 2>&1); then
     echo "FAIL $name — query error: $(printf '%s' "$out" | tail -1)"
     fails=$((fails + 1)); return
   fi
