@@ -2,8 +2,8 @@
 
 The surface list is this file's own parametrisations and walkers, restated nowhere else: a
 second copy drifts. A new surface an operator reads at runtime -- a unit description, an alert
-summary, a notification template, a `fail_msg` -- is added to this file's parametrisation in the
-change that creates it. `WP<N>` is different -- memo-private, banned from every git-tracked file
+summary, a notification template, a `fail_msg` -- joins this file's parametrisations or walkers in
+the change that creates it. `WP<N>` is different -- memo-private, banned from every git-tracked file
 outright, enforced by the last test in this file; widening its allowlist, `_WP_CARRIERS`, is a
 different act from adding a surface and is refused.
 
