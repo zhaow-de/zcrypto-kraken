@@ -236,7 +236,7 @@ def test_liquidations_poll_end_to_end_with_duration(tmp_path, monkeypatch):
     # sweep closes it into a final rather than leaving it an open part.
     tree = tmp_path / "BTC" / "liquidations-1m"
     finals = [q for q in tree.rglob("*.parquet") if ".part" not in q.name]
-    assert finals, "expected a FINAL -- the stale hour must have finalized past the 31h lag (review M-3)"
+    assert finals, "expected a FINAL -- the stale hour must have finalized past the 31h lag"
     assert not list(tree.rglob("*.part*.parquet")), "no open parts should remain"
 
 
