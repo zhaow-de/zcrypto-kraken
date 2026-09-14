@@ -114,6 +114,14 @@ repos:
         language: system
         stages: [commit-msg]
         always_run: true
+      # Every `path:line`, `path::symbol` and `T<NNNN>` the message cites resolves on a side of the commit -- the
+      # index or HEAD -- so a coordinate that sends its reader nowhere is refused where it is written.
+      - id: message-citations
+        name: every citation in the message resolves
+        entry: uv run python infra/scripts/message-citations.py
+        language: system
+        stages: [commit-msg]
+        always_run: true
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
