@@ -572,3 +572,19 @@ def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch)
     monkeypatch.setattr(gate.subprocess, "run", raise_fetch)
     fails = gate.branch_growth("develop", "gone/branch", "0" * 40)
     assert fails == ["the branch could not be checked commit by commit: fatal: couldn't find remote ref gone/branch"]
+
+
+def test_a_keyed_branch_with_no_row_is_refused() -> None:
+    """The completeness test reads the branch name and fails only on develop, after this merge."""
+    fails = gate.index_row_fails(_pr(number=99999, headRefName="docs/t0210-register-the-thing"))
+    assert len(fails) == 1 and "has no `| #99999 ` row" in fails[0], fails
+
+
+def test_an_unkeyed_branch_owes_no_row() -> None:
+    """Most branches carry no key, and the index holds a row only for those that do."""
+    assert gate.index_row_fails(_pr(number=99999, headRefName="claude/w16-skills-pass")) == []
+
+
+def test_a_keyed_branch_whose_row_exists_passes() -> None:
+    """#519's own branch carries no key, so drive the pass through a row the index really holds."""
+    assert gate.index_row_fails(_pr(number=514, headRefName="fix/t0193-broken-input-class")) == []
