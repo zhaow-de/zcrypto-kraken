@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Read-guard for .local/memo.md (hand-edited outside sessions, not version-controlled).
-# Protocol: a write is allowed only when the file has been Read since its content last changed;
+# Protocol: an Edit is allowed only when the file has been Read since its content last changed;
 # every write invalidates the stamp, so the next write (and honest verification) needs a re-read.
+# A Write of the existing file is refused outright -- it drops whatever the rewrite forgot, and
+# there is no history to recover from; only the Write that creates an absent memo is admitted.
 # Wired in .claude/settings.json: pre-write on Edit|Write (blocks), post-read on Read (stamps),
 # post-write on Edit|Write (invalidates + instructs the read-back). Shell writes bypass Edit/Write,
 # which is why the grooming/auto-exec skills require memo edits to go through those tools.
 set -euo pipefail
 mode="${1:?mode required: pre-write|post-read|post-write}"
-path="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))')"
+{ read -r tool; read -r path; } < <(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_name","")); print(d.get("tool_input",{}).get("file_path",""))')
 case "$path" in
   */.local/memo.md|.local/memo.md) ;;
   *) exit 0 ;;
@@ -23,6 +25,10 @@ case "$mode" in
     # Absent file: nothing to stale-clobber -- allow the creating write (else Write deadlocks:
     # the block message demands a Read of a file that does not exist).
     [[ -z "$cur" ]] && exit 0
+    if [[ "$tool" == Write ]]; then
+      echo "memo-guard: BLOCKED. A wholesale Write of .local/memo.md drops whatever the rewrite forgot and there is no history — use Edit." >&2
+      exit 2
+    fi
     if [[ ! -f "$stamp" || "$(cat "$stamp")" != "$cur" ]]; then
       echo "memo-guard: BLOCKED. .local/memo.md must be Read immediately before this write — it is hand-edited outside sessions, and every write invalidates the previous read. Read the file, then retry the edit." >&2
       exit 2
