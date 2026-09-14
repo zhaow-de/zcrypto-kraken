@@ -1,6 +1,6 @@
 ---
 name: zcrypto-refine-rules
-description: Use before any edit to CLAUDE.md, a rule under .claude/rules/, a skill file or a page under infra/runbooks/, and for `/zcrypto-refine-rules round`, the periodic guidance round.
+description: Use before editing CLAUDE.md, a rule under .claude/rules/, a skill file or a top-level page under infra/runbooks/, and for `/zcrypto-refine-rules round`, the guidance round.
 model: fable
 ---
 
@@ -17,6 +17,8 @@ A line lands on one of four grounds, or it does not land:
 3. it is a recurring cross-session failure with an existing check;
 4. the owner kept it by name.
 
+Net ambient growth is the owner's word, in a round or outside one: a coordinator cannot grant it and a session cannot grant its own. A session does not author a change to the instruction set that governs it, so a guidance change rides its own branch, never a payload's.
+
 Three tests on the line as written, two of them the guard's:
 
 - **The universal test.** A bullet that says *every*, *never*, *always*, *only*, *any* or *cannot* names its set and its count — `(set: …; count: `infra/scripts/count-list.sh <entry>`)` — or declares `(no count command: <why nothing in the tree records it>)`. The guard reads every list item of `CLAUDE.md`, the rules and the contracts read whole by the sessions, skills and operators that act on them — `docs/reference/fleet.md`, `docs/reference/fleet-pins.md`, the memo protocol and every top-level page under `infra/runbooks/` (since 2026-09-12, when the pages' count reached 0; a page in a subdirectory is not read), read for universals and never counted as ambient — `-`, `*`, `+` and numbered, nested ones included, a wrapped item as one block when its continuation lines are indented, a step's prose under its own indented command block included, code spans and fenced code blocks set aside — and refuses one whose prose carries the word with neither the entry nor the declaration; it does not judge the set, which is the reader's. A paragraph or a heading it does not read. An entry is a `c_<name>` function in `infra/scripts/count-list.sh` plus its `emit "<entry>"` line; `tests/test_count_list.py` pins that every entry a corpus line names exists.
@@ -31,15 +33,16 @@ A joint session, the owner's word closing every disposition; undecided is the de
 
 ### Step 1 — Harvest
 
-Populate the memory inbox with candidate items in the standard memory-file shape (frontmatter `name`/`description`/`metadata.type`, body with **Why** and **How to apply**). A memory that CONFERS a capability names the session it belongs to — read by a session it does not describe, it hands over an authority nobody granted; a prohibition is safe subjectless.
+The candidate set is the inbox records themselves: every `.local/agent-lessons/<session>.jsonl` in the main checkout (swept with `infra/scripts/sweep.sh`), `infra/scripts/check-agent-lessons.py` on each first, a malformed line being a finding, not a skip. Read per session and grouped by class into the round's table, id `<session>:<ts>`. A harvested inbox rotates to `.local/agent-lessons/harvested/<round-date>/` in the same step — that rotation is the archive — so the next round starts from empty inboxes and no record is harvested twice.
 
-- **Watermark**: `git log -1 --grep='^Refine-Round-Closed:' --format=%cI` — the previous round's closing commit carries the `Refine-Round-Closed: <ISO-8601 UTC>` trailer. No match ⇒ first round: harvest the full current memory inbox plus the trailing two weeks.
-- **Sources since the watermark**: every inbox `.local/agent-lessons/*.jsonl` in the main checkout (swept with `infra/scripts/sweep.sh`) — `infra/scripts/check-agent-lessons.py` on each first, a malformed line being a finding, not a skip; `git log` over `.claude/`; merged PR bodies; lessons either party names in the session. A harvested inbox rotates to `.local/agent-lessons/harvested/<round-date>/` in the same step, so the next round starts from empty inboxes and no record is harvested twice.
-- A candidate that duplicates an existing memory item updates that item instead.
+- **Watermark**: `git log -1 --grep='^Refine-Round-Closed:' --format=%cI` — the previous round's closing commit, found by its `Refine-Round-Closed:` trailer. The commit's date is the boundary, not the trailer's value, which is stamped before the commit lands; `count-list.sh claude-commits-since-the-round-closed` anchors on the same commit. No match ⇒ first round: harvest every inbox whole plus the trailing two weeks.
+- **Other sources since the watermark**: `git log` over `.claude/`; merged PR bodies; lessons either party names in the session.
+- **The memory walk** is the standing items the memory dir holds — `MEMORY.md`'s index — the only files Step 5 (c) can stage and delete. An item that stays there keeps the memory-file shape: frontmatter `name`/`description`/`metadata.type`, body with **Why** and **How to apply**; a memory that CONFERS a capability names the session it belongs to — read by a session it does not describe, it hands over an authority nobody granted; a prohibition is safe subjectless.
+- A candidate that duplicates a standing memory item updates that item instead.
 
 ### Step 2 — Graduate (joint)
 
-Walk every memory item — candidates and standing ones alike. Per item, exactly one disposition, the owner's word closing each:
+Walk every candidate in the round's table and every standing memory item alike. Per item, exactly one disposition, the owner's word closing each:
 
 | Disposition | Action |
 |---|---|
@@ -47,16 +50,17 @@ Walk every memory item — candidates and standing ones alike. Per item, exactly
 | → an existing skill | Lands at the step where it applies |
 | → a new skill | Only with the description-is-ambient cost measured and acknowledged |
 | → a hook proposal | Shown to the owner; on approval, lands with the settings change |
-| stays in memory | Personal or session-scoped — not repo-worthy; the default when undecided |
-| dropped | With the owner's word; the file is deleted at Step 5 |
+| stays in memory | Personal or session-scoped — not repo-worthy; the default when undecided. An inbox record that stays is written as a memory file in Step 1's shape |
+| dropped | With the owner's word; a standing item's file is deleted at Step 5, an inbox record rests in the archive |
 
-A graduated item's file is **staged** — moved to `graduated/<round-date>/` under the memory dir — never deleted here: memory is unversioned, and an unverified landing must not be the only copy's obituary. Record every graduation in a table: *item → disposition → landing path*. Deletion is Step 5's last action.
+A graduated standing item's file is **staged** — moved to `graduated/<round-date>/` under the memory dir — never deleted here: memory is unversioned, and an unverified landing must not be the only copy's obituary; a graduated inbox record is already archived by Step 1's rotation. Record every graduation in a table: *item → disposition → landing path*. Deletion is Step 5's last action.
 
 ### Step 3 — Count list
 
 Run `infra/scripts/count-list.sh`. It prints one line per entry — the entry's name and today's value; a surviving universal in `CLAUDE.md` and `.claude/rules/` names its set in prose and its entry as `count: `infra/scripts/count-list.sh <entry>``, and the script's `c_` function behind that entry is the command.
 
-- **A non-zero count is a finding.** Resolve it in the round: fix the practice, narrow the rule, or delete the rule.
+- **A non-zero count is a finding**, except where zero is not the healthy value: the four entries `tests/test_count_list.py` holds as `NOT_NAMED` — the corpus names none of them — `prose-chars`, a number to watch, `pinned-leaves-the-edge-renders`, the client PEMs the edge renders, healthy at 1, a value that reads `N passed`, a passing suite, and `operator-term-surfaces`' second value, the allowlist's edit count, 1 being the commit that added it. Resolve a finding in the round: fix the practice, narrow the rule, or delete the rule.
+- **An `ERROR` line is its own finding** — the script exits 2 and names the entries that errored on stderr; a count that cannot run is not a count of 0.
 - **A universal with no entry beside it is the finding** — the guard refuses one at commit, so a standing one is older than the guard or sits in a paragraph the guard does not read. It is given a set and an entry in this round, or it goes.
 
 Read the corpus and you can find a stale path, two texts that disagree, and a name that has gone stale; you structurally cannot find a rule whose text is entirely correct, whose citations all resolve, and which is simply not obeyed by the population it governs, because nothing in a read counts that population — which is why this step counts instead of reading. Output is a findings table, resolved jointly; the values live in that table, never in the corpus lines.
@@ -69,9 +73,9 @@ Read the corpus and you can find a stale path, two texts that disagree, and a na
 
 In order, all five before anything is deleted:
 
-- **(a) Cold diff review** — a fresh subagent reads the round's full diff for weakened or lost invariants, every changed line, not only removals: rewording can weaken a `Never` without deleting it.
+- **(a) Cold read** — the `review` workflow over the round's range at the tip the PR body names, read for weakened or lost invariants on every changed line, not only removals: rewording can weaken a `Never` without deleting it. A commit made after that read re-opens it: the read covers the tip it names and nothing past it.
 - **(b) Modal floor** — `grep -cE 'Never|never|MUST|must|only|refuse|explicit' CLAUDE.md .claude/rules/*.md` before vs after; any decrease itemized and justified line by line, never summarized.
-- **(c) Graduation table check** — each staged file's content verified present at its named landing path.
+- **(c) Graduation table check** — every row's content verified present at its named landing path, staged files included.
 - **(d) Net measurement** — `infra/scripts/count-list.sh ambient-bytes` before vs after; the delta goes in the closeout.
 - **(e) Commit gate** — `uv run pre-commit run -a` until clean.
 
