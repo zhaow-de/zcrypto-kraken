@@ -81,6 +81,16 @@ _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
 _UNCHECKED_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
 _QUOTE_MARKERS = re.compile(r"^\s*(?:> ?)+")
+
+
+def _quote_depth(raw: str) -> int:
+    """How many blockquotes a line sits in: a line with fewer markers than an open construct began with ends that
+    construct's blockquote, and the construct with it, since a fence, a comment and an HTML block take no lazy
+    continuation."""
+    m = _QUOTE_MARKERS.match(raw)
+    return m.group(0).count(">") if m else 0
+
+
 _HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)\b")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
@@ -101,8 +111,8 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines. The read line must
     be plainly visible, so it is judged without them; a checklist item inside either is an item GitHub renders and
     counts, so gate 6 is judged with them -- as the page renders them. A fence or comment opened inside a blockquote
-    hides what follows it until its closer or the blockquote's end, whichever comes first, since neither takes lazy
-    continuation; a quoted line inside a fence that opened UNQUOTED is literal content; and a `<details>` or
+    hides what follows it until its closer or the first line at a lesser quote depth -- the blockquote's end --
+    whichever comes first, since none of the three takes lazy continuation; a quoted line inside a fence that opened UNQUOTED is literal content; and a `<details>` or
     `<summary>` line, opening or closing, opens an HTML block that runs to the next blank line (CommonMark block
     condition 6), inside which nothing is markdown, so a box written there is literal text and not counted.
 
@@ -118,21 +128,28 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     in_comment = False
     in_details = False
     html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to the blank line
-    quoted_open = False  # keep_collapsed only: the open fence or comment began on a quoted line
+    open_depth = 0  # keep_collapsed only: the quote depth the open fence or comment began at; 0 when not quoted
+    html_depth = 0  # keep_collapsed only: the same for the open HTML block
     for raw in body.splitlines():
-        # A fence or comment opened inside a blockquote takes no lazy continuation, so the first unquoted line
-        # ends the blockquote and closes it; one opened outside a quote treats a quoted line as literal content.
-        if keep_collapsed and quoted_open and not raw.lstrip().startswith(">"):
-            fence, in_comment, quoted_open = None, False, False
-        line = _QUOTE_MARKERS.sub("", raw) if keep_collapsed and (fence is None or quoted_open) else raw
+        # A fence, comment or HTML block opened inside a blockquote takes no lazy continuation, so the first line
+        # at a lesser quote depth ends the blockquote and closes it; a fence opened outside a quote treats a quoted
+        # line as literal content.
+        depth = _quote_depth(raw) if keep_collapsed else 0
+        if open_depth and depth < open_depth:
+            fence, in_comment, open_depth = None, False, 0
+        line = _QUOTE_MARKERS.sub("", raw) if keep_collapsed and (fence is None or open_depth) else raw
         if html_block:
-            if not line.strip():
-                html_block = False
-            continue
+            if html_depth and depth < html_depth:
+                html_block, html_depth = False, 0  # the blockquote ended: this line is read
+            elif not line.strip():
+                html_block, html_depth = False, 0
+                continue
+            else:
+                continue
         if fence is not None:
             run = _FENCE_CLOSE.match(line)
             if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
-                fence, quoted_open = None, False
+                fence, open_depth = None, 0
             continue
         if in_comment or in_details:
             # Inside a comment BLOCK a renderer parses no markdown, so a `-->` written in backticks still
@@ -143,7 +160,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
                 m = _COMMENT_CLOSE.search(masked)
                 if not m:
                     continue
-                line, in_comment, quoted_open = line[m.end() :], False, False
+                line, in_comment, open_depth = line[m.end() :], False, 0
             else:
                 at = masked.find("</details>")
                 if at < 0:
@@ -152,7 +169,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         opener = _FENCE_OPEN.match(line)
         if opener:
             fence = opener.group("run") or opener.group("trun")
-            quoted_open = keep_collapsed and raw.lstrip().startswith(">")
+            open_depth = depth
             continue
         # An inline comment or details element, opened and closed on this line, takes its own span and nothing
         # more. Code spans are masked so a `<!--` written as prose about this gate is not read as markup.
@@ -174,14 +191,14 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
             a, b = min(pairs)
             line = line[:a] + line[b:]
         # A block-level opener -- first non-space text on the line -- hides every line until its closer, or to the
-        # end of the document when it has none, which is what a renderer does with it.
+        # end of the document when it has none; opened on a quoted line, it ends with the blockquote instead.
         stripped = line.lstrip()
         if stripped.startswith("<!--"):
             in_comment = True
-            quoted_open = keep_collapsed and raw.lstrip().startswith(">")
+            open_depth = depth
             continue
         if keep_collapsed and _HTML_BLOCK_TAG.match(stripped):
-            html_block = True
+            html_block, html_depth = True, depth
             continue
         if stripped.startswith("<details"):
             in_details = True

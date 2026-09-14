@@ -704,3 +704,14 @@ def test_a_quoted_fence_or_comment_ends_with_its_blockquote() -> None:
 def test_a_quoted_fence_closed_by_an_unquoted_fence_line_opens_a_new_fence() -> None:
     """The unquoted line ends the blockquote and starts a top-level fence that runs on, so nothing after it is a box."""
     assert not _boxed("> ```\n```\n- [ ] after")
+
+
+def test_a_quoted_html_block_ends_with_its_blockquote() -> None:
+    """An HTML block takes no lazy continuation either, so the blockquote's end closes it and a box after it counts."""
+    assert _boxed("> <details>\n- [ ] real") and not _boxed("> <details>\n> - [ ] literal")
+
+
+def test_a_construct_two_quotes_deep_is_closed_by_a_line_one_quote_deep() -> None:
+    """A blockquote ends at the first line with fewer markers than it opened with, not only at an unquoted line."""
+    assert _boxed("> > ```\n> - [ ] real") and _boxed("> > <!--\n> - [ ] real")
+    assert not _boxed("> > ```\n> > - [ ] in code\n> more") and _boxed("> > ```\n> > - [ ] in code\n> > ```\n> > - [ ] later")
