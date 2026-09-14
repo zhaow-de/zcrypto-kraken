@@ -1,8 +1,11 @@
 """Internal development vocabulary must not reach a surface an operator sees at runtime (T0096).
 
 The surface list is this file's own parametrisations and walkers, restated nowhere else: a
-second copy drifts. `WP<N>` is different -- memo-private, banned from every git-tracked file
-outright, enforced by the last test in this file.
+second copy drifts. A new surface an operator reads at runtime -- a unit description, an alert
+summary, a notification template, a `fail_msg` -- is added to this file's parametrisation in the
+change that creates it. `WP<N>` is different -- memo-private, banned from every git-tracked file
+outright, enforced by the last test in this file; widening its allowlist, `_WP_CARRIERS`, is a
+different act from adding a surface and is refused.
 
 Every non-docstring string literal in the scanned packages is checked, not just the ones lexically
 inside a `raise`/`echo`: a message built into a variable and echoed later
