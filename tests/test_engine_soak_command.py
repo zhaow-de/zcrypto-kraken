@@ -60,8 +60,8 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
         cycle_ts = base + timedelta(hours=4 * k)
         last_ts = cycle_ts - timedelta(hours=4)
         upto = [t for t in labels if t <= last_ts]
-        # The first cycle's window is one bar, which the writer refuses: widened to two and hashed over exactly
-        # the window the entry declares.
+        # The first cycle's window is one bar, which `validate_record` refuses at the soak's read (`first_ts`
+        # must precede `last_ts`): widened to two and hashed over exactly the window the entry declares.
         h4_ts = upto if len(upto) > 1 else [last_ts - timedelta(hours=4), last_ts]
         h4 = SnapshotEntry(
             pair=asset,
@@ -74,7 +74,7 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
             content_hash=snapshot_content_hash(h4_ts, [closes_by_label.get(x, closes_by_label[labels[0]]) for x in h4_ts]),
             path="p240",
         )
-        # Both grids per pair, since the soak's read now validates; the realized numbers come from the store, so
+        # Both grids per pair, since the soak's read validates; the realized numbers come from the store, so
         # the daily entry is inert here.
         midnight = cycle_ts.replace(hour=0, minute=0, second=0, microsecond=0)
         daily_last = midnight - timedelta(days=1)
@@ -141,15 +141,14 @@ def test_soak_check_aborts_cleanly_on_a_corrupt_store_frame(tmp_path, monkeypatc
         # Readable parquet, no `close` column: the column reads have to be inside the try, not just the open.
         ("no close column", lambda frame: frame.drop("close")),
         ("close column of strings", lambda frame: frame.with_columns(pl.col("close").cast(pl.Utf8))),
-        # The sibling column: an epoch-int `ts` is the raw Kraken shape `_row()` writes, and it died in
-        # `_fmt_ts` on the last line of `soak_report` -- the whole report lost to a traceback.
+        # The sibling column: an epoch-int `ts` is the raw Kraken shape `_row()` writes.
         ("ts column of epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
     ],
 )
 def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp_path, monkeypatch, shape, wreck):
-    """Both frames are READABLE -- neither is the corrupt-bytes case above -- and both used to reach the operator
-    as a traceback from inside a helper. `read_store_series` refuses each as an `EngineError`, which is what the
-    command aborts on, and it refuses them at the one door both the store and the frozen canonical enter."""
+    """Both frames are READABLE -- neither is the corrupt-bytes case above. `read_store_series` refuses each as
+    an `EngineError`, which is what the command aborts on, at the one door both the store and the frozen
+    canonical enter."""
     from cli.ohlc.dataset import read_parquet
 
     _patch_config(monkeypatch, tmp_path)
@@ -175,7 +174,7 @@ def test_soak_check_aborts_cleanly_on_a_store_frame_it_cannot_read_as_prices(tmp
     ("shape", "wreck"),
     [
         ("epoch ints", lambda frame: frame.with_columns(pl.col("ts").dt.epoch("s"))),
-        # Aware vs merely-a-datetime: this satisfies `isinstance` and died in `select_model_inputs`' `sorted()`.
+        # Aware vs merely-a-datetime: a naive stamp satisfies an `isinstance(datetime)` check.
         ("tz-naive datetimes", lambda frame: frame.with_columns(pl.col("ts").dt.replace_time_zone(None))),
     ],
 )
@@ -215,10 +214,9 @@ def test_soak_check_aborts_cleanly_on_a_canonical_leg_whose_stamps_are_unusable(
 
 
 def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, monkeypatch):
-    """The second door this input class leaves by. `build_null` enters the
-    portfolio builders, whose new front door refuses a non-finite close with a `PortfolioError` -- not an
-    `EngineError`, so it walked past `soak_report`'s `except SoakError` AND the command's handler and reached the
-    operator as a traceback, exit 1, no report. The handler catches that class now."""
+    """The second door this input class leaves by. `build_null` enters the portfolio builders, whose front
+    door refuses a non-finite close with a `PortfolioError` -- not an `EngineError`, so neither `soak_report`'s
+    `except SoakError` nor a bare `except EngineError` catches it; the command's handler names that class too."""
     import basket_fixture
 
     from cli.engine.store import _store_path
@@ -270,8 +268,8 @@ def test_soak_check_aborts_cleanly_on_a_non_finite_canonical_close(tmp_path, mon
 
 def _ten_leg_canonical(tmp_path):
     """The ten `/EUR` model legs on both grids, through the real writer. Without a canonical
-    `instrument_self_check` returns early on `canonical absent` and NEVER READS THE REGISTRY -- which is how a
-    first pass at these cases reported every shape clean while reaching none of them."""
+    `instrument_self_check` returns early on `canonical absent` and never reads the registry, so the registry
+    cases below would reach nothing."""
     import basket_fixture
 
     from cli.engine.store import _store_path
@@ -317,7 +315,7 @@ def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_p
     """The JOURNAL door's version of the store door's aware-stamp check. `validate_record` does not require an
     orderable stamp -- `_refuse_mixed_awareness` says in as many words that a wholly naive record "compares
     consistently" and is left alone, which is true among the record's own stamps and false against the aware
-    boundary this path supplies, where `nxt.cycle_ts > now` raised a bare TypeError with no report."""
+    boundary this path supplies, where `nxt.cycle_ts > now` is a bare TypeError with no report."""
     import re
 
     _patch_config(monkeypatch, tmp_path)
@@ -391,11 +389,8 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
             ),
             "carries no usable metrics",
         ),
-        # The decode error comes out of the iterator's FIRST `__next__`, before `n` is bound. Its
-        # wording is pinned below, including that it claims NO line: for a decode error `n` is a chunk boundary
-        # rather than the bad byte's line. Putting `{n}` itself back is already fatal -- measured, it exits
-        # `UnboundLocalError`, which the exception-type assertion below refuses -- but a plausible LITERAL line
-        # number survived every assertion this file had before the `says` column, which is why the column is here.
+        # A decode error claims NO line: `n` is unbound before the iterator's first `__next__`, and once bound
+        # it marks a chunk boundary rather than the bad byte's line. Pinned below by `at line` being absent.
         ("non-UTF-8 bytes", lambda p: p.write_bytes(b"\xff\xfe{\x00b\x00a\x00d\x00"), "is not valid UTF-8"),
         # Valid JSON, not an object: `.get` on a list escaped one level ABOVE the metrics wrap.
         ("a line that is valid JSON but not an object", lambda p: p.write_text("[1, 2, 3]\n"), "line 1 is not a JSON object"),
@@ -445,8 +440,7 @@ def test_soak_check_aborts_cleanly_on_a_registry_it_cannot_use(tmp_path, monkeyp
     ],
 )
 def test_soak_check_aborts_cleanly_on_a_journaled_cycle_it_cannot_read(tmp_path, monkeypatch, shape, wreck):
-    """The read that feeds the whole report: `read_text` on a path the glob found can still fail, and did so
-    past every handler."""
+    """The read that feeds the whole report: `read_text` on a path the glob found can still fail."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
@@ -506,7 +500,7 @@ def test_soak_check_no_canonical_short_window_is_no_verdict(tmp_path, monkeypatc
     assert payload["provenance"]["L"] < 30
     assert payload["self_test"] is None  # canonical absent -> self-tests never ran
     assert payload["gating_verdicts"] is None  # void -> no per-metric conclusion in the payload either
-    # canonical absent -> soak_report never builds an internals rebuild either; both new keys are
+    # canonical absent -> soak_report never builds an internals rebuild either; both keys are
     # present in the payload shape but carry no analysis, symmetric with the other analysis fields.
     assert "internals" in payload and payload["internals"] is None
     assert "disclosures" in payload and payload["disclosures"] is None
@@ -544,9 +538,8 @@ def _patch_canonical_pipeline(
     stub_self_tests: bool = True,
 ) -> None:
     """Stub the canonical-present branch of `soak_report` so a command test needs no real frozen canonical
-    dataset or trial registry: `_canonical_present` always True, `build_null`/`self_tests` canned non-void
-    results, `realized_internals` one over the actual scored records. `stub_self_tests=False` runs the REAL
-    `self_tests` -- the only way to reach the `reconcile_ok` wiring the stub swallows -- the instrument canned."""
+    dataset or trial registry. `stub_self_tests=False` runs the REAL `self_tests` with only the instrument
+    check canned -- the one way to reach the `reconcile_ok` wiring the stubbed `self_tests` swallows."""
     monkeypatch.setattr(soak, "_canonical_present", lambda canonical_dir: True)
     monkeypatch.setattr(
         soak, "build_null", lambda canonical_dir, fee=0.006, path="fast": _mk_fake_null(null_bars, reconcile_ok=reconcile_ok)
@@ -644,10 +637,9 @@ def test_soak_check_json_includes_internals_and_disclosures(tmp_path, monkeypatc
 
 
 def test_soak_check_void_wiring_for_internals(tmp_path, monkeypatch):
-    """The D2/D3-vs-D7 void distinction, wired at `soak_report`: `available=True` with
-    `identity_ok=False` or `cap_consistent=False` VOIDS (the instrument is lying about alignment);
-    `identity_ok=None` (unmeasured) does not, `available=False` DEGRADES but never voids alone --
-    and `identity_unmeasurable` picks which void-reason string names the failure (spec 00113 D6)."""
+    """The void-vs-degrade distinction wired at `soak_report` (spec 00059 D2/D3 vs D7): a proof that ran
+    and failed voids, an unmeasured one does not, an unavailable rebuild degrades -- and
+    `identity_unmeasurable` picks which void-reason string names the failure (spec 00113 D6)."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {
@@ -761,7 +753,7 @@ _CLOSES = {
 
 def test_soak_check_exits_non_zero_when_the_null_reconciliation_fails(tmp_path, monkeypatch):
     """A `reconcile_ok=False` null is a BROKEN CODE CONTRACT, not a data finding: the run prints its
-    window, its self-tests and its record-47 comparison, then exits 1. No other test takes that branch."""
+    window, its self-tests and its record-47 comparison, then exits 1."""
     _patch_config(monkeypatch, tmp_path)
     _patch_canonical_pipeline(monkeypatch, reconcile_ok=False, stub_self_tests=False)
     journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
@@ -782,8 +774,8 @@ def test_soak_check_exits_non_zero_when_the_null_reconciliation_fails(tmp_path, 
 
 def test_soak_check_voids_when_the_null_cannot_discriminate(tmp_path, monkeypatch):
     """A null too short to discriminate is a void reason, not a full page of "n/a" over an empty
-    `void_reasons`. At this fixture's L=2 over one realized day every gating arm is under the cutoff
-    at 2 retained bars -- the governor arm is the binding one, its numerator the null's distinct-day count."""
+    `void_reasons`. At this fixture's L=2 over one realized day every gating arm's `effective_n` is under
+    the cutoff at 2 retained bars."""
     _patch_config(monkeypatch, tmp_path)
     _patch_canonical_pipeline(monkeypatch, null_bars=2)
     journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
@@ -816,7 +808,7 @@ def test_soak_check_short_null_reason_does_not_fire_on_an_empty_realized_window(
 
 
 def test_soak_report_degrades_when_the_canonical_is_missing_a_leg(tmp_path, monkeypatch):
-    """State (a): a canonical carrying only the leg `_canonical_present` probes. Nothing is stubbed, so
+    """A canonical carrying only the leg `_canonical_present` probes. Nothing is stubbed, so
     the real `_load_canonical` probe runs -- without it the run ends on `read_store_series`' own `EngineError`,
     which the command aborts on, instead of this function's `SoakError` naming the legs that are absent."""
     _patch_config(monkeypatch, tmp_path)
@@ -881,7 +873,7 @@ def _daily_dead_leg_panels(dead: str = "XRP", *, n_daily: int = 60, n_h4: int = 
 
 
 def test_soak_report_degrades_when_a_leg_carries_no_price(tmp_path, monkeypatch):
-    """State (b) end to end, on the daily-only shape. Neither builder is stubbed: the daily refusal runs
+    """The daily-only shape, end to end. Neither builder is stubbed: the daily refusal runs
     BEFORE them, and ordered after -- or with the daily call gone -- the real builder is entered on an
     all-None column and raises a bare `ValueError` that escapes the CLI's `except EngineError` entirely."""
     _patch_config(monkeypatch, tmp_path)
@@ -906,7 +898,7 @@ def test_soak_report_degrades_when_a_leg_carries_no_price(tmp_path, monkeypatch)
 def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, monkeypatch):
     # A SoakError from realized_internals (e.g. a scored cycle's T-4h missing from the rebuilt grid)
     # signals a genuine inconsistency and must PROPAGATE out of soak_report rather than being caught
-    # into the D7 degrade path.
+    # into the degrade path (spec 00059 D7).
     _patch_config(monkeypatch, tmp_path)
     _patch_canonical_pipeline(monkeypatch)
 
@@ -936,8 +928,9 @@ def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, mon
 
 def test_unrecognized_verdict_label_aborts_cleanly_through_the_cli(tmp_path, monkeypatch):
     # reconcile_verdicts raises SoakError on a label outside metric_verdict's closed vocabulary -- a
-    # code defect, never a data finding. soak_report guards only realized_series, so the raise
-    # reaches the CLI's `except EngineError` and aborts with a one-line message.
+    # code defect, never a data finding. soak_report catches SoakError only around the realized-series
+    # read and the null build, so this raise reaches the CLI's `except EngineError` and aborts with a
+    # one-line message.
     _patch_config(monkeypatch, tmp_path)
     _patch_canonical_pipeline(monkeypatch)
 
@@ -1202,9 +1195,8 @@ def test_soak_check_spans_the_schema_boundary(tmp_path, monkeypatch):
     """A soak report over a window that straddles the deploy runs to a rendered report instead of
     aborting.
 
-    SCOPE: the canonical is absent here, so this exercises the journal read and `realized_series` --
-    the two things that previously raised, `SoakError` on the changing asset set and the store
-    path's `ValueError` on a base key."""
+    SCOPE: the canonical is absent here, so this exercises only the journal read and `realized_series`
+    across the flip."""
     _patch_config(monkeypatch, tmp_path)
     journal_dir, store_dir = _mk_straddling_journal_and_store(tmp_path)
     json_out = tmp_path / "report.json"

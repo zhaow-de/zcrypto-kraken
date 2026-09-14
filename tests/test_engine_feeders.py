@@ -232,8 +232,8 @@ def test_replay_stages_identity_holds_when_a_whole_book_limit_binds(monkeypatch)
 
     assert stages.final == {a: final_targets[a][n] for a in cfg.assets}
     assert stages.cap_bound is False  # only the whole-book limits bit
-    # What the caps-only recomputation used to compare against -- it disagrees, which is why the
-    # pre-fix code raised here.
+    # A recomputation that stopped at the caps would compare against this and disagree: the premise
+    # that makes the no-raise above discriminating.
     assert all(mult[n] * capped[a][n] != stages.final[a] for a in cfg.assets)
 
 
@@ -247,7 +247,7 @@ def test_decompose_payload_reports_every_stage_and_the_ratios():
             sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.06}, "A2": {"BTC": 0.0}},
             combined={"BTC": 0.06},
             capped={"BTC": 0.06},
-            limited={"BTC": 0.06},  # no whole-book limit binds in this fixture
+            limited={"BTC": 0.06},
             final={"BTC": 0.03},
             multiplier=0.5,
             closes={"BTC": 50000.0},
@@ -283,7 +283,7 @@ def _two_asymmetric_cycles() -> list[CycleStages]:
             sleeve_positions={"B": {"BTC": 0.12}, "A1": {"BTC": 0.12}, "A2": {"BTC": 0.12}},
             combined={"BTC": 0.12},
             capped={"BTC": 0.12},
-            limited={"BTC": 0.12},  # no whole-book limit binds in this fixture
+            limited={"BTC": 0.12},
             final={"BTC": 0.12},
             multiplier=1.0,
             closes={"BTC": 100.0},
@@ -294,7 +294,7 @@ def _two_asymmetric_cycles() -> list[CycleStages]:
             sleeve_positions={"B": {"BTC": 0.09}, "A1": {"BTC": -0.09}, "A2": {"BTC": 0.0}},
             combined={"BTC": 0.0},
             capped={"BTC": 0.0},
-            limited={"BTC": 0.0},  # no whole-book limit binds in this fixture
+            limited={"BTC": 0.0},
             final={"BTC": 0.0},
             multiplier=0.5,
             closes={"BTC": 100.0},
@@ -350,8 +350,8 @@ def test_a_binding_whole_book_limit_is_attributed_to_the_limits_not_the_governor
             sleeve_positions={"B": {"BTC": 0.16}, "A1": {"BTC": 0.16}, "A2": {"BTC": 0.16}},
             combined={"BTC": 0.16},
             capped={"BTC": 0.16},
-            limited={"BTC": 0.12},  # a whole-book limit takes a quarter
-            final={"BTC": 0.06},  # the governor then halves what the limits left
+            limited={"BTC": 0.12},
+            final={"BTC": 0.06},
             multiplier=0.5,
             closes={"BTC": 50000.0},
             cap_bound=False,
@@ -398,7 +398,7 @@ def _stage(ts, weight, close):
         sleeve_positions={s: {"BTC": 0.0} for s in ("B", "A1", "A2")},
         combined={"BTC": 0.0},
         capped={"BTC": 0.0},
-        limited={"BTC": 0.0},  # no whole-book limit binds in this fixture
+        limited={"BTC": 0.0},
         final={"BTC": weight},
         multiplier=1.0,
         closes={"BTC": close},
@@ -445,7 +445,7 @@ def test_a_price_move_alone_changes_drift_with_no_order_placed():
 
 
 def test_an_unplaced_asset_cycle_always_sits_below_its_floor():
-    # The true invariant (spec Verification). NAV-monotonicity is NOT one and must not be asserted:
+    # The true invariant (spec 00081, Verification). NAV-monotonicity is NOT one and must not be asserted:
     # held histories diverge across NAV rungs, so a lower NAV just after placing can beat a higher
     # one carrying a fresh sub-floor residual.
     stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 100.0) for i, h in enumerate((0, 4, 8, 12))]
@@ -456,9 +456,8 @@ def test_an_unplaced_asset_cycle_always_sits_below_its_floor():
 
 
 def test_the_accumulation_replays_chronologically_whatever_order_it_is_handed():
-    # The policy carries held_qty across cycles, so the order is load-bearing, not cosmetic. Every
-    # other fixture in this file is already sorted, so nothing else would notice the sort going
-    # missing: reversed input must still produce the forward answer.
+    # The policy carries held_qty across cycles, so the order is load-bearing, not cosmetic:
+    # reversed input must still produce the forward answer.
     stages = [_stage(datetime(2026, 8, 1, h, tzinfo=UTC), 0.001 * (i + 1), 1000.0) for i, h in enumerate((0, 4, 8, 12, 16, 20))]
     minimums = {"BTC": (0.005, 0.45)}
     assert accumulation_payload(list(reversed(stages)), minimums, [1000.0]) == accumulation_payload(stages, minimums, [1000.0])
@@ -487,7 +486,8 @@ def test_accumulation_raises_when_a_traded_asset_has_no_floor():
 
 # --- accumulation: the weekly aggregation --------------------------------------------------------
 
-# 2026-07-13 00:00 is the Monday of ISO week 2026-W29 -- the journal's own first full week.
+# 2026-07-13 00:00 is the Monday of ISO week 2026-W29 -- the journal's own first full week (spec
+# 00081 D6).
 WEEK29_MONDAY = datetime(2026, 7, 13, tzinfo=UTC)
 
 
@@ -504,7 +504,8 @@ def test_weekly_rows_flag_a_short_week_and_report_no_weekly_p95():
     assert weeks[1]["partial"] is True
     # The flag is DERIVED from the cycle count, never a hardcoded week number.
     assert _weekly_payload(41)["by_nav"][1000.0]["weeks"][0]["partial"] is True
-    # No weekly p95: 4 weeks cannot support a percentile, and this number becomes a gate band.
+    # No weekly p95: 4 weeks cannot support a percentile, and this number becomes a gate band
+    # (spec 00081 D6).
     assert not any("p95" in key for w in weeks for key in w)
 
 
@@ -521,7 +522,7 @@ def test_accumulation_render_stamps_the_minimums_and_refuses_a_weekly_p95():
     payload = _weekly_payload(45)
     payload["minimums_fetched_at"] = "2026-07-07T03:29:00+00:00"
     text = _render_accumulation(payload)
-    assert "2026-07-07" in text  # spec D8: the floors move; the table says when it was read
+    assert "2026-07-07" in text  # spec 00081 D8: the floors move; the table says when it was read
     assert "2026-W29" in text and "2026-W30" in text
     assert "no weekly p95" in text
 
@@ -570,7 +571,7 @@ def test_load_minimums_raises_on_two_eur_pairs_for_one_base(tmp_path):
 
 @pytest.mark.skipif(not CANONICAL_SNAPSHOT.exists(), reason="gitignored snapshots dataset absent")
 def test_load_minimums_against_the_canonical_snapshot():
-    # The numbers the measurement is quoted from, read off the real file rather than a fixture.
+    # The snapshot spec 00081's measurement is quoted from, read off the real file rather than a fixture.
     minimums, fetched_at = load_minimums(CANONICAL_SNAPSHOT)
     assert fetched_at.startswith("2026-07-07")
     assert minimums["DOGE"] == (50.0, 0.45)
