@@ -1,5 +1,5 @@
-"""The open-topics frontmatter invariants `.claude/skills/topic-ops/SKILL.md` states, checked
-mechanically."""
+"""The open-topics invariants `.claude/skills/topic-ops/SKILL.md` and CLAUDE.md's topics line state --
+frontmatter, file shape, the trigger and the rendered index -- checked mechanically."""
 
 import importlib.util
 import re
@@ -120,14 +120,12 @@ def test_done_so_far_marks_a_partial_and_nothing_else(path: Path):
 
 
 # --- every live topic carries a trigger: the counter's decision, as a gate -------------------------
-# CLAUDE.md's topics line: a live topic's `ripe_when:` is one of six shapes -- a date, another topic's
-# resolution, an alert, an evaluation statement, a milestone, an activity -- and `infra/scripts/
-# count-list.sh live-topics-without-a-trigger` is the count under it. That counter's whole grammar is one
-# grep, `grep -L '^ripe_when:' docs/open-topics/T*.md`: a live file with no line opening `ripe_when:`.
-# The six shapes themselves are semantic -- nothing mechanical separates a milestone from an activity,
-# and a grammar tight enough to try would refuse ordinary triggers -- so the shape is read by hand in
-# `zcrypto-daily-ops` §5b, and these decide exactly what the counter decides and no more: the regex is
-# the counter's, and the tie test reads it back from the script so the two move together.
+# The rule and the six shapes a `ripe_when:` may take are CLAUDE.md's topics line; the count under it is
+# `infra/scripts/count-list.sh live-topics-without-a-trigger`, which nothing gated. The shapes are
+# semantic -- nothing mechanical separates a milestone from an activity, and a grammar tight enough to
+# try would refuse ordinary triggers -- so the shape is read by hand in `zcrypto-daily-ops` §5b and
+# these decide exactly what the counter decides and no more, the tie test below reading the pattern back
+# out of the script so the two move together.
 
 COUNT_LIST = TOPICS.parents[1] / "infra" / "scripts" / "count-list.sh"
 _TRIGGER_LINE = re.compile(r"^ripe_when:", re.M)
@@ -186,9 +184,8 @@ def test_the_trigger_grammar_is_the_counters():
     ],
 )
 def test_carries_a_trigger_reads_the_line_the_counter_reads(text: str, carried: bool):
-    """Both directions of the grep: the value's quoting and folding are not read, and a key that is not
-    `ripe_when:` at column 0 is not a trigger. The body-line case is admitted on purpose -- the counter
-    reads the whole file, and a frontmatter-only rewrite here would gate what the counter does not count."""
+    """The body-line case is admitted on purpose: the counter reads the whole file, so a frontmatter-only
+    rewrite here would gate what the counter does not count."""
     assert carries_a_trigger(text) is carried
 
 
