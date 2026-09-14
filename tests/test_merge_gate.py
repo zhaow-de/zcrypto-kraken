@@ -1,5 +1,6 @@
 """merge-gate.py: the read line must be at the floor and name the head, with exactly three exceptions -- the change-index
-row commit past the tip it names, a head whose tree is that tip's tree, and the ops-journal month PR."""
+row commit past the tip it names, a head whose tree is that tip's tree, and the ops-journal month PR -- and a keyed
+branch owes its change-index row before the merge."""
 
 from __future__ import annotations
 
@@ -575,16 +576,31 @@ def test_a_branch_that_cannot_be_fetched_is_one_refusal_not_a_crash(monkeypatch)
 
 
 def test_a_keyed_branch_with_no_row_is_refused() -> None:
-    """The completeness test reads the branch name and fails only on develop, after this merge."""
     fails = gate.index_row_fails(_pr(number=99999, headRefName="docs/t0210-register-the-thing"))
     assert len(fails) == 1 and "has no `| #99999 ` row" in fails[0], fails
 
 
 def test_an_unkeyed_branch_owes_no_row() -> None:
-    """Most branches carry no key, and the index holds a row only for those that do."""
+    """Most branches carry no key; this arm asks the branch name only, so a key spelled only in the title is not its business."""
     assert gate.index_row_fails(_pr(number=99999, headRefName="claude/w16-skills-pass")) == []
 
 
 def test_a_keyed_branch_whose_row_exists_passes() -> None:
-    """#519's own branch carries no key, so drive the pass through a row the index really holds."""
+    """A pass needs both a key and a row, so it is driven through a merged PR the index really holds."""
     assert gate.index_row_fails(_pr(number=514, headRefName="fix/t0193-broken-input-class")) == []
+
+
+def test_the_branch_key_grammar_mirrors_the_tests_grammar() -> None:
+    """Compared against `_keys` itself: a literal list stays green when the grammar it mirrors drifts."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from test_change_index import _keys
+
+    for branch in (
+        "docs/t0210-register-the-thing",
+        "feat/iter-7-x",
+        "chore/00062-y",
+        "chore/ITER-7-x",
+        "fix/T0048-alloy-tailer-recreate",
+        "claude/w16-skills-pass",
+    ):
+        assert bool(gate.BRANCH_KEY.search(branch)) == any(_keys(branch)), branch
