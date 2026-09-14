@@ -136,3 +136,18 @@ def test_an_absent_ledger_directory_says_so_on_stderr(tmp_path):
     run("commit", "-qm", "one file")
     done = _sweep(repo, "NEEDLE")
     assert done.returncode == 0 and "not in this sweep" in done.stderr, done.stdout + done.stderr
+
+
+def test_an_untracked_unignored_file_is_swept(tmp_path):
+    """A session writes a file before it adds it; the shell grep this script replaces opens it, so this must too."""
+    repo = _repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "new-spec.md").write_text("NEEDLE not yet added\n")
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert sorted(done.stdout.split()) == [".local/memo.md", "cli/thing.py", "docs/new-spec.md"], done.stdout + done.stderr
+
+
+def test_no_pattern_at_all_is_an_error(tmp_path):
+    """Given no pattern grep takes the first path as one and answers rc 0 over whatever that regex matched."""
+    done = _sweep(_repo(tmp_path))
+    assert done.returncode == 2 and "usage" in done.stderr, done.stdout + done.stderr
