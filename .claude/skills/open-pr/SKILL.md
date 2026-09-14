@@ -40,33 +40,42 @@ Open PRs using the template at `.github/pull_request_template.md`. Because `gh p
 5. the flexible middle (below),
 6. `## Checklist`.
 
-**Flexible middle:** between the lines above and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home.
+**Flexible middle:** between the lines above and Checklist, add whatever sections fit the change — a *menu, not a mandate*: `## Changes`, `## Test plan`, `## Migration / compatibility`, `## Risks`, `## Screenshots`, `## Out of scope`, `## Follow-ups`. Scale to complexity and mirror the spec — a trivial PR may add none, a large one several. Every `## Changes` bullet is derived from the file-scoped diff at write time — `git diff <base> <tip> -- <path>` — never from a working summary of the branch; and a body claim about the branch names the class it covers, never a count, because the count is false the moment the next commit lands under it. **`## Follow-ups` and `## Out of scope` may only reference registered `T<NNNN>` open topics (or state an explicit drop)** — a PR description is never re-read after merge, so it must never be a deferred action's only home.
 
 ## The deferral sweep — before every create or body edit
 
-Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted.
+Sweep the draft body for deferral language — *follow-up, later, once/when X, deferred, out of scope, known imprecision, registered* — and resolve **every hit in the same edit**: an existing `T<NNNN>` reference, a new topic via `topic-ops`, or an explicit drop. Writing the caveat is not registering it; a claim that something "is registered" is checked by grep, not trusted. Its mirror image: every `T<NNNN>` the body reports resolved, partial or archived is checked against `git diff develop...HEAD --name-only | grep T<NNNN>` — a status claim the diff does not carry is a false claim about durable state, the same way "is registered" is.
 
 ## Creating the PR — four steps, in order
 
 Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it. Step 0's gate is read at the undraft, so a draft takes these four steps at the branch's first green commit and the gate again when it is undrafted.
 
-**Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it. A title carrying a path-shaped token — a repo root `cli/`, `tests/`, `infra/`, `docs/`, `.claude/`, or `word/word.ext` — writes its `/` as `-` (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token` is the grammar); a bare `long/flat` is not a path and keeps its slash:
+**Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it — and the measurement and the create never share a Bash call: branch on the number in the script, or read it in one call and act in the next, because a number printed above a `gh pr create` line gates nothing. A title carrying a path-shaped token — a repo root `cli/`, `tests/`, `infra/`, `docs/`, `.claude/`, or `word/word.ext` — writes its `/` as `-` (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token` is the grammar); a bare `long/flat` is not a path and keeps its slash:
 
 ```bash
 TITLE='feat(<scope>): iter-<N> — <short description>'
-printf '%s' "$TITLE" | wc -m      # > 72 → rewrite the title shorter, do not create
+N=$(printf '%s' "$TITLE" | wc -m); [ "$N" -le 72 ] || { echo "REFUSE: title is $N chars, cap is 72"; exit 1; }
 ```
 
 **Step 2 — the serial refusal.** If the branch name or the title carries `iter-<N>`, that number must be the change index's highest `iter` **plus one**, or the index must already hold this PR's own row (a body edit on a PR that has one). Anything else means the serial was improvised rather than minted:
 
 ```bash
+TITLE='feat(<scope>): iter-<N> — <short description>'   # Step 1's title again: a fresh shell per call
 HIGHEST=$(awk -F'|' '/^\| #/ {print $5}' docs/reference/change-index.md | grep -oE 'iter-[0-9]{3}' | sort -u | tail -1)
-grep -n "^| #<PR number> " docs/reference/change-index.md   # on a body edit: the row this PR already has
+NEXT=$(printf 'iter-%03d' $((10#${HIGHEST#iter-} + 1)))
+MINE=$(printf '%s\n%s' "$(git branch --show-current)" "$TITLE" | grep -oE '\biter-[0-9]{1,3}\b' | head -1)
+[ -z "$MINE" ] || [ "$(printf 'iter-%03d' $((10#${MINE#iter-})))" = "$NEXT" ] || grep -q "^| #<PR number> " docs/reference/change-index.md \
+  || { echo "REFUSE: the branch or title says $MINE, the index's highest is $HIGHEST, so the mint is $NEXT"; exit 1; }
 ```
 
-On a mismatch, **refuse to create the PR** and print both numbers — the one in the branch or title, and the index's highest — so the mint can be corrected before the PR exists. A serial is minted when the branch is cut, from this same command; nothing else mints one.
+The refusal is the branch above, in the same call as the measurement and never in the call that creates: it prints both numbers — the one in the branch or title, and the index's highest — so the mint can be corrected before the PR exists; the `grep` arm is the body edit on a PR that already has its row. A serial is minted when the branch is cut, from this same `HIGHEST`; nothing else mints one.
 
-**Step 3 — `gh pr create`.** `--draft` unless the branch is already complete and has the word; the PR number comes back in the URL it prints either way, and keep it.
+**Step 3 — `gh pr create`.** `--draft` unless the branch is already complete and has the word; the PR number comes back in the URL it prints either way, and keep it. The turn does not end at the PR number: start the CI watch in the same turn — one backgrounded command re-reading the `Full test suite` check-run of the pushed sha with a per-call `timeout`, its terminal branch matched case-insensitively against the raw value, never a lowercase guess — and it ends at that run's conclusion; `merge-gate.py <n>` waits for the undraft, since its first gate refuses a draft.
+
+```bash
+SHA=$(git rev-parse HEAD)   # the pushed head; a later push restarts the watch on its sha
+until R=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" --jq '.check_runs[] | select(.name == "Full test suite") | "\(.status) \(.conclusion // "")"'); [[ "${R,,}" == completed* ]]; do sleep 45; done; echo "$R"
+```
 
 **Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section — and a topic the PR only **registers** is not a key: it is a cross-reference like the iteration above, recorded by `docs/open-topics/README.md`, and a row claiming it says the index delivered what it only filed. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
 
