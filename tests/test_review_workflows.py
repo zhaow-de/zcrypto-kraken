@@ -1,4 +1,4 @@
-"""The three review workflows carry one grading, one scope and one worktree contract, copied because a workflow script
+"""The three review workflows carry one grading, one scope and one set of rules, copied because a workflow script
 cannot import another; this holds the copies equal."""
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ def _constant(name: str, text: str) -> str:
 
 def test_the_three_workflows_share_their_grading_scope_and_checkout_contract():
     texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
-    for name in ("GRADING", "SCOPE", "COMMON"):
+    for name in ("GRADING", "SCOPE", "RULES"):
         values = {f: _constant(name, t) for f, t in texts.items()}
         assert len(set(values.values())) == 1, f"{name} differs between {sorted(values)}"
 

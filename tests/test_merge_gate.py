@@ -79,7 +79,7 @@ def test_an_amend_that_kept_the_tree_the_read_graded_passes():
     assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40)) == []
 
 
-def test_a_head_whose_tree_differs_from_the_read_tips_fails(monkeypatch):
+def test_a_head_whose_tree_differs_from_the_read_tips_fails():
     pr = _pr(body=_stale_body())
     head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
     fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40))
