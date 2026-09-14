@@ -614,3 +614,21 @@ def test_evaluate_carries_the_index_row_arm() -> None:
     """Wired into `evaluate`, not merely defined: unwiring it leaves every other case in this file green."""
     fails = _eval(_pr(number=99999, headRefName="docs/t0210-register-the-thing"))
     assert any("change-index" in f for f in fails), fails
+
+
+def test_an_unchecked_box_quoted_in_a_code_span_is_not_a_box() -> None:
+    """The marker inside a code span renders as text; the old substring test read it as an open item."""
+    body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\nthe gate parses `- [ ]` items\n\n- [x] done\n"
+    assert not [f for f in _eval(_pr(body=body)) if "checklist" in f]
+
+
+def test_an_unchecked_box_in_a_fenced_block_is_not_a_box() -> None:
+    """A fenced block is code to a reader, so a list marker inside it is not a checklist item."""
+    body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n```\n- [ ] not a box\n```\n\n- [x] done\n"
+    assert not [f for f in _eval(_pr(body=body)) if "checklist" in f]
+
+
+def test_a_real_unchecked_box_still_fails() -> None:
+    """The two exemptions above must not have widened into ignoring the box the arm exists to catch."""
+    body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [ ] not done\n"
+    assert [f for f in _eval(_pr(body=body)) if "checklist" in f]
