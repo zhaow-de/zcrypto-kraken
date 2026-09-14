@@ -56,13 +56,13 @@ def test_parse_force_order_maps_envelope_to_row():
         "order_status": "FILLED",
         "event_id": "BTCUSDT-1568014460893-9910-0.014",
     }
-    assert row["ts"].tzinfo is not None  # tz-aware UTC
+    assert row["ts"].tzinfo is not None
 
 
 def test_parse_force_order_tolerates_missing_avg_price_and_status():
-    # `ap` and `X` are secondary fields; a forceOrder missing them still carries the required
-    # identity fields (s/S/p/q/T), so it must still yield a row (with the secondary fields None)
-    # rather than the whole non-backfillable liquidation being discarded.
+    # `ap` and `X` are secondary: a forceOrder missing them still carries the identity fields
+    # (s/S/p/q/T), so it yields a row with those two None rather than discarding a non-backfillable
+    # liquidation.
     raw = json.dumps(
         {
             "stream": "!forceOrder@arr",
@@ -79,7 +79,6 @@ def test_parse_force_order_tolerates_missing_avg_price_and_status():
 
 
 def test_parse_force_order_returns_none_for_non_force_order():
-    # A different event type on the same combined stream envelope.
     assert parse_force_order(json.dumps({"stream": "x", "data": {"e": "aggTrade", "o": {}}})) is None
 
 
@@ -91,8 +90,8 @@ def test_parse_force_order_returns_none_and_never_raises_on_garbage():
         "123",
         json.dumps({"data": {"e": "forceOrder"}}),
         json.dumps({"data": {"e": "forceOrder", "o": {"s": "BTCUSDT"}}}),
-        # `T: Infinity` -- json.loads parses the `Infinity` literal to float('inf'); int(float('inf'))
-        # raises OverflowError, which the old `except KeyError, TypeError, ValueError` did not catch.
+        # `T: Infinity` -- json.loads parses the `Infinity` literal to float('inf'), and int(float('inf'))
+        # raises OverflowError.
         '{"stream":"x","data":{"e":"forceOrder","o":{"s":"BTCUSDT","S":"SELL","p":"1","q":"1","ap":"1","X":"FILLED","T":Infinity}}}',
         # A huge out-of-range integer `T` survives `int()` (Python bigints) but blows up
         # `datetime.fromtimestamp` with OverflowError/OSError depending on platform.
@@ -129,7 +128,6 @@ class _FakeStreamClient:
 
 
 def test_recorder_writes_hour_finals_dedups_and_flushes_on_close(tmp_path):
-    # Five events spanning three UTC hours (06/07/08) on 2019-09-09, with one redelivered 06 event.
     r1 = parse_force_order(_envelope(price="100", qty="1", t_ms=1568008800000))  # 06:00:00
     r2 = parse_force_order(_envelope(price="101", qty="2", t_ms=1568009400000))  # 06:10:00
     r3 = parse_force_order(_envelope(price="100", qty="1", t_ms=1568008800000))  # redeliver of r1
@@ -148,13 +146,11 @@ def test_recorder_writes_hour_finals_dedups_and_flushes_on_close(tmp_path):
     final_06 = base / "06.parquet"
     final_07 = base / "07.parquet"
 
-    # Hour 06 finalized when the 07:00 event crossed the boundary; hour 07 when 08:00 crossed.
     assert final_06.exists()
     assert final_07.exists()
     assert verify_manifest(final_06) is True
     assert verify_manifest(final_07) is True
 
-    # Dedup: the redelivered 06 event (r3) was dropped, so hour 06 holds only r1 + r2.
     df06 = pl.read_parquet(final_06)
     assert df06.height == 2
     assert sorted(df06["event_id"].to_list()) == sorted([r1["event_id"], r2["event_id"]])
@@ -176,15 +172,13 @@ def test_run_recorder_skips_rows_while_disk_watermark_is_breached(tmp_path):
     asyncio.run(run_recorder(client, recorder, watermark))
     recorder.close()
 
-    # The row was skipped by the write gate: no segment/part file for BTCUSDT anywhere under tmp_path.
     assert not list(tmp_path.rglob("*.parquet"))
 
 
 def test_parse_force_order_stringifies_a_structured_order_status():
-    # A malformed frame whose `X` is a JSON object (not a string) must not slip through as a raw
-    # dict: polars' Utf8 column raises ComputeError on a structured value at SegmentWriter flush --
-    # crashing the recorder DOWNSTREAM of the "never raises" parser. str() coercion keeps the row
-    # (identity fields are valid) with the garbage stringified harmlessly.
+    # An `X` that is a JSON object must not reach the writer as a dict: polars' Utf8 column raises
+    # ComputeError on a structured value at SegmentWriter flush, downstream of the "never raises"
+    # parser. str() keeps the row (its identity fields are valid) with the garbage stringified.
     raw = json.dumps(
         {
             "stream": "!forceOrder@arr",
@@ -196,4 +190,4 @@ def test_parse_force_order_stringifies_a_structured_order_status():
     )
     row = parse_force_order(raw)
     assert row is not None
-    assert isinstance(row["order_status"], str)  # never a dict/list reaching the writer
+    assert isinstance(row["order_status"], str)

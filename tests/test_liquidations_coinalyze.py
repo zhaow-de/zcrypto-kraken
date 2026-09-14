@@ -123,8 +123,8 @@ def test_poll_cycle_dedups_across_overlapping_polls(tmp_path):
     writers = {"BTC": SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")}
 
     first = poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
-    # A later cycle re-fetches the same 24h-back window (the plan's decision: no "since last
-    # cycle" state) and gets the SAME bucket again -- SegmentWriter's dedup_key must absorb it.
+    # A later cycle re-fetches the same 30h window; with no watermark passed, the SAME bucket reaches
+    # the writer again -- SegmentWriter's dedup_key must absorb it.
     second = poll_cycle("key", ["BTC"], writers, now=now + timedelta(seconds=5), opener=_opener(body))
     writers["BTC"].close()
 
@@ -150,7 +150,7 @@ def test_poll_cycle_raises_and_writes_nothing_on_fetch_failure(tmp_path):
 
 
 def test_poll_cycle_finalizes_a_crossed_hour_with_a_valid_manifest(tmp_path):
-    now = datetime(2024, 3, 1, 13, 10, 0, tzinfo=UTC)  # currently in hour 13
+    now = datetime(2024, 3, 1, 13, 10, 0, tzinfo=UTC)
     t_hour12 = int(datetime(2024, 3, 1, 12, 5, 0, tzinfo=UTC).timestamp())
     t_hour13 = int(datetime(2024, 3, 1, 13, 0, 0, tzinfo=UTC).timestamp())  # +60 <= now-120s: closed
     body = [
@@ -184,7 +184,6 @@ def test_poll_cycle_ignores_a_symbol_with_no_writer(tmp_path):
     ]
     writers = {"BTC": SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")}
 
-    # Only "BTC" was passed in `coins`/`writers` -- ETH's entry must be skipped, not KeyError.
     written = poll_cycle("key", ["BTC"], writers, now=now, opener=_opener(body))
     assert written == 1
     writers["BTC"].close()
@@ -233,8 +232,8 @@ def test_liquidations_poll_end_to_end_with_duration(tmp_path, monkeypatch):
     result = runner.invoke(app, ["liquidations-poll", "--data-dir", str(tmp_path), "--duration", "0"])
     assert result.exit_code == 0, result.output
 
-    # 2024-03-01 is now (T0046) more than the 31h finalize lag behind the real wall clock, so this
-    # cycle's own finalize step closes it into a final rather than leaving it an open part.
+    # 2024-03-01 is more than the 31h finalize lag behind the wall clock, so the cycle's own finalize
+    # sweep closes it into a final rather than leaving it an open part.
     tree = tmp_path / "BTC" / "liquidations-1m"
     finals = [q for q in tree.rglob("*.parquet") if ".part" not in q.name]
     assert finals, "expected a FINAL -- the stale hour must have finalized past the 31h lag (review M-3)"
@@ -294,10 +293,9 @@ def test_liquidations_poll_skips_ping_and_keeps_looping_on_a_failed_cycle(tmp_pa
 
 
 def test_poll_cycle_resubmission_into_a_finalized_hour_leaves_it_byte_identical(tmp_path):
-    """The load-bearing overlap invariant (2026-07-15 review): every cycle re-fetches the whole
-    catch-up window, and re-submitted buckets from an already-FINALIZED hour must be dropped by
-    SegmentWriter's late-event floor (dedup's `_seen` covers only the open hour). A regression here
-    silently duplicates rows into the non-backfillable archive."""
+    """Every cycle re-fetches the whole catch-up window, so a re-submitted bucket from an already-FINALIZED
+    hour must be dropped by SegmentWriter's late-event floor (dedup's `_seen` covers only the open hour).
+    A regression here silently duplicates rows into the non-backfillable archive."""
     hour1 = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
     hour2 = hour1 + timedelta(hours=1)
     t1 = int(hour1.timestamp()) + 300  # 12:05 bucket
@@ -318,8 +316,6 @@ def test_poll_cycle_resubmission_into_a_finalized_hour_leaves_it_byte_identical(
     before = final_12.read_bytes()
     parts_12_before = sorted(p.name for p in day_dir.glob("12.part*.parquet"))
 
-    # Second cycle: the SAME response (the flat catch-up window re-fetch). The hour-12 bucket is now
-    # a late event below the writer's floor -- it must be dropped, not appended to a new part.
     poll_cycle("key", ["BTC"], writers, now=now + timedelta(minutes=5), opener=_opener(body))
     writers["BTC"].close()
 
@@ -330,7 +326,7 @@ def test_poll_cycle_resubmission_into_a_finalized_hour_leaves_it_byte_identical(
 
 
 def test_poll_cycle_handles_a_reversed_history_without_dropping_earlier_hours(tmp_path):
-    """I2: a non-ascending response must not ratchet the writer's hour forward past earlier buckets
+    """A non-ascending response must not ratchet the writer's hour forward past earlier buckets
     (which would drop them as late events on EVERY cycle -- a permanent, silent gap)."""
     hour1 = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
     hour2 = hour1 + timedelta(hours=1)
@@ -357,10 +353,9 @@ def test_poll_cycle_handles_a_reversed_history_without_dropping_earlier_hours(tm
 
 
 def test_liquidations_poll_finalizes_a_stale_open_hour_past_the_finalize_lag(tmp_path, monkeypatch):
-    # The lag (31h) is deliberately wider than the 30h catch-up window, so a hour eligible for
-    # finalize can never still be reachable by poll_cycle's own re-fetch -- it must already be open
-    # from an earlier cycle. Simulated here by appending directly to the writer, like the other
-    # SIGTERM/duration tests above.
+    # The 31h lag is wider than the 30h catch-up window, so an hour eligible for finalize can never
+    # still be reachable by poll_cycle's own re-fetch -- it must already be open from an earlier
+    # cycle, which appending directly to the writer simulates.
     monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
     monkeypatch.setattr("cli.liquidations.coinalyze._sleep", lambda seconds: None)
     stale_ts = datetime.now(UTC) - timedelta(hours=32)
@@ -410,13 +405,13 @@ def test_liquidations_poll_leaves_a_recent_open_hour_untouched(tmp_path, monkeyp
 
     hour_dir = tmp_path / "BTC" / "liquidations-1m" / f"{recent_ts:%Y}" / f"{recent_ts:%m}" / f"{recent_ts:%d}"
     final = hour_dir / f"{recent_ts:%H}.parquet"
-    assert not final.exists()  # not old enough to cross the lag -- still open
+    assert not final.exists()
     # The graceful shutdown's close() still flushes the buffered row to a part (never a final).
     assert list(hour_dir.glob(f"{recent_ts:%H}.part*.parquet"))
 
 
 def test_run_survives_a_malformed_bucket_and_retries(tmp_path, monkeypatch):
-    """I1: a bucket with null l/s raises TypeError inside poll_cycle -- the CYCLE must fail (no ping)
+    """A bucket with null l/s raises TypeError inside poll_cycle -- the CYCLE must fail (no ping)
     while the loop keeps running, instead of the process crash-looping against the same response."""
     from cli.liquidations import coinalyze as mod
 
@@ -442,7 +437,7 @@ def test_run_survives_a_malformed_bucket_and_retries(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, ["liquidations-poll", "--data-dir", str(tmp_path), "--duration", "1"])
     assert result.exit_code == 0, result.output
     assert calls["n"] >= 1
-    assert pings == []  # a failed cycle must never ping the dead-man
+    assert pings == []
 
 
 # --- prime_bucket_watermarks (spec 00055) -----------------------------------------------------
@@ -453,7 +448,6 @@ def test_prime_bucket_watermarks_empty_dir_returns_empty(tmp_path):
 
 
 def test_prime_bucket_watermarks_reads_newest_part(tmp_path):
-    # Persist two buckets an hour apart through the real writer (parts, no final).
     w = SegmentWriter(tmp_path, "BTC", "liquidations-1m", LIQ_AGG_SCHEMA, dedup_key="event_id")
     t_old = 1784300400  # 2026-07-17 15:00:00 UTC
     t_new = 1784304000  # 2026-07-17 16:00:00 UTC
@@ -539,7 +533,7 @@ def test_poll_cycle_skips_buckets_at_or_below_watermark(tmp_path):
     marks = {"BTC": t_covered}
     written = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
     writers["BTC"].close()
-    assert written == 1  # only the fresh bucket reached the writer
+    assert written == 1
     parts = list(tmp_path.rglob("*.part*.parquet"))
     df = pl.concat([pl.read_parquet(p) for p in parts])
     assert df["event_id"].to_list() == [f"BTCUSDT_PERP.A-{t_fresh}"]
@@ -547,8 +541,6 @@ def test_poll_cycle_skips_buckets_at_or_below_watermark(tmp_path):
 
 
 def test_poll_cycle_second_cycle_is_silent_no_dedup_drops(tmp_path, caplog):
-    # The production symptom, reproduced and killed: an identical follow-up cycle must submit
-    # nothing and trigger ZERO writer-level "dropping replayed event" drops.
     now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
     t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
     body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
@@ -563,7 +555,6 @@ def test_poll_cycle_second_cycle_is_silent_no_dedup_drops(tmp_path, caplog):
 
 
 def test_poll_cycle_none_watermarks_preserves_resubmit_behavior(tmp_path, caplog):
-    # watermarks=None is today's contract: re-submission reaches the writer and dedup drops it.
     now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
     t = int(datetime(2026, 7, 17, 16, 0, tzinfo=UTC).timestamp())
     body = [{"symbol": "BTCUSDT_PERP.A", "history": [{"t": t, "l": 1.0, "s": 2.0}]}]
@@ -584,11 +575,11 @@ def test_poll_cycle_open_bucket_does_not_advance_watermark(tmp_path):
     written = poll_cycle("key", ["BTC"], writers, watermarks=marks, now=now, opener=_opener(body))
     writers["BTC"].close()
     assert written == 0
-    assert marks == {}  # an unsubmitted bucket must never advance the mark
+    assert marks == {}
 
 
 def test_poll_cycle_failure_mid_cycle_leaves_unsubmitted_coins_unadvanced(tmp_path):
-    # Spec Verify names "a failed cycle": a malformed entry aborts the cycle (poll_cycle raises,
+    # Spec 00055's Verify names a failed cycle: a malformed entry aborts it (poll_cycle raises,
     # _poll_once catches). Marks advanced before the abort stand (those rows sit in their writer's
     # buffer); coins never reached must stay unadvanced so the next cycle re-covers them.
     now = datetime(2026, 7, 17, 16, 30, tzinfo=UTC)
@@ -603,7 +594,7 @@ def test_poll_cycle_failure_mid_cycle_leaves_unsubmitted_coins_unadvanced(tmp_pa
     marks: dict[str, int] = {}
     with pytest.raises(TypeError):
         poll_cycle("key", ["BTC", "ETH"], writers, watermarks=marks, now=now, opener=_opener(body))
-    assert marks == {"BTC": t}  # BTC advanced (its row is buffered in its writer); ETH never did
+    assert marks == {"BTC": t}
     for w in writers.values():
         w.close()
 
@@ -629,8 +620,6 @@ def test_poll_cycle_logs_submitted_and_skipped_counts(tmp_path, caplog):
 
 
 def test_run_primes_watermarks_and_threads_them_to_poll_cycle(tmp_path, monkeypatch):
-    # Persist one bucket, then boot _run: the primed dict must reach poll_cycle so the very
-    # first cycle after a restart already skips what is on disk.
     from cli.liquidations import coinalyze as mod
 
     t = 1784304000
@@ -677,7 +666,7 @@ def test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping(tmp_path, mon
 
     # The failure lands INSIDE `_write_part`, below its own `except Exception` -- replacing
     # `_write_part` would remove the swallow this test is about. `_replace_durably` is the last
-    # statement in its try, exactly where a read-only or full mount fails.
+    # call in its try, exactly where a read-only or full mount fails.
     def refuse(tmp, dest):
         raise OSError(30, "Read-only file system")
 
@@ -690,7 +679,7 @@ def test_a_finalize_that_wrote_nothing_withholds_the_dead_man_ping(tmp_path, mon
 
 
 def test_a_healthy_cycle_still_pings_the_dead_man(tmp_path, monkeypatch):
-    """The true positive beside the guard above: without it, a poller that never pings ships green."""
+    """The true positive beside the guard above: without it, a poller that never pings would pass that guard."""
     from cli.liquidations import coinalyze as mod
 
     hour = datetime(2024, 3, 1, 12, tzinfo=UTC)

@@ -7,9 +7,9 @@ import pytest
 from cli.logging.config import configure
 from cli.logging.ship import LokiShipHandler, ShipConfig
 
-# RFC 5737 TEST-NET-1 (192.0.2.0/24): guaranteed non-routable, so if a test ever did trigger a
-# post this could never reach a real host -- though none of the tests below emit a log record,
-# so the ring stays empty and the worker thread never calls _post() at all.
+# RFC 5737 TEST-NET-1 (192.0.2.0/24): non-routable, so a post could never reach a real host -- and
+# no test that attaches a ship handler emits a record, so the ring stays empty and the worker
+# thread never calls _post() at all.
 _DEAD_SHIP = ShipConfig(
     url="http://192.0.2.1:1/loki/api/v1/push", username="u", password="p", host="test-host", service="test-service"
 )
@@ -104,7 +104,7 @@ def test_ship_config_attaches_ship_handler_alongside_console_handler():
     assert len(console_handlers) == 1
     assert isinstance(console_handlers[0], logging.StreamHandler)
     assert isinstance(console_handlers[0].formatter, PlainTextFormatter)
-    assert console_handlers[0].level == logging.INFO  # shipping must not mute the local ground truth (D2)
+    assert console_handlers[0].level == logging.INFO  # shipping must not mute the local ground truth (spec 00068 D2)
 
 
 def test_reconfigure_with_ship_leaves_one_ship_handler_and_stops_prior_worker():
@@ -117,13 +117,11 @@ def test_reconfigure_with_ship_leaves_one_ship_handler_and_stops_prior_worker():
     assert len(ship_handlers) == 1
     assert ship_handlers[0] is not first_ship
     # The removal loop must have called close() on the prior handler, which stops its
-    # worker thread -- a leaked worker per reconfigure is a defect (spec 00068 T3).
+    # worker thread; a reconfigure that leaked one would accumulate a thread per call.
     assert not first_ship._worker.is_alive()
 
 
 def test_configure_swallows_owned_handler_close_error():
-    # A prior project-owned handler whose close() fails (e.g. a dead fd raising OSError) must not
-    # break reconfiguration: configure() removes it, swallows the error, and attaches the new handler.
     lg = logging.getLogger("zcrypto")
 
     class _CloseRaises(logging.Handler):
