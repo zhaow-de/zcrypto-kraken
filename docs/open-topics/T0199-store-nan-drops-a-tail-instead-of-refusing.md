@@ -29,6 +29,11 @@ NaN-caused drop from a legitimately short store, so a poisoned tail and a quiet 
 page. The fixture attempt that first suggested a NaN could not reach the store hit `to_frame`'s refusal on the
 REST parse, not the writer's — measured on T0193's branch, the writer refuses nothing.
 
+## Findings so far
+
+PR #514 (T0193) measured the writer refusing nothing and found no decision — spec `00059` D7, `00058` D2 — that
+rules on a store NaN; nothing investigated since registration.
+
 ## Suggested next steps
 
 - Decide where the refusal belongs: at `write_parquet` (a capture-adjacent change, its own blast radius, and it

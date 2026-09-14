@@ -25,6 +25,11 @@ path, and every parquet under `data/` today is `Datetime("us", "UTC")` (128 of 1
 it worth registering rather than dropping is the arrival path — a republished quarterly dump is written by
 whatever wrote it, and `ns`-typed parquet is what pandas and pyarrow produce.
 
+## Findings so far
+
+PR #514 (T0193) found the undoored join at `cli/ohlc/reach.py:88` and measured every parquet under `data/` as
+`Datetime("us", "UTC")` (128 of 128); nothing investigated since registration.
+
 ## Suggested next steps
 
 - Call `_require_joinable_ts` (or a `cli/ohlc/`-local twin, since importing from `cli/engine/` inverts the
