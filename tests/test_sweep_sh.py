@@ -1,4 +1,4 @@
-"""`infra/scripts/sweep.sh` — the sweep that sees `.local/`, which a bare one cannot."""
+"""`infra/scripts/sweep.sh` — the sweep that opens what a bare one does not: `.local/`, and a file not yet added."""
 
 from __future__ import annotations
 
@@ -148,6 +148,31 @@ def test_an_untracked_unignored_file_is_swept(tmp_path):
 
 
 def test_no_pattern_at_all_is_an_error(tmp_path):
-    """Given no pattern grep takes the first path as one and answers rc 0 over whatever that regex matched."""
+    """Given no pattern grep takes the first path as one and answers that accidental regex's rc — a hit or a clean, never the error this is."""
     done = _sweep(_repo(tmp_path))
     assert done.returncode == 2 and "usage" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_conflicted_file_is_swept_once(tmp_path):
+    """During a merge conflict the index carries a path once per stage, and grep would open it once per entry."""
+    repo = _repo(tmp_path)
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    run("checkout", "-q", "-b", "other")
+    (repo / "cli" / "thing.py").write_text("NEEDLE from the other branch\n")
+    run("commit", "-qam", "other")
+    run("checkout", "-q", "develop")
+    (repo / "cli" / "thing.py").write_text("NEEDLE from develop\n")
+    run("commit", "-qam", "develop")
+    subprocess.run(["git", "-C", str(repo), "merge", "other"], capture_output=True)
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert done.stdout.split().count("cli/thing.py") == 1, done.stdout + done.stderr
+
+
+def test_an_untracked_nested_checkout_is_named_not_dropped(tmp_path):
+    """`git ls-files --others` lists a nested repo as the bare directory, which the regular-file filter drops."""
+    repo = _repo(tmp_path)
+    (repo / "vendor").mkdir()
+    (repo / "vendor" / "thing.py").write_text("NEEDLE in a nested checkout\n")
+    subprocess.run(["git", "-C", str(repo / "vendor"), "init", "-q", "-b", "develop"], check=True, capture_output=True)
+    done = _sweep(repo, "-l", "NEEDLE")
+    assert "vendor" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr

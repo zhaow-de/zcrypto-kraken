@@ -21,11 +21,17 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 ledger=.local
 [ "$main" = "$(pwd -P)" ] || ledger="$main/.local"
 [ -d "$ledger" ] || echo "sweep: no $ledger -- the memo, the table and the inboxes are not in this sweep" >&2
-mapfile -d '' -t listed < <(git ls-files -z --cached --others --exclude-standard -- ':(exclude).local'; [ -d "$ledger" ] && find "$ledger" -type f -print0)
+mapfile -d '' -t listed < <(git ls-files -z --deduplicate --cached --others --exclude-standard -- ':(exclude).local'; [ -d "$ledger" ] && find "$ledger" -type f -print0)
 # A tracked file deleted in the worktree is still in the index, and grep exits 2 over it whatever it printed,
 # so the list is narrowed to what exists and rc keeps the meaning the usage line documents.
 files=()
-for f in ${listed[@]+"${listed[@]}"}; do [ -f "$f" ] && files+=("$f"); done
+for f in ${listed[@]+"${listed[@]}"}; do
+  if [ -f "$f" ]; then files+=("$f")
+  # An untracked nested checkout is listed as the bare directory, so dropping it silently would answer
+  # "absent" over files nobody opened -- say it instead.
+  elif [ -d "$f" ]; then echo "sweep: $f is a directory, not swept -- an untracked nested checkout is one entry" >&2
+  fi
+done
 [ "${#files[@]}" -gt 0 ] || { echo "sweep: no files to search under $PWD" >&2; exit 2; }
 set +e
 grep -I -H "$@" -- "${files[@]}"
