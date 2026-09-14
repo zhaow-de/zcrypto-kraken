@@ -119,6 +119,79 @@ def test_done_so_far_marks_a_partial_and_nothing_else(path: Path):
     )
 
 
+# --- every live topic carries a trigger: the counter's decision, as a gate -------------------------
+# CLAUDE.md's topics line: a live topic's `ripe_when:` is one of six shapes -- a date, another topic's
+# resolution, an alert, an evaluation statement, a milestone, an activity -- and `infra/scripts/
+# count-list.sh live-topics-without-a-trigger` is the count under it. That counter's whole grammar is one
+# grep, `grep -L '^ripe_when:' docs/open-topics/T*.md`: a live file with no line opening `ripe_when:`.
+# The six shapes themselves are semantic -- nothing mechanical separates a milestone from an activity,
+# and a grammar tight enough to try would refuse ordinary triggers -- so the shape is read by hand in
+# `zcrypto-daily-ops` §5b, and these decide exactly what the counter decides and no more: the regex is
+# the counter's, and the tie test reads it back from the script so the two move together.
+
+COUNT_LIST = TOPICS.parents[1] / "infra" / "scripts" / "count-list.sh"
+_TRIGGER_LINE = re.compile(r"^ripe_when:", re.M)
+_COUNTER_GREP = re.compile(r"^c_topics_without_a_trigger\(\) \{[^\n]*grep -L '([^']*)' docs/open-topics/T\*\.md", re.M)
+
+
+def carries_a_trigger(text: str) -> bool:
+    """The counter's decision over one file: a line opening `ripe_when:` anywhere in it -- the whole file,
+    not the frontmatter, because that is what the grep reads; a key indented, mistyped or absent is none."""
+    return bool(_TRIGGER_LINE.search(text))
+
+
+@pytest.mark.parametrize("path", OPEN_TOPICS, ids=lambda p: p.name)
+def test_a_live_topic_carries_a_trigger(path: Path):
+    """A live topic with no trigger waits on nothing anyone can evaluate, and the counter that would show
+    it is a number to read, not a gate."""
+    assert carries_a_trigger(path.read_text(encoding="utf-8")), (
+        f"{path.name}: no line opens `ripe_when:` -- a live topic carries a trigger in one of the six shapes "
+        f"CLAUDE.md names, or it is not a topic (`.claude/skills/topic-ops/SKILL.md`, *Before the file exists*)"
+    )
+
+
+def test_the_trigger_grammar_is_the_counters():
+    """`count-list.sh live-topics-without-a-trigger` and this file decide by the same pattern, or one of
+    them reports a number the other does not gate."""
+    m = _COUNTER_GREP.search(COUNT_LIST.read_text(encoding="utf-8"))
+    assert m, "the counter's function is gone, renamed, or no longer a `grep -L '<pattern>' docs/open-topics/T*.md`"
+    assert m.group(1) == _TRIGGER_LINE.pattern, (
+        f"the counter greps {m.group(1)!r} and this file {_TRIGGER_LINE.pattern!r} -- move both, or the gate and the count disagree"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "carried"),
+    [
+        ("---\nstatus: open\nripe_when: rung 1 produces real fills\n---\n\n# a title\n", True),
+        ('---\nstatus: partial\nripe_when: "per family — B2: settled; C1: weeks of captured L2 exist"\n---\n', True),
+        ("---\nstatus: open\nripe_when: 'the first armed session''s order\n  survives a restart'\n---\n", True),
+        ("---\nstatus: open\n---\n\nripe_when: a line in the body\n", True),
+        ("---\nstatus: open\n---\n\n# a title\n", False),
+        ("---\nstatus: open\nripe-when: a mistyped key\n---\n", False),
+        ("---\nstatus: open\n  ripe_when: indented under nothing\n---\n", False),
+        ("---\nstatus: open\nripe_when_note: a longer key\n---\n", False),
+        ("---\nstatus: open\n# ripe_when: commented out\n---\n", False),
+    ],
+    ids=[
+        "plain-value",
+        "double-quoted-value",
+        "single-quoted-folded-value",
+        "body-line-admitted-as-the-counter-admits-it",
+        "no-key",
+        "mistyped-key",
+        "indented-key",
+        "longer-key",
+        "commented-key",
+    ],
+)
+def test_carries_a_trigger_reads_the_line_the_counter_reads(text: str, carried: bool):
+    """Both directions of the grep: the value's quoting and folding are not read, and a key that is not
+    `ripe_when:` at column 0 is not a trigger. The body-line case is admitted on purpose -- the counter
+    reads the whole file, and a frontmatter-only rewrite here would gate what the counter does not count."""
+    assert carries_a_trigger(text) is carried
+
+
 # --- every link in the index lands on a file that exists ------------------------------------------
 # A topic's filename is its identity: a sweep that rewrites a link target rather than moving the
 # file leaves a dead pointer here.
