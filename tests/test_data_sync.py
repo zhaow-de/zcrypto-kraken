@@ -24,7 +24,7 @@ def test_fetch_is_additive_and_idempotent(tmp_path):
 
 
 def test_fetch_never_overwrites_a_changed_file(tmp_path):
-    # The D1c contract: a content-changed remote file is structurally untransmittable.
+    # spec 00056 D1c: rsync `--ignore-existing` makes a changed remote file untransmittable by construction.
     hot, data = tmp_path / "hot", tmp_path / "data"
     _mk(hot, "ohlc-full/x.parquet", b"remote-v2")
     local = _mk(data, "ohlc-full/x.parquet", b"local-v1")
@@ -38,8 +38,8 @@ def test_fetch_missing_hot_dir_raises(tmp_path):
 
 
 def test_push_only_allowlisted_sets_and_additive(tmp_path):
-    # Payloads are non-parquet on purpose: this pins WHICH SETS travel, and a parquet would also
-    # engage the attestation check, conflating two things. That refusal has its own test below.
+    # Non-parquet payloads on purpose: this pins WHICH SETS travel; a parquet would also engage the
+    # attestation check and conflate the two.
     data, dest = tmp_path / "data", tmp_path / "dest"
     _mk(data, "ohlc-full/a.json", b"A")
     _mk(data, "engine-store/secret.parquet", b"NO")
@@ -74,8 +74,8 @@ def test_push_extra_sets_pushes_minted_siblings(tmp_path):
 
 
 def test_push_refuses_a_parquet_set_attested_by_nothing(tmp_path):
-    # Push fails closed MORE readily than fetch, and deliberately has no --no-verify counterpart:
-    # the hub never overwrites, so unattested bytes that leave are final on every node.
+    # Push has no --no-verify counterpart: the hub never overwrites, so unattested bytes that leave
+    # are final on every node.
     data, dest = tmp_path / "data", tmp_path / "dest"
     _mk(data, "ohlc-full/a.parquet", b"A")
     dest.mkdir()
@@ -85,7 +85,6 @@ def test_push_refuses_a_parquet_set_attested_by_nothing(tmp_path):
 
 
 def test_a_stamped_set_is_published_via_extra_sets_beside_the_legacy_one(tmp_path):
-    # The minted sibling reaches the hub under its own name; the legacy universe/ set is untouched.
     data, dest = tmp_path / "data", tmp_path / "dest"
     _mk(data, "universe-20260811/point-in-time-universe.json", b"new")
     kept = _mk(dest, "universe/point-in-time-universe.json", b"legacy")
@@ -95,7 +94,6 @@ def test_a_stamped_set_is_published_via_extra_sets_beside_the_legacy_one(tmp_pat
 
 
 def test_publishing_the_same_stamp_twice_creates_nothing_the_second_time(tmp_path):
-    """Additive by construction: the second push's itemised output names no new files."""
     data, dest = tmp_path / "data", tmp_path / "dest"
     _mk(data, "universe-20260811/point-in-time-universe.json", b"v1")
     dest.mkdir()
@@ -111,7 +109,6 @@ def test_a_new_stamp_never_modifies_a_previously_published_one(tmp_path):
     push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260811"])
     _mk(data, "universe-20260812/point-in-time-universe.json", b"v2")
     report = push_hot(data, [], str(dest) + "/", extra_sets=["universe-20260812"])
-    # The itemised output names files under the NEW stamp only, and the old bytes are untouched.
     assert report.new_files and all(n.startswith("universe-20260812/") for n in report.new_files)
     assert (dest / "universe-20260811" / "point-in-time-universe.json").read_bytes() == b"v1"
 
@@ -124,8 +121,7 @@ def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
     from cli.ohlc.dataset import dataset_hash
 
     hot, data = tmp_path / "hot", tmp_path / "data"
-    # REAL hot-set manifest shape: series is a NESTED dict (symbol -> grid -> {sha256, ...}), NOT a
-    # list of {path, sha256}; the parquet lives at <symbol>/<grid>.parquet (funding: series[symbol]).
+    # The real hot-set manifest shape: series[symbol][grid] = {sha256, ...}, parquet at <symbol>/<grid>.parquet.
     good = pl.DataFrame({"ts": [1, 2], "close": [1.0, 2.0]})
     f = hot / "ohlc-test/BTC/EUR/1440.parquet"
     f.parent.mkdir(parents=True)
@@ -136,7 +132,6 @@ def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
     r = fetch_hot(hot, data)  # verify=True is the default
     assert "ohlc-test/BTC/EUR/1440.parquet" in r.new_files
 
-    # A corrupted parquet: its content hash is attested by nothing in the manifest -> raises.
     bad = hot / "ohlc-bad/BTC/EUR/1440.parquet"
     bad.parent.mkdir(parents=True)
     pl.DataFrame({"ts": [9]}).write_parquet(bad)
@@ -146,7 +141,6 @@ def test_fetch_verifies_manifest_and_fails_on_corruption(tmp_path):
 
 
 def test_fetch_verifies_flat_funding_shape_manifest(tmp_path):
-    # derivatives-funding manifest is FLAT: series[symbol] = {sha256, ...}, parquet at <symbol>/funding.parquet.
     import json
 
     import polars as pl
@@ -161,14 +155,12 @@ def test_fetch_verifies_flat_funding_shape_manifest(tmp_path):
     (hot / "derivatives-funding/manifest.json").write_text(
         json.dumps({"series": {"BTCUSDT": {"rows": 2, "sha256": dataset_hash(good)}}})
     )
-    r = fetch_hot(hot, data)  # verify=True default
+    r = fetch_hot(hot, data)
     assert "derivatives-funding/BTCUSDT/funding.parquet" in r.new_files
 
 
 def test_fetch_refuses_a_parquet_set_whose_manifest_vouches_nothing(tmp_path):
-    # Holdout-style manifest: metadata + a manifest-level manifest_sha256, but no per-parquet
-    # sha256. This used to warn and continue -- which is how the real holdout went unverified.
-    # It now fails closed: an unattested set is refused, never accepted quietly.
+    # Holdout-style manifest: a manifest-level manifest_sha256 and no per-parquet sha256.
     import json
 
     import polars as pl
@@ -179,15 +171,14 @@ def test_fetch_refuses_a_parquet_set_whose_manifest_vouches_nothing(tmp_path):
     pl.DataFrame({"ts": [1]}).write_parquet(f)
     (hot / "ohlc-holdout/manifest.json").write_text(json.dumps({"series": {"ADA": {"rows": 1}}, "manifest_sha256": "a" * 64}))
     with pytest.raises(DataSyncError, match="ships parquet but is attested by neither"):
-        fetch_hot(hot, data)  # verify=True default
-    # The escape is explicit rather than silent. Against a FRESH destination, because a fetch
-    # verifies after rsync, so the refused bytes are already on disk in `data`.
+        fetch_hot(hot, data)
+    # Against a FRESH destination: a fetch verifies after rsync, so the refused bytes are already
+    # on disk in `data`.
     r = fetch_hot(hot, tmp_path / "data2", verify=False)
     assert "ohlc-holdout/ADA/1440.parquet" in r.new_files
 
 
 def test_fetch_refuses_a_parquet_set_with_no_manifest_at_all(tmp_path):
-    # A set shipping parquet with nothing attesting it is the same hole by another route.
     import polars as pl
 
     hot, data = tmp_path / "hot", tmp_path / "data"
@@ -195,15 +186,15 @@ def test_fetch_refuses_a_parquet_set_with_no_manifest_at_all(tmp_path):
     f.parent.mkdir(parents=True)
     pl.DataFrame({"x": [1]}).write_parquet(f)
     with pytest.raises(DataSyncError, match="ships parquet but is attested by neither"):
-        fetch_hot(hot, data)  # verify=True default
+        fetch_hot(hot, data)
 
 
 def test_fetch_ignores_a_set_that_ships_no_parquet(tmp_path):
-    # The TRUE POSITIVE for the refusal above: universe/snapshots ship JSON, never enter the
-    # parquet loop, and must stay unaffected -- otherwise fail-closed would break every fetch.
+    # universe/ and snapshots/ ship JSON and never enter the parquet loop; fail-closed must not
+    # touch them, or every fetch breaks.
     hot, data = tmp_path / "hot", tmp_path / "data"
     f = hot / "universe/selection.json"
     f.parent.mkdir(parents=True)
     f.write_text("{}")
-    r = fetch_hot(hot, data)  # verify=True default -- must not raise
+    r = fetch_hot(hot, data)
     assert "universe/selection.json" in r.new_files

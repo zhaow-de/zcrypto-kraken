@@ -50,7 +50,7 @@ def test_missing_one_path_key_is_none(tmp_path):
 def test_fetch_override_merges_over_defaults(tmp_path):
     cfg = load_config(_write(tmp_path, "[zcrypto.fetch]\nfetch_concurrency = 3\n"))
     assert cfg.fetch.fetch_concurrency == 3
-    assert cfg.fetch.http_timeout_get_secs == 60  # untouched default
+    assert cfg.fetch.http_timeout_get_secs == 60
 
 
 def test_malformed_toml_raises(tmp_path):
@@ -59,13 +59,11 @@ def test_malformed_toml_raises(tmp_path):
 
 
 def test_zcrypto_not_a_table_raises(tmp_path):
-    # [zcrypto] present but bound to a scalar (not a table) is malformed config.
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, "zcrypto = 5\n"))
 
 
 def test_fetch_not_a_table_raises(tmp_path):
-    # [zcrypto].fetch present but bound to a scalar (not a table) is malformed config.
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, "[zcrypto]\nfetch = 5\n"))
 
@@ -109,7 +107,7 @@ def test_engine_override_merges_over_defaults(tmp_path):
         )
     )
     assert cfg.engine.store_dir == Path("elsewhere/store")
-    assert cfg.engine.journal_dir == Path("data/engine-journal")  # untouched default
+    assert cfg.engine.journal_dir == Path("data/engine-journal")
     assert cfg.engine.shadow_nav_eur == 2500.0
     assert cfg.engine.exec_enabled is True
     assert cfg.engine.settle_delay_secs == 45
@@ -141,16 +139,13 @@ def test_engine_non_positive_shadow_nav_raises(tmp_path):
 
 
 def test_engine_bool_shadow_nav_raises(tmp_path):
-    # bool is a subclass of int/float — must be rejected, not silently accepted as 1.
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, "[zcrypto.engine]\nshadow_nav_eur = true\n"))
 
 
 @pytest.mark.parametrize("literal", ["nan", "inf", "-inf"])
 def test_engine_non_finite_shadow_nav_raises(tmp_path, literal):
-    # `nan`/`inf` are valid TOML floats and `nan <= 0` is False, so they cleared the positivity
-    # check. The cycle writer would then fail its record's validation AFTER appending its orders,
-    # leaving an orders block with no cycle record behind it -- so this must fail at load.
+    # `nan <= 0` is False: positivity alone admits nan and inf, so finiteness is its own check.
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, f"[zcrypto.engine]\nshadow_nav_eur = {literal}\n"))
 
@@ -161,13 +156,11 @@ def test_engine_shadow_nav_accepts_float(tmp_path):
 
 
 def test_engine_exec_enabled_int_raises(tmp_path):
-    # exec_enabled must be a real bool — 1 is not accepted as truthy.
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, "[zcrypto.engine]\nexec_enabled = 1\n"))
 
 
 def test_engine_settle_delay_secs_bool_raises(tmp_path):
-    # bool is a subclass of int — must be rejected, not silently accepted as 1.
     with pytest.raises(ConfigError):
         load_config(_write(tmp_path, "[zcrypto.engine]\nsettle_delay_secs = true\n"))
 
@@ -219,9 +212,7 @@ def test_exec_max_plan_notional_eur_reads_a_set_value(tmp_path):
 
 def test_exec_max_plan_notional_eur_rejects_a_non_number_non_positive_or_bool(tmp_path):
     cfg_path = tmp_path / "zcrypto.toml"
-    # nan/inf are real TOML float literals; nan defeats every "<= 0" comparison (always False) and
-    # inf disables the blast-radius bound entirely (nothing compares as "exceeding" it) -- both
-    # must be refused explicitly, not admitted as "positive".
+    # nan and inf are real TOML float literals, and both pass a bare positivity check.
     for bad in ('"nope"', "0", "true", "nan", "inf"):
         cfg_path.write_text(f"[zcrypto.engine]\nexec_max_plan_notional_eur = {bad}\n")
         with pytest.raises(ConfigError, match="must be a positive number"):
@@ -244,9 +235,7 @@ def test_tracking_band_bps_reads_a_set_value(tmp_path):
 
 def test_tracking_band_bps_rejects_a_non_number_non_positive_or_bool(tmp_path):
     cfg_path = tmp_path / "zcrypto.toml"
-    # `exec_max_plan_notional_eur`'s reasoning, in the opposite direction: nan defeats every
-    # `mean > band` comparison (always False) and silently disarms the trip, inf does the same
-    # explicitly, and zero or a negative band would trip on the first week ever scored.
+    # nan or inf disarms the trip while looking configured; zero or a negative band trips on the first week scored.
     for bad in ('"nope"', "0", "-1.0", "true", "nan", "inf"):
         cfg_path.write_text(f"[zcrypto.engine]\ntracking_band_bps = {bad}\n")
         with pytest.raises(ConfigError, match="must be a positive number"):
@@ -256,8 +245,7 @@ def test_tracking_band_bps_rejects_a_non_number_non_positive_or_bool(tmp_path):
 def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     """The blast-radius bound must appear in a converge diff, exactly like exec_armed."""
     text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
-    # Parsed, not substring: a commented-out line satisfies containment, and `100.01` contains
-    # `100.0`. This is the live trade path's blast-radius cap -- it must be the real setting.
+    # Parsed, not substring: a commented-out line satisfies containment, and `100.01` contains `100.0`.
     assert any(ln.strip() == "exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}" for ln in text.splitlines()), (
         "the cap is not rendered into the engine config"
     )
@@ -266,7 +254,7 @@ def test_the_engine_role_template_renders_the_plan_cap_explicitly():
 
 
 def test_committed_zcrypto_toml_has_no_engine_table():
-    # the committed config stays unchanged — EngineConfig defaults live in code (spec precedent).
+    # EngineConfig's defaults live in code; the committed zcrypto.toml carries no engine table to shadow them.
     cfg = load_config(Path("zcrypto.toml"))
     assert cfg.engine == EngineConfig()
 
@@ -284,7 +272,6 @@ def test_resolve_ohlcvt_source_dir_flag_wins(tmp_path):
 def test_resolve_ohlcvt_source_dir_derives_from_nfs_mount(tmp_path):
     cfg = load_config(_write(tmp_path, '[zcrypto]\nnfs_mount_dir = "/mnt/nas"\n'))
     assert resolve_ohlcvt_source_dir(None, cfg) == Path("/mnt/nas/kraken-ohlcvt-updates")
-    # and with no config at all, from the default mount root
     assert resolve_ohlcvt_source_dir(None, load_config(tmp_path / "absent.toml")) == Path("/mnt/zhao-crypto/kraken-ohlcvt-updates")
 
 
@@ -321,7 +308,7 @@ def test_data_config_parses_all_keys(tmp_path):
 
 def test_data_config_unknown_key_raises(tmp_path):
     with pytest.raises(ConfigError, match="unknown key"):
-        load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = "x"\n'))  # hot_dir is now removed → unknown
+        load_config(_write(tmp_path, '[zcrypto.data]\nhot_dir = "x"\n'))
 
 
 def test_data_config_rejects_bad_types(tmp_path):

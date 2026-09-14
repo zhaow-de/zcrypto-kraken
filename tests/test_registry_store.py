@@ -17,7 +17,7 @@ _BLOCK = {
 
 
 def _line(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
-    # Pinned to a literal 3: this is the v3-semantics helper -- a v4 body would need a `datasets` block.
+    # The v3 helper: a literal 3, not SCHEMA_VERSION -- a v4 body would need a `datasets` block.
     body = dict(
         trial_id=trial_id,
         schema_version=3,
@@ -38,7 +38,6 @@ def _line(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
 
 
 def _line_v2(trial_id, family="A1", n=1, metrics=None, prev_hash=GENESIS_HASH):
-    # Mimics the pre-v3 writer: hardcodes schema_version=2, never emits a `variant` key.
     body = dict(
         trial_id=trial_id,
         schema_version=2,
@@ -95,9 +94,9 @@ def test_bare_nan_token_line_raises(tmp_path):
 
 def test_contiguity_violation_raises(tmp_path):
     with pytest.raises(RegistryCorruptionError):
-        TrialRegistry(_write(tmp_path, [_line(1), _line(3)]))  # gap
+        TrialRegistry(_write(tmp_path, [_line(1), _line(3)]))
     with pytest.raises(RegistryCorruptionError):
-        TrialRegistry(_write(tmp_path, [_line(2), _line(1)]))  # reorder
+        TrialRegistry(_write(tmp_path, [_line(2), _line(1)]))
 
 
 def test_record_hash_mismatch_raises(tmp_path):
@@ -111,13 +110,13 @@ def test_torn_trailing_line_self_heals(tmp_path):
     p = _write(tmp_path, [_line(1)])
     with p.open("a", encoding="utf-8") as f:
         f.write('{"trial_id":2,"fam')  # crash mid-append, NO trailing newline
-    reg = TrialRegistry(p)  # heals, does not raise
+    reg = TrialRegistry(p)
     assert len(reg) == 1
     assert p.read_text(encoding="utf-8").endswith("}\n")  # partial line physically truncated
 
 
 def test_torn_interior_line_raises(tmp_path):
-    # same partial content but as an INTERIOR line (file ends in newline) -> body corruption, must raise
+    # the same torn content as an INTERIOR line: only a trailing line can be a torn append
     with pytest.raises(RegistryCorruptionError):
         TrialRegistry(_write(tmp_path, ['{"trial_id":1,"fam', _line(2)]))
 
@@ -143,7 +142,7 @@ def test_unknown_schema_version_raises(tmp_path):
         TrialRegistry(_write(tmp_path, [line]))
 
 
-COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: run_ref is now required to name one
+COMMITTED_PATH = "cli/registry/record.py"  # a real, git-tracked file: run_ref must name one
 
 
 def _append(reg, **over):
@@ -166,16 +165,16 @@ def test_append_assigns_contiguous_ids_across_reopen(tmp_path):
     p = tmp_path / "t.jsonl"
     r1 = _append(TrialRegistry(p))
     assert r1.trial_id == 1 and r1.record_hash and r1.timestamp.endswith("+00:00")
-    r2 = _append(TrialRegistry(p))  # fresh registry, same path
+    r2 = _append(TrialRegistry(p))
     assert r2.trial_id == 2
-    assert len(TrialRegistry(p)) == 2  # reload verifies all asserts
+    assert len(TrialRegistry(p)) == 2
 
 
 def test_append_rejects_nonfinite_before_writing(tmp_path):
     p = tmp_path / "t.jsonl"
     with pytest.raises(RegistryError):
         _append(TrialRegistry(p), metrics={"dsr": float("nan")})
-    assert not p.exists() or p.read_text() == ""  # nothing was written
+    assert not p.exists() or p.read_text() == ""
 
 
 def test_append_family_count_floor(tmp_path):
@@ -188,12 +187,12 @@ def test_append_family_count_floor(tmp_path):
 def test_append_then_records_snapshot(tmp_path):
     reg = TrialRegistry(tmp_path / "t.jsonl")
     _append(reg)
-    assert reg.records[-1].trial_id == 1  # in-memory cache updated
+    assert reg.records[-1].trial_id == 1
 
 
 def test_concurrent_registries_get_unique_ids(tmp_path):
     p = tmp_path / "t.jsonl"
-    a, b = TrialRegistry(p), TrialRegistry(p)  # both see empty
+    a, b = TrialRegistry(p), TrialRegistry(p)
     _append(a)
     _append(b)  # b re-reads under lock -> id 2, not a duplicate 1
     ids = sorted(r.trial_id for r in TrialRegistry(p).records)
@@ -203,11 +202,11 @@ def test_concurrent_registries_get_unique_ids(tmp_path):
 def test_append_after_torn_trailing_line_self_heal(tmp_path):
     p = _write(tmp_path, [_line(1)])
     with p.open("a", encoding="utf-8") as f:
-        f.write('{"trial_id":2,"fam')  # crash mid-append, NO trailing newline
-    reg = TrialRegistry(p)  # heals to len 1, does not raise
+        f.write('{"trial_id":2,"fam')  # torn append: no trailing newline
+    reg = TrialRegistry(p)
     r = _append(reg, family="B1", n_trials_in_family=1)  # 1st in a fresh family -> floor OK
     assert r.trial_id == 2
-    assert len(TrialRegistry(p)) == 2  # reload confirms the registry stayed appendable
+    assert len(TrialRegistry(p)) == 2
 
 
 def test_chain_links_are_written(tmp_path):
@@ -226,8 +225,8 @@ def test_rehashing_tamper_of_middle_record_is_caught(tmp_path):
     _append(reg, family="A", n_trials_in_family=2)
     _append(reg, family="A", n_trials_in_family=3)
     lines = reg.path.read_text().splitlines()
-    rec = json.loads(lines[1])  # record 2 (trial_id 2)
-    rec["metrics"] = {**rec["metrics"], "sharpe": 999.0}  # tamper a metric
+    rec = json.loads(lines[1])
+    rec["metrics"] = {**rec["metrics"], "sharpe": 999.0}
     body = {k: v for k, v in rec.items() if k != "record_hash"}
     rec["record_hash"] = compute_hash(body)  # re-hash so the SELF-hash check passes
     lines[1] = canonical_json(rec)
@@ -246,7 +245,7 @@ def test_metric_tamper_without_rehash_still_caught(tmp_path):
     lines[0] = canonical_json(rec)
     reg.path.write_text("\n".join(lines) + "\n")
     with pytest.raises(RegistryCorruptionError):
-        TrialRegistry(reg.path)  # existing self-hash check fires
+        TrialRegistry(reg.path)
 
 
 def test_deleting_middle_record_is_caught(tmp_path):
@@ -278,7 +277,7 @@ def test_schema_version_1_record_is_rejected(tmp_path):
 def test_chain_continues_across_registry_instances(tmp_path):
     reg = _new_registry(tmp_path)
     last = _append(reg, family="A", n_trials_in_family=1)
-    reg2 = TrialRegistry(reg.path)  # reopen
+    reg2 = TrialRegistry(reg.path)
     nxt = _append(reg2, family="A", n_trials_in_family=2)
     assert nxt.prev_hash == last.record_hash
 
@@ -300,7 +299,7 @@ def test_append_without_variant_omits_key_from_raw_line(tmp_path):
     assert r.variant is None
     raw = p.read_text(encoding="utf-8").strip()
     assert '"variant"' not in raw
-    assert len(TrialRegistry(p)) == 1  # loads fine without the key
+    assert len(TrialRegistry(p)) == 1
 
 
 def test_append_rejects_invalid_variant_before_writing(tmp_path):
@@ -314,7 +313,6 @@ def test_append_rejects_invalid_variant_before_writing(tmp_path):
 
 
 def test_mixed_v2_and_v4_file_loads_with_intact_chain(tmp_path):
-    # Two legacy v2 lines plus a freshly appended one, which the writer now emits at schema 4.
     p = tmp_path / "trials.jsonl"
     l1 = _line_v2(1, n=1)
     l2 = _line_v2(2, n=2, prev_hash=_hash_of(l1))
@@ -326,7 +324,7 @@ def test_mixed_v2_and_v4_file_loads_with_intact_chain(tmp_path):
     assert r3.trial_id == 3
     assert r3.prev_hash == _hash_of(l2)
 
-    fresh = TrialRegistry(p)  # fresh instance re-reads and re-validates the whole file
+    fresh = TrialRegistry(p)
     assert [r.trial_id for r in fresh.records] == [1, 2, 3]
     assert fresh.records[0].schema_version == 2 and fresh.records[1].schema_version == 2
     assert fresh.records[2].schema_version == SCHEMA_VERSION
@@ -337,7 +335,7 @@ def test_mixed_v2_and_v4_file_loads_with_intact_chain(tmp_path):
 
 def test_v2_record_with_variant_key_is_corruption(tmp_path):
     body = json.loads(_line_v2(1, n=1))
-    body["variant"] = "A2-donchian"  # a v2 record must never carry this key
+    body["variant"] = "A2-donchian"
     tampered = canonical_json(dict(body, record_hash=compute_hash({k: v for k, v in body.items() if k != "record_hash"})))
     with pytest.raises(RegistryCorruptionError):
         TrialRegistry(_write(tmp_path, [tampered]))
@@ -346,11 +344,11 @@ def test_v2_record_with_variant_key_is_corruption(tmp_path):
 def test_v3_record_with_nonstr_variant_is_corruption(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
+        schema_version=3,
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
-        variant=42,  # non-str
+        variant=42,
         spec_hash="s",
         dataset_hash="d",
         seeds=[0],
@@ -369,7 +367,7 @@ def test_v3_record_with_nonstr_variant_is_corruption(tmp_path):
 def test_v3_unknown_key_forge_is_corruption(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
+        schema_version=3,
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -383,7 +381,7 @@ def test_v3_unknown_key_forge_is_corruption(tmp_path):
         run_ref=None,
         notes="",
         prev_hash=GENESIS_HASH,
-        variannt="x",  # misspelled forge, not a real field
+        variannt="x",  # deliberately misspelled
     )
     line = canonical_json(dict(body, record_hash=compute_hash(body)))
     with pytest.raises(RegistryCorruptionError):
@@ -392,7 +390,7 @@ def test_v3_unknown_key_forge_is_corruption(tmp_path):
 
 def test_v2_unknown_key_forge_is_corruption(tmp_path):
     body = json.loads(_line_v2(1, n=1))
-    body["extra_key"] = 1  # unknown key, not part of any v2 field set
+    body["extra_key"] = 1
     tampered = canonical_json(dict(body, record_hash=compute_hash({k: v for k, v in body.items() if k != "record_hash"})))
     with pytest.raises(RegistryCorruptionError):
         TrialRegistry(_write(tmp_path, [tampered]))
@@ -401,7 +399,7 @@ def test_v2_unknown_key_forge_is_corruption(tmp_path):
 def test_missing_base_key_is_corruption(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
+        schema_version=3,
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -423,7 +421,7 @@ def test_missing_base_key_is_corruption(tmp_path):
 def test_v3_without_variant_still_loads(tmp_path):
     body = dict(
         trial_id=1,
-        schema_version=3,  # v3 semantics: a v4 body would need a `datasets` block
+        schema_version=3,
         timestamp="2026-07-07T00:00:00+00:00",
         iteration="iter-001",
         family="A1",
@@ -447,7 +445,7 @@ def test_variant_tamper_without_rehash_is_caught(tmp_path):
     _append(reg, family="A", n_trials_in_family=1, variant="v1")
     lines = reg.path.read_text().splitlines()
     rec = json.loads(lines[0])
-    rec["variant"] = "tampered"  # no re-hash
+    rec["variant"] = "tampered"
     lines[0] = canonical_json(rec)
     reg.path.write_text("\n".join(lines) + "\n")
     with pytest.raises(RegistryCorruptionError):
@@ -455,22 +453,21 @@ def test_variant_tamper_without_rehash_is_caught(tmp_path):
 
 
 def test_live_registry_file_loads_clean():
-    # Read-only: exercises the v2/v3 loader against the real, committed registry. Never write to this file.
-    # The registry is append-only, so records 1-32 (the pre-v3 era) are a frozen historical fact asserted
-    # verbatim; the total count grows with every registered trial and is only floored, never pinned.
+    # Read-only: never write to this file. Records 1-32 predate schema 3 and are asserted verbatim;
+    # the count is floored, never pinned, because the file grows with every registered trial.
     reg = TrialRegistry(Path(__file__).resolve().parents[1] / "docs" / "reference" / "trial-registry.jsonl")
     assert len(reg) >= 33  # 32 pre-v3 + the first v3-era record (iter-059, P1)
     pre_v3 = reg.records[:32]
     assert all(r.schema_version == 2 for r in pre_v3)
-    assert all(r.variant is None for r in pre_v3)  # pre-v3 records; variant-25..32 lives in `notes` only
-    assert all(r.schema_version >= 3 for r in reg.records[32:])  # everything after landed on schema v3+
+    assert all(r.variant is None for r in pre_v3)  # trials 25-32 carry their variant in `notes` only
+    assert all(r.schema_version >= 3 for r in reg.records[32:])
 
 
 def test_append_records_a_committed_run_ref_end_to_end(tmp_path):
     p = tmp_path / "t.jsonl"
     r = _append(TrialRegistry(p), n_trials_in_family=1, run_ref=COMMITTED_PATH)
     assert r.run_ref == COMMITTED_PATH
-    assert TrialRegistry(p).records[0].run_ref == COMMITTED_PATH  # survives the reload + re-validation
+    assert TrialRegistry(p).records[0].run_ref == COMMITTED_PATH
 
 
 def test_append_rejects_unprovenanced_run_ref_before_writing(tmp_path):
@@ -478,11 +475,11 @@ def test_append_rejects_unprovenanced_run_ref_before_writing(tmp_path):
         p = tmp_path / f"t{hash(str(bad))}.jsonl"
         with pytest.raises(RegistryError):
             _append(TrialRegistry(p), n_trials_in_family=1, run_ref=bad)
-        assert not p.exists() or p.read_text() == ""  # fail rather than be recorded
+        assert not p.exists() or p.read_text() == ""
 
 
 def test_append_requires_run_ref_explicitly(tmp_path):
-    # No default: omitting run_ref is a TypeError at the call, not a silently-recorded null.
+    # keyword-only with no default: omitting run_ref is a TypeError, not a recorded null
     reg = TrialRegistry(tmp_path / "t.jsonl")
     with pytest.raises(TypeError):
         reg.append(
@@ -501,7 +498,7 @@ def test_variant_does_not_affect_family_budget_monotonic_check(tmp_path):
     p = tmp_path / "t.jsonl"
     reg = TrialRegistry(p)
     _append(reg, family="A1", n_trials_in_family=1, variant="v1")
-    with pytest.raises(RegistryError):  # 2nd in A1 needs >= 2, regardless of a different variant
+    with pytest.raises(RegistryError):
         _append(reg, family="A1", n_trials_in_family=1, variant="v2")
     r2 = _append(reg, family="A1", n_trials_in_family=2, variant="v2")
     assert r2.trial_id == 2
@@ -526,7 +523,7 @@ def test_a_schema_four_record_round_trips_through_disk(tmp_path):
 
 
 def test_different_file_sets_give_different_digests(tmp_path):
-    """The slice IS the file list: daily-only vs daily+4h differ by construction (D2)."""
+    """The slice IS the file list: daily-only vs daily+4h differ by construction (spec 00086 D2)."""
     reg = _new_registry(tmp_path)
     daily = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
     both_files = {**_BLOCK["files"], "BTC/EUR/240.parquet": "d" * 64}
@@ -535,7 +532,7 @@ def test_different_file_sets_give_different_digests(tmp_path):
 
 
 def test_a_windowed_read_gives_a_different_digest(tmp_path):
-    """The sample window is expressible (D2): same files, different rows/span, different digest."""
+    """The sample window is expressible (spec 00086 D2): same files, different rows/span, different digest."""
     reg = _new_registry(tmp_path)
     full = _append(reg, family="A", n_trials_in_family=1, datasets={"ohlc-test": dict(_BLOCK)})
     windowed = _append(
@@ -572,8 +569,8 @@ def _schema4_line(**over):
 @pytest.mark.parametrize(
     "over, match",
     [
-        ({"dataset_hash": "deadbeef" * 8}, "dataset_hash"),  # D4: derivation, not a caller claim
-        ({"datasets": "ba47e37e"}, "datasets must be a non-empty dict"),  # the original failure, verbatim
+        ({"dataset_hash": "deadbeef" * 8}, "dataset_hash"),  # spec 00086 D3: derived, never claimed
+        ({"datasets": "ba47e37e"}, "datasets must be a non-empty dict"),  # a digest where the block belongs
         ({"datasets": {}}, "datasets must be a non-empty dict"),  # empty carries no provenance
         ({"datasets": {"ohlc-test": {**_BLOCK, "files": {}}}}, "files"),  # says nothing
         ({"datasets": {"ohlc-test": {**_BLOCK, "files": {"a.parquet": "C" * 64}}}}, "files"),  # uppercase hex
@@ -591,7 +588,7 @@ def _schema4_line(**over):
     ],
 )
 def test_a_forged_schema_four_record_is_rejected_at_load(tmp_path, over, match):
-    """D4/D2: the invariant is a property of the FILE, not of append()."""
+    """spec 00086 D4: the invariant is a property of the FILE, not of append()."""
     with pytest.raises(RegistryCorruptionError, match=match):
         TrialRegistry(_write(tmp_path, [_schema4_line(**over)]))
 
@@ -606,9 +603,9 @@ def test_a_schema_four_record_missing_datasets_entirely_is_rejected(tmp_path):
 
 @pytest.mark.parametrize("bad", ["", 123])
 def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_path, bad):
-    """This check ran on EVERY load via `validate_caller_fields` until the key became store-owned;
-    nothing else covers schema 2/3, so unless re-homed the guard lapses silently."""
-    body = json.loads(_line(1))  # the schema-3 helper, pinned to a literal 3 in Step 4
+    """spec 00086 D4: a schema-2/3 record has no `datasets` block to derive from, so the non-empty-str
+    check at load is the only one its `dataset_hash` gets."""
+    body = json.loads(_line(1))
     del body["record_hash"]
     body["dataset_hash"] = bad
     with pytest.raises(RegistryError, match="dataset_hash"):
@@ -616,7 +613,8 @@ def test_a_stored_schema_three_dataset_hash_must_still_be_a_nonempty_str(tmp_pat
 
 
 def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
-    """D4: what actually binds record 47 — built on the REAL 46 records (read-only)."""
+    """spec 00086 D4: the floor at trial 46 binds the record after the last real one -- built on the
+    real file, read-only."""
     real = _REGISTRY.read_text(encoding="utf-8").splitlines()
     prev = json.loads(real[-1])
 
@@ -647,7 +645,7 @@ def test_a_record_past_the_legacy_floor_must_declare_schema_four(tmp_path):
     v3 = json.loads(_line47())
     del v3["datasets"], v3["record_hash"]
     v3["schema_version"] = 3
-    v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # verbatim
+    v3["dataset_hash"] = "ba47e37e2601d6098fd13c0e338a5301e8eeebb16bb4341c76a68147c7b08e42"  # spec 00086 D4's own example
     forged = canonical_json(dict(v3, record_hash=compute_hash(v3)))
     with pytest.raises(RegistryCorruptionError, match="schema_version"):
         TrialRegistry(_write(tmp_path, [*real, forged]))
