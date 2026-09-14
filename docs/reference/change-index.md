@@ -1,14 +1,14 @@
 # Change index
 
-One row per merged pull request that carries at least one key. A key is an `iter-NNN` iteration serial, a 5-digit spec serial, or a `T<NNNN>` topic id, an iteration serial read from the pull request's own title and branch name, a spec serial or topic id from those and its `## Spec / Plan` section — never from a sentence citing an earlier iteration as a precedent, which is a cross-reference, not a delivery — a topic key case-insensitively, since a branch spells it `t0189`, and written with an upper-case T; a cell with no key of that kind is an em dash. The backfilled rows also drew on two sources a pull request does not hold — the iterations-history entry git keeps for the row's iteration, and the trial registry's `spec_hash` resolved through the digest of the spec file it pins — so a cell can name a spec or topic the title does not spell. No file path appears in this file (`test_change_index` asserts it), so a rename sweep has nothing to edit here — a path-shaped title has its `/` written as `-`, a bare `long/flat` keeps it, and titles are truncated to 72 characters. `date` is the date the pull request was created, UTC — the day the row is written. Rows are sorted by pull-request number ascending. The row is written by the `open-pr` skill when the pull request is created, which is also where an iteration's serial comes from: this file's highest `iter` plus one. `test_change_index` guards its shape and its completeness against git.
+One row per merged pull request that carries at least one key. A key is an `iter-NNN` iteration serial, a 5-digit spec serial, or a `T<NNNN>` topic id, an iteration serial read from the pull request's own title and branch name, a spec serial or topic id from those and its `## Spec / Plan` section — never from a sentence citing an earlier iteration as a precedent, and never a topic the pull request only registers — both are cross-references, not deliveries, and a registration is what the topic index records — a topic key case-insensitively, since a branch spells it `t0189`, and written with an upper-case T; a cell with no key of that kind is an em dash. The backfilled rows also drew on two sources a pull request does not hold — the iterations-history entry git keeps for the row's iteration, and the trial registry's `spec_hash` resolved through the digest of the spec file it pins — so a cell can name a spec or topic the title does not spell. No file path appears in this file (`test_change_index` asserts it), so a rename sweep has nothing to edit here — a path-shaped title has its `/` written as `-`, a bare `long/flat` keeps it, and titles are truncated to 72 characters. `date` is the date the pull request was created, UTC — the day the row is written. Rows are sorted by pull-request number ascending. The row is written by the `open-pr` skill when the pull request is created, which is also where an iteration's serial comes from: this file's highest `iter` plus one. `test_change_index` guards its shape and its completeness against git.
 
 | PR | date | title | iter | spec | topic |
 |---|---|---|---|---|---|
-| #3 | 2026-07-07 | feat(registry): iter-1 — trial registry (Phase 0 P0-1) | iter-001 | 00000 | T0000 |
+| #3 | 2026-07-07 | feat(registry): iter-1 — trial registry (Phase 0 P0-1) | iter-001 | 00000 | — |
 | #4 | 2026-07-07 | feat(snapshot): iter-2 — Kraken reference-data snapshot register (Phase | iter-002 | 00001 | T0000 |
 | #5 | 2026-07-07 | docs(research): iter-3 — NautilusTrader Kraken adapter smoke-test memo ( | iter-003 | — | T0000 |
-| #6 | 2026-07-07 | feat(ohlc): iter-4 — OHLC ingestion → canonical Parquet (Phase 1 v0) | iter-004 | 00002 | T0001 |
-| #7 | 2026-07-07 | feat(universe): iter-5 — rule-driven universe finalization (Phase 1) | iter-005 | 00003 | T0002 |
+| #6 | 2026-07-07 | feat(ohlc): iter-4 — OHLC ingestion → canonical Parquet (Phase 1 v0) | iter-004 | 00002 | — |
+| #7 | 2026-07-07 | feat(universe): iter-5 — rule-driven universe finalization (Phase 1) | iter-005 | 00003 | — |
 | #8 | 2026-07-07 | feat(ohlc): iter-6 — OHLC dataset QA report (Phase 1) | iter-006 | 00004 | — |
 | #9 | 2026-07-07 | chore: resolve open topics T0000–T0002 (T0002 done; T0000/T0001 partial) | — | — | T0000, T0001, T0002 |
 | #12 | 2026-07-07 | feat(backfill): iter-8 — full-history OHLCVT backfill from Kraken 1-minu | iter-008 | 00005 | T0001 |
@@ -19,7 +19,7 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #18 | 2026-07-07 | feat(validation): iter-13 — CPCV splitter (purge + embargo) | iter-013 | 00006 | — |
 | #19 | 2026-07-07 | feat(validation): iter-14 — deflated & probabilistic Sharpe ratio | iter-014 | 00007 | — |
 | #20 | 2026-07-07 | feat(validation): iter-15 — PBO (probability of backtest overfitting) | iter-015 | 00008 | — |
-| #21 | 2026-07-08 | feat(validation): iter-16 — stationary block bootstrap CIs | iter-016 | 00009 | T0006 |
+| #21 | 2026-07-08 | feat(validation): iter-16 — stationary block bootstrap CIs | iter-016 | 00009 | — |
 | #22 | 2026-07-08 | feat(costs): iter-17 — Kraken cost model (fees + margin) | iter-017 | 00010 | — |
 | #23 | 2026-07-08 | feat(validation): iter-18 — performance statistics | iter-018 | 00011 | — |
 | #24 | 2026-07-08 | feat(registry): iter-19 — trial-registry hash chain | iter-019 | 00012 | — |
@@ -33,7 +33,7 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #33 | 2026-07-08 | feat(benchmark): iter-27 — 200-day regime gate (prior survivor) | iter-027 | 00019 | — |
 | #34 | 2026-07-08 | docs(benchmark): iter-28 — gated BTC benchmark panel | iter-028 | 00020 | — |
 | #35 | 2026-07-08 | feat(benchmark): iter-29 — §9.6 cost-stress panel on the BTC benchmarks | iter-029 | 00021 | — |
-| #36 | 2026-07-08 | feat(benchmark): iter-30 — inverse-vol majors basket generator (B2) | iter-030 | 00022 | T0007 |
+| #36 | 2026-07-08 | feat(benchmark): iter-30 — inverse-vol majors basket generator (B2) | iter-030 | 00022 | — |
 | #37 | 2026-07-08 | feat(benchmark): iter-31 — B2 inverse-vol basket bar-to-beat (basket vs | iter-031 | 00023 | T0007 |
 | #38 | 2026-07-08 | feat(benchmark): iter-32 — complete the basket family (B3 gate + B4 shor | iter-032 | 00024 | T0010 |
 | #39 | 2026-07-08 | feat(benchmark): iter-33 — bootstrap-CI significance sections (Phase-3 e | iter-033 | 00025 | T0007 |
@@ -61,12 +61,12 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #71 | 2026-07-09 | docs(research): iter-53 — A2 kill-bar verdict + two instrument findings | iter-053 | 00033 | T0009, T0011 |
 | #72 | 2026-07-09 | feat(alpha): iter-54 — benchmark-relative worst-slice diagnostic | iter-054 | — | T0009 |
 | #74 | 2026-07-09 | docs(research): iter-55 — dynamic B3/B4 catch-up; the benchmark family r | iter-055 | — | T0010 |
-| #75 | 2026-07-09 | feat(registry): iter-56 — schema v3, first-class variant field (T0013) | iter-056 | — | T0013, T0015 |
-| #76 | 2026-07-09 | docs(research): iter-57 — phase-4 close-out, decisions drain, T0016 | iter-057 | — | T0016 |
+| #75 | 2026-07-09 | feat(registry): iter-56 — schema v3, first-class variant field (T0013) | iter-056 | — | T0013 |
+| #76 | 2026-07-09 | docs(research): iter-57 — phase-4 close-out, decisions drain, T0016 | iter-057 | — | — |
 | #77 | 2026-07-09 | feat(risk): iter-58 — §10 drawdown governor + threshold backtest on the | iter-058 | 00034 | — |
 | #78 | 2026-07-09 | feat(risk): iter-59 — combination trial P1 adopted (cap + governor on th | iter-059 | 00035 | T0016 |
 | #79 | 2026-07-09 | docs(research): iter-60 — phase-5 stress suite on the adopted combined s | iter-060 | — | T0010, T0016 |
-| #80 | 2026-07-09 | docs(research): iter-61 — final system spec, runbook draft & pre-registe | iter-061 | — | T0017 |
+| #80 | 2026-07-09 | docs(research): iter-61 — final system spec, runbook draft & pre-registe | iter-061 | — | — |
 | #81 | 2026-07-09 | feat(registry): iter-62 — exact key-set validation (T0015) | iter-062 | — | T0013, T0015 |
 | #82 | 2026-07-09 | feat(portfolio): iter-63 — combined-system builder (record 33's pipeline | iter-063 | 00036 | — |
 | #83 | 2026-07-09 | docs(research): iter-64 — holdout-procedure dry-run; paired-index CI con | iter-064 | — | — |
@@ -83,50 +83,49 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #97 | 2026-07-10 | docs(research): iter-76 — cross-frequency combination design (T0011 unbl | iter-076 | 00038 | T0011 |
 | #98 | 2026-07-10 | feat(portfolio): iter-77 — cross-frequency helpers (daily→intraday expan | iter-077 | 00038 | — |
 | #99 | 2026-07-10 | docs(research): iter-78 — night-audit fixes (T0011 index sync) | iter-078 | — | T0011 |
-| #101 | 2026-07-10 | feat(config): iter-079 — phase-6 kickoff: adapter verification, key cere | iter-079 | 00039 | T0005, T0014, T0018 |
-| #102 | 2026-07-10 | feat(portfolio): iter-080 — cross-frequency combination adopted (trial 4 | iter-080 | 00037, 00038 | T0009, T0011, T0017, T0018, T0019 |
+| #101 | 2026-07-10 | feat(config): iter-079 — phase-6 kickoff: adapter verification, key cere | iter-079 | 00039 | T0005, T0014 |
+| #102 | 2026-07-10 | feat(portfolio): iter-080 — cross-frequency combination adopted (trial 4 | iter-080 | 00037, 00038 | T0009, T0011, T0017, T0018 |
 | #103 | 2026-07-10 | feat(portfolio): iter-081 — fixed-weight combination adopted (trial 44) | iter-081 | 00038 | T0018, T0019 |
 | #104 | 2026-07-10 | feat(portfolio): iter-082 — record-44 builder + concordance core | iter-082 | 00040 | — |
 | #105 | 2026-07-10 | feat(engine): iter-083 — the shadow node (store, cycle, node, CLI) + wor | iter-083 | 00041 | T0018 |
-| #106 | 2026-07-11 | feat(engine): iter-084 — the engine on the VPS (role, watchdog, gate ops | iter-084 | 00042, 00043 | T0018, T0020, T0021 |
+| #106 | 2026-07-11 | feat(engine): iter-084 — the engine on the VPS (role, watchdog, gate ops | iter-084 | 00042, 00043 | T0018 |
 | #107 | 2026-07-11 | feat(backfill): iter-085 — the 15m bar substrate for Bucket B (T0012) | iter-085 | 00044 | T0012, T0022 |
-| #108 | 2026-07-11 | feat(alpha): iter-086 — B1 family opening (conditioning overlay; trial 4 | iter-086 | 00045 | T0016, T0022 |
+| #108 | 2026-07-11 | feat(alpha): iter-086 — B1 family opening (conditioning overlay; trial 4 | iter-086 | 00045 | T0016 |
 | #109 | 2026-07-11 | feat(alpha): iter-087 — B1 trial 46 (window-only, reject); both overlay | iter-087 | 00045 | T0022 |
 | #110 | 2026-07-11 | feat(risk): iter-088 — §10 portfolio limits (gross, net band, margin flo | iter-088 | 00046 | T0016 |
-| #111 | 2026-07-11 | docs(open-topics): iter-089 — T0023 B2 derivatives-positioning data sour | iter-089 | — | T0023 |
+| #111 | 2026-07-11 | docs(open-topics): iter-089 — T0023 B2 derivatives-positioning data sour | iter-089 | — | — |
 | #112 | 2026-07-11 | feat(derivatives): iter-090 — B2 funding substrate (Binance Vision backf | iter-090 | 00047 | T0023 |
-| #116 | 2026-07-12 | feat(config): iter-093 — three-tier topology Role A (always-on NAS pull/ | iter-093 | 00048 | T0003, T0028, T0029 |
+| #116 | 2026-07-12 | feat(config): iter-093 — three-tier topology Role A (always-on NAS pull/ | iter-093 | 00048 | T0003, T0029 |
 | #117 | 2026-07-12 | feat(config): iter-094 — Role B (NAS gate-verify + telemetry) | iter-094 | 00049 | T0003, T0020, T0029, T0030 |
 | #120 | 2026-07-13 | fix(capture): stop the dead-man reporting green while the disk is full ( | — | — | T0032 |
 | #121 | 2026-07-13 | fix(capture): keep the book congruent with Kraken's depth window (T0008) | — | — | T0008 |
 | #122 | 2026-07-14 | fix(capture): make the capture writer restart-safe — T0036/T0037 + T0032 | — | — | T0032, T0035, T0036, T0037 |
 | #123 | 2026-07-14 | docs(infra): spec 00050 v2 — redundant capture rewrite + T0036 resolutio | — | 00050 | T0036 |
-| #127 | 2026-07-14 | feat(infra): iter-096 — Role C redundant capture (spec 00050) (1 of 2) | iter-096 | 00050, 00051 | T0033, T0039 |
-| #129 | 2026-07-15 | feat(infra): iter-097 — ops-node compute tier OPS-1…3 (spec 00051) | iter-097 | 00051 | T0045, T0046, T0047 |
+| #127 | 2026-07-14 | feat(infra): iter-096 — Role C redundant capture (spec 00050) (1 of 2) | iter-096 | 00050, 00051 | T0033 |
+| #129 | 2026-07-15 | feat(infra): iter-097 — ops-node compute tier OPS-1…3 (spec 00051) | iter-097 | 00051 | T0047 |
 | #130 | 2026-07-15 | feat(infra): Grafana alerts to Slack alongside email (T0047, phase one) | — | — | T0047 |
 | #131 | 2026-07-15 | feat(capture): wall-clock hour finalization for sparse segment trees (T0 | — | — | T0046 |
 | #132 | 2026-07-15 | feat(infra): iter-098 — the 1-second L2 primitive panel (spec 00052, OPS | iter-098 | 00052 | T0014 |
-| #133 | 2026-07-15 | docs(open-topics): T0048 — Alloy tailer dies on container recreation | — | — | T0048 |
-| #137 | 2026-07-16 | docs(config): iter-099 — capture exit bar verified, T0003 closed | iter-099 | — | T0003, T0050 |
+| #133 | 2026-07-15 | docs(open-topics): T0048 — Alloy tailer dies on container recreation | — | — | — |
+| #137 | 2026-07-16 | docs(config): iter-099 — capture exit bar verified, T0003 closed | iter-099 | — | T0003 |
 | #138 | 2026-07-16 | feat(trades): iter-100 — REST trade-backfill, a provably complete trade | iter-100 | 00053 | T0052, T0053, T0054 |
 | #139 | 2026-07-16 | refactor(trades): derive the Kraken altname instead of hardcoding it (re | — | 00053 | T0055 |
 | #141 | 2026-07-17 | feat(config): iter-101 — OPS-5 offload + T0058 NFS pivot: the overlay wr | iter-101 | 00054 | T0044, T0056, T0057, T0058, T0059, T0061, T0062 |
 | #143 | 2026-07-17 | fix(liquidations): iter-102 — the poller stops re-submitting at source ( | iter-102 | 00055 | T0060 |
 | #144 | 2026-07-17 | docs(config): resolve T0060 — poller fix deployed to ops and verified | — | 00055 | T0060 |
 | #145 | 2026-07-17 | feat(infra): iter-096 — Role C redundant capture (spec 00050) (2 of 2) | iter-096 | 00050 | T0039 |
-| #146 | 2026-07-17 | docs(config): register T0063 + T0064 + T0065 (strategy-provenance + data | — | — | T0063, T0064, T0065 |
 | #147 | 2026-07-18 | feat(data): iter-103 — OPS-6 Loop: dataset topology + zcrypto data excha | iter-103 | 00056, 00057 | T0067, T0068 |
 | #148 | 2026-07-18 | feat(infra): fleet users/groups migration — ops + capture/engine (spec 0 | — | 00057 | — |
 | #149 | 2026-07-19 | docs(open-topics): pre-6a topic-state sync — T0063 resolved, gate-export | — | — | T0063 |
 | #152 | 2026-07-19 | fix(panel): settle-watermark so an un-healed hour is never permanently c | iter-106 | 00052 | T0014, T0024, T0065, T0066 |
 | #153 | 2026-07-19 | chore(open-topics): resolve T0070 (host-cruft cleaned) + record T0066 op | — | — | T0066, T0070 |
-| #154 | 2026-07-19 | feat(engine): iter-107 — zcrypto engine soak-check (realized-OOS-vs-back | iter-107 | 00058 | T0064, T0072, T0073 |
+| #154 | 2026-07-19 | feat(engine): iter-107 — zcrypto engine soak-check (realized-OOS-vs-back | iter-107 | 00058 | T0064 |
 | #155 | 2026-07-20 | feat(engine): iter-108 — soak-check gates the realized governor/cap fing | iter-108 | 00059 | T0072, T0073 |
 | #156 | 2026-07-20 | docs(open-topics): iter-109 — gate-export profiled, super-linear hypothe | iter-109 | — | T0069 |
-| #157 | 2026-07-20 | feat(engine): iter-110 — gate-export incremental scoring (T0069 structur | iter-110 | 00060 | T0069, T0074 |
+| #157 | 2026-07-20 | feat(engine): iter-110 — gate-export incremental scoring (T0069 structur | iter-110 | 00060 | T0069 |
 | #158 | 2026-07-20 | fix(engine): fold the execution environment into the gate-cache fingerpr | — | 00060 | T0074 |
 | #159 | 2026-07-20 | feat(cli): iter-111 — soak-check's secondary null and instrument-fragili | iter-111 | 00058, 00061 | T0073 |
-| #161 | 2026-07-20 | docs(open-topics): register the gate-guarantee mutation audits (T0075, T | — | — | T0075, T0076 |
+| #161 | 2026-07-20 | docs(open-topics): register the gate-guarantee mutation audits (T0075, T | — | — | — |
 | #162 | 2026-07-20 | test(cli): pin the gate streak threshold and the dead-engine reset (T007 | — | — | T0076 |
 | #163 | 2026-07-20 | docs(open-topics): T0076 → partial after PR #162 | — | — | T0076 |
 | #165 | 2026-07-20 | feat(cli): iter-112 — rotating re-verification so the gate cache never t | iter-112 | 00062 | T0069, T0077 |
@@ -136,15 +135,15 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #173 | 2026-07-21 | fix(trades): total fetch-failed ids in the backfill summary (T0078) | — | — | T0078 |
 | #175 | 2026-07-21 | docs(reference): T0071 — capture-era data-hygiene map (full-window verdi | — | — | T0071 |
 | #176 | 2026-07-21 | feat(infra): T0086 — workspace-transport script (workstation↔ops continu | — | — | T0086 |
-| #177 | 2026-07-21 | docs(open-topics): T0082 — parked-items review closes; T0088 registers t | — | — | T0082, T0088 |
+| #177 | 2026-07-21 | docs(open-topics): T0082 — parked-items review closes; T0088 registers t | — | — | T0082 |
 | #178 | 2026-07-21 | feat(infra): T0079 — per-host Alloy-dark dead-man rules, pushed + live-v | — | — | T0079 |
 | #179 | 2026-07-21 | feat(infra): T0083 — healthchecks retag + the Grafana-hc.io mutual watch | — | — | T0083 |
 | #180 | 2026-07-21 | docs(open-topics): correct T0089 — the log wedge is a marginal race, not | — | — | T0089 |
 | #181 | 2026-07-21 | fix(infra): drop the copytruncate logrotate policy wedging docker's log | — | 00043 | T0089 |
 | #182 | 2026-07-21 | docs(open-topics): retract T0089's byte-offset model, falsified by measu | — | — | T0089 |
 | #183 | 2026-07-21 | fix(infra): repair workspace-transport after its first real run + 13 rev | — | — | T0086 |
-| #184 | 2026-07-22 | feat(costs): calibrate the missing spread term from our own L2 capture ( | iter-114 | 00066 | T0014, T0090, T0091 |
-| #185 | 2026-07-22 | feat(universe): iter-115 — retire the spread_cap placeholder with a cali | iter-115 | 00067 | T0014, T0024, T0092, T0093 |
+| #184 | 2026-07-22 | feat(costs): calibrate the missing spread term from our own L2 capture ( | iter-114 | 00066 | T0014 |
+| #185 | 2026-07-22 | feat(universe): iter-115 — retire the spread_cap placeholder with a cali | iter-115 | 00067 | T0014, T0024 |
 | #186 | 2026-07-22 | fix(data): fail closed when the universe rebuild's OHLC set is stale (T0 | — | — | T0093 |
 | #187 | 2026-07-22 | fix(data): make the universe artifact name the OHLC set it was built fro | — | — | T0093 |
 | #190 | 2026-07-22 | feat(logging): iter-116 — direct-ship the app's logs, retire docker.sock | iter-116 | 00068 | — |
@@ -176,17 +175,15 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #226 | 2026-07-29 | fix(config): mount the alloy config directory, so a config change reache | — | 00071 | T0109 |
 | #227 | 2026-07-29 | fix(config): the alloy config that never reached the process — and the s | — | 00073 | T0101, T0109 |
 | #230 | 2026-07-30 | docs(reference): correct the 00075 closeout entry — G2 live in-iteration | — | 00075 | — |
-| #231 | 2026-07-30 | claude(config): refine-rules round 2 — graduations, guard-class sweep, s | — | — | T0111 |
 | #232 | 2026-07-30 | fix(infra): iter closeout — the archive verification instruments, re-fit | — | 00076 | T0097 |
 | #233 | 2026-07-30 | docs(ops): resolve T0032 and close Stage 6a — exit bar derived, residual | — | — | T0032 |
 | #235 | 2026-07-31 | fix(infra): verify-replay pages on NEW breakage, not on exit code (spec | — | 00077 | — |
 | #236 | 2026-08-01 | docs(reference): spec 00077 deploy record — converged, pruned, and an Al | — | 00077 | — |
 | #237 | 2026-08-01 | feat(archive): verify-replay goes incremental — checkpoint raw facts, re | — | 00078 | T0114 |
-| #239 | 2026-08-01 | docs(reference): spec 00078 deploy record + T0115 — converged, verificat | — | 00078 | T0115 |
+| #239 | 2026-08-01 | docs(reference): spec 00078 deploy record + T0115 — converged, verificat | — | 00078 | — |
 | #240 | 2026-08-02 | fix(infra): continuity.py refuses a contaminated tail instead of trustin | — | 00079 | T0112 |
 | #241 | 2026-08-02 | docs(topics): resolve T0043 — loss attribution ruled on measured evidenc | — | — | T0043 |
 | #242 | 2026-08-02 | fix(ohlc): close T0098's three reach-review residuals (spec 00080) | — | 00080 | T0098 |
-| #243 | 2026-08-02 | docs(topics): register the Stage 6b gap set — T0116–T0123 + the executor | — | — | T0116, T0123 |
 | #244 | 2026-08-02 | feat(engine): the two Stage-6b feeder measurements, answered (spec 00081 | — | 00081 | — |
 | #246 | 2026-08-02 | feat(engine): rule T0124 and publish the sleeve-occupancy gauges it requ | — | 00081 | T0124 |
 | #247 | 2026-08-02 | docs(research): ratify the §12 Stage-6b amendment — the three-rung ladde | — | 00081 | T0116, T0124 |
@@ -201,15 +198,14 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #258 | 2026-08-03 | feat(config): iter-124 — converge discipline becomes refusable: wave-1 g | iter-124 | 00082 | T0111 |
 | #259 | 2026-08-03 | docs(reference): record the iter-119 T+24h RSS re-read — flat on both ho | iter-119 | — | T0120, T0121, T0124 |
 | #260 | 2026-08-04 | feat(config): iter-125 — the converge path becomes refusable: wave-2 scr | iter-125 | 00083 | T0111 |
-| #264 | 2026-08-04 | docs(topics): T0126 accepted into T0085's pre-go-live carrier — rotation | — | — | T0085, T0126 |
+| #264 | 2026-08-04 | docs(topics): T0126 accepted into T0085's pre-go-live carrier — rotation | — | — | T0126 |
 | #265 | 2026-08-04 | docs(reference): iter-126 — the reference-data sweep gets a home, a trig | iter-126 | — | T0113 |
 | #267 | 2026-08-05 | docs(infra): iter-125 closeout — both converge paths drilled live, and t | iter-125 | 00082, 00083 | T0111 |
-| #268 | 2026-08-05 | feat(grafana): iter-127 — every family that can page you is visible, and | iter-127 | 00043, 00084 | T0020, T0128, T0129, T0130 |
+| #268 | 2026-08-05 | feat(grafana): iter-127 — every family that can page you is visible, and | iter-127 | 00043, 00084 | T0020, T0129, T0130 |
 | #269 | 2026-08-06 | feat(infra): iter-128 — make the panel regeneration's closing checklist | iter-128 | — | T0111 |
-| #272 | 2026-08-06 | feat(grafana): iter-127 — the rollout: boards, rules and all four conver | iter-127 | 00043, 00084 | T0020, T0128, T0129, T0130 |
+| #272 | 2026-08-06 | feat(grafana): iter-127 — the rollout: boards, rules and all four conver | iter-127 | 00043, 00084 | T0020, T0128 |
 | #273 | 2026-08-06 | feat(capture): iter-129 — resolve the venue pre-drain decision from its | iter-129 | — | T0018, T0105 |
 | #276 | 2026-08-08 | feat(cli): iter-131 — the quote-aware notional ladder and the /BTC sprea | iter-131 | 00085 | T0092 |
-| #277 | 2026-08-08 | docs(reference): the T+24h RSS re-read — converging, not yet dischargeab | — | — | T0131 |
 | #278 | 2026-08-08 | feat(grafana): iter-132 — a dead canary for the engine's log plane | iter-132 | — | T0128 |
 | #279 | 2026-08-09 | docs(reference): discharge the capture bake's RSS residual — no leak | — | — | T0131 |
 | #280 | 2026-08-09 | docs(open-topics): T0018's Stage-6a gate is met — 28 clean days, measure | — | — | T0018 |
@@ -224,12 +220,12 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #293 | 2026-08-13 | feat(universe): iter-137 — the attended refresh, and the legacy fallback | iter-137 | 00093 | T0024, T0065, T0093 |
 | #294 | 2026-08-14 | feat(engine): iter-138 — venue truth: the instrument map, constraint siz | iter-138 | 00089 | T0018, T0130, T0134 |
 | #295 | 2026-08-14 | docs(open-topics): resolve T0136 — the capture bake's RSS residual conve | — | — | T0136 |
-| #297 | 2026-08-15 | feat(engine): iter-139 — the /BTC widening: a twelve-leg symbol-keyed pi | iter-139 | 00094, 00095 | T0018, T0137, T0138, T0139 |
+| #297 | 2026-08-15 | feat(engine): iter-139 — the /BTC widening: a twelve-leg symbol-keyed pi | iter-139 | 00094, 00095 | T0018, T0137 |
 | #299 | 2026-08-17 | docs(reference): record the twelve-leg deploy, and resolve T0139 on the | — | 00094 | T0139 |
-| #301 | 2026-08-18 | feat(engine): iter-140 — the rung-1 order path, the engine's first real | iter-140 | 00088, 00090, 00092, 00094 | T0018, T0120, T0141, T0142 |
+| #301 | 2026-08-18 | feat(engine): iter-140 — the rung-1 order path, the engine's first real | iter-140 | 00088, 00090, 00092, 00094 | T0018, T0120 |
 | #302 | 2026-08-18 | refactor(runbooks): split the runbook by subsystem, and make the README | — | — | T0141 |
 | #305 | 2026-08-20 | docs(reference): the 00090 deploy record, and fleet-pins becomes a state | — | 00090 | — |
-| #306 | 2026-08-20 | feat(archive): iter-141 — a venue-silence discriminator for the residual | iter-141 | 00096 | T0143, T0144 |
+| #306 | 2026-08-20 | feat(archive): iter-141 — a venue-silence discriminator for the residual | iter-141 | 00096 | T0143 |
 | #308 | 2026-08-21 | docs(archive): Kraken published every venue outage days ahead — correct | — | 00096 | T0144 |
 | #312 | 2026-08-21 | docs(reference): the spread calibration discloses both frozen intervals, | — | — | T0146 |
 | #313 | 2026-08-21 | docs(reference): schedule the fleet around Kraken's published maintenanc | — | — | T0145 |
@@ -238,7 +234,7 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #316 | 2026-08-22 | feat(portfolio): trial 43 recovered and absorbed — the 43-vs-44 ordering | — | — | T0148 |
 | #317 | 2026-08-22 | feat(engine): iter-143 — adopted orders' fills become observable, withou | iter-143 | 00098 | T0142 |
 | #318 | 2026-08-22 | docs(engine): the one-sleeve era ended — every number derived under it r | iter-144 | — | T0149 |
-| #320 | 2026-08-23 | feat(engine): iter-145 — the weekly tracking-error report, the ledger re | iter-145 | 00091 | T0090, T0150 |
+| #320 | 2026-08-23 | feat(engine): iter-145 — the weekly tracking-error report, the ledger re | iter-145 | 00091 | T0090 |
 | #321 | 2026-08-23 | feat(engine): 1.231.0 fixes the abort, and its attended order-semantics | — | 00039 | T0115 |
 | #324 | 2026-08-23 | docs(open_topics): T0103 resolves by re-homing its routine — and the dro | — | — | T0103, T0113 |
 | #326 | 2026-08-24 | feat(engine): the cycle record journals the NAV it priced against, and t | — | — | T0150 |
@@ -254,17 +250,17 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #347 | 2026-08-29 | feat(capture): iter-153 — make T0037's accepted residuals observable | iter-153 | 00103 | T0037 |
 | #348 | 2026-08-29 | feat(engine): iter-154 — decompose keeps the whole-book limits' share | iter-154 | — | T0120, T0121, T0124 |
 | #349 | 2026-08-29 | docs(research): iter-155 — the sleeve-promotion path, ruled and then re- | iter-155 | — | T0123 |
-| #350 | 2026-08-29 | docs(open-topics): split T0049 — the drill program (spec 00105) and day- | — | 00104, 00105 | T0049, T0157 |
-| #351 | 2026-08-29 | docs(specs): 00106 — zcrypto engine flatten, the red button; T0158/T0159 | — | 00104, 00105, 00106 | T0158, T0159 |
+| #350 | 2026-08-29 | docs(open-topics): split T0049 — the drill program (spec 00105) and day- | — | 00104, 00105 | T0049 |
+| #351 | 2026-08-29 | docs(specs): 00106 — zcrypto engine flatten, the red button; T0158/T0159 | — | 00104, 00105, 00106 | — |
 | #352 | 2026-08-30 | feat(obs): iter-156 — every alert has a runbook, and a daily pass reads | iter-156 | 00104 | T0157 |
 | #356 | 2026-08-30 | fix(ops_daily): what day one showed, folded back — and T0157 resolved | — | 00104 | T0157 |
 | #357 | 2026-08-30 | feat(ops_daily): iter-157 — the signals that were silently absent | iter-157 | 00107 | T0037 |
 | #361 | 2026-08-31 | docs(plans): point 00040 and 00084 at committed artifacts, not vanished | — | 00040, 00084 | — |
 | #363 | 2026-08-31 | feat(drill_program): iter-158 — the go-live drill program, built and run | iter-158 | 00105 | — |
-| #364 | 2026-09-01 | feat(engine): iter-159 — the red button, one command that flattens the w | iter-159 | 00106 | T0159, T0160 |
+| #364 | 2026-09-01 | feat(engine): iter-159 — the red button, one command that flattens the w | iter-159 | 00106 | T0159 |
 | #368 | 2026-09-01 | feat(engine): iter-160 — the rest-hold plan mode, an order that stays | iter-160 | 00108 | T0158 |
 | #373 | 2026-09-02 | feat(plan_review): iter-162 — the spec+plan review as a skill, battle-te | iter-162 | — | — |
-| #374 | 2026-09-02 | fix(capture): iter-163 — the past-dated detector counts only a never-cap | iter-163 | 00103, 00109 | T0037, T0161 |
+| #374 | 2026-09-02 | fix(capture): iter-163 — the past-dated detector counts only a never-cap | iter-163 | 00103, 00109 | T0037 |
 | #377 | 2026-09-02 | docs(open_topics): T0065's trigger names its source, and separates NAS c | — | — | T0065 |
 | #378 | 2026-09-03 | fix(ops_daily): iter-164 — the daily pass reports what it measured | iter-164 | 00104 | — |
 | #379 | 2026-09-03 | fix(runbooks): iter-165 — the venue-halt prose the fourth Kraken mainten | iter-165 | — | — |
@@ -308,8 +304,6 @@ One row per merged pull request that carries at least one key. A key is an `iter
 | #462 | 2026-09-09 | feat(engine): iter-169 — the soak's null is judged over the complete-bas | iter-169 | 00112 | T0184 |
 | #463 | 2026-09-09 | fix(engine): a reconciliation that compared nothing reports no number in | — | — | T0183 |
 | #469 | 2026-09-09 | test(infra): T0187's replay gains a never-observed history, and the topi | — | — | T0187 |
-| #470 | 2026-09-09 | docs(tests): engine_executor — the docstring pass re-run, and T0192 regi | — | — | T0192 |
-| #471 | 2026-09-09 | docs(tests): engine_flatten — the docstring pass, and T0191 registered | — | — | T0191 |
 | #473 | 2026-09-09 | test(engine): T0192 — the week-boundary fixture reaches the arm it is na | — | — | T0192 |
 | #474 | 2026-09-09 | docs(open_topics): T0197 closes as a measured non-issue — the OI null gu | — | — | T0197 |
 | #475 | 2026-09-09 | fix(tests): T0196 — the kill-bar can_fail_alone fixtures prove isolation | — | — | T0196 |
