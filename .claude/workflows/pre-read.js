@@ -54,7 +54,7 @@ const WALK = {
   type: 'object',
   properties: {
     fix: { type: 'string', description: 'what the commit says it fixed, and in one sentence the invariant the fix restores' },
-    siblingsLeft: { type: 'array', items: { type: 'string' }, description: 'path:line of each text carrier of the same defect the fix did not touch, and each input or state category the fix still admits' },
+    siblingsLeft: { type: 'array', items: { type: 'string' }, description: 'one entry per member the fix left, each prefixed `TEXT:` (a carrier, with its path:line) or `SPACE:` (an input or state category the fix still admits, with what you drove or why you could not)' },
   },
   required: ['fix', 'siblingsLeft'],
 }

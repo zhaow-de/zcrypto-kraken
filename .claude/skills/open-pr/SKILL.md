@@ -46,7 +46,7 @@ Sweep the draft body for deferral language — *follow-up, later, once/when X, d
 
 ## Creating the PR — four steps, in order
 
-Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it.
+Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it. Step 0's gate is read at the undraft, so a draft takes these four steps at the branch's first green commit and the gate again when it is undrafted.
 
 **Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it. A title carrying a path-shaped token — a repo root `cli/`, `tests/`, `infra/`, `docs/`, `.claude/`, or `word/word.ext` — writes its `/` as `-` (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token` is the grammar); a bare `long/flat` is not a path and keeps its slash:
 
@@ -64,7 +64,7 @@ grep -n "^| #<PR number> " docs/reference/change-index.md   # on a body edit: th
 
 On a mismatch, **refuse to create the PR** and print both numbers — the one in the branch or title, and the index's highest — so the mint can be corrected before the PR exists. A serial is minted when the branch is cut, from this same command; nothing else mints one.
 
-**Step 3 — `gh pr create`.** The PR number comes back in the URL it prints; keep it.
+**Step 3 — `gh pr create`.** `--draft` unless the branch is already complete and has the word; the PR number comes back in the URL it prints either way, and keep it.
 
 **Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
 
