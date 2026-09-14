@@ -18,9 +18,8 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 ## Repo specifics
 
 - **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only. If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
-- The Python application lives at the **repo root** (flat layout). Tests, lint, and the lockfile (`uv.lock`) all live at the root; run `uv` commands from the repo root.
-- Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.). A push after a hook-driven amend may need re-staging — the loop handles it.
-- Configured ecosystems: `uv` (updates `pyproject.toml` + `uv.lock`), `github-actions` (updates `.github/workflows/*`), and `pre-commit` (updates `.pre-commit-config.yaml`). This skill processes any `dependabot/` PR regardless of ecosystem.
+- Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.).
+- This skill processes any `dependabot/` PR regardless of ecosystem (`.github/dependabot.yml` lists them).
 
 ## Workflow
 
@@ -36,7 +35,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
    ORIGINAL_BRANCH=$(git branch --show-current)
    ```
 
-3. **Sort** the Dependabot PRs from context by priority: minor/patch first, major last. Classify each PR by parsing the `from <X> to <Y>` versions in its title and comparing the major components. Within a priority class, oldest first (longest-pending PRs likely need the most rebasing).
+3. **Sort** the Dependabot PRs from context by priority: minor/patch first, major last. Classify each PR by parsing the `from <X> to <Y>` versions in its title and comparing the major components. Within a priority class, oldest first.
 
 4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above).
 
@@ -103,9 +102,6 @@ A branch that carries a 2c fix commit is read before the push by a different age
 # The rebase rewrote history, so the push must be forced (lease-guarded).
 git push --force-with-lease origin "$(git branch --show-current)"
 
-# Identify the PR number for this branch (or use the number already in the sorted list)
-PR_NUMBER=<the number for this PR>
-
 # coverage.yml runs on pull_request into develop/main (dependabot targets develop), so a
 # Dependabot PR DOES report a "Full test suite" check — wait for it, and merge only when green.
 # coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
@@ -113,17 +109,14 @@ PR_NUMBER=<the number for this PR>
 #
 # Poll the check-runs OF THE PUSHED SHA. **Never `gh pr view --json statusCheckRollup` here** —
 # it serves the PREVIOUS head's results after a force push, and §2a force-pushes every PR.
-# **Allowlist green; everything else is pending.** A merge gate must fail closed: `status` has six
-# documented values (`queued`, `in_progress`, `completed`, `waiting`, `requested`, `pending`), and
-# anything that denylists a few of them lets `waiting` — a job held by a deployment-protection
-# rule — read as green.
+# Allowlist green: only `completed` is decided. A denylist of the pending states lets `waiting` — a job
+# held by a deployment-protection rule — read as green.
 # **An EMPTY result is pending, never green.** On a freshly force-pushed SHA it means the checks
 # have not registered yet; `coverage.yml` triggers on `pull_request` into develop/main and branch
 # protection requires the `Full test suite` context, so "this repo runs no checks" is not a state
 # this loop can be in. Requiring that run BY NAME is what makes the empty window pending.
 # Run this as its OWN command and re-read it every ~45 s — never one long foreground loop —
-# then merge in a SEPARATE command only after reading `success` — a fresh shell per call means
-# `$state` does not survive to the `if` below, which fails closed but merges nothing.
+# then merge in a SEPARATE command only after reading `success`.
 SHA=$(git rev-parse HEAD)
 # default filter=latest: one run per name
 timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
@@ -146,8 +139,8 @@ print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed (
 # merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
 gh pr merge <number> --squash --delete-branch    # the number from the sorted list, not a variable
 # Anything other than `success` stops the merge: a red check is escalation trigger #4, and a check
-# still pending past the full suite's duration (CLAUDE.md states it) is reported as stalled. Never
-# merge on a state you did not read, and never on an empty check list.
+# still pending 30 minutes after the push is reported as stalled. Never merge on a state you did
+# not read.
 ```
 
 ### Phase 3 — Cleanup
@@ -177,6 +170,5 @@ Only pause for user input when:
 
 ## Notes
 
-- **`main` is PR-only** (branch protection enforces); it advances only via `/release`. Dependabot PRs target `develop`.
 - Use `fix(config): …` for auto-fix commits — cross-cutting tooling fixes, not component-specific.
 - Prefer separate `uv …` / `git …` lines over composite `(cd X && Y) && Z` commands.
