@@ -9,7 +9,7 @@ allowed-tools: Read, Edit, Write, Grep, Glob, AskUserQuestion, Skill, Bash(git l
 
 ## What this is
 
-`.local/memo.md` is the user's personal working memo. Its data model, tooling discipline, and the mechanical ad-hoc procedures live in **`references/memo-protocol.md`** — the single source of truth, also loaded by `/zcrypto-auto-exec`. Read it before touching the file.
+`.local/memo.md` is the user's personal working memo. Its data model, tooling discipline, and the mechanical ad-hoc procedures live in **`references/memo-protocol.md`** — read it before touching the file.
 
 Grooming is a **joint conversation**: this skill structures it, the user decides. Nothing in the memo is disposed of unilaterally — the memo is the user's memory, and an item silently mis-filed is worse than one left untouched.
 
@@ -39,7 +39,7 @@ Parse the points and present your understanding of each; ask where unclear. Then
 |---|---|
 | Not pursuing | **Rewrite** into `ABANDONED ITEMS` — a summary reflecting the discussion (never a cut-and-paste), the subject, the decision date, and the drop date |
 | Enhances / changes / invalidates an existing T\<NNNN\> | Remove the point from the memo; revise the topic file **interactively** so it stays internally consistent; index sync through the `topic-ops` skill |
-| New, deserves its own topic | Remove the point from the memo; create the T\<NNNN\> through the `topic-ops` skill (its serial check spans `archive/` **and** unmerged branches) |
+| New, deserves its own topic | Remove the point from the memo; create the T\<NNNN\> through the `topic-ops` skill |
 | Undecided — any reason (no time, needs thought, no consensus yet) | Stays in `NEW IDEAS`, untouched — **the default**: a point leaves the inbox only through one of the other four outcomes |
 | Already addressed (memory gap or changed context) | Cite the evidence — iter-N, T-topic, or PR — and drop **only after the user confirms the citation** |
 
@@ -75,7 +75,6 @@ Set `last-grooming-section-at:` to now (UTC, ISO-8601) — full runs only; seman
 | Impulse | Reality |
 |---|---|
 | "I'll just decide these three quickly" | Dispositions are joint. Undecided = stays in NEW IDEAS — that IS the fast path. |
-| Rewriting the whole file for tidiness | Not version-controlled — whatever a rewrite silently drops is gone for good. Anchored edits. |
 | Ad-hoc argument, but NEW IDEAS looks messy | Out of scope. Mention it; the user can invoke the full flow. |
 | Purging DONE ITEMS as items arrive there | Purge happens once — after the numbered display and the batch confirmation. |
 | Changing a T-topic's *status* without re-rendering `docs/open-topics/README.md` | The index is rendered from the topic files — `topic-ops`'s index sync, `uv run python infra/scripts/topics-index.py`; the frontmatter test refuses a stale render. |

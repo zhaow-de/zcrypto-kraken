@@ -2,7 +2,7 @@
 
 **One writer:** a payload session sends `zcrypto-marco` the exact text and where it goes; marco writes, and records the `sha256 · lines · bytes` chain in `.local/coordination.md`. The memo lives in the main checkout under `.local/`, which `infra/scripts/sweep.sh` reads from any checkout.
 
-The single source of truth for the memo's data model, tooling discipline and mechanical procedures. Loaded by `/zcrypto-grooming` (the owner — its interactive flow is `../SKILL.md`) and by `/zcrypto-auto-exec` (full path: `.claude/skills/zcrypto-grooming/references/memo-protocol.md`). The human gates below attach to the operations themselves, not to whichever skill loaded this file.
+The human gates below attach to the operations themselves, not to whichever skill loaded this file.
 
 ## The file
 
@@ -24,7 +24,7 @@ The single source of truth for the memo's data model, tooling discipline and mec
 
 - **Re-read the file first.** A copy already in context is stale by definition.
 - **The Edit and Write tools, under the hook.** `.claude/hooks/memo-guard.sh` (wired in `.claude/settings.json`) refuses a write without a fresh read, instructs the read-back after, and invalidates after each write, so a multi-edit pass re-reads before each further edit. A shell write bypasses the hook and is never used (no count command: the memo is unversioned, and a touch leaves no record in the tree).
-- **Anchored edits.** A wholesale `Write` silently drops whatever the rewrite forgot, and there is no history to recover it from.
+- **Anchored edits** — the hook refuses a `Write` of the existing file.
 - **Deletion is licensed only at the purge gate** (human-gated, below); outside it, condense or relocate prose (no count command: the memo is unversioned, and a touch leaves no record in the tree).
 - **Privacy.** The memo is the user's private journal: never paste its content into a subagent prompt, never run a subagent on this file in any role, and memo text never lands verbatim in a git-tracked file — a new or revised topic paraphrases (no count command: a prompt leaves no record in the tree). `WP<N>` labels stay out of git-tracked files: `tests/test_internal_terms_not_operator_visible.py` enforces it, its `_WP_CARRIERS` naming the exceptions.
 - **Git-tracked files this machinery produces** (new or revised topics, the `docs/open-topics/README.md` index) land through the repo's normal conventions — gate, review, branch, PR — not as a side effect of memo work.
