@@ -31,8 +31,7 @@ REST parse, not the writer's — measured on T0193's branch, the writer refuses 
 
 ## Findings so far
 
-PR #514 (T0193) measured the writer refusing nothing and found no decision — spec `00059` D7, `00058` D2 — that
-rules on a store NaN; nothing investigated since registration.
+Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
 
 ## Suggested next steps
 

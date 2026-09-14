@@ -24,8 +24,7 @@ value door exists, it is just on the wrong side of the write.
 
 ## Findings so far
 
-PR #514 (T0193) put the refusal at the read — `_validate_grid` raises `PortfolioError` on a non-finite close — and
-costed nothing at the write; nothing investigated since registration.
+Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
 
 ## Suggested next steps
 

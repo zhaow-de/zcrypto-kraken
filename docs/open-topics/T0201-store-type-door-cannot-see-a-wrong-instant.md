@@ -22,9 +22,7 @@ grid's origin, which is not the frame's to state.
 
 ## Findings so far
 
-PR #514 (T0193) measured the rc-0 degrade and pinned its render in
-`tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`;
-nothing investigated since registration.
+Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
 
 ## Suggested next steps
 

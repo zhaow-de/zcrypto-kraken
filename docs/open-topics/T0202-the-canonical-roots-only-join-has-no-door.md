@@ -27,8 +27,7 @@ whatever wrote it, and `ns`-typed parquet is what pandas and pyarrow produce.
 
 ## Findings so far
 
-PR #514 (T0193) found the undoored join at `cli/ohlc/reach.py:88` and measured every parquet under `data/` as
-`Datetime("us", "UTC")` (128 of 128); nothing investigated since registration.
+Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
 
 ## Suggested next steps
 
