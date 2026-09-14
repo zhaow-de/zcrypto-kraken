@@ -89,6 +89,11 @@ def _quote_depth(raw: str) -> int:
     return m.group(0).count(">") if m else 0
 
 
+def _at_depth(raw: str, depth: int) -> str:
+    """The line as the blockquote `depth` levels deep sees it: exactly that many markers removed."""
+    return re.sub(rf"^\s*(?:> ?){{{depth}}}", "", raw)
+
+
 _HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)\b")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
@@ -108,12 +113,10 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
 
     `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines. The read line must
     be plainly visible, so it is judged without them; a checklist item inside either is an item GitHub renders and
-    counts, so gate 6 is judged with them -- as the page renders them. A fence, comment or HTML block opened inside a
-    blockquote
-    hides what follows it until its closer or the first line at a lesser quote depth -- the blockquote's end --
-    whichever comes first, since none of the three takes lazy continuation; a quoted line inside a fence that opened UNQUOTED is literal content; and a `<details>` or
-    `<summary>` line, opening or closing, opens an HTML block that runs to the next blank line (CommonMark block
-    condition 6), inside which nothing is markdown, so a box written there is literal text and not counted.
+    counts, so gate 6 is judged with them -- as the page renders them. A `<details>` or `<summary>` line, opening or
+    closing, opens an HTML block that runs to the next blank line (CommonMark block condition 6) -- blank at the
+    quote depth the block opened under, so a `>`-only line is content to an unquoted block -- and inside it nothing
+    is markdown, so a box written there is literal text and not counted.
 
     Two rules keep this close to a renderer without becoming one. A fence is decided before any inline markup is
     masked, because a renderer settles fences first -- and, under `keep_collapsed`, on the line with its quote
@@ -126,7 +129,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     fence: str | None = None  # the opening run, when inside a fenced block
     in_comment = False
     in_details = False
-    html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to the blank line
+    html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to a line blank at its depth
     open_depth = 0  # keep_collapsed only: the quote depth the open fence or comment began at; 0 when not quoted
     html_depth = 0  # keep_collapsed only: the same for the open HTML block
     for raw in body.splitlines():
@@ -136,11 +139,18 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         depth = _quote_depth(raw) if keep_collapsed else 0
         if open_depth and depth < open_depth:
             fence, in_comment, open_depth = None, False, 0
-        line = _QUOTE_MARKERS.sub("", raw) if keep_collapsed and (fence is None or open_depth) else raw
+        # Every closer is read at the depth its construct opened under: an unquoted fence sees a quoted line as
+        # literal content, a quoted one sees a deeper-quoted line the same way, and nothing open sees every depth.
+        if not keep_collapsed or (fence is not None and not open_depth):
+            line = raw
+        elif open_depth:
+            line = _at_depth(raw, open_depth)
+        else:
+            line = _QUOTE_MARKERS.sub("", raw)
         if html_block:
             if html_depth and depth < html_depth:
                 html_block, html_depth = False, 0  # the blockquote ended: this line is read
-            elif not re.sub(rf"^\s*(?:> ?){{{html_depth}}}", "", raw).strip():
+            elif not _at_depth(raw, html_depth).strip():
                 html_block, html_depth = False, 0
                 continue
             else:

@@ -722,3 +722,8 @@ def test_a_quote_marker_alone_is_content_to_an_unquoted_html_block() -> None:
     assert (
         not _boxed("<details>\n>\n- [ ] box") and _boxed("> <details>\n>\n> - [ ] x") and not _boxed("> <details>\n> >\n> - [ ] x")
     )
+
+
+def test_a_deeper_quoted_fence_line_inside_a_quoted_fence_is_content() -> None:
+    """A fence opened one quote deep is closed by a one-quote line, not by a two-quote one, which is code to it."""
+    assert not _boxed("> ```\n> > ```\n> - [ ] after") and _boxed("> ```\n> ```\n> - [ ] after")
