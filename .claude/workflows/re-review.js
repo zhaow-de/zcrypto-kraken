@@ -1,7 +1,7 @@
 export const meta = {
   name: 're-review',
   description: 'The single-lens read of a fix range: each open Critical or Important closed at its class, left, or open',
-  whenToUse: 'After the fixes a read asked for, after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, worktree, left?, reported?, drive?, model?}',
+  whenToUse: 'After the fixes a read asked for, after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}',
   phases: [
     { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important, new or reopened' },
@@ -9,9 +9,9 @@ export const meta = {
 }
 
 // --- inputs ------------------------------------------------------------------------------------
-const { repo, range, tip, prior, reportDir, worktree, left, reported, drive, model } = args || {}
-if (!repo || !range || !tip || !Array.isArray(prior) || !reportDir || !worktree) {
-  throw new Error('args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, worktree, left?, reported?, drive?, model?}')
+const { repo, range, tip, prior, reportDir, left, reported, drive, model } = args || {}
+if (!repo || !range || !tip || !Array.isArray(prior) || !reportDir) {
+  throw new Error('args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}')
 }
 for (const p of prior) {
   if (!Number.isInteger(p.id) || !p.severity || !p.path || !Number.isInteger(p.line) || !p.claim) throw new Error(`prior finding needs integer id, severity, path, integer line, claim: ${JSON.stringify(p)}`)
@@ -19,12 +19,13 @@ for (const p of prior) {
   if (/\n/.test(p.claim)) throw new Error(`prior finding ${p.id}: claim is one line -- the full text stays in the prior review's report, which the reader can open`)
 }
 if (left && !/#\d+/.test(left)) throw new Error('left names each consciously-left prior by id (#<id>) with its reason')
-if (drive && drive.length > 400) throw new Error('drive is one sentence naming what the standing brief does not cover; a re-measurement list is not a drive')
+if (drive && drive.length > 400) throw new Error('drive is at most 400 characters: one sentence naming what the standing brief does not cover, never a re-measurement list')
 
-// --- shared with pre-read.js and review.js; tests/test_review_workflows.py holds the three copies equal ---
+// --- shared with pre-read.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, or prose that, acted on as written, breaks something no test stops. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
-const COMMON = `Run every git command with \`-C ${repo}\`. READ-ONLY in that checkout: no edits, no commits, no checkout, no stash. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there, and never create, remove or check out a worktree. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
+const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
+const CHECKOUT = (label) => `Run every git command with \`-C ${repo}\`. Probes and drives run in a detached worktree of your own at the tip — \`git -C ${repo} worktree add --detach ${reportDir}/wt-${label} ${tip}\`, whose first \`uv run\` syncs it (about two minutes) — never in the checkout and never in another agent's worktree: a sibling's mutation probe rewrites its tree while it runs. Remove yours with \`git worktree remove --force\` before you finish.`
 
 // --- schemas -----------------------------------------------------------------------------------
 const FINDING = {
@@ -67,7 +68,7 @@ const VERDICT = {
 
 // --- prompts -----------------------------------------------------------------------------------
 const priorList = prior.map((p) => `- #${p.id} [${p.severity}] ${p.path}:${p.line} — ${p.claim}`).join('\n')
-const readerPrompt = `You are the scoped second reader, a different agent from the author, of the fix commits \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${COMMON} ${SCOPE} Grading: ${GRADING}
+const readerPrompt = `You are the scoped second reader, a different agent from the author, of the fix commits \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${RULES} ${CHECKOUT('re-read')} ${SCOPE} Grading: ${GRADING}
 
 The prior read's open findings, which these commits answer:
 ${priorList}
@@ -79,7 +80,7 @@ The pre-read has already graded the range's prose and re-run its message claims:
 
 Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of — the sibling spellings, the other carriers of the same claim, the other branches of the same condition — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-read, not a row for the next read. Write a Markdown report to ${reportDir}/re-review.md with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
-const refutePrompt = (f) => `You are the skeptic. ${COMMON} ${SCOPE}
+const refutePrompt = (f) => `You are the skeptic. ${RULES} ${CHECKOUT(`refute-${f.id}`)} ${SCOPE}
 
 A reader graded this ${f.severity}: at \`${f.path}:${f.line}\` — ${f.claim}
 Its evidence: ${f.evidence}

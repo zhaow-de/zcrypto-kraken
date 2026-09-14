@@ -9,10 +9,11 @@ export const meta = {
 const { repo, range, tip, reportDir, worktree, model } = args || {}
 if (!repo || !range || !tip || !reportDir || !worktree) throw new Error('args: {repo, range, tip, reportDir, worktree, model?}')
 
-// --- shared with review.js and re-review.js; tests/test_review_workflows.py holds the three copies equal ---
+// --- shared with review.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, or prose that, acted on as written, breaks something no test stops. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
-const COMMON = `Run every git command with \`-C ${repo}\`. READ-ONLY in that checkout: no edits, no commits, no checkout, no stash. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there, and never create, remove or check out a worktree. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
+const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
+const CHECKOUT = `Run every git command with \`-C ${repo}\`. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there — you are its only user — and never create, remove or check out a worktree.`
 
 // --- schema ------------------------------------------------------------------------------------
 const PROSE = {
@@ -70,7 +71,7 @@ const REPORT = {
 }
 
 // --- the grader --------------------------------------------------------------------------------
-const prompt = `You are the pre-reader of \`git log ${range}\` at tip \`${tip}\` in ${repo}, a different agent from the author, run before any review. ${COMMON} ${SCOPE} Grading: ${GRADING}
+const prompt = `You are the pre-reader of \`git log ${range}\` at tip \`${tip}\` in ${repo}, a different agent from the author, run before any review. ${RULES} ${CHECKOUT} ${SCOPE} Grading: ${GRADING}
 
 Four things, each against the tree at the tip, none on trust:
 

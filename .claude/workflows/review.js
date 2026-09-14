@@ -1,7 +1,7 @@
 export const meta = {
   name: 'review',
   description: 'The wide read of a whole branch: two lenses, one skeptic per Critical or Important',
-  whenToUse: 'The wide read a branch owes once it is complete, after its pre-read; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, worktree, lenses?, drive?, model?}',
+  whenToUse: 'The wide read a branch owes once it is complete, after its pre-read; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, lenses?, drive?, model?}',
   phases: [
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important' },
@@ -9,9 +9,9 @@ export const meta = {
 }
 
 // --- inputs ------------------------------------------------------------------------------------
-const { repo, range, tip, reportDir, worktree, drive, model } = args || {}
-if (!repo || !range || !tip || !reportDir || !worktree) throw new Error('args: {repo, range, tip, reportDir, worktree, lenses?, drive?, model?}')
-if (drive && drive.length > 400) throw new Error('drive is one sentence naming what the standing brief does not cover; a re-measurement list is not a drive')
+const { repo, range, tip, reportDir, drive, model } = args || {}
+if (!repo || !range || !tip || !reportDir) throw new Error('args: {repo, range, tip, reportDir, lenses?, drive?, model?}')
+if (drive && drive.length > 400) throw new Error('drive is at most 400 characters: one sentence naming what the standing brief does not cover, never a re-measurement list')
 const DEFAULT_LENSES = [
   { name: 'behaviour', brief: 'What the range changes, driven: each door, refusal, count or guard the messages claim, exercised with the input it names on every grid or path it applies to; anything legitimate now refused; any live-path behaviour changed where no test drives it; every citation of a spec, rule or topic read as written.' },
   { name: 'guards', brief: 'Every test and assertion the range adds or changes: does it refuse what its door refuses, can it pass vacuously (an absence, a substring, a double that never runs), does each probe verdict a message records reproduce through the case it names with a mutation that parses, and is every test double the engine suite must classify classified.' },
@@ -22,10 +22,11 @@ for (const l of lenses) {
 }
 if (new Set(lenses.map((l) => l.name)).size !== lenses.length) throw new Error(`lens names must be distinct: ${lenses.map((l) => l.name).join(', ')}`)
 
-// --- shared with pre-read.js and re-review.js; tests/test_review_workflows.py holds the three copies equal ---
+// --- shared with pre-read.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, or prose that, acted on as written, breaks something no test stops. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
-const COMMON = `Run every git command with \`-C ${repo}\`. READ-ONLY in that checkout: no edits, no commits, no checkout, no stash. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there, and never create, remove or check out a worktree. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
+const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
+const CHECKOUT = (label) => `Run every git command with \`-C ${repo}\`. Probes and drives run in a detached worktree of your own at the tip — \`git -C ${repo} worktree add --detach ${reportDir}/wt-${label} ${tip}\`, whose first \`uv run\` syncs it (about two minutes) — never in the checkout and never in another agent's worktree: a sibling's mutation probe rewrites its tree while it runs. Remove yours with \`git worktree remove --force\` before you finish.`
 
 // --- schemas -----------------------------------------------------------------------------------
 const FINDING = {
@@ -60,13 +61,13 @@ const VERDICT = {
 }
 
 // --- prompts -----------------------------------------------------------------------------------
-const readerPrompt = (lens) => `You are one of ${lenses.length} independent readers, a different agent from the author, of \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${COMMON} ${SCOPE} Grading: ${GRADING}
+const readerPrompt = (lens) => `You are one of ${lenses.length} independent readers, a different agent from the author, of \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${RULES} ${CHECKOUT(`read-${lens.name}`)} ${SCOPE} Grading: ${GRADING}
 
 YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-read has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
 Read \`git diff ${range}\` first, then each commit message. Write a Markdown report to ${reportDir}/${lens.name}.md with \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
 
-const refutePrompt = (f) => `You are the skeptic. ${COMMON} ${SCOPE}
+const refutePrompt = (f) => `You are the skeptic. ${RULES} ${CHECKOUT(`refute-${f.id}`)} ${SCOPE}
 
 A reader graded this ${f.severity}: at \`${f.path}:${f.line}\` — ${f.claim}
 Its evidence: ${f.evidence}
