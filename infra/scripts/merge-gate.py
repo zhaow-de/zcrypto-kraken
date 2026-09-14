@@ -81,6 +81,7 @@ _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
 _UNCHECKED_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
 _QUOTE_MARKERS = re.compile(r"^\s*(?:> ?)+")
+_HTML_BLOCK_TAG = re.compile(r"</?(?:details|summary)\b")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
 _CODE_SPAN = re.compile(r"(?P<ticks>`+)(?:(?!(?P=ticks)).)*(?P=ticks)", re.S)
@@ -97,9 +98,13 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     """The body with everything a rendered PR hides removed: comments (terminated or not, `--!>` included), fenced
     blocks (nested or not), `<details>` blocks, and quoted lines.
 
-    `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines, the quote marker
-    stripped. The read line must be plainly visible, so it is judged without them; a checklist item inside either
-    is an item GitHub renders and counts, so gate 6 is judged with them.
+    `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines. The read line must
+    be plainly visible, so it is judged without them; a checklist item inside either is an item GitHub renders and
+    counts, so gate 6 is judged with them -- as the page renders them. Quote markers come off BEFORE the walk, so a
+    fence or a comment inside a blockquote is still a fence or a comment, while a quoted line inside a fence that
+    opened UNQUOTED stays literal code; and a `<details>` or `<summary>` line,
+    opening or closing, opens an HTML block that runs to the next blank line (CommonMark block condition 6), inside
+    which nothing is markdown, so a box written there is literal text and not counted.
 
     Two rules keep this close to a renderer without becoming one. A fence is decided on the RAW line, because a
     renderer settles fences before it ever looks for inline markup. And a comment or `<details>` HIDES what
@@ -111,8 +116,16 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     fence: str | None = None  # the opening run, when inside a fenced block
     in_comment = False
     in_details = False
+    html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to the blank line
+    fence_quoted = False  # keep_collapsed only: the open fence began on a quoted line
     for raw in body.splitlines():
-        line = raw
+        # A fence opened inside a blockquote closes on a quoted line; one opened outside it treats a quoted line as
+        # literal code -- so markers come off inside a fence only when the fence itself was opened quoted.
+        line = _QUOTE_MARKERS.sub("", raw) if keep_collapsed and (fence is None or fence_quoted) else raw
+        if html_block:
+            if not line.strip():
+                html_block = False
+            continue
         if fence is not None:
             run = _FENCE_CLOSE.match(line)
             if run and run.group("run")[0] == fence[0] and len(run.group("run")) >= len(fence):
@@ -136,6 +149,7 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         opener = _FENCE_OPEN.match(line)
         if opener:
             fence = opener.group("run") or opener.group("trun")
+            fence_quoted = raw.lstrip().startswith(">")
             continue
         # An inline comment or details element, opened and closed on this line, takes its own span and nothing
         # more. Code spans are masked so a `<!--` written as prose about this gate is not read as markup.
@@ -162,14 +176,13 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         if stripped.startswith("<!--"):
             in_comment = True
             continue
+        if keep_collapsed and _HTML_BLOCK_TAG.match(stripped):
+            html_block = True
+            continue
         if stripped.startswith("<details"):
-            if keep_collapsed:
-                continue  # the tag line is markup; what follows stays visible
             in_details = True
             continue
         if stripped.startswith(">"):
-            if keep_collapsed:
-                visible.append(_QUOTE_MARKERS.sub("", line))
             continue
         visible.append(line)
     return "\n".join(visible)

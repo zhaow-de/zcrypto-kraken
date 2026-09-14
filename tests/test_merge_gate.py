@@ -662,3 +662,32 @@ def test_a_nested_box_is_a_box() -> None:
 def test_a_marker_that_is_only_text_is_not_a_box() -> None:
     """A code span at the line's start, and a list item whose content is a code span, both render as text."""
     assert not _boxed("`- [ ]` is the marker") and not _boxed("- `[ ]` is the marker's text")
+
+
+def test_a_box_inside_a_details_html_block_is_literal_text() -> None:
+    """With no blank line after `<summary>`, CommonMark keeps the HTML block open, and GitHub draws no box there."""
+    assert not _boxed("<details>\n<summary>later</summary>\n- [ ] literal\n</details>")
+    assert _boxed("<details>\n<summary>later</summary>\n\n- [ ] real\n\n</details>")
+
+
+def test_a_box_right_after_a_closing_details_tag_is_literal_text() -> None:
+    """The closing tag opens an HTML block of its own, to the next blank line."""
+    assert not _boxed("<details>\n\n- [x] done\n\n</details>\n- [ ] literal") and _boxed(
+        "<details>\n\n- [x] done\n\n</details>\n\n- [ ] real"
+    )
+
+
+def test_a_quoted_fence_or_comment_is_still_code() -> None:
+    """A fenced block or an HTML comment inside a blockquote renders as code or nothing, never as a task item --
+    while a plain quoted box in the same body is still a box, so this case fails in both directions."""
+    assert (
+        not _boxed("> ```\n> - [ ] in quoted code\n> ```")
+        and not _boxed("> <!--\n> - [ ] in quoted comment\n> -->")
+        and not _boxed("> > ```\n> > - [ ] nested\n> > ```")
+    )
+    assert _boxed("> ```\n> - [ ] in quoted code\n> ```\n\n> - [ ] real")
+
+
+def test_a_quoted_fence_inside_a_fence_does_not_close_it() -> None:
+    """Fence content is literal: a `> ```` line inside an open fence is code, not a quoted fence closing the block."""
+    assert not _boxed("```\n> ```\n- [ ] still inside the fence\n```")
