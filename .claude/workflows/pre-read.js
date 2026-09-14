@@ -84,7 +84,7 @@ Four things, each against the tree at the tip, none on trust:
 
 3. PROBES. Every mutate-probe verdict a message records: apply the quoted mutation to a copy of the file and compile it (python -m py_compile, bash -n, node --check as the file demands) — a mutation that does not parse voids the verdict whatever the script printed; then re-run the probe as quoted in the worktree and read what the killed case died on: a collection error, an import error or a SyntaxError is not a kill by the guard.
 
-4. CLASS WALK. For each defect a commit says it fixed, grep the tree for the same defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition — and list any the fix did not touch.
+4. CLASS WALK. For each defect a commit says it fixed, state in one sentence the invariant the fix restores, then walk its class BOTH ways and list every member the fix left. TEXT: the defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition. SPACE: the categories the fixed code's input or state ranges over, each judged against the invariant — only categories this repo produces, driven where you can drive them, named rather than guessed where you cannot. A class walked one way is half walked.
 
 Write a Markdown report to ${reportDir}/pre-read.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
