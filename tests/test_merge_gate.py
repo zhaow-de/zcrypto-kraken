@@ -632,3 +632,33 @@ def test_a_real_unchecked_box_still_fails() -> None:
     """The two exemptions above must not have widened into ignoring the box the arm exists to catch."""
     body = f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n- [ ] not done\n"
     assert [f for f in _eval(_pr(body=body)) if "checklist" in f]
+
+
+def _boxed(body: str) -> bool:
+    return any(
+        "checklist" in f for f in _eval(_pr(body=f"## Summary\n\nRead before push by: Claude Fable 5.1 at {TIP}\n\n{body}\n"))
+    )
+
+
+def test_a_real_box_inside_details_is_still_a_box() -> None:
+    """GitHub renders a task list inside `<details>`; hiding it was the read-line rule leaking into gate 6."""
+    assert _boxed("<details>\n<summary>later</summary>\n\n- [ ] real\n\n</details>")
+
+
+def test_a_real_box_on_a_quoted_line_is_still_a_box() -> None:
+    """A blockquote is visible on the page, so a box inside it counts, its marker stripped before the match."""
+    assert _boxed("> - [ ] real") and _boxed("> > - [ ] nested quote")
+
+
+def test_the_star_and_numbered_spellings_are_boxes() -> None:
+    """The arm widened past `- [ ]` to every list marker CommonMark renders; nothing pinned the widening."""
+    assert _boxed("* [ ] real") and _boxed("+ [ ] real") and _boxed("1. [ ] real") and _boxed("1) [ ] real")
+
+
+def test_a_nested_box_is_a_box() -> None:
+    assert _boxed("- outer\n  - [ ] inner")
+
+
+def test_a_marker_that_is_only_text_is_not_a_box() -> None:
+    """A code span at the line's start, and a list item whose content is a code span, both render as text."""
+    assert not _boxed("`- [ ]` is the marker") and not _boxed("- `[ ]` is the marker's text")

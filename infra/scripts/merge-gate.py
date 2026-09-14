@@ -80,6 +80,7 @@ _FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
 # A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
 _UNCHECKED_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
+_QUOTE_MARKERS = re.compile(r"^\s*(?:> ?)+")
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
 _CODE_SPAN = re.compile(r"(?P<ticks>`+)(?:(?!(?P=ticks)).)*(?P=ticks)", re.S)
@@ -92,9 +93,13 @@ def _outside_code_spans(line: str) -> str:
     return _CODE_SPAN.sub(lambda m: " " * len(m.group(0)), line)
 
 
-def _as_a_reader_sees_it(body: str) -> str:
+def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
     """The body with everything a rendered PR hides removed: comments (terminated or not, `--!>` included), fenced
     blocks (nested or not), `<details>` blocks, and quoted lines.
+
+    `keep_collapsed` keeps the two a renderer still shows: `<details>` content and quoted lines, the quote marker
+    stripped. The read line must be plainly visible, so it is judged without them; a checklist item inside either
+    is an item GitHub renders and counts, so gate 6 is judged with them.
 
     Two rules keep this close to a renderer without becoming one. A fence is decided on the RAW line, because a
     renderer settles fences before it ever looks for inline markup. And a comment or `<details>` HIDES what
@@ -158,9 +163,13 @@ def _as_a_reader_sees_it(body: str) -> str:
             in_comment = True
             continue
         if stripped.startswith("<details"):
+            if keep_collapsed:
+                continue  # the tag line is markup; what follows stays visible
             in_details = True
             continue
         if stripped.startswith(">"):
+            if keep_collapsed:
+                visible.append(_QUOTE_MARKERS.sub("", line))
             continue
         visible.append(line)
     return "\n".join(visible)
@@ -369,8 +378,10 @@ def evaluate(
         fails.append(f"{len(pending)} CI check(s) still running — wait; nothing else blocks a merge on pending")
     if not rollup:
         fails.append("no CI checks reported yet — wait for coverage.yml to register")
-    if _UNCHECKED_BOX.search(_as_a_reader_sees_it(body)):
-        fails.append("PR description has unchecked checklist item(s) (- [ ])")
+    if _UNCHECKED_BOX.search(_as_a_reader_sees_it(body, keep_collapsed=True)):
+        fails.append(
+            "PR description has unchecked checklist item(s): a `- [ ]`, `* [ ]` or `1. [ ]` box, inside `<details>` or a quote too"
+        )
     fails.extend(read_line_fails(pr, head_commit, files, read_commit))
     fails.extend(index_row_fails(pr))
     if branch_growth is None:
