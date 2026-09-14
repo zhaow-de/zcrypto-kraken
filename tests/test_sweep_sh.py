@@ -233,3 +233,9 @@ def test_an_optional_argument_flag_does_not_eat_the_pattern(tmp_path):
     """The case that keeps `--color` out of sweep.sh's option table; the table's own comment says why."""
     done = _sweep(_repo(tmp_path), "-l", "--color", "NEEDLE")
     assert done.returncode == 0 and ".local/memo.md" in done.stdout, done.stdout + done.stderr
+
+
+def test_a_pattern_flag_with_no_operand_is_an_error(tmp_path):
+    """`-e` promises a pattern the argument list never supplies; grep then binds the script's own `--`."""
+    done = _sweep(_repo(tmp_path), "-e")
+    assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr

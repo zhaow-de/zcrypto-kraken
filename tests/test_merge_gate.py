@@ -608,3 +608,9 @@ def test_the_branch_key_grammar_mirrors_the_tests_grammar() -> None:
             + rng.choice(["", "-tail", "/more"])
         )
         assert bool(gate.BRANCH_KEY.search(branch)) == any(_keys(branch)), branch
+
+
+def test_evaluate_carries_the_index_row_arm() -> None:
+    """Wired into `evaluate`, not merely defined: unwiring it leaves every other case in this file green."""
+    fails = _eval(_pr(number=99999, headRefName="docs/t0210-register-the-thing"))
+    assert any("change-index" in f for f in fails), fails
