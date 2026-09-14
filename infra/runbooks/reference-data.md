@@ -25,7 +25,7 @@ Two facts about the sources decide how to read the result, and both were learned
 
 ### What to do
 
-Run `/zcrypto-refdata-sweep` — the skill carries the procedure and the exact code. In short:
+Run `/zcrypto-refdata-sweep` — the skill carries the procedure and the command. In short:
 
 1. **Automated half**: re-fetch, re-render, diff the rendered tables, never the hash (no count command: `tests/test_snapshot_register.py::test_render_markdown_carries_the_fee_and_borrow_cells_the_sweep_verdict_is_read_from` pins the rendered cells the verdict is read from), append a log row in `docs/reference/kraken-snapshot-register.md`. The stamp moves even on an unchanged sweep.
 2. **Fee tier, automated**: `kraken volume --pair BTCUSD -o json` from the workstation — read-only, and never from a remote host (set: the non-Markdown files under `infra/` and `cli/` — roles, compose templates, units, scripts, and the Python that runs on the engine host — with the counter itself excluded; count: `infra/scripts/count-list.sh kraken-cli-on-infra-surfaces`; and the not-re-read rule below, where a copied cell reads like a re-read one, no count command). Its per-pair block comes back under the venue altname (`XXBTZUSD`), carrying the taker rate, the maker rate and the next tier; `inputs` carries the 30-day spot and futures volumes and the AoP held value. Unchanged → logged; changed → `docs/reference/kraken-fee-schedule.md` is corrected *and* the re-pricing named (`cli/costs/fees.py` encodes that ladder verbatim); the read unavailable → **Kraken Pro → Fee tab** is the fallback, and only when a read happened at neither is the row recorded as **not re-read**, never inherited from the previous row.

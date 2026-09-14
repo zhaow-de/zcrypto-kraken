@@ -140,6 +140,6 @@ qualification rule, or the observed margin opening/rollover bands on majors — 
 (`docs/open-topics/archive/T0000-phase0-account-actions.md`); the values live in
 `docs/reference/kraken-fee-schedule.md`, and `cli/costs/fees.py` encodes that ladder verbatim. What
 remains is keeping them current: the tier, the 30-day spot and futures volumes and the AoP held value are
-the **automated** part of the monthly sweep (`/zcrypto-refdata-sweep` step 7, via `kraken volume`), and the
+the **automated** part of the monthly sweep (`/zcrypto-refdata-sweep` step 6, via `kraken volume`), and the
 ladder's shape plus the AoP qualification ladder stay attended — the re-read that lost its trigger when T0000 was
 archived, and now has one again.
