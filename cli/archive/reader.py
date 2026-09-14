@@ -1,6 +1,6 @@
 """The canonical read surface (spec 00050 D6).
 
-Consumers must not glob `*.parquet` over the archive: it also matches the live hour's
+Consumers must not glob `**/*.parquet` over the archive: it also matches the live hour's
 `<HH>.part####.parquet`, and any part a mirror still holds beside its merged final (T0038), so those
 rows are read twice. L2 rows carry absolute quantities, so a doubled delta stream reconstructs a
 different book. `FINAL_NAME` is `settle.py`'s, not a second copy of it: one pattern for what counts

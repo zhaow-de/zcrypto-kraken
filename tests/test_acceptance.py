@@ -27,7 +27,9 @@ def test_planted_signal_recovered():
 
 
 def test_null_false_positive_rate_is_low():
-    # Nominal rate 5%: >= 5 of 20 null seeds flagged has P ~= 0.003 under Binomial(20, 0.05).
+    # Nominal rate 5%: >= 5 of 20 null seeds flagged has P ~= 0.003 under Binomial(20, 0.05). A
+    # harness that never declared significance would pass this alone, so it holds only paired with
+    # test_planted_signal_recovered.
     flagged = sum(1 for seed in range(20) if _strategy_psr(beta=0.0, seed=seed) > 0.95)
     assert flagged <= 4
 

@@ -35,9 +35,9 @@ def test_a1_book_returns_no_lookahead():
     n, k_common = 150, 99
     prices_a, btc = _synthetic_universe(n)
     prices_b = {a: list(p) for a, p in prices_a.items()}
-    # Anchor the divergent leg to the boundary price: a fixed magnitude such as 999.0 makes the first
-    # divergent ETH move a ~+1700% jump, which pushes a book period return past -100% and trips
-    # run_backtest's degenerate-equity guard.
+    # Anchor the divergent leg to the boundary price: an unrelated fixed magnitude such as 999.0
+    # makes the first divergent ETH move a jump past +1000%, which pushes a book period return past
+    # -100% on the shorted leg and trips run_backtest's degenerate-equity guard.
     base_val = prices_b["ETH"][k_common]
     for j in range(k_common + 1, n):
         prices_b["ETH"][j] = base_val * (1 + 0.3 * math.sin(j))
