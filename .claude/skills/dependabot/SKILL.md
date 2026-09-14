@@ -17,7 +17,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 ## Repo specifics
 
-- **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
+- **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only. If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
 - The Python application lives at the **repo root** (flat layout). Tests, lint, and the lockfile (`uv.lock`) all live at the root; run `uv` commands from the repo root.
 - Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.). A push after a hook-driven amend may need re-staging — the loop handles it.
 - Configured ecosystems: `uv` (updates `pyproject.toml` + `uv.lock`), `github-actions` (updates `.github/workflows/*`), and `pre-commit` (updates `.pre-commit-config.yaml`). This skill processes any `dependabot/` PR regardless of ecosystem.
@@ -60,7 +60,7 @@ If the rebase produces conflicts:
 
 #### 2b. Local validation
 
-Run in this order; stop on the first failure (so the auto-fix step in 2c knows what to attack). **This local full run stays, and is not the duplicate `CLAUDE.md` retires** — a lockfile change reaches every test, including the data-gated ones CI cannot run at all:
+Run in this order; stop on the first failure (so the auto-fix step in 2c knows what to attack). **This local full run stays** — a lockfile change reaches every test, including the data-gated ones CI cannot run at all:
 
 ```bash
 uv run ruff check
@@ -95,7 +95,7 @@ EOF
 
 If pre-commit reformats during the commit, re-stage and re-commit (NEVER `--no-verify`).
 
-Before pushing, dispatch a review subagent on the fix commit — mandatory for every Claude-authored branch, no trivial-fix exception; the reader is a different agent from the author (`CLAUDE.md`).
+A branch that carries a 2c fix commit is read before the push by a different agent from the author — the `pre-read` workflow over the fix range's prose and message claims, then `re-review` over the range — and the read is edited into the PR body as `Read before push by: <model> at <sha>` (`open-pr`'s Body item 3 is the line's contract): §2d's `gh pr merge --squash` bypasses `infra/scripts/merge-gate.py`, so that line is the read's only record. A PR with no fix commit needs no read.
 
 #### 2d. Push + wait for CI + merge
 
@@ -177,6 +177,6 @@ Only pause for user input when:
 
 ## Notes
 
-- **`main` is PR-only** (branch protection enforces); it advances only via `/release` (set: `main`'s first-parent merges; count: `git log --first-parent --merges main --format=%s | grep -vc '/release/'`). Dependabot PRs target `develop`.
+- **`main` is PR-only** (branch protection enforces); it advances only via `/release`. Dependabot PRs target `develop`.
 - Use `fix(config): …` for auto-fix commits — cross-cutting tooling fixes, not component-specific.
 - Prefer separate `uv …` / `git …` lines over composite `(cd X && Y) && Z` commands.
