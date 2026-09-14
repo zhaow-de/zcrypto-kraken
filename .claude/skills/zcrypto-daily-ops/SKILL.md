@@ -57,6 +57,8 @@ The report's `## Reminders` section is the trigger — an **OWED** line is work,
 
 **Slack's scheduled message is a convenience ping, never the check.** Its scheduling cannot be listed or verified from this side, so "no message arrived" means nothing and a message that did arrive adds nothing the report did not already say. A reminder source the report could not read is exit 2, like any other.
 
+**The nightly data-gated run is read from its file, not from the report.** `infra/scripts/data-gated-run.py`, fired by the `zcrypto-data-gated-tests.timer` user unit (`infra/systemd/`), runs the whole suite from the main checkout — the one with `data/`, where every test that skips in CI for want of a dataset runs for real — and writes `.local/data-gated-runs/latest.json` there. Read it. It is `FAIL data-gated tests: <why>` — a row in the entry's paragraph in the shape of the report's fleet-check rows, and the verdict is `attention` — when the file is absent, when `finished` is more than 26 h before the pass (nightly, with two hours of slack), or when `ok` is false: a non-zero `exit_code`, `failed` or `errors` above zero, or `error` set — that last is a run that could not read its own summary, a timeout or a usage error, a failure of the runner rather than of a test. The row names the ids `failed` and `errors` carry. A failing test goes the normal fix-branch way (autonomous: nothing here touches a host); an absent or stale file means the timer did not fire — `systemctl --user list-timers zcrypto-data-gated-tests.timer` and `journalctl --user -u zcrypto-data-gated-tests.service -n 50` on the workstation say why, read from the main loop like any other host step. `skipped` is recorded so a rise can be read, and is not a finding on its own: the suite's own gates decide what skips.
+
 ## 5b. Evaluate the live topics' triggers
 
 Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the rendered index carries each live topic's trigger — and run the one check each trigger names, for the four shapes this pass can decide from repo state and its own reading:
@@ -107,3 +109,4 @@ A scheduled message fires once. Schedule tomorrow's trigger before finishing, th
 |---|---|
 | "Nothing fired, so there is nothing to write" | The all-clear entry is the product. A missing entry reads as a day nobody looked. |
 | "I will restart Alloy on the capture host, it is only telemetry" | The capture pair's Alloy goes through `zcrypto-bump-alloy`, attended. |
+| "No nightly file, so there is nothing to report" | An absent or stale `latest.json` is the FAIL row: the timer did not fire, and the data-gated family ran nowhere that night. |
