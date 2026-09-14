@@ -24,7 +24,7 @@ status: open   # one of: open | partial | resolved
 ---
 ```
 
-`ripe_when:` (when present) is the bare condition plus the one check that evaluates it — a clause a reviewer runs and reads true/false at a glance. Its history, reasoning, and what the check read live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
+`ripe_when:` (when present) is the bare condition plus the one check that evaluates it — a clause a reviewer runs and reads true/false at a glance. The bar is two-sided: the condition must be satisfiable, and not satisfiable *as this topic's own work* — a state someone would reach only in order to make the topic ripe is not a trigger, and work that waits on no precondition takes none. Its history, reasoning, and what the check read live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
 
 …followed by, in order — a live topic's shape; the archived shape, under *Closing a topic*, ends at `## Resolution`:
 
@@ -46,6 +46,7 @@ A topic is partially completed by flipping its front-matter `status: open` → `
 
 - Insert a `## Done so far` section immediately after `## Findings so far`, linking the relevant commits, PRs, and spec that delivered the completed work.
 - Trim `## Suggested next steps` to list only the still-open remainder.
+- Rewrite `ripe_when:` for the remainder — the arm this change discharged goes, and what the still-open sub-items wait on takes its place. A trigger the landed work satisfied is not a trigger.
 - Re-render `docs/open-topics/README.md` (Index sync below).
 
 A partially completed topic later closes the normal way (see below).
@@ -66,7 +67,7 @@ Write the evidence at close, while it is known: an archived topic whose work is 
 
 A topic is closed by flipping its front-matter `status` (`open` or `partial`) → `status: resolved`, **deleting its `ripe_when:` key**, **and moving the file into `docs/open-topics/archive/`** (flat — `git mv docs/open-topics/T<NNNN>-<slug>.md docs/open-topics/archive/`).
 
-Delete `ripe_when:` rather than leaving it discharged: `grep -rl '^ripe_when:' docs/open-topics/archive/` must stay empty -- keep the `-r`: without it the answer depends on which grep runs, and one of them lies. Measured against a planted stranded trigger -- busybox grep over a directory misses it silently (rc 1, nothing on either stream), so it reports the clean state it cannot see; GNU grep exits 2 with `Is a directory` on stderr; the shell's `grep` function execs ugrep, which recurses anyway. Only the first is dangerous and no `grep` on the workstation resolves to it today, which is exactly why the flag is cheaper than the assumption -- so that a hit is *by construction* a stranded live deferral rather than something to read through and adjudicate. A closed topic has no trigger — if it still has one, it is not closed. `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in the render's `## Resolved` list, with its link now pointing at the archived path (see Index sync).
+Delete `ripe_when:` rather than leaving it discharged — `tests/test_open_topics_frontmatter.py::test_an_archived_topic_carries_no_ripe_when` refuses an archived topic that keeps one. A closed topic has no trigger — if it still has one, it is not closed. `docs/open-topics/archive/` is the longitudinal record of completed investigations; the closing commit (or PR) is where the resolution lives. The index still lists the topic in the render's `## Resolved` list, with its link now pointing at the archived path (see Index sync).
 
 ## Index sync (every change)
 

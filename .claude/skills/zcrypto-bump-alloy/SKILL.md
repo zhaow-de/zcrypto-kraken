@@ -18,7 +18,7 @@ The codified Alloy image bump. Four hosts run digest-pinned `grafana/alloy` cont
 
 ## Standing cautions (they all transfer)
 
-- Converges via `infra/ansible/scripts/converge.sh` — requires `--limit`, shows the `--check --diff` preview, takes a typed confirm (preview-only: pass `--check`); **never wrap it in `timeout`** (it is attended by design, and `timeout` orphans the running `ansible-playbook` child). **Never** `ansible-inventory --host/--list` (prints the vault, incl. the live trade key).
+- Converges via `infra/ansible/scripts/converge.sh`: never wrapped in `timeout` — `.claude/rules/fleet-deploys.md`'s, restated here because this is where the command is typed — and the script itself refuses a missing `--limit`; the mechanics are the *Shared converge mechanics* block below.
 - Timeout-guard every network command; an empty filtered query is not an absent event — verify by positive trace.
 - `converge.sh` appends every real pass to `docs/reference/deploy-log.jsonl` — the Alloy digest you passed is on record the moment the pass returns; the `fleet-pins.md` row at closeout is re-trued from that line, never re-typed.
 - NAS docker is `/usr/local/bin/docker` (not on sudo's PATH); the NAS play refuses on a non-UTC clock (`tags: [always]` guard).

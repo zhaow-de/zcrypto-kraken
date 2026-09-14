@@ -16,6 +16,9 @@ INDEX = "docs/reference/change-index.md"
 JOURNAL = "docs/reference/ops-journal/"
 FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
 READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
+# The key grammar of `_keys` in tests/test_change_index.py, which decides whether a merge owes a row: only
+# its topic alternative case-folds, so a global re.I here would make `ITER-7` a key to the gate alone.
+BRANCH_KEY = re.compile(r"\biter-\d{1,3}\b|\b\d{5}\b|\b[Tt]\d{4}\b")
 FLOOR = re.compile(r"Claude (Opus|Fable)\b", re.I)
 FABLE_PATHS = (
     "CLAUDE.md",
@@ -308,6 +311,26 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
     ]
 
 
+def index_row_fails(pr: dict) -> list[str]:
+    """A key in the BRANCH NAME obliges a row, and this is the last moment anything can say so.
+    Reads the index from the checkout, so the gate is run from the branch that carries the row."""
+    branch = pr.get("headRefName") or ""
+    if not BRANCH_KEY.search(branch):
+        return []
+    path = pathlib.Path(__file__).resolve().parents[2] / INDEX
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        return [f"{INDEX} unreadable ({exc.strerror or exc}) -- the row a keyed branch owes cannot be checked"]
+    if re.search(rf"^\| #{pr['number']} ", text, re.M):
+        return []
+    return [
+        f"branch `{branch}` carries a key and {INDEX} has no `| #{pr['number']} ` row -- the completeness "
+        "test reads the branch name and turns develop red after this merge; write the row (open-pr Step 4, "
+        "every cell may be an em dash) and re-run the gate from the branch"
+    ]
+
+
 def evaluate(
     pr: dict,
     head_commit: dict | None = None,
@@ -347,6 +370,7 @@ def evaluate(
     if "- [ ]" in body:
         fails.append("PR description has unchecked checklist item(s) (- [ ])")
     fails.extend(read_line_fails(pr, head_commit, files, read_commit))
+    fails.extend(index_row_fails(pr))
     if branch_growth is None:
         fails.append(
             "the branch's ambient growth was not checked commit by commit: `guidance-guard.py --range <base>..<head>` did not run"

@@ -1,6 +1,6 @@
 ---
 name: zcrypto-refine-rules
-description: Use before any edit to CLAUDE.md, a rule under .claude/rules/, a skill file or a page under infra/runbooks/ — the edit contract that infra/scripts/guidance-guard.py enforces at commit — and, invoked as `/zcrypto-refine-rules round`, the periodic harvest → graduate → count → condense → verify round over the guidance and the lesson inboxes.
+description: Use before any edit to CLAUDE.md, a rule under .claude/rules/, a skill file or a page under infra/runbooks/, and for `/zcrypto-refine-rules round`, the periodic guidance round.
 model: fable
 ---
 
@@ -21,7 +21,7 @@ Three tests on the line as written, two of them the guard's:
 
 - **The universal test.** A bullet that says *every*, *never*, *always*, *only*, *any* or *cannot* names its set and its count — `(set: …; count: `infra/scripts/count-list.sh <entry>`)` — or declares `(no count command: <why nothing in the tree records it>)`. The guard reads every list item of `CLAUDE.md`, the rules and the contracts read whole by the sessions, skills and operators that act on them — `docs/reference/fleet.md`, `docs/reference/fleet-pins.md`, the memo protocol and every top-level page under `infra/runbooks/` (since 2026-09-12, when the pages' count reached 0; a page in a subdirectory is not read), read for universals and never counted as ambient — `-`, `*`, `+` and numbered, nested ones included, a wrapped item as one block when its continuation lines are indented, a step's prose under its own indented command block included, code spans and fenced code blocks set aside — and refuses one whose prose carries the word with neither the entry nor the declaration; it does not judge the set, which is the reader's. A paragraph or a heading it does not read. An entry is a `c_<name>` function in `infra/scripts/count-list.sh` plus its `emit "<entry>"` line; `tests/test_count_list.py` pins that every entry a corpus line names exists.
 - **The trade.** The ambient set grows only for a stated reason: the commit message carries one line, `Ambient grows by N bytes: <reason>`, with N the exact growth the guard measures from the staged files; a deletion of equal size in the same commit needs no line, and a line on a commit that does not grow the set is refused. The guard measures the commit against `HEAD`, or against the amended commit's parent when the subject is unchanged — every file the whole commit changes — so an amend states the whole commit's growth: the hook checks it while the subject is kept, and a message-only amend must keep its line right. To reword an amended commit, stage under the kept subject first, then reword message-only: skip the first step and the hook, seeing only the increment, refuses the whole-growth line as too large, while the gate judges the whole commit. A commit that changes no ambient file is not judged, and neither instrument judges a merge commit — a conflict resolution that adds lines to an ambient file is the reader's. What no commit-msg hook sees — a reworded amend, a squash or fixup in a rebase — `merge-pr`'s gate catches at merge: `infra/scripts/guidance-guard.py --range <base>..<head>` judges every non-merge commit of the branch against its parent, so a line a rewrite lost or doubled is refused there, and a branch whose commits predate the guard states their growth by rewording each commit the mode names; an uncounted universal at an intermediate commit is cured only by a rebase that edits that commit. A growth with no reason worth one line is a line that does not belong.
-- **Placement.** What every session must do on every turn goes to `CLAUDE.md`; what it must do in one domain goes to that domain's rule; a procedure goes to the skill step where it runs; a claim a check can make goes to the check, and the sentence goes. A skill's description is ambient — write it as the trigger and nothing else.
+- **Placement.** What every session must do on every turn goes to `CLAUDE.md`; what it must do in one domain goes to that domain's rule; a procedure goes to the skill step where it runs; a claim a check can make goes to the check, and the sentence goes. A ruling on how work is performed lands its imperative on the surface that performs it — the skill step, the runbook section, the role — in the same change; a ruling that lives only in a spec, a topic or the memo is invisible at execution time. A skill's description is ambient — write it as the trigger and nothing else.
 
 A lesson goes to the inbox through `infra/scripts/append-lesson.py`, never straight into a rule: the round below is where a lesson becomes guidance, under the trade above.
 
@@ -34,7 +34,7 @@ A joint session, the owner's word closing every disposition; undecided is the de
 Populate the memory inbox with candidate items in the standard memory-file shape (frontmatter `name`/`description`/`metadata.type`, body with **Why** and **How to apply**). A memory that CONFERS a capability names the session it belongs to — read by a session it does not describe, it hands over an authority nobody granted; a prohibition is safe subjectless.
 
 - **Watermark**: `git log -1 --grep='^Refine-Round-Closed:' --format=%cI` — the previous round's closing commit carries the `Refine-Round-Closed: <ISO-8601 UTC>` trailer. No match ⇒ first round: harvest the full current memory inbox plus the trailing two weeks.
-- **Sources since the watermark**: every inbox `.local/agent-lessons/*.jsonl` in the main checkout — `infra/scripts/check-agent-lessons.py` on each first, a malformed line being a finding, not a skip; `git log` over `.claude/`; merged PR bodies; lessons either party names in the session. A harvested inbox rotates to `.local/agent-lessons/harvested/<round-date>/` in the same step, so the next round starts from empty inboxes and no record is harvested twice.
+- **Sources since the watermark**: every inbox `.local/agent-lessons/*.jsonl` in the main checkout (swept with `infra/scripts/sweep.sh`) — `infra/scripts/check-agent-lessons.py` on each first, a malformed line being a finding, not a skip; `git log` over `.claude/`; merged PR bodies; lessons either party names in the session. A harvested inbox rotates to `.local/agent-lessons/harvested/<round-date>/` in the same step, so the next round starts from empty inboxes and no record is harvested twice.
 - A candidate that duplicates an existing memory item updates that item instead.
 
 ### Step 2 — Graduate (joint)
@@ -63,7 +63,7 @@ Read the corpus and you can find a stale path, two texts that disagree, and a na
 
 ### Step 4 — Condense
 
-**Load `references/principles.md` now** — the principles there govern every edit in this step. Work the biggest always-loaded offenders first (`wc -c CLAUDE.md .claude/rules/*.md | sort -n`, then the skill descriptions by length). A prose-cleanup worklist over the whole tree excludes `.claude/*` and `docs/specs/*` + `docs/plans/*`; `docs/open-topics/*` keeps `topic-ops`'s shape.
+**Load `references/principles.md` now** — the principles there govern every edit in this step. Work the biggest always-loaded offenders first (`wc -c CLAUDE.md .claude/rules/*.md | sort -n`, then the skill descriptions by length). The standing prose worklist is `.local/prose-gap/REMAINING.txt` in the main checkout; `.claude/` is this round's own subject and is worked in Steps 2–3, not here.
 
 ### Step 5 — Verify
 
@@ -79,7 +79,7 @@ Then, and only then, delete the staged memory files and update `MEMORY.md`.
 
 ### Closing
 
-The round closes with one commit: Step 5 (d)'s delta in its body as prose (the growth line, when the round grows the set, is its own line), the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — below `Co-Authored-By:`, which opens the trailer block; the PR's `## Guidance changes` carries the round's claude commits. Verify end-to-end before reporting done:
+The round closes with one commit: Step 5 (d)'s delta in its body as prose (the growth line, when the round grows the set, is its own line), the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — below `Co-Authored-By:`, which opens the trailer block. Verify end-to-end before reporting done:
 
 ```bash
 test "$(git log -1 --grep='^Refine-Round-Closed:' --format=%H)" = "$(git rev-parse HEAD)"

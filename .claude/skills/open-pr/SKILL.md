@@ -8,7 +8,9 @@ disable-model-invocation: false
 
 ## Step 0 — the gate
 
-A PR delivers **one completed, nameable component**. Before anything below: (1) name the component from durable state — branch name, spec serial, memo queue item, `T<NNNN>` topic; cannot name it → stop, report the branch ready-or-not instead. (2) Confirm the component is complete — topic `resolved`, or `partial` with the remainder registered. (3) The word — `zcrypto-marco`'s by delegation in the multi-session setup, the user's explicit say-so for a single attended session; a `/zcrypto-auto-exec` run opens at item completion. A green commit is not a reason; a different component is not a reason to reuse this PR.
+A PR delivers **one completed, nameable component**. Before anything below: (1) name the component from durable state — branch name, spec serial, memo queue item, `T<NNNN>` topic; cannot name it → stop, report the branch ready-or-not instead. (2) Confirm the component is complete — topic `resolved`, or `partial` with the remainder registered. (3) The word — `zcrypto-marco`'s by delegation in the multi-session setup, the user's explicit say-so for a single attended session; a `/zcrypto-auto-exec` run opens at item completion. A green commit is not a reason; a different component is not a reason to reuse this PR. The ban on a second PR is on the one that follows the merge: a change that lands while the branch is open is a commit on it, not a follow-up. The one case a second component rides an open PR is an owner-directed fold-in, named under `## Changes` with the owner's word — never under `## Out of scope`.
+
+**A draft is not a delivery.** `.github/workflows/coverage.yml` fires on `pull_request` alone, so a branch with no PR runs no CI at all and its author pays for the whole suite by hand. Open the PR as a draft (`gh pr create --draft`) at the branch's first green commit: CI then runs the suite on every push, and `merge-pr`'s first gate refuses a draft, so nothing leaves early. The three conditions above are read at the undraft, not at the create; the body and Step 4's change-index row are written at create time, except the `Read before push by:` line, which names a read that has not happened yet and is written at the undraft.
 
 ## Title (iteration PRs)
 
@@ -44,7 +46,7 @@ Sweep the draft body for deferral language — *follow-up, later, once/when X, d
 
 ## Creating the PR — four steps, in order
 
-Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it.
+Steps 1 and 2 refuse before anything reaches GitHub; steps 3 and 4 are one operation and neither is finished without the other. **This skill runs BEFORE `iteration-closeout`**, so the PR number an entry cites already exists when closeout writes it. Step 0's gate is read at the undraft, so a draft takes these four steps at the branch's first green commit and the gate again when it is undrafted.
 
 **Step 1 — the title check.** A title longer than 72 characters is refused: `docs/reference/change-index.md`'s title cell IS the title, capped at 72 by `tests/test_change_index.py`, so a longer one either loses its tail or fails the guard. Measure it, never eyeball it. A title carrying a path-shaped token — a repo root `cli/`, `tests/`, `infra/`, `docs/`, `.claude/`, or `word/word.ext` — writes its `/` as `-` (`tests/test_change_index.py::test_no_cell_carries_a_path_shaped_token` is the grammar); a bare `long/flat` is not a path and keeps its slash:
 
@@ -62,15 +64,15 @@ grep -n "^| #<PR number> " docs/reference/change-index.md   # on a body edit: th
 
 On a mismatch, **refuse to create the PR** and print both numbers — the one in the branch or title, and the index's highest — so the mint can be corrected before the PR exists. A serial is minted when the branch is cut, from this same command; nothing else mints one.
 
-**Step 3 — `gh pr create`.** The PR number comes back in the URL it prints; keep it.
+**Step 3 — `gh pr create`.** `--draft` unless the branch is already complete and has the word; the PR number comes back in the URL it prints either way, and keep it.
 
-**Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
+**Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section — and a topic the PR only **registers** is not a key: it is a cross-reference like the iteration above, recorded by `docs/open-topics/README.md`, and a row claiming it says the index delivered what it only filed. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:
 
 ```
 | #<PR number> | <today, UTC> | <title, at most 72 chars> | <iters> | <specs> | <topics> |
 ```
 
-Iterations are zero-padded to three digits (`iter-007`), several keys of one kind are comma-separated, and a kind with no key is an em dash `—`. Rows stay sorted by PR number ascending, and **no cell may hold a file path** — a spec is its bare serial `00034`, never `docs/specs/00034-…`. No key of any kind ⇒ no row. Then re-read the file and confirm the row is there before reporting the PR open. The row commit is one of the two heads `merge-pr`'s gate admits past the tip the read line names — a single commit touching the index alone (the other is a message amend of that tip) — so it takes no delta read and the line stays as written.
+Iterations are zero-padded to three digits (`iter-007`), several keys of one kind are comma-separated, and a kind with no key is an em dash `—`. Rows stay sorted by PR number ascending, and **no cell may hold a file path** — a spec is its bare serial `00034`, never `docs/specs/00034-…`. No key of any kind ⇒ no row, and a topic the PR only registers is no key — except in the BRANCH NAME, which always takes a row, even when the PR delivered none of it and every cell is an em dash: `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` reads the branch name and fires only on the merge, so this PR's CI is green without the row and develop goes red after it. The registration-only PR is exactly this case. Then re-read the file and confirm the row is there before reporting the PR open. The row commit is one of the two heads `merge-pr`'s gate admits past the tip the read line names — a single commit touching the index alone (the other is a message amend of that tip) — so it takes no delta read and the line stays as written.
 
 ## Editing a PR body
 

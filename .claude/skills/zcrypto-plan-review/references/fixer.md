@@ -56,4 +56,4 @@ Sections, each present even when empty:
 
 Final message, at most four lines: the commit hash, the counts fixed / refuted / skipped derived by re-reading the report, and anything the spec left you unable to decide.
 
-Run everything as plain blocking commands; background nothing; no subagents. Do not end your turn before the commit exists.
+Run everything as plain blocking commands; background nothing; no subagents; no agent tools (`ListAgents`, `SendMessage`). Do not end your turn before the commit exists.

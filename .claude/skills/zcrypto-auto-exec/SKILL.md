@@ -70,18 +70,14 @@ Measurement bugs produce plausible numbers — *artifacts asserting untruths*. S
 
 | The impulse | The reality |
 |---|---|
-| Ask / wait on a reversible choice | Decide → log → continue. The logs are the human's involvement. |
-| "`Who: me` on the item, so its attended sub-step is fine too" | The boundary governs per sub-item. Park the attended step, do the rest. |
 | Merge the autonomous half of an attended item ("the rules are green; park just the push") | The component includes its deploy tail. Land it branch-ready with no PR; the attended session opens the one PR. |
 | Drain NEW IDEAS or purge DONE ITEMS "while I'm in the memo anyway" | Human-only gates. The loop's memo surface is exactly the ad-hoc procedures. |
 | Resolve the topic, move on without the grooming bookkeeping | The item isn't done until the queue reflects it and the memo was re-read. |
 | Edit the memo via a shell heredoc | Bypasses the read-guard. Edit/Write tools only. |
-| Register a topic without queueing it | Invisible at the next pick. Register **and** insert. |
-| Stop at an open PR for approval | The loop merges via `merge-pr` when green. |
+| Stop at an open PR for approval | The loop merges via `merge-pr` when green — no stop, no ask. |
 | Squeeze one more item past the time-gate | Stop at the gate; hand back the summary. |
 | Peek at the holdout / expand a budget / touch production "just this once" | Named park triggers. Park and continue. |
 | Record a verdict from a suspicious run (bit-identical arms, NaN, zero trades, too-good Sharpe) | Instrument bug-hunt first — plausible numbers from broken instruments steered this project wrong twice. |
-| Loosen a failing assert so the run finishes | Guardrails are the product; a red check is a finding. |
 | "Correct" a doc by appending the retraction below the old text | The retracted claim still reads first, and more confidently. Rewrite the narrative — the durable file must read correctly cold. |
 
 ## Notes

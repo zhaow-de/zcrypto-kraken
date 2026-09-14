@@ -18,6 +18,8 @@ An iteration that introduces, relocates, or retires a dataset updates `docs/refe
 
 ## The decisions-log entry
 
+**Log iff both hold**: the decision is about the **subject matter** — research direction, variants, scope, the feature, model, label, universe or knob to try — *and* you are in a live research iteration, an unattended `/zcrypto-auto-exec` iteration or an interactive session actively designing or running one. Everything else is skipped: permission, engineering, tooling, process, formatting. A reversible tooling choice is still decided autonomously, just not logged.
+
 ### What to log
 
 One paragraph per decision prefixed `[iter-<NNN>]`: the question, **2–3 options each with a short tradeoff**, and the resolution marked `(Decision: N)` — options laid out as fully as you'd present them. Example:

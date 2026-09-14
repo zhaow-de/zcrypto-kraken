@@ -5,6 +5,8 @@ disable-model-invocation: false
 allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
 ---
 
+> **Unrun, and three steps are broken as written** — read `docs/open-topics/T0203-the-release-skill-has-never-run-and-three-steps-are-broken.md` first and fix as you go: this skill is refined on the first real release, not before.
+
 Cuts a release PR from `develop` to `main`, then pushes the `v<version>` tag and creates the GitHub Release directly from this skill. After the release is published, the skill back-merges `main` into `develop` to keep them in lock-step.
 
 ## Context
