@@ -63,7 +63,7 @@ The report's `## Reminders` section is the trigger — an **OWED** line is work,
 
 ## 5b. Evaluate the live topics' triggers
 
-Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the rendered index carries each live topic's trigger — and run the one check each trigger names, for the three shapes this pass can decide from repo state and its own reading:
+Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the rendered index carries each live topic's trigger — and run the one check each trigger names, for the four shapes this pass can decide from repo state and its own reading:
 
 - **a date** — compare with today, unless the trigger's own text says the date is a handle for a check this
   pass cannot run: `T0150` names the oldest `cycle-<HH>.json` on the engine host as its test, so it is named
@@ -75,7 +75,7 @@ Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the
   standing line saying a topic waits is wallpaper within a week, and the daily pass is the backstop here,
   not the primary reader — `open-pr`'s rider clause is what keeps these from being written at all.
 
-A milestone or an evaluation statement is not this pass's to decide: name it unevaluated rather than guessing. A fired trigger goes into the journal entry's `follow-ups` line by serial (`follow-ups none` stays the all-clear form) and is handed to `zcrypto-marco`; the topic itself is edited by whoever takes the work, through `topic-ops`.
+A milestone, an evaluation statement, or an activity no repo path records is not this pass's to decide: name it unevaluated rather than guessing. A fired trigger goes into the journal entry's `follow-ups` line by serial (`follow-ups none` stays the all-clear form) and is handed to `zcrypto-marco`; the topic itself is edited by whoever takes the work, through `topic-ops`.
 
 ## 6. Rewrite any dead-man description the report faults
 
