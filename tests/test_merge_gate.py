@@ -737,3 +737,10 @@ def test_the_tail_of_a_block_comments_closing_line_is_not_a_box() -> None:
         and not _boxed("> <!--\n> hidden\n> --> - [ ] box")
         and _boxed("<!--\nhidden\n-->\n- [ ] box")
     )
+
+
+def test_an_html_block_or_comment_admits_at_most_three_columns_of_indent() -> None:
+    """Four spaces or a tab before the opener is an indented code block on the page, and a box after it is drawn."""
+    assert not _boxed("## Checklist\n\n   <details>\n- [ ] unchecked")
+    assert _boxed("## Checklist\n\n    <details>\n- [ ] unchecked") and _boxed("## Checklist\n\n\t<details>\n- [ ] unchecked")
+    assert _boxed("## Checklist\n\n    <!--\n- [ ] unchecked") and _boxed("- notes\n    <details>\n- [ ] unchecked")

@@ -206,6 +206,14 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         # A block-level opener -- first non-space text on the line -- hides every line until its closer, or to the
         # end of the document when it has none; opened on a quoted line, it ends with the blockquote instead.
         stripped = line.lstrip()
+        # An HTML block or comment admits at most three columns of indent (CommonMark, the bound `_FENCE_OPEN` spells
+        # as `{0,3}`); four, or a tab, is an indented code block on the page, literal, hiding nothing and drawing no box.
+        if (
+            keep_collapsed
+            and stripped.startswith(("<!--", "<details", "</details", "<summary", "</summary"))
+            and len(line[: len(line) - len(stripped)].expandtabs(4)) > 3
+        ):
+            continue
         if stripped.startswith("<!--"):
             in_comment = True
             open_depth = depth
