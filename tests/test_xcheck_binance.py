@@ -96,7 +96,7 @@ def test_binance_daily_closes_parses_sorts_and_dedupes():
     rows = [
         _kline(BASE_TS * 1000 + 2 * DAY * 1000, 102.0),
         _kline(BASE_TS * 1000, 100.0),
-        _kline(BASE_TS * 1000, 100.0),  # exact duplicate of the first row
+        _kline(BASE_TS * 1000, 100.0),
     ]
 
     frame = binance_daily_closes("BTCEUR", fetch_fn=lambda pair, *, limit=1000: rows)
@@ -165,9 +165,8 @@ def test_crosscheck_series_disjoint_ts_yields_zero_overlap_and_nulls():
 
 
 def test_crosscheck_series_single_overlapping_row_reports_no_deviation():
-    """The `< 2` arm the zero-overlap test does not reach: one shared day is too few for a
-    correlation, and the same branch must not hand the dataset maximum a 0.0 that reads as the two
-    venues agreeing exactly."""
+    """One shared row is under the two-row floor: the planted deviation comes back None with the
+    correlations, not as a number and not as a 0.0 the dataset maximum would read as agreement."""
     kraken = _kraken_frame(3)
     binance = _binance_frame(1, close_fn=lambda i: 90.0)  # a real 10% deviation on the shared day
 
@@ -225,10 +224,9 @@ def test_crosscheck_dataset_skips_malformed_symbol_without_crashing(tmp_path):
 
 
 def test_crosscheck_dataset_skips_a_symbol_whose_parquet_is_absent(tmp_path):
-    """The other arm of the skip: well-formed, but nothing on disk to read."""
-    # `"/EUR"` is the shape that hides it -- `split("/")` gives an empty base, which pathlib drops, so
-    # the read is attempted against a path that was never a dataset. `read_parquet` raises
-    # FileNotFoundError, which is neither ValueError nor XCheckError.
+    # `"/EUR"` splits into an empty base, which pathlib drops, so the read lands on a path that was
+    # never a dataset and `read_parquet` raises FileNotFoundError -- neither ValueError nor
+    # XCheckError, so the skip needs an arm of its own for it.
     root = tmp_path / "ohlc-full"
     write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
 
@@ -239,7 +237,7 @@ def test_crosscheck_dataset_skips_a_symbol_whose_parquet_is_absent(tmp_path):
     report = crosscheck_dataset(root, ["SOL/EUR", "/EUR", "BTC/EUR"], fetch_fn=fetch_fn)
 
     assert report["skipped"] == ["SOL/EUR", "/EUR"]
-    assert "BTC/EUR" in report["series"]  # the true positive: the healthy symbol is still crosschecked
+    assert "BTC/EUR" in report["series"]
     assert report["summary"]["series_count"] == 1
 
 
@@ -247,8 +245,6 @@ def test_crosscheck_dataset_skips_a_symbol_whose_parquet_is_absent(tmp_path):
 
 
 def test_summary_over_no_series_reports_no_deviation_and_renders_it(tmp_path):
-    """A maximum over no series has no value; 0.0 would say every series matched exactly. The
-    renderer must show that the way it already shows an absent correlation."""
     report = crosscheck_dataset(tmp_path / "empty", [], fetch_fn=lambda pair, *, limit=1000: [])
 
     assert report["summary"]["max_abs_rel_diff_overall"] is None
@@ -256,9 +252,6 @@ def test_summary_over_no_series_reports_no_deviation_and_renders_it(tmp_path):
 
 
 def test_summary_over_a_symbol_with_no_overlap_reports_no_deviation(tmp_path):
-    """The failure that happens in production, unlike the no-series case above: the symbol IS
-    crosschecked, Binance answers, and the two windows simply do not meet. Its per-series maximum is
-    the only one the dataset maximum sees."""
     root = tmp_path / "ohlc-full"
     write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
 
@@ -272,13 +265,10 @@ def test_summary_over_a_symbol_with_no_overlap_reports_no_deviation(tmp_path):
     assert report["summary"]["max_abs_rel_diff_overall"] is None
     md = render_markdown(report)
     assert "Max abs rel diff overall: n/a" in md
-    assert "| n/a |" in md  # the per-series cell, which formatted the same value
+    assert "| n/a |" in md
 
 
 def test_summary_over_a_mixed_universe_ignores_the_symbol_that_measured_nothing(tmp_path):
-    """The branch's headline scenario, which neither the all-populated nor the no-series test builds:
-    some symbols reach and some do not. The `is not None` filter in `crosscheck_dataset` is what makes
-    it work, and without a fixture that mixes, deleting that filter passes the suite."""
     root = tmp_path / "ohlc-full"
     for base, quote in [("BTC", "EUR"), ("ETH", "EUR"), ("SOL", "BTC")]:
         write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / base / quote / "1440.parquet")
@@ -295,15 +285,13 @@ def test_summary_over_a_mixed_universe_ignores_the_symbol_that_measured_nothing(
 
     assert report["series"]["SOL/BTC"]["max_abs_rel_diff"] is None
     assert report["series"]["ETH/EUR"]["max_abs_rel_diff"] == pytest.approx(0.20)
-    # 0.25, not 0.20: the aggregate is the WORST deviation across the universe, and the unmeasured
-    # symbol contributes nothing to it rather than a zero.
+    # 0.25, the worst across the universe, over the two symbols that measured anything
     assert report["summary"]["max_abs_rel_diff_overall"] == pytest.approx(0.25)
 
 
 def test_summary_and_render_carry_the_deviation_a_populated_run_measures(tmp_path):
-    """The control beside the two None cases: with a real overlap and a planted diff, both the
-    summary and the rendered line must carry the measured number, so a guard that answered None or
-    "n/a" unconditionally cannot pass."""
+    """The control: a real overlap and a planted diff must reach the summary and the rendered line, so
+    an unconditional None or "n/a" cannot pass."""
     root = tmp_path / "ohlc-full"
     write_parquet(to_frame([_kraken_row(BASE_TS + i * DAY) for i in range(3)]), root / "BTC" / "EUR" / "1440.parquet")
 

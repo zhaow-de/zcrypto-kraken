@@ -1,14 +1,10 @@
 """The canonical read surface (spec 00050 D6).
 
-Consumers must NOT glob `**/*.parquet` over the archive: that also matches `<HH>.part####.parquet`
-(the live hour) and, on the NAS mirror, thousands of already-merged stale part files rsync never
-deleted (T0038) — so the obvious glob silently reads a large fraction of the archive TWICE. For L2
-book deltas that is not cosmetic: rows carry ABSOLUTE quantities, so a doubled delta stream
-reconstructs a different book. This helper is the safe way in, and the strict final-name match makes
-that whole class of bug structurally impossible.
-
-`FINAL_NAME` is `settle.py`'s, not a second copy of it — one pattern for what counts as a committed
-final, shared by the settlement scan and this reader.
+Consumers must not glob `**/*.parquet` over the archive: it also matches the live hour's
+`<HH>.part####.parquet`, and any part a mirror still holds beside its merged final (T0038), so those
+rows are read twice. L2 rows carry absolute quantities, so a doubled delta stream reconstructs a
+different book. `FINAL_NAME` is `settle.py`'s, not a second copy of it: one pattern for what counts
+as a committed final, shared by the settlement scan and this reader.
 """
 
 from __future__ import annotations
@@ -39,13 +35,13 @@ def canonical_segments(
 ) -> Iterator[tuple[str, datetime, Path]]:
     """Yield `(pair, hour, path)` for every canonical hour: reconciled-first, primary otherwise.
 
-    Yields are sorted by `(pair, hour)` — overlay-only hours (a wholly-missing primary hour, healed
-    from the secondary) included, IN sequence, never appended after later raw hours. The order is a
-    contract: consumers concatenate hours in yield order and may never re-sort rows by `ts` (L2 rows
-    carry absolute quantities), so an out-of-sequence healed hour would splice a different book.
+    Sorted by `(pair, hour)`, a healed hour the primary lacks in sequence with the rest, never appended
+    after later hours. The order is a contract: consumers concatenate hours in yield order and may
+    never re-sort rows by `ts` (L2 rows carry absolute quantities), so an out-of-sequence hour would
+    splice a different book.
     """
     merged = {(pair, hour): p for pair, hour, p in _hours(primary_root, kind)}
     if reconciled_root is not None and reconciled_root.exists():
-        merged.update({(pair, hour): p for pair, hour, p in _hours(reconciled_root, kind)})  # reconciled-first
+        merged.update({(pair, hour): p for pair, hour, p in _hours(reconciled_root, kind)})
     for (pair, hour), p in sorted(merged.items()):
         yield pair, hour, p

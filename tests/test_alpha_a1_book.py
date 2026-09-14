@@ -9,9 +9,8 @@ BASE_KWARGS = dict(gate_window=20, vol_lookback=20, basket_lookback=20, trend_lo
 
 
 def _synthetic_universe(n=150):
-    # Three legs (rally / drawdown / recovery) for BTC and a phase-shifted ETH -- guarantees the SMA
-    # gate and trend_agreement both flip regimes for real (not a same-signed drift throughout), so
-    # every toggle has a genuine chance to engage.
+    # Three legs (rally / drawdown / recovery) for BTC and a phase-shifted ETH, so the SMA gate and
+    # trend_agreement both flip regimes and every toggle has a chance to engage.
     btc, eth = [], []
     for i in range(n):
         if i < 50:
@@ -30,15 +29,15 @@ def _synthetic_universe(n=150):
 
 
 def test_a1_book_returns_no_lookahead():
-    # Prices identical through index 99 (100 elements); ETH diverges from index 100 on. A return at
-    # period t needs prices[t]/prices[t+1], so only t <= 98 is guaranteed invariant -> [:99].
+    # Prices identical through index 99; ETH diverges from index 100 on. Return k spans
+    # prices[k] -> prices[k+1], so k = 99 already reads a divergent price and only k <= 98 is
+    # invariant -> [:99].
     n, k_common = 150, 99
     prices_a, btc = _synthetic_universe(n)
     prices_b = {a: list(p) for a, p in prices_a.items()}
-    # Anchor the divergent replacement to the actual boundary price (not an unrelated fixed magnitude
-    # like 999.0) so the first divergent return isn't an unrealistic multi-hundred-percent jump that
-    # would trip run_backtest's degenerate-equity-curve guard -- deviation from the plan's literal
-    # fixture, noted in the iter report; the look-ahead property under test is unaffected.
+    # Anchor the divergent leg to the boundary price: an unrelated fixed magnitude such as 999.0
+    # makes the first divergent ETH move a jump past +1000%, which pushes a book period return past
+    # -100% on the shorted leg and trips run_backtest's degenerate-equity guard.
     base_val = prices_b["ETH"][k_common]
     for j in range(k_common + 1, n):
         prices_b["ETH"][j] = base_val * (1 + 0.3 * math.sin(j))
@@ -64,10 +63,10 @@ def test_a1_book_returns_toggles_engage():
     r_short = a1_book_returns(prices, btc, config=cfg_short)
     r_vol12 = a1_book_returns(prices, btc, config=cfg_vol12)
 
-    assert r_btc["net_returns"] != r_basket["net_returns"]  # base toggle engages
-    assert r_basket["net_returns"] != r_ensemble["net_returns"]  # regime toggle engages
-    assert r_basket["net_returns"] != r_short["net_returns"]  # short toggle engages
-    assert r_basket["net_returns"] != r_vol12["net_returns"]  # vol_target toggle engages
+    assert r_btc["net_returns"] != r_basket["net_returns"]
+    assert r_basket["net_returns"] != r_ensemble["net_returns"]
+    assert r_basket["net_returns"] != r_short["net_returns"]
+    assert r_basket["net_returns"] != r_vol12["net_returns"]
 
 
 def test_a1_book_returns_reduces_to_gated_btc():
@@ -81,10 +80,9 @@ def test_a1_book_returns_reduces_to_gated_btc():
 
 
 def test_a1_book_returns_reduces_to_basket_when_always_long():
-    # A strictly rising BTC keeps sma_gate at 1.0 for every post-warmup period (all-long, single_gate,
-    # short=off) -> every present asset's direction is +1.0, so the weighted directional book
-    # collapses to the plain dynamic_inverse_vol_basket over those gate-on periods -- an end-to-end
-    # cross-check (through the public API) that the inline weights match the reviewed basket.
+    # A strictly rising BTC keeps sma_gate at 1.0 past warm-up, so under single_gate/short=off every
+    # present asset's direction is +1.0 and the book collapses to dynamic_inverse_vol_basket on the
+    # gate-on periods: the inline weights are checked against the basket through the public API.
     n = 100
     btc = [100.0 * (1.01**i) for i in range(n)]
     eth = [50.0 * (1.008**i) * (1 + 0.02 * math.sin(i / 3)) for i in range(n)]
@@ -106,10 +104,8 @@ def test_a1_book_returns_planted_signal_positive_sharpe():
 
 
 def test_a1_book_returns_asset_positions_reconstruct_net_returns():
-    # At zero fees, run_backtest's net_returns[k] = positions[k] * book_base_returns[k] =
-    # positions[k] * sum_i weight_i[k]*direction_i[k]*ret_i[k] = sum_i asset_positions[i][k]*ret_i[k] --
-    # dotting the exposed per-asset positions with the per-asset returns must reconstruct net_returns
-    # exactly, for every period.
+    # At zero fees net_returns[k] = positions[k] * book_base_returns[k]
+    # = positions[k] * sum_i weight_i[k]*direction_i[k]*ret_i[k] = sum_i asset_positions[i][k]*ret_i[k].
     prices, btc = _synthetic_universe(150)
     cfg = A1Config(base="equal_risk_basket", regime="ensemble", short="confirmed_bear", target_vol=0.10, **BASE_KWARGS)
     out = a1_book_returns(prices, btc, config=cfg)
@@ -128,10 +124,10 @@ def test_a1_book_returns_asset_positions_btc_only():
     assert len(out["asset_positions"]["BTC"]) == len(out["net_returns"])
     for k in range(len(out["net_returns"])):
         assert out["asset_positions"]["BTC"][k] == pytest.approx(out["vol_target_positions"][k] * gate[k], abs=1e-12)
-    # concrete periods: k=0 is warm-up (k < gate_window-1=19) -> gate is 0.0 regardless of positions.
+    # k=0 is warm-up (k < gate_window-1 = 19) -> gate 0.0 whatever the position.
     assert out["asset_positions"]["BTC"][0] == 0.0
-    # k=25 sits inside the strictly-rising rally leg (i < 50) -> price is the max of its trailing
-    # window, so the gate is on (1.0) and the position equals vol_target_positions verbatim.
+    # k=25 is inside the strictly-rising rally leg (i < 50): prices[25] tops its 20-price window, so
+    # the gate is on and the position is vol_target_positions[25] verbatim.
     assert out["asset_positions"]["BTC"][25] == pytest.approx(out["vol_target_positions"][25], abs=1e-12)
 
 
@@ -141,19 +137,17 @@ def test_a1_book_returns_guards():
     with pytest.raises(AlphaError):
         a1_book_returns(prices, btc, config="not a config")
     with pytest.raises(AlphaError):
-        a1_book_returns({"ETH": prices["ETH"]}, btc, config=cfg)  # missing BTC
+        a1_book_returns({"ETH": prices["ETH"]}, btc, config=cfg)
     with pytest.raises(AlphaError):
-        a1_book_returns({"BTC": btc, "ETH": prices["ETH"][:-1]}, btc, config=cfg)  # unequal lengths
+        a1_book_returns({"BTC": btc, "ETH": prices["ETH"][:-1]}, btc, config=cfg)
     with pytest.raises(AlphaError):
-        a1_book_returns(prices, btc[:-1], config=cfg)  # btc_prices wrong length
+        a1_book_returns(prices, btc[:-1], config=cfg)
     gapped = {"BTC": [None] + btc[1:], "ETH": prices["ETH"]}
     with pytest.raises(AlphaError):
-        a1_book_returns(gapped, btc, config=cfg)  # BTC must have full coverage
+        a1_book_returns(gapped, btc, config=cfg)
 
 
 def test_a1_book_returns_btc_prices_must_match_prices_by_asset():
-    # Right length, but one element differs from prices_by_asset["BTC"] -- the regime gate would
-    # silently compute off different data than the BTC leg's own return/weight contribution.
     prices, btc = _synthetic_universe(150)
     cfg = A1Config(base="btc_only", regime="single_gate", short="off", target_vol=0.10, **BASE_KWARGS)
     mismatched = list(btc)

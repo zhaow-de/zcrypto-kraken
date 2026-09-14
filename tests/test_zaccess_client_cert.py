@@ -70,7 +70,6 @@ def test_issue_refuses_overwrite(tmp_path, ca):
 
 
 def test_issue_fails_cleanly_on_ca_key_cmd_failure(tmp_path, ca):
-    """Failure path: if CA key command fails, no PEM is left behind."""
     r = subprocess.run(
         [str(SCRIPT), "issue", "test-device", "--out-dir", str(tmp_path / "leaves"), "--p12-dir", str(tmp_path)],
         env={
@@ -89,15 +88,12 @@ def test_issue_fails_cleanly_on_ca_key_cmd_failure(tmp_path, ca):
 
 
 def test_issue_bundle_integrity(tmp_path, ca):
-    """Bundle integrity: .pass file has correct permissions and p12 is valid."""
     r = _issue(tmp_path, ca, "testnode")
     assert r.returncode == 0
     pf = tmp_path / "zaccess-testnode.p12.pass"
     assert pf.exists()
-    # Check passphrase file mode is 0600
     mode = oct(pf.stat().st_mode)[-3:]
     assert mode == "600", f"expected mode 0600, got {mode}"
-    # Verify the p12 can be opened with the passphrase
     verify = subprocess.run(
         ["openssl", "pkcs12", "-in", str(tmp_path / "zaccess-testnode.p12"), "-passin", f"file:{pf}", "-nokeys", "-noout"],
         capture_output=True,

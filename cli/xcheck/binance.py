@@ -69,9 +69,8 @@ def crosscheck_series(kraken: pl.DataFrame, binance: pl.DataFrame) -> dict:
             "overlap_rows": overlap_rows,
             "close_corr": None,
             "return_corr": None,
-            # None, not 0.0: this is what the dataset maximum below is taken over, and a symbol
-            # whose Binance window does not reach Kraken's would otherwise contribute perfect
-            # agreement to it.
+            # None, not 0.0: the dataset maximum is taken over this, and a symbol whose Binance
+            # window does not reach Kraken's must not contribute perfect agreement to it.
             "max_abs_rel_diff": None,
             "max_rel_diff_ts": None,
         }
@@ -113,8 +112,7 @@ def crosscheck_dataset(kraken_root: Path, symbols: list[str], *, fetch_fn=fetch_
     summary = {
         "series_count": len(series),
         "min_close_corr": min(close_corrs) if close_corrs else None,
-        # None, not 0.0, matching `min_close_corr` above: a maximum over no series has no value,
-        # and zero deviation reads as every series matching exactly.
+        # None, not 0.0: a maximum over no series has no value, and 0.0 reads as every series matching.
         "max_abs_rel_diff_overall": max(max_diffs) if max_diffs else None,
     }
     return {"series": series, "skipped": skipped, "summary": summary}
@@ -146,9 +144,7 @@ def render_markdown(report: dict) -> str:
         f"- Min close corr: {min_close_corr}",
         f"- Max abs rel diff overall: {max_abs_rel_diff}",
         "",
-        "_Recent-window check: the most recent ≤ 1000 daily candles per pair (Binance single-page "
-        "limit); Binance EUR history reaches ~2020, so full-overlap cross-check via startTime pagination "
-        "is a deferred follow-up._",
+        "_Recent-window check: the most recent ≤ 1000 daily candles per pair (Binance single-page limit)._",
     ]
 
     if report["skipped"]:

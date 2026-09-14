@@ -36,8 +36,8 @@ def test_read_trades_csv_headerless(tmp_path):
 
 
 def test_read_trades_csv_ignores_extra_trailing_columns(tmp_path):
-    # the real quarterly ZIPs carry extra columns beyond Price,Volume,Timestamp,Type (order type,
-    # misc, trade id) that the header row doesn't even fully name — ignored positionally.
+    # the quarterly ZIPs carry more data fields (order type, misc, trade id) than the header names;
+    # read positionally, the surplus is ignored
     path = tmp_path / "XBTEUR.csv"
     path.write_text("Price,Volume,Timestamp,Type,Miscellaneous,Trade ID\n100.5,1.0,1700000000.0,b,l,,1\n")
 
@@ -66,8 +66,8 @@ def test_read_trades_csv_raises_on_bad_numeric_value_on_a_data_row(tmp_path):
 
 
 def test_read_trades_csv_headerless_corrupted_first_row_raises_not_silently_dropped(tmp_path):
-    # headerless; row 1's Price field is garbage but Volume/Timestamp are numeric — it must NOT be
-    # sniffed as a header and silently dropped; it must raise (the never-silent-misparse contract)
+    # row 1's Price is garbage but Volume and Timestamp are numeric: a data row, not a header, so it
+    # must raise rather than be dropped as one
     path = tmp_path / "XBTEUR.csv"
     path.write_text("garbage,1.0,1700000000.0,b\n100.5,2.0,1700000060.0,s\n101.0,1.5,1700000120.0,b\n")
 
@@ -101,8 +101,8 @@ def test_read_trades_csv_complete_3col_format(tmp_path):
     assert frame.height == 2
     assert frame["price"].to_list() == [97.0, 99.9]
     assert frame["volume"].to_list() == [1.0, 0.1]
-    assert frame["ts"][0].year == 2013  # field 0 is the timestamp, not the price
-    assert frame["side"].to_list() == [None, None]  # side is unavailable in this schema
+    assert frame["ts"][0].year == 2013
+    assert frame["side"].to_list() == [None, None]
 
 
 def test_read_trades_csv_complete_3col_from_zip_member(tmp_path):
@@ -155,7 +155,6 @@ def test_read_trades_csv_from_zip_member(tmp_path):
 
 
 def test_read_trades_csv_from_zip_member_str_path(tmp_path):
-    # the zip path may be a str, not only a Path — coerced internally
     zip_path = tmp_path / "Kraken_Trading_History_Q1_2099.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("XBTEUR.csv", "Price,Volume,Timestamp,Type,Miscellaneous,Trade ID\n100.5,1.0,1700000000.0,b,,1\n")
@@ -194,7 +193,6 @@ def test_read_trades_csv_corrupted_zip_raises(tmp_path):
     ],
 )
 def test_read_trades_csv_refuses_a_ts_that_is_not_epoch_seconds(tmp_path, name, first_field):
-    """A `ts` outside the plausible epoch-SECONDS range is refused, whichever way it fails."""
     path = tmp_path / "XBTEUR.csv"
     path.write_text(f"{first_field},100.5,2.0\n{first_field},101.0,1.0\n")
 
@@ -205,10 +203,10 @@ def test_read_trades_csv_refuses_a_ts_that_is_not_epoch_seconds(tmp_path, name, 
 
 
 def test_read_trades_csv_refuses_a_ts_below_the_epoch_floor(tmp_path):
-    """The floor at its VALUE: one second below it still casts and converts, so only the floor refuses
-    it and any lowering at all accepts it. The row is quarterly-shaped because a 3-field row whose
-    first field is below `_MIN_UNIX_TS` is not "complete" by `_detect_schema`, and dies as a short row
-    before any value check sees it."""
+    """One second below the floor still casts and converts, so only the floor refuses it and any
+    lowering accepts it. The row is quarterly-shaped because a 3-field row whose first field is below
+    `_MIN_UNIX_TS` is not "complete" by `_detect_schema`, and dies as a short row before any value
+    check sees it."""
     path = tmp_path / "XBTEUR.csv"
     path.write_text("100.5,2.0,999999999,b\n101.0,1.0,999999999,s\n")
 
@@ -218,10 +216,6 @@ def test_read_trades_csv_refuses_a_ts_below_the_epoch_floor(tmp_path):
 
 
 def test_read_trades_csv_bounds_are_the_values_the_constants_name(tmp_path):
-    """Both endpoints accepted at their exact values, and the ceiling refused one second above. The
-    floor's refusing side is `test_read_trades_csv_refuses_a_ts_below_the_epoch_floor`, feeding the
-    second below it -- a copy of that case here would be one pin counted twice, not two."""
-
     def _read(name: str, text: str):
         path = tmp_path / f"XBTEUR-{name}.csv"
         path.write_text(text)
@@ -234,8 +228,7 @@ def test_read_trades_csv_bounds_are_the_values_the_constants_name(tmp_path):
 
 
 def test_read_trades_csv_refuses_a_nan_ts_as_nan_not_as_out_of_range(tmp_path):
-    """Pins the check's POSITION: it must sit below the NaN check, or a NaN ts is reported as a range
-    fault -- a message naming a neighbouring problem, which is what the guard exists to avoid."""
+    """The range check sits below the NaN check: reordered, a NaN ts is reported as out of range."""
     path = tmp_path / "XBTEUR.csv"
     path.write_text("100.5,2.0,nan,b\n101.0,1.0,nan,s\n")
 
@@ -244,7 +237,6 @@ def test_read_trades_csv_refuses_a_nan_ts_as_nan_not_as_out_of_range(tmp_path):
 
 
 def test_read_trades_csv_still_reads_a_valid_seconds_file(tmp_path):
-    """The true positive: the range guard must not refuse the data it exists to protect."""
     path = tmp_path / "XBTEUR.csv"
     path.write_text("1700000000.123456,100.5,2.0\n1700000060.5,101.0,1.0\n")
 

@@ -1,4 +1,4 @@
-"""The four pre-schema-4 hashes: ruled 2026-08-09 — documented, never repaired (spec 00086 D6)."""
+"""The four pre-schema-4 hashes: documented, never repaired (spec 00086 D6)."""
 
 import hashlib
 import json
@@ -42,9 +42,6 @@ def test_epistemics_live_in_the_referent_value():
 
 
 def test_every_confidence_is_one_of_the_three_ruled_grades():
-    """Deliberately narrow, and named for what it can prove. Whether a row claims more than the
-    measured evidence supports is a judgement no assertion makes -- it is carried by the sibling
-    tests that re-derive the recipe and cross-check trial_ids against the registry, and by review."""
     assert all(r["confidence"] in ("reproduced", "inferred", "unrecoverable") for r in _rows())
 
 
@@ -52,9 +49,9 @@ def test_the_reproduced_15m_operand_is_the_manifest_basket_on_disk():
     if not _MANIFEST_15M.exists():
         pytest.skip("data/ohlc-15m/manifest.json absent — off-workstation; the 15m byte anchor is data-gated")
     row = next(r for r in _rows() if r["confidence"] == "reproduced")
-    # `basket_sha256` became `set_sha256` under the manifest contract (spec 00099). The VALUE is
-    # unchanged for this set: ohlc-15m is single-interval, so ordering by path and by the legacy
-    # string-sorted interval key coincide -- the byte anchor this row pins still holds.
+    # `basket_sha256` became `set_sha256` under the manifest contract (spec 00099), with the same
+    # value for this set: ohlc-15m is single-interval, so path order and the legacy string-sorted
+    # interval order coincide, and the byte anchor this row pins holds under either key.
     from cli.data.manifest import ManifestError, read_manifest
 
     try:
