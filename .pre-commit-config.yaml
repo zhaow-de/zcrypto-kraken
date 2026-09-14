@@ -81,7 +81,7 @@ repos:
   # shellcheck over the bash and POSIX-sh scripts under infra/: the commit hooks, the fleet's units and
   # the operator scripts. A finding is fixed in the script; a `# shellcheck disable=` stays only on the
   # one line it is wrong for, with the reason beside it. Out of the pattern by extension: the two zsh
-  # scripts -- shellcheck has no zsh dialect and refuses one whole (SC1071); the agent shell is bash.
+  # scripts -- shellcheck has no zsh dialect and refuses one whole (SC1071).
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1-1
     hooks:

@@ -2,7 +2,7 @@
 # Transports the full working environment between the workstation and the ops node so work continues
 # where it left off (T0086). Run it ON THE SOURCE; the destination is inferred, or named as $1.
 #
-#   usage: workspace-transport.sh [destination-fqdn] [-y|--yes]   -- -y skips the confirmation,
+#   usage: workspace-transport.zsh [destination-fqdn] [-y|--yes]   -- -y skips the confirmation,
 # which is required when there is no terminal
 #
 # Git state moves as a bundle because this repo keeps branches local until PR-open, so origin cannot
