@@ -727,3 +727,13 @@ def test_a_quote_marker_alone_is_content_to_an_unquoted_html_block() -> None:
 def test_a_deeper_quoted_fence_line_inside_a_quoted_fence_is_content() -> None:
     """A fence opened one quote deep is closed by a one-quote line, not by a two-quote one, which is code to it."""
     assert not _boxed("> ```\n> > ```\n> - [ ] after") and _boxed("> ```\n> ```\n> - [ ] after")
+
+
+def test_the_tail_of_a_block_comments_closing_line_is_not_a_box() -> None:
+    """The line carrying `-->` is the HTML block's last line, so a marker after it is raw text on the page, not a task
+    item; on the next line it is a box again."""
+    assert (
+        not _boxed("<!--\nhidden\n--> - [ ] box")
+        and not _boxed("> <!--\n> hidden\n> --> - [ ] box")
+        and _boxed("<!--\nhidden\n-->\n- [ ] box")
+    )

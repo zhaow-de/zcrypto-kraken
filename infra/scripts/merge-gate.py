@@ -90,7 +90,7 @@ def _quote_depth(raw: str) -> int:
 
 
 def _at_depth(raw: str, depth: int) -> str:
-    """The line as the blockquote `depth` levels deep sees it: exactly that many markers removed."""
+    """The line as the blockquote `depth` levels deep sees it: that many markers, and the indent before them, off."""
     return re.sub(rf"^\s*(?:> ?){{{depth}}}", "", raw)
 
 
@@ -120,16 +120,15 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
 
     Two rules keep this close to a renderer without becoming one. A fence is decided before any inline markup is
     masked, because a renderer settles fences first -- and, under `keep_collapsed`, on the line with its quote
-    markers already off, since a fence written inside a blockquote is still a fence. And a comment or `<details>` HIDES what
-    follows it only when it opens the line -- an HTML block -- while one that opens and closes inside a line just
-    takes its own span with it; an unterminated `<!--` in the middle of a sentence renders as text, and treating
-    it as an opener threw away the rest of a body a reader can see in full.
+    markers off, since a fence inside a blockquote is still a fence. And a comment or `<details>` HIDES what
+    follows it only when it opens the line and closes on a later one -- an HTML block; treating an unterminated
+    `<!--` in the middle of a sentence as an opener threw away the rest of a body a reader can see in full.
     """
     visible: list[str] = []
     fence: str | None = None  # the opening run, when inside a fenced block
     in_comment = False
     in_details = False
-    html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to a line blank at its depth
+    html_block = False  # keep_collapsed only: inside a details/summary HTML block, up to its blank line
     open_depth = 0  # keep_collapsed only: the quote depth the open fence or comment began at; 0 when not quoted
     html_depth = 0  # keep_collapsed only: the same for the open HTML block
     for raw in body.splitlines():
@@ -139,8 +138,8 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
         depth = _quote_depth(raw) if keep_collapsed else 0
         if open_depth and depth < open_depth:
             fence, in_comment, open_depth = None, False, 0
-        # Every closer is read at the depth its construct opened under: an unquoted fence sees a quoted line as
-        # literal content, a quoted one sees a deeper-quoted line the same way, and nothing open sees every depth.
+        # Every closer is read at the depth its construct opened under: a quoted fence sees a deeper-quoted line as
+        # literal content, and nothing open sees every depth, so an opener is found wherever it sits.
         if not keep_collapsed or (fence is not None and not open_depth):
             line = raw
         elif open_depth:
@@ -168,6 +167,11 @@ def _as_a_reader_sees_it(body: str, *, keep_collapsed: bool = False) -> str:
             if in_comment:
                 m = _COMMENT_CLOSE.search(masked)
                 if not m:
+                    continue
+                if keep_collapsed:
+                    # The closing line is the HTML block's last line: what follows `-->` on it is raw text a reader can
+                    # see, never a list item, so gate 6 does not read it while the read line's walk still does.
+                    in_comment, open_depth = False, 0
                     continue
                 line, in_comment, open_depth = line[m.end() :], False, 0
             else:
