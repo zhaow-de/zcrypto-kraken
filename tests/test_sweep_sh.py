@@ -227,3 +227,9 @@ def test_the_word_form_the_refusal_advertises_works(tmp_path):
     (repo / "cli" / "dashed.py").write_text("a -NEEDLE here\n")
     done = _sweep(repo, "-l", "-e", "-NEEDLE")
     assert done.returncode == 0 and "cli/dashed.py" in done.stdout, done.stdout + done.stderr
+
+
+def test_an_optional_argument_flag_does_not_eat_the_pattern(tmp_path):
+    """The case that keeps `--color` out of sweep.sh's option table; the table's own comment says why."""
+    done = _sweep(_repo(tmp_path), "-l", "--color", "NEEDLE")
+    assert done.returncode == 0 and ".local/memo.md" in done.stdout, done.stdout + done.stderr

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import random
 import subprocess
 import sys
 
@@ -587,20 +588,23 @@ def test_an_unkeyed_branch_owes_no_row() -> None:
 
 def test_a_keyed_branch_whose_row_exists_passes() -> None:
     """A pass needs both a key and a row, so it is driven through a merged PR the index really holds."""
-    assert gate.index_row_fails(_pr(number=514, headRefName="fix/t0193-broken-input-class")) == []
+    assert gate.index_row_fails(_pr(number=514, headRefName="fix/t0193-nonfinite-snapshot-close")) == []
 
 
 def test_the_branch_key_grammar_mirrors_the_tests_grammar() -> None:
-    """Compared against `_keys` itself: a literal list stays green when the grammar it mirrors drifts."""
+    """Generated rather than sampled: a list of spellings cannot cover a digit range, so a widened `_ITER`
+    keys `iter-0664` in one grammar and not the other with the list still green."""
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
     from test_change_index import _keys
 
-    for branch in (
-        "docs/t0210-register-the-thing",
-        "feat/iter-7-x",
-        "chore/00062-y",
-        "chore/ITER-7-x",
-        "fix/T0048-alloy-tailer-recreate",
-        "claude/w16-skills-pass",
-    ):
+    rng = random.Random(20260914)
+    heads = ["iter-", "ITER-", "Iter-", "T", "t", "spec-", "v", ""]
+    for _ in range(3000):
+        digits = "".join(rng.choice("0123456789") for _ in range(rng.randint(1, 7)))
+        branch = (
+            rng.choice(["", "feat/", "docs/", "chore/x-", "claude/"])
+            + rng.choice(heads)
+            + digits
+            + rng.choice(["", "-tail", "/more"])
+        )
         assert bool(gate.BRANCH_KEY.search(branch)) == any(_keys(branch)), branch
