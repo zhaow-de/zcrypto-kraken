@@ -6,7 +6,12 @@ disable-model-invocation: false
 
 # topic-ops
 
-The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of the operation. Whether a follow-up becomes a topic at all, and the six shapes its `ripe_when:` may take, are CLAUDE.md's topics line. A topic that is created here but not inserted into `.local/memo.md`'s queue is invisible at pick time — registration and queue insertion travel together.
+The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of the operation. Whether a follow-up becomes a topic at all is *Before the file exists*; the six shapes its `ripe_when:` may take are CLAUDE.md's topics line. A topic that is created here but not inserted into `.local/memo.md`'s queue is invisible at pick time — registration and queue insertion travel together: the memo has one writer, so the creating session sends `zcrypto-marco` the item text and its milestone (`.claude/skills/zcrypto-grooming/references/memo-protocol.md`), and marco applies `/zcrypto-grooming T<NNNN> registered — insert into queue`; the registration is not complete until the queue line exists.
+
+## Before the file exists
+
+- Can it be resolved in the branch at hand? Then resolve it there — a change that lands while the branch is open is a commit on it, not a follow-up (`open-pr`); the cost of the fix, a converge included, is a cost to weigh, never a reason to defer.
+- A topic is for a non-trivial item that cannot be resolved within the current iteration — never for a one-clause question a message would settle, and never for work that waits on no precondition (the trigger bar under *Required file shape*).
 
 ## File path & naming
 
@@ -24,7 +29,7 @@ status: open   # one of: open | partial | resolved
 ---
 ```
 
-`ripe_when:` (when present) is the bare condition plus the one check that evaluates it — a clause a reviewer runs and reads true/false at a glance. The bar is two-sided: the condition must be satisfiable, and not satisfiable *as this topic's own work* — a state someone would reach only in order to make the topic ripe is not a trigger, and work that waits on no precondition takes none. A trigger naming a file the registering PR is already touching is not a trigger at all — it is satisfied as it is written, and the work belongs in that PR under `open-pr`'s rider clause. Its history, reasoning, and what the check read live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
+`ripe_when:` (when present) is the bare condition plus the one check that evaluates it — a clause a reviewer runs and reads true/false at a glance. The bar is two-sided: the condition must be satisfiable, and not satisfiable *as this topic's own work* — a state someone would reach only in order to make the topic ripe is not a trigger, and work that waits on no precondition takes none — and takes no topic either (*Before the file exists*). The check resolves from the repo and the fleet alone — never from `.local/`, a session's context or a transcript: a condition only one session can read is a deferral with one reader. A trigger naming a file the registering PR is already touching is not a trigger at all — it is satisfied as it is written, and the work belongs in that PR under `open-pr`'s rider clause. Its history, reasoning, and what the check read live under `## Findings so far`; when the trigger changes, rewrite the key in place and put the why in the body.
 
 …followed by, in order — a live topic's shape; the archived shape, under *Closing a topic*, ends at `## Resolution`:
 
