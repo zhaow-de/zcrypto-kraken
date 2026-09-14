@@ -61,7 +61,7 @@ def test_an_error_record_carries_the_reason_and_no_state_key(tmp_path):
         error="cache read failed: BTC instrument not found",
     )
     doc = read_venue_record(p)
-    validate_venue_record(doc)  # the writer's own output must validate under its declared schema
+    validate_venue_record(doc)
     assert doc["status"] == "error"
     assert doc["error"] == "cache read failed: BTC instrument not found"
     assert "state" not in doc
@@ -113,7 +113,7 @@ def test_a_schema2_record_with_base_keys_is_refused(tmp_path):
 
 
 def test_a_v1_record_validates_in_its_own_shape():
-    doc = _v1_doc()  # helper: schema_version 1, base-keyed, entries carry "base", no costmin_quote
+    doc = _v1_doc()
     validate_venue_record(doc)  # must not raise
     doc["state"]["instruments"]["BTC"]["costmin_quote"] = "EUR"
     with pytest.raises(EngineJournalError):

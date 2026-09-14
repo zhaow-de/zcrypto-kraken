@@ -73,7 +73,7 @@ def test_keeps_the_newest_n_days_even_when_all_are_aged(tmp_path, retention):
 
     Parametrized over the DEPLOYED retention (60) as well as the small test default, because this
     is the case where the floor binds: a literal `14` hardcoded into the floor passes every
-    fixed-at-14 test in this file and shows up only here.
+    fixed-at-14 test in this file.
     """
     n = int(retention)
     planted = [_day(tmp_path, m) for m in range(n + 10, n + 10 + n + 16)]  # all far beyond retention
@@ -96,11 +96,9 @@ def test_never_touches_the_current_utc_day(tmp_path):
 def test_a_day_exactly_at_the_retention_boundary_survives(tmp_path, retention):
     """The AGE condition, isolated from the keep-newest floor.
 
-    15 consecutive days means exactly one candidate below the floor — the oldest, aged exactly
-    `retention_days`. The cutoff is `today - 14` and the comparison is strictly-older, so that day
-    must survive. This is the only shape where age decides anything the floor has not already
-    decided: with 15 distinct days the oldest is necessarily >= 14 days old, so any fixture with
-    more days makes the floor sufficient and leaves the cutoff untested.
+    n+1 consecutive days, ages 0..n: the floor keeps the newest n, leaving exactly one candidate —
+    the day aged exactly `retention_days`. The cutoff is `today - retention_days` and the
+    comparison is strictly-older, so that day must survive and the run deletes nothing.
     """
     n = int(retention)
     days = {m: _day(tmp_path, m) for m in range(n + 1)}  # ages 0..n
@@ -204,8 +202,7 @@ def test_the_published_file_is_readable_by_the_non_root_collector(tmp_path):
 def test_every_published_series_is_admitted_by_the_keep_regex(tmp_path):
     """The allow-list has no `node_.*` wildcard, so a published-but-unadmitted series is dropped at
     the remote-write boundary and looks exactly like a producer that never ran (spec 00071 D2).
-    Derived from what the script ACTUALLY emits rather than from a hand-kept list — that is how
-    `oldest_day_age_seconds` came to be published and silently dropped."""
+    Derived from what the script ACTUALLY emits rather than from a hand-kept list."""
     _day(tmp_path, 40)
     for n in range(1, 15):
         _day(tmp_path, n)
@@ -261,8 +258,9 @@ def test_deletes_the_whole_day_never_a_partial(tmp_path):
 
 # --- The systemd wiring ------------------------------------------------------------------------
 # The script above is only correct if the unit invokes it the way it expects. A mismatch here is
-# near-silent: the timer fires nightly, the oneshot fails, and nothing pages — the journal simply
-# grows while the fleet looks healthy.
+# near-silent: the timer fires nightly, the oneshot fails, the journal grows, and the first thing
+# that notices is the staleness alert on `_last_run_timestamp_seconds` (`infra/grafana/alerts.yaml`),
+# a day later.
 
 ROLE = Path(__file__).resolve().parents[1] / "infra/ansible/roles/engine"
 
@@ -346,10 +344,8 @@ def test_protectsystem_strict_still_permits_writing_the_journal_dir():
 def test_the_prune_publishes_into_the_directory_alloy_actually_scrapes():
     """T0100's defect in one assertion: a producer writing where no reader looks.
 
-    This unit originally passed no --textfile at all, because these hosts ran no textfile collector.
-    That was true, and the wrong conclusion — the fix was to add the reader. Three paths must agree
-    or the metric silently goes nowhere: the engine role's dir, the capture role's dir (same host),
-    and the container path Alloy's collector globs.
+    Three paths must agree or the metric silently goes nowhere: the engine role's dir, the capture
+    role's dir (same host), and the container path Alloy's collector globs.
     """
     unit = _rendered_unit()
     exec_start = _directive(unit, "ExecStart=")

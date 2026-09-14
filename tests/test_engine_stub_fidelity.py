@@ -12,9 +12,7 @@ The two directions are NOT symmetric, and only one of them is self-policing:
     raises, and the test that made it goes red. Nothing extra is owed here beyond having the test.
   * A stub OFFERING something the real type LACKS fails nothing at all. Every test simply believes
     the fabricated attribute, forever, and production is the only place the read comes back wrong.
-    That direction has to be checked explicitly, and this suite has already paid for not checking
-    it: a stub node carrying an attribute the library never had kept the whole `engine run` suite
-    green while production raised on that same read, at start, on the live trade path.
+    That direction has to be checked explicitly.
 
 So each library stand-in owes both directions, and the classification below is what makes "each"
 checkable.
@@ -27,8 +25,8 @@ Three verdicts, and the reason the distinction matters:
 
   LIBRARY       stands in for a type this repo does not own (nautilus, or the stdlib). Checked
                 against the real class -- always both directions.
-  OURS          stands in for a type this repo owns. The library has no say: the modelled type's own
-                tests are its contract, and a drifting stub goes red there rather than silently.
+  OURS          stands in for a type this repo owns. The library has no say, and no guard is owed:
+                the contract the stub restates is this repo's own source, not somebody else's.
   NOT_A_STANDIN not a test double -- a fixture-environment helper, or a class that models an event
                 rather than a type. The doubles such a helper installs are registered on their own.
 
@@ -125,17 +123,15 @@ TABLE: dict[str, dict[str, Standin]] = {
     # The red button drives the venue's HTTP client directly rather than the node, so all but one of
     # its doubles stand in for what the venue hands over. `typing.Any` is what the client's signatures promise,
     # which is why the real answer classes are named per row rather than read off a signature -- the
-    # offers guard keeps each name, and its KIND, honest against the real class: `_Book` once
-    # restated OrderBook's `bids`/`asks` METHODS as plain lists and every name-only check agreed.
+    # offers guard checks each name, and its KIND, against the class the row names.
     "test_engine_flatten.py": {
         "FakeClient": Standin(LIBRARY, "nautilus_trader.adapters.kraken.KrakenSpotHttpClient", (_BINDS_FLATTEN, _OFFERS_FLATTEN)),
-        # `request_instruments()`'s row. Measured against the installed adapter's public listing
-        # endpoint, not inferred: the answer is a list of these.
+        # `request_instruments()` answers a list of these.
         "_Instrument": Standin(LIBRARY, "nautilus_trader.model.CurrencyPair", (_OFFERS_FLATTEN,)),
         "_Position": Standin(LIBRARY, "nautilus_trader.model.PositionStatusReport", (_OFFERS_FLATTEN,)),
         "_AccountState": Standin(LIBRARY, "nautilus_trader.model.AccountState", (_OFFERS_FLATTEN,)),
         "_Balance": Standin(LIBRARY, "nautilus_trader.model.AccountBalance", (_OFFERS_FLATTEN,)),
-        # `request_book_snapshot()`'s answer and one of its levels, measured the same way.
+        # `request_book_snapshot()`'s answer and one of its levels.
         "_Book": Standin(LIBRARY, "nautilus_trader.model.OrderBook", (_OFFERS_FLATTEN,)),
         "_Level": Standin(LIBRARY, "nautilus_trader.model.BookLevel", (_OFFERS_FLATTEN,)),
         "_StdoutThatDies": Standin(OURS, "the echo-callable cli.engine.flatten.run_flatten is built with", ()),
@@ -233,14 +229,11 @@ def _defined_at_top_level(module: str) -> set[str]:
 
 
 # A class is a class however it is spelled. `X = namedtuple(...)` / `X = type(...)` /
-# `X = NamedTuple(...)` bind one to a name through an assignment, which no `ClassDef` walk sees --
-# and this suite has already used that spelling for a library stand-in that sat unclassified inside
-# a module the walk was reading.
+# `X = NamedTuple(...)` bind one to a name through an assignment, which no `ClassDef` walk sees.
 _CLASS_FACTORIES = frozenset({"namedtuple", "type", "NamedTuple"})
 
 
 def _discovered_doubles(module: str) -> set[str]:
-    """The test doubles a walk can find without being told, in one of this directory's modules."""
     return _doubles_in(_tree(module))
 
 
@@ -252,8 +245,7 @@ def _doubles_in(tree: ast.Module) -> set[str]:
     one that can be stepped around by naming a stub differently.
 
     Takes a parsed tree rather than a module name so the factory branch can be handed a synthetic
-    one: it has no live member in this directory today, so nothing else here would notice its
-    removal."""
+    one."""
     found = set()
     for n in tree.body:
         if isinstance(n, ast.ClassDef):
@@ -291,12 +283,7 @@ plain_value = 5
 
 
 def test_the_class_factory_branch_of_the_walk_finds_an_assignment_form_double():
-    """The branch's own floor, and the only one it has.
-
-    Nothing in this directory is spelled `X = namedtuple(...)` TODAY, so deleting the branch
-    re-opens that blind spot with every test still green. This is what goes red.
-
-    Both directions are asserted from one snippet: discovering the factory forms is the true
+    """Both directions are asserted from one snippet: discovering the factory forms is the true
     positive; the ordinary assignments beside them are the true negative, without which a branch
     that simply claimed every assignment target would pass."""
     found = _doubles_in(ast.parse(_FACTORY_FORMS))
