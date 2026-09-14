@@ -222,7 +222,7 @@ def test_a_flags_operand_is_not_a_pattern(tmp_path):
 
 
 def test_the_word_form_the_refusal_advertises_works(tmp_path):
-    """`-e` is the recovery the refusal names, and the only way to sweep for a pattern that begins with a dash."""
+    """`-e` is the recovery the refusal names; a pattern beginning with a dash is where the arm is load-bearing."""
     repo = _repo(tmp_path)
     (repo / "cli" / "dashed.py").write_text("a -NEEDLE here\n")
     done = _sweep(repo, "-l", "-e", "-NEEDLE")
