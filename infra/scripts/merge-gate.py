@@ -78,6 +78,8 @@ def _is_a_stated_reason(reason: str) -> bool:
 # declined a tilde opener that a renderer honours, and everything below it counted as body.
 _FENCE_OPEN = re.compile(r"^ {0,3}(?:(?P<run>`{3,})[^`]*|(?P<trun>~{3,}).*)$")
 _FENCE_CLOSE = re.compile(r"^ {0,3}(?P<run>`{3,}|~{3,}) *$")
+# A checkbox is a list item whose text opens with `[ ]`; the marker inside a code span or mid-sentence renders as text.
+_UNCHECKED_BOX = re.compile(r"^\s*(?:[-*+]|\d+[.)]) +\[ \]", re.M)
 # An inline code span renders its content as text, so a `<!--` or a `</details>` inside one is neither an opener
 # nor a closer. Masking keeps the line's length, so an index found in the masked line slices the real one.
 _CODE_SPAN = re.compile(r"(?P<ticks>`+)(?:(?!(?P=ticks)).)*(?P=ticks)", re.S)
@@ -367,7 +369,7 @@ def evaluate(
         fails.append(f"{len(pending)} CI check(s) still running — wait; nothing else blocks a merge on pending")
     if not rollup:
         fails.append("no CI checks reported yet — wait for coverage.yml to register")
-    if "- [ ]" in body:
+    if _UNCHECKED_BOX.search(_as_a_reader_sees_it(body)):
         fails.append("PR description has unchecked checklist item(s) (- [ ])")
     fails.extend(read_line_fails(pr, head_commit, files, read_commit))
     fails.extend(index_row_fails(pr))
