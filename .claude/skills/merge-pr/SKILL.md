@@ -1,15 +1,14 @@
 ---
 name: merge-pr
 description: Use when a reviewed pull request is ready to merge and the local clone needs cleanup afterward — e.g. "merge PR #60 and clean up". Merge-commit only (never squash or rebase); Dependabot PRs are handled by the dependabot skill instead.
-disable-model-invocation: false
-allowed-tools: Bash(git status:*), Bash(git checkout:*), Bash(git pull:*), Bash(git branch:*), Bash(git ls-remote:*), Bash(git push:*), Bash(git fetch:*), Bash(gh pr:*), Bash(python3:*)
+allowed-tools: Bash(git status:*), Bash(git checkout:*), Bash(git pull:*), Bash(git branch:*), Bash(git ls-remote:*), Bash(git push:*), Bash(git fetch:*), Bash(gh pr:*), Bash(uv run python infra/scripts/merge-gate.py:*)
 ---
 
 # merge-pr
 
 ## Overview
 
-Merging a PR is a shared, hard-to-reverse action. **Gate it on verification first, then clean up local state safely.** Never merge past a failed gate; never touch a dirty worktree. If a gate fails, report exactly what's wrong and ask the user to resolve it manually — do not work around it, do not proceed.
+Merging a PR is a shared, hard-to-reverse action: gate it on verification first, then clean up local state safely.
 
 PRs handled by this skill **always merge with a merge commit** (`--merge`) — never squash, never rebase. (The one deliberate exception in this repo is Dependabot PRs, which the `dependabot` skill squash-merges so each bump lands as a single commit — they are not handled here.)
 
@@ -46,7 +45,7 @@ What each gate covers:
 4. **`reviewDecision != "CHANGES_REQUESTED"`** — if reviews aren't required by the repo, `reviewDecision` comes back empty and the user's go-ahead (why this skill was invoked) is the approval. If reviews ARE required, gate 3 (`BLOCKED`) enforces them.
 5. **No failing and no still-running CI** — the gate blocks both: `develop` requires the **`Full test suite`** check (`.github/settings.yml`), so GitHub now refuses a red or unfinished run by itself — this evaluator is defense in depth, not the only gate, and it still catches what GitHub does not: an unchecked checklist, a wrong base, a draft. Do not relax it on the strength of the branch rule; the rule lives in a file one PR can change. `coverage.yml` runs the suite on **`pull_request` into `develop`/`main`** (only — no `push` trigger, so no redundant post-merge run), and a failing suite fails that check; an empty rollup means it has not registered yet, which is also a wait. CI is the only place the whole suite runs (`.github/workflows/coverage.yml`; the `Full test suite` context in `.github/settings.yml`).
 6. **Checklist complete** — the PR description has no unchecked task-list item, `- [ ]`, `* [ ]` or `1. [ ]`, read as a reader sees the page: a marker in a code span or a fenced block is text, a box inside `<details>` or a quote is still a box (GitHub does not enforce these, so the gate parses the body).
-7. **The whole-branch read covers the head** — the body's `Read before push by: <model> at <sha>` line names a model at the floor and a sha that is the PR head; a line missing, still carrying the `<model>` placeholder, or naming an earlier tip fails, and a commit pushed after the read takes a delta read (`re-review`) or a re-read (`review`) with the line updated. The line's full contract — the floor, the two heads admitted past the named tip, the substitution and the bar its reason clears — is `open-pr`'s Body item 3, which writes it. The gate reads the body as a reader sees it, and reports a line the rendered page hides, or a reason that is not one, as that rather than as a missing line.
+7. **The whole-branch read covers the head** — the body's `Read before push by: <model> at <sha>` line names a model at the floor and the PR head; a commit pushed after the read takes a delta read (`re-review`) or a re-read (`review`) with the line updated. The line's contract — the floor, the two heads admitted past the named tip, the substitution — is `open-pr`'s Body item 3, which writes it.
 8. **The `ops-journal` month PR is exempt from gate 7** — its README declares the month PR outside the pre-push read; a head branch named `ops-journal` whose every file is under `docs/reference/ops-journal/` skips the read-line arm; one carrying any other file takes every arm, floor included.
 9. **Every commit of the branch states its ambient growth** — the gate fetches the base and head branches and runs `infra/scripts/guidance-guard.py --range <merge-base>..<head>`, which judges each non-merge commit against its parent: the check the commit-msg hook cannot make under a rewrite, where a reworded amend or a squash lands a lost or doubled `Ambient grows by` line. A branch whose commits predate the guard carries no lines: the mode names each of them that grows the set, and the author rewords it with its line before the merge; a universal the mode refuses at an intermediate commit takes a rebase that edits that commit. The same walk refuses a non-merge commit that mixes claude-kind files with another kind: the `staged-kind` hook sees the index, and an amend lands the mix past it. A head branch gone from origin, or no merge base, is reported as this arm's failure, never a crash.
 10. **A keyed branch owes its change-index row** — when the head branch name carries an `iter-NNN`, a 5-digit spec serial or a `T<NNNN>` (the grammar `test_every_keyed_merge_on_develop_has_a_row` reads), the gate refuses unless `docs/reference/change-index.md` holds a `| #<number> ` row. That test reads the merge subject's branch name and so can only fail on develop AFTER the merge, when this PR's own CI has long been green. The arm reads the index **from the checkout**, so run the gate from the branch that carries the row — from `develop`, or with a `<number>` that is not the current branch's, it refuses a PR whose row is simply not in this working tree.
@@ -67,7 +66,7 @@ Gate 6 reads a box's state, never its text: a `- [x]` checked with a false `N/A`
 gh pr merge <number> --merge --delete-branch
 ```
 
-`--merge` creates a merge commit, which preserves per-commit history and the `Co-Authored-By:` trailers; `--delete-branch` deletes the remote head branch as part of the merge. The explicit method flag makes the command non-interactive.
+`--merge` keeps per-commit history and the `Co-Authored-By:` trailers.
 
 ## Step 4 — Sync develop (never through a dirty worktree)
 
@@ -109,8 +108,6 @@ git push origin --delete <headRefName>
 ```bash
 git fetch --all --prune
 ```
-
-Updates every remote and drops local remote-tracking refs whose upstream branch no longer exists.
 
 ## Report
 
