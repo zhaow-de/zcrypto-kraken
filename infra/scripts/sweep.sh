@@ -10,6 +10,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
+# Under `--separate-git-dir`, or a worktree of a bare repo, that dirname is not a checkout: refuse rather
+# than sweep the tracked tree alone, which is the silent clean this script exists to end.
+[ "$(git -C "$main" rev-parse --show-toplevel 2>/dev/null)" = "$main" ] || {
+  echo "sweep: no main checkout at $main, resolved from $(git rev-parse --git-common-dir)" >&2; exit 2; }
 ledger=.local
 [ "$main" = "$(pwd -P)" ] || ledger="$main/.local"
 # A tracked file deleted in the worktree is still in the index, and grep exits 2 over it whatever it printed,

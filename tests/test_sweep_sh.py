@@ -22,7 +22,7 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     run("init", "-q", "-b", "develop")
     run("config", "user.email", "sweep@test")
     run("config", "user.name", "sweep")
-    run("add", ".gitignore", "cli/thing.py")
+    run("add", "-f", ".gitignore", "cli/thing.py", ".local/.gitignore")
     run("commit", "-qm", "tracked")
     return repo
 
@@ -102,3 +102,22 @@ def test_a_tracked_file_under_local_is_swept_once(tmp_path):
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "tracked under .local"], check=True, capture_output=True)
     done = _sweep(repo, "NEEDLE")
     assert done.stdout.count(".local/memo.md:") == 1, done.stdout + done.stderr
+
+
+def test_a_main_checkout_that_does_not_resolve_is_refused(tmp_path):
+    """Under `--separate-git-dir` the common dir's parent is no checkout, and a sweep of the tracked tree alone is the silent clean."""
+    repo = tmp_path / "sep"
+    (tmp_path / "elsewhere").mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "develop", "--separate-git-dir", str(tmp_path / "elsewhere" / "sep.git"), str(repo)],
+        check=True,
+        capture_output=True,
+    )
+    (repo / "only.py").write_text("NEEDLE alone\n")
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    run("config", "user.email", "sweep@test")
+    run("config", "user.name", "sweep")
+    run("add", "only.py")
+    run("commit", "-qm", "one file")
+    done = _sweep(repo, "NEEDLE")
+    assert done.returncode == 2 and "no main checkout" in done.stderr, done.stdout + done.stderr
