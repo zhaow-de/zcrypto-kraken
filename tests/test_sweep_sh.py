@@ -121,3 +121,18 @@ def test_a_main_checkout_that_does_not_resolve_is_refused(tmp_path):
     run("commit", "-qm", "one file")
     done = _sweep(repo, "NEEDLE")
     assert done.returncode == 2 and "no main checkout" in done.stderr, done.stdout + done.stderr
+
+
+def test_an_absent_ledger_directory_says_so_on_stderr(tmp_path):
+    """rc stays the pattern's answer, but a sweep that could not open `.local/` must not read like one that did."""
+    repo = tmp_path / "solo"
+    repo.mkdir()
+    (repo / "only.py").write_text("NEEDLE alone\n")
+    run = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    run("init", "-q", "-b", "develop")
+    run("config", "user.email", "sweep@test")
+    run("config", "user.name", "sweep")
+    run("add", "only.py")
+    run("commit", "-qm", "one file")
+    done = _sweep(repo, "NEEDLE")
+    assert done.returncode == 0 and "not in this sweep" in done.stderr, done.stdout + done.stderr
