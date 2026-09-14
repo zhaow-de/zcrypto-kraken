@@ -33,6 +33,7 @@ The human gates below attach to the operations themselves, not to whichever skil
 
 - **Queue item** (short lists — no grouping): a bold `T<NNNN> — subject` line, then **sub-bullets** — `Who: … — Size: S/M/L`, `Why: …`, `DependsOn: …` (prerequisites — items, T-topics, or a named trigger/date; "—" when free). Sub-bullets, not inline fields: the memo is read by human and AI alike, and scanning beats parsing.
 - **Long lists** (rule of thumb: ~8+ active items, or natural clusters): group into work packages — a level-4 header `#### WP<N>: <name>` with the same sub-bullet fields at package level, then its items, one T-topic each.
+- **Status marker.** A queue item's line opens with ⬜ while nothing of it has landed, 🔄 once part has, ✅ when it is done; the sub-bullet that records a landing carries the marker of what it records.
 - **The list IS the schedule**: ordered as the suggested execution sequence, the next work item on top, and nothing above something it depends on.
 - **A `DependsOn:` that names an artifact states whether the artifact EXISTS.** "Read X first" and "build X first" compress to the same reference and fail differently. The work to produce a missing prerequisite is itself a queue item, sequenced above its consumer.
 - **Milestones sequence like items.** A `###` milestone may carry one `DependsOn:` line directly under its heading (another milestone, or a named trigger/date); milestones appear in dependency-true order, and an item is eligible for pickup when its own **and** its milestone's `DependsOn:` are satisfied.
