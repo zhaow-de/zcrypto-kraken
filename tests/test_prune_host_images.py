@@ -258,7 +258,7 @@ def test_two_tags_of_one_digest_are_removed_once():
 
 # --------------------------------------------------------------------------------------------
 # Pre-staged digests: resident, unrecorded, attached to no container — indistinguishable from
-# stale, and `.claude/skills/zcrypto-rollout-image/SKILL.md`'s `Shared converge mechanics` MANDATES
+# stale, and `.claude/skills/zcrypto-rollout-image/SKILL.md`'s `Converge mechanics` MANDATES
 # pre-staging before a converge.
 # --------------------------------------------------------------------------------------------
 
