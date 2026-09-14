@@ -27,10 +27,10 @@ mapfile -d '' -t listed < <(git ls-files -z --deduplicate --cached --others --ex
 files=()
 for f in ${listed[@]+"${listed[@]}"}; do
   if [ -f "$f" ]; then files+=("$f")
-  # A nested checkout and a submodule arrive as a bare directory, a dangling link satisfies no test at all,
-  # and a link to a directory would otherwise be reported as a checkout: one band, named not dropped, because
-  # silence here answers "absent" over content nobody opened. A path merely gone from the worktree is the
-  # exception -- it is in the index alone and has nothing to miss.
+  # A nested checkout, a submodule and a link to a directory all pass the directory test, and a dangling
+  # link passes none: one band, named not dropped, because silence here answers "absent" over content
+  # nobody opened. A path merely gone from the worktree is the exception -- it is in the index alone, with
+  # no worktree entry to name.
   elif [ -d "$f" ] || [ -L "$f" ]; then echo "sweep: $f is not a regular file, not swept" >&2
   fi
 done

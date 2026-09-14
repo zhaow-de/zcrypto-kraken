@@ -179,7 +179,7 @@ def test_an_untracked_nested_checkout_is_named_not_dropped(tmp_path):
 
 
 def test_a_dangling_symlink_is_named_not_dropped(tmp_path):
-    """A broken link satisfies neither the regular-file test nor the directory test, and silence is the one answer this script may not give."""
+    """A broken link satisfies neither the regular-file test nor the directory test, and a path still in the worktree is never dropped in silence."""
     repo = _repo(tmp_path)
     (repo / "cli" / "gone.py").symlink_to("/nonexistent/never-here.py")
     subprocess.run(["git", "-C", str(repo), "add", "cli/gone.py"], check=True, capture_output=True)
