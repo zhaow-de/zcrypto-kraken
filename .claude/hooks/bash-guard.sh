@@ -23,17 +23,23 @@
 # The second arm reads one pipeline at a time: a stage that CAPS what passes through it -- `head` in any spelling,
 # `tail` but for `-n +N`, which starts at line N and caps nothing -- and reads a PIPE rather than opening a file, so
 # it is never the pipeline's first stage, is refused when what it feeds is
-#   a count         `wc` in any spelling, or grep/egrep/fgrep/rg carrying -c or --count before a `--`, anywhere later
-#                   in the pipeline: `| head -5 | wc -l`, `| tail -3 | grep -c fix`. The number is then the cap.
-#   a test          a `[`, `[[` or `test` stage whose words hold a substitution that caps (`[ "$( .. | head -1)" = "" ]`),
-#                   or that stands earlier in the same pipeline than the cap, which is what an unquoted `$( .. )`
-#                   leaves behind (`[[ -n $( .. | head -1) ]]`). The verdict is then the cap's.
+#   a count         `wc` in any spelling, or grep/egrep/fgrep/rg carrying -c, --count or rg's own --count-matches
+#                   before a `--`, anywhere later in the pipeline: `| head -5 | wc -l`, `| tail -3 | grep -c fix`.
+#                   The number is then the cap.
+#   a comparison    a `[`, `[[` or `test` stage comparing (`=`, `==`, `!=`) against anything but the empty string,
+#                   whose words hold a substitution that caps (`[ "$( .. | tail -1)" = x ]`), or that stands earlier
+#                   in the same pipeline than the cap, which is what an unquoted `$( .. )` leaves behind
+#                   (`[[ $( .. | tail -1) = x ]]`). The verdict is then the cap's.
 # A stage's program is read after its leading NAME=value assignments and shell keywords (if, while, then, ...) and
 # with its path stripped, so `grep -c head docs/` is a search for the word and `timeout 5 head -5 f | wc -l` reaches
 # the judge as `timeout` -- the price of listing no wrapper, and the direction that does not refuse ordinary work.
 # Outside, deliberately: `| head -20` to LOOK at output, `head -1 VERSION` and every head/tail first in its pipeline,
 # `| tail -n +2 | wc -l` (no cap), a grep with no count flag after a cap, a count BEFORE one (`| wc -l | head -1`),
-# a cap and a count in two commands joined by && or ;, and every other truncation (`sed -n 1,5p`, `awk NR<5`, `-m 5`).
+# a cap and a count in two commands joined by && or ;, every other truncation (`sed -n 1,5p`, `awk NR<5`, `-m 5`);
+# an emptiness test over a capped substitution (`[ -z "$( .. | head -1)" ]`, `-n`, `= ""`), where `$( .. )` strips
+# the trailing newlines and the cap flips the verdict only on a first line that is itself blank, which `git status
+# --porcelain`, `git ls-files` and `git diff --name-only` never emit; and a substitution body that does not tokenise
+# on its own (`$(git log --grep=doesn't)`), which this arm cannot read and skips -- the command is judged without it.
 # Argv, not text. The command is cut of its heredoc bodies, split into pipelines on && || ; & and newlines and into
 # stages on |, each tokenised by shlex, and git's own options before the subcommand (-C <dir>, --git-dir, --work-tree, -c,
 # --no-pager, ...) are stepped over -- so a flag inside a quoted message, a heredoc or a comment is never an argv
@@ -87,9 +93,11 @@ CONFIG_VALUE = {"file", "blob", "type", "default", "comment", "value", "url"}
 CONFIG_VERBS = {"list", "get", "set", "unset", "rename-section", "remove-section", "edit"}
 CAPS = {"head", "tail"}
 GREPS = {"grep", "egrep", "fgrep", "rg"}
+COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
 TESTS = {"[", "[[", "test"}
+COMPARE = {"=", "==", "!="}
 KEYWORDS = {"if", "elif", "while", "until", "then", "do", "!", "{"}
-TERMINATORS = {"]", "]]"}  # what an unquoted `$( .. )` inside a test leaves glued to the last stage
+TERMINATORS = {"]", "]]"} | COMPARE  # the test's own words an unquoted `$( .. )` inside it leaves glued to the last stage
 OPS = ["&>>", ";;&", "<<<", "&&", "||", "|&", ";;", ";&", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "|", "&", ";", "\n", "<", ">", "(", ")"]
 SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
 PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator starts a new one
@@ -309,7 +317,6 @@ def spelled(words):
 
 
 def stage_name(words):
-    # A stage spelled for a message, cut at the `]` or `]]` an unquoted `$( .. )` inside a test leaves glued to it.
     out = []
     for w in words:
         if w in TERMINATORS:
@@ -421,7 +428,7 @@ def counting(words):
     for a in rest:
         if a == "--":
             break  # a pattern, not a flag: `grep -- -c` searches for `-c`
-        if a == "--count" or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]):
+        if a in COUNT_FLAGS or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]):
             return True
     return False
 
@@ -430,10 +437,31 @@ def testing(words):
     return argv_of(words)[0] in TESTS
 
 
+def comparing(words):
+    # The words of a test, in the order the shell hands them: a comparison against anything but the empty string,
+    # which is the verdict a cap can change. An emptiness test -- `-z`, `-n`, `= ""`, `!= ""` -- reads a capped
+    # stream and an uncapped one alike, because `$( .. )` strips the trailing newlines and `head -1` of a non-empty
+    # stream is non-empty.
+    return any(w in COMPARE and 0 < j < len(words) - 1 and words[j - 1] and words[j + 1] for j, w in enumerate(words))
+
+
+def capped_stage(body):
+    # The stage of a substitution body that caps a stream it did not open, or None -- None too for a body that does
+    # not tokenise on its own, which the quote around it can hide from the top-level scan (`$(git log
+    # --grep=doesn't)` holds one apostrophe). Skipping such a body leaves every other stage and the first arm
+    # judged; letting the error out of here fails the whole hook open instead, and with it the bypass arm.
+    try:
+        subs = pipelines(body)
+    except ValueError:
+        return None
+    return next((stage for sub in subs for i, stage in enumerate(sub) if i and capping(stage)), None)
+
+
 def refuse_capped_test(cap, test, raw):
     refuse(
-        f"`{stage_name(cap)}` caps the stream a `{argv_of(test)[0]}` decides on -- the verdict is the cap's, not the "
-        f"tree's; in `{raw}`. Test the whole stream, or read it without the cap."
+        f"`{stage_name(cap)}` caps the stream a `{argv_of(test)[0]}` then compares -- the verdict is the cap's line, "
+        f"not what the whole stream holds; in `{raw}`. Compare the whole stream, or keep the cap and read the lines "
+        f"instead of comparing them."
     )
 
 
@@ -448,17 +476,18 @@ def judge_cap(pipe, raw):
                     f"be the cap, not what the tree holds; in `{raw}`. Count the whole stream, or keep the cap and read "
                     f"the lines instead of counting them."
                 )
-        if tested and i > tested[0]:
+        # An unquoted `$( .. )` leaves the test's own words spread over the stages after it, so the comparison is
+        # read over the pipeline from the test on, not over that first stage alone.
+        if tested and i > tested[0] and comparing([w for stage in pipe[tested[0] :] for w in stage]):
             refuse_capped_test(pipe[i], pipe[tested[0]], raw)
     for stage in pipe:
         if not testing(stage):
             continue
         for w in stage:
             for body in expansions(w):
-                for sub in pipelines(body):
-                    for i, inner in enumerate(sub):
-                        if i and capping(inner):
-                            refuse_capped_test(inner, stage, raw)
+                inner = capped_stage(body)
+                if inner and comparing(stage):
+                    refuse_capped_test(inner, stage, raw)
 
 
 def is_git(w):
