@@ -105,10 +105,12 @@ def test_an_id_is_kept_whole_through_a_spaced_dash_in_its_parameter_or_a_cut_mes
     assert parsed["failed"] + parsed["errors"] == [expected]
 
 
-# The reasons this tree's skip gates give today, spelled as the runner reads them at run time -- a
-# template's rendered line, not its source; a `reason=` that is an event's or a verdict's, not a
-# skip's, is no gate -- each in the direction the runner must read it: the first block is a dataset
-# that is not on this machine, the second the suite's own gates.
+# One reason per shape this tree's skip gates give, each in the direction the runner must read it:
+# the first block is a dataset that is not on this machine, the second the suite's own gates. What
+# may enter: the line as the runner reads it on a `SKIPPED` line -- a template's rendered line,
+# never its source, a host path spelled as this workstation renders it (the mount from
+# zcrypto.toml, the checkout's absolute path), a run-time date as one run printed it -- and only a
+# skip's reason, never an event's or a verdict's `reason=`.
 _DATA_ABSENT_REASONS = [
     "canonical dataset not present",
     "gitignored snapshots dataset absent",
@@ -128,10 +130,10 @@ _DATA_ABSENT_REASONS = [
     "ohlc-15m not on this host — data-bearing workstation only",
     "gitignored refdata snapshot absent",
     "engine journal mount not present",
-    "data/universe/manifest.json absent -- the set is gitignored and not present on this machine",
+    "/home/zhaow/Projects/zcrypto-kraken/data/ohlc-reach-20260813/manifest.json absent -- the set is gitignored and not present on this machine",
     "data/ohlc-full absent — the canonical-host marker; the disk pass runs only where the data root is",
-    "trade archive absent at data/trades — data-bearing workstation only",
-    "no BTC/EUR trade segments under data/trades",
+    "trade archive absent at /mnt/zhao-crypto/capture-segments — data-bearing workstation only",
+    "no BTC/EUR trade segments under /mnt/zhao-crypto/capture-segments",
     "no heal-complete BTC/EUR day inside the REST window (REST reaches 2026-09-01..2026-09-14; archive holds 2026-08-01..2026-08-30)",
     "no local datasets (CI)",
 ]
@@ -147,7 +149,6 @@ _OWN_GATE_REASONS = [
     "bash not available",
     "no schema-4 records yet — nothing in the registry cites observed bytes",
     "could not import 'jinja2': No module named 'jinja2'",
-    "unconditional skip",
     "five counts read the develop ref by name, and this checkout has none",
     "reaches Kraken's public listing endpoint -- set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it",
     "root bypasses file permissions",
