@@ -22,13 +22,18 @@ def _load():
 
 
 @pytest.fixture(scope="module")
-def instrument():
+def readers():
+    """Both readers of the one rule, over one text: the bullet instrument, and the page-wide walker it
+    borrows its token classes from."""
     module = _load()
-    return lambda text: module.hits(
-        text,
-        module._load(module._GUARD, "guidance_guard"),
-        module._load(module._VOCABULARY, "internal_terms_vocabulary"),
-    )
+    guard = module._load(module._GUARD, "guidance_guard")
+    vocabulary = module._load(module._VOCABULARY, "internal_terms_vocabulary")
+    return (lambda text: module.hits(text, guard, vocabulary)), vocabulary._page_leaks
+
+
+@pytest.fixture(scope="module")
+def instrument(readers):
+    return readers[0]
 
 
 def test_a_token_in_a_bullet_is_a_hit_and_one_in_a_paragraph_is_not(instrument):
@@ -71,6 +76,16 @@ def test_a_fenced_block_is_not_prose_and_the_step_under_it_still_is(instrument):
     an item in `bullets()`, so the block sits directly under the step, as a page writes it."""
     text = "- **Run it** and read the output.\n  ```\n  zcrypto engine replay --spec 00106\n  ```\n  Then record T0123.\n"
     assert instrument(text) == [(1, "T0123")]
+
+
+def test_both_readers_report_a_token_a_line_wrap_splits(readers):
+    """One rule, two readers, one verdict: the instrument joined a wrapped item from the start, while
+    the page walked one line at a time, so the wrap a 100-column page puts between `spec` and its
+    serial was a hit in a bullet and clean on the page around it."""
+    instrument, page_leaks = readers
+    text = "- **Grant the exception** because the allowlist entry predates spec\n  00039 decision 3.\n"
+    assert instrument(text) == [(1, "spec 00039")]
+    assert [(line, hits) for line, _, hits in page_leaks(text)] == [(1, ["spec 00039"])]
 
 
 def test_every_spelling_of_the_vocabulary_reaches_the_instrument(instrument):

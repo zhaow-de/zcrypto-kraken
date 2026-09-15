@@ -327,17 +327,39 @@ def _without_fenced_blocks(text: str) -> str:
     return "\n".join(out)
 
 
+def _paragraphs(text: str) -> list[tuple[int, str]]:
+    """Each paragraph as its first line number and its lines joined, a blank line ending one.
+
+    The unit is the paragraph because `spec`/`Phase` and their numbers are two words and this page
+    style hard-wraps near 100 columns, so a line reader is blind to any of them a wrap straddles while
+    `bullets()`, which joins a wrapped item, is not. A heading and a table row are each their own unit:
+    neither runs on into what follows, so a hit keeps a line an operator can open to.
+    """
+    out: list[tuple[int, str]] = []
+    joining = False
+    for i, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped:
+            joining = False
+        elif joining and not stripped.startswith(("#", "|")):
+            out[-1] = (out[-1][0], f"{out[-1][1]} {stripped}")
+        else:
+            out.append((i, stripped))
+            joining = not stripped.startswith(("#", "|"))
+    return out
+
+
 def _page_leaks(text: str) -> list[tuple[int, str, list[str]]]:
-    """A page's leaking lines as (lineno, text, hits).
+    """A page's leaking paragraphs as (first lineno, text, hits).
 
     Comments are blanked before fences: a fence marker inside an HTML comment is invisible to the fence
     blanker, so left standing it toggles the block open and blanks every line below it. What the order
     costs is a `<!--` inside a fenced block, which now pairs with the next `-->` under it.
     """
     return [
-        (i, line.strip()[:110], hits)
-        for i, line in enumerate(_without_fenced_blocks(_without_html_comments(text)).splitlines(), 1)
-        if (hits := _leaks(line))
+        (i, para[:110], hits)
+        for i, para in _paragraphs(_without_fenced_blocks(_without_html_comments(text)))
+        if (hits := _leaks(para))
     ]
 
 
@@ -354,6 +376,22 @@ def test_a_fence_marker_inside_a_comment_does_not_blank_the_page_under_it():
     the step below it is blanked unread, and the command inside the comment is reported in its place."""
     text = "# P\n\n<!-- ```\nzcrypto engine replay --spec 00106\n``` -->\n\nThen record T0123.\n"
     assert _page_leaks(text) == [(7, "Then record T0123.", ["T0123"])]
+
+
+def test_a_token_a_line_wrap_splits_is_still_the_token():
+    """`spec` ending a line and its serial opening the next is what a 100-column wrap produces, and the
+    bullet instrument already reports it. Two paragraphs are not one wrapped paragraph."""
+    assert _page_leaks("# P\n\nThe exception is granted by spec\n00039 decision 3.\n") == [
+        (3, "The exception is granted by spec 00039 decision 3.", ["spec 00039"])
+    ]
+    assert _page_leaks("# P\n\nGranted by spec\n\n00039 is the serial.\n") == []
+
+
+def test_a_heading_and_a_table_row_each_name_their_own_line():
+    """A paragraph reader that swallowed them would report a table's every hit at its first row."""
+    assert _page_leaks("# Restart\nThe step records T0123.\n") == [(2, "The step records T0123.", ["T0123"])]
+    table = "| step | note |\n| --- | --- |\n| restart | ordinary |\n| verify | see T0123 |\n"
+    assert _page_leaks(table) == [(4, "| verify | see T0123 |", ["T0123"])]
 
 
 def _runbook_pages() -> list[Path]:
@@ -373,7 +411,8 @@ def test_runbook_pages_carry_no_internal_vocabulary(path):
     """
     on_the_page = _page_leaks(path.read_text())
     assert not on_the_page, "\n".join(
-        f"{path.relative_to(REPO)}:{i} leaks {hits} — say it in words, or keep the token in an HTML comment on that line: {txt!r}"
+        f"{path.relative_to(REPO)}:{i} leaks {hits} — say it in words, or keep the token in an HTML comment beside it. The "
+        f"paragraph starting there reads: {txt!r}"
         for i, txt, hits in on_the_page
     )
 
