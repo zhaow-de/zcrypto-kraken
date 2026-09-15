@@ -142,13 +142,7 @@ def bullets(text: str) -> list[tuple[int, str]]:
     """Each bullet, nested ones included and fenced blocks skipped, as its first line number and its
     text with continuation lines joined.
 
-    A blank line ends an item, an indented fence does not: a step's prose under its command block is
-    the step's, and only while the page writes the block tight against it. Spaced out -- the loose
-    list Markdown still renders as one item -- the prose under the fence is no bullet's, so a
-    universal written there is never counted here. On a runbook page the page walker in
-    `tests/test_internal_terms_not_operator_visible.py` still reads that prose, though for tokens and
-    not universals; off the runbooks -- `CLAUDE.md`, a rule, a contract page -- that walker never
-    opens it, and nothing reads it at all.
+    A blank line ends an item, so a universal in a loose list's continuation goes uncounted here.
     """
     out: list[tuple[int, str]] = []
     open_bullet = fenced = False
