@@ -171,6 +171,25 @@ REFUSED = [
     ("echo $((1 | 2)); ls | sort; rc=$?", "rc=$?"),
     # a `$( .. )` inside arithmetic is a command of its own, and with assignments alone its status is what stays
     ("n=$(( $(ls | wc -l) | 1 )); echo $?", "$?"),
+    # `$?` inside arithmetic is expanded as it is outside: the `if`, the bare command, before `&&` and `||`, assigned
+    # inside, in a `$(( .. ))` assigned and quoted, and beside the `|` that is arithmetic
+    ("ls | sort; if (( $? != 0 )); then echo bad; fi", "$?"),
+    ("ls | sort; (( $? )); echo done", "$?"),
+    ("uv run pytest -q | tail -5; (( $? )) && echo fail", "$?"),
+    ("git ls-files | wc -l; (( $? == 0 )) || echo fail", "$?"),
+    ("ls | sort; ((rc=$?)); exit $rc", "$?"),
+    ("ls | sort; rc=$(( $? )); echo $rc", "$?"),
+    ("ls | sort; x=$(($? + 0)); echo $x", "$?"),
+    ('ls | sort; echo "rc=$(( $? ))"', "$?"),
+    ("ls | sort; x=$(( $? | 0 )); echo $x", "$?"),
+    # a word that goes on after its substitution's `)` is that one word: assignments alone keep the substitution's
+    # status, in either spelling and inside arithmetic; and a `$?` later in the same command reads it
+    ("x=$(ls | sort)y; echo $?", "$?"),
+    ("x=$(true)$(ls | sort); echo $?", "$?"),
+    ("x=`ls | sort`y; echo $?", "$?"),
+    ("n=$(( $(ls | wc -l) + 1 )); echo $?", "$?"),
+    ("echo $(ls | sort) $?", "$?"),
+    ("x=$(ls | sort) rc=$?; echo $rc", "rc=$?"),
 ]
 
 ADMITTED = [
@@ -320,6 +339,15 @@ ADMITTED = [
     "mask=$((FLAG_A | FLAG_B)); rc=$?",
     "(( x = 1 | 2 )); echo $?",
     "ls | sort; (( i = 1 )); rc=$?",  # the arithmetic command ran between, and the status is its own
+    "ls | sort; (( x = $(ls | wc -l) )); echo $?",  # whatever ran inside it
+    "rc=$(( $? )); echo $rc",  # no pipeline before the read
+    "ls | sort; echo done; (( $? ))",  # another command between
+    "set -o pipefail; ls | sort; if (( $? != 0 )); then echo bad; fi",
+    # a word that goes on after its substitution's `)`: the status it leaves is no pipeline's, or a program follows
+    "ls | sort; x=$(true)y; echo $?",
+    "x=$(ls | sort)$(true); echo $?",
+    "x=$(ls | sort)y z; echo $?",
+    "ls | sort; echo $(true) $?",
     # after `&` the status is the launch's, never the pipeline's
     "ls | sort & echo $?",
 ]
