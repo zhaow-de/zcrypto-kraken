@@ -797,15 +797,22 @@ def test_no_strategy_claims_external_orders(tmp_path):
         node.ExternalOrderObserver(lambda event: None),
     )
     for strategy in strategies:
-        assert strategy.config.external_order_claims is None
+        assert strategy.config.external_order_instrument_ids is None
 
 
 # Each banned text mapped to the cli/ paths allowed to carry it and how many times; every entry is
 # allowed nowhere, so the values are empty -- a map rather than a set because an allowance, if one is
 # ever argued for, must be spelled as a path AND a count, so a reviewer sees the widening.
 #
-# `external_order_claims`: a claim routes the account owner's own hand-placed settling fills onto a
-# strategy's OWN order topic and straight into the unknown-order trip.
+# `external_order_instrument_ids`: a claim routes the account owner's own hand-placed settling fills
+# onto a strategy's OWN order topic and straight into the unknown-order trip. The library's field of
+# this name replaced `external_order_claims` under nautilus-trader 2.0.0rc6.dev20260915 -- same
+# default (`None`), same meaning, new spelling; the old name is kept banned below since it is still
+# the literal spec 00098/00100 cite, and a rename this guard did not follow would have gone quiet.
+# `cli/engine/node.py` carries it twice -- `set_external_order_instrument_ids`'s def and its own
+# `_refuse` call -- the library's order-mutating METHOD of the same root name, sealed on the
+# observer exactly like every other one below; the seal's presence is what makes the name safe to
+# carry, and the count is exact so a third occurrence is still red.
 # `msgbus`: nothing under cli/ reaches the raw message bus -- the second order stream is a
 # registered strategy whose events the library routes by identity, so there is no topic to
 # subscribe.
@@ -813,6 +820,7 @@ def test_no_strategy_claims_external_orders(tmp_path):
 # D3) -- submitted orders then freeze at INITIALIZED, no event fires and nothing raises; a separate
 # ban because `"MessageBus".count("msgbus")` is 0.
 _ORDER_STREAM_WIDENERS = {
+    "external_order_instrument_ids": {"cli/engine/node.py": 2},
     "external_order_claims": {},
     "msgbus": {},
     "MessageBus": {},
