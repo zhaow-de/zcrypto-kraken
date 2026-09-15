@@ -23,8 +23,8 @@ def _load():
 
 @pytest.fixture(scope="module")
 def readers():
-    """Both readers of the one rule, over one text: the bullet instrument, and the page-wide walker it
-    borrows its token classes from."""
+    """Both readers of the one rule, over one text: the bullet instrument, and the page-wide walker in
+    the module whose token classes it calls."""
     module = _load()
     guard = module._load(module._GUARD, "guidance_guard")
     vocabulary = module._load(module._VOCABULARY, "internal_terms_vocabulary")
