@@ -72,7 +72,8 @@ def workflow_listed(text: str) -> list[str]:
 
 GROWTH_LINE = re.compile(r"^Ambient grows by (\d+) bytes: \S", re.M)
 UNIVERSAL = re.compile(r"\b(every|never|always|only|any|cannot)\b", re.I)
-CODE_SPAN = re.compile(r"`[^`]*`")
+CODE_SPAN = re.compile(r"`[^`]*`")  # inside one bullet, already joined, where no newline can fall
+CODE_SPAN_LINE = re.compile(r"`[^`\n]+`")  # across a whole page, where an unpaired backtick must not swallow the lines below
 BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)]) ")
 COUNTED = ("count: `infra/scripts/count-list.sh ", "(no count command:")
 SCISSORS = "# ------------------------ >8 ------------------------"
@@ -111,11 +112,42 @@ def ambient_bytes(path: str, text: str) -> int:
     return 0
 
 
+def without_html_comments(text: str) -> str:
+    """Every `<!-- ... -->` blanked to its own newlines, so a hit's line number is still the file's.
+
+    A `<!--` inside a code span renders as text and opens nothing; an unterminated `<!--` hides
+    nothing, so a token after one is still read. Fences are not known here and need not be: this runs
+    FIRST for both readers of a page, because a fence marker sitting inside a comment is commented out
+    and not a block opened -- read the other way round it opens a block there and blanks every line
+    below it unread. An INDENTED code block is known to neither reader, so a comment in one is blanked
+    here and still renders to the operator: that block is where a token hides.
+    """
+    spans = [m.span() for m in CODE_SPAN_LINE.finditer(text)]
+    out, pos = [], 0
+    while (start := text.find("<!--", pos)) != -1:
+        if any(s <= start < e for s, e in spans):
+            out.append(text[pos : start + 4])
+            pos = start + 4
+            continue
+        end = text.find("-->", start + 4)
+        if end == -1:
+            break
+        out.append(text[pos:start] + "\n" * text.count("\n", start, end + 3))
+        pos = end + 3
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def bullets(text: str) -> list[tuple[int, str]]:
-    """Each bullet, nested ones included and fenced blocks skipped, as its first line number and its text with continuation lines joined -- an indented fence keeps its list item open, so a step's prose under its command block is read."""
+    """Each bullet, nested ones included and fenced blocks skipped, as its first line number and its text with continuation lines joined -- an indented fence keeps its list item open, so a step's prose under its command block is read.
+
+    HTML comments are blanked before any fence state is decided, so a bullet's provenance comment
+    cannot open a block over the bullets under it; the page reader of this same rule blanks in that
+    order too, and the two agree on where a fence begins.
+    """
     out: list[tuple[int, str]] = []
     open_bullet = fenced = False
-    for i, line in enumerate(text.split("\n"), 1):
+    for i, line in enumerate(without_html_comments(text).split("\n"), 1):
         stripped = line.lstrip()
         if stripped.startswith(("```", "~~~")):
             if fenced:

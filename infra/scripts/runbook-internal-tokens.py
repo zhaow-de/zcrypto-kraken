@@ -15,14 +15,15 @@ A declaration's `why` is inside its bullet and takes the rule with it.
 
 Neither half of the reading is defined here, and that is the point -- one definition, two readers:
 
-* the TOKEN CLASSES, the path exemption and the HTML-comment blanking come from `tests/test_internal_terms_not_operator_visible.py`,
+* the TOKEN CLASSES and the path exemption come from `tests/test_internal_terms_not_operator_visible.py`,
   which is the rule's holder for every other surface. They stay in that file rather than moving here
   because `infra/scripts/` is inside the very set that test scans for leaks: its `VERBOSE` pattern
   carries `# T0096` and `# spec 00052` as examples, so a copy of it living under `infra/scripts/`
   would read as an operator-facing leak and turn the test red on its own definition.
-* the BULLET, with a wrapped item's continuation lines joined and fenced code set aside, comes from
-  `infra/scripts/guidance-guard.py`'s `bullets()` -- the same reader the universal test uses, so
-  "inside a bullet" means one thing across both instruments.
+* the BULLET -- a wrapped item's continuation lines joined, fenced code set aside and HTML comments
+  blanked before the fence state is decided -- comes from `infra/scripts/guidance-guard.py`'s
+  `bullets()`, which the universal gate and that page reader both borrow, so "inside a bullet" and
+  "inside a comment" each mean one thing across all three.
 
 Both are loaded by path because neither filename is importable (a hyphen, and a test module outside
 any package). A page this cannot read is reported on stderr and exits 2, so a typo in the count
@@ -53,12 +54,13 @@ def hits(text: str, guard: types.ModuleType, vocabulary: types.ModuleType) -> li
     """One (line, tokens) per offending bullet, its line the item's first and its tokens comma-joined
     in the order they appear, so the caller counts bullets and still reads what each one carries.
 
-    The bullet's HTML comments are blanked first, because that is where this instrument's own rule
-    sends a bullet's provenance: counting the comment would present a compliant bullet as a finding
-    named "bullets to fix", whose obvious remedy is deleting the provenance the rule asked for."""
+    A bullet arrives with its HTML comments already blanked, because that is where this instrument's
+    own rule sends a bullet's provenance: counting the comment would present a compliant bullet as a
+    finding named "bullets to fix", whose obvious remedy is deleting the provenance the rule asked
+    for. Blanking there rather than here also reads a comment that opens or closes outside the item."""
     found = []
     for line, bullet in guard.bullets(text):
-        tokens = [token.strip() for token in vocabulary._leaks(vocabulary._without_html_comments(bullet))]
+        tokens = [token.strip() for token in vocabulary._leaks(bullet)]
         if tokens:
             found.append((line, ", ".join(dict.fromkeys(tokens))))
     return found

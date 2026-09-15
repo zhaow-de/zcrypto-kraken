@@ -18,6 +18,7 @@ loophole such a carve-out would otherwise be.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import re
 import subprocess
@@ -280,32 +281,23 @@ def test_readme_carries_no_internal_vocabulary():
     assert not found, "\n".join(f"README.md:{i} leaks {hits}: {txt!r}" for i, txt, hits in found)
 
 
-_CODE_SPAN = re.compile(r"`[^`\n]+`")
+def _guidance_guard():
+    """`infra/scripts/guidance-guard.py`, loaded by path: a hyphen makes the name unimportable.
 
-
-def _without_html_comments(text: str) -> str:
-    """Every `<!-- ... -->` blanked to its own newlines, so a hit's line number is the file's.
-
-    A `<!--` inside a code span renders as text and opens nothing; an unterminated `<!--` hides
-    nothing, so a token after one is still read. Fences are not known here and need not be: a comment
-    inside one is dropped either way -- the page reader blanks the whole block after this runs, the
-    bullet instrument's `bullets()` skips it. An INDENTED block is known to neither, so a comment in
-    one is blanked here and still renders to the operator: that block is where a token hides.
+    Where an HTML comment is, is borrowed from the commit-msg guard rather than restated here, so that
+    the guard's bullet reader and this page reader cannot drift into two verdicts on one line. The
+    token classes do not move the other way: `VOCABULARY`'s own examples are a string literal, and
+    under `infra/scripts/` this file would read them as an operator-facing leak and refuse its own
+    definition.
     """
-    spans = [m.span() for m in _CODE_SPAN.finditer(text)]
-    out, pos = [], 0
-    while (start := text.find("<!--", pos)) != -1:
-        if any(s <= start < e for s, e in spans):
-            out.append(text[pos : start + 4])
-            pos = start + 4
-            continue
-        end = text.find("-->", start + 4)
-        if end == -1:
-            break
-        out.append(text[pos:start] + "\n" * text.count("\n", start, end + 3))
-        pos = end + 3
-    out.append(text[pos:])
-    return "".join(out)
+    spec = importlib.util.spec_from_file_location("guidance_guard", REPO / "infra/scripts/guidance-guard.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_GUARD = _guidance_guard()
+_without_html_comments = _GUARD.without_html_comments
 
 
 def _without_fenced_blocks(text: str) -> str:

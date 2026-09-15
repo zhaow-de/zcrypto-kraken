@@ -88,6 +88,17 @@ def test_both_readers_report_a_token_a_line_wrap_splits(readers):
     assert [(line, hits) for line, _, hits in page_leaks(text)] == [(1, ["spec 00039"])]
 
 
+def test_both_readers_read_a_fence_marker_inside_a_comment_as_commented_out(readers):
+    """One rule, two readers, one verdict, on the shape the page reader was fixed for first: a stale
+    command block commented out leaves an odd marker, and a reader that decides its fence state before
+    blanking comments opens a block there and skips every line under it. The instrument returned
+    nothing for this text while the page around it returned the token."""
+    instrument, page_leaks = readers
+    text = "<!--\n```\nzcrypto engine replay --spec 00106\n-->\n\n- Then record T0123.\n"
+    assert instrument(text) == [(6, "T0123")]
+    assert [(line, hits) for line, _, hits in page_leaks(text)] == [(6, ["T0123"])]
+
+
 def test_every_spelling_of_the_vocabulary_reaches_the_instrument(instrument):
     """The classes are the vocabulary test's, not this file's: Phase, T, iter, spec, the work-package
     token and a spec decision number. A class this instrument silently could not see would be a hole
