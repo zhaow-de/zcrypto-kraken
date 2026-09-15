@@ -77,6 +77,11 @@ SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
 PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator starts a new one
 REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
+INERT = PUNCT | set("$`\"\\")  # what a quoting makes text of: an operator, an expansion, a quote
+
+
+def inert(s):
+    return "".join("_" if c in INERT else c for c in s)
 
 
 def expansions(body):
@@ -137,20 +142,21 @@ def ansi_decode(raw):
     return "".join(out)
 
 
-def cut_heredocs(text, literal_dollars=True):
+def cut_heredocs(text, inert_quoted=False):
     # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
     # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
     # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
-    # `literal_dollars=False` drops the `$` of a single-quoted span, the one quoting bash never expands: shlex
-    # strips the quotes, so a caller that judges what an expansion yields cannot otherwise tell `'$?'` from `"$?"`.
+    # `inert_quoted=True` renders the text as bash's quoting leaves it for expansion, for the arm that judges an
+    # expansion rather than an argv: a single quote, a backslash and `$'..'` expand nothing, so their `|` and their
+    # `$` are inert; a double quote expands `$` and nothing else; `$((..))` and `((..))` are arithmetic, where `|`
+    # is an operator on numbers and only a `$(..)` inside is a command.
     out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
         if st == "sq":
             if ch == "'":
                 stack.pop()
-            if literal_dollars or ch != "$":
-                out.append(ch)
+            out.append(inert(ch) if inert_quoted else ch)
             i += 1
             continue
         if st == "ansi":
@@ -160,13 +166,42 @@ def cut_heredocs(text, literal_dollars=True):
                 i += 2
                 continue
             if ch == "'":
-                body = ansi_decode(text[stack.pop()[1] : i]).replace("\\", "\\\\").replace('"', '\\"')
+                body = ansi_decode(text[stack.pop()[1] : i])
+                body = inert(body) if inert_quoted else body.replace("\\", "\\\\").replace('"', '\\"')
                 out.append(body if any(s == "dq" for s, _ in stack) else f'"{body}"')
             i += 1
             continue
+        if st in ("arith", "aparen"):
+            if text.startswith("$((", i):
+                stack.append(("arith", i))
+                i += 3
+            elif text.startswith("$(", i):
+                stack.append(("sub", i + 2))
+                out.append("$(")
+                i += 2
+            elif ch == "`":
+                stack.append(("bq", i + 1))
+                out.append(ch)
+                i += 1
+            elif ch == "(":
+                stack.append(("aparen", i))
+                i += 1
+            elif ch == ")" and st == "aparen":
+                stack.pop()
+                i += 1
+            elif text.startswith("))", i):
+                stack.pop()
+                i += 2
+            else:
+                i += 1
+            continue
         if ch == "\\" and i + 1 < n:
             if text[i + 1] != "\n":
-                out.append(text[i : i + 2])
+                out.append("_" if inert_quoted else text[i : i + 2])
+            i += 2
+            continue
+        if inert_quoted and text.startswith("$$", i):  # the pid, whatever follows it
+            out.append("__")
             i += 2
             continue
         if st != "dq" and text.startswith(ANSI, i):
@@ -176,7 +211,7 @@ def cut_heredocs(text, literal_dollars=True):
         if st != "dq" and text.startswith('$"', i):
             i += 1
             continue
-        if st == "bq":
+        if st == "bq" and (ch == "`" or not inert_quoted):
             if ch == "`":
                 bodies.append(text[stack.pop()[1] : i])
             out.append(ch)
@@ -186,6 +221,13 @@ def cut_heredocs(text, literal_dollars=True):
             stack.append(("bq", i + 1))
             out.append(ch)
             i += 1
+            continue
+        if inert_quoted and (text.startswith("$((", i) or (st != "dq" and text.startswith("((", i))):
+            # `$((..))` is a number inside its word and `((..))` a command: the first leaves nothing, the second a word
+            if ch == "(":
+                out.append("_")
+            stack.append(("arith", i))
+            i += 3 if ch == "$" else 2
             continue
         if text.startswith("$(", i):
             stack.append(("sub", i + 2))
@@ -201,7 +243,7 @@ def cut_heredocs(text, literal_dollars=True):
         if st == "dq":
             if ch == '"':
                 stack.pop()
-            out.append(ch)
+            out.append("_" if inert_quoted and ch in PUNCT else ch)
             i += 1
             continue
         if ch == "'" or ch == '"':
@@ -500,7 +542,7 @@ def judge_status(command, raw):
     # A substitution is a level of its own, because it runs before the command whose word it is: after
     # `wc -l $(a | b)` the last thing to have run is `wc`. A `( .. )` subshell is not -- it IS the command.
     levels, pipefail, prev = [status_level()], False, ""
-    for tok in lexer(cut_heredocs(command, literal_dollars=False)[0]):
+    for tok in lexer(cut_heredocs(command, inert_quoted=True)[0]):
         if tok and set(tok) <= PUNCT:
             op = ""
             while tok:
@@ -514,8 +556,8 @@ def judge_status(command, raw):
                     level = levels[-1]
                     if op in PIPE and level["seen"]:
                         level["piped"] = True
-                    else:
-                        level["closed"], level["piped"], level["sub"] = ran_piped(level), False, None
+                    else:  # after `&` the status is the launch's
+                        level["closed"], level["piped"], level["sub"] = op != "&" and ran_piped(level), False, None
                     level["lead"], level["seen"] = True, False
                 tok = tok[len(op) :]
             prev = ""
@@ -534,7 +576,7 @@ def judge_status(command, raw):
             level, assign = levels[-1], ASSIGN.match(word)
             if word == PIPEFAIL and SET_O.match(prev):
                 pipefail = True
-            elif level["closed"] and not pipefail and (word == STATUS or (level["lead"] and assign and assign.group(2) == STATUS)):
+            elif level["closed"] and not pipefail and STATUS in word:
                 refuse(
                     f"`{word}` reads the status of a pipeline no `pipefail` covers, so it is the LAST stage's and a failing "
                     f"earlier stage reads as success; in `{raw}`. Set `-o pipefail` ahead of the pipeline, or read "
