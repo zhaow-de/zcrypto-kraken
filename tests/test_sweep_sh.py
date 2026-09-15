@@ -90,8 +90,8 @@ def test_the_control_is_matched_with_the_callers_flags(tmp_path):
 
 
 def test_the_control_is_not_matched_under_an_inverting_flag(tmp_path):
-    """`-v .` selects no line, which is the clean this flag holds back; inherited by the control, that same `-v`
-    makes a pattern nothing holds select every line, and the clean passes over a control that proves nothing."""
+    """`-v .` selects no line, so the sweep is clean and the control decides; inherited, that same `-v` makes a
+    pattern nothing holds select every line, and the clean passes over a control that proves nothing."""
     repo = _repo(tmp_path)
     absent = _sweep(repo, "-v", "--control", "no-such-control-either", ".")
     assert absent.returncode == 2 and "no-such-control-either" in absent.stderr, absent.stdout + absent.stderr
@@ -100,8 +100,8 @@ def test_the_control_is_not_matched_under_an_inverting_flag(tmp_path):
 
 
 def test_an_inverting_flag_clustered_with_another_is_not_matched_either(tmp_path):
-    """`-lv` is the same inverting sweep as `-l -v`, written as one word; inherited, it vacates the control the
-    same way, and the arm that holds `-v` back is a literal match that never saw it."""
+    """`-lv` is the same inverting sweep as `-l -v`, written as one word, and a control inherits neither
+    spelling."""
     repo = _repo(tmp_path)
     absent = _sweep(repo, "-lv", "--control", "no-such-control-either", ".")
     assert absent.returncode == 2 and "no-such-control-either" in absent.stderr, absent.stdout + absent.stderr
@@ -124,10 +124,80 @@ def test_an_inverting_cluster_keeps_the_letters_that_still_select(tmp_path):
 
 
 def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
-    """The arm reads a cluster only for `v` and `L`: under `-il` the control keeps the `-i` the sweep ran, so a
-    control in the other case still hits, and dropping the cluster would make this clean an error."""
+    """A cluster carrying no `v` or `L` loses nothing to the hand-back: under `-il` the control keeps the `-i` the
+    sweep ran, so a control in the other case still hits."""
     done = _sweep(_repo(tmp_path), "-il", "--control", "needle", "no-such-string-anywhere")
     assert done.returncode == 1, done.stdout + done.stderr
+
+
+# One sweep written every way grep accepts it. A row is the words before `--control`, the control, and the rc
+# those words MEAN: rc 1 the clean a control that hit licenses, rc 2 the refusal of a control that missed. The
+# control doubles as the question -- `NEEDLE` the tree holds either way, `needle` only under an `-i` the cluster
+# must have handed back, `no-such-control-either` nothing holds, so rc 1 there is the inversion leaking into the
+# probe. What rc cannot answer: `-L` does not invert grep's exit status, only `-v` does, so the `-L` rows pin the
+# hand-back and nothing pins their withholding.
+_SPELLINGS = [
+    # An inverting cluster in both orderings, and one that is nothing but inverting letters.
+    (("-lv", "."), "no-such-control-either", 2),
+    (("-vl", "."), "no-such-control-either", 2),
+    (("-iv", "."), "no-such-control-either", 2),
+    (("-vi", "."), "no-such-control-either", 2),
+    (("-vL", "."), "no-such-control-either", 2),
+    (("-lv", "."), "NEEDLE", 1),
+    (("-vl", "."), "NEEDLE", 1),
+    # The hand-back, which is what makes the orderings one sweep: `i` survives it, and a cluster without one
+    # cannot find the control in the other case.
+    (("-iv", "."), "needle", 1),
+    (("-vi", "."), "needle", 1),
+    (("-lv", "."), "needle", 2),
+    (("-ivl", "."), "needle", 1),
+    (("-vil", "."), "needle", 1),
+    (("-liv", "."), "needle", 1),
+    # `-L` inverts what the output names, not the exit status, so its rows are driven by an absent pattern.
+    (("-iL", "no-such-string-anywhere"), "needle", 1),
+    (("-Li", "no-such-string-anywhere"), "needle", 1),
+    # Each letter grep gives an operand, clustered with the inverting one. The operand is a separate word this
+    # loop leaves in the sweep's arguments, so the letter must not be handed back alone.
+    (("-lvm", "5", "."), "NEEDLE", 1),
+    (("-lvA", "1", "."), "NEEDLE", 1),
+    (("-lvB", "1", "."), "NEEDLE", 1),
+    (("-lvC", "1", "."), "NEEDLE", 1),
+    (("-lvd", "read", "."), "NEEDLE", 1),
+    (("-lvD", "read", "."), "NEEDLE", 1),
+    (("-lvm", "5", "."), "no-such-control-either", 2),
+    # The same withholding for the pattern-bearing letters, whose operand the control must not inherit at all.
+    (("-lve", "."), "NEEDLE", 1),
+    (("-lvf", "pat.txt"), "NEEDLE", 1),
+    (("-lve", "."), "no-such-control-either", 2),
+    # The long spellings and the prefixes of them grep resolves: `--inv` and `--files-witho` are the shortest
+    # that are not ambiguous, and every longer prefix is the same flag.
+    (("-l", "--invert-match", "."), "no-such-control-either", 2),
+    (("-l", "--invert", "."), "no-such-control-either", 2),
+    (("-l", "--inv", "."), "no-such-control-either", 2),
+    (("-l", "--inv", "."), "NEEDLE", 1),
+    (("-i", "--files-without-match", "no-such-string-anywhere"), "needle", 1),
+    (("-i", "--files-witho", "no-such-string-anywhere"), "needle", 1),
+    # The separate-word spellings each cluster above is one word of, including the operand grep takes as its own.
+    (("-l", "-v", "."), "no-such-control-either", 2),
+    (("-i", "-v", "."), "needle", 1),
+    (("-l", "-m", "5", "-v", "."), "NEEDLE", 1),
+    # A cluster that does not invert keeps everything it can carry, and loses what it cannot.
+    (("-il", "no-such-string-anywhere"), "needle", 1),
+    (("-lm", "5", "no-such-string-anywhere"), "NEEDLE", 1),
+]
+
+
+def test_every_spelling_of_the_same_sweep_answers_alike(tmp_path):
+    """A guard that answers one way for `-lv` and another for `-vl` is a guard whose verdict depends on how the
+    operator typed the sweep, and the operator has no way to know which spelling is the read one."""
+    repo = _repo(tmp_path)
+    (repo / "pat.txt").write_text(".\n")  # the `-f` rows' pattern file: one pattern every line matches
+    wrong = []
+    for words, control, want in _SPELLINGS:
+        done = _sweep(repo, *words, "--control", control)
+        if done.returncode != want:
+            wrong.append(f"{' '.join(words)} --control {control}: rc {done.returncode}, want {want} -- {done.stderr.strip()}")
+    assert not wrong, "\n".join(wrong)
 
 
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):
@@ -332,10 +402,49 @@ def test_a_pattern_flag_with_no_operand_is_an_error(tmp_path):
     assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
 
 
-# A prescribing line names the script and carries the control, over a backslash continuation where it has one.
-# Both spellings the script accepts, quoted either way or bare, so a prescriber cannot leave the scan by rewriting
-# its own quotes.
-_PRESCRIBED = re.compile(r"""sweep\.sh(?:[^\n]|\\\n)*?--control[ =]+(?:'([^']+)'|"([^"]+)"|(\S+))""")
+# A prescribing line names the script and carries the control, over a backslash continuation wherever it has one
+# -- before `--control`, or between the flag and its operand. Both spellings the script accepts, quoted either way
+# or bare, so a prescriber cannot leave the scan by rewriting its own quotes or its line breaks. What does leave
+# it is a control the line does not itself hold: `--control "$CTL"` is read as the literal `$CTL`, and what that
+# expands to is outside anything a scan of the tracked text can see.
+_PRESCRIBED = re.compile(r"""sweep\.sh(?:[^\n]|\\\n)*?--control(?:[ =]|\\\n)+(?:'([^']+)'|"([^"]+)"|(\S+))""")
+
+
+def _controls(text: str) -> list[str]:
+    """The controls a text prescribes. `<pattern>` is this repo's usage convention, the script's own line
+    included: a line showing the flag prescribes no control, and reading one out of it would fail the case over a
+    word nobody sweeps for."""
+    return [p for groups in _PRESCRIBED.findall(text) for p in [next(g for g in groups if g)] if not p.startswith("<")]
+
+
+# One prescription in every spelling, and what the scan must read out of it -- including the two that prescribe
+# nothing and the one shape that leaves the scan.
+_PRESCRIPTIONS = [
+    ("sweep.sh -l --control 'PAT' x", ["PAT"]),
+    ('sweep.sh -l --control "PAT" x', ["PAT"]),
+    ("sweep.sh -l --control PAT x", ["PAT"]),
+    ("sweep.sh -l --control='PAT' x", ["PAT"]),
+    ('sweep.sh -l --control="PAT" x', ["PAT"]),
+    ("sweep.sh -l --control=PAT x", ["PAT"]),
+    ("sweep.sh -l \\\n  --control 'PAT' x", ["PAT"]),
+    ("sweep.sh -l --control \\\n  'PAT' x", ["PAT"]),
+    ("sweep.sh -l --control '<pattern>' x", []),
+    ("git grep -l --control 'PAT' x", []),
+    # A bare newline is not a continuation: a control on the next line of a fenced block is a prescription this
+    # scan does not reach, and the line above it is not read as prescribing the words below.
+    ("sweep.sh -l\n--control 'PAT' x", []),
+]
+
+
+def test_the_prescription_scan_reads_every_spelling_the_script_accepts():
+    """The scan is the only thing holding the exclusivity below true as the tree moves, so a spelling it cannot
+    read is a prescription nothing checks at all."""
+    wrong = []
+    for text, want in _PRESCRIPTIONS:
+        got = _controls(text)
+        if got != want:
+            wrong.append(f"{text!r}: read {got}, want {want}")
+    assert not wrong, "\n".join(wrong)
 
 
 def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
@@ -350,17 +459,15 @@ def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
         (path, pattern)
         for path in git("grep", "-l", "--fixed-strings", "sweep.sh").stdout.split()
         if path not in outside
-        for groups in _PRESCRIBED.findall((root / path).read_text())
-        # `<pattern>` is this repo's usage convention, the script's own line included: a line showing the flag
-        # prescribes no control, and reading one out of it would fail the case over a word nobody sweeps for.
-        for pattern in [next(g for g in groups if g)]
-        if not pattern.startswith("<")
+        for pattern in _controls((root / path).read_text())
     ]
     assert prescribed, "no prescribed sweep control found: the scan has gone blind, which is not the tree clean"
     carried = []
     for path, pattern in prescribed:
         # Case-folded, and without the prescriber's own selecting flags: both widen what counts as a carrier, and
         # a check that errs wide refuses a control the sweep would have accepted rather than passing one it holds.
+        # `-E`/`-P` are the exception -- an alternation dropped to a BRE matches its own text, which is narrower --
+        # and no prescription carries either today.
         done = git("grep", "-l", "-i", "-e", pattern)
         assert done.returncode in (0, 1), (
             f"{path}: git grep could not read {pattern!r} -- rc {done.returncode}, {done.stderr.strip()}"

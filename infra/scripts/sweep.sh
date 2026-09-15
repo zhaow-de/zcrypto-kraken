@@ -7,15 +7,13 @@
 # The `.local/` swept is the MAIN checkout's, whichever checkout you call this from: a linked worktree
 # carries a `.local/` of its own holding nothing but the tracked `.gitignore`, and sweeping that one returns
 # the silent clean this script exists to end.
-# A clean is reported only over a sweep proven able to see: `--control <pattern>` names a known positive, something
-# this tree certainly holds, and rc 1 is reported when that control hit. With no control, or with one that missed,
-# the clean is rc 2 instead -- an empty result over a file list that opened nothing reads exactly like an absent
-# needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
+# A clean is reported only over a sweep proven able to see: `--control <pattern>` names a known positive, and rc 1
+# is reported when that control hit -- an empty result over a file list that opened nothing reads exactly like an
+# absent needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
 # The control is matched with the caller's own flags (`-i`, `-w`, `--include`) and its pattern in place of the
-# sweep's, so what it proves is the matcher the sweep actually ran, not a second, laxer one. A flag that inverts
-# the selection (`-v`, `-L`, the long spelling of either, and a short cluster carrying `v` or `L`) is the one kind
-# it does not inherit: a control is a positive probe, and under `-v` a pattern nothing holds selects every line of
-# every file.
+# sweep's, so what it proves is the matcher the sweep actually ran, not a second, laxer one. It never inherits a
+# word that would make a positive probe vacuous -- a selection the sweep inverts, or a pattern of the sweep's own
+# -- nor a clustered letter whose operand stays behind; the arms below say which words those are.
 # What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
 # opened only when the pattern is one that directory alone holds. `git grep` finding no carrier settles the
 # tracked half of that; the list also holds the untracked files git does not ignore and everything under
@@ -55,16 +53,20 @@ for a in "$@"; do
     --regexp=*|--file=*) pattern=1; args+=("$a"); continue ;;
     -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
     # The sweep may invert its selection; its control never does -- under `-v` a pattern nothing holds selects
-    # every line, so the control would prove only that the files have lines. A short cluster is read for `v` and
-    # `L` too, which the option table above deliberately does not do: a cluster that table misses ends in grep's
-    # own loud error, one missed here in a silent clean. Of grep's short flags only `v` and `L` invert; the other
-    # word this reads is one with its operand attached (`-eNEEDLE`), whose pattern the control must not inherit
-    # either, and grep's own `-d`/`-D`/`-m`/`-A`/`-B`/`-C` operands carry neither letter.
-    -v|-L|--invert-match|--files-without-match) args+=("$a"); continue ;;
-    -[!-]*[vL]*)
+    # every line, so the control would prove only that the files have lines. `--inv` and `--files-witho` are where
+    # grep's long-option prefixes stop being ambiguous, so every spelling from there to the full name is the same
+    # flag and is held back with it; a word outside grep's table that begins either way is grep's loud error.
+    -v|-L|--inv*|--files-witho*) args+=("$a"); continue ;;
+    # EVERY short cluster is read, wherever its inverting letter sits: `-vl` is the `-lv` sweep spelled backwards.
+    # The option table above deliberately does not read clusters -- one it misses ends in grep's own loud error,
+    # one missed here in a silent clean.
+    -[!-]*)
       args+=("$a")
-      # A cluster carrying `e` or `f` holds or takes a pattern, which the control must not inherit at all.
-      case "$a" in *[ef]*) continue ;; esac
+      # A letter the control cannot carry alone withholds the cluster whole: `e` and `f` hold or take the sweep's
+      # own pattern, which the control must not inherit at all, and `m`, `A`, `B`, `C`, `d`, `D`, `X` -- grep's
+      # short options that require an operand -- have theirs in a word this loop leaves in the sweep's own
+      # arguments, so the letter handed back alone would eat the control's `-e` as its operand.
+      case "$a" in *[efmABCdDX]*) continue ;; esac
       selecting="${a#-}"; selecting="${selecting//[vL]/}"
       [ -z "$selecting" ] || flags+=("-$selecting")
       continue ;;
