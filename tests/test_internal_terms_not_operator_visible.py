@@ -37,13 +37,18 @@ ALERTS = REPO / "infra/grafana/alerts.yaml"
 # user-facing as the CLI's.
 SCANNED_PACKAGES = [REPO / "cli", REPO / "infra/scripts"]
 
+# Five of the six classes read case-insensitively: prose capitalises a sentence's first word, so
+# `Spec 00039` opening a sentence is the same unresolvable reference as `spec 00039` inside one, and a
+# case-sensitive class is a door open to the shape prose produces most often. `D<N>` is the exception
+# and stays case-sensitive: `d4` is a key in the soak report's payload, a record field its readers
+# index on, and folding case there would report a schema name as operator vocabulary.
 VOCABULARY = re.compile(
     r"""(
-        \bPhase\s+\d           # Phase 6a
-      | \bT\d{4}\b             # T0096
-      | \biter-\d+             # iter-117
-      | \bspec\s+`?\d{5}       # spec 00052  /  spec `00052`
-      | \bWP\d                 # work-package tokens
+        (?i:\bPhase\s+\d)      # Phase 6a
+      | (?i:\bT\d{4}\b)        # T0096
+      | (?i:\biter-\d+)        # iter-117
+      | (?i:\bspec\s+`?\d{5})  # spec 00052  /  spec `00052`  /  Spec 00052
+      | (?i:\bWP\d)            # work-package tokens
       | \bD\d{1,2}[a-z]?\b     # D3 / D12 / D5a — spec decision numbers (CLAUDE.md's guards bullet names them; this
                                # enforces it). The optional letter is NOT cosmetic: `\bD\d{1,2}\b`
                                # cannot match `D5a`, because there is no word boundary between `5`
@@ -68,6 +73,18 @@ def _leaks(text: str) -> list[str]:
     flat = re.sub(r"[\s\u2502]+", " ", text)
     spans = [m.span() for m in PATH_LIKE.finditer(flat)]
     return [m.group(0) for m in VOCABULARY.finditer(flat) if not any(s <= m.start() and m.end() <= e for s, e in spans)]
+
+
+def test_a_sentence_initial_token_is_the_same_token():
+    """The capitalised spelling is what a paragraph produces, and it is what escaped the guard: a
+    runbook step read `Spec 00039 decision 3 …` while every surface walked here reported clean.
+
+    `D<N>` is deliberately absent from the folded classes, and the third case is why: lowercased it is
+    a key in the soak report's payload, not a reference an operator is handed.
+    """
+    assert _leaks("Spec 00039 decision 3 makes the workstation IP an exception.") == ["Spec 00039"]
+    assert _leaks("Iter-117 registered it as T0123 during Phase 6a.") == ["Iter-117", "T0123", "Phase 6"]
+    assert _leaks('payload["d4"] = {"d4_gap_bps": gap}') == []
 
 
 def _python_files() -> list[Path]:
