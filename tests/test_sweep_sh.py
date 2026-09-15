@@ -546,8 +546,7 @@ _NOT_A_PATTERN_SOURCE = [
 
 # What the admission takes, and the one kind outside it that is admitted anyway. A symlink is a row because the
 # admission follows one. `/dev/null` is the exception and its rc says why it is safe to make: it reads empty to
-# every reader, so the empty-set refusal above owns it and gives the diagnosis that helps. The exception is over
-# the resolved name, so a re-spelling of it lands on the same diagnosis rather than on a refusal about its kind.
+# every reader, so the empty-set refusal above owns it and gives the diagnosis that helps.
 _ADMITTED_AS_A_PATTERN_SOURCE = [
     (("-l", "-f", "pat.txt", "--control", "NEEDLE"), 0),
     (("-lf", "pat.txt"), 0),
@@ -580,10 +579,12 @@ def test_only_a_regular_file_is_admitted_as_a_pattern_source(tmp_path):
 
 
 def test_a_source_named_as_stdin_is_refused_where_no_stat_could_tell(tmp_path):
-    """Over a redirected regular file every one of these names stats as that regular file -- `-` as nothing at
-    all -- so the admission below them would take four of the five, and the name is the whole of what tells.
-    The last row is the shape a clean comes out of: beside an ordinary `-f` the set is not empty either, so
-    nothing downstream asks again."""
+    """Over a redirected regular file every one of these names stats as that regular file, so the kind test below
+    them would take it and the name is the whole of what tells. `-` is a row for that reason and not because no
+    stat can see it: it is grep's own word for stdin, and in a tree holding a file called `-` the kind test is
+    TRUE of it too, so dropping its arm hands grep the file where the caller meant the stream. The last row is
+    the shape a clean comes out of: beside an ordinary `-f` the set is not empty either, so nothing downstream
+    asks again."""
     repo = _repo(tmp_path)
     pats = repo.parent / "pats.txt"
     pats.write_text("NEEDLE\n")
