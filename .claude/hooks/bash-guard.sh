@@ -26,12 +26,12 @@
 #   a count         `wc` in any spelling, or grep/egrep/fgrep/rg carrying -c or --count before a `--`, anywhere later
 #                   in the pipeline: `| head -5 | wc -l`, `| tail -3 | grep -c fix`. The number is then the cap.
 #   a test          a `[`, `[[` or `test` stage whose words hold a substitution that caps (`[ "$( .. | head -1)" = "" ]`),
-#                   or that stands earlier in the same pipeline, which is what an unquoted `$( .. )` leaves behind
-#                   (`[[ -n $( .. | head -1) ]]`). The verdict is then the cap's.
+#                   or that stands earlier in the same pipeline than the cap, which is what an unquoted `$( .. )`
+#                   leaves behind (`[[ -n $( .. | head -1) ]]`). The verdict is then the cap's.
 # A stage's program is read after its leading NAME=value assignments and shell keywords (if, while, then, ...) and
 # with its path stripped, so `grep -c head docs/` is a search for the word and `timeout 5 head -5 f | wc -l` reaches
 # the judge as `timeout` -- the price of listing no wrapper, and the direction that does not refuse ordinary work.
-# Outside, deliberately: `| head -20` to LOOK at output, `head -1 VERSION` and every head/tail that opens a file,
+# Outside, deliberately: `| head -20` to LOOK at output, `head -1 VERSION` and every head/tail first in its pipeline,
 # `| tail -n +2 | wc -l` (no cap), a grep with no count flag after a cap, a count BEFORE one (`| wc -l | head -1`),
 # a cap and a count in two commands joined by && or ;, and every other truncation (`sed -n 1,5p`, `awk NR<5`, `-m 5`).
 # Argv, not text. The command is cut of its heredoc bodies, split into pipelines on && || ; & and newlines and into
