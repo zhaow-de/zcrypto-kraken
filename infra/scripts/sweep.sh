@@ -159,29 +159,48 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # as it will for them. Three greps read that file ahead of the sweep's own -- the pattern question below, then
 # the empty-set probe and its control -- so the source has to hand all four the same patterns. One thing does,
 # and it is the whole of what this admits: a REGULAR FILE, under a name that means the same file to each reader.
-# Both halves are put as what is TAKEN. The kind is asked of the file. The name is asked of the two filesystems
-# that answer a path per reading process, `/proc/` and `/dev/`, and everything under them is refused unasked --
-# not the names there anyone thought to write down, because the ways a source can differ do not end -- drained
-# by the first reader, reopened for each of them, resolved against whichever stdin or pid the reader has -- and
-# a list of those admits whatever is not yet on it, which is a clean standing over a grep that never carried the
-# caller's pattern: the one thing this script exists to refuse. Refused rather than modelled around, because
-# every measurement of a source is itself one of the reads.
+# Both halves are put as what is TAKEN, because the ways a source can differ do not end -- drained by the first
+# reader, reopened for each of them, resolved against whichever stdin or pid the reader has -- and a list of
+# those admits whatever is not yet on it, which is a clean standing over a grep that never carried the caller's
+# pattern: the one thing this script exists to refuse. Refused rather than modelled around, because every
+# measurement of a source is itself one of the reads.
 for src in ${sources[@]+"${sources[@]}"}; do
   # The name as the four greps will resolve it, so what is judged is the file named and not its spelling: the
   # directory physically -- one answer for `//`, `/./`, `..`, a relative path and a symlinked directory alike --
-  # and the last component as the caller wrote it, because the kind test still has to ask about what they named.
-  # A directory that does not resolve leaves it empty, which is no `/proc/` or `/dev/` path and falls to the kind
-  # test, where a source whose directory is missing is refused anyway. `CDPATH` is cleared because `cd` consults
-  # it for a relative directory and both answers it then gives are wrong here: a directory the greps will not
-  # open, and a line of its own on the stdout this substitution reads.
+  # and the last component as the caller wrote it. A directory that does not resolve leaves it empty, which is
+  # no `/proc/` or `/dev/` path and falls to the kind test, where a source whose directory is missing is refused
+  # anyway. `CDPATH` is cleared because `cd` consults it for a relative directory and both answers it then gives
+  # are wrong here: a directory the greps will not open, and a line of its own on the stdout this substitution
+  # reads.
+  # The same question is then put to every name the source stands on, hop by hop, because `-f` follows the chain:
+  # a link in the tree whose leaf is `/proc/self/cmdline` is a regular file to the stat below and a different
+  # file to each of the four greps, and answering only the name the caller wrote admits it. A hop past the first
+  # answers into `reached`, which only ever REFUSES -- what the arms below read is still the first hop, so the
+  # `/dev/null` exception stays over what the caller wrote and the kind test still stats what they named.
+  # Bounded at 40 hops, which is where the kernel stops resolving and answers ELOOP.
   named=-
+  reached=""
   if [ "$src" != - ]; then
-    dir="$(CDPATH='' cd -P -- "$(dirname -- "$src")" 2>/dev/null && pwd -P)" || dir=""
-    # `pwd -P` keeps a leading `//`, which POSIX leaves implementation-defined and this kernel resolves as `/`:
-    # collapsed here rather than left standing as a spelling that walks past the prefix below.
-    while [ "$dir" != "${dir#//}" ]; do dir="${dir#/}"; done
+    hop="$src"
+    hops=0
     named=""
-    [ -z "$dir" ] || named="${dir%/}/$(basename -- "$src")"
+    while :; do
+      dir="$(CDPATH='' cd -P -- "$(dirname -- "$hop")" 2>/dev/null && pwd -P)" || dir=""
+      # `pwd -P` keeps a leading `//`, which POSIX leaves implementation-defined and this kernel resolves as `/`:
+      # collapsed here rather than left standing as a spelling that walks past the prefix below.
+      while [ "$dir" != "${dir#//}" ]; do dir="${dir#/}"; done
+      step=""
+      [ -z "$dir" ] || step="${dir%/}/$(basename -- "$hop")"
+      [ "$hops" -ne 0 ] || named="$step"
+      case "$step" in /dev/*|/proc/*) [ "$hops" -eq 0 ] || reached="$step"; break ;; esac
+      [ -L "$hop" ] && [ "$hops" -lt 40 ] || break
+      target="$(readlink -- "$hop")" || break
+      case "$target" in
+        /*) hop="$target" ;;
+        *) hop="$(dirname -- "$hop")/$target" ;;
+      esac
+      hops=$((hops + 1))
+    done
   fi
   case "$named" in
     # The one source that is no regular file and still reads the same to every reader: nothing, four times over.
@@ -191,22 +210,26 @@ for src in ${sources[@]+"${sources[@]}"}; do
     # process that asks and the kind test would take it: over a redirected regular file `/dev/stdin` IS that
     # regular file, while the greps above the sweep read with stdin redirected to `/dev/null` and find it empty,
     # and `/proc/self/cmdline` is a regular file to every stat and a different file to each of the four greps.
-    # What stands here is the two filesystems, so a spelling nobody wrote down -- `/proc/thread-self/stat`,
-    # `/dev/./fd/0`, a relative climb into `/dev` -- is answered the same. The cost is a regular file under
-    # `/dev/shm`, refused although every reader would read it alike: the error is in the closed direction and
-    # the message says where to put the file instead. `-` is grep's own word for stdin and no path at all, so it
-    # is matched as itself: in a tree holding a file called `-` the kind test is TRUE of it and would admit it,
-    # and this arm is what tells the two apart. A symlink is not followed to get here -- its own name is what
-    # was resolved -- so a link to one of these is taken by the kind test as the regular file it lands on.
+    # What stands here is the two filesystems, so a spelling nobody wrote down is answered the same. The cost is
+    # a regular file under `/dev/shm`, refused although every reader would read it alike: the error is in the
+    # closed direction and the message says where to put the file instead. `-` is grep's own word for stdin and
+    # no path at all, so it is matched as itself: in a tree holding a file called `-` the kind test is TRUE of it
+    # and would admit it, and this arm is what tells the two apart.
     -|/dev/*|/proc/*) ;;
-    # The admission itself. `-f` follows symlinks, so a link to a regular file is one.
-    *) [ ! -f "$src" ] || continue ;;
+    # The admission itself. `-f` follows symlinks, so a link to a regular file is one -- and `reached` is what
+    # refuses the links that land on the two filesystems instead. The kind is asked FIRST, so a link to a
+    # character device is still answered by being no regular file, and `reached` only ever takes back a source
+    # the stat above it had admitted.
+    *) [ ! -f "$src" ] || [ -n "$reached" ] || continue ;;
   esac
   # The resolved name is given back where it differs from what was written, because the commonest way an ordinary
   # regular file reaches this line is being named from a subdirectory: the sweep runs from the toplevel, so the
-  # `pat.txt` beside the caller is not the `pat.txt` these greps open.
+  # `pat.txt` beside the caller is not the `pat.txt` these greps open. Where a link is what carried it there, the
+  # end of the chain is named instead -- that is the file the greps would have opened, and the name the caller
+  # wrote says nothing about it.
   here=""
-  [ -z "$named" ] || [ "$named" = "$src" ] || here=" -- '$named' as resolved here"
+  landed="${reached:-$named}"
+  [ -z "$landed" ] || [ "$landed" = "$src" ] || here=" -- '$landed' as resolved here"
   echo "sweep: '$src' is not a pattern source this sweep can use$here -- four greps read that file, the pattern question and the empty-set probe and its control ahead of the sweep's own, and only a regular file named outside /proc and /dev hands all four one pattern set. Any other kind, and any name those two answer per reading process, leaves the sweep searching a set the probes never measured, and a clean over that would stand on a grep that never carried your pattern. Write the patterns into a regular file outside those two, name it as it stands from the toplevel, or give the pattern as a word of your own" >&2
   exit 2
 done

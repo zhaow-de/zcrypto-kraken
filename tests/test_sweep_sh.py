@@ -622,7 +622,11 @@ def test_a_name_that_answers_per_reader_is_refused_whatever_its_spelling(tmp_pat
     # Lexical, from the physical toplevel the script `cd`s to, so the climb lands where the script resolves it.
     climb = os.path.relpath("/dev/stdin", os.path.realpath(repo))
     rows = ["/dev//stdin", "/dev/./stdin", "//dev/stdin", "/dev/./fd/0", climb]
-    rows += [p for p in ("/proc/self/cmdline", "/proc/self/maps", "/proc/thread-self/stat") if os.path.isfile(p)]
+    procfs = [p for p in ("/proc/self/cmdline", "/proc/self/maps", "/proc/thread-self/stat") if os.path.isfile(p)]
+    # The leading `//` that `pwd -P` hands back is driven over procfs too, and not over `/dev` alone: every `/dev`
+    # name here is a link onward to a descriptor, so the chain below the arm refuses it a hop later whatever the
+    # collapse does, and procfs is where dropping the collapse is a reported clean rather than a later refusal.
+    rows += procfs + [f"/{p}" for p in procfs]
     wrong = []
     for row in rows:
         words = ("-l", "-f", str(ordinary), "-f", row, "--control", "NEEDLE")
@@ -638,6 +642,58 @@ def test_a_name_that_answers_per_reader_is_refused_whatever_its_spelling(tmp_pat
         done = subprocess.run(["bash", str(SCRIPT), *words], cwd=repo, stdout=out, stderr=subprocess.PIPE, text=True, stdin=fh)
     if done.returncode != 2 or "is not a pattern source this sweep can use" not in done.stderr:
         wrong.append(f"-f /dev/stdout: rc {done.returncode}, want 2 -- {(written.read_text() + done.stderr).strip()[:80]}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_a_link_whose_leaf_answers_per_reader_is_refused_though_its_own_name_does_not(tmp_path):
+    """The carrier no name of the caller's shows: the source is an ordinary relative name in the tree, so neither
+    prefix matches it, and it stats as a REGULAR FILE, so the kind test takes it -- while each of the four greps
+    follows it and opens its own `/proc/self`. Every row is driven beside an ordinary `-f`, the arrangement
+    nothing downstream catches: the set is not empty, so the sweep runs and answers 1 over an empty stderr, which
+    this script reports as a clean standing on a grep that carried its own argv as the pattern set.
+    The descriptor spellings are rows here and not only in the case above because they are what the resolution
+    must not be bought with: over a redirected regular file the END of `/dev/fd/0` is that regular file, outside
+    both prefixes, so a walk that judged the end of the chain would admit the names this arm was first written
+    for. What answers them stands a hop before the end, which is why every hop is asked and not the last. The
+    cycle row is the walk's own bound, which has to answer rather than follow; the last row is the admission it
+    must leave standing, a chain that ends on an ordinary regular file. The procfs rows stand only where procfs
+    does; the two `/dev` rows need only `/dev`."""
+    repo = _repo(tmp_path)
+    pats = repo.parent / "pats.txt"
+    pats.write_text("NEEDLE\n")
+    ordinary = repo.parent / "absent.txt"
+    ordinary.write_text("no-such-string-anywhere\n")
+    leaves = [p for p in ("/proc/self/cmdline", "/proc/self/maps", "/proc/self/environ") if os.path.isfile(p)]
+    leaves.append("/dev/stdin")
+    rows = []
+    for n, target in enumerate(leaves):
+        (repo / f"leaf{n}").symlink_to(target)
+        rows.append(f"leaf{n}")
+    # One hop is not the rule: a chain that leaves the tree and comes back to one of them is the same source.
+    (tmp_path / "mid").symlink_to(leaves[0])
+    (repo / "chained").symlink_to(tmp_path / "mid")
+    rows.append("chained")
+    (repo / "ring").symlink_to(repo / "ring-back")
+    (repo / "ring-back").symlink_to(repo / "ring")
+    rows.append("ring")
+    rows.append("/dev/fd/0")
+    wrong = []
+    for row in rows:
+        words = ("-l", "-f", str(ordinary), "-f", row, "--control", "NEEDLE")
+        # The timeout is no part of the assertion: it is what keeps a tree whose walk has lost its bound from
+        # spinning on the cycle row for good.
+        with pats.open() as fh:
+            done = subprocess.run(["bash", str(SCRIPT), *words], cwd=repo, capture_output=True, text=True, stdin=fh, timeout=30)
+        if done.returncode != 2 or "is not a pattern source this sweep can use" not in done.stderr:
+            wrong.append(f"-f {row}: rc {done.returncode}, want 2 -- {(done.stdout + done.stderr).strip()[:80]}")
+    # In a tree of its own, so the links above are no part of the file list this one sweeps.
+    plain = _repo(tmp_path / "plain")
+    (plain.parent / "outside.txt").write_text("NEEDLE\n")
+    (plain / "mid.txt").symlink_to(plain.parent / "outside.txt")
+    (plain / "ok.txt").symlink_to(plain / "mid.txt")
+    done = _sweep(plain, "-l", "-f", "ok.txt", "--control", "NEEDLE")
+    if done.returncode != 0 or "is not a pattern source" in done.stderr:
+        wrong.append(f"-f ok.txt: rc {done.returncode}, want 0 -- {(done.stdout + done.stderr).strip()[:80]}")
     assert not wrong, "\n".join(wrong)
 
 
@@ -677,7 +733,10 @@ def test_a_character_device_is_refused_though_no_reader_drains_it(tmp_path):
     prices. The device is reached through a LINK in the tree, because the only path an unprivileged tree can make
     one at is under `/dev`, where the name arm would refuse it before its kind was ever asked; the link's own
     name is the toplevel's, so the kind test is what answers it -- and the `/dev/pts` path is driven too, for
-    the refusal an operator naming the device directly actually gets. The writer feeds one EOF per reader so a
+    the refusal an operator naming the device directly actually gets. What this row does NOT do is tell the two
+    doors apart: the chain the name arm walks reaches `/dev/pts` a hop on, so a tree that has lost the kind test
+    still refuses both rows here, and where that loss is caught is the missing file and the directory of
+    `test_only_a_regular_file_is_admitted_as_a_pattern_source`. The writer feeds one EOF per reader so a
     tree without the admission ANSWERS instead of blocking on a read no writer ends, and the timeout bounds the
     case whatever the tree does; neither is asserted on."""
     repo = _repo(tmp_path)
