@@ -14,17 +14,18 @@
 #                    --get-all, --unset, --unset-all, `config get`/`unset`, nor the bare read `git config core.hooksPath`.
 #   before the subcommand and in the environment: `-c core.hooksPath=..`, `--config-env core.hooksPath=..`, and a
 #                    GIT_CONFIG_KEY_<n>=core.hooksPath or GIT_CONFIG_PARAMETERS assignment where git would see it:
-#                    the assignment prefix of a command whose program is git, or a wrapper (sudo, env, command,
-#                    exec, nice, nohup, time) with git among its words; and an argument of export, env or sudo,
-#                    which take NAME=value words (export outlives the command). Not an argument of any other
-#                    program -- `grep 'GIT_CONFIG_KEY_0=..'` is a search -- and not a bare assignment
-#                    (`GIT_CONFIG_KEY_0=..; git commit` is a shell variable git never sees).
+#                    a NAME=value word before `git` in the same simple command -- the prefix of git itself or of
+#                    whatever reaches it (sudo, env, timeout, nice, ...) -- and an argument of export, which
+#                    outlives the command. Not an assignment in a command that never reaches git -- `grep
+#                    'GIT_CONFIG_KEY_0=..'` is a search -- and not a bare assignment (`GIT_CONFIG_KEY_0=..; git
+#                    commit` is a shell variable git never sees).
 # Argv, not text. The command is cut of its heredoc bodies, split into simple commands on && || ; | & and newlines,
 # each tokenised by shlex, and git's own options before the subcommand (-C <dir>, --git-dir, --work-tree, -c,
 # --no-pager, ...) are stepped over -- so a flag inside a quoted message, a heredoc or a comment is never an argv
 # element, and `git -C <dir> commit -n`, `/usr/bin/git commit -n`, `cd <dir> && git commit -n`, `PATH=.. git
 # commit -n` and `-n` behind `--amend` are the same command as the bare one. An ANSI-C quoted word, `$'..'`, which
-# shlex does not know, reaches it as one double-quoted word: `-m $'it\'s'` is a message, `$'-n'` is `-n`. A
+# shlex does not know, reaches it as one double-quoted word with its escapes decoded: `-m $'it\'s'` is a message,
+# `$'-n'` and `$'\x2dn'` are `-n`. A
 # command substitution -- `$( .. )` or backticks, quoted or not, and inside a heredoc whose delimiter is unquoted,
 # which bash expands -- is a command of its own and is judged as one. Outside, deliberately: `git push --no-verify`
 # (no hook runs at push here), the pre-commit framework's SKIP=<hook> door (used on purpose), an edit of
@@ -44,10 +45,9 @@ import sys
 KEY = "core.hookspath"
 NO_VERIFY = "--no-verify"
 ANSI = "$'"
+ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 CONFIG_KEY_ENV = re.compile(r"^GIT_CONFIG_KEY_\d+$")
-WRAPPERS = {"sudo", "env", "command", "exec", "nice", "nohup", "time"}
-TAKES_ASSIGNMENTS = {"export", "env", "sudo"}
 HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"]+))")
 GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
 GLOBAL_TERMINAL = {"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path", "--list-cmds"}
@@ -102,6 +102,35 @@ def expansions(body):
     return found
 
 
+def ansi_decode(raw):
+    # The escapes bash decodes inside $'..' -- \xHH, \NNN, \uHHHH, \UHHHHHHHH and the letter escapes -- so
+    # $'\x2dn' reaches the judge as the -n bash hands git; an escape bash does not know stays as written.
+    out, i, n = [], 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch != "\\" or i + 1 >= n:
+            out.append(ch)
+            i += 1
+            continue
+        nxt = raw[i + 1]
+        if nxt in ANSI_SIMPLE:
+            out.append(ANSI_SIMPLE[nxt])
+            i += 2
+        elif nxt == "x" and (m := re.match(r"[0-9A-Fa-f]{1,2}", raw[i + 2 : i + 4])):
+            out.append(chr(int(m.group(), 16)))
+            i += 2 + m.end()
+        elif nxt in "01234567" and (m := re.match(r"[0-7]{1,3}", raw[i + 1 : i + 4])):
+            out.append(chr(int(m.group(), 8) & 0xFF))
+            i += 1 + m.end()
+        elif nxt in "uU" and (m := re.match(r"[0-9A-Fa-f]{1,%d}" % (4 if nxt == "u" else 8), raw[i + 2 : i + 10])):
+            out.append(chr(int(m.group(), 16)))
+            i += 2 + m.end()
+        else:
+            out.append(raw[i : i + 2])
+            i += 2
+    return "".join(out)
+
+
 def cut_heredocs(text):
     # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
     # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
@@ -122,7 +151,7 @@ def cut_heredocs(text):
                 i += 2
                 continue
             if ch == "'":
-                body = text[stack.pop()[1] : i].replace("\\", "\\\\").replace('"', '\\"')
+                body = ansi_decode(text[stack.pop()[1] : i]).replace("\\", "\\\\").replace('"', '\\"')
                 out.append(body if any(s == "dq" for s, _ in stack) else f'"{body}"')
             i += 1
             continue
@@ -168,7 +197,7 @@ def cut_heredocs(text):
             stack.pop()
         elif ch == ")" and st == "sub":
             bodies.append(text[stack.pop()[1] : i])
-        elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|("):
+        elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
             end = text.find("\n", i)
             i = n if end == -1 else end
             continue
@@ -319,16 +348,12 @@ def is_git(w):
 
 
 def env_assignments(words):
-    k = 0
-    while k < len(words) and ASSIGN.match(words[k]):
-        k += 1
-    if k == len(words):
-        return []  # a bare assignment is a shell variable git never sees
-    program, seen = words[k].rpartition("/")[2], []
-    if is_git(words[k]) or (program in WRAPPERS and any(is_git(w) for w in words[k + 1 :])):
-        seen.extend(words[:k])
-    if program in TAKES_ASSIGNMENTS:
-        seen.extend(w for w in words[k + 1 :] if ASSIGN.match(w))
+    at = next((i for i, w in enumerate(words) if is_git(w)), None)
+    prefix = words[:at] if at is not None else []
+    seen = [w for w in prefix if ASSIGN.match(w)]
+    program = next((w for w in words if not ASSIGN.match(w)), "")
+    if program.rpartition("/")[2] == "export":
+        seen.extend(w for w in words[1:] if ASSIGN.match(w))
     return seen
 
 
