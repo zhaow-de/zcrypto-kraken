@@ -78,6 +78,7 @@ PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator
 REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 INERT = PUNCT | set("$`\"\\")  # what a quoting makes text of: an operator, an expansion, a quote
+GLUE = "\x01"  # in the inert_quoted view, opens a word the lexer cuts off at a substitution's `)`: bash reads `x=$(a)y` as one word
 
 
 def inert(s):
@@ -148,11 +149,16 @@ def cut_heredocs(text, inert_quoted=False):
     # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
     # `inert_quoted=True` renders the text as bash's quoting leaves it for expansion, for the arm that judges an
     # expansion rather than an argv: a single quote, a backslash and `$'..'` expand nothing, so their `|` and their
-    # `$` are inert; a double quote expands `$` and nothing else; `$((..))` and `((..))` are arithmetic, where `|`
-    # is an operator on numbers and only a `$(..)` inside is a command.
-    out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
+    # `$` are inert; a double quote expands `$` and nothing else; `$((..))` and `((..))` are arithmetic, which expands
+    # `$` as a double quote does and is one word to bash whatever it holds; a word that goes on after a substitution's
+    # `)`, where the lexer cuts it, opens with GLUE.
+    out, bodies, pending, stack, i, n, sub_close, glue = [], [], [], [("top", 0)], 0, len(text), -1, False
     while i < n:
         ch, st = text[i], stack[-1][0]
+        if glue:
+            glue = False
+            if st in ("arith", "aparen") or (st != "dq" and ch not in PUNCT and ch not in " \t\r"):
+                out.append(GLUE)
         if st == "sq":
             if ch == "'":
                 stack.pop()
@@ -172,6 +178,9 @@ def cut_heredocs(text, inert_quoted=False):
             i += 1
             continue
         if st in ("arith", "aparen"):
+            # `$?` is the read, as outside; a name or a number stays; everything else is `_`, so the arithmetic is the
+            # one word bash reads it as -- its space and its quote never split or pair to the lexer, and its `=` is not
+            # a shell assignment's: a `((..))` command is neither an assignment nor a keyword.
             if text.startswith("$((", i):
                 stack.append(("arith", i))
                 i += 3
@@ -192,7 +201,11 @@ def cut_heredocs(text, inert_quoted=False):
             elif text.startswith("))", i):
                 stack.pop()
                 i += 2
+            elif text.startswith(STATUS, i):
+                out.append(STATUS)
+                i += 2
             else:
+                out.append(ch if ch.isalnum() else "_")
                 i += 1
             continue
         if ch == "\\" and i + 1 < n:
@@ -223,7 +236,7 @@ def cut_heredocs(text, inert_quoted=False):
             i += 1
             continue
         if inert_quoted and (text.startswith("$((", i) or (st != "dq" and text.startswith("((", i))):
-            # `$((..))` is a number inside its word and `((..))` a command: the first leaves nothing, the second a word
+            # `$((..))` expands inside a double quote too; `((..))` is a command only outside one, and opens its own word
             if ch == "(":
                 out.append("_")
             stack.append(("arith", i))
@@ -254,7 +267,7 @@ def cut_heredocs(text, inert_quoted=False):
             stack.pop()
         elif ch == ")" and st == "sub":
             bodies.append(text[stack.pop()[1] : i])
-            sub_close = i
+            sub_close, glue = i, inert_quoted
         elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|(" or (text[i - 1] == ")" and sub_close != i - 1)):
             # after a subshell's `)` bash starts a comment; after the `)` that closes `$( .. )` it continues the word
             end = text.find("\n", i)
@@ -563,26 +576,33 @@ def judge_status(command, raw):
             prev = ""
             continue
         # A backtick pair opens and closes its level inside a word, where the lexer leaves it glued to what
-        # surrounds it (`x=` + `` ` `` + `ls`), so the word is walked in the fragments the backticks cut it into.
+        # surrounds it (`x=` + `` ` `` + `ls`), so the word is walked in the fragments the backticks cut it into. The
+        # fragment after a closing backtick, like a GLUE word after a `)`, goes on with the word before it, whose kind
+        # is already counted.
         for nth, word in enumerate(tok.split("`")):
+            glued = word.startswith(GLUE)
             if nth:
                 if levels[-1]["backtick"]:
                     closed_sub = ran_piped(levels.pop())
                     levels[-1]["sub"] = closed_sub
+                    glued = True
                 else:
                     levels.append(status_level(backtick=True))
             if not word:
                 continue
             level, assign = levels[-1], ASSIGN.match(word)
+            # What `$?` holds here: the last substitution among this command's words, else what stood before the command.
+            holds = level["closed"] if level["sub"] is None else level["sub"]
             if word == PIPEFAIL and SET_O.match(prev):
                 pipefail = True
-            elif level["closed"] and not pipefail and STATUS in word:
+            elif holds and not pipefail and STATUS in word:
+                # named as the command spells it; a word the rendering rewrote is named by its read
                 refuse(
-                    f"`{word}` reads the status of a pipeline no `pipefail` covers, so it is the LAST stage's and a failing "
-                    f"earlier stage reads as success; in `{raw}`. Set `-o pipefail` ahead of the pipeline, or read "
-                    f"`${{PIPESTATUS[@]}}` instead."
+                    f"`{word if word in command else STATUS}` reads the status of a pipeline no `pipefail` covers, so it is "
+                    f"the LAST stage's and a failing earlier stage reads as success; in `{raw}`. Set `-o pipefail` ahead of "
+                    f"the pipeline, or read `${{PIPESTATUS[@]}}` instead."
                 )
-            level["lead"] = level["lead"] and bool(assign or word in KEYWORDS)
+            level["lead"] = level["lead"] and (glued and level["seen"] or bool(assign or word in KEYWORDS))
             prev, level["seen"] = word, True
 
 
