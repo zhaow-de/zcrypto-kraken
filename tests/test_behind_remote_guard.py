@@ -67,6 +67,20 @@ def make_behind_repo(root: Path) -> Path:
     return local
 
 
+def make_diverged_repo(root: Path, branch: str) -> Path:
+    """`local` on `branch`, two behind its upstream and one ahead of it."""
+    local, other = make_pair(root)
+    advance_remote(other, 2, branch=None if branch == "main" else branch)
+    git(local, "fetch", "-q", "origin")
+    if branch != "main":
+        git(local, "checkout", "-q", "-b", branch, "main")
+        git(local, "branch", "-q", "-u", f"origin/{branch}")
+    commit_file(local, "mine.txt")
+    assert git(local, "rev-list", "--count", "HEAD..@{u}").stdout.strip() == "2", "fixture failed to fall behind"
+    assert git(local, "rev-list", "--count", "@{u}..HEAD").stdout.strip() == "1", "fixture failed to get ahead"
+    return local
+
+
 @pytest.fixture
 def behind_repo(tmp_path: Path) -> Path:
     return make_behind_repo(tmp_path)
@@ -159,8 +173,11 @@ def test_a_command_without_a_verb_is_silent_on_the_same_behind_state(behind_repo
         "git --no-pager fetch origin",
         "git -c core.pager=cat fetch origin",
         "git -ccore.pager=cat --no-optional-locks --literal-pathspecs fetch origin",
+        "git -P fetch origin",
+        "git --paginate fetch origin",
+        "git --namespace x fetch origin",
     ],
-    ids=["no_pager", "dash_c", "dash_c_attached_and_two_more"],
+    ids=["no_pager", "dash_c", "dash_c_attached_and_two_more", "dash_P", "paginate", "namespace_spaced"],
 )
 def test_a_global_option_between_git_and_the_verb_is_stepped_over(behind_repo: Path, command: str):
     # git 2.47.3 refuses the attached `-c` spelling; the arm stays, since what is reported is the
@@ -168,11 +185,28 @@ def test_a_global_option_between_git_and_the_verb_is_stepped_over(behind_repo: P
     assert "by 2" in reported(run_hook(hook_payload(command), cwd=behind_repo))
 
 
-def test_a_diverged_branch_names_both_counts_and_the_rebase(behind_repo: Path):
-    commit_file(behind_repo, "mine.txt")
-    msg = reported(run_hook(hook_payload("git pull --ff-only"), cwd=behind_repo))
-    assert "by 2 and ahead by 1" in msg
+def test_a_value_taking_global_option_consumes_the_next_token(behind_repo: Path):
+    # `fetch` is the namespace here and git runs `origin` as the command: no fetch ran, and the
+    # behind state in the cwd would report if the option were stepped over alone.
+    assert_silent(run_hook(hook_payload("git --namespace fetch origin"), cwd=behind_repo))
+
+
+def test_a_diverged_feature_branch_names_both_counts_and_the_rebase(tmp_path: Path):
+    local = make_diverged_repo(tmp_path, "topic")
+    msg = reported(run_hook(hook_payload("git pull --ff-only"), cwd=local))
+    assert "topic is behind origin/topic by 2 and ahead by 1" in msg
     assert "git pull --rebase" in msg
+    assert "STOP" not in msg
+
+
+@pytest.mark.parametrize("branch", ["develop", "main"])
+def test_a_diverged_shared_branch_is_a_stop_and_never_a_rebase(tmp_path: Path, branch: str):
+    local = make_diverged_repo(tmp_path, branch)
+    msg = reported(run_hook(hook_payload("git fetch origin"), cwd=local))
+    assert f"{branch} is behind origin/{branch} by 2 and ahead by 1" in msg
+    assert "STOP" in msg
+    assert "--rebase" not in msg
+    assert "pull" not in msg
 
 
 def test_a_fetch_of_another_branch_leaves_a_level_branch_silent(pair: tuple[Path, Path]):
@@ -225,10 +259,24 @@ def test_a_merge_in_progress_is_silent(pair: tuple[Path, Path]):
     assert_silent(run_hook(hook_payload("git merge origin/main"), cwd=local))
 
 
+def test_a_conflicted_squash_merge_is_silent(behind_repo: Path):
+    # `merge --squash` writes no MERGE_HEAD, so the unmerged index is the only sign of the merge in
+    # progress; the pull a report would prescribe is what git refuses meanwhile.
+    commit_file(behind_repo, "main-0.txt", "mine\n")
+    assert git(behind_repo, "merge", "--squash", "origin/main", check=False).returncode != 0
+    assert git(behind_repo, "ls-files", "--unmerged").stdout != ""
+    assert git(behind_repo, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode != 0
+    assert_silent(run_hook(hook_payload("git merge --squash origin/main"), cwd=behind_repo))
+
+
 def test_a_cherry_pick_in_progress_is_silent(behind_repo: Path):
-    # Diverged (behind 2, ahead 1) while the pick is unresolved, the same shape as the merge above.
+    # Diverged (behind 2, ahead 1), the pick stopped on a conflict that is resolved and staged but
+    # not continued: CHERRY_PICK_HEAD is the only sign of it, since a conflicted index is silent on
+    # its own, and the fix is to finish the pick.
     commit_file(behind_repo, "main-0.txt", "mine\n")
     assert git(behind_repo, "cherry-pick", "origin/main~1", check=False).returncode != 0
+    git(behind_repo, "add", "main-0.txt")
+    assert git(behind_repo, "ls-files", "--unmerged").stdout == ""
     assert git(behind_repo, "rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD").returncode == 0
     assert_silent(run_hook(hook_payload("git fetch origin && git cherry-pick origin/main~1"), cwd=behind_repo))
 
@@ -291,6 +339,66 @@ def test_unspaced_cd_form_judges_the_named_repo(tmp_path: Path):
     clean_cwd.mkdir()
     msg = reported(run_hook(hook_payload(f"cd {other / 'local'};git pull --ff-only"), cwd=clean_cwd))
     assert "main is behind origin/main by 2" in msg
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["echo hi\ncd {repo}\ngit fetch origin", "false || cd {repo} && git fetch origin"],
+    ids=["later_line", "after_or"],
+)
+def test_a_cd_on_a_later_line_or_after_an_or_judges_the_named_repo(tmp_path: Path, template: str):
+    other = tmp_path / "named"
+    other.mkdir()
+    make_behind_repo(other)
+    clean_cwd = tmp_path / "clean"
+    clean_cwd.mkdir()
+    msg = reported(run_hook(hook_payload(template.format(repo=other / "local")), cwd=clean_cwd))
+    assert f"git -C {other / 'local'} pull --ff-only" in msg
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["echo hi\ncd {plain}\ngit fetch origin", "false || cd {plain} && git fetch origin"],
+    ids=["later_line", "after_or"],
+)
+def test_a_cd_on_a_later_line_or_after_an_or_is_not_the_process_cwd(behind_repo: Path, tmp_path: Path, template: str):
+    # Behind state in the PROCESS cwd and the `cd` to a directory that is no repo: a scanner blind to
+    # the separator would report the cwd here.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert_silent(run_hook(hook_payload(template.format(plain=plain)), cwd=behind_repo))
+
+
+def test_a_relative_dash_c_resolves_against_the_cd_before_it(tmp_path: Path):
+    other = tmp_path / "named"
+    other.mkdir()
+    make_behind_repo(other)
+    clean_cwd = tmp_path / "clean"
+    clean_cwd.mkdir()
+    msg = reported(run_hook(hook_payload(f"cd {other} && git -C local fetch origin"), cwd=clean_cwd))
+    assert f"git -C {other / 'local'} pull --ff-only" in msg
+
+
+def test_a_relative_dash_c_after_a_cd_is_not_resolved_against_the_process_cwd(behind_repo: Path, tmp_path: Path):
+    # `local` exists under the process cwd, not under `plain`: a resolver that drops the `cd`
+    # would judge the behind repo here.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert_silent(run_hook(hook_payload(f"cd {plain} && git -C local fetch origin"), cwd=behind_repo.parent))
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["git fetch origin && git -C {repo} fetch origin", "cd {repo} && git fetch origin && git -C . pull --ff-only"],
+    ids=["cwd_and_absolute", "cd_and_dot"],
+)
+def test_one_repo_named_twice_is_one_line(behind_repo: Path, template: str):
+    msg = reported(run_hook(hook_payload(template.format(repo=behind_repo)), cwd=behind_repo))
+    assert msg.count("is behind") == 1
+
+
+def test_a_verb_quoted_inside_a_string_still_reports(behind_repo: Path):
+    assert "by 2" in reported(run_hook(hook_payload("git commit -m 'run git fetch origin next'"), cwd=behind_repo))
 
 
 @pytest.mark.parametrize(
