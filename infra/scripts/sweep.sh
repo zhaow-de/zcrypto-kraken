@@ -158,22 +158,27 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
   echo "sweep: no main checkout at $main, resolved from $(git rev-parse --git-common-dir)" >&2; exit 2; }
 # What a pattern FILE names, asked before any grep here opens it, and after the `cd` so a relative path resolves
 # as it will for them. Three greps read that file ahead of the sweep's own -- the pattern question below, then
-# the empty-set probe and its control -- and a regular file answers all four alike. Two kinds do not, and under
-# either the set the probes ask about is not the set the sweep would run with: a clean could then stand over a
-# grep that never carried the caller's pattern, which is the one thing this script exists to refuse. Refused
-# rather than modelled around: `git grep -ho "sweep\.sh[^\`]*" -- '*.md'` finds four prescribed sweeps and not
-# one of them names a pattern file, so this costs a spelling nothing here asks for.
+# the empty-set probe and its control -- so the source has to hand all four the same patterns. One kind does,
+# and it is what this admits: a REGULAR FILE, under a name that means the same file to each reader. Every other
+# source is refused without asking how it differs. An allowlist because the ways of differing do not end --
+# drained by the first reader, reopened for each of them, resolved against whichever stdin the reader has, no
+# file to read at all -- and a list of those admits whatever is not yet on it, which is a clean standing over a
+# grep that never carried the caller's pattern: the one thing this script exists to refuse. Refused rather than
+# modelled around, because every measurement of a source is itself one of the reads.
 for src in ${sources[@]+"${sources[@]}"}; do
   case "$src" in
-    # A name for the caller's own stdin, or for a descriptor already open. The greps above the sweep read with
-    # stdin redirected to `/dev/null`, so this path is one file to them and another to the sweep. A stat cannot
-    # tell: `/dev/stdin` over a redirected file stats as a regular file. The name is what tells.
-    -|/dev/stdin|/dev/fd/*|/proc/self/fd/*|/proc/[0-9]*/fd/*) ;;
-    # A pipe or a socket, however it was spelled -- `<(...)` reaches here as `/dev/fd/N`, a pipe. The first
-    # reader drains it and the sweep's grep, reading last, gets nothing.
-    *) [ -p "$src" ] || [ -S "$src" ] || continue ;;
+    # Asked ahead of the admission, because these stat as whatever stands behind them and it would take them:
+    # over a redirected regular file `/dev/stdin` stats as that regular file, while the greps above the sweep
+    # read with stdin redirected to `/dev/null` and find it empty. What is listed is the spellings, not every
+    # path that can reach the same descriptor -- a symlink to one of them stats as a regular file and is taken.
+    -|/dev/stdin|/dev/fd/*|/proc/*/fd/*) ;;
+    # The one source that is no regular file and still reads the same to every reader: nothing, four times over.
+    # Admitted so the empty-set refusal below is what names it, which is the diagnosis that helps there.
+    /dev/null) continue ;;
+    # The admission itself. `-f` follows symlinks, so a link to a regular file is one.
+    *) [ ! -f "$src" ] || continue ;;
   esac
-  echo "sweep: the pattern source '$src' cannot be put to grep twice -- a pipe is drained by the first of the three greps that run before the sweep, and a name for stdin is /dev/null to those three and yours to the sweep -- so what the sweep would search for is not what was asked about, and a clean over it would stand over a grep that never carried your pattern. Write the patterns into a regular file and name that file, or give the pattern as a word of your own" >&2
+  echo "sweep: '$src' is not a pattern source this sweep can use -- four greps read that file, the pattern question and the empty-set probe and its control ahead of the sweep's own, and only a regular file under a name that means the same file to each of them hands all four one pattern set. Anything else -- a stream drained by its first reader, a device reopened for each of them, a name resolved against a stdin of its own, a path that is no file to read -- leaves the sweep searching a set the probes never measured, and a clean over that would stand on a grep that never carried your pattern. Write the patterns into a regular file and name that file, or give the pattern as a word of your own" >&2
   exit 2
 done
 # The pattern question, put to grep. Handed the sweep's own words and no file operand of the caller's, grep
@@ -199,8 +204,9 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 [ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. Where that is a missing pattern: this script supplies the file list, so the word grep lacks it takes from there -- a file path as the regex, and a hit or a clean about a filename. Give the pattern as a word of your own, -e <pattern> if it begins with a dash. Any other complaint above is about the word grep names in it" >&2; exit 2; }
 # The pattern SET, put to grep the same way, because an EMPTY one is a clean the control cannot catch: the control
 # carries a pattern of its own, so it hits over a sweep whose grep opened nothing. `-f`/`--file` naming a file that
-# holds no pattern is the way left to it -- every other pattern source is a pattern by being written, and one that
-# is no file is refused above -- and grep with none reads no file, refuses nothing, and answers 1: the rc this
+# holds no pattern is the way left to it -- every other pattern source is a pattern by being written, and of the
+# sources that are files only a regular one and `/dev/null` get past the admission above -- and grep with none
+# reads no file, refuses nothing, and answers 1: the rc this
 # script reports as an absence. What it also does not do is stat a file operand, which is the question here. One
 # path that cannot exist stands in for the list (`/dev/null` is a character device, so anything under it is ENOTDIR
 # wherever this runs): words carrying a pattern are refused over it at rc 2, words carrying none answer 1 in

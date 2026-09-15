@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import os
 import pathlib
+import pty
 import re
 import socket
 import subprocess
+import threading
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "infra" / "scripts" / "sweep.sh"
 
@@ -524,12 +526,13 @@ def test_an_empty_pattern_set_is_refused_rather_than_answered(tmp_path):
     assert not wrong, "\n".join(wrong)
 
 
-# A pattern source the three greps ahead of the sweep cannot read the way the sweep will, in every spelling that
-# names one as its own word or attached behind the letter. `-lf -` is not among them: a bare `-` is no pattern
-# word, so that spelling ends at the no-pattern refusal before any of this is asked. Every row must be refused,
-# and refused HERE -- the empty-set check one screen up would answer the stdin rows with a diagnosis about a file
-# that holds no pattern, and the first row with nothing at all.
-_A_SOURCE_GREP_CANNOT_BE_ASKED_TWICE = [
+# Pattern sources the admission does not take, written as their own word and attached behind the letter: names
+# for the caller's stdin, a path that is no file to read, a directory. `-lf -` is not among them: a bare `-` is
+# no pattern word, so that spelling ends at the no-pattern refusal before any of this is asked. Every row must be
+# refused, and refused HERE -- the empty-set check one screen up answers the stdin rows with a diagnosis about a
+# file that holds no pattern, which is false of every one of them, and the last two reach grep's own complaint at
+# the pattern question, which names the path and not what a pattern source has to be.
+_NOT_A_PATTERN_SOURCE = [
     ("-l", "-f", "-"),
     ("-l", "--file", "-"),
     ("-l", "--file=-"),
@@ -537,70 +540,88 @@ _A_SOURCE_GREP_CANNOT_BE_ASKED_TWICE = [
     ("-l", "--file=/dev/stdin"),
     ("-l", "-f", "/dev/fd/0"),
     ("-lf/dev/stdin", "NEEDLE"),  # attached: grep binds the rest of the cluster, so the path never stands alone
+    ("-l", "-f", "no-such-pattern-file.txt"),
+    ("-l", "-f", "cli"),
 ]
 
-# A source that reads the same to all four greps, so this refusal must not reach it. `/dev/null` is the near miss:
-# not a regular file, and still the same empty answer every time it is opened, so it belongs to the empty-set
-# refusal above and not to this one.
-_A_SOURCE_READ_THE_SAME_TWICE = [
+# What the admission takes, and the one kind outside it that is admitted anyway. A symlink is a row because the
+# admission follows one. `/dev/null` is the exception and its rc says why it is safe to make: it reads empty to
+# every reader, so the empty-set refusal above owns it and gives the diagnosis that helps.
+_ADMITTED_AS_A_PATTERN_SOURCE = [
     (("-l", "-f", "pat.txt", "--control", "NEEDLE"), 0),
     (("-lf", "pat.txt"), 0),
     (("-l", "--file=pat.txt", "--control", "NEEDLE"), 0),
+    (("-l", "-f", "link.txt", "--control", "NEEDLE"), 0),
     (("-l", "-f", "/dev/null", "--control", "NEEDLE"), 2),
 ]
 
 
-def test_a_pattern_source_grep_cannot_be_asked_twice_is_refused(tmp_path):
-    """This script reads the caller's pattern source before the sweep does -- three times -- so a source that is
-    consumed by reading, or that names a different file to a probe than to the sweep, leaves the sweep's own grep
-    carrying a pattern set nobody asked about. Refused here rather than measured, because every measurement is
-    itself one of the reads."""
+def test_only_a_regular_file_is_admitted_as_a_pattern_source(tmp_path):
+    """This script reads the caller's pattern source before the sweep does -- three times -- so what it needs is
+    a source all four reads answer alike, and only a regular file under a name that means one file to each of
+    them is that. The check is which kind it IS and not which way it could differ, because the ways of differing
+    have no end and a list of them admits the next spelling; measuring instead is no option at all, since every
+    measurement of a source is itself one of the reads."""
     repo = _repo(tmp_path)
     (repo / "pat.txt").write_text("NEEDLE\n")
+    (repo / "link.txt").symlink_to(repo / "pat.txt")
     wrong = []
-    for words in _A_SOURCE_GREP_CANNOT_BE_ASKED_TWICE:
+    for words in _NOT_A_PATTERN_SOURCE:
         done = _sweep(repo, *words, "--control", "NEEDLE", feed="NEEDLE\n")
-        if done.returncode != 2 or "cannot be put to grep twice" not in done.stderr:
+        if done.returncode != 2 or "is not a pattern source this sweep can use" not in done.stderr:
             spelt = " ".join(words)
             wrong.append(f"{spelt} --control NEEDLE: rc {done.returncode}, want 2 -- {done.stderr.strip()[:70]}")
-    for words, want in _A_SOURCE_READ_THE_SAME_TWICE:
+    for words, want in _ADMITTED_AS_A_PATTERN_SOURCE:
         done = _sweep(repo, *words, feed="NEEDLE\n")
-        if done.returncode != want or "cannot be put to grep twice" in done.stderr:
+        if done.returncode != want or "is not a pattern source this sweep can use" in done.stderr:
             wrong.append(f"{' '.join(words)}: rc {done.returncode}, want {want} -- {done.stderr.strip()[:70]}")
     assert not wrong, "\n".join(wrong)
 
 
 def test_a_source_named_as_stdin_is_refused_where_no_stat_could_tell(tmp_path):
-    """Over a redirected regular file `/dev/stdin` stats as a regular file, and `-` stats as nothing at all, so
-    the name is the whole of what tells here. What the greps ahead of the sweep read under these words is their
-    own `/dev/null`: an empty pattern set, measured for a sweep whose set holds the caller's patterns."""
+    """Over a redirected regular file every one of these names stats as that regular file -- `-` as nothing at
+    all -- so the admission below them would take four of the five, and the name is the whole of what tells.
+    What the greps ahead of the sweep read under these words is their own `/dev/null`: an empty pattern set,
+    measured for a sweep whose set holds the caller's patterns. The last row is the shape a clean comes out of:
+    beside an ordinary `-f` the set is not empty either, so nothing downstream asks again."""
     repo = _repo(tmp_path)
     pats = repo.parent / "pats.txt"
     pats.write_text("NEEDLE\n")
-    for words in (("-l", "-f", "/dev/stdin", "--control", "NEEDLE"), ("-l", "-f", "-", "--control", "NEEDLE")):
+    ordinary = repo.parent / "absent.txt"
+    ordinary.write_text("no-such-string-anywhere\n")
+    rows = [
+        ("-l", "-f", "/dev/stdin", "--control", "NEEDLE"),
+        ("-l", "-f", "-", "--control", "NEEDLE"),
+        ("-l", "-f", "/dev/fd/0", "--control", "NEEDLE"),
+        ("-l", "-f", "/proc/self/fd/0", "--control", "NEEDLE"),
+        ("-l", "-f", "/proc/thread-self/fd/0", "--control", "NEEDLE"),
+        ("-l", "-f", str(ordinary), "-f", "/proc/thread-self/fd/0", "--control", "NEEDLE"),
+    ]
+    for words in rows:
         with pats.open() as fh:
             done = subprocess.run(["bash", str(SCRIPT), *words], cwd=repo, capture_output=True, text=True, stdin=fh)
         spelt = " ".join(words)
         assert done.returncode == 2, spelt + ": " + done.stdout + done.stderr
-        assert "cannot be put to grep twice" in done.stderr, spelt + ": " + done.stdout + done.stderr
+        assert "is not a pattern source this sweep can use" in done.stderr, spelt + ": " + done.stdout + done.stderr
 
 
-def test_a_source_that_stats_as_a_stream_is_refused(tmp_path):
-    """The half no name can do: a pipe or a socket reaches `-f` under a path of its own -- a `mkfifo`, or a process
-    substitution on a shell that has no `/dev/fd`. The socket stands first because its open fails fast, so a tree
-    that has lost this arm fails on it and never reaches the fifo, whose open blocks until a writer arrives --
-    the second thing this refusal replaces, a sweep that hangs with nothing on stderr."""
+def test_a_fifo_and_a_socket_are_refused_before_a_reader_drains_them(tmp_path):
+    """The half no name can do: a pipe or a socket reaches `-f` under a path of its own -- a `mkfifo`, or a
+    process substitution on a shell that has no `/dev/fd` -- and what refuses them is being no regular file. The
+    socket stands first because its open fails fast, so a tree that has lost the admission fails on it and never
+    reaches the fifo, whose open blocks until a writer arrives -- the second thing this refusal replaces, a sweep
+    that hangs with nothing on stderr."""
     repo = _repo(tmp_path)
     sock = tmp_path / "sock"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as bound:
         bound.bind(str(sock))
         done = _sweep(repo, "-l", "-f", str(sock), "--control", "NEEDLE")
     assert done.returncode == 2, done.stdout + done.stderr
-    assert "cannot be put to grep twice" in done.stderr, done.stdout + done.stderr
+    assert "is not a pattern source this sweep can use" in done.stderr, done.stdout + done.stderr
     fifo = tmp_path / "fifo"
     os.mkfifo(fifo)
-    # The timeout is no part of the assertion: it is what keeps a tree that has lost only the `-p` arm from
-    # blocking the suite for good on grep's open of a writerless fifo.
+    # The timeout is no part of the assertion: it is what keeps a tree that has lost the admission from blocking
+    # the suite for good on grep's open of a writerless fifo.
     done = subprocess.run(
         ["bash", str(SCRIPT), "-l", "-f", str(fifo), "--control", "NEEDLE"],
         cwd=repo,
@@ -609,7 +630,48 @@ def test_a_source_that_stats_as_a_stream_is_refused(tmp_path):
         timeout=30,
     )
     assert done.returncode == 2, done.stdout + done.stderr
-    assert "cannot be put to grep twice" in done.stderr, done.stdout + done.stderr
+    assert "is not a pattern source this sweep can use" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_character_device_is_refused_though_no_reader_drains_it(tmp_path):
+    """The kind that answers to neither half: a pty slave is a character device, so no name tells it and it is
+    neither `-p` nor `-S`, and it is what a rule written as the kinds that fail lets through. Each of the four
+    greps opens it afresh and the sweep's own, reading last, gets whatever is there then -- which is the same
+    wrong set, with nothing drained and nothing to see: the ordinary `-f` beside it keeps the set non-empty, so
+    what a tree without the admission reports is rc 1 over an empty stderr, a clean over a pattern the tree
+    holds. The writer feeds one EOF per reader so such a tree ANSWERS instead of blocking on a read no writer
+    ends, and the timeout bounds the case whatever the tree does; neither is asserted on."""
+    repo = _repo(tmp_path)
+    ordinary = repo.parent / "absent.txt"
+    ordinary.write_text("no-such-string-anywhere\n")
+    master, slave = pty.openpty()
+    stop = threading.Event()
+
+    def eof_per_reader() -> None:
+        while not stop.wait(0.2):
+            try:
+                os.write(master, b"\x04")
+            except OSError:
+                return
+
+    writer = threading.Thread(target=eof_per_reader, daemon=True)
+    writer.start()
+    try:
+        done = subprocess.run(
+            ["bash", str(SCRIPT), "-l", "-f", str(ordinary), "-f", os.ttyname(slave), "--control", "NEEDLE"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=30,
+        )
+    finally:
+        stop.set()
+        writer.join(timeout=5)
+        os.close(master)
+        os.close(slave)
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "is not a pattern source this sweep can use" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_stream_beside_an_ordinary_pattern_file_is_refused_rather_than_swept(tmp_path):
@@ -627,7 +689,7 @@ def test_a_stream_beside_an_ordinary_pattern_file_is_refused_rather_than_swept(t
         text=True,
     )
     assert done.returncode == 2, done.stdout + done.stderr
-    assert "cannot be put to grep twice" in done.stderr, done.stdout + done.stderr
+    assert "is not a pattern source this sweep can use" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_control_grep_refused_is_not_reported_as_a_control_that_missed(tmp_path):
