@@ -2,8 +2,8 @@
 reports a clean only over a `--control` pattern that hit.
 
 The pattern is required as `-e <pattern>`, so the script reads exactly three things out of the caller's words --
-the pattern, the control, and two refusals -- and every other word reaches grep unexamined. The tables below are
-the two refusals in every spelling, and the words they must leave alone."""
+the pattern, the control, and two refusals. The tables below are the two refusals in every spelling, the words
+they must leave alone, and the control this script cannot judge."""
 
 from __future__ import annotations
 
@@ -316,6 +316,33 @@ def test_a_control_pattern_beginning_with_a_dash_is_the_controls_own(tmp_path):
     assert done.returncode == 1, done.stdout + done.stderr
 
 
+# The limit the script's header states: the empty control is refused (above), the broad one cannot be. The rc 1
+# rows are a clean licensed by a control the fixture cannot fail to hold -- its one dashed line carries no `-f`
+# at all, and `-f*` reaches it on the dash alone. The last two rows are the same words where the script has not
+# already taken them, which is where the refusals do bite.
+_A_CONTROL_THIS_SCRIPT_CANNOT_JUDGE = [
+    (("-l", "--control", "-f*", "-e", "no-such-string-anywhere"), 1),
+    (("-l", "--control=-f*", "-e", "no-such-string-anywhere"), 1),
+    (("-l", "--control", "-v", "-e", "no-such-string-anywhere"), 1),
+    (("-l", "--control=-v", "-e", "no-such-string-anywhere"), 1),
+    (("-l", "-e", "-f*"), 0),
+    (("-l", "-e", "-v"), 0),
+    (("-l", "--include", "-f*", "-e", "NEEDLE"), 2),
+    (("-l", "--include", "-v", "-e", "NEEDLE"), 2),
+]
+
+
+def test_a_control_broad_enough_to_hit_anything_is_taken_and_licenses_its_clean(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "cli" / "dashed.py").write_text("a -v line, and no -needle here\n")
+    wrong = []
+    for words, rc in _A_CONTROL_THIS_SCRIPT_CANNOT_JUDGE:
+        done = _sweep(repo, *words)
+        if done.returncode != rc:
+            wrong.append(f"{' '.join(words)}: rc {done.returncode}, want {rc} -- {(done.stdout + done.stderr).strip()[:70]}")
+    assert not wrong, "\n".join(wrong)
+
+
 # A sweep whose grep opens no file at all: an invalid `-d` ACTION is the one word in grep 3.11 refused at rc 1
 # rather than 2, so the sweep's own rc reads exactly like "nothing matched" over files it never opened. Every row
 # must end in a refusal, never in the clean that rc 1 would otherwise license.
@@ -585,8 +612,9 @@ _A_PATTERN = re.compile(rf"""(?:^|{_SEP})-e{_SEP}+(?:'[^']+'|"[^"]+"|\S+)""")
 # positional operand, so a line that calls it opens with one, and a line that names it inside a sentence opens with
 # the sentence. A flag read anywhere on the line instead would make a mention sharing its line with another
 # command's flags a prescription with no pattern -- a refusal over a line nobody sweeps. Outside every flag test,
-# this one included: a line naming the script with no flag after it -- a prescription that has lost its flags,
-# which then shows no call at all, and the bare `sweep.sh 'PAT'`, which the script meets with its own rc 2.
+# this one included: a line whose next word is not a flag -- a prescription that has lost them, or one opening on
+# a variable (`sweep.sh $FLAGS --control 'C'`), which this scan cannot tell from the sentence it may stand in --
+# and the bare `sweep.sh 'PAT'`, which the script meets with its own rc 2.
 _PRESCRIBES = re.compile(rf"sweep\.sh{_SEP}+--?[A-Za-z]")
 
 
@@ -602,9 +630,10 @@ def _patternless(text: str) -> list[str]:
 
 
 # A prescription in every spelling of the pattern, and the spellings that are not one: attached to its flag, and
-# the long name this script does not read, each of them a line that earns rc 2 before it sweeps. Then the two
-# shapes the gate itself decides -- a prescription carrying no control, which is the tree's own harvest sweep, and
-# a mention, with and without a `-` word standing later in its sentence.
+# the long name this script does not read, each of them a line that earns rc 2 before it sweeps. Then the shapes
+# the gate itself decides -- a prescription carrying no control, which is the tree's own harvest sweep; a mention,
+# with and without a `-` word standing later in its sentence; and the call whose next word is not a flag, which it
+# reads as one of those mentions.
 _PATTERNLESS = [
     ("sweep.sh --control 'C' -e 'PAT'", False),
     ('sweep.sh --control "C" -e PAT', False),
@@ -620,6 +649,7 @@ _PATTERNLESS = [
     ("sweep.sh -ePAT", True),
     ("the memo, which `infra/scripts/sweep.sh` reads from any checkout", False),
     ("sweep.sh is the sweep; re-run it with --control 'C' when the clean has to count", False),
+    ("sweep.sh $FLAGS --control 'C'", False),
 ]
 
 
