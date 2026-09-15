@@ -126,6 +126,14 @@ repos:
         language: system
         stages: [commit-msg]
         always_run: true
+      # A coordinate that sends its reader nowhere is refused where it is written; both sides count, the index
+      # and HEAD, and the script's docstring lists the shapes it leaves alone.
+      - id: message-citations
+        name: every citation in the message resolves
+        entry: uv run python infra/scripts/message-citations.py
+        language: system
+        stages: [commit-msg]
+        always_run: true
 
   - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
