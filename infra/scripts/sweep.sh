@@ -52,8 +52,7 @@ sources=() # ...and the pattern FILES named among them, the one input here that 
 # Each list is read twice below, where the option stands alone and where it is one letter of a cluster, and
 # writing it once is what keeps the two readings one set as grep's table moves.
 # A source letter is the pattern letter whose operand is not a pattern but a FILE of them; it is written as its
-# own list because a third reading below asks what that file is, and `pattern_letters` is built from it so the
-# two arms that hand a cluster back stay one set with it.
+# own list because a third reading below asks what that file is, and `pattern_letters` is built from it.
 source_letters=f
 pattern_letters=e$source_letters
 operand_letters=mABCdDX
@@ -254,12 +253,11 @@ if [ "$rc" -eq 1 ]; then
     # (Over the file list it could also write about a file it could not open, which is no refusal and belongs to
     # the sweep's own grep above.)
     refusal="$(grep -I -q ${flags[@]+"${flags[@]}"} -e "$known" --directories=skip </dev/null 2>&1 >/dev/null)" || true
-    # A refusal of those words is of the caller's or of the control's OWN pattern, and those two want opposite
-    # moves again: the caller's word refused the sweep's grep too, so its rc 1 is no absence, while a control
-    # pattern grep cannot compile leaves that rc standing and unproven. Which it was is asked the same way, the
-    # same words with `-e ''` where the control's pattern stood: nothing there is the caller's to refuse but the
-    # caller's own words. Not read off the first probe above, whose silence would have to mean grep never writes
-    # while exiting 0 or 1 -- a claim about grep this script need not make.
+    # A refusal of those words is of the caller's or of the control's OWN pattern, and the two messages below
+    # want them told apart. Which it was is asked the same way, the same words with `-e ''` where the control's
+    # pattern stood: nothing there is the caller's to refuse but the caller's own words. Not read off the first
+    # probe above, whose silence would have to mean grep never writes while exiting 0 or 1 -- a claim about grep
+    # this script need not make.
     theirs="$(grep -I -q ${flags[@]+"${flags[@]}"} -e '' --directories=skip </dev/null 2>&1 >/dev/null)" || true
     # Both can be waiting at once, and this arm is where that lands: grep names the first refusal it reaches,
     # which is the option error, before any pattern is compiled. Sending the operator to that word is right --
