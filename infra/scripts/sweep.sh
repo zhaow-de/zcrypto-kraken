@@ -13,8 +13,12 @@
 # needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
 # The control is matched with the caller's own flags (`-i`, `-w`, `--include`) and its pattern in place of the
 # sweep's, so what it proves is the matcher the sweep actually ran, not a second, laxer one. A flag that inverts
-# the selection (`-v`, `-L`, and the long spelling of either) is the one kind it does not inherit: a control is a
-# positive probe, and under `-v` a pattern nothing holds selects every line of every file.
+# the selection (`-v`, `-L`, the long spelling of either, and a short cluster carrying `v` or `L`) is the one kind
+# it does not inherit: a control is a positive probe, and under `-v` a pattern nothing holds selects every line of
+# every file.
+# What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
+# opened only when the pattern is one that directory alone holds -- `git grep` finding no tracked carrier is that
+# check. Whether `.local/` was in the list at all is the other door: the `no <path>/.local` line below.
 # Usage: infra/scripts/sweep.sh [grep flags] --control <known-positive> <pattern>   rc: 0 a hit, 1 none (control hit), 2 an error.
 set -euo pipefail
 # Given no pattern -- none at all, or flags alone -- grep takes the first path as its regex and answers
@@ -49,9 +53,13 @@ for a in "$@"; do
     --regexp=*|--file=*) pattern=1; args+=("$a"); continue ;;
     -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
     # The sweep may invert its selection; its control never does -- under `-v` a pattern nothing holds selects
-    # every line, so the control would prove only that the files have lines. A clustered `-lv` is outside this
-    # table, as it is outside the one above, and still reaches the control.
+    # every line, so the control would prove only that the files have lines. A short cluster is read for `v` and
+    # `L` too, which the option table above deliberately does not do: a cluster that table misses ends in grep's
+    # own loud error, one missed here in a silent clean. Of grep's short flags only `v` and `L` invert; the other
+    # word this reads is one with its operand attached (`-eNEEDLE`), whose pattern the control must not inherit
+    # either, and grep's own `-d`/`-D`/`-m`/`-A`/`-B`/`-C` operands carry neither letter.
     -v|-L|--invert-match|--files-without-match) args+=("$a"); continue ;;
+    -[!-]*) case "$a" in *[vL]*) args+=("$a"); continue ;; esac ;;
     -*) ;;
     *) pattern=1; args+=("$a"); continue ;;
   esac

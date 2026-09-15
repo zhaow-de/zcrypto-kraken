@@ -98,6 +98,25 @@ def test_the_control_is_not_matched_under_an_inverting_flag(tmp_path):
     assert held.returncode == 1, held.stdout + held.stderr
 
 
+def test_an_inverting_flag_clustered_with_another_is_not_matched_either(tmp_path):
+    """`-lv` is the same inverting sweep as `-l -v`, written as one word; inherited, it vacates the control the
+    same way, and the arm that holds `-v` back is a literal match that never saw it."""
+    repo = _repo(tmp_path)
+    absent = _sweep(repo, "-lv", "--control", "no-such-control-either", ".")
+    assert absent.returncode == 2 and "no-such-control-either" in absent.stderr, absent.stdout + absent.stderr
+    held = _sweep(repo, "-lv", "--control", "NEEDLE", ".")
+    assert held.returncode == 1, held.stdout + held.stderr
+    separate = _sweep(repo, "-l", "-v", "--control", "no-such-control-either", ".")
+    assert separate.returncode == 2 and "no-such-control-either" in separate.stderr, separate.stdout + separate.stderr
+
+
+def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
+    """The arm reads a cluster only for `v` and `L`: under `-il` the control keeps the `-i` the sweep ran, so a
+    control in the other case still hits, and dropping the cluster would make this clean an error."""
+    done = _sweep(_repo(tmp_path), "-il", "--control", "needle", "no-such-string-anywhere")
+    assert done.returncode == 1, done.stdout + done.stderr
+
+
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):
     done = _sweep(_repo(tmp_path), "-l", "--control=NEEDLE", "no-such-string-anywhere")
     assert done.returncode == 1, done.stdout + done.stderr
