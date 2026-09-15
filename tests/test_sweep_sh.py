@@ -478,6 +478,70 @@ def test_a_grep_that_opened_no_file_is_never_reported_as_a_clean(tmp_path):
     assert not wrong, "\n".join(wrong)
 
 
+# A sweep whose pattern SET is empty, written every way that reaches one. Only `-f`/`--file` does, since every
+# other pattern source is a pattern by being written. grep holding no pattern opens no file -- it never reads the
+# list, and never stats a missing operand either -- and exits 1, which is this script's clean; the control cannot
+# be what catches it, because the control supplies a pattern of its own and hits. Every row must be a refusal.
+_AN_EMPTY_PATTERN_SET = [
+    ("-lf", "empty.txt"),
+    ("-l", "-f", "empty.txt"),
+    ("-l", "--file", "empty.txt"),
+    ("-l", "--file=empty.txt"),
+    ("-l", "-f", "/dev/null"),
+    ("-lf", "empty.txt", "cli/thing.py"),  # a bare word after `-f` is a FILE to grep, not a pattern
+    ("-Lf", "empty.txt"),  # `-L` names every file in the list without opening one, and still exits 1
+]
+
+# The same flag over a file that holds a pattern, and the two other ways a sweep opens nothing, neither of them a
+# missing pattern: a refusal that reached these is one the next operator turns off. `-m 0` stops before the file
+# list with a pattern and without one alike, which is the control's business below and not this check's; under
+# `-v` an empty pattern set selects every line, so that grep opens every file and hits.
+_STILL_A_PATTERN = [
+    (("-lf", "pat.txt"), 0),
+    (("-l", "-f", "pat.txt", "--control", "NEEDLE"), 0),
+    (("-lvf", "empty.txt"), 0),
+    (("-l", "-m", "0", "--control", "NEEDLE", "NEEDLE"), 2),
+    (("-l", "--control", "NEEDLE", "no-such-string-anywhere"), 1),
+]
+
+
+def test_an_empty_pattern_set_is_refused_rather_than_answered(tmp_path):
+    """rc 1 over a control that hit is this script's clean, and a pattern set grep never had earns that rc from
+    files it never opened. The control is no guard here -- it carries a pattern of its own, so it hits whatever
+    the sweep's grep did -- and what tells the two apart is whether these words reach a file operand at all,
+    which is asked of grep rather than derived from the words."""
+    repo = _repo(tmp_path)
+    (repo / "empty.txt").write_text("")
+    (repo / "pat.txt").write_text("NEEDLE\n")
+    wrong = []
+    for words in _AN_EMPTY_PATTERN_SET:
+        done = _sweep(repo, *words, "--control", "NEEDLE")
+        if done.returncode != 2 or "empty pattern set" not in done.stderr:
+            spelt = " ".join(words)
+            wrong.append(f"{spelt} --control NEEDLE: rc {done.returncode}, want 2 -- {done.stderr.strip()[:70]}")
+    for words, want in _STILL_A_PATTERN:
+        done = _sweep(repo, *words)
+        if done.returncode != want or "empty pattern set" in done.stderr:
+            wrong.append(f"{' '.join(words)}: rc {done.returncode}, want {want} -- {done.stderr.strip()[:70]}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_a_control_grep_refused_is_not_reported_as_a_control_that_missed(tmp_path):
+    """The two arrive as the same rc from the same grep -- an invalid `-d` ACTION is rc 1, exactly like an honest
+    miss -- and they want opposite next moves: a refused control is the one thing here that was never wrong, and
+    replacing it is the move that cannot help. The control carrying the sweep's operand-taking words is what makes
+    a mistyped ACTION end here routinely."""
+    repo = _repo(tmp_path)
+    refused = _sweep(repo, "-ld", "recursive", "NEEDLE", "--control", "NEEDLE")
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert "refused the control's words" in refused.stderr, refused.stdout + refused.stderr
+    assert "pick a control this tree holds" not in refused.stderr, refused.stdout + refused.stderr
+    missed = _sweep(repo, "-lm", "5", "--control", "no-such-control-either", "no-such-string-anywhere")
+    assert missed.returncode == 2, missed.stdout + missed.stderr
+    assert "pick a control this tree holds" in missed.stderr, missed.stdout + missed.stderr
+    assert "refused the control's words" not in missed.stderr, missed.stdout + missed.stderr
+
+
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):
     done = _sweep(_repo(tmp_path), "-l", "--control=NEEDLE", "no-such-string-anywhere")
     assert done.returncode == 1, done.stdout + done.stderr

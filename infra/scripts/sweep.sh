@@ -12,11 +12,12 @@
 # absent needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
 # The control is matched with the caller's own flags (`-i`, `-w`, `--include`) and its pattern in place of the
 # sweep's, so what it proves is a matcher the sweep ran rather than a bare grep. Every operand-taking word of the
-# caller's goes over WITH its operand, so words the sweep's grep refuses the control's refuses too, and a grep
-# that opened no file cannot end in a clean. It never inherits the two that would make a positive probe vacuous:
-# a selection the sweep inverts, and a pattern of the sweep's own -- the second held back as the whole cluster
-# carrying it, which takes its narrowing letters with it, so the control is laxer there and the refusal below
-# names what it lost rather than blaming the control.
+# caller's goes over WITH its operand, so a word the sweep's grep refuses the control's refuses too. It never
+# inherits the two that would make a positive probe vacuous: a selection the sweep inverts, and a pattern of the
+# sweep's own -- the second held back as the whole cluster carrying it, which takes its narrowing letters with it,
+# so the control is laxer there and the refusal below names what it lost rather than blaming the control.
+# The one clean no control can judge is a sweep whose pattern set is EMPTY: the control carries a pattern of its
+# own, so it hits where the sweep's grep opened no file. That sweep is refused instead, by the second probe below.
 # What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
 # opened only when the pattern is one that directory alone holds. `git grep` finding no carrier settles the
 # tracked half of that; the list also holds the untracked files git does not ignore and everything under
@@ -54,9 +55,9 @@ pattern_letters=ef
 operand_letters=mABCdDX
 for a in "$@"; do
   # The cluster handed to the control one word ago is still waiting for the operand grep binds from THIS word,
-  # whatever this word spells, so the control takes it too. `--control` standing here is the caller's error the
-  # promise rule names one word later -- the sweep's own word where an operand of theirs should be -- and handing
-  # it over leaves grep refusing the control, which is a refusal rather than a clean, the direction to err in.
+  # whatever this word spells, so the control takes it too. `--control` standing here is a word of the sweep's own
+  # where an operand of the caller's should be, and handing it over leaves grep refusing the control -- a refusal
+  # below rather than a clean, which is the direction to err in.
   if [ "$owed" -eq 1 ]; then owed=0; flags+=("$a"); fi
   promised=""   # every word clears it, so only the last word of all can leave a promise standing
   if [ "$skip" -eq 1 ]; then
@@ -105,13 +106,13 @@ for a in "$@"; do
       case "${letters:${#before}:1}" in
         # A pattern letter's operand is the sweep's own pattern, and the letter handed back without it would eat
         # the control's own `-e`: the cluster is withheld WHOLE, narrowing letters and all, and the refusal below
-        # names it. Nothing here can end in a false clean -- every way grep refuses an `-e` or an `-f` is rc 2,
-        # which the probe below answers before the sweep runs.
+        # names it. What the control cannot see here the probes do: every way grep REFUSES an `-e` or an `-f` is
+        # rc 2, which the first answers, and an `-f` whose file holds no pattern is no refusal at all, which is
+        # the second's question.
         ["$pattern_letters"]) held+=("$a"); continue ;;
-        # An operand letter's operand is a NUM, an ACTION or a matcher name, a word this loop leaves in the
-        # sweep's arguments -- so the cluster goes over WITH it, exactly as the standalone arms hand `-d read`
-        # over. The control then runs the matcher the sweep ran and is refused by whatever refuses the sweep,
-        # which is the whole of what stops a clean over a grep that opened nothing.
+        # The operand is a word this loop leaves in the sweep's arguments, so the cluster goes over WITH it,
+        # exactly as the standalone arms hand `-d read` over, and the control is then refused by whatever
+        # refuses the sweep.
         ["$operand_letters"]) [ -z "$promised" ] || owed=1; flags+=("-${before//[vL]/}${letters:${#before}}") ;;
         # No operand-taking letter at all: nothing waits on a later word, so only the inverting letters go.
         *) selecting="${letters//[vL]/}"; [ -z "$selecting" ] || flags+=("-$selecting") ;;
@@ -160,6 +161,22 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 # `-ld bogus NEEDLE --control NEEDLE` is rc 2, the control's refusal. Widening this line to refuse on anything
 # the probe wrote would rest on grep writing nothing while exiting 0 or 1, a claim about grep it need not make.
 [ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. Where that is a missing pattern: this script supplies the file list, so the word grep lacks it takes from there -- a file path as the regex, and a hit or a clean about a filename. Give the pattern as a word of your own, -e <pattern> if it begins with a dash. Any other complaint above is about the word grep names in it" >&2; exit 2; }
+# The pattern SET, put to grep the same way, because an EMPTY one is the clean no control can catch: the control
+# carries a pattern of its own, so it hits over a sweep whose grep opened nothing. `-f`/`--file` naming a file that
+# holds no pattern is the way there -- every other pattern source is a pattern by being written -- and grep with
+# none reads no file, refuses nothing, and answers 1: the rc this script reports as an absence. What it also does
+# not do is stat a file operand, which is the question here. One path that cannot exist stands in for the list
+# (`/dev/null` is a character device, so anything under it is ENOTDIR wherever this runs): words carrying a pattern
+# are refused over it at rc 2, words carrying none answer 1 in silence.
+# The second run is that question's own control, and it is what keeps this refusal off an ordinary sweep: it adds a
+# pattern and asks again, so a 1 is read as "no pattern" only where a pattern DOES reach the path. `-m 0` stops
+# before the stat with a pattern and without one alike and answers 1 twice -- a sweep that opens nothing for its
+# own reason, which the control below is what answers -- and under `-v` an empty pattern set selects every line, so
+# grep opens the files, the stat happens, and rc 2 leaves this alone.
+nowhere=/dev/null/no-such-file
+grep -I -H ${args[@]+"${args[@]}"} --directories=skip -- "$nowhere" </dev/null >/dev/null 2>&1 && reached=0 || reached=$?
+grep -I -H ${args[@]+"${args[@]}"} -e '' --directories=skip -- "$nowhere" </dev/null >/dev/null 2>&1 && reachable=0 || reachable=$?
+[ "$reached" -ne 1 ] || [ "$reachable" -ne 2 ] || { echo "sweep: these words reach grep with an empty pattern set -- an -f/--file file that holds no pattern is the way there -- so grep opens no file and exits 1, which this script reports as a clean over a sweep that read nothing. Write the patterns into that file, or give the pattern as a word of your own. Asked of grep rather than assumed: under these words a file operand is never reached, and under the same words plus one pattern it is" >&2; exit 2; }
 ledger=.local
 [ "$main" = "$(pwd -P)" ] || ledger="$main/.local"
 [ -d "$ledger" ] || echo "sweep: no $ledger -- the memo, the table and the inboxes are not in this sweep" >&2
@@ -188,10 +205,21 @@ if [ "$rc" -eq 1 ]; then
   grep -I -q ${flags[@]+"${flags[@]}"} -e "$known" -- "${files[@]}"
   crc=$?
   if [ "$crc" -ne 0 ]; then
-    echo "sweep: the control '$known' matched nothing either in ${#files[@]} files (grep rc $crc) -- this sweep is not proven able to see, so its clean is no evidence; pick a control this tree holds" >&2
-    # Without this the operator's next move is to replace a control that was never wrong: a cluster held back
-    # whole takes its narrowing letters with it, so the control ran under less than the sweep did.
-    [ "${#held[@]}" -eq 0 ] || echo "sweep: before replacing it: the control ran without ${held[*]}, held back whole because a letter there takes the sweep's own pattern as its operand -- spell that cluster out, the pattern flag and its pattern each a word of their own ('-i -v -e .' for '-ive .'), and the control keeps the letters that narrow it" >&2
+    # A control REFUSED and a control that ran and missed arrive here as the same rc -- an invalid `-d` ACTION is
+    # rc 1 like an honest miss -- and they want opposite next moves, so which it was is asked rather than read off
+    # `crc`: the control's words, put to grep with no file list, where nothing but a refusal can make it write.
+    # (Over the file list it could also write about a file it could not open, which is no refusal and belongs to
+    # the sweep's own grep above.) Now that the control carries the sweep's operand-taking words, this is the
+    # ordinary end of a typed ACTION rather than a rare one.
+    refusal="$(grep -I -q ${flags[@]+"${flags[@]}"} -e "$known" --directories=skip </dev/null 2>&1 >/dev/null)" || true
+    if [ -n "$refusal" ]; then
+      echo "sweep: grep refused the control's words -- '${refusal%%$'\n'*}' -- and they are the sweep's own, so the sweep's grep was refused the same way and its rc 1 is no absence. Fix the word grep names above; the control '$known' is not what is wrong here" >&2
+    else
+      echo "sweep: the control '$known' matched nothing either in ${#files[@]} files (grep rc $crc) -- this sweep is not proven able to see, so its clean is no evidence; pick a control this tree holds" >&2
+      # Without this the operator's next move is to replace a control that was never wrong: a cluster held back
+      # whole takes its narrowing letters with it, so the control ran under less than the sweep did.
+      [ "${#held[@]}" -eq 0 ] || echo "sweep: before replacing it: the control ran without ${held[*]}, held back whole because a letter there takes the sweep's own pattern as its operand -- spell that cluster out, the pattern flag and its pattern each a word of their own ('-i -v -e .' for '-ive .'), and the control keeps the letters that narrow it" >&2
+    fi
     exit 2
   fi
 fi
