@@ -201,10 +201,10 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 # carries a pattern of its own, so it hits over a sweep whose grep opened nothing. `-f`/`--file` naming a file that
 # holds no pattern is the way left to it -- every other pattern source is a pattern by being written, and one that
 # is no file is refused above -- and grep with none reads no file, refuses nothing, and answers 1: the rc this
-# script reports as an absence. What it also does
-# not do is stat a file operand, which is the question here. One path that cannot exist stands in for the list
-# (`/dev/null` is a character device, so anything under it is ENOTDIR wherever this runs): words carrying a pattern
-# are refused over it at rc 2, words carrying none answer 1 in silence.
+# script reports as an absence. What it also does not do is stat a file operand, which is the question here. One
+# path that cannot exist stands in for the list (`/dev/null` is a character device, so anything under it is ENOTDIR
+# wherever this runs): words carrying a pattern are refused over it at rc 2, words carrying none answer 1 in
+# silence.
 # The second run is that question's own control, and it is what keeps this refusal off an ordinary sweep: it adds a
 # pattern and asks again, so a 1 is read as "no pattern" only where a pattern DOES reach the path. `-m 0` stops
 # before the stat with a pattern and without one alike and answers 1 twice -- a sweep that opens nothing for its
