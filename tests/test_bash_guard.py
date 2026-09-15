@@ -240,11 +240,12 @@ ADMITTED = [
     "git log --oneline | head -5 && git status",
     '[ -n "$(git rev-parse HEAD)" ]',
     "sed -n 1,5p file | wc -l",  # another truncation, outside the arm
+    "git log --oneline | head -5 | uniq -c",  # `counting` is closed over wc and the greps: another -c is not one
     # the shape as text: a message, an echo, a quoted heredoc body, a pytest selector
     'git commit -m "head -5 | wc -l is the defect"',
     'echo "git log | head -5 | wc -l"',
     "cat <<'EOF'\nls | head -2 | wc -l\nEOF",
-    "uv run pytest tests/test_bash_guard.py -k head_tail",
+    'uv run pytest tests/test_bash_guard.py -k "head or tail"',  # the ids are the commands, so this is the selector
 ]
 
 
