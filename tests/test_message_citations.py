@@ -352,6 +352,18 @@ def test_a_message_that_is_not_utf8_is_judged_and_not_a_traceback(tmp_path):
     assert "Traceback" not in refused.stderr, refused.stderr
     passed = _run(repo, b"fix: caf\xe9 and cli/x.py:3\n")
     assert passed.returncode == 0 and passed.stdout == "", passed.stdout + passed.stderr
+    # The other carrier: under a repo-wide commitEncoding, `git log` prints the recorded bytes untranscoded, and
+    # --range reads them through _git
+    _git(repo, "config", "i18n.commitEncoding", "ISO-8859-1")
+    (repo / "MSG").write_bytes(b"fix: caf\xe9 and cli/y.py:3\n")
+    _git(repo, "commit", "-q", "--allow-empty", "-F", "MSG")
+    refused = _run(repo, "", "--range", "HEAD~1..HEAD")
+    assert refused.returncode == 1 and "cli/y.py:3: no tracked file" in refused.stdout, refused.stdout + refused.stderr
+    assert "Traceback" not in refused.stderr, refused.stderr
+    (repo / "MSG").write_bytes(b"fix: caf\xe9 and cli/x.py:3\n")
+    _git(repo, "commit", "-q", "--amend", "--allow-empty", "-F", "MSG")
+    passed = _run(repo, "", "--range", "HEAD~1..HEAD")
+    assert passed.returncode == 0 and "every citation" in passed.stdout, passed.stdout + passed.stderr
 
 
 # --- the wiring --------------------------------------------------------------------------------

@@ -64,7 +64,7 @@ PYTHON, SHELL = {"py"}, {"sh", "bash", "zsh"}
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], capture_output=True, text=True)
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 class Tree:
