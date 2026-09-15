@@ -24,11 +24,10 @@
 set -euo pipefail
 # Given no pattern -- none at all, or flags alone -- grep takes the first path of the file list below as its
 # regex and answers whatever that earns, a hit or a clean, never the error this is. WHICH word is the pattern is
-# asked of grep, further down, and not of the option table this loop reads: read for the pattern question that
-# table is right for one spelling and wrong for its neighbour -- a cluster, an abbreviation, a letter absent from
-# `--help` -- and wrong there is the clean nobody hears. The table is read for a different question, what the
-# CONTROL may inherit, where wrong costs a control and says so: `--include '*.py'` takes a bare operand that is
-# not a pattern, and handed to the control without it the option eats the control's own `-e` instead.
+# not decided here: it is asked of grep at the probe below, where the reason is written. The table this loop
+# reads answers a different question, what the CONTROL may inherit, where wrong costs a control and says so:
+# `--include '*.py'` takes a bare operand that is not a pattern, and handed to the control without it the option
+# eats the control's own `-e` instead.
 # `--color`'s argument is optional and grep reads it only attached, so it is not one of them.
 # `pattern` is this loop's own answer to the pattern question, kept because it may only ever REFUSE: an attached
 # `-eNEEDLE` is refused although grep accepts it, a loud refusal naming the spelling that works.
@@ -36,6 +35,8 @@ pattern=0
 skip=0     # the next word is a flag's operand, to be stepped over
 carries=0  # ...and that operand is the pattern, so a dangling `-e` never records one
 takes=0    # ...and that operand is --control's known positive, which grep never sees
+promised=""  # the flag standing LAST with its operand unsupplied, the one word of the caller's that would reach
+             # past their own words into the probe's; cleared by whatever word follows it
 control=0
 known=""
 args=()    # what grep is handed: the caller's words, `--control <pattern>` removed
@@ -49,6 +50,7 @@ held=()    # ...and those held back whole, which the refusal names rather than l
 pattern_letters=ef
 operand_letters=mABCdDX
 for a in "$@"; do
+  promised=""   # every word clears it, so only the last word of all can leave a promise standing
   if [ "$skip" -eq 1 ]; then
     skip=0
     if [ "$takes" -eq 1 ]; then known="$a"; takes=0; continue; fi
@@ -60,7 +62,7 @@ for a in "$@"; do
     --control) control=1; skip=1; takes=1; continue ;;
     --control=*) control=1; known="${a#--control=}"; continue ;;
     --reg*=*|--file=*) pattern=1; args+=("$a"); continue ;;
-    -["$pattern_letters"]|--reg*|--file) skip=1; carries=1; args+=("$a"); continue ;;
+    -["$pattern_letters"]|--reg*|--file) skip=1; carries=1; promised="$a"; args+=("$a"); continue ;;
     # An operand attached with `=` leaves nothing behind, so its word reaches the control whole. This arm is
     # what keeps the globs below off `--after-context=3`, where one would otherwise step over the pattern.
     --*=*) ;;
@@ -70,7 +72,7 @@ for a in "$@"; do
     # `--files-without-match`, which take no operand, so it is written literally above; `--exclude` is a prefix of
     # `--exclude-dir` and `--exclude-from`, which do take one, so it may be globbed. `--binary` (`-U`) takes none,
     # which is why the glob starts at `--binary-`.
-    -["$operand_letters"]|--a*|--be*|--binary-*|--con*|--dev*|--di*|--exclude*|--g*|--inc*|--la*|--m*) skip=1 ;;
+    -["$operand_letters"]|--a*|--be*|--binary-*|--con*|--dev*|--di*|--exclude*|--g*|--inc*|--la*|--m*) skip=1; promised="$a" ;;
     # The sweep may invert its selection; its control never does -- under `-v` a pattern nothing holds selects
     # every line, so the control would prove only that the files have lines. `--inv` and `--files-witho` are where
     # grep's long-option prefixes stop being ambiguous, so every spelling from there to the full name is the same
@@ -83,10 +85,14 @@ for a in "$@"; do
     # one missed here in a silent clean.
     -[!-]*)
       args+=("$a")
+      # grep binds the REST of a cluster as the operand of its first operand-taking letter, so only a letter
+      # standing at the very end of one reaches past the word: `-ldread` and `-lm5` carry their own, `-ld` and
+      # `-le` take the next word. That is the same promise the standalone arms above record.
+      letters="${a#-}"
+      [ "${letters%%["$pattern_letters$operand_letters"]*}" != "${letters%?}" ] || promised="$a"
       # A letter the control cannot carry alone withholds the cluster whole -- the two lists above, read here as
       # one, because that letter handed back would eat the control's own `-e` as its operand. `-lm5` carries its
-      # operand attached and would not, and is held with the rest anyway: a control laxer than the sweep, which
-      # the refusal below names rather than sorting the two spellings apart here.
+      # operand attached and would not, and is held with the rest anyway rather than sorted apart here.
       case "$a" in *["$pattern_letters$operand_letters"]*) held+=("$a"); continue ;; esac
       selecting="${a#-}"; selecting="${selecting//[vL]/}"
       [ -z "$selecting" ] || flags+=("-$selecting")
@@ -100,22 +106,39 @@ done
 # A dangling `--control`, or `--control=`, records the empty pattern, which every line matches: the control that
 # proves nothing, and the clean it would wave through is the one this flag exists to hold back.
 [ "$control" -eq 0 ] || [ -n "$known" ] || { echo "sweep: --control takes its known positive as its own word -- something this tree certainly holds, e.g. --control 'NEEDLE'" >&2; exit 2; }
+# The caller's last word is a flag still waiting for the operand grep binds from the NEXT word, and there is no
+# next word of theirs -- so the next word is the one the probe below appends. Refused here rather than asked,
+# because the probe is only a fair question while nothing of ours is standing where an operand of the caller's
+# should be: a dangling `-e` binds `--directories=skip` as the regex and the sweep answers, confidently, about a
+# word nobody typed. This is the loop's own answer again, and like `pattern` it may only ever REFUSE -- a flag
+# left promising an operand is the caller's error in every spelling, which is why refusing it costs no sweep.
+[ -z "$promised" ] || { echo "sweep: '$promised' stands last and nothing supplies the operand it promises -- grep takes the next word for it, and the only word after yours is one this script appends, so the sweep would search for that instead; give the operand as its own word, or drop the flag" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # Under `--separate-git-dir`, or a worktree of a bare repo, that dirname is not a checkout: refuse rather
 # than sweep the tracked tree alone.
 [ "$(git -C "$main" rev-parse --show-toplevel 2>/dev/null)" = "$main" ] || {
   echo "sweep: no main checkout at $main, resolved from $(git rev-parse --git-common-dir)" >&2; exit 2; }
-# The pattern question, put to grep. Handed the sweep's own words and NO file list, grep either has a pattern of
-# its own -- and searches the empty stdin for it, 0 or 1 -- or refuses, because the word it would have bound as
-# the regex is the file list this script is about to supply. Asking is what keeps the answer from being one
-# spelling behind grep's own parser; it costs a second grep per sweep, and a refusal in grep's words rather than
-# this script's. It runs from the toplevel, after the `cd`, so a `-f pattern-file` resolves exactly as it will
-# for the sweep. `--directories=skip` goes last because `-r` with no file operand means "search the working
-# directory", which is a walk of the whole tree for nothing and an rc 2 over any path here that cannot be read;
-# one word and an option, it can be eaten as a missing operand but can never become a pattern.
+# The pattern question, put to grep. Handed the sweep's own words and no file operand of the caller's, grep
+# either has a pattern of its own -- and searches the empty stdin for it, 0 or 1 -- or refuses at rc 2, because
+# the word it would have bound as the regex is the file list this script is about to supply. Asking keeps the
+# answer from being one spelling behind grep's own parser; it costs a second grep per sweep, and a refusal in
+# grep's words rather than this script's. It runs from the toplevel, after the `cd`, so a `-f pattern-file`
+# resolves exactly as it will for the sweep. `--directories=skip` goes last because `-r` with no file operand
+# means "search the working directory", which is a walk of the whole tree for nothing and an rc 2 over any path
+# here that cannot be read. It is the one word of ours in the question, and grep reads it as the option it is
+# unless a flag is still waiting for an operand -- which is refused above, and refused there so that this
+# question stays a fair one: nothing of ours is left for grep to bind, so a pattern grep reports is the caller's.
 probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >/dev/null)" && prc=0 || prc=$?
-[ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. This script supplies the list, so a word grep lacks it takes from there: a file path as the regex, and a hit or a clean about a filename. Give it as a word of your own -- -e <pattern> if it begins with a dash" >&2; exit 2; }
+# rc 2 is more than the missing pattern: an unrecognised option, a bad `-m` argument and an invalid regex all
+# land here, each carrying its own first line. Explaining them all as a missing pattern sends that operator to
+# add an `-e` to a sweep that already has one, so the explanation below is offered rather than asserted.
+# It is also less than every refusal grep has: an invalid ACTION for `-d`/`-D` is rejected at rc 1, which reads
+# here as a pattern found. The sweep's own grep then fails the same way and reads as "nothing matched", and where
+# that letter came in a cluster the control never carried it, so a clean is reported -- `-ld bogus NEEDLE` is
+# rc 1. Refusing instead on anything the probe wrote would close that and would rest on grep writing nothing
+# while exiting 0 or 1, a wider claim about grep than this line needs to make.
+[ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. Where that is a missing pattern: this script supplies the file list, so the word grep lacks it takes from there -- a file path as the regex, and a hit or a clean about a filename. Give the pattern as a word of your own, -e <pattern> if it begins with a dash. Any other complaint above is about the word grep names in it" >&2; exit 2; }
 ledger=.local
 [ "$main" = "$(pwd -P)" ] || ledger="$main/.local"
 [ -d "$ledger" ] || echo "sweep: no $ledger -- the memo, the table and the inboxes are not in this sweep" >&2

@@ -347,6 +347,79 @@ def test_the_words_grep_refuses_are_refused_in_greps_own_terms(tmp_path):
     assert "Usage: grep" in done.stderr, done.stdout + done.stderr
 
 
+# Every flag whose operand grep takes from the NEXT word, written in the position where the next word is not the
+# caller's at all: grep 3.11's nine such letters standing alone and ending a cluster, and its fifteen long
+# options. `-f` and `-e` belong in these rows although they are absent from the ones above -- a promise of a
+# pattern is a promise like any other once no word keeps it.
+_TAKES_THE_NEXT_WORD = (
+    [f"-{letter}" for letter in "efmABCdDX"]
+    + [f"-l{letter}" for letter in "efmABCdDX"]
+    + [f"-vl{letter}" for letter in "efmABCdDX"]
+    + [
+        "--regexp",
+        "--file",
+        "--max-count",
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--devices",
+        "--directories",
+        "--exclude",
+        "--exclude-dir",
+        "--exclude-from",
+        "--group-separator",
+        "--include",
+        "--label",
+        "--binary-files",
+    ]
+)
+
+
+def test_a_flag_standing_last_is_refused_before_grep_is_asked(tmp_path):
+    """The probe below the loop asks grep which word is the pattern, and that question is only a fair one while
+    every word in it but the appended one is the caller's. A flag standing last takes the appended one: the
+    sweep then answers about a word nobody typed, and `-e` and `-ld` answered with a licensed clean. So the
+    promise is refused instead, in the script's own words, naming the flag rather than what grep bound."""
+    repo = _repo(tmp_path)
+    wrong = []
+    for flag in _TAKES_THE_NEXT_WORD:
+        done = _sweep(repo, "-l", "--control", "NEEDLE", "cli/thing.py", flag)
+        if done.returncode != 2 or "stands last" not in done.stderr:
+            wrong.append(f"{flag}: rc {done.returncode} -- {done.stdout.strip()[:60]}{done.stderr.strip()[:60]}")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_a_flag_whose_operand_is_supplied_is_an_ordinary_sweep(tmp_path):
+    """The other direction of the rows above, since a refusal that reached an ordinary sweep is one the next
+    operator turns off. What the refusal has to read past is a word that LOOKS like an unkept promise: a cluster
+    standing last whose operand is attached to it or whose letters take none at all, and a `--control` pattern
+    beginning with a dash, which is the one word that may follow a flag without being what that flag asked for."""
+    repo = _repo(tmp_path)
+    (repo / "pat.txt").write_text(".\n")
+    (repo / "cli" / "dashed.py").write_text("a -e here\n")
+    wrong = []
+    for words, want in [
+        (("-le", "NEEDLE"), 0),
+        (("-l", "-e", "NEEDLE"), 0),
+        (("-l", "--regexp", "NEEDLE"), 0),
+        (("-lvf", "pat.txt", "--control", "NEEDLE"), 1),
+        (("-l", "-d", "read", "NEEDLE"), 0),
+        (("-l", "-X", "grep", "NEEDLE"), 0),
+        (("-l", "--label", "LAB", "NEEDLE"), 0),
+        (("-ldread", "NEEDLE"), 0),
+        (("-lXgrep", "NEEDLE"), 0),
+        (("-lm5", "NEEDLE"), 0),
+        (("-l", "NEEDLE", "-lm5"), 0),
+        (("-l", "NEEDLE", "-il"), 0),
+        (("-l", "NEEDLE", "--files-with-matches"), 0),
+        (("-l", "no-such-string-anywhere", "--control", "-e"), 1),
+    ]:
+        done = _sweep(repo, *words)
+        if done.returncode != want:
+            wrong.append(f"{' '.join(words)}: rc {done.returncode}, want {want} -- {done.stderr.strip()[:80]}")
+    assert not wrong, "\n".join(wrong)
+
+
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):
     done = _sweep(_repo(tmp_path), "-l", "--control=NEEDLE", "no-such-string-anywhere")
     assert done.returncode == 1, done.stdout + done.stderr
