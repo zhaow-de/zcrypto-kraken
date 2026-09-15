@@ -17,6 +17,7 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
   - [`zcrypto engine`](#zcrypto-engine)
     - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
+    - [Nightly data-gated tests (systemd user unit)](#nightly-data-gated-tests-systemd-user-unit)
     - [VPS journal pull and daily gate ops — retired (moved to the NAS)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas)
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
@@ -128,16 +129,33 @@ zcrypto engine <subcommand> [OPTIONS]
 
 #### Shadow soak service (systemd user unit)<a name="shadow-soak-service-systemd-user-unit"></a>
 
-`infra/systemd/zcrypto-engine-shadow.service` is a systemd **user**-unit template that keeps `zcrypto engine run` alive on a workstation (`Restart=on-failure`, `RestartSec=30`, `WantedBy=default.target`). Fill in its `<repo>`/`<uv>` placeholders (absolute paths), then:
+`infra/systemd/zcrypto-engine-shadow.service` is a systemd **user**-unit template that keeps `zcrypto engine run` alive on a workstation (`Restart=on-failure`, `RestartSec=30`, `WantedBy=default.target`). Its `<repo>`/`<uv>` placeholders are filled into a copy at install time — the tracked file is never edited; its render is a test — from the checkout root:
 
 ```bash
 loginctl enable-linger $USER            # prerequisite: without lingering the user service dies on logout
 loginctl show-user $USER -p Linger      # verify: prints Linger=yes
 mkdir -p ~/.config/systemd/user
-cp infra/systemd/zcrypto-engine-shadow.service ~/.config/systemd/user/
+sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|" infra/systemd/zcrypto-engine-shadow.service > ~/.config/systemd/user/zcrypto-engine-shadow.service
 systemctl --user daemon-reload
 systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
+```
+
+#### Nightly data-gated tests (systemd user unit)<a name="nightly-data-gated-tests-systemd-user-unit"></a>
+
+`infra/systemd/zcrypto-data-gated-tests.service` and `.timer` are a systemd **user**-unit pair that runs the whole test suite nightly (02:30 UTC, `Persistent=true`) from a checkout where `data/` is present — the tests CI skips for want of local data run for real here — through `infra/scripts/data-gated-run.py`, which writes `.local/data-gated-runs/<UTC stamp>.json` and `latest.json` (counts, failing ids, the git sha, whether `data/` was there, the skips whose reason says a dataset was absent, and an `ok` flag that neither a run without a summary line nor a data-gated skip earns). The daily operations pass reads `latest.json` and reports a missing, stale (older than 26 h) or failed result. Enable lingering, then, from the main checkout's root, render a copy of the service with its `<repo>`/`<uv>` placeholders filled into `~/.config/systemd/user/` — the tracked template keeps them, so the units test reads it as committed — and copy the timer, which has none:
+
+```bash
+loginctl enable-linger $USER            # prerequisite: without lingering the timer dies at logout
+loginctl show-user $USER -p Linger      # verify: prints Linger=yes
+mkdir -p ~/.config/systemd/user
+sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|" infra/systemd/zcrypto-data-gated-tests.service > ~/.config/systemd/user/zcrypto-data-gated-tests.service
+cp infra/systemd/zcrypto-data-gated-tests.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now zcrypto-data-gated-tests.timer
+systemctl --user list-timers zcrypto-data-gated-tests.timer   # confirm the next fire
+systemctl --user start --no-block zcrypto-data-gated-tests.service   # a first run by hand, so tomorrow's read has a file; returns at once
+journalctl --user -u zcrypto-data-gated-tests.service -f      # follow it; the last line names the files written
 ```
 
 #### VPS journal pull and daily gate ops — retired (moved to the NAS)<a name="vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas"></a>

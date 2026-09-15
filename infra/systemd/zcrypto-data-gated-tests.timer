@@ -1,0 +1,16 @@
+# The timer half of zcrypto-data-gated-tests.service -- the placeholders, the prerequisite and the
+# install steps are in that file's header; this file has nothing to fill in. Nightly at 02:30 UTC.
+# Persistent=true fires the run a workstation slept through as soon as it is up again, so a night
+# off is a late result rather than none; a machine off past 26 h still reads as stale to
+# zcrypto-daily-ops, which is the point.
+
+[Unit]
+Description=zcrypto data-gated tests: the nightly trigger
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+Unit=zcrypto-data-gated-tests.service
+
+[Install]
+WantedBy=timers.target
