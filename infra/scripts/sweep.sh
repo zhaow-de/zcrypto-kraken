@@ -16,9 +16,6 @@
 # inherits the two that would make a positive probe vacuous: a selection the sweep inverts, and a pattern of the
 # sweep's own -- the second held back as the whole cluster carrying it, which takes its narrowing letters with it,
 # so the control is laxer there and the refusal below names what it lost rather than blaming the control.
-# A clean the control cannot judge at all is one whose sweep carried no pattern: the control supplies a pattern
-# of its own, so it hits where the sweep's grep opened no file. That sweep is refused below instead, by the
-# second probe.
 # What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
 # opened only when the pattern is one that directory alone holds. `git grep` finding no carrier settles the
 # tracked half of that; the list also holds the untracked files git does not ignore and everything under
@@ -127,9 +124,7 @@ for a in "$@"; do
       case "$binds" in
         # A pattern letter's operand is the sweep's own pattern, and the letter handed back without it would eat
         # the control's own `-e`: the cluster is withheld WHOLE, narrowing letters and all, and the refusal below
-        # names it. Two things the control cannot see here the probes do: every way grep REFUSES an `-e` or an
-        # `-f` is rc 2, which the first answers, and an `-f` whose file holds no pattern is no refusal at all,
-        # which is the second's question.
+        # names it. The control is no guard in this arm; the checks below are.
         ["$pattern_letters"]) held+=("$a"); continue ;;
         # The operand is a word this loop leaves in the sweep's arguments, so the cluster goes over WITH it,
         # exactly as the standalone arms hand `-d read` over, and the control is then refused by whatever
@@ -202,10 +197,11 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 # this line to refuse on anything the probe wrote would rest on grep writing nothing while exiting 0 or 1, a
 # claim about grep it need not make.
 [ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. Where that is a missing pattern: this script supplies the file list, so the word grep lacks it takes from there -- a file path as the regex, and a hit or a clean about a filename. Give the pattern as a word of your own, -e <pattern> if it begins with a dash. Any other complaint above is about the word grep names in it" >&2; exit 2; }
-# The pattern SET, put to grep the same way, because an EMPTY one is the clean no control can catch: the control
+# The pattern SET, put to grep the same way, because an EMPTY one is a clean the control cannot catch: the control
 # carries a pattern of its own, so it hits over a sweep whose grep opened nothing. `-f`/`--file` naming a file that
-# holds no pattern is the way there -- every other pattern source is a pattern by being written -- and grep with
-# none reads no file, refuses nothing, and answers 1: the rc this script reports as an absence. What it also does
+# holds no pattern is the way left to it -- every other pattern source is a pattern by being written, and one that
+# is no file is refused above -- and grep with none reads no file, refuses nothing, and answers 1: the rc this
+# script reports as an absence. What it also does
 # not do is stat a file operand, which is the question here. One path that cannot exist stands in for the list
 # (`/dev/null` is a character device, so anything under it is ENOTDIR wherever this runs): words carrying a pattern
 # are refused over it at rc 2, words carrying none answer 1 in silence.
@@ -217,7 +213,7 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 nowhere=/dev/null/no-such-file
 grep -I -H ${args[@]+"${args[@]}"} --directories=skip -- "$nowhere" </dev/null >/dev/null 2>&1 && reached=0 || reached=$?
 grep -I -H ${args[@]+"${args[@]}"} -e '' --directories=skip -- "$nowhere" </dev/null >/dev/null 2>&1 && reachable=0 || reachable=$?
-[ "$reached" -ne 1 ] || [ "$reachable" -ne 2 ] || { echo "sweep: these words reach grep with an empty pattern set -- an -f/--file file that holds no pattern is the way there -- so grep opens no file and exits 1, which this script reports as a clean over a sweep that read nothing. Write the patterns into that file, or give the pattern as a word of your own. Asked of grep rather than assumed: under these words a file operand is never reached, and under the same words plus one pattern it is" >&2; exit 2; }
+[ "$reached" -ne 1 ] || [ "$reachable" -ne 2 ] || { echo "sweep: these words reach grep with an empty pattern set -- an -f/--file file that holds no pattern is the way there -- so grep opens no file and exits 1, which this script reports as a clean over a sweep that read nothing. Write the patterns into that file, or give the pattern as a word of your own" >&2; exit 2; }
 ledger=.local
 [ "$main" = "$(pwd -P)" ] || ledger="$main/.local"
 [ -d "$ledger" ] || echo "sweep: no $ledger -- the memo, the table and the inboxes are not in this sweep" >&2
