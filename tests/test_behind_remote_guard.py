@@ -1,12 +1,11 @@
 """The PostToolUse[Bash] behind-remote guard, driven with synthetic stdin over a scratch clone of a
 bare remote that a second clone advances: after a command carrying `git fetch`, `git pull`,
-`git merge` or `git rebase`, a tracking branch left behind its upstream is reported -- branch,
-upstream, count and the one command that closes it -- as hook JSON on stdout with rc 0, and every
-other state is silent.
+`git merge`, `git rebase` or `git remote update`, a tracking branch left behind its upstream is
+reported -- branch, upstream, count and the one command that closes it -- as hook JSON on stdout
+with rc 0, and every other state is silent.
 
-The script judges the repo the command NAMES -- `git -C <dir>` or a leading `cd <dir> &&` -- and
-falls back to the PROCESS cwd only when the command names none (it never reads a `cwd` field in
-the JSON), so a case pins both the subprocess cwd and the directory written into the command.
+The script judges the repo the command names and reads no `cwd` field from the JSON, so a case pins
+both the subprocess cwd and the directory written into the command.
 """
 
 import json
@@ -95,10 +94,11 @@ def hook_payload(command: str) -> dict:
 
 
 def reported(result: subprocess.CompletedProcess) -> str:
-    """The systemMessage of a report; rc 0 because there is nothing left to block, and the same
-    text under additionalContext because plain stdout never reaches the model."""
+    """The systemMessage of a report; the rc, the clean stderr and the additionalContext copy are
+    asserted on the way through."""
     assert result.returncode == 0
     assert result.stderr == ""
+    assert result.stdout, "expected a report"
     out = json.loads(result.stdout)
     msg = out["systemMessage"]
     assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
@@ -124,12 +124,13 @@ def test_a_fetch_that_leaves_the_branch_behind_is_reported(behind_repo: Path):
         "git pull --ff-only",
         "git merge --ff-only origin/main",
         "git rebase origin/main",
+        "git remote update",
         "gh pr merge 1 --squash --delete-branch && git fetch origin",
     ],
-    ids=["pull", "merge", "rebase", "compound_fetch"],
+    ids=["pull", "merge", "rebase", "remote_update", "compound_fetch"],
 )
 def test_every_verb_that_moves_refs_is_judged(behind_repo: Path, command: str):
-    # The verbs the brief names, and one buried in the compound shape a merge closeout takes.
+    # The five verbs, fetch buried in the compound shape a merge closeout takes.
     assert "by 2" in reported(run_hook(hook_payload(command), cwd=behind_repo))
 
 
@@ -140,12 +141,31 @@ def test_every_verb_that_moves_refs_is_judged(behind_repo: Path, command: str):
         "git merge-base HEAD origin/main",
         "git log --merges -1",
         "gh pr merge 1 --squash",
+        "git remote -v",
+        "git switch -c topic",
+        "git checkout main",
+        "git worktree add ../wt",
     ],
-    ids=["status", "merge_base", "log_merges", "gh_pr_merge"],
+    ids=["status", "merge_base", "log_merges", "gh_pr_merge", "remote_v", "switch", "checkout", "worktree_add"],
 )
 def test_a_command_without_a_verb_is_silent_on_the_same_behind_state(behind_repo: Path, command: str):
     # Same behind state -- so this pins the COMMAND filter, `merge-base` included, not an absent condition.
     assert_silent(run_hook(hook_payload(command), cwd=behind_repo))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git --no-pager fetch origin",
+        "git -c core.pager=cat fetch origin",
+        "git -ccore.pager=cat --no-optional-locks --literal-pathspecs fetch origin",
+    ],
+    ids=["no_pager", "dash_c", "dash_c_attached_and_two_more"],
+)
+def test_a_global_option_between_git_and_the_verb_is_stepped_over(behind_repo: Path, command: str):
+    # git 2.47.3 refuses the attached `-c` spelling; the arm stays, since what is reported is the
+    # repo's state, true whether or not the command ran.
+    assert "by 2" in reported(run_hook(hook_payload(command), cwd=behind_repo))
 
 
 def test_a_diverged_branch_names_both_counts_and_the_rebase(behind_repo: Path):
@@ -205,6 +225,21 @@ def test_a_merge_in_progress_is_silent(pair: tuple[Path, Path]):
     assert_silent(run_hook(hook_payload("git merge origin/main"), cwd=local))
 
 
+def test_a_cherry_pick_in_progress_is_silent(behind_repo: Path):
+    # Diverged (behind 2, ahead 1) while the pick is unresolved, the same shape as the merge above.
+    commit_file(behind_repo, "main-0.txt", "mine\n")
+    assert git(behind_repo, "cherry-pick", "origin/main~1", check=False).returncode != 0
+    assert git(behind_repo, "rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD").returncode == 0
+    assert_silent(run_hook(hook_payload("git fetch origin && git cherry-pick origin/main~1"), cwd=behind_repo))
+
+
+def test_a_revert_in_progress_is_silent(behind_repo: Path):
+    commit_file(behind_repo, "base.txt", "mine\n")
+    assert git(behind_repo, "revert", "--no-edit", "HEAD~1", check=False).returncode != 0
+    assert git(behind_repo, "rev-parse", "-q", "--verify", "REVERT_HEAD").returncode == 0
+    assert_silent(run_hook(hook_payload("git fetch origin && git revert HEAD~1"), cwd=behind_repo))
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -237,6 +272,17 @@ def test_dash_c_form_judges_the_named_repo_and_the_fix_carries_it(tmp_path: Path
     assert f"git -C {other / 'local'} pull --ff-only" in msg
 
 
+def test_repeated_dash_c_is_joined_as_git_chdirs_through_it(tmp_path: Path):
+    other = tmp_path / "named"
+    other.mkdir()
+    make_behind_repo(other)
+    clean_cwd = tmp_path / "clean"
+    clean_cwd.mkdir()
+    command = f"git -C {clean_cwd} -c core.pager=cat -C {other} -C local fetch origin"
+    msg = reported(run_hook(hook_payload(command), cwd=clean_cwd))
+    assert f"git -C {other / 'local'} pull --ff-only" in msg
+
+
 def test_unspaced_cd_form_judges_the_named_repo(tmp_path: Path):
     other = tmp_path / "named"
     other.mkdir()
@@ -247,10 +293,18 @@ def test_unspaced_cd_form_judges_the_named_repo(tmp_path: Path):
     assert "main is behind origin/main by 2" in msg
 
 
-def test_an_unresolvable_dir_judges_nothing(behind_repo: Path):
-    # Behind state in the PROCESS cwd; a variable in `-C` must not fall back to it, which would
-    # report a different repo's state as this command's.
-    assert_silent(run_hook(hook_payload('git -C "$WORKDIR" fetch origin'), cwd=behind_repo))
+@pytest.mark.parametrize(
+    "template",
+    [
+        'git -C "$WORKDIR" fetch origin',
+        "git --git-dir={repo}/.git fetch origin",
+        "git --git-dir={repo}/.git --work-tree={repo} fetch origin",
+    ],
+    ids=["variable", "git_dir", "git_dir_and_work_tree"],
+)
+def test_an_unresolvable_dir_judges_nothing(behind_repo: Path, template: str):
+    # Behind state in the PROCESS cwd, so a fallback to it would report here.
+    assert_silent(run_hook(hook_payload(template.format(repo=behind_repo)), cwd=behind_repo))
 
 
 def test_two_repos_in_one_command_are_each_judged(tmp_path: Path):
