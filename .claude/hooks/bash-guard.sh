@@ -63,6 +63,9 @@ CONFIG_SET = {"add", "replace-all"}
 CONFIG_VALUE = {"file", "blob", "type", "default", "comment", "value", "url"}
 CONFIG_VERBS = {"list", "get", "set", "unset", "rename-section", "remove-section", "edit"}
 CAPS = {"head", "tail"}
+STATUS = "$?"
+PIPEFAIL = "pipefail"
+SET_O = re.compile(r"^-[A-Za-z]*o$")
 GREPS = {"grep", "egrep", "fgrep", "rg"}
 COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
 TESTS = {"[", "[[", "test"}
@@ -242,14 +245,19 @@ def cut_heredocs(text):
     return "".join(out), bodies
 
 
-def pipelines(text):
-    # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
-    # arm reads every stage on its own.
-    cut, bodies = cut_heredocs(text)
+def lexer(cut):
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
+    return lex
+
+
+def pipelines(text):
+    # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
+    # arm reads every stage on its own.
+    cut, bodies = cut_heredocs(text)
+    lex = lexer(cut)
     pipes, skip = [[[]]], False
     for tok in lex:
         if skip:
@@ -462,6 +470,41 @@ def judge_cap(pipe, raw):
                     refuse_capped_test(inner, stage, raw)
 
 
+def judge_status(command, raw):
+    # The tokens in the order bash meets them, which `pipelines` cannot give: it returns each substitution's body
+    # after the whole top level, and what this arm reads is what stands AFTER a pipeline -- `x=$(a | b)` then the
+    # read among it. `$?` is the LAST command's status, so the read counts only while the pipeline is still the last
+    # thing to have run: inside it, or with another command between, `$?` is some other command's status.
+    piped = closed = pipefail = seen = False
+    lead, prev = True, ""
+    for tok in lexer(cut_heredocs(command)[0]):
+        if tok and set(tok) <= PUNCT:
+            while tok:
+                op = next(o for o in OPS if tok.startswith(o))
+                if op in SEP:
+                    if op in PIPE and seen:
+                        piped = True
+                    elif piped:
+                        closed, piped = True, False
+                    elif seen:
+                        closed = False
+                    lead, seen = True, False
+                tok = tok[len(op) :]
+            prev = ""
+            continue
+        assign = ASSIGN.match(tok)
+        if tok == PIPEFAIL and SET_O.match(prev):
+            pipefail = True
+        elif closed and not pipefail and (tok == STATUS or (lead and assign and assign.group(2) == STATUS)):
+            refuse(
+                f"`{tok}` reads the status of a pipeline no `pipefail` covers, so it is the LAST stage's and a failing "
+                f"earlier stage reads as success; in `{raw}`. Set `-o pipefail` ahead of the pipeline, or read "
+                f"`${{PIPESTATUS[@]}}` instead."
+            )
+        lead = lead and bool(assign or tok in KEYWORDS)
+        prev, seen = tok, True
+
+
 def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
@@ -527,6 +570,7 @@ for pipe in commands:
     for words in pipe:
         judge(words)
     judge_cap(pipe, raw)
+judge_status(command, raw)
 PY
 )"
 if out="$(printf '%s' "$input" | python3 -c "$prog" 2>/dev/null)"; then
