@@ -27,11 +27,17 @@ What it deliberately leaves alone -- the false-positive shapes considered and ex
   with a `..` segment; a path git ignores (`.local/`, `data/`);
 - a token whose extension no tracked file has -- `status.kraken.com:443` is a host and port, `2.x:` is a version -- and a
   version string, whose "extension" is digits (`0.16.0:`);
+- a dotfile whose only dot is its first (`.gitignore:9999`, `.python-version:99`): the path pattern wants a stem before the
+  dot, so it never matches one; `.cz.toml:40` has a stem and is judged;
 - a `T<NNNN>` preceded by `/` (a branch name `fix/T<NNNN>-slug`, a path segment) and the lowercase `t<NNNN>` a branch here
   usually carries; a `T<NNNN>` inside a URL or a fenced block goes with the URL or the block;
 - a `path:symbol` token on a file that is not Python or shell (`README.md:badge` is a `version_files` entry quoted from
   `.cz.toml`), and a symbol followed by `-` (`count-list.sh:live-topics` is an entry name, not a function);
 - a suffix that resolves to several files: the token stands when any of them has the line or defines the symbol.
+Not excluded, and so fenced when cited on purpose: a path only a sibling session's branch holds, and a path an earlier
+commit of this branch renamed away -- a topic serial resolves at every branch tip because a serial is registered once, so
+its file at any tip is the registration; a path is not, and the old name of a rename this branch made still sits at every
+other tip, so reading the tips for paths would admit it.
 
 The hook covers commit messages alone: dispatch text and PR bodies leave no record in the tree. `--range <a>..<b>` judges
 every non-merge commit's message against its own two sides, by hand over a branch; nothing in the tree calls it."""
@@ -47,7 +53,7 @@ from collections.abc import Sequence
 
 SCISSORS = "# ------------------------ >8 ------------------------"
 URL = re.compile(r"\b\w+://\S+")
-COMMAND_SPAN = re.compile(r"`[^`\n]*[ \t][^`\n]*`")
+SPAN = re.compile(r"`[^`\n]*`")
 _PATH = r"(?<![\w./-])(?P<path>[\w./-]*[\w-]\.(?P<ext>[A-Za-z]\w*))"
 LINE = re.compile(_PATH + r":(?P<lines>\d+(?:[,-]\d+)*)(?!\w)")
 SYMBOL = re.compile(_PATH + r"::?(?P<symbol>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?![\w-])")
@@ -97,7 +103,7 @@ class Tree:
 
 
 def clean(raw: str) -> str:
-    """A message as git records it: nothing below the scissors line, no comment line."""
+    """Comment lines and the scissors tail go, as the editor path's cleanup drops them; a `#` line a `-m`/`-F` message records (cleanup mode `whitespace`) is not judged."""
     kept: list[str] = []
     for line in raw.split("\n"):
         if line.startswith(SCISSORS):
@@ -108,7 +114,7 @@ def clean(raw: str) -> str:
 
 
 def strip(text: str) -> str:
-    """The message with fenced blocks, URLs and quoted commands -- a code span with whitespace in it -- taken out."""
+    """The message with fenced blocks, URLs and quoted commands -- a code span with whitespace in it -- taken out; code spans pair left to right within a line, so the prose between two of them is read."""
     kept: list[str] = []
     fenced = False
     for line in text.split("\n"):
@@ -116,7 +122,8 @@ def strip(text: str) -> str:
             fenced = not fenced
         elif not fenced:
             kept.append(line)
-    return COMMAND_SPAN.sub(" ", URL.sub(" ", "\n".join(kept)))
+    text = URL.sub(" ", "\n".join(kept))
+    return SPAN.sub(lambda m: " " if re.search(r"[ \t]", m.group()) else m.group(), text)
 
 
 def _line_count(data: bytes) -> int:
@@ -228,7 +235,7 @@ def main(argv: list[str]) -> int:
         print("usage: message-citations.py <commit-message-file> | --range <base>..<head>", file=sys.stderr)
         return 2
     try:
-        raw = pathlib.Path(argv[1]).read_text()
+        raw = pathlib.Path(argv[1]).read_bytes().decode("utf-8", errors="replace")
     except OSError as exc:
         print(f"message-citations: cannot read {argv[1]}: {exc.strerror or exc}", file=sys.stderr)
         return 2

@@ -1,6 +1,6 @@
 """message-citations.py: a commit message whose `path:line`, `path::symbol` / `path:symbol` or `T<NNNN>` resolves on neither side of the commit is refused, and every shape the hook leaves alone is admitted.
 
-Driven with synthetic messages over a fake tree for the judgement, and over a repository of its own for the git-facing arms: the index against HEAD, a file the commit lands or takes away, an ignored path, a topic at a sibling branch tip, the script run from a subdirectory, and `--range`. The wiring test reads the pre-commit config, so the hook cannot fall out of the commit-msg stage unnoticed."""
+Driven with synthetic messages over a fake tree for the judgement, and over a repository of its own for the git-facing arms: the index against HEAD, a file the commit lands or takes away, an ignored path, a topic at a sibling branch tip, the script run from a subdirectory, `--range`, and a message file that is not UTF-8. The wiring test reads the pre-commit config, so the hook cannot fall out of the commit-msg stage unnoticed."""
 
 from __future__ import annotations
 
@@ -182,7 +182,7 @@ def test_the_excluded_shapes_are_not_citations():
         "a time and a ratio": "12:30 and 1:1 and 2026-09-14T1230",
         "a no-extension path": "Dockerfile:12 and LICENSE:3",
         "a dotfile": ".gitignore:3",
-        "a suffix in a word": "ocli/x.py:99",
+        "a top-level name with a prefix, which claims no top-level directory": "ocli/x.py:99",
     }
     for shape, text in shapes.items():
         assert _judge(text + "\n") == [], shape
@@ -197,6 +197,15 @@ def test_a_citation_beside_an_excluded_one_is_still_judged():
     )
 
 
+def test_a_dead_coordinate_between_two_whitespace_free_spans_is_refused():
+    assert _judge("the `--range` flag and cli/gone.py:99 live beside `judge`\n") == [
+        "cli/gone.py:99: no tracked file is or ends with cli/gone.py, on either side of the commit"
+    ]
+    assert _judge("`judge` lists lines, cli/engine/gone.py:3 is dead, and `strip` ends\n") == [
+        "cli/engine/gone.py:3: no tracked file is or ends with cli/engine/gone.py, on either side of the commit"
+    ]
+
+
 def test_a_message_with_no_candidate_token_lists_no_tree():
     class Untouchable:
         label = "staged"
@@ -208,7 +217,7 @@ def test_a_message_with_no_candidate_token_lists_no_tree():
     assert guard.judge("docs: a plain message about nothing\n\nCo-Authored-By: x <x@y.com>\n", [Untouchable()]) == []
 
 
-def test_the_message_is_read_as_git_records_it():
+def test_comment_lines_and_the_scissors_tail_are_not_judged():
     raw = f"subject\n\n# cli/x.py:99 is a comment\nbody\n{guard.SCISSORS}\ncli/x.py:99 below the scissors\n"
     assert guard.clean(raw) == "subject\n\nbody"
 
@@ -236,8 +245,8 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     return repo
 
 
-def _run(repo: pathlib.Path, message: str, *args: str, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
-    (repo / "MSG").write_text(message)
+def _run(repo: pathlib.Path, message: str | bytes, *args: str, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
+    (repo / "MSG").write_bytes(message.encode() if isinstance(message, str) else message)
     return subprocess.run(
         [sys.executable, str(_SCRIPT), *(args or (str(repo / "MSG"),))], cwd=cwd or repo, capture_output=True, text=True
     )
@@ -330,6 +339,15 @@ def test_the_script_names_a_message_it_cannot_read_and_exits_2(tmp_path):
     assert proc.returncode == 2 and "cannot read" in proc.stderr and "Traceback" not in proc.stderr
     proc = subprocess.run([sys.executable, str(_SCRIPT)], cwd=repo, capture_output=True, text=True)
     assert proc.returncode == 2 and proc.stderr.startswith("usage:")
+
+
+def test_a_message_that_is_not_utf8_is_judged_and_not_a_traceback(tmp_path):
+    repo = _repo(tmp_path)
+    refused = _run(repo, b"fix: caf\xe9 and cli/y.py:3\n")
+    assert refused.returncode == 1 and "cli/y.py:3: no tracked file" in refused.stdout, refused.stdout + refused.stderr
+    assert "Traceback" not in refused.stderr, refused.stderr
+    passed = _run(repo, b"fix: caf\xe9 and cli/x.py:3\n")
+    assert passed.returncode == 0 and passed.stdout == "", passed.stdout + passed.stderr
 
 
 # --- the wiring --------------------------------------------------------------------------------
