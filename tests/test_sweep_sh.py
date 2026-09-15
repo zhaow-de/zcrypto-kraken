@@ -143,9 +143,8 @@ def test_a_refused_control_names_the_cluster_the_sweep_held_back(tmp_path):
 
 
 def test_a_cluster_whose_binding_letter_takes_a_num_an_action_or_a_matcher_goes_over_whole(tmp_path):
-    """The other cluster -- the one whose binding letter takes a NUM, an ACTION or a matcher name, grep's own
-    operand rather than the sweep's pattern -- is handed over whole, its operand behind it, so the control runs
-    the matcher the sweep ran."""
+    """Its operand is grep's own -- a NUM, an ACTION, a matcher name -- not the sweep's pattern, so the whole
+    cluster goes to the control with the operand behind it and the control runs the matcher the sweep ran."""
     repo = _repo(tmp_path)
     kept = _sweep(repo, "-ivm", "5", ".", "--control", "needle")
     assert kept.returncode == 1, kept.stdout + kept.stderr
@@ -480,9 +479,7 @@ def test_a_grep_that_opened_no_file_is_never_reported_as_a_clean(tmp_path):
 
 
 # A sweep whose pattern SET is empty, written every way that reaches one. Only `-f`/`--file` does, since every
-# other pattern source is a pattern by being written. grep holding no pattern opens no file -- it never reads the
-# list, and never stats a missing operand either -- and exits 1, which is this script's clean; the control cannot
-# be what catches it, because the control supplies a pattern of its own and hits. Every row must be a refusal.
+# other pattern source is a pattern by being written. Every row must be a refusal.
 _AN_EMPTY_PATTERN_SET = [
     ("-lf", "empty.txt"),
     ("-l", "-f", "empty.txt"),
@@ -493,10 +490,10 @@ _AN_EMPTY_PATTERN_SET = [
     ("-Lf", "empty.txt"),  # `-L` names every file in the list without opening one, and still exits 1
 ]
 
-# The same flag over a file that holds a pattern, and the two other ways a sweep opens nothing, neither of them a
-# missing pattern: a refusal that reached these is one the next operator turns off. `-m 0` stops before the file
-# list with a pattern and without one alike, which is the control's business below and not this check's; under
-# `-v` an empty pattern set selects every line, so that grep opens every file and hits.
+# Words this check must leave alone -- a refusal that reached these is one the next operator turns off. `-m 0`
+# stops before the file list with a pattern and without one alike, so its emptiness is the control's business
+# below and not this check's; under `-v` an empty pattern set selects every line, so that grep opens every file
+# and hits.
 _STILL_A_PATTERN = [
     (("-lf", "pat.txt"), 0),
     (("-l", "-f", "pat.txt", "--control", "NEEDLE"), 0),
