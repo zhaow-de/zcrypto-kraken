@@ -42,17 +42,23 @@ takes=0    # ...and that operand is --control's known positive, which grep never
 promised=""  # the flag standing LAST with its operand unsupplied, the one word of the caller's that would reach
              # past their own words into the probe's
 owed=0     # a cluster already handed to the control takes its operand from the next word; the control needs it too
+sourcing=0 # ...and a pattern FILE takes its path from the next word, which the question below needs
 control=0
 known=""
 args=()    # what grep is handed: the caller's words, `--control <pattern>` removed
 flags=()   # ...those of them that are not a pattern, so the control runs under the same matcher
 held=()    # ...and those held back whole, which the refusal names rather than leaving to the control
+sources=() # ...and the pattern FILES named among them, the one input here that is read and not merely passed
 # grep's short options that take an operand -- every letter grep answers "requires an argument" to -- split by
 # what that operand is: a pattern letter's is the sweep's own pattern, which the control must not inherit at all;
 # an operand letter's is a NUM, an ACTION or a matcher name, a word this loop leaves in the sweep's arguments.
 # Each list is read twice below, where the option stands alone and where it is one letter of a cluster, and
 # writing it once is what keeps the two readings one set as grep's table moves.
-pattern_letters=ef
+# A source letter is the pattern letter whose operand is not a pattern but a FILE of them; it is written as its
+# own list because a third reading below asks what that file is, and `pattern_letters` is built from it so the
+# two arms that hand a cluster back stay one set with it.
+source_letters=f
+pattern_letters=e$source_letters
 operand_letters=mABCdDX
 for a in "$@"; do
   # The cluster handed to the control one word ago is still waiting for the operand grep binds from THIS word,
@@ -60,6 +66,9 @@ for a in "$@"; do
   # where an operand of the caller's should be, and handing it over leaves grep refusing the control -- a refusal
   # below rather than a clean, which is the direction to err in.
   if [ "$owed" -eq 1 ]; then owed=0; flags+=("$a"); fi
+  # The same shape for a pattern FILE: whichever word supplies the path, it is recorded here rather than opened,
+  # because what that path NAMES is asked below and decides whether this sweep may run at all.
+  if [ "$sourcing" -eq 1 ]; then sourcing=0; sources+=("$a"); fi
   promised=""   # every word clears it, so only the last word of all can leave a promise standing
   if [ "$skip" -eq 1 ]; then
     skip=0
@@ -71,8 +80,12 @@ for a in "$@"; do
   case "$a" in
     --control) control=1; skip=1; takes=1; continue ;;
     --control=*) control=1; known="${a#--control=}"; continue ;;
-    --reg*=*|--file=*) pattern=1; args+=("$a"); continue ;;
-    -["$pattern_letters"]|--reg*|--file) skip=1; carries=1; promised="$a"; args+=("$a"); continue ;;
+    # The two source spellings stand ahead of the two pattern ones: `-f` is a member of both lists, and the arm
+    # that runs is the first that matches.
+    --file=*) pattern=1; sources+=("${a#--file=}"); args+=("$a"); continue ;;
+    -["$source_letters"]|--file) skip=1; carries=1; sourcing=1; promised="$a"; args+=("$a"); continue ;;
+    --reg*=*) pattern=1; args+=("$a"); continue ;;
+    -["$pattern_letters"]|--reg*) skip=1; carries=1; promised="$a"; args+=("$a"); continue ;;
     # An operand attached with `=` leaves nothing behind, so its word reaches the control whole. This arm is
     # what keeps the globs below off `--after-context=3`, where one would otherwise step over the pattern.
     --*=*) ;;
@@ -104,7 +117,14 @@ for a in "$@"; do
       # Which of the two lists that binding letter is in decides what the control may be handed, because it
       # decides what the operand IS. Only the letters BEFORE it may be filtered: one dropped from behind it
       # changes what grep binds, and `-dvread` is an invalid ACTION where `-dread` is not.
-      case "${letters:${#before}:1}" in
+      binds="${letters:${#before}:1}"
+      # A source letter binds a pattern FILE wherever grep takes it from -- attached behind the letter, or the
+      # next word -- and the path is what the question below reads, either way.
+      case "$binds" in
+        ["$source_letters"])
+          if [ -n "${letters:${#before}+1}" ]; then sources+=("${letters:${#before}+1}"); else sourcing=1; fi ;;
+      esac
+      case "$binds" in
         # A pattern letter's operand is the sweep's own pattern, and the letter handed back without it would eat
         # the control's own `-e`: the cluster is withheld WHOLE, narrowing letters and all, and the refusal below
         # names it. Two things the control cannot see here the probes do: every way grep REFUSES an `-e` or an
@@ -141,6 +161,26 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # than sweep the tracked tree alone.
 [ "$(git -C "$main" rev-parse --show-toplevel 2>/dev/null)" = "$main" ] || {
   echo "sweep: no main checkout at $main, resolved from $(git rev-parse --git-common-dir)" >&2; exit 2; }
+# What a pattern FILE names, asked before any grep here opens it, and after the `cd` so a relative path resolves
+# as it will for them. Three greps read that file ahead of the sweep's own -- the pattern question below, then
+# the empty-set probe and its control -- and a regular file answers all four alike. Two kinds do not, and under
+# either the set the probes ask about is not the set the sweep would run with: a clean could then stand over a
+# grep that never carried the caller's pattern, which is the one thing this script exists to refuse. Refused
+# rather than modelled around: `git grep -ho "sweep\.sh[^\`]*" -- '*.md'` finds four prescribed sweeps and not
+# one of them names a pattern file, so this costs a spelling nothing here asks for.
+for src in ${sources[@]+"${sources[@]}"}; do
+  case "$src" in
+    # A name for the caller's own stdin, or for a descriptor already open. The greps above the sweep read with
+    # stdin redirected to `/dev/null`, so this path is one file to them and another to the sweep. A stat cannot
+    # tell: `/dev/stdin` over a redirected file stats as a regular file. The name is what tells.
+    -|/dev/stdin|/dev/fd/*|/proc/self/fd/*|/proc/[0-9]*/fd/*) ;;
+    # A pipe or a socket, however it was spelled -- `<(...)` reaches here as `/dev/fd/N`, a pipe. The first
+    # reader drains it and the sweep's grep, reading last, gets nothing.
+    *) [ -p "$src" ] || [ -S "$src" ] || continue ;;
+  esac
+  echo "sweep: the pattern source '$src' cannot be put to grep twice -- a pipe is drained by the first of the three greps that run before the sweep, and a name for stdin is /dev/null to those three and yours to the sweep -- so what the sweep would search for is not what was asked about, and a clean over it would stand over a grep that never carried your pattern. Write the patterns into a regular file and name that file, or give the pattern as a word of your own" >&2
+  exit 2
+done
 # The pattern question, put to grep. Handed the sweep's own words and no file operand of the caller's, grep
 # either has a pattern of its own -- and searches the empty stdin for it, 0 or 1 -- or refuses at rc 2, because
 # the word it would have bound as the regex is the file list this script is about to supply. Asking keeps the
