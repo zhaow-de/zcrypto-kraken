@@ -57,8 +57,8 @@ def test_a_selector_that_matches_is_silent(tree: Path):
 
 
 def test_a_run_with_no_selector_is_silent(tree: Path):
-    (tree / "test_scratch.py").write_text("x = 1\n")
-    r = run(tree)
+    # Emptied by a mark over the three collected, not by collecting nothing: only the missing `-k` keeps this silent.
+    r = run(tree, "-m", "nosuchmark")
     assert r.returncode == 5, r.stdout + r.stderr
     assert BANNER not in r.stderr, r.stderr
 
