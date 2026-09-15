@@ -1,9 +1,7 @@
 """`tests/conftest.py`'s empty-selector arm, driven by running pytest over a scratch tree.
 
 The conftest that ships is copied into the tree and pytest is run there as a subprocess, so what is driven is the
-file itself -- a mutation of it moves these cases -- and nothing here imports the hook. Both directions: the `-k`
-that selects nothing beside the `-k` that selects, the run with no `-k` whose collection is empty for its own
-reasons, and the `--collect-only` run where an empty selection is the answer.
+file itself -- a mutation of it moves these cases -- and nothing here imports the hook.
 """
 
 from __future__ import annotations
@@ -62,6 +60,13 @@ def test_a_run_with_no_selector_is_silent(tree: Path):
     (tree / "test_scratch.py").write_text("x = 1\n")
     r = run(tree)
     assert r.returncode == 5, r.stdout + r.stderr
+    assert BANNER not in r.stderr, r.stderr
+
+
+def test_a_run_whose_collection_found_nothing_is_silent(tree: Path):
+    (tree / "test_scratch.py").write_text("import nosuchmodule\n")
+    r = run(tree, "-k", "nosuchtest")
+    assert r.returncode == 2, r.stdout + r.stderr  # the code a banner claiming 5 would have contradicted
     assert BANNER not in r.stderr, r.stderr
 
 
