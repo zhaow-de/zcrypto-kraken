@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import subprocess
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "infra" / "scripts" / "sweep.sh"
@@ -317,3 +318,28 @@ def test_a_pattern_flag_with_no_operand_is_an_error(tmp_path):
     """`-e` promises a pattern the argument list never supplies; grep then binds the script's own `--`."""
     done = _sweep(_repo(tmp_path), "-e")
     assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
+
+
+# A prescribing line names the script and carries the control, over a backslash continuation where it has one.
+_PRESCRIBED = re.compile(r"sweep\.sh(?:[^\n]|\\\n)*?--control +'([^']+)'")
+
+
+def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
+    """A control the tracked tree carries cannot miss, so the clean it licenses proves nothing -- the silent
+    clean this script exists to end, one level up. Each prescribing line says no tracked file carries its
+    pattern, and nothing else holds that true as the tree moves. The script's own header example is
+    illustrative rather than prescribed, so it is outside."""
+    root = SCRIPT.parents[2]
+    git = lambda *a: subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True)  # noqa: E731
+    outside = {"infra/scripts/sweep.sh", "tests/test_sweep_sh.py"}
+    prescribed = [
+        (path, pattern)
+        for path in git("grep", "-l", "--fixed-strings", "sweep.sh").stdout.split()
+        if path not in outside
+        for pattern in _PRESCRIBED.findall((root / path).read_text())
+    ]
+    assert prescribed, "no prescribed sweep control found: the scan has gone blind, which is not the tree clean"
+    carried = [(path, pattern, git("grep", "-l", "-e", pattern).stdout.split()) for path, pattern in prescribed]
+    assert not [c for c in carried if c[2]], "\n".join(
+        f"{path} prescribes {pattern!r}, which these tracked files carry: {files}" for path, pattern, files in carried if files
+    )
