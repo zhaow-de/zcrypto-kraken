@@ -16,8 +16,9 @@
 # inherits the two that would make a positive probe vacuous: a selection the sweep inverts, and a pattern of the
 # sweep's own -- the second held back as the whole cluster carrying it, which takes its narrowing letters with it,
 # so the control is laxer there and the refusal below names what it lost rather than blaming the control.
-# The one clean no control can judge is a sweep whose pattern set is EMPTY: the control carries a pattern of its
-# own, so it hits where the sweep's grep opened no file. That sweep is refused instead, by the second probe below.
+# A clean the control cannot judge at all is one whose sweep carried no pattern: the control supplies a pattern
+# of its own, so it hits where the sweep's grep opened no file. That sweep is refused below instead, by the
+# second probe.
 # What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
 # opened only when the pattern is one that directory alone holds. `git grep` finding no carrier settles the
 # tracked half of that; the list also holds the untracked files git does not ignore and everything under
@@ -106,9 +107,9 @@ for a in "$@"; do
       case "${letters:${#before}:1}" in
         # A pattern letter's operand is the sweep's own pattern, and the letter handed back without it would eat
         # the control's own `-e`: the cluster is withheld WHOLE, narrowing letters and all, and the refusal below
-        # names it. What the control cannot see here the probes do: every way grep REFUSES an `-e` or an `-f` is
-        # rc 2, which the first answers, and an `-f` whose file holds no pattern is no refusal at all, which is
-        # the second's question.
+        # names it. Two things the control cannot see here the probes do: every way grep REFUSES an `-e` or an
+        # `-f` is rc 2, which the first answers, and an `-f` whose file holds no pattern is no refusal at all,
+        # which is the second's question.
         ["$pattern_letters"]) held+=("$a"); continue ;;
         # The operand is a word this loop leaves in the sweep's arguments, so the cluster goes over WITH it,
         # exactly as the standalone arms hand `-d read` over, and the control is then refused by whatever
@@ -157,9 +158,9 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 # as a pattern found, and the sweep's own grep then fails the same way and reads as "nothing matched". Of every
 # operand this loop steps over it is the only one -- `-D`, `-m`, `-A`, `-B`, `-C`, `-X`, `-f`, `-e`,
 # `--binary-files` and `--exclude-from` all answer 2 and stop here. What keeps it from ending in a clean is not
-# this line but the control, which carries that letter and its operand and is refused by the same grep:
-# `-ld bogus NEEDLE --control NEEDLE` is rc 2, the control's refusal. Widening this line to refuse on anything
-# the probe wrote would rest on grep writing nothing while exiting 0 or 1, a claim about grep it need not make.
+# this line but the control, which carries that letter and its operand and is refused by the same grep. Widening
+# this line to refuse on anything the probe wrote would rest on grep writing nothing while exiting 0 or 1, a
+# claim about grep it need not make.
 [ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. Where that is a missing pattern: this script supplies the file list, so the word grep lacks it takes from there -- a file path as the regex, and a hit or a clean about a filename. Give the pattern as a word of your own, -e <pattern> if it begins with a dash. Any other complaint above is about the word grep names in it" >&2; exit 2; }
 # The pattern SET, put to grep the same way, because an EMPTY one is the clean no control can catch: the control
 # carries a pattern of its own, so it hits over a sweep whose grep opened nothing. `-f`/`--file` naming a file that
