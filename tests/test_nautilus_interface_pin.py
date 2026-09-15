@@ -153,6 +153,11 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "unclaimed external orders would stop materialising -- the external-order stream, the "
         "adopted-row sweep and the unmatched counter all go dark at once"
     )
+    assert config.generate_missing_orders is True, (
+        "this one is INHERITED rather than stated, and it gates the synthetic adjustment that "
+        "aligns the Cache's startup position with the venue -- the position cli/engine/venuestate.py "
+        "freezes into the VenueState the cycle sizes off. False would let the two disagree silently"
+    )
 
 
 def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
