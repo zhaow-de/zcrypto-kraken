@@ -70,9 +70,9 @@ c_docs_markdown_at_the_root() { git ls-files ':(glob)docs/*.md' | wc -l; }
 
 c_non_pr_merges() { git log --first-parent --merges develop --format=%s | grep -vc '^Merge pull request'; }
 
-c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker exec [^|;]* env( |$)|docker compose config' -- infra .claude cli ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_engine_env_forms() { git grep -nE '\{\{ ?json \.Config(\.Env)? ?\}\}|docker exec [^|;]* env( |$)|docker compose config' -- infra .claude cli ':!*.md' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
-c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|list|vars)' -- infra .claude cli ':!*.md' ':!infra/ansible/scripts/vault-pass.sh' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|list|vars)' -- infra .claude cli ':!*.md' ':!infra/ansible/scripts/vault-pass.sh' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
@@ -266,6 +266,7 @@ c_converges_inside_a_kraken_window() {
   uv run python infra/scripts/deploy-log-audit.py maintenance --venue-facing "${feed[@]}" | sed -n 's/^rows inside an API-impacting window \([0-9][0-9]*\) of .*/\1/p'
 }
 
+# shellcheck disable=SC2016  # the backticks are the drill-log row's literal Markdown fences
 c_drills_on_the_primary() { grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md; }
 
 c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="")' docs/reference/deploy-log.jsonl | wc -l; }
@@ -274,9 +275,9 @@ c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.p
 
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
-c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
-c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A capture host counts unless the setting it reads first -- its host_vars, else the group -- is one of
 # six false spellings (0, f, false, n, no, off): the template renders the value raw into apt's config,
@@ -344,7 +345,7 @@ c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // 
 
 # The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the
 # `group_vars/all/` copy is read from the workstation by file path. A role naming the key is the finding.
-c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- infra/ansible/roles | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | wc -l; }
+c_hc_readonly_key_in_a_role() { git grep -nE 'healthchecks_readonly_api_key' -- infra/ansible/roles | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
 
 # A write to one of the six gate gauges from outside `_ExecGauges.update`, whose single call is what makes
 # a frozen gauge set indistinguishable from a live one. The awk excises that method's body alone.
@@ -352,14 +353,15 @@ c_gate_gauge_writes_outside_the_publish_call() { [ -f cli/engine/command.py ] ||
 
 # `--delete` anywhere in the archive pull's module: the mirror keeps every day it ever fetched, which is
 # what makes a mismatch count span days and an empty tree mean the pull has never succeeded.
-c_archive_pull_delete_flags() { [ -f cli/archive/command.py ] || return 2; grep -nE -- '--delete' cli/archive/command.py | grep -vE '^[0-9]+:[[:space:]]*#' | wc -l; }
+c_archive_pull_delete_flags() { [ -f cli/archive/command.py ] || return 2; grep -nE -- '--delete' cli/archive/command.py | grep -vcE '^[0-9]+:[[:space:]]*#'; }
 
 # A deployed `--cache` naming a path outside `/tmp/`: wider than the bullet's "a path both hosts reach",
 # which is the direction that never under-reports the siting the cross-host poisoning rule forbids.
-c_gate_cache_args_outside_tmp() { git grep -nE -- '--cache[ =]["'"'"'$]?[/$~.]' -- infra cli ':!*.md' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vE -- '--cache[ =]["'"'"']?/tmp/' | wc -l; }
+c_gate_cache_args_outside_tmp() { git grep -nE -- '--cache[ =]["'"'"'$]?[/$~.]' -- infra cli ':!*.md' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -vcE -- '--cache[ =]["'"'"']?/tmp/'; }
 
 # A rule whose `folderUID` is a literal rather than `${GRAFANA_ALERT_FOLDER_UID}`: it provisions into
 # another folder AND escapes the push script's orphan prune, which selects by that same field.
+# shellcheck disable=SC2016  # ${GRAFANA_ALERT_FOLDER_UID} is the placeholder text alerts.yaml carries, compared as a literal
 c_alert_rules_without_the_folder_literal() { uv run python -c 'import yaml;print(sum(r.get("folderUID")!="${GRAFANA_ALERT_FOLDER_UID}" for r in yaml.safe_load(open("infra/grafana/alerts.yaml"))["rules"]))'; }
 
 # A verified nautilus version with no adapter-verification record carrying a PASS. Both arming guards read
@@ -408,7 +410,7 @@ INV
 # invocation whose `--format` sits on the continuation line counts too, over-reporting in the safe direction for a
 # prohibition, since a line-oriented grep cannot see the next line. Narrower than the
 # bare command an operator types at a prompt, which nothing records.
-c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^`;&|][^;&|]*' | grep -vE -- '--format|-f ' | wc -l; }
+c_unscoped_docker_inspects_invoked() { git grep -nE 'docker inspect +[^`;&|]' -- infra cli .claude ':!*.md' ':!infra/scripts/count-list.sh' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' | grep -oE 'docker inspect +[^`;&|][^;&|]*' | grep -vcE -- '--format|-f '; }
 
 # The pinned leaves the edge renders, one `file /etc/caddy/pinned-leaves/<name>.pem` line per tracked PEM:
 # a figure to read, not a gate. At 1 every revocation issues its replacement first; at 0 the block is empty.

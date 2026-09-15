@@ -78,6 +78,18 @@ repos:
       - id: yamllint
         args: ["-c", ".yamllint.yaml"]
 
+  # shellcheck over the shell under infra/ -- what `identify` types as shell by shebang or extension,
+  # so the extensionless `rrsync-shell` login shell is walked too: the commit hooks, the fleet's units
+  # and the operator scripts. A finding is fixed in the script; a `# shellcheck disable=` stays only on
+  # the one line it is wrong for, with the reason beside it. Out by type: the two zsh scripts (the
+  # hook's own `exclude_types: [zsh]`; shellcheck has no zsh dialect) and the Jinja templates.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+        files: '^infra/'
+        types: [shell]
+
   # Local (not the upstream hook repo) so there is ONE ansible-lint version: the one pinned in
   # pyproject/uv.lock, which dependabot's `uv` ecosystem already tracks. The upstream repo would add
   # a second, separately-pinned copy in an isolated venv (ansible-core is heavy) and the two would

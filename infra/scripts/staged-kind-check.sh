@@ -26,6 +26,6 @@ claude=$(grep -cE '^(\.claude/|CLAUDE\.md$)' <<<"$staged" || true)
 other=$(grep -cvE '^(\.claude/|CLAUDE\.md$)' <<<"$staged" || true)
 if [ "$claude" -gt 0 ] && [ "$other" -gt 0 ]; then
     printf 'claude-kind files mixed with another kind — split the commit (one kind per commit):\n'
-    sed 's/^/  /' <<<"$staged"
+    while IFS= read -r path; do printf '  %s\n' "$path"; done <<<"$staged"
     exit 1
 fi
