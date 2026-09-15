@@ -507,9 +507,9 @@ def test_a_fifo_under_the_ledger_is_named(tmp_path):
     assert "pipe" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
 
 
-# What stands between a flag and its operand: a space, a tab, or a backslash continuation. Both scans below read
-# it from here, because a separator one of them takes and the other does not is a line read as prescribing a
-# control and as prescribing no pattern at once -- a failure over a prescription that would have swept.
+# What stands between a flag and its operand, and between the script's name and its first flag: a space, a tab, or
+# a backslash continuation. Every scan below reads it from here, because one scan taking a separator another does
+# not is a line read as a prescription whose own pattern is then unreadable -- a failure over a line that sweeps.
 _SEP = r"(?:[ \t]|\\\n)"
 
 # A prescribing line names the script and carries the control, over a separator wherever it has one -- before
@@ -564,16 +564,30 @@ def test_the_prescription_scan_reads_every_spelling_the_script_accepts():
 # clustered or attached `-e` is grep's to bind and this script records none, which is the rc 2 the scan is for.
 _INVOCATION = re.compile(r"sweep\.sh(?:\\\n|[^\n])*")
 _A_PATTERN = re.compile(rf"""(?:^|{_SEP})-e{_SEP}+(?:'[^']+'|"[^"]+"|\S+)""")
+# What tells a prescription from a mention: the word after the script's name is a flag. The script takes no
+# positional operand, so a line that calls it opens with one, and a line that names it inside a sentence opens with
+# the sentence. A flag read anywhere on the line instead would make a mention sharing its line with another
+# command's flags a prescription with no pattern -- a refusal over a line nobody sweeps. Outside every flag test,
+# this one included: a line naming the script with no flag after it -- a prescription that has lost its flags,
+# which then shows no call at all, and the bare `sweep.sh 'PAT'`, which the script meets with its own rc 2.
+_PRESCRIBES = re.compile(rf"sweep\.sh{_SEP}+--?[A-Za-z]")
+
+
+def _prescribed(text: str) -> list[str]:
+    return [i.group() for i in _INVOCATION.finditer(text) if _PRESCRIBES.match(i.group())]
 
 
 def _patternless(text: str) -> list[str]:
-    """The prescribed invocations carrying no pattern. A line prescribing no control this scan reads -- none at
-    all, or the `<pattern>` of a usage line -- prescribes no sweep either, and is outside here as it is below."""
-    return [i.group() for i in _INVOCATION.finditer(text) if _controls(i.group()) and not _A_PATTERN.search(i.group())]
+    """The prescribed invocations carrying no pattern. A control is not what makes a line a prescription: this tree
+    prescribes a sweep carrying none, and gating on one leaves that line held by nothing. A usage line showing the
+    call without its `-e <pattern>` is flagged like any other -- what it shows is a call that earns rc 2."""
+    return [inv for inv in _prescribed(text) if not _A_PATTERN.search(inv)]
 
 
 # A prescription in every spelling of the pattern, and the spellings that are not one: attached to its flag, and
-# the long name this script does not read, each of them a line that earns rc 2 before it sweeps.
+# the long name this script does not read, each of them a line that earns rc 2 before it sweeps. Then the two
+# shapes the gate itself decides -- a prescription carrying no control, which is the tree's own harvest sweep, and
+# a mention, with and without a `-` word standing later in its sentence.
 _PATTERNLESS = [
     ("sweep.sh --control 'C' -e 'PAT'", False),
     ('sweep.sh --control "C" -e PAT', False),
@@ -584,8 +598,11 @@ _PATTERNLESS = [
     ("sweep.sh --control 'C'", True),
     ("sweep.sh --control 'C' -ePAT", True),
     ("sweep.sh --control 'C' --regexp 'PAT'", True),
-    ("sweep.sh --control '<pattern>'", False),
+    ("sweep.sh --control '<pattern>'", True),
     ("sweep.sh -e 'PAT'", False),
+    ("sweep.sh -ePAT", True),
+    ("the memo, which `infra/scripts/sweep.sh` reads from any checkout", False),
+    ("sweep.sh is the sweep; re-run it with --control 'C' when the clean has to count", False),
 ]
 
 
@@ -609,9 +626,9 @@ def _prescribing(root: pathlib.Path) -> list[tuple[str, str]]:
 def test_every_prescribed_sweep_carries_the_pattern_the_script_requires():
     """The pattern is required as `-e <pattern>`, its own word, so a prescribing line carrying none is an rc 2
     before it sweeps: the operator gets a refusal where the line promised an answer. Nothing else holds the
-    prescriptions in this tree carrying one as the tree moves."""
+    prescriptions in this tree as the tree moves."""
     prescribing = _prescribing(SCRIPT.parents[2])
-    assert [t for _, t in prescribing if _controls(t)], "no prescribed sweep found: the scan has gone blind"
+    assert [t for _, t in prescribing if _prescribed(t)], "no prescribed sweep found: the scan has gone blind"
     patternless = [(path, inv) for path, text in prescribing for inv in _patternless(text)]
     assert not patternless, "\n".join(
         f"{path} prescribes {inv!r}, which carries no -e <pattern> and is an rc 2 before it sweeps" for path, inv in patternless
