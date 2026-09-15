@@ -46,6 +46,7 @@ REFUSED = [
     ("/usr/bin/git commit --no-verify", "--no-verify"),
     ("GIT_EDITOR=true git commit --no-verify", "--no-verify"),
     ("sudo git commit -n", "-n"),
+    ("PATH=/opt/git git commit -n", "-n"),
     # a compound command, a redirect, a heredoc message beside the flag
     ("cd /repo && git commit --no-verify -m msg", "--no-verify"),
     ("git add . ; git commit -n -m msg", "-n"),
@@ -53,6 +54,16 @@ REFUSED = [
     ("git commit -m msg --no-verify >/dev/null 2>&1", "--no-verify"),
     (f'git commit -m "{HEREDOC_MESSAGE}" --no-verify', "--no-verify"),
     (f'git commit --no-verify -m "{HEREDOC_MESSAGE}"', "--no-verify"),
+    # an unquoted # inside a word is text to bash, not a comment
+    ("git commit -m issue#42 -n", "-n"),
+    ("git commit -m fix#123 --no-verify", "--no-verify"),
+    ("echo a#b; git commit -n", "-n"),
+    ("cd /repo#1 && git commit -n", "-n"),
+    ("git -C /repo commit -m x#y -n", "-n"),
+    # an ANSI-C quoted message beside the flag
+    ("git commit --amend -n -m $'it\\'s'", "-n"),
+    ("git -C . commit -n -m $'don\\'t'", "-n"),
+    ("git commit --no-veri -m $'don\\'t'", "--no-veri"),
     # a command substitution: $( .. ) and backticks, bare, assigned, double-quoted, inside a heredoc bash expands
     ("x=$(git commit -n)", "-n"),
     ('echo "$(git commit -n)"', "-n"),
@@ -78,6 +89,8 @@ REFUSED = [
     ("git --config-env core.hooksPath=HP commit -m msg", "core.hooksPath"),
     ("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m msg", "GIT_CONFIG_KEY_0"),
     ("export GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/dev/null'\"; git commit -m msg", "GIT_CONFIG_PARAMETERS"),
+    ("env GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m msg", "GIT_CONFIG_KEY_0"),
+    ("sudo GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/x'\" git commit -m msg", "GIT_CONFIG_PARAMETERS"),
     ("git config core.hooksPath /dev/null", "core.hooksPath"),
     ("git config --local core.hooksPath /tmp/none", "core.hooksPath"),
     ("git config --global core.hooksPath /x", "core.hooksPath"),
@@ -109,6 +122,9 @@ ADMITTED = [
     "git commit --message -n",
     "git commit -m msg -- -n",
     "git commit -m msg # not --no-verify",
+    'git commit -m "a#b"',
+    "git commit -m $'it\\'s -n'",  # the flag inside an ANSI-C quoted value
+    "git commit -m $'plain' -m more",
     "git commit -uno -m msg",  # -u<mode>: `no` is the mode, not a bundle carrying n
     "git commit --no-status -m msg",
     "git commit -m msg && git push",
@@ -144,6 +160,11 @@ ADMITTED = [
     "git config --local user.email x@example.invalid",
     "git -c color.ui=never log -1",
     "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=t git commit -m msg",
+    # an assignment-shaped word where git never sees it: a search, a note, a bare assignment
+    "grep -rn 'GIT_CONFIG_KEY_0=core.hooksPath' docs/",
+    "rg -n 'GIT_CONFIG_PARAMETERS=.*core.hooksPath' .",
+    "echo \"GIT_CONFIG_PARAMETERS='core.hooksPath=/dev/null' is the env door\" >> notes.md",
+    "GIT_CONFIG_KEY_0=core.hooksPath; git commit -m msg",
     "git -C /repo status",
     "git status",
     "which git",
@@ -172,7 +193,13 @@ def test_a_hook_bypass_is_refused_and_the_message_names_it(tmp_path: Path, comma
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr
-    assert spelling in r.stderr
+    # Where the message names the spelling: a flag as a word of the first backtick pair (`git <sub> <tok>`), never the
+    # later echo of the whole command; a key or a variable before " sets ".
+    named = r.stderr.partition("`")[2].partition("`")[0]
+    if spelling.startswith("-"):
+        assert spelling in named.split(), r.stderr
+    else:
+        assert spelling in r.stderr.partition(" sets ")[0], r.stderr
     assert "hooks" in r.stderr  # what the spelling bypasses
     assert r.stdout == ""
 
