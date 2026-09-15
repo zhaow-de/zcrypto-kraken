@@ -19,6 +19,8 @@
 # Usage: infra/scripts/sweep.sh [grep flags] -e <pattern> [--control <known-positive>]
 #   rc: 0 a hit, 1 none (control hit), 2 an error.
 set -euo pipefail
+# `+(...)` below, where a `*` swallows the letter the glob has to stop at. Off, the case is a syntax error.
+shopt -s extglob
 # The pattern is REQUIRED as `-e <pattern>`, its own word, and that is the whole of what this script reads out of
 # the caller's words: which word the control replaces is then a lookup, not a model of grep's option table. Every
 # other word goes to grep unexamined, its operands riding along in place; a pattern spelt any other way records
@@ -44,8 +46,10 @@ for a in "$@"; do
     # A pattern FILE is refused rather than opened: no sweep prescribed here uses one, and taking it would put a
     # reader of the caller's patterns ahead of grep's -- over anything but a plain file, the sweep's own grep
     # then searches for whatever that reader left. `--file` is written out because it is a prefix of
-    # `--files-with-matches` and `--files-without-match`, which name no pattern file.
-    -f*|--file|--file=*|-[!-]*f*)
+    # `--files-with-matches` and `--files-without-match`, which name no pattern file. A cluster is read only as
+    # far as its `X`: grep binds the rest of a cluster to its first operand-taking letter, so the `f` of
+    # `-lXfgrep` stands inside a matcher name and names nothing.
+    -f*|--file|--file=*|-+([!-X])f*)
       echo "sweep: '$a' names a pattern FILE, which this sweep does not read -- give the pattern as -e <pattern>, its own word" >&2; exit 2 ;;
     # An inverting selection is refused for what it does to the control: under `-v` a pattern nothing holds
     # selects every line, so a control carrying the sweep's words hits whatever the tree holds and the clean it

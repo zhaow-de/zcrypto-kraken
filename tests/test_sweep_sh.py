@@ -160,8 +160,10 @@ def test_an_inverting_selection_is_refused(tmp_path):
 
 
 # Every spelling of a pattern FILE, standalone, attached, clustered and long. Each must be refused: reading one
-# would put a reader of the caller's patterns ahead of grep's, and no sweep prescribed here uses one.
-_A_PATTERN_FILE = ["-f", "-fpat.txt", "-lf", "-fl", "-lfpat.txt", "--file", "--file=pat.txt"]
+# would put a reader of the caller's patterns ahead of grep's, and no sweep prescribed here uses one. The `X` the
+# cluster glob stops at is the cluster's own letter, so `-lfXpat.txt` -- a file whose NAME carries one, bound to
+# an `f` that stands first -- is a pattern file like any other.
+_A_PATTERN_FILE = ["-f", "-fpat.txt", "-lf", "-fl", "-lfpat.txt", "-lfXpat.txt", "--file", "--file=pat.txt"]
 
 
 def test_a_pattern_file_is_refused(tmp_path):
@@ -204,14 +206,15 @@ _ORDINARY = [
     ("-il",),
     ("-lm5",),
     ("-ldread",),
-    ("-lXgrep",),
+    ("-Xfgrep",),
+    ("-lXfgrep",),
     ("-m", "5"),
     ("-A", "1"),
     ("-B", "1"),
     ("-C", "1"),
     ("-d", "read"),
     ("-D", "read"),
-    ("-X", "grep"),
+    ("-X", "fgrep"),
     ("--color",),
     ("--recursive",),
     ("--devices", "read"),
@@ -226,8 +229,9 @@ _ORDINARY = [
 
 
 def test_the_refusals_leave_an_ordinary_sweep_alone(tmp_path):
-    """Both refusals read letters out of a cluster, which is the shape that over-reaches: `-lXgrep` carries an
-    `f` inside grep's own matcher name, and `--devices` and `--recursive` carry a `v` inside theirs."""
+    """Both refusals read letters out of a cluster, which is the shape that over-reaches: `-lXfgrep` and
+    `-Xfgrep` carry an `f` inside grep's own matcher name, where grep binds it as `-X`'s operand and no pattern
+    file is named, and `--devices` and `--recursive` carry a `v` inside theirs."""
     repo = _repo(tmp_path)
     wrong = []
     for words in _ORDINARY:
