@@ -69,9 +69,16 @@ PATH_LIKE = re.compile(
 )
 
 
+def _flat(text: str) -> str:
+    """Whitespace and the box-drawing bar collapsed to single spaces, so a token a wrap or a table
+    border splits reads as the one token it is. Every reader of a hit's position shares this, or a
+    preview cut from the unflattened text would not hold the hit found in the flattened one."""
+    return re.sub(r"[\s\u2502]+", " ", text)
+
+
 def _leaks(text: str) -> list[str]:
     """Vocabulary hits, ignoring any inside a path, after collapsing whitespace."""
-    flat = re.sub(r"[\s\u2502]+", " ", text)
+    flat = _flat(text)
     spans = [m.span() for m in PATH_LIKE.finditer(flat)]
     return [m.group(0) for m in VOCABULARY.finditer(flat) if not any(s <= m.start() and m.end() <= e for s, e in spans)]
 
@@ -284,11 +291,11 @@ def test_readme_carries_no_internal_vocabulary():
 def _guidance_guard():
     """`infra/scripts/guidance-guard.py`, loaded by path: a hyphen makes the name unimportable.
 
-    Where an HTML comment is, is borrowed from the commit-msg guard rather than restated here, so that
-    the guard's bullet reader and this page reader cannot drift into two verdicts on one line. The
-    token classes do not move the other way: `VOCABULARY`'s own examples are a string literal, and
-    under `infra/scripts/` this file would read them as an operator-facing leak and refuse its own
-    definition.
+    Two halves of the page rule are borrowed from the commit-msg guard rather than restated here --
+    what a list item is, and where an HTML comment is -- so that the guard's bullet reader and this
+    page reader cannot drift into two verdicts on one line. The token classes do not move the other
+    way: `VOCABULARY`'s own examples are a string literal, and under `infra/scripts/` this file would
+    read them as an operator-facing leak and refuse its own definition.
     """
     spec = importlib.util.spec_from_file_location("guidance_guard", REPO / "infra/scripts/guidance-guard.py")
     module = importlib.util.module_from_spec(spec)
@@ -320,12 +327,14 @@ def _without_fenced_blocks(text: str) -> str:
 
 
 def _paragraphs(text: str) -> list[tuple[int, str]]:
-    """Each paragraph as its first line number and its lines joined, a blank line ending one.
+    """Each unit as its first line number and its lines joined, a blank line ending one.
 
-    The unit is the paragraph because `spec`/`Phase` and their numbers are two words and this page
-    style hard-wraps near 100 columns, so a line reader is blind to any of them a wrap straddles while
-    `bullets()`, which joins a wrapped item, is not. A heading and a table row are each their own unit:
-    neither runs on into what follows, so a hit keeps a line an operator can open to.
+    The unit is not the line: `spec`/`Phase` and their numbers are two words, and a wrap falling
+    between them is invisible to a line reader while `bullets()`, which joins a wrapped item, sees it.
+    Nor is it the whole run of text -- a list item, a heading and a table row each open their own unit,
+    because the number reported is the unit's FIRST line and an operator opens the page there: a whole
+    list joined into one would report a hit in its last item at the first item's line. The item is
+    `bullets()`' item, read with the guard's own marker, and its continuation lines join it.
     """
     out: list[tuple[int, str]] = []
     joining = False
@@ -333,7 +342,7 @@ def _paragraphs(text: str) -> list[tuple[int, str]]:
         stripped = line.strip()
         if not stripped:
             joining = False
-        elif joining and not stripped.startswith(("#", "|")):
+        elif joining and not stripped.startswith(("#", "|")) and not _GUARD.BULLET.match(line):
             out[-1] = (out[-1][0], f"{out[-1][1]} {stripped}")
         else:
             out.append((i, stripped))
@@ -341,15 +350,29 @@ def _paragraphs(text: str) -> list[tuple[int, str]]:
     return out
 
 
+_PREVIEW = 110
+
+
+def _preview(para: str, hit: str) -> str:
+    """At most `_PREVIEW` characters of the unit, centred on its first hit and flattened as `_leaks`
+    reads it, so the operator is shown the token the failure names and not whatever the unit opens
+    with -- these pages do not hard-wrap, and a unit is routinely longer than the window."""
+    flat = _flat(para)
+    if len(flat) <= _PREVIEW:
+        return flat
+    start = min(max(flat.find(hit) - (_PREVIEW - len(hit)) // 2, 0), len(flat) - _PREVIEW)
+    return ("…" if start else "") + flat[start : start + _PREVIEW] + ("…" if start + _PREVIEW < len(flat) else "")
+
+
 def _page_leaks(text: str) -> list[tuple[int, str, list[str]]]:
-    """A page's leaking paragraphs as (first lineno, text, hits).
+    """A page's leaking units as (first lineno, preview, hits).
 
     Comments are blanked before fences: a fence marker inside an HTML comment is invisible to the fence
     blanker, so left standing it toggles the block open and blanks every line below it. What the order
     costs is a `<!--` inside a fenced block, which now pairs with the next `-->` under it.
     """
     return [
-        (i, para[:110], hits)
+        (i, _preview(para, hits[0]), hits)
         for i, para in _paragraphs(_without_fenced_blocks(_without_html_comments(text)))
         if (hits := _leaks(para))
     ]
@@ -386,6 +409,28 @@ def test_a_heading_and_a_table_row_each_name_their_own_line():
     assert _page_leaks(table) == [(4, "| verify | see T0123 |", ["T0123"])]
 
 
+def test_a_list_item_is_its_own_unit_and_a_wrap_inside_one_is_not():
+    """A list read as one unit reported a hit in its last item at the FIRST item's line, which is the
+    cost the table case above refuses; a prose line running into the list without a blank line between
+    made that first line the prose's. Both halves in one text. The wrap a page can still put inside an
+    item stays one unit, so the two words of `spec 00039` are not split by the narrower unit."""
+    listed = "# P\n\nThe steps are:\n- Restart the daemon.\n  - A nested note.\n- The last step records T0123.\n"
+    assert _page_leaks(listed) == [(6, "- The last step records T0123.", ["T0123"])]
+    assert _page_leaks("# P\n\n- Granted by spec\n  00039 decision 3.\n") == [
+        (3, "- Granted by spec 00039 decision 3.", ["spec 00039"])
+    ]
+
+
+def test_the_preview_is_cut_around_the_token_not_around_the_unit_s_opening():
+    """These pages do not hard-wrap -- a step is one line of some hundreds of characters -- so a window
+    taken from the unit's start shows an operator 110 characters that need not contain the token the
+    failure names, and they then read the wrong end of the right line."""
+    filler = "the step runs on, as these pages write it, " * 4
+    ((line, preview, hits),) = _page_leaks(f"# P\n\n- A first step.\n- {filler}and it records T0123 at the end.\n")
+    assert (line, hits) == (4, ["T0123"])
+    assert "T0123" in preview and preview.startswith("…") and len(preview) <= _PREVIEW + 2
+
+
 def _runbook_pages() -> list[Path]:
     """Every page under `infra/runbooks/`, a subdirectory's included: an operator opens any of them."""
     out = sorted((REPO / "infra/runbooks").rglob("*.md"))
@@ -403,8 +448,8 @@ def test_runbook_pages_carry_no_internal_vocabulary(path):
     """
     on_the_page = _page_leaks(path.read_text())
     assert not on_the_page, "\n".join(
-        f"{path.relative_to(REPO)}:{i} leaks {hits} — say it in words, or keep the token in an HTML comment beside it. The "
-        f"paragraph starting there reads: {txt!r}"
+        f"{path.relative_to(REPO)}:{i} leaks {hits} — say it in words, or keep the token in an HTML comment beside it. "
+        f"Around the token: {txt!r}"
         for i, txt, hits in on_the_page
     )
 
