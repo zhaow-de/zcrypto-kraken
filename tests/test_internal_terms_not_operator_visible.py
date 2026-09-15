@@ -287,9 +287,9 @@ def _without_html_comments(text: str) -> str:
     """Every `<!-- ... -->` blanked to its own newlines, so a hit's line number is the file's.
 
     A `<!--` inside a code span renders as text and opens nothing; an unterminated `<!--` hides
-    nothing, so a token after one is still read. Fences are not known here: `<!-- T<NNNN> -->`
-    inside a fenced or indented code block renders literally on the page and is blanked before the
-    read, so that block is the one place a token hides.
+    nothing, so a token after one is still read. Fences are not known here and need not be: both
+    readers drop a fenced block before reaching this -- the page reader by blanking it, the bullet
+    instrument because `bullets()` skips it.
     """
     spans = [m.span() for m in _CODE_SPAN.finditer(text)]
     out, pos = [], 0
@@ -307,6 +307,42 @@ def _without_html_comments(text: str) -> str:
     return "".join(out)
 
 
+def _without_fenced_blocks(text: str) -> str:
+    """Every fenced block, its markers included, blanked to its own newlines.
+
+    A fence is the command an operator pastes, so a serial inside one is the operand and not
+    vocabulary aimed at them -- the carve-out `tests/test_runbook_internal_tokens.py` already pins for
+    the bullet instrument, restated here so the two readers of one rule do not disagree about the same
+    line. An INDENTED code block is not known here, as it is not known to `bullets()` either: a token
+    in one is read, and the page's answer is to fence it.
+    """
+    out, fenced = [], False
+    for line in text.split("\n"):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            out.append("")
+        else:
+            out.append("" if fenced else line)
+    return "\n".join(out)
+
+
+def _page_leaks(text: str) -> list[tuple[int, str, list[str]]]:
+    """A page's leaking lines as (lineno, text, hits) -- fences blanked, then comments, so a comment
+    inside a fence is never read as prose either."""
+    return [
+        (i, line.strip()[:110], hits)
+        for i, line in enumerate(_without_html_comments(_without_fenced_blocks(text)).splitlines(), 1)
+        if (hits := _leaks(line))
+    ]
+
+
+def test_a_fenced_block_is_the_command_to_paste_and_the_step_under_it_is_still_prose():
+    """Both directions of the carve-out in one page: the serial an operator pastes passes, and the
+    prose under the block is still read, so the exemption cannot be widened into a hiding place."""
+    text = "# P\n\n```\nzcrypto engine replay --spec 00106\n```\n\nThen record T0123.\n"
+    assert _page_leaks(text) == [(7, "Then record T0123.", ["T0123"])]
+
+
 def _runbook_pages() -> list[Path]:
     """Every page under `infra/runbooks/`, a subdirectory's included: an operator opens any of them."""
     out = sorted((REPO / "infra/runbooks").rglob("*.md"))
@@ -318,14 +354,11 @@ def _runbook_pages() -> list[Path]:
 def test_runbook_pages_carry_no_internal_vocabulary(path):
     """A runbook page is where an alert's `Runbook:` link lands and what a procedure is read from, so
     the whole page is the surface -- its paragraphs and table rows as much as the bullets
-    `infra/scripts/runbook-internal-tokens.py` counts. An HTML comment is the one place a token may
-    sit: the rendered page hides it, and it is where the provenance a maintainer needs lives.
+    `infra/scripts/runbook-internal-tokens.py` counts. An HTML comment is where a token may sit
+    hidden, being where the provenance a maintainer needs lives; a fenced block is where one may sit
+    in plain view, being the command the operator pastes.
     """
-    on_the_page = [
-        (i, line.strip()[:110], hits)
-        for i, line in enumerate(_without_html_comments(path.read_text()).splitlines(), 1)
-        if (hits := _leaks(line))
-    ]
+    on_the_page = _page_leaks(path.read_text())
     assert not on_the_page, "\n".join(
         f"{path.relative_to(REPO)}:{i} leaks {hits} — say it in words, or keep the token in an HTML comment on that line: {txt!r}"
         for i, txt, hits in on_the_page
