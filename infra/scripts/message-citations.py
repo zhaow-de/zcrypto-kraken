@@ -1,55 +1,50 @@
-"""The commit-msg guard over a message's citations: every `path:line`, `path::symbol` / `path:symbol` and `T<NNNN>` the
+"""The commit-msg guard over a message's citations: every `path:line`, `path::symbol`, `T<NNNN>` and hex id the
 message carries resolves on a side of the commit, and a message citing what is on neither side is refused.
 
-A commit has two sides and a message describes the move between them, so a citation stands when it resolves in the STAGED
-tree (`git ls-files`, `git show :<path>` -- the file the commit lands) or at HEAD (the file, or the line, the commit takes
-away); under `--range` the two sides are the commit and its first parent. What it refuses:
-- a `path:line` token -- a path with an extension some tracked file has, a colon, digits; a range `12-14` or a list
-  `12,15` is read number by number -- whose line is 0 or past the end of every file the path resolves to on either side;
-  the path resolves to a tracked file it equals or is a `/`-bounded suffix of (`nas.md:92`, `roles/nas/tasks/main.yml:206`),
-  and a path that resolves to nothing is refused only when it claims a place under a top-level directory of the tree
-  (`cli/engine/executer.py:12`, a typo; `tests/test_gone.py:3`, a rename);
-- a `T<NNNN>` that names no `docs/open-topics/T<NNNN>-*.md` and no `docs/open-topics/archive/T<NNNN>-*.md` on either side,
-  nor at the tip of any local or remote-tracking branch -- a topic another session registered on a branch not yet merged
-  is cited by serial here before the merge, and is not a dead citation;
-- a `path::symbol` or `path:symbol` token on a Python or shell file whose symbol no line of the file defines on either
-  side -- for Python a `def`, an `async def`, a `class` or a `name =` / `name: type =` at any indentation; for shell a
-  `name()` function, a `function name`, or a `name=` with an optional `export`/`readonly`/`local`; a `::`-joined chain
-  (`path::Class::method`) is read segment by segment and a `[param]` suffix is not read.
+A commit has two sides and a message describes the move between them, so a citation stands when it resolves in
+the staged tree or at HEAD (the line the commit takes away included); under `--range` the sides are the commit
+and its first parent. Judged, and refused when nothing resolves it:
+- `path:line` -- a path with an extension some tracked file has, then `:` and a line, a range `12-14` or a list
+  `12,15` read number by number. The path resolves to a tracked file it equals or is a `/`-bounded suffix of, and
+  the token stands when any such file has the line; a path matching nothing is refused only when its first segment
+  is a top-level directory of the tree (a typo, a rename), never when git ignores it or a `..` segment sits in it.
+- `T<NNNN>` -- refused when no `docs/open-topics/T<NNNN>-*.md` exists on either side, in the archive, or at the tip
+  of any local or remote-tracking branch: a serial is registered once, on a branch that may not be merged yet, so
+  its file at any tip is the registration. A `/` before it (a branch name) and a lowercase `t<NNNN>` are not read.
+- `path::symbol` or `path:symbol` on a Python or shell file -- refused when no line of the file defines the symbol on
+  either side: for Python a `def`, `async def`, `class` or `name =` / `name: type =` at any indentation, for shell a
+  `name()`, `function name` or `name=` with an optional `export`/`readonly`/`local`; a `::` chain is read segment by
+  segment, a `[param]` suffix and a symbol followed by `-` are not read.
+- a hex id -- a backticked 7-12 hex, a 40-hex bare or backticked, a backticked 64-hex, each holding a digit and a
+  letter. The 7-12 and the 40 are refused when the repository holds no object with that id -- an ambiguous prefix is
+  an id it holds -- and no tracked file on either side carries it (an image digest, an upstream commit a spec pins, a
+  `spec_hash`); the 64 -- no sha1 object id -- when no tracked file carries it and no blob hashes to it. Left alone:
+  an unquoted 7-12 hex and an unquoted 64-hex (the backticks are the citation marker; an unquoted 64 here is
+  prove-inert's digest of derived text no side can recompute), a 7-12 span the word `sha256` labels -- quoted or not,
+  with spaces, a colon or a newline between them (a truncated content digest) -- and a 40-hex a word character or `/`
+  touches, or `.`/`-` with a word after it (`<id>/x`, `<id>.py`, `x-<id>`: a path segment, while a full stop ending a
+  sentence is not). A backticked span holding more than a 7-12 or a 64 (`abc1234..def5678`, `abc1234^`) is no id, and
+  neither is a hex of another length; a 40-hex inside such a span is still the id it is, and is judged.
 
-What it deliberately leaves alone -- the false-positive shapes considered and excluded, each one the tree's own usage:
-- a URL; anything inside a ``` or ~~~ fenced block; a code span with whitespace in it, which is a quoted command
-  (`sed -n '12p' cli/x.py`, `git show HEAD:cli/x.py`) and not a citation -- so a dead coordinate a message quotes on purpose,
-  the way a commit that repairs one names it, goes in a fenced block or beside a word in its span;
-- a bare basename, a foreign-rooted path or an absolute path that matches nothing: `m.py:1` and `probe.sh:2` are files a
-  test writes into a repository of its own, `polars/series/series.py:925` and `apt.py:815` are a library's source,
-  `/home/x/cli/x.py:99` is outside the tree and its first segment is empty, so none claims a top-level directory; a path
-  with a `..` segment; a path git ignores (`.local/`, `data/`);
-- a token whose extension no tracked file has -- `status.kraken.com:443` is a host and port, `2.x:` is a version -- and a
-  version string, whose "extension" is digits (`0.16.0:`);
-- a dotfile whose only dot is its first (`.gitignore:9999`, `.python-version:99`): the path pattern wants a stem before the
-  dot, so it never matches one; `.cz.toml:40` has a stem and is judged;
-- a `T<NNNN>` preceded by `/` (a branch name `fix/T<NNNN>-slug`, a path segment) and the lowercase `t<NNNN>` a branch here
-  usually carries; a `T<NNNN>` inside a URL or a fenced block goes with the URL or the block;
-- a `path:symbol` token on a file that is not Python or shell (`README.md:badge` is a `version_files` entry quoted from
-  `.cz.toml`), and a symbol followed by `-` (`count-list.sh:live-topics` is an entry name, not a function);
-- a suffix that resolves to several files: the token stands when any of them has the line or defines the symbol.
-Not excluded, and so fenced when cited on purpose: a path only a sibling session's branch holds, and a path an earlier
-commit of this branch renamed away -- a topic serial resolves at every branch tip because a serial is registered once, so
-its file at any tip is the registration; a path is not, and the old name of a rename this branch made still sits at every
-other tip, so reading the tips for paths would admit it.
+Not read at all: a URL, a fenced block, and a code span with whitespace in it (a quoted command) -- the escapes for a
+coordinate or id cited on purpose. Refused all the same, and so fenced: a path only a sibling session's branch holds,
+a path an earlier commit of this branch renamed away, and an id quoted as dead -- a path is not registered once the
+way a serial is, and a rename's old name still sits at every other tip, so tips resolve topics and never paths. An
+id the author's own store holds is admitted here whatever any remote has, so an unpushed tip cited by id passes the
+hook and is caught only by a `--range` run in a clone without it.
 
-The hook covers commit messages alone: dispatch text and PR bodies leave no record in the tree. `--range <a>..<b>` judges
-every non-merge commit's message against its own two sides, by hand over a branch; nothing in the tree calls it."""
+The hook covers commit messages alone. `--range <a>..<b>` judges every non-merge commit of a branch against its own
+two sides, by hand; nothing in the tree calls it."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import pathlib
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 SCISSORS = "# ------------------------ >8 ------------------------"
 URL = re.compile(r"\b\w+://[^\s`]+")
@@ -59,6 +54,10 @@ LINE = re.compile(_PATH + r":(?P<lines>\d+(?:[,-]\d+)*)(?!\w)")
 SYMBOL = re.compile(_PATH + r"::?(?P<symbol>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)(?![\w-])")
 TOPIC = re.compile(r"(?<![\w/])T(?P<serial>\d{4})(?!\w)")
 TOPIC_FILE = re.compile(r"^docs/open-topics/(?:archive/)?T(\d{4})-[^/]+\.md$")
+SHORT_ID = re.compile(r"`(?P<hex>[0-9a-f]{7,12})`")
+LABELLED = re.compile(r"sha256`?[ :\n]*$")
+FULL_ID = re.compile(r"(?<![\w/.-])(?P<hex>[0-9a-f]{40})(?![\w/])(?![.-][\w/-])")
+DIGEST = re.compile(r"`(?P<hex>[0-9a-f]{64})`")
 EXTENSION = re.compile(r"\.([A-Za-z]\w*)$")
 PYTHON, SHELL = {"py"}, {"sh", "bash", "zsh"}
 
@@ -74,6 +73,7 @@ class Tree:
         self.rev, self.label = rev, label
         self._paths: list[str] | None = None
         self._topics: set[str] | None = None
+        self._digests: set[str] | None = None
 
     def _list(self, *pathspec: str) -> list[str]:
         if self.rev:
@@ -94,12 +94,36 @@ class Tree:
             self._topics = {m.group(1) for p in self._list("docs/open-topics") if (m := TOPIC_FILE.match(p))}
         return self._topics
 
+    @property
+    def digests(self) -> set[str]:
+        if self._digests is None:
+            if self.rev:
+                entries = [e.split() for e in _git("ls-tree", "-r", "-z", self.rev).stdout.split("\0") if e]
+                ids = [e[2] for e in entries if e[1] == "blob"]
+            else:
+                entries = [e.split() for e in _git("ls-files", "-s", "-z").stdout.split("\0") if e]
+                ids = [e[1] for e in entries if e[0] != "160000"]
+            batch = subprocess.run(
+                ["git", "cat-file", "--batch"], input="".join(f"{i}\n" for i in ids).encode(), capture_output=True
+            )
+            self._digests = set(_blob_digests(batch.stdout))
+        return self._digests
+
     def read(self, path: str) -> bytes | None:
         done = subprocess.run(["git", "show", f"{self.rev}:{path}"], capture_output=True)
         return done.stdout if done.returncode == 0 else None
 
+    def carries(self, token: str) -> bool:
+        where, cached = ([self.rev], []) if self.rev else ([], ["--cached"])
+        return _git("grep", "-q", "-I", "-F", *cached, "-e", token, *where).returncode == 0
+
     def ignored(self, path: str) -> bool:
         return subprocess.run(["git", "check-ignore", "-q", "--", path], capture_output=True).returncode == 0
+
+    def has_object(self, hex_id: str) -> bool:
+        # Every object whose id starts with the prefix, of any type and however many: `cat-file -e` would refuse an
+        # ambiguous one whatever it peels to, and the store holds it all the same.
+        return bool(_git("rev-parse", f"--disambiguate={hex_id}").stdout.split())
 
 
 def clean(raw: str) -> str:
@@ -130,6 +154,20 @@ def _line_count(data: bytes) -> int:
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
+def _blob_digests(batch: bytes) -> Iterator[str]:
+    """sha256 of each body in `git cat-file --batch` output: a `<id> <type> <size>` line, the body, a newline."""
+    at = 0
+    while at < len(batch):
+        end = batch.index(b"\n", at)
+        header = batch[at:end].split()
+        if len(header) != 3:
+            at = end + 1
+            continue
+        size = int(header[2])
+        yield hashlib.sha256(batch[end + 1 : end + 1 + size]).hexdigest()
+        at = end + 1 + size + 1
+
+
 def _defines(text: str, ext: str, name: str) -> bool:
     n = re.escape(name)
     if ext in PYTHON:
@@ -140,9 +178,9 @@ def _defines(text: str, ext: str, name: str) -> bool:
 
 
 def judge(text: str, trees: Sequence[Tree], tips: Sequence[Tree] = ()) -> list[str]:
-    """Each citation of the message that resolves on none of `trees` -- the staged tree and HEAD, or a commit and its parent -- once per token, lines then symbols then topics; a topic id also stands when a `tips` tree holds its file."""
+    """Each citation of the message that resolves on none of `trees` -- the staged tree and HEAD, or a commit and its parent -- once per token, lines then symbols then topics then hex ids; a topic id also stands when a `tips` tree holds its file."""
     body = strip(text)
-    if not (LINE.search(body) or SYMBOL.search(body) or TOPIC.search(body)):
+    if not any(p.search(body) for p in (LINE, SYMBOL, TOPIC, SHORT_ID, FULL_ID, DIGEST)):
         return []
     paths = sorted({p for t in trees for p in t.paths})
     extensions = {m.group(1) for p in paths if (m := EXTENSION.search(p))}
@@ -190,6 +228,18 @@ def judge(text: str, trees: Sequence[Tree], tips: Sequence[Tree] = ()) -> list[s
             fails.append(
                 f"{token}: no topic file under docs/open-topics/ or its archive, on either side of the commit or at a branch tip"
             )
+    for m in (*SHORT_ID.finditer(body), *FULL_ID.finditer(body), *DIGEST.finditer(body)):
+        token = m.group("hex")
+        if token in seen or not (re.search(r"\d", token) and re.search(r"[a-f]", token)):
+            continue
+        if len(token) <= 12 and LABELLED.search(body[: m.start()]):
+            continue
+        seen.add(token)
+        if len(token) == 64:
+            if not any(t.carries(token) for t in trees) and not any(token in t.digests for t in trees):
+                fails.append(f"{token}: no tracked file carries it or hashes to it, on either side of the commit")
+        elif not trees[0].has_object(token) and not any(t.carries(token) for t in trees):
+            fails.append(f"{token}: no object has that id, and no tracked file carries it, on either side of the commit")
     return fails
 
 
@@ -251,7 +301,7 @@ def main(argv: list[str]) -> int:
         print("message-citations: refused")
         for fail in fails:
             print("  - " + fail)
-        print("  a coordinate quoted on purpose goes in a fenced block, or in a code span with a space in it")
+        print("  a coordinate or id quoted on purpose goes in a fenced block, or in a code span with a space in it")
         return 1
     return 0
 
