@@ -166,10 +166,11 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # modelled around, because every measurement of a source is itself one of the reads.
 for src in ${sources[@]+"${sources[@]}"}; do
   case "$src" in
-    # Asked ahead of the admission, because these stat as whatever stands behind them and it would take them:
-    # over a redirected regular file `/dev/stdin` stats as that regular file, while the greps above the sweep
-    # read with stdin redirected to `/dev/null` and find it empty. What is listed is the spellings, not every
-    # path that can reach the same descriptor -- a symlink to one of them stats as a regular file and is taken.
+    # Asked ahead of the admission, because the four paths stat as whatever stands behind them and it would take
+    # them: over a redirected regular file `/dev/stdin` stats as that regular file, while the greps above the
+    # sweep read with stdin redirected to `/dev/null` and find it empty. `-` stats as nothing and the admission
+    # refuses it anyway; it stands here so one message answers every spelling. What is listed is the spellings,
+    # not every path that can reach the same descriptor -- a symlink to one of them is taken as a regular file.
     -|/dev/stdin|/dev/fd/*|/proc/*/fd/*) ;;
     # The one source that is no regular file and still reads the same to every reader: nothing, four times over.
     # Admitted so the empty-set refusal below is what names it, which is the diagnosis that helps there.
