@@ -1,7 +1,6 @@
 """`infra/scripts/runbook-internal-tokens.py`: an internal token inside a runbook bullet or numbered
 step is a hit, one inside an HTML comment or a real path is not, and the page reader beside it takes
-the same classes to the whole page. One line per BULLET, whatever it carries, because the entry
-counting them is named for bullets."""
+the same classes to the whole page."""
 
 import importlib.util
 import pathlib

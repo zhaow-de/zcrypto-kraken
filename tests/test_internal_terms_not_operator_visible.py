@@ -362,9 +362,8 @@ _PREVIEW = 110
 
 def _preview(para: str, at: int, hit: str) -> str:
     """At most `_PREVIEW` characters of the unit, flattened as `_leaks` reads it and centred on `at`
-    -- the offset `_leak_spans` matched, not the first place the hit's characters appear, or a unit
-    that cites an exempt path before its real leak shows a window round the path the rule permits.
-    These pages do not hard-wrap, and a unit is routinely longer than the window."""
+    -- the offset `_leak_spans` matched. These pages do not hard-wrap, and a unit is routinely longer
+    than the window."""
     flat = _flat(para)
     if len(flat) <= _PREVIEW:
         return flat
