@@ -303,11 +303,10 @@ def test_readme_carries_no_internal_vocabulary():
 def _guidance_guard():
     """`infra/scripts/guidance-guard.py`, loaded by path: a hyphen makes the name unimportable.
 
-    Two halves of the page rule are borrowed from the commit-msg guard rather than restated here --
-    what a list item is, and where an HTML comment is -- so that the guard's bullet reader and this
-    page reader cannot drift into two verdicts on one line. The token classes do not move the other
-    way: `VOCABULARY`'s own examples are a string literal, and under `infra/scripts/` this file would
-    read them as an operator-facing leak and refuse its own definition.
+    What a list item is and where an HTML comment is are borrowed from the commit-msg guard rather
+    than restated here, so the two readers of one rule cannot drift into two verdicts on one line;
+    the token classes do not move the other way, for the reason
+    `infra/scripts/runbook-internal-tokens.py` gives.
     """
     spec = importlib.util.spec_from_file_location("guidance_guard", REPO / "infra/scripts/guidance-guard.py")
     module = importlib.util.module_from_spec(spec)
@@ -341,12 +340,8 @@ def _without_fenced_blocks(text: str) -> str:
 def _paragraphs(text: str) -> list[tuple[int, str]]:
     """Each unit as its first line number and its lines joined, a blank line ending one.
 
-    The unit is not the line: `spec`/`Phase` and their numbers are two words, and a wrap falling
-    between them is invisible to a line reader while `bullets()`, which joins a wrapped item, sees it.
-    Nor is it the whole run of text -- a list item, a heading and a table row each open their own unit,
-    because the number reported is the unit's FIRST line and an operator opens the page there: a whole
-    list joined into one would report a hit in its last item at the first item's line. The item is
-    `bullets()`' item, read with the guard's own marker, and its continuation lines join it.
+    The unit is neither the line -- a token's two words straddle a wrap -- nor the whole run of text,
+    because the number reported is the unit's FIRST line and an operator opens the page there.
     """
     out: list[tuple[int, str]] = []
     joining = False

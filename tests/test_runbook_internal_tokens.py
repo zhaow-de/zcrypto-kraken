@@ -1,6 +1,7 @@
 """`infra/scripts/runbook-internal-tokens.py`: an internal token inside a runbook bullet or numbered
-step is a hit, one in a paragraph is not, and one inside a real path is the operand it looks like.
-One line per BULLET, whatever it carries, because the entry counting them is named for bullets."""
+step is a hit, one inside an HTML comment or a real path is not, and the page reader beside it takes
+the same classes to the whole page. One line per BULLET, whatever it carries, because the entry
+counting them is named for bullets."""
 
 import importlib.util
 import pathlib
@@ -36,9 +37,10 @@ def instrument(readers):
     return readers[0]
 
 
-def test_a_token_in_a_bullet_is_a_hit_and_one_in_a_paragraph_is_not(instrument):
-    """The rule binds a step, because that is what an operator acts on from a phone; the prose keeps
-    the provenance for a claim the tree cannot otherwise re-derive."""
+def test_a_token_in_a_bullet_is_a_hit_and_a_paragraph_is_outside_this_instrument_s_unit(instrument):
+    """The unit is the step, because that is what an operator acts on from a phone. The paragraph
+    beside it is not clean -- `tests/test_internal_terms_not_operator_visible.py` reads the whole
+    page -- it is simply not what the entry named for bullets counts."""
     found = instrument("- **Do the thing** because T0123 says so.\n\nThe paragraph explains T0456.\n")
     assert found == [(1, "T0123")], found
 
@@ -91,8 +93,7 @@ def test_both_readers_report_a_token_a_line_wrap_splits(readers):
 def test_both_readers_read_a_fence_marker_inside_a_comment_as_commented_out(readers):
     """One rule, two readers, one verdict, on the shape the page reader was fixed for first: a stale
     command block commented out leaves an odd marker, and a reader that decides its fence state before
-    blanking comments opens a block there and skips every line under it. The instrument returned
-    nothing for this text while the page around it returned the token."""
+    blanking comments opens a block there and skips every line under it."""
     instrument, page_leaks = readers
     text = "<!--\n```\nzcrypto engine replay --spec 00106\n-->\n\n- Then record T0123.\n"
     assert instrument(text) == [(6, "T0123")]
