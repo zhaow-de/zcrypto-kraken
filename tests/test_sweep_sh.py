@@ -129,14 +129,27 @@ def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
 
 
 def test_a_refused_control_names_the_cluster_the_sweep_held_back(tmp_path):
-    """The separate-word spelling is the recovery the refusal advertises, and it is asserted here rather than
-    only advertised."""
+    """One cluster is still withheld: the one whose binding letter takes the sweep's own pattern, which the
+    control cannot inherit and cannot be handed the letter without. The separate-word spelling is the recovery
+    the refusal advertises, and it is asserted here rather than only advertised."""
     repo = _repo(tmp_path)
-    done = _sweep(repo, "-ivm", "5", "--control", "needle", ".")
+    done = _sweep(repo, "-ive", ".", "--control", "needle")
     assert done.returncode == 2, done.stdout + done.stderr
-    assert "-ivm" in done.stderr and "held back whole" in done.stderr, done.stdout + done.stderr
-    kept = _sweep(repo, "-i", "-m", "5", "-v", "--control", "needle", ".")
+    assert "-ive" in done.stderr and "held back whole" in done.stderr, done.stdout + done.stderr
+    kept = _sweep(repo, "-i", "-v", "-e", ".", "--control", "needle")
     assert kept.returncode == 1, kept.stdout + kept.stderr
+
+
+def test_a_cluster_whose_operand_is_greps_own_goes_to_the_control_with_it(tmp_path):
+    """The other cluster -- the one whose binding letter takes a NUM, an ACTION or a matcher name -- is handed
+    over whole, its operand behind it, so the control runs the matcher the sweep ran. `-i` is what the withholding
+    used to cost here: a control in the other case found nothing, and the sweep's clean was refused for it."""
+    repo = _repo(tmp_path)
+    kept = _sweep(repo, "-ivm", "5", ".", "--control", "needle")
+    assert kept.returncode == 1, kept.stdout + kept.stderr
+    assert "held back whole" not in kept.stderr, kept.stdout + kept.stderr
+    absent = _sweep(repo, "-ivm", "5", ".", "--control", "no-such-control-either")
+    assert absent.returncode == 2, absent.stdout + absent.stderr
 
 
 def test_a_refusal_that_held_nothing_back_names_nothing(tmp_path):
@@ -413,6 +426,55 @@ def test_a_flag_whose_operand_is_supplied_is_an_ordinary_sweep(tmp_path):
         done = _sweep(repo, *words)
         if done.returncode != want:
             wrong.append(f"{' '.join(words)}: rc {done.returncode}, want {want} -- {done.stderr.strip()[:80]}")
+    assert not wrong, "\n".join(wrong)
+
+
+# One sweep whose grep opens no file at all, written every way grep accepts it. `-d` with an ACTION grep refuses
+# is the only operand in this script's table GNU grep 3.11 rejects at rc 1 rather than 2 -- `-D`, `-m`, `-A`,
+# `-B`, `-C`, `-X`, `-f`, `-e`, `--binary-files` and `--exclude-from` all answer 2, which the probe refuses before
+# the sweep runs -- so rc 1 here is the sweep's grep saying "nothing matched" about files it never opened. Every
+# row must be a refusal; the standalone and long spellings are rows because the clustered ones were the only leak
+# and nothing else would notice if they stopped being.
+_OPENED_NOTHING = [
+    ("-ld", "recursive", "NEEDLE"),  # `recurse` misspelt: the typo this costs
+    ("-ld", "bogus", "no-such-string-anywhere"),
+    ("-lde", "no-such-string-anywhere"),  # the ACTION attached inside the cluster, and it is `e`
+    ("-ld", "NEEDLE"),  # no ACTION typed at all, so grep binds the pattern as one
+    ("-vld", "bogus", "NEEDLE"),
+    ("-l", "-d", "recursive", "NEEDLE"),
+    ("-l", "--directories", "bogus", "NEEDLE"),
+    ("-l", "--di", "bogus", "NEEDLE"),
+    ("-l", "--directories=bogus", "NEEDLE"),
+]
+
+# The same letters with an ACTION grep takes, which is an ordinary sweep and must stay one: a refusal that reached
+# these is a refusal the next operator turns off.
+_OPENED_EVERYTHING = [
+    (("-ld", "read", "NEEDLE"), 0),
+    (("-lD", "read", "NEEDLE"), 0),
+    (("-ldread", "NEEDLE"), 0),
+    (("-lvd", "read", ".", "--control", "NEEDLE"), 1),
+    (("-l", "--directories=read", "NEEDLE"), 0),
+]
+
+
+def test_a_grep_that_opened_no_file_is_never_reported_as_a_clean(tmp_path):
+    """rc 1 means the pattern is absent from files that were read. A grep that refused its own words read none of
+    them, and the control is the whole of what tells the two apart -- so the control has to carry the words the
+    sweep carried, operands and all. Held back instead, it runs a laxer matcher, hits, and licenses a clean over a
+    grep that opened nothing: a one-letter typo then reads as an absence, visible only to a human watching stderr
+    and invisible to anything reading rc."""
+    repo = _repo(tmp_path)
+    wrong = []
+    for words in _OPENED_NOTHING:
+        done = _sweep(repo, *words, "--control", "NEEDLE")
+        if done.returncode != 2:
+            spelt = " ".join(words)
+            wrong.append(f"{spelt} --control NEEDLE: rc {done.returncode}, want 2 -- {done.stderr.strip()[:70]}")
+    for words, want in _OPENED_EVERYTHING:
+        done = _sweep(repo, *words)
+        if done.returncode != want:
+            wrong.append(f"{' '.join(words)}: rc {done.returncode}, want {want} -- {done.stderr.strip()[:70]}")
     assert not wrong, "\n".join(wrong)
 
 
