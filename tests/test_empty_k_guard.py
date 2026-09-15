@@ -56,6 +56,20 @@ def test_a_selector_that_matches_is_silent(tree: Path):
     assert BANNER not in r.stderr, r.stderr
 
 
+def test_a_mark_that_empties_a_matched_selection_is_named_beside_the_k(tree: Path):
+    r = run(tree, "-k", "alpha", "-m", "nosuchmark")
+    assert r.returncode == 5, r.stdout + r.stderr
+    assert "0 of 3 collected" in r.stderr, r.stderr
+    assert "Selectors given: -k 'alpha', -m 'nosuchmark'." in r.stderr, r.stderr
+
+
+def test_a_deselect_that_empties_a_matched_selection_is_named_beside_the_k(tree: Path):
+    r = run(tree, "-k", "alpha", "--deselect", "test_scratch.py::test_alpha")
+    assert r.returncode == 5, r.stdout + r.stderr
+    assert "0 of 3 collected" in r.stderr, r.stderr
+    assert "Selectors given: -k 'alpha', --deselect 'test_scratch.py::test_alpha'." in r.stderr, r.stderr
+
+
 def test_a_run_with_no_selector_is_silent(tree: Path):
     # Emptied by a mark over the three collected, not by collecting nothing: only the missing `-k` keeps this silent.
     r = run(tree, "-m", "nosuchmark")
