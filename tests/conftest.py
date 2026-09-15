@@ -33,12 +33,11 @@ def pytest_collection_modifyitems(config, items):
     alone -- and a recorded probe whose selector selects nothing is a verdict nothing earned.
 
     A wrapper, because both numbers exist only here -- what collection found, and what survived the deselection,
-    which a plain hookimpl in this file runs before and a `trylast` one after. The line names the `-k`, the `-m` and
-    each `--deselect` the run was given and blames none of them, because the two numbers do not say what emptied
-    the run. Deliberately silent: a run with no `-k`, which has no expression to name and where pytest's own line
-    already stands alone; `--collect-only`, where an empty selection is the answer to the question asked; and a run
-    that collected nothing at all, where there was nothing to select and the run's own answer -- an ERRORS block, or
-    an empty path -- already stands."""
+    which a plain hookimpl in this file runs before and a `trylast` one after. The line blames none of the selectors
+    it names, because the two numbers do not say what emptied the run. Deliberately silent: a run with no `-k`,
+    which has no expression to name and where pytest's own line already stands alone; `--collect-only`, where an
+    empty selection is the answer to the question asked; and a run that collected nothing at all, where there was
+    nothing to select and the run's own answer -- an ERRORS block, or an empty path -- already stands."""
     collected = len(items)
     result = yield
     expression = config.option.keyword
@@ -50,7 +49,7 @@ def pytest_collection_modifyitems(config, items):
             given.append(f"--deselect '{prefix}'")
         print(
             f"conftest: NO TEST SELECTED -- the selection left 0 of {collected} collected, so nothing ran "
-            f"and this run's exit code is not a pass. Selectors given: {', '.join(given)}.",
+            f"and this run's exit code is not a pass. Selectors this hook reads: {', '.join(given)}.",
             file=sys.stderr,
         )
     return result
