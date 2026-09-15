@@ -93,8 +93,7 @@ if [ "$rc" -eq 1 ]; then
   grep -I -q "${probe[@]}" -- "${files[@]}"
   crc=$?
   if [ "$crc" -ne 0 ]; then
-    # Every word here but the pattern is the sweep's own, which grep compiled one run ago, so an rc 2 is of the
-    # control's pattern and nothing else; rc 1 is the honest miss, or the invalid `-d` ACTION grep answers 1 to.
+    # rc 1 is the honest miss, or the invalid `-d` ACTION grep answers 1 to.
     if [ "$crc" -eq 2 ]; then
       echo "sweep: grep refused the control pattern '$known' -- every other word here is the sweep's own, which grep has just compiled, so the pattern is what to fix: give a control grep compiles, naming something this tree holds" >&2
     else
