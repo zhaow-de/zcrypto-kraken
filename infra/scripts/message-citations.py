@@ -21,9 +21,10 @@ What it deliberately leaves alone -- the false-positive shapes considered and ex
 - a URL; anything inside a ``` or ~~~ fenced block; a code span with whitespace in it, which is a quoted command
   (`sed -n '12p' cli/x.py`, `git show HEAD:cli/x.py`) and not a citation -- so a dead coordinate a message quotes on purpose,
   the way a commit that repairs one names it, goes in a fenced block or beside a word in its span;
-- a bare basename or a foreign-rooted path that matches nothing: `m.py:1` and `probe.sh:2` are files a test writes into a
-  repository of its own, `polars/series/series.py:925` and `apt.py:815` are a library's source, none a tracked-file path;
-  an absolute path; a path with a `..` segment; a path git ignores (`.local/`, `data/`);
+- a bare basename, a foreign-rooted path or an absolute path that matches nothing: `m.py:1` and `probe.sh:2` are files a
+  test writes into a repository of its own, `polars/series/series.py:925` and `apt.py:815` are a library's source,
+  `/home/x/cli/x.py:99` is outside the tree and its first segment is empty, so none claims a top-level directory; a path
+  with a `..` segment; a path git ignores (`.local/`, `data/`);
 - a token whose extension no tracked file has -- `status.kraken.com:443` is a host and port, `2.x:` is a version -- and a
   version string, whose "extension" is digits (`0.16.0:`);
 - a `T<NNNN>` preceded by `/` (a branch name `fix/T<NNNN>-slug`, a path segment) and the lowercase `t<NNNN>` a branch here
@@ -131,10 +132,6 @@ def _defines(text: str, ext: str, name: str) -> bool:
     return re.search(pattern, text, re.M) is not None
 
 
-def _resolvable(path: str) -> bool:
-    return not path.startswith("/") and ".." not in path.split("/")
-
-
 def judge(text: str, trees: Sequence[Tree], tips: Sequence[Tree] = ()) -> list[str]:
     """Each citation of the message that resolves on none of `trees` -- the staged tree and HEAD, or a commit and its parent -- once per token, lines then symbols then topics; a topic id also stands when a `tips` tree holds its file."""
     body = strip(text)
@@ -157,7 +154,7 @@ def judge(text: str, trees: Sequence[Tree], tips: Sequence[Tree] = ()) -> list[s
 
     for m in LINE.finditer(body):
         token, path, ext = m.group(0), m.group("path").removeprefix("./"), m.group("ext")
-        if token in seen or ext not in extensions or not _resolvable(path):
+        if token in seen or ext not in extensions or ".." in path.split("/"):
             continue
         seen.add(token)
         if files := candidates(token, path):
@@ -167,7 +164,7 @@ def judge(text: str, trees: Sequence[Tree], tips: Sequence[Tree] = ()) -> list[s
                 fails.append(f"{token}: " + ", ".join(f"{f} has {c} lines {label}" for (f, label), c in counts.items()))
     for m in SYMBOL.finditer(body):
         token, path, ext = m.group(0), m.group("path").removeprefix("./"), m.group("ext")
-        if token in seen or ext not in extensions or ext not in PYTHON | SHELL or not _resolvable(path):
+        if token in seen or ext not in extensions or ext not in PYTHON | SHELL or ".." in path.split("/"):
             continue
         seen.add(token)
         if files := candidates(token, path):

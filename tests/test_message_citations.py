@@ -168,13 +168,14 @@ def test_a_symbol_on_a_file_that_is_not_python_or_shell_and_an_entry_name_are_no
 def test_the_excluded_shapes_are_not_citations():
     shapes = {
         "a URL": "https://github.com/x/y/blob/main/cli/z.py:99 and https://x/T0009",
+        "a URL with a coordinate in its query": "https://github.com/search?q=cli/x.py:99+T0009 and https://x/s?q=cli/x.py::nope",
         "a fenced block": "before\n```\ncli/x.py:99 T0009 cli/x.py::nope\n```\nafter",
         "a tilde fence": "~~~bash\ncli/x.py:99\n~~~",
         "an unclosed fence": "```\ncli/x.py:99",
         "a quoted command": "`sed -n '99p' cli/x.py:99` and `git show HEAD:cli/x.py:99`",
         "a host and port": "status.kraken.com:443 and grafana.example.com:3000",
         "a version": "ruff 0.16.0:3 and nautilus 2.x:1 and python3.14:1",
-        "an absolute path": "/home/x/cli/x.py:99 and ~/cli/x.py:99",
+        "an absolute path": "/home/x/cli/x.py:99 and ~/cli/x.py:99 and /cli/x.py:99",
         "a dotdot path": "../cli/x.py:99 and cli/../cli/x.py:99",
         "a branch name": "fix/T0009-slug and docs/t0009-slug and origin/T0009-x",
         "an ignored path": ".local/memo.md:99 and data/x.jsonl:99",
