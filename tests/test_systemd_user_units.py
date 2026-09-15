@@ -3,9 +3,9 @@
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
 units are filled in by hand (`<repo>`, `<uv>`), so the render here is a substitution, and what is
 checked is that every placeholder a unit carries is named in its header's `Placeholders:` line, that
-no `<...>` token of any spelling survives the render, and that the directives a timer-driven oneshot
-needs sit in the section systemd reads them from -- a `Persistent=` under `[Unit]` is silently
-ignored. Not checked: `systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off
+no `<...>` token of any spelling -- a whitespace-bearing `<data root>` included -- survives the render,
+and that the directives a timer-driven oneshot needs sit in the section systemd reads them from -- a
+`Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off
 disk and refuses the example paths this render fills in."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ REGISTERED = {
 }
 # The placeholders a header may name, with the absolute paths the render fills them with.
 KNOWN = {"<repo>": "/home/you/Projects/zcrypto-kraken", "<uv>": "/home/you/.local/bin/uv"}
-_PLACEHOLDER = re.compile(r"<[^<>\s]+>")
+_PLACEHOLDER = re.compile(r"<[^<>]+>")
 
 
 def units() -> list[Path]:
@@ -60,6 +60,11 @@ def render(text: str) -> str:
     for token, value in KNOWN.items():
         text = text.replace(token, value)
     return text
+
+
+@pytest.mark.parametrize("token", ["<repo>", "<data_root>", "<data root>"])
+def test_a_placeholder_of_any_spelling_is_seen_whitespace_included(token):
+    assert _PLACEHOLDER.findall(f"WorkingDirectory={token}\n") == [token]
 
 
 def test_every_unit_is_registered():
@@ -103,12 +108,17 @@ def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
 def test_the_data_gated_service_is_a_oneshot_the_timer_owns():
     """Enabled through its timer alone: an [Install] section on the service would let `enable` start
     the whole suite at every login, and a non-oneshot would go active the moment pytest forked, so
-    the timer's trigger and a hand `systemctl start` would stop reporting the suite's own result."""
-    service = directives(render((UNITS / "zcrypto-data-gated-tests.service").read_text()))
+    the timer's trigger and a hand `systemctl start` would stop reporting the suite's own result.
+    `ExecStart=` is a list directive -- a oneshot runs every line, in order, and `directives()` keeps
+    only the last -- so the count is read off the raw text."""
+    raw = (UNITS / "zcrypto-data-gated-tests.service").read_text()
+    service = directives(render(raw))
     timer = directives(render((UNITS / "zcrypto-data-gated-tests.timer").read_text()))
     assert service["[Service]"]["Type"] == "oneshot"
     assert "[Install]" not in service, "the service must not be enableable on its own"
     assert timer["[Timer]"]["Unit"] == "zcrypto-data-gated-tests.service"
-    runner = service["[Service]"]["ExecStart"].split()[-1]
+    exec_lines = [line for line in raw.splitlines() if line.startswith("ExecStart=")]
+    assert len(exec_lines) == 1, f"a oneshot runs every ExecStart= line, and there must be one: {exec_lines}"
+    runner = exec_lines[0].split()[-1]
     assert runner == "infra/scripts/data-gated-run.py", f"ExecStart names an unexpected runner: {runner!r}"
     assert os.access(REPO / runner, os.X_OK), f"{runner} is not executable"
