@@ -129,9 +129,8 @@ def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
 
 
 def test_a_refused_control_names_the_cluster_the_sweep_held_back(tmp_path):
-    """A cluster held back whole takes its narrowing letters with it, so a control the sweep's own matcher would
-    have found is refused. Named nowhere, the operator's next move is to replace a control that was never wrong;
-    the separate-word spelling is the recovery, and it is asserted here rather than only advertised."""
+    """The separate-word spelling is the recovery the refusal advertises, and it is asserted here rather than
+    only advertised."""
     repo = _repo(tmp_path)
     done = _sweep(repo, "-ivm", "5", "--control", "needle", ".")
     assert done.returncode == 2, done.stdout + done.stderr
@@ -220,8 +219,8 @@ _SPELLINGS = [
     (("-l", "--di", "read", "no-such-string-anywhere"), "NEEDLE", 1),
     (("-l", "--group-separator", "SEP", "no-such-string-anywhere"), "NEEDLE", 1),
     (("-l", "--g", "SEP", "no-such-string-anywhere"), "NEEDLE", 1),
-    # The pattern-bearing long options, where an abbreviation costs more than a refused clean: the control would
-    # inherit the option and run under the SWEEP's own pattern, which can hit and license a clean.
+    # The pattern-bearing long options, where an abbreviation costs what an operand-taking one costs: the control
+    # inherits the option, it eats the control's own `-e`, and the clean the sweep earned is refused.
     (("-l", "--regexp", "no-such-string-anywhere"), "NEEDLE", 1),
     (("-l", "--regex", "no-such-string-anywhere"), "NEEDLE", 1),
     (("-l", "--reg", "no-such-string-anywhere"), "NEEDLE", 1),
@@ -533,8 +532,8 @@ def test_a_flags_operand_is_not_a_pattern(tmp_path):
 def test_the_letter_absent_from_greps_help_skips_its_operand_too(tmp_path):
     """`-X MATCHER` is grep's obsolete matcher selection: missing from `--help`, accepted, operand-taking. Read as
     the pattern, its operand leaves grep with none and grep binds a file path as the regex instead -- a clean
-    reported over a sweep that searched for a filename. This is the case that holds the two letter lists to one
-    set, since the letter that decides it was in the cluster reading and out of the standalone one."""
+    reported over a sweep that searched for a filename. It is the case that holds the two letter lists to one
+    set."""
     done = _sweep(_repo(tmp_path), "-l", "-X", "grep", "--control", "NEEDLE")
     assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
 
