@@ -26,12 +26,11 @@ set -euo pipefail
 # whatever that earns, a hit or a clean, never the error this is. Deciding this needs grep's option table:
 # `--include '*.py'` has a bare operand that is not a pattern, so the flags below that take one AS A
 # SEPARATE WORD consume it. `--color`'s argument is optional and grep reads it only attached, so it is not
-# one of them. The table is the short list anyone sweeping would reach for, in the spelling it is written
-# here: a flag outside it, a long spelling of one inside it (`--after-context 3`), or one clustered into
-# `-lm 5`, still reads its operand as a pattern and passes this check -- and a long spelling then reaches the
-# control with its operand left behind, which refuses a clean sweep rather than licensing it. An attached
-# `-eNEEDLE` is refused although grep accepts it -- a loud refusal naming the spelling that works, which is
-# the recoverable error of the two.
+# one of them. The table below is every long option grep answers "requires an argument" to, each written as
+# the shortest prefix grep resolves plus a glob, so an abbreviation is the same word to this loop as the full
+# name. What still reads its operand as a pattern and passes this check is a flag outside grep's table, or one
+# clustered into `-lm 5`, which the cluster arm decides instead. An attached `-eNEEDLE` is refused although
+# grep accepts it -- a loud refusal naming the spelling that works, which is the recoverable error of the two.
 # A pattern flag records the pattern from its OPERAND: `sweep.sh -e` supplies none, and grep would then bind the script's own `--` as the regex.
 pattern=0
 skip=0     # the next word is a flag's operand, to be stepped over
@@ -60,9 +59,18 @@ for a in "$@"; do
   case "$a" in
     --control) control=1; skip=1; takes=1; continue ;;
     --control=*) control=1; known="${a#--control=}"; continue ;;
-    -["$pattern_letters"]|--regexp|--file) skip=1; carries=1; args+=("$a"); continue ;;
-    --regexp=*|--file=*) pattern=1; args+=("$a"); continue ;;
-    -["$operand_letters"]|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
+    --reg*=*|--file=*) pattern=1; args+=("$a"); continue ;;
+    -["$pattern_letters"]|--reg*|--file) skip=1; carries=1; args+=("$a"); continue ;;
+    # An operand attached with `=` leaves nothing behind, so its word reaches the control whole. This arm is
+    # what keeps the globs below off `--after-context=3`, where one would otherwise step over the pattern.
+    --*=*) ;;
+    # Every long option grep answers "requires an argument" to, each as the shortest prefix grep resolves: every
+    # longer prefix is the same flag, and a word outside grep's table that begins the same way is grep's own loud
+    # error rather than a clean. `--file` is an exact match that is ALSO a prefix of `--files-with-matches` and
+    # `--files-without-match`, which take no operand, so it is written literally above; `--exclude` is a prefix of
+    # `--exclude-dir` and `--exclude-from`, which do take one, so it may be globbed. `--binary` (`-U`) takes none,
+    # which is why the glob starts at `--binary-`.
+    -["$operand_letters"]|--a*|--be*|--binary-*|--con*|--dev*|--di*|--exclude*|--g*|--inc*|--la*|--m*) skip=1 ;;
     # The sweep may invert its selection; its control never does -- under `-v` a pattern nothing holds selects
     # every line, so the control would prove only that the files have lines. `--inv` and `--files-witho` are where
     # grep's long-option prefixes stop being ambiguous, so every spelling from there to the full name is the same

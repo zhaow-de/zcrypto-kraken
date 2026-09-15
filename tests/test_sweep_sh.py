@@ -194,6 +194,58 @@ _SPELLINGS = [
     (("-l", "--inv", "."), "NEEDLE", 1),
     (("-i", "--files-without-match", "no-such-string-anywhere"), "needle", 1),
     (("-i", "--files-witho", "no-such-string-anywhere"), "needle", 1),
+    # Every long option grep answers "requires an argument" to, in its full spelling and in the shortest prefix
+    # grep still resolves. The operand is a separate word this loop must step over: left behind, it is read as
+    # the sweep's pattern and the option reaches the control alone, where it eats the control's own `-e`.
+    (("-l", "--after-context", "1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--a", "1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--before-context", "1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--be", "1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--context", "1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--con", "1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--max-count", "5", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--m", "5", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--include", "*.py", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--inc", "*.py", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--exclude", "*.md", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--exclude-dir", ".venv", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--exclude-d", ".venv", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--label", "LAB", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--la", "LAB", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--binary-files", "text", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--binary-", "text", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--devices", "read", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--dev", "read", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--directories", "read", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--di", "read", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--group-separator", "SEP", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--g", "SEP", "no-such-string-anywhere"), "NEEDLE", 1),
+    # The pattern-bearing long options, where an abbreviation costs more than a refused clean: the control would
+    # inherit the option and run under the SWEEP's own pattern, which can hit and license a clean.
+    (("-l", "--regexp", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--regex", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--reg", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-lv", "--file", "pat.txt"), "NEEDLE", 1),
+    # Attached, where nothing stays behind and the word goes to the control whole -- the arm that keeps the
+    # globs above off the pattern that follows.
+    (("-l", "--after-context=1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--a=1", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--regexp=no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--reg=no-such-string-anywhere"), "NEEDLE", 1),
+    # The neighbours each glob stops short of. Every one takes NO operand, so a glob one letter too wide steps
+    # over the pattern and the sweep is refused for having none.
+    (("-l", "--ini", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--cou", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--binary", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--ext", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--der", "no-such-string-anywhere"), "NEEDLE", 1),
+    (("-l", "--line-n", "no-such-string-anywhere"), "NEEDLE", 1),
+    # `--file` and `--reg` are the two whose neighbours a glob would reach for nothing: the words it would take
+    # carry no operand, so the pattern still lands and the rc is unchanged. Written LAST, before `--control`,
+    # they answer: a glob one letter wider steps over `--control` itself, and grep is handed a flag it has never
+    # heard of instead of a control.
+    (("-l", "no-such-string-anywhere", "--files-with-matches"), "NEEDLE", 1),
+    (("-l", "no-such-string-anywhere", "--recursive"), "NEEDLE", 1),
     # The separate-word spellings each cluster above is one word of, including the operand grep takes as its own.
     (("-l", "-v", "."), "no-such-control-either", 2),
     (("-i", "-v", "."), "needle", 1),
