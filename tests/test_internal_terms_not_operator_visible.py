@@ -270,8 +270,9 @@ def _without_html_comments(text: str) -> str:
     """Every `<!-- ... -->` blanked to its own newlines, so a hit's line number is the file's.
 
     A `<!--` inside a code span renders as text and opens nothing; an unterminated `<!--` hides
-    nothing, so a token after one is still read -- the direction that fails safe is a leak read,
-    never a leak hidden.
+    nothing, so a token after one is still read. Fences are not known here: `<!-- T<NNNN> -->`
+    inside a fenced or indented code block renders literally on the page and is blanked before the
+    read, so that block is the one place a token hides.
     """
     spans = [m.span() for m in _CODE_SPAN.finditer(text)]
     out, pos = [], 0
