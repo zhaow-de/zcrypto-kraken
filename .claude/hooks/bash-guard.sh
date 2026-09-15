@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# PreToolUse[Bash] guard: a command whose argv would skip the repo's commit-time hooks, or believe a number or a
-# word a cap took off the stream an earlier stage handed it, is refused before it runs -- exit 2, the one code the
-# harness blocks on, with the spelling found and what it costs on stderr; anything else exits 0 silently.
+# PreToolUse[Bash] guard: a refusal is exit 2, the one code the harness blocks on, with the spelling found and
+# what it costs on stderr; anything else exits 0 silently.
 # `tests/test_bash_guard.py` drives every family in both directions and IS the list of what is refused and what
 # is admitted; what follows is only what neither the code nor that corpus can say.
 #
