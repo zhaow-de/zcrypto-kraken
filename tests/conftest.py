@@ -33,11 +33,11 @@ def pytest_collection_modifyitems(config, items):
     alone -- and a recorded probe whose selector selects nothing is a verdict nothing earned.
 
     A wrapper, because both numbers exist only here -- what collection found, and what survived the deselection,
-    which a plain hookimpl in this file runs before and a `trylast` one after. The line names every selector the
-    run was given and blames none of them: a `-m` or a `--deselect` empties a selection the `-k` matched inside
-    this same hook, and the two numbers do not say which one did. Deliberately silent: a run with no `-k`, which
-    has no expression to name and where pytest's own line already stands alone; `--collect-only`, where an empty
-    selection is the answer to the question asked; and a run that collected nothing at all, where there was
+    which a plain hookimpl in this file runs before and a `trylast` one after. The line names the selectors that
+    deselect while this wrapper waits at its `yield` -- the `-k`, the `-m`, each `--deselect` -- and blames none of
+    them, because the two numbers do not say which one emptied the run. Deliberately silent: a run with no `-k`,
+    which has no expression to name and where pytest's own line already stands alone; `--collect-only`, where an
+    empty selection is the answer to the question asked; and a run that collected nothing at all, where there was
     nothing to select and the run's own answer -- an ERRORS block, or an empty path -- already stands."""
     collected = len(items)
     result = yield
