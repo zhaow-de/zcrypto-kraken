@@ -12,26 +12,41 @@
 # $CLAUDE_PROJECT_DIR's. A call from the project directory or any subdirectory of it has one possible
 # answer; advising there speaks on every bare git a session runs, and an advisory that speaks that
 # often is trained away. With CLAUDE_PROJECT_DIR unset there is no default to differ from, and the
-# hook is silent rather than guessing one.
-# Silent, deliberately: a bare git made from the project directory's own checkout, even where the
-# reader meant a worktree -- that is the default cwd, the case above; a git reached through a
-# variable or an alias, or through a string handed to `sh -c`, `eval` or a heredoc -- none is an argv
-# of git in this command; a substitution inside a double quote, which bash expands and this reader
-# does not open; a call whose answer does not depend on the cwd (`git --version`, `git help`); and a
-# `cd` whose target holds a substitution, read as a pin rather than as the process cwd.
-set -euo pipefail
-input="$(cat)"
+# hook is silent rather than guessing one. A repository NESTED under the project directory resolves
+# to its own toplevel and is advised: a bare git there answers about the nested checkout, which is
+# the belief this exists to correct, whatever the path prefix suggests.
+# Silent, deliberately, and one miss bought with it: a bare git made from the project directory's own
+# checkout, even where the reader meant a worktree -- that is the default cwd, and the case above.
+# Which command shapes count as a git call at all, and which stay silent, is driven shape by shape in
+# `tests/test_git_cwd_advisory.py`.
+# `gh` is outside this hook by decision, not by oversight: `gh pr create`, `gh pr merge` and `gh pr
+# view` lean on the cwd's repository the same way, but gh has no `-C`, and its `-R owner/repo` names
+# the remote -- which a checkout and a linked worktree of it SHARE. There is no gh spelling that pins
+# the directory, so there is nothing this advisory could hand a reader.
+# The judgement is one python3 program that prints the finished hook JSON or nothing, so no field
+# crosses back into the shell and no byte a command can hold -- a tab, a newline -- can be re-read as
+# a separator. `set -e` is deliberately absent and the last statement is `exit 0`: a PostToolUse arm
+# that exits non-zero reports a failure against a Bash call it was never meant to judge. The price is
+# that the reader's own stderr is discarded, so a bug in it is silence; the cases catch that as a
+# missing advisory.
+set -uo pipefail
 prog="$(cat <<'PY'
 import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
 DURATION = re.compile(r"^\d+(?:\.\d+)?[smhd]?$")
 HEREDOC = re.compile(r"<<(-?)\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([\w./-]+))")
 WRAPPERS = {"sudo", "doas", "env", "timeout", "nice", "ionice", "stdbuf", "setsid", "nohup", "command", "time"}
+# The shell words that can stand immediately BEFORE a command word inside one simple command, and so
+# would otherwise be read as one: `if git diff --quiet; then`, `do git status`, `{ git status; }`.
+# `fi`, `done`, `esac` and `in` are not here -- nothing follows them in the same simple command, and a
+# word skipped for nothing is a git call attributed to the wrong one.
+KEYWORDS = {"if", "elif", "while", "until", "then", "else", "do", "{", "!"}
 PIN_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
 PIN_OPT = {"-C", "--git-dir", "--work-tree"}
 GLOBAL_VALUE = {"-c", "--config-env", "--namespace", "--super-prefix", "--attr-source", "--exec-path"}
@@ -62,7 +77,9 @@ def cut_heredocs(text):
 def simple_commands(text):
     # Words, not text: a `git` inside a quoted word is an argument and never a command word, and a
     # `$( .. )` or backtick body is a command of its own -- bash runs it in the same cwd, so a bare
-    # git there is as unpinned as one outside. A redirect and its target are dropped.
+    # git there is as unpinned as one outside, and the `$(` is opened before the enclosing quote is
+    # ever tested, so `x="$(git status)"` is advised exactly as `x=$(git status)` is. A redirect and
+    # its target are dropped.
     cmds, word, started, stack, i, n = [[]], [], False, [["top", None]], 0, len(text)
 
     def flush():
@@ -167,10 +184,13 @@ def is_git(w):
 
 
 def head(words):
-    """Where the command word is, after the assignments and wrappers, and whether git's directory is
-    already pinned in the environment."""
+    """Where the command word is, after the shell keywords, the assignments and the wrappers, and
+    whether git's directory is already pinned in the environment."""
     i, pinned = 0, False
     while i < len(words):
+        if words[i] in KEYWORDS:
+            i += 1
+            continue
         m = ASSIGN.match(words[i])
         if m:
             pinned = pinned or m.group(1) in PIN_ENV
@@ -211,20 +231,35 @@ def git_call(words):
 
 
 def cd_target(words):
+    """Where a leading `cd` or `pushd` moves to and which verb moved there, or ("", "") for anything
+    else; `popd` names its verb and no target, since what it moves to is on the stack."""
     i, _ = head(words)
-    if i >= len(words) or words[i].rpartition("/")[2] not in ("cd", "pushd"):
-        return ""
-    return next((w for w in words[i + 1 :] if not w.startswith("-")), "~")
+    if i >= len(words):
+        return "", ""
+    verb = words[i].rpartition("/")[2]
+    if verb == "popd":
+        return "", "popd"
+    if verb not in ("cd", "pushd"):
+        return "", ""
+    return next((w for w in words[i + 1 :] if not w.startswith("-")), "~"), verb
 
 
 def read(command, cwd):
     # A `cd` to an absolute path, or to one this reader cannot resolve, is the author pinning the
     # directory by another spelling and silences the rest of the command; a relative one leaves the
-    # answer as cwd-dependent as it was and only moves where it points.
-    base, pinned = cwd, False
+    # answer as cwd-dependent as it was and only moves where it points. `pushd` saves what it leaves
+    # and `popd` restores it, because a git call after the pop ran where the command started: naming
+    # the pushed directory there would be a WRONG answer, which costs more than a missing one.
+    base, pinned, stack = cwd, False, []
     for words in simple_commands(cut_heredocs(command)):
-        target = cd_target(words)
-        if target:
+        target, verb = cd_target(words)
+        if verb == "popd":
+            if stack:
+                base, pinned = stack.pop()
+            continue
+        if verb:
+            if verb == "pushd":
+                stack.append((base, pinned))
             if target.startswith(("/", "~")) or any(ch in target for ch in "$`"):
                 pinned = True
             else:
@@ -237,6 +272,21 @@ def read(command, cwd):
     return None
 
 
+def toplevel(directory):
+    """The work-tree root a directory belongs to, as git itself answers it -- a linked worktree's root
+    is not a path prefix of the checkout it belongs to, so no comparison of paths stands in for it."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", directory, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
 try:
     call = json.load(sys.stdin)
     command = call.get("tool_input", {}).get("command", "")
@@ -245,31 +295,30 @@ try:
         raise ValueError
 except Exception:
     sys.exit(0)
-found = read(command, cwd)
-if found:
-    print("\t".join(found))
-PY
-)"
-found="$(printf '%s' "$input" | python3 -c "$prog" 2>/dev/null || true)"
-[[ -z "$found" ]] && exit 0
-IFS=$'\t' read -r dir ran fix <<<"$found"
-[[ -z "${CLAUDE_PROJECT_DIR:-}" ]] && exit 0
-here="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
-there="$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
-[[ -z "$here" || -z "$there" || "$here" == "$there" ]] && exit 0
+project = os.environ.get("CLAUDE_PROJECT_DIR", "")
+found = read(command, cwd) if project else None
+if not found:
+    sys.exit(0)
+dirname, ran, fix = found
+here, there = toplevel(dirname), toplevel(project)
+if not here or not there or here == there:
+    sys.exit(0)
 # systemMessage reaches the user, additionalContext the model; exit 0, since a PostToolUse hook has
 # nothing left to block and the next command is what the report is for.
-printf '%s\t%s\t%s' "$dir" "$ran" "$fix" | python3 -c '
-import json, sys
-
-dirname, ran, fix = sys.stdin.read().split("\t")
 msg = "git-cwd-advisory: `%s` ran in %s, a different checkout from the project directory — pin it: `%s`" % (ran, dirname, fix)
-print(json.dumps({
-    "systemMessage": msg,
-    "hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": msg + " -- the tool cwd drifts between calls, so read this answer as that checkout'"'"'s, not the project directory'"'"'s.",
-    },
-}))
-'
+print(
+    json.dumps(
+        {
+            "systemMessage": msg,
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": msg
+                + " -- the tool cwd drifts between calls, so read this answer as that checkout's, not the project directory's.",
+            },
+        }
+    )
+)
+PY
+)"
+python3 -c "$prog" 2>/dev/null || true
 exit 0
