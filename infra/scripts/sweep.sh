@@ -45,7 +45,7 @@ for a in "$@"; do
     # A cluster is read only as far as its `X`: grep binds the rest of a cluster to its first operand-taking
     # letter, so the `f` of `-lXfgrep` stands inside a matcher name and names nothing.
     -f*|--file|--file=*|-+([!-X])f*)
-      echo "sweep: '$a' names a pattern FILE, which this sweep does not read -- give the pattern as -e <pattern>, its own word" >&2; exit 2 ;;
+      echo "sweep: '$a' carries an 'f' this sweep does not read -- grep's pattern FILE, or, inside a cluster, another flag's operand; give the pattern as -e <pattern>, its own word" >&2; exit 2 ;;
     # Both short globs are needed: a cluster inverts wherever its letter sits. `--inv` and `--files-witho` are
     # where grep's long-option prefixes stop being ambiguous, so every spelling from there to the full name is
     # the same flag.

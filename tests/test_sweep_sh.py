@@ -172,7 +172,24 @@ def test_a_pattern_file_is_refused(tmp_path):
     wrong = []
     for word in _A_PATTERN_FILE:
         done = _sweep(repo, "-e", "NEEDLE", word, "pat.txt")
-        if done.returncode != 2 or "names a pattern FILE" not in done.stderr:
+        if done.returncode != 2 or "pattern FILE" not in done.stderr:
+            wrong.append(f"{word}: rc {done.returncode} -- {(done.stdout + done.stderr).strip()[:70]}")
+    assert not wrong, "\n".join(wrong)
+
+
+# The other words this same arm catches: a cluster whose `f` is the operand of a letter standing before it -- the
+# pattern in `-lef`, `-m`'s NUM in `-lmf`. Neither names a pattern file, and neither gives the pattern as its own
+# word; the one binding an `e` would hand grep a second pattern the control substitution cannot replace, so the
+# reach is the arm's and the message has to hold both.
+_A_CLUSTERED_OPERAND = ["-lef", "-lmf"]
+
+
+def test_a_cluster_whose_f_is_another_flags_operand_is_refused_and_not_called_a_file(tmp_path):
+    repo = _repo(tmp_path)
+    wrong = []
+    for word in _A_CLUSTERED_OPERAND:
+        done = _sweep(repo, word, "PAT", "--control", "NEEDLE")
+        if done.returncode != 2 or "another flag's operand" not in done.stderr:
             wrong.append(f"{word}: rc {done.returncode} -- {(done.stdout + done.stderr).strip()[:70]}")
     assert not wrong, "\n".join(wrong)
 
