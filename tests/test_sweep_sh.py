@@ -507,12 +507,17 @@ def test_a_fifo_under_the_ledger_is_named(tmp_path):
     assert "pipe" in done.stderr and "not swept" in done.stderr, done.stdout + done.stderr
 
 
-# A prescribing line names the script and carries the control, over a backslash continuation wherever it has one
-# -- before `--control`, or between the flag and its operand. Both spellings the script accepts, quoted either way
-# or bare, so a prescriber cannot leave the scan by rewriting its own quotes or its line breaks. What does leave
-# it is a control the line does not itself hold: `--control "$CTL"` is read as the literal `$CTL`, and what that
-# expands to is outside anything a scan of the tracked text can see.
-_PRESCRIBED = re.compile(r"""sweep\.sh(?:[^\n]|\\\n)*?--control(?:[ =]|\\\n)+(?:'([^']+)'|"([^"]+)"|(\S+))""")
+# What stands between a flag and its operand: a space, a tab, or a backslash continuation. Both scans below read
+# it from here, because a separator one of them takes and the other does not is a line read as prescribing a
+# control and as prescribing no pattern at once -- a failure over a prescription that would have swept.
+_SEP = r"(?:[ \t]|\\\n)"
+
+# A prescribing line names the script and carries the control, over a separator wherever it has one -- before
+# `--control`, or between the flag and its operand. Both spellings the script accepts, quoted either way or bare,
+# so a prescriber cannot leave the scan by rewriting its own quotes or its line breaks. What does leave it is a
+# control the line does not itself hold: `--control "$CTL"` is read as the literal `$CTL`, and what that expands
+# to is outside anything a scan of the tracked text can see.
+_PRESCRIBED = re.compile(rf"""sweep\.sh(?:[^\n]|\\\n)*?--control(?:{_SEP}|=)+(?:'([^']+)'|"([^"]+)"|(\S+))""")
 
 
 def _controls(text: str) -> list[str]:
@@ -533,6 +538,7 @@ _PRESCRIPTIONS = [
     ("sweep.sh -l --control=PAT -e x", ["PAT"]),
     ("sweep.sh -l \\\n  --control 'PAT' -e x", ["PAT"]),
     ("sweep.sh -l --control \\\n  'PAT' -e x", ["PAT"]),
+    ("sweep.sh -l --control\t'PAT' -e x", ["PAT"]),
     ("sweep.sh -l --control '<pattern>' -e x", []),
     ("git grep -l --control 'PAT' x", []),
     ('sweep.sh -l --control "$CTL" -e x', ["$CTL"]),
@@ -557,7 +563,7 @@ def test_the_prescription_scan_reads_every_spelling_the_script_accepts():
 # read over, so the pattern below is asked of the same words. The pattern is `-e <word>` and nothing else: a
 # clustered or attached `-e` is grep's to bind and this script records none, which is the rc 2 the scan is for.
 _INVOCATION = re.compile(r"sweep\.sh(?:\\\n|[^\n])*")
-_A_PATTERN = re.compile(r"""(?:^|[ ])-e(?:[ ]|\\\n)+(?:'[^']+'|"[^"]+"|\S+)""")
+_A_PATTERN = re.compile(rf"""(?:^|{_SEP})-e{_SEP}+(?:'[^']+'|"[^"]+"|\S+)""")
 
 
 def _patternless(text: str) -> list[str]:
@@ -573,6 +579,8 @@ _PATTERNLESS = [
     ('sweep.sh --control "C" -e PAT', False),
     ("sweep.sh -e 'PAT' --control 'C'", False),
     ("sweep.sh --control 'C' \\\n  -e 'PAT'", False),
+    ("sweep.sh --control 'C' \\\n-e 'PAT'", False),
+    ("sweep.sh --control 'C'\t-e\t'PAT'", False),
     ("sweep.sh --control 'C'", True),
     ("sweep.sh --control 'C' -ePAT", True),
     ("sweep.sh --control 'C' --regexp 'PAT'", True),
