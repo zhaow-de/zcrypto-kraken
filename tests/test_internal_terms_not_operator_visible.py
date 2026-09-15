@@ -44,7 +44,7 @@ SCANNED_PACKAGES = [REPO / "cli", REPO / "infra/scripts"]
 # index on, and folding case there would report a schema name as operator vocabulary.
 VOCABULARY = re.compile(
     r"""(
-        (?i:\bPhase\s+\d)      # Phase 6a
+        (?i:\bPhase\s+\d)      # Phase 6a — folded, so ordinary "phase 2 of the rollout" is a hit too: reword it, do not allowlist
       | (?i:\bT\d{4}\b)        # T0096
       | (?i:\biter-\d+)        # iter-117
       | (?i:\bspec\s+`?\d{5})  # spec 00052  /  spec `00052`  /  Spec 00052
@@ -287,9 +287,10 @@ def _without_html_comments(text: str) -> str:
     """Every `<!-- ... -->` blanked to its own newlines, so a hit's line number is the file's.
 
     A `<!--` inside a code span renders as text and opens nothing; an unterminated `<!--` hides
-    nothing, so a token after one is still read. Fences are not known here and need not be: both
-    readers drop a fenced block before reaching this -- the page reader by blanking it, the bullet
-    instrument because `bullets()` skips it.
+    nothing, so a token after one is still read. Fences are not known here and need not be: a comment
+    inside one is dropped either way -- the page reader blanks the whole block after this runs, the
+    bullet instrument's `bullets()` skips it. An INDENTED block is known to neither, so a comment in
+    one is blanked here and still renders to the operator: that block is where a token hides.
     """
     spans = [m.span() for m in _CODE_SPAN.finditer(text)]
     out, pos = [], 0
@@ -327,11 +328,15 @@ def _without_fenced_blocks(text: str) -> str:
 
 
 def _page_leaks(text: str) -> list[tuple[int, str, list[str]]]:
-    """A page's leaking lines as (lineno, text, hits) -- fences blanked, then comments, so a comment
-    inside a fence is never read as prose either."""
+    """A page's leaking lines as (lineno, text, hits).
+
+    Comments are blanked before fences: a fence marker inside an HTML comment is invisible to the fence
+    blanker, so left standing it toggles the block open and blanks every line below it. What the order
+    costs is a `<!--` inside a fenced block, which now pairs with the next `-->` under it.
+    """
     return [
         (i, line.strip()[:110], hits)
-        for i, line in enumerate(_without_html_comments(_without_fenced_blocks(text)).splitlines(), 1)
+        for i, line in enumerate(_without_fenced_blocks(_without_html_comments(text)).splitlines(), 1)
         if (hits := _leaks(line))
     ]
 
@@ -340,6 +345,14 @@ def test_a_fenced_block_is_the_command_to_paste_and_the_step_under_it_is_still_p
     """Both directions of the carve-out in one page: the serial an operator pastes passes, and the
     prose under the block is still read, so the exemption cannot be widened into a hiding place."""
     text = "# P\n\n```\nzcrypto engine replay --spec 00106\n```\n\nThen record T0123.\n"
+    assert _page_leaks(text) == [(7, "Then record T0123.", ["T0123"])]
+
+
+def test_a_fence_marker_inside_a_comment_does_not_blank_the_page_under_it():
+    """A stale command block commented out with its markers tucked into the comment's own lines leaves
+    an odd marker for a fence blanker that cannot see comments: read fences first and the block opens,
+    the step below it is blanked unread, and the command inside the comment is reported in its place."""
+    text = "# P\n\n<!-- ```\nzcrypto engine replay --spec 00106\n``` -->\n\nThen record T0123.\n"
     assert _page_leaks(text) == [(7, "Then record T0123.", ["T0123"])]
 
 
