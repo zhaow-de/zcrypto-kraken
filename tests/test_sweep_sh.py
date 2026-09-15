@@ -269,12 +269,10 @@ def test_every_spelling_of_the_same_sweep_answers_alike(tmp_path):
 
 
 # Flags whose last operand belongs to grep, written every way grep accepts them -- standalone, clustered, the
-# operand attached, long, abbreviated, and the letter absent from `--help` -- and not one pattern among them. The
-# first column is refused: what grep would bind as the regex comes out of the file list this script supplies, so
-# neither answer is the caller's -- not the clean a control licenses, not the hit a search for a filename earns.
-# The second column is the same flags with a pattern of the caller's own and the rc that pattern means, because a
-# guard that refuses those too is one the next operator turns off. `-f` is absent: its operand IS a pattern, so
-# there is no row to write where the same word means both things.
+# operand attached, long, abbreviated, and the letter absent from `--help` -- and not one pattern among them.
+# Every row is driven twice: as written, where the answer has to be a refusal, and again with a pattern of the
+# caller's own, which is what the second column's rc is for. `-f` is absent from these rows: its operand IS a
+# pattern, so there is no row to write where the same word means both things.
 _MISSING_PATTERN = [
     (("-l", "-m", "5"), 1),
     (("-lm", "5"), 1),
@@ -315,12 +313,10 @@ _MISSING_PATTERN = [
 
 
 def test_no_spelling_of_a_missing_pattern_is_answered_rather_than_refused(tmp_path):
-    """The operand of a flag is not a pattern in any spelling, and a script that decides which word is the pattern
-    by reading grep's option table decides it rightly for one spelling and wrongly for the neighbour -- the wrong
-    answer being a clean, or a hit, over a grep that searched for a file path out of the list this script itself
-    supplied. What holds every spelling at once is that the question goes to grep: handed these words and no file
-    list, grep says it has no pattern. The second drive is the other direction, a pattern of the caller's own in
-    the same flags, which must still be answered."""
+    """The operand of a flag is not a pattern in any spelling, and what holds every spelling at once is that the
+    question goes to grep rather than to a table read here: handed these words and no file list, grep says it has
+    no pattern. `infra/scripts/sweep.sh`'s probe carries what a wrong answer costs. The second drive is the other
+    direction, a pattern of the caller's own in the same flags, which must still be answered."""
     repo = _repo(tmp_path)
     wrong = []
     for flags, want in _MISSING_PATTERN:
@@ -603,10 +599,8 @@ def test_a_flags_operand_is_not_a_pattern(tmp_path):
 
 
 def test_the_letter_absent_from_greps_help_skips_its_operand_too(tmp_path):
-    """`-X MATCHER` is grep's obsolete matcher selection: missing from `--help`, accepted, operand-taking. Read as
-    the pattern, its operand leaves grep with none and grep binds a file path as the regex instead -- a clean
-    reported over a sweep that searched for a filename. It is the case that holds the two letter lists to one
-    set."""
+    """`-X MATCHER` is grep's obsolete matcher selection -- accepted, operand-taking, in no `--help` -- and the
+    case that holds the two letter lists to one set."""
     done = _sweep(_repo(tmp_path), "-l", "-X", "grep", "--control", "NEEDLE")
     assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
 
