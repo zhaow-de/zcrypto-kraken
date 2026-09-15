@@ -263,6 +263,57 @@ def test_readme_carries_no_internal_vocabulary():
     assert not found, "\n".join(f"README.md:{i} leaks {hits}: {txt!r}" for i, txt, hits in found)
 
 
+_CODE_SPAN = re.compile(r"`[^`\n]+`")
+
+
+def _without_html_comments(text: str) -> str:
+    """Every `<!-- ... -->` blanked to its own newlines, so a hit's line number is the file's.
+
+    A `<!--` inside a code span renders as text and opens nothing; an unterminated `<!--` hides
+    nothing, so a token after one is still read -- the direction that fails safe is a leak read,
+    never a leak hidden.
+    """
+    spans = [m.span() for m in _CODE_SPAN.finditer(text)]
+    out, pos = [], 0
+    while (start := text.find("<!--", pos)) != -1:
+        if any(s <= start < e for s, e in spans):
+            out.append(text[pos : start + 4])
+            pos = start + 4
+            continue
+        end = text.find("-->", start + 4)
+        if end == -1:
+            break
+        out.append(text[pos:start] + "\n" * text.count("\n", start, end + 3))
+        pos = end + 3
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _runbook_pages() -> list[Path]:
+    """Every page under `infra/runbooks/`, a subdirectory's included: an operator opens any of them."""
+    out = sorted((REPO / "infra/runbooks").rglob("*.md"))
+    assert out, "walked no runbook pages — the glob is broken, not the pages clean"
+    return out
+
+
+@pytest.mark.parametrize("path", _runbook_pages(), ids=lambda p: str(p.relative_to(REPO)))
+def test_runbook_pages_carry_no_internal_vocabulary(path):
+    """A runbook page is where an alert's `Runbook:` link lands and what a procedure is read from, so
+    the whole page is the surface -- its paragraphs and table rows as much as the bullets
+    `infra/scripts/runbook-internal-tokens.py` counts. An HTML comment is the one place a token may
+    sit: the rendered page hides it, and it is where the provenance a maintainer needs lives.
+    """
+    on_the_page = [
+        (i, line.strip()[:110], hits)
+        for i, line in enumerate(_without_html_comments(path.read_text()).splitlines(), 1)
+        if (hits := _leaks(line))
+    ]
+    assert not on_the_page, "\n".join(
+        f"{path.relative_to(REPO)}:{i} leaks {hits} — say it in words, or keep the token in an HTML comment on that line: {txt!r}"
+        for i, txt, hits in on_the_page
+    )
+
+
 def test_grafana_alert_summaries_carry_no_internal_vocabulary():
     """An alert summary is read on a phone, in Slack, by someone with no repo open."""
     rules = yaml.safe_load(ALERTS.read_text())["rules"]
