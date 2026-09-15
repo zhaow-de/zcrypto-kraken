@@ -158,6 +158,19 @@ REFUSED = [
     # pipeline's, in both spellings of a substitution
     ("x=`git log --oneline | sort`; echo $?", "$?"),
     ('ls | sort; echo "$?"', "$?"),  # a double quote expands, so this is the read a single quote is not
+    # `$?` inside a double quote, or inside a longer word, is expanded wherever it stands: the logging line, the
+    # echo, a message, and behind an assignment builtin
+    ('ls | sort; echo "rc=$?"', "rc=$?"),
+    ('uv run pytest -q 2>&1 | tail -5; echo "rc=$?"', "rc=$?"),
+    ("ls | sort; echo rc=$?", "rc=$?"),
+    ('git log --oneline | sort; git commit -m "rc=$? reads the last stage"', "rc=$? reads the last stage"),
+    ("uv run pytest -q | tee /tmp/log; export rc=$?", "rc=$?"),
+    ("ls | sort; declare -i rc=$?", "rc=$?"),
+    # a quoted `|` beside a real one, and arithmetic beside a real pipeline: the real one arms the read
+    ("echo 'a' | tr -d '|'; rc=$?", "rc=$?"),
+    ("echo $((1 | 2)); ls | sort; rc=$?", "rc=$?"),
+    # a `$( .. )` inside arithmetic is a command of its own, and with assignments alone its status is what stays
+    ("n=$(( $(ls | wc -l) | 1 )); echo $?", "$?"),
 ]
 
 ADMITTED = [
@@ -278,19 +291,37 @@ ADMITTED = [
     # `${PIPESTATUS[@]}`, the spelling that reads every stage
     'ls | sort; echo "${PIPESTATUS[@]}"',
     "ls | sort\nstatus=${PIPESTATUS[0]}",
-    # `$?` as a character of a longer word: a message, an echo, a quoted heredoc body -- never a word bash expands
-    'git log --oneline | sort; git commit -m "rc=$? reads the last stage"',
-    'ls | sort; echo "rc=$?"',
-    "cat <<'EOF'\nls | sort\nrc=$?\nEOF",
     # the pipeline ran inside a substitution the command's own program then consumed, so the status is that
     # program's: an argument, a process substitution, a backtick pair
     "wc -l $(git ls-files | grep py); echo $?",
     "diff <(ls | sort) <(ls -a | sort); rc=$?",
     "wc -l `git ls-files | grep py`; echo $?",
     "x=$(git log --oneline | sort; echo done); echo $?",  # the substitution's own last command is not a pipeline
-    # `$?` inside a single quote, the one quoting bash never expands: a search string and an echo, not a read
+    # `$?` where bash expands nothing -- a single quote, a backslash, `$'..'`, a backslash inside a double quote, a
+    # quoted heredoc body: a search string and an echo of the text, not a read
     "ls | sort; grep -rn '$?' docs/",
     "git log --oneline | head -3; echo '$?'",
+    "ls | sort; echo \\$?",
+    'ls | sort; grep -rn "\\$?" docs/',
+    "ls | sort; echo $'$?'",
+    "cat <<'EOF'\nls | sort\nrc=$?\nEOF",
+    "ls | sort; echo $$?",  # `$$` is the pid, and the `?` after it is text
+    # a `|` that is text -- inside a single quote, a double quote, `$'..'`, behind a backslash, inside a backtick
+    # pair -- runs no pipeline, so the read that follows holds the one command's own status
+    "tr '|' ',' < data.csv; rc=$?",
+    "cut -d '|' -f 2 docs/reference/change-index.md; rc=$?",
+    "grep -c '|' docs/reference/fleet-pins.md; echo $?",
+    'cut -d "|" -f 2 f; rc=$?',
+    "tr $'|' ',' < f; rc=$?",
+    "cut -d \\| -f 2 f; rc=$?",
+    "x=`grep -c '|' f`; echo $?",
+    # `$(( .. ))` and `(( .. ))` are arithmetic: the `|` is an operator on numbers, and no pipeline ran
+    "x=$((1 | 2)); echo $?",
+    "mask=$((FLAG_A | FLAG_B)); rc=$?",
+    "(( x = 1 | 2 )); echo $?",
+    "ls | sort; (( i = 1 )); rc=$?",  # the arithmetic command ran between, and the status is its own
+    # after `&` the status is the launch's, never the pipeline's
+    "ls | sort & echo $?",
 ]
 
 
