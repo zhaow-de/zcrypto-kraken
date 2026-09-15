@@ -60,7 +60,7 @@ The boundary schedule is `.claude/rules/fleet-deploys.md`'s engine bullet; a hea
 
 #### 1.3 The key's IP allowlist
 
-This is the step that otherwise fails every run. Spec 00039 decision 3 makes the workstation IP a verification-window-only exception, closed again at §7.3 after every pass, so it is absent when you start:
+This is the step that otherwise fails every run. The workstation IP is a verification-window-only exception on the key's allowlist<!-- spec 00039 decision 3 -->, closed again at §7.3 after every pass, so it is absent when you start:
 
 1. Kraken → Settings → API → `zcrypto-engine` → edit IP restrictions → add the workstation's current public IP (`curl -s https://api.ipify.org`).
 2. Note the time. This exception is temporary and closing it is §7.3.
