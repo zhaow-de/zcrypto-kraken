@@ -22,16 +22,16 @@
 # list at all is the other door: the `no <path>/.local` line below.
 # Usage: infra/scripts/sweep.sh [grep flags] --control <known-positive> <pattern>   rc: 0 a hit, 1 none (control hit), 2 an error.
 set -euo pipefail
-# Given no pattern -- none at all, or flags alone -- grep takes the first path as its regex and answers
-# whatever that earns, a hit or a clean, never the error this is. Deciding this needs grep's option table:
-# `--include '*.py'` has a bare operand that is not a pattern, so the flags below that take one AS A
-# SEPARATE WORD consume it. `--color`'s argument is optional and grep reads it only attached, so it is not
-# one of them. The table below is every long option grep answers "requires an argument" to, each written as
-# the shortest prefix grep resolves plus a glob, so an abbreviation is the same word to this loop as the full
-# name. What still reads its operand as a pattern and passes this check is a flag outside grep's table, or one
-# clustered into `-lm 5`, which the cluster arm decides instead. An attached `-eNEEDLE` is refused although
-# grep accepts it -- a loud refusal naming the spelling that works, which is the recoverable error of the two.
-# A pattern flag records the pattern from its OPERAND: `sweep.sh -e` supplies none, and grep would then bind the script's own `--` as the regex.
+# Given no pattern -- none at all, or flags alone -- grep takes the first path of the file list below as its
+# regex and answers whatever that earns, a hit or a clean, never the error this is. WHICH word is the pattern is
+# asked of grep, further down, and not of the option table this loop reads: read for the pattern question that
+# table is right for one spelling and wrong for its neighbour -- a cluster, an abbreviation, a letter absent from
+# `--help` -- and wrong there is the clean nobody hears. The table is read for a different question, what the
+# CONTROL may inherit, where wrong costs a control and says so: `--include '*.py'` takes a bare operand that is
+# not a pattern, and handed to the control without it the option eats the control's own `-e` instead.
+# `--color`'s argument is optional and grep reads it only attached, so it is not one of them.
+# `pattern` is this loop's own answer to the pattern question, kept because it may only ever REFUSE: an attached
+# `-eNEEDLE` is refused although grep accepts it, a loud refusal naming the spelling that works.
 pattern=0
 skip=0     # the next word is a flag's operand, to be stepped over
 carries=0  # ...and that operand is the pattern, so a dangling `-e` never records one
@@ -84,8 +84,9 @@ for a in "$@"; do
     -[!-]*)
       args+=("$a")
       # A letter the control cannot carry alone withholds the cluster whole -- the two lists above, read here as
-      # one, because a letter buried in a cluster still leaves its operand behind in the sweep's own arguments,
-      # and the letter handed back alone would eat the control's `-e` as that operand.
+      # one, because that letter handed back would eat the control's own `-e` as its operand. `-lm5` carries its
+      # operand attached and would not, and is held with the rest anyway: a control laxer than the sweep, which
+      # the refusal below names rather than sorting the two spellings apart here.
       case "$a" in *["$pattern_letters$operand_letters"]*) held+=("$a"); continue ;; esac
       selecting="${a#-}"; selecting="${selecting//[vL]/}"
       [ -z "$selecting" ] || flags+=("-$selecting")
@@ -105,6 +106,16 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # than sweep the tracked tree alone.
 [ "$(git -C "$main" rev-parse --show-toplevel 2>/dev/null)" = "$main" ] || {
   echo "sweep: no main checkout at $main, resolved from $(git rev-parse --git-common-dir)" >&2; exit 2; }
+# The pattern question, put to grep. Handed the sweep's own words and NO file list, grep either has a pattern of
+# its own -- and searches the empty stdin for it, 0 or 1 -- or refuses, because the word it would have bound as
+# the regex is the file list this script is about to supply. Asking is what keeps the answer from being one
+# spelling behind grep's own parser; it costs a second grep per sweep, and a refusal in grep's words rather than
+# this script's. It runs from the toplevel, after the `cd`, so a `-f pattern-file` resolves exactly as it will
+# for the sweep. `--directories=skip` goes last because `-r` with no file operand means "search the working
+# directory", which is a walk of the whole tree for nothing and an rc 2 over any path here that cannot be read;
+# one word and an option, it can be eaten as a missing operand but can never become a pattern.
+probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >/dev/null)" && prc=0 || prc=$?
+[ "$prc" -ne 2 ] || { echo "sweep: grep refuses these words without a file list -- '${probe%%$'\n'*}'. This script supplies the list, so a word grep lacks it takes from there: a file path as the regex, and a hit or a clean about a filename. Give it as a word of your own -- -e <pattern> if it begins with a dash" >&2; exit 2; }
 ledger=.local
 [ "$main" = "$(pwd -P)" ] || ledger="$main/.local"
 [ -d "$ledger" ] || echo "sweep: no $ledger -- the memo, the table and the inboxes are not in this sweep" >&2
@@ -136,7 +147,7 @@ if [ "$rc" -eq 1 ]; then
     echo "sweep: the control '$known' matched nothing either in ${#files[@]} files (grep rc $crc) -- this sweep is not proven able to see, so its clean is no evidence; pick a control this tree holds" >&2
     # Without this the operator's next move is to replace a control that was never wrong: a cluster held back
     # whole takes its narrowing letters with it, so the control ran under less than the sweep did.
-    [ "${#held[@]}" -eq 0 ] || echo "sweep: before replacing it: the control ran without ${held[*]}, held back whole because a letter there takes an operand this loop left in the sweep's own words -- spell that cluster as separate words ('-i -m 5' for '-ivm 5') and the control keeps every letter it can use" >&2
+    [ "${#held[@]}" -eq 0 ] || echo "sweep: before replacing it: the control ran without ${held[*]}, held back whole because a letter there takes an operand -- spell that cluster out, the flag and its operand each a word of their own ('-i -m 5' for '-ivm 5', '-m 5' for '-m5'), and the control keeps the letters that take none" >&2
     exit 2
   fi
 fi

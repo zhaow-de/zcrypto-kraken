@@ -269,6 +269,85 @@ def test_every_spelling_of_the_same_sweep_answers_alike(tmp_path):
     assert not wrong, "\n".join(wrong)
 
 
+# Flags whose last operand belongs to grep, written every way grep accepts them -- standalone, clustered, the
+# operand attached, long, abbreviated, and the letter absent from `--help` -- and not one pattern among them. The
+# first column is refused: what grep would bind as the regex comes out of the file list this script supplies, so
+# neither answer is the caller's -- not the clean a control licenses, not the hit a search for a filename earns.
+# The second column is the same flags with a pattern of the caller's own and the rc that pattern means, because a
+# guard that refuses those too is one the next operator turns off. `-f` is absent: its operand IS a pattern, so
+# there is no row to write where the same word means both things.
+_MISSING_PATTERN = [
+    (("-l", "-m", "5"), 1),
+    (("-lm", "5"), 1),
+    (("-lm5",), 1),
+    (("-l", "-A", "1"), 1),
+    (("-lA", "1"), 1),
+    (("-lA1",), 1),
+    (("-l", "-B", "1"), 1),
+    (("-lB", "1"), 1),
+    (("-l", "-C", "1"), 1),
+    (("-lC", "1"), 1),
+    (("-l", "-d", "read"), 1),
+    (("-ld", "read"), 1),
+    (("-l", "-D", "read"), 1),
+    (("-lD", "read"), 1),
+    (("-l", "-X", "grep"), 1),
+    (("-lX", "grep"), 1),
+    # The same letters clustered with an inverting one, which is where the sweep's own answer is inverted too.
+    (("-ivm", "5"), 0),
+    (("-vlA", "1"), 0),
+    # Long, abbreviated to the shortest prefix grep resolves, and with the operand attached.
+    (("-l", "--include", "*.py"), 1),
+    (("-l", "--inc", "*.py"), 1),
+    (("-l", "--include=*.py"), 1),
+    (("-l", "--after-context", "1"), 1),
+    (("-l", "--a", "1"), 1),
+    (("-l", "--after-context=1"), 1),
+    (("-l", "--label", "LAB"), 1),
+    (("-l", "--la", "LAB"), 1),
+    # A pattern flag promising a pattern the words never supply, clustered and not.
+    (("-l", "-e"), 1),
+    (("-le",), 1),
+    (("-l", "--regexp"), 1),
+    (("-l", "--reg"), 1),
+    # Flags alone, which is the same missing pattern with nothing to blame it on.
+    (("-l",), 1),
+]
+
+
+def test_no_spelling_of_a_missing_pattern_is_answered_rather_than_refused(tmp_path):
+    """The operand of a flag is not a pattern in any spelling, and a script that decides which word is the pattern
+    by reading grep's option table decides it rightly for one spelling and wrongly for the neighbour -- the wrong
+    answer being a clean, or a hit, over a grep that searched for a file path out of the list this script itself
+    supplied. What holds every spelling at once is that the question goes to grep: handed these words and no file
+    list, grep says it has no pattern. The second drive is the other direction, a pattern of the caller's own in
+    the same flags, which must still be answered."""
+    repo = _repo(tmp_path)
+    wrong = []
+    for flags, want in _MISSING_PATTERN:
+        spelt = " ".join(flags)
+        done = _sweep(repo, *flags, "--control", "NEEDLE")
+        if done.returncode != 2:
+            wrong.append(
+                f"{spelt} --control NEEDLE: rc {done.returncode}, want 2 -- {done.stdout.strip()[:60]}{done.stderr.strip()[:60]}"
+            )
+        done = _sweep(repo, *flags, "no-such-string-anywhere", "--control", "NEEDLE")
+        if done.returncode != want:
+            wrong.append(
+                f"{spelt} no-such-string-anywhere --control NEEDLE: rc {done.returncode}, want {want} -- {done.stderr.strip()[:60]}"
+            )
+    assert not wrong, "\n".join(wrong)
+
+
+def test_the_words_grep_refuses_are_refused_in_greps_own_terms(tmp_path):
+    """Which refusal answers the clustered spelling is the whole point: a table widened to cover `-lX` would pass
+    the rows above and leave the next spelling standing, so the refusal here has to be the one that quotes grep's
+    own complaint back. `-lX grep` is the case because `-X` is in no `--help` this script could have read."""
+    done = _sweep(_repo(tmp_path), "-lX", "grep", "--control", "NEEDLE")
+    assert done.returncode == 2 and "grep refuses these words" in done.stderr, done.stdout + done.stderr
+    assert "Usage: grep" in done.stderr, done.stdout + done.stderr
+
+
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):
     done = _sweep(_repo(tmp_path), "-l", "--control=NEEDLE", "no-such-string-anywhere")
     assert done.returncode == 1, done.stdout + done.stderr
