@@ -556,20 +556,70 @@ def test_the_prescription_scan_reads_every_spelling_the_script_accepts():
     assert not wrong, "\n".join(wrong)
 
 
+# An invocation is `sweep.sh` to the end of its line, continuations included -- the grammar the control is already
+# read over, so the pattern below is asked of the same words. The pattern is `-e <word>` and nothing else: a
+# clustered or attached `-e` is grep's to bind and this script records none, which is the rc 2 the scan is for.
+_INVOCATION = re.compile(r"sweep\.sh(?:\\\n|[^\n])*")
+_A_PATTERN = re.compile(r"""(?:^|[ ])-e(?:[ ]|\\\n)+(?:'[^']+'|"[^"]+"|\S+)""")
+
+
+def _patternless(text: str) -> list[str]:
+    """The prescribed invocations carrying no pattern. A line prescribing no control this scan reads -- none at
+    all, or the `<pattern>` of a usage line -- prescribes no sweep either, and is outside here as it is below."""
+    return [i.group() for i in _INVOCATION.finditer(text) if _controls(i.group()) and not _A_PATTERN.search(i.group())]
+
+
+# A prescription in every spelling of the pattern, and the spellings that are not one: attached to its flag, and
+# the long name this script does not read, each of them a line that earns rc 2 before it sweeps.
+_PATTERNLESS = [
+    ("sweep.sh --control 'C' -e 'PAT'", False),
+    ('sweep.sh --control "C" -e PAT', False),
+    ("sweep.sh -e 'PAT' --control 'C'", False),
+    ("sweep.sh --control 'C' \\\n  -e 'PAT'", False),
+    ("sweep.sh --control 'C'", True),
+    ("sweep.sh --control 'C' -ePAT", True),
+    ("sweep.sh --control 'C' --regexp 'PAT'", True),
+    ("sweep.sh --control '<pattern>'", False),
+    ("sweep.sh -e 'PAT'", False),
+]
+
+
+def test_the_pattern_scan_reads_the_one_spelling_the_script_takes():
+    wrong = []
+    for text, want in _PATTERNLESS:
+        got = bool(_patternless(text))
+        if got != want:
+            wrong.append(f"{text!r}: flagged {got}, want {want}")
+    assert not wrong, "\n".join(wrong)
+
+
+def _prescribing(root: pathlib.Path) -> list[tuple[str, str]]:
+    """(path, text) for every tracked file that names the script. The script's own header example and this file's
+    own tables are illustrative rather than prescribed, so both are outside."""
+    outside = {"infra/scripts/sweep.sh", "tests/test_sweep_sh.py"}
+    names = subprocess.run(["git", "-C", str(root), "grep", "-l", "--fixed-strings", "sweep.sh"], capture_output=True, text=True)
+    return [(path, (root / path).read_text()) for path in names.stdout.split() if path not in outside]
+
+
+def test_every_prescribed_sweep_carries_the_pattern_the_script_requires():
+    """The pattern is required as `-e <pattern>`, its own word, so a prescribing line carrying none is an rc 2
+    before it sweeps: the operator gets a refusal where the line promised an answer. Both prescriptions in this
+    tree were that until the commit that required it, and nothing else holds them repaired as the tree moves."""
+    prescribing = _prescribing(SCRIPT.parents[2])
+    assert [t for _, t in prescribing if _controls(t)], "no prescribed sweep found: the scan has gone blind"
+    patternless = [(path, inv) for path, text in prescribing for inv in _patternless(text)]
+    assert not patternless, "\n".join(
+        f"{path} prescribes {inv!r}, which carries no -e <pattern> and is an rc 2 before it sweeps" for path, inv in patternless
+    )
+
+
 def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
     """A control the tracked tree carries cannot miss, so the clean it licenses proves nothing -- the silent
     clean this script exists to end, one level up. Each prescribing line says no tracked file carries its
-    pattern, and nothing else holds that true as the tree moves. The script's own header example is
-    illustrative rather than prescribed, so it is outside."""
+    pattern, and nothing else holds that true as the tree moves."""
     root = SCRIPT.parents[2]
     git = lambda *a: subprocess.run(["git", "-C", str(root), *a], capture_output=True, text=True)  # noqa: E731
-    outside = {"infra/scripts/sweep.sh", "tests/test_sweep_sh.py"}
-    prescribed = [
-        (path, pattern)
-        for path in git("grep", "-l", "--fixed-strings", "sweep.sh").stdout.split()
-        if path not in outside
-        for pattern in _controls((root / path).read_text())
-    ]
+    prescribed = [(path, pattern) for path, text in _prescribing(root) for pattern in _controls(text)]
     assert prescribed, "no prescribed sweep control found: the scan has gone blind, which is not the tree clean"
     carried = []
     for path, pattern in prescribed:
