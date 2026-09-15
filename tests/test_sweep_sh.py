@@ -581,9 +581,8 @@ def test_only_a_regular_file_is_admitted_as_a_pattern_source(tmp_path):
 def test_a_source_named_as_stdin_is_refused_where_no_stat_could_tell(tmp_path):
     """Over a redirected regular file every one of these names stats as that regular file -- `-` as nothing at
     all -- so the admission below them would take four of the five, and the name is the whole of what tells.
-    What the greps ahead of the sweep read under these words is their own `/dev/null`: an empty pattern set,
-    measured for a sweep whose set holds the caller's patterns. The last row is the shape a clean comes out of:
-    beside an ordinary `-f` the set is not empty either, so nothing downstream asks again."""
+    The last row is the shape a clean comes out of: beside an ordinary `-f` the set is not empty either, so
+    nothing downstream asks again."""
     repo = _repo(tmp_path)
     pats = repo.parent / "pats.txt"
     pats.write_text("NEEDLE\n")
@@ -636,11 +635,10 @@ def test_a_fifo_and_a_socket_are_refused_before_a_reader_drains_them(tmp_path):
 def test_a_character_device_is_refused_though_no_reader_drains_it(tmp_path):
     """The kind that answers to neither half: a pty slave is a character device, so no name tells it and it is
     neither `-p` nor `-S`, and it is what a rule written as the kinds that fail lets through. Each of the four
-    greps opens it afresh and the sweep's own, reading last, gets whatever is there then -- which is the same
-    wrong set, with nothing drained and nothing to see: the ordinary `-f` beside it keeps the set non-empty, so
-    what a tree without the admission reports is rc 1 over an empty stderr, a clean over a pattern the tree
-    holds. The writer feeds one EOF per reader so such a tree ANSWERS instead of blocking on a read no writer
-    ends, and the timeout bounds the case whatever the tree does; neither is asserted on."""
+    greps opens it afresh and the sweep's own, reading last, gets whatever is there then. It is driven beside an
+    ordinary `-f` because that is the arrangement no measurement downstream catches, which the sibling below
+    prices. The writer feeds one EOF per reader so a tree without the admission ANSWERS instead of blocking on a
+    read no writer ends, and the timeout bounds the case whatever the tree does; neither is asserted on."""
     repo = _repo(tmp_path)
     ordinary = repo.parent / "absent.txt"
     ordinary.write_text("no-such-string-anywhere\n")
@@ -676,9 +674,9 @@ def test_a_character_device_is_refused_though_no_reader_drains_it(tmp_path):
 
 def test_a_stream_beside_an_ordinary_pattern_file_is_refused_rather_than_swept(tmp_path):
     """The shape no measurement downstream can catch: the ordinary `-f` keeps the pattern set non-empty, so the
-    empty-set check stays quiet, while the stream reaches the sweep's grep drained. What is reported is rc 1 with
-    an empty stderr -- a clean over a pattern the tree holds. A process substitution needs a shell to write it,
-    which is also the only way an operator does."""
+    empty-set check stays quiet, while the stream reaches the sweep's grep drained. Without the refusal what
+    stands is rc 1 with an empty stderr -- a clean over a pattern the tree holds. A process substitution needs a
+    shell to write it, which is also the only way an operator does."""
     repo = _repo(tmp_path)
     absent = repo.parent / "absent.txt"
     absent.write_text("no-such-string-anywhere\n")
@@ -713,8 +711,8 @@ def test_a_control_refused_for_its_own_pattern_is_not_blamed_on_the_callers_word
     other, and again the two want opposite moves. Refused for the caller's word, the sweep's own grep was refused
     the same way and its rc 1 is no absence -- the sibling above. Refused for the pattern, that rc stands unproven
     and replacing the control is the whole fix, which is the move the sibling's message tells the operator not to
-    make. An unescaped `(` or `[` in a regex is an ordinary typo, so this is the category the two share a door
-    with most often."""
+    make. A group left unclosed or a bracket class left open is an ordinary typo in a regex, so this is the
+    category the two share a door with most often."""
     repo = _repo(tmp_path)
     for control in ("NEEDLE\\(", "["):
         done = _sweep(repo, "-l", "--control", control, "no-such-string-anywhere")
