@@ -26,9 +26,10 @@
 # element, and `git -C <dir> commit -n`, `/usr/bin/git commit -n`, `cd <dir> && git commit -n`, `PATH=.. git
 # commit -n` and `-n` behind `--amend` are the same command as the bare one. An ANSI-C quoted word, `$'..'`, which
 # shlex does not know, reaches it as one double-quoted word with its escapes decoded: `-m $'it\'s'` is a message,
-# `$'-n'` and `$'\x2dn'` are `-n`. A command substitution -- `$( .. )` or backticks, quoted or not, a process
-# substitution `<( .. )` or `>( .. )`, and inside a heredoc whose delimiter is unquoted, which bash expands -- is
-# a command of its own and is judged as one. Outside, deliberately: `git push --no-verify`
+# `$'-n'` and `$'\x2dn'` are `-n`. A substitution is a command of its own and is judged as one wherever bash
+# performs it, and nowhere else: `$( .. )` and backticks bare, inside a double quote, and inside a heredoc whose
+# delimiter is unquoted, which bash expands; `<( .. )` and `>( .. )` bare only -- inside a quote of either kind, a
+# `$'..'` or a heredoc body, bash performs no process substitution. Outside, deliberately: `git push --no-verify`
 # (no hook runs at push here), the pre-commit framework's SKIP=<hook> door (used on purpose), an edit of
 # .git/hooks/ or of this file, a git alias, a shell string handed to `sh -c`, `eval` or a Python subprocess, and a
 # program or a flag arriving through a variable or a substitution (`"$(which git)" commit -n`, `F=--no-verify; git
