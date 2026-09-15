@@ -47,7 +47,7 @@ def test_a_pattern_nothing_holds_exits_1_over_a_control_that_hit(tmp_path):
 
 def test_a_clean_with_no_control_is_an_error(tmp_path):
     done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere")
-    assert done.returncode == 2 and "--control" in done.stderr, done.stdout + done.stderr
+    assert done.returncode == 2 and "nothing here proves this sweep could see" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_control_that_misses_makes_the_clean_an_error(tmp_path):
@@ -76,7 +76,7 @@ def test_the_controls_own_operand_is_not_the_swept_pattern(tmp_path):
 
 def test_a_control_with_no_pattern_of_its_own_is_an_error(tmp_path):
     done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere", "--control")
-    assert done.returncode == 2 and "--control" in done.stderr, done.stdout + done.stderr
+    assert done.returncode == 2 and "takes its known positive as its own word" in done.stderr, done.stdout + done.stderr
 
 
 def test_the_control_is_matched_with_the_callers_flags(tmp_path):
@@ -86,6 +86,16 @@ def test_the_control_is_matched_with_the_callers_flags(tmp_path):
     assert under_w.returncode == 2 and "NEEDL" in under_w.stderr, under_w.stdout + under_w.stderr
     plain = _sweep(repo, "--control", "NEEDL", "no-such-string-anywhere")
     assert plain.returncode == 1, plain.stdout + plain.stderr
+
+
+def test_the_control_is_not_matched_under_an_inverting_flag(tmp_path):
+    """`-v .` selects no line, which is the clean this flag holds back; inherited by the control, that same `-v`
+    makes a pattern nothing holds select every line, and the clean passes over a control that proves nothing."""
+    repo = _repo(tmp_path)
+    absent = _sweep(repo, "-v", "--control", "no-such-control-either", ".")
+    assert absent.returncode == 2 and "no-such-control-either" in absent.stderr, absent.stdout + absent.stderr
+    held = _sweep(repo, "-v", "--control", "NEEDLE", ".")
+    assert held.returncode == 1, held.stdout + held.stderr
 
 
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):

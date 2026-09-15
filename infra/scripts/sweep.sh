@@ -12,7 +12,9 @@
 # the clean is rc 2 instead -- an empty result over a file list that opened nothing reads exactly like an absent
 # needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
 # The control is matched with the caller's own flags (`-i`, `-w`, `--include`) and its pattern in place of the
-# sweep's, so what it proves is the matcher the sweep actually ran, not a second, laxer one.
+# sweep's, so what it proves is the matcher the sweep actually ran, not a second, laxer one. A flag that inverts
+# the selection (`-v`, `-L`, and the long spelling of either) is the one kind it does not inherit: a control is a
+# positive probe, and under `-v` a pattern nothing holds selects every line of every file.
 # Usage: infra/scripts/sweep.sh [grep flags] --control <known-positive> <pattern>   rc: 0 a hit, 1 none (control hit), 2 an error.
 set -euo pipefail
 # Given no pattern -- none at all, or flags alone -- grep takes the first path as its regex and answers
@@ -46,6 +48,10 @@ for a in "$@"; do
     -e|-f|--regexp|--file) skip=1; carries=1; args+=("$a"); continue ;;
     --regexp=*|--file=*) pattern=1; args+=("$a"); continue ;;
     -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
+    # The sweep may invert its selection; its control never does -- under `-v` a pattern nothing holds selects
+    # every line, so the control would prove only that the files have lines. A clustered `-lv` is outside this
+    # table, as it is outside the one above, and still reaches the control.
+    -v|-L|--invert-match|--files-without-match) args+=("$a"); continue ;;
     -*) ;;
     *) pattern=1; args+=("$a"); continue ;;
   esac
