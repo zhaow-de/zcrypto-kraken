@@ -38,7 +38,7 @@ skip=0     # the next word is a flag's operand, to be stepped over
 carries=0  # ...and that operand is the pattern, so a dangling `-e` never records one
 takes=0    # ...and that operand is --control's known positive, which grep never sees
 promised=""  # the flag standing LAST with its operand unsupplied, the one word of the caller's that would reach
-             # past their own words into the probe's; cleared by whatever word follows it
+             # past their own words into the probe's
 owed=0     # a cluster already handed to the control takes its operand from the next word; the control needs it too
 control=0
 known=""
@@ -146,9 +146,8 @@ main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # grep's words rather than this script's. It runs from the toplevel, after the `cd`, so a `-f pattern-file`
 # resolves exactly as it will for the sweep. `--directories=skip` goes last because `-r` with no file operand
 # means "search the working directory", which is a walk of the whole tree for nothing and an rc 2 over any path
-# here that cannot be read. It is the one word of ours in the question, and grep reads it as the option it is
-# unless a flag is still waiting for an operand -- which is refused above, and refused there so that this
-# question stays a fair one: nothing of ours is left for grep to bind, so a pattern grep reports is the caller's.
+# here that cannot be read. It is the one word of ours here, and only a flag still promising an operand could
+# take it, which is what the check above holds back.
 probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >/dev/null)" && prc=0 || prc=$?
 # rc 2 is more than the missing pattern: an unrecognised option, a bad `-m` argument and an invalid regex all
 # land here, each carrying its own first line. Explaining them all as a missing pattern sends that operator to

@@ -386,9 +386,9 @@ _TAKES_THE_NEXT_WORD = (
 
 def test_a_flag_standing_last_is_refused_before_grep_is_asked(tmp_path):
     """The probe below the loop asks grep which word is the pattern, and that question is only a fair one while
-    every word in it but the appended one is the caller's. A flag standing last takes the appended one: the
-    sweep then answers about a word nobody typed, and `-e` and `-ld` answered with a licensed clean. So the
-    promise is refused instead, in the script's own words, naming the flag rather than what grep bound."""
+    every word in it but the appended one is the caller's. A flag standing last takes the appended one, and the
+    sweep then answers about a word nobody typed. So the promise is refused instead, in the script's own words,
+    naming the flag rather than what grep bound."""
     repo = _repo(tmp_path)
     wrong = []
     for flag in _TAKES_THE_NEXT_WORD:
