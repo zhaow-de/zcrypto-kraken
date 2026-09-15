@@ -9,7 +9,7 @@ set clause both say, so a bullet carrying three tokens is one finding to fix and
 prints `path:line <tokens>` per offending bullet and exits 0 whether or not it found any: this is an instrument the
 count list reads, not a gate, and a refusal here would block a runbook fix during an incident. A
 non-zero count is the finding -- an operator reaching the page from an alert description cannot
-resolve `T0160` or `spec 00106`, while a paragraph and a table row may carry one, because provenance
+resolve `T0160` or `spec 00106`, while an HTML comment on the line may carry one, because provenance
 for a claim the tree cannot otherwise re-derive is worth keeping (the owner's ruling of 2026-09-12).
 A declaration's `why` is inside its bullet and takes the rule with it.
 
