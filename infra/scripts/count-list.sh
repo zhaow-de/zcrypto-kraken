@@ -243,7 +243,7 @@ c_operator_term_allowlist_edits() { git log --oneline -G_WP_CARRIERS -- tests/te
 # count; its docstring lists what passes it uncaught -- five binding shapes, two `unittest` forms.
 c_skip_gate_contract() { uv run pytest tests/test_live_venue_opt_in.py -q || return 2; }
 
-c_topics_without_a_trigger() { grep -L '^ripe_when:' docs/open-topics/T*.md | wc -l; }
+c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.md | wc -l; }
 
 # The bullets and numbered steps of the top-level runbook pages, `infra/runbooks/README.md` aside, whose own bullets
 # state the rule rather than an operator's step: an internal token --

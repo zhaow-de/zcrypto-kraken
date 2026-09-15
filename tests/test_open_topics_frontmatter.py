@@ -1,5 +1,5 @@
-"""The open-topics frontmatter invariants `.claude/skills/topic-ops/SKILL.md` states, checked
-mechanically."""
+"""The open-topics invariants `.claude/skills/topic-ops/SKILL.md` and CLAUDE.md's topics line state --
+frontmatter, file shape, the trigger and the rendered index -- checked mechanically."""
 
 import importlib.util
 import re
@@ -117,6 +117,90 @@ def test_done_so_far_marks_a_partial_and_nothing_else(path: Path):
     assert bool(found) == (status == "partial"), (
         f"{path.name}: status={status!r} with {len(found)} `Done so far` heading(s) -- a partial carries one, any other status none"
     )
+
+
+# --- every live topic carries a trigger: the counter's decision, as a gate -------------------------
+# The rule and the six shapes a `ripe_when:` may take are CLAUDE.md's topics line; the count under it is
+# `infra/scripts/count-list.sh live-topics-without-a-trigger`, which nothing gated. The shapes are
+# semantic -- nothing mechanical separates a milestone from an activity, and a grammar tight enough to
+# try would refuse ordinary triggers -- so the shape is read by hand in `zcrypto-daily-ops` §5b and
+# these decide exactly what the counter decides and no more, the tie test below reading the pattern back
+# out of the script so the two move together.
+
+COUNT_LIST = TOPICS.parents[1] / "infra" / "scripts" / "count-list.sh"
+_TRIGGER_LINE = re.compile(r"^ripe_when: *[^ ]")
+# The counter's WHOLE function body, end-anchored: a file added after the glob, a stage after the grep or a
+# dropped `wc -l` moves the printed count, and each is a difference this pattern refuses to match.
+_COUNTER_GREP = re.compile(r"^c_topics_without_a_trigger\(\) \{ grep -L '([^']*)' docs/open-topics/T\*\.md \| wc -l; \}$", re.M)
+_DISPATCH = 'emit "live-topics-without-a-trigger" c_topics_without_a_trigger'
+
+
+def carries_a_trigger(text: str) -> bool:
+    """The counter's decision over one file, line by line as grep reads it: a line opening `ripe_when:` with a
+    value, anywhere in the file -- the whole file, not the frontmatter, because that is what the grep reads; a
+    key indented, mistyped, absent or carrying no value is none. Lines, not the text under `re.M`: `[^ ]`
+    would match the newline after an empty key there, and grep's never can."""
+    return any(_TRIGGER_LINE.search(line) for line in text.splitlines())
+
+
+@pytest.mark.parametrize("path", OPEN_TOPICS, ids=lambda p: p.name)
+def test_a_live_topic_carries_a_trigger(path: Path):
+    """A live topic with no trigger waits on nothing anyone can evaluate, and the counter that would show
+    it is a number to read, not a gate."""
+    assert carries_a_trigger(path.read_text(encoding="utf-8")), (
+        f"{path.name}: no line opens `ripe_when:` with a value -- a live topic carries a trigger in one of the six shapes "
+        f"CLAUDE.md names, or it is not a topic (`.claude/skills/topic-ops/SKILL.md`, *Before the file exists*)"
+    )
+
+
+def test_the_trigger_grammar_is_the_counters():
+    """`count-list.sh live-topics-without-a-trigger` and this file decide by the same pattern, or one of
+    them reports a number the other does not gate."""
+    script = COUNT_LIST.read_text(encoding="utf-8")
+    m = _COUNTER_GREP.search(script)
+    assert m, "the counter's function is gone, renamed, or no longer exactly `grep -L '<pattern>' docs/open-topics/T*.md | wc -l`"
+    assert m.group(1) == _TRIGGER_LINE.pattern, (
+        f"the counter greps {m.group(1)!r} and this file {_TRIGGER_LINE.pattern!r} -- move both, or the gate and the count disagree"
+    )
+    assert not _TRIGGER_LINE.flags & (re.IGNORECASE | re.MULTILINE | re.DOTALL), "a flag the grep does not carry"
+    assert any(line.strip().startswith(_DISPATCH) for line in script.splitlines()), (
+        "the entry no longer dispatches to this function"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "carried"),
+    [
+        ("---\nstatus: open\nripe_when: rung 1 produces real fills\n---\n\n# a title\n", True),
+        ('---\nstatus: partial\nripe_when: "per family — B2: settled; C1: weeks of captured L2 exist"\n---\n', True),
+        ("---\nstatus: open\nripe_when: 'the first armed session''s order\n  survives a restart'\n---\n", True),
+        ("---\nstatus: open\n---\n\nripe_when: a line in the body\n", True),
+        ("---\nstatus: open\n---\n\n# a title\n", False),
+        ("---\nstatus: open\nripe-when: a mistyped key\n---\n", False),
+        ("---\nstatus: open\n  ripe_when: indented under nothing\n---\n", False),
+        ("---\nstatus: open\nripe_when_note: a longer key\n---\n", False),
+        ("---\nstatus: open\n# ripe_when: commented out\n---\n", False),
+        ("---\nstatus: open\nripe_when:\n---\n", False),
+        ("---\nstatus: open\nripe_when:    \n---\n", False),
+    ],
+    ids=[
+        "plain-value",
+        "double-quoted-value",
+        "single-quoted-folded-value",
+        "body-line-admitted-as-the-counter-admits-it",
+        "no-key",
+        "mistyped-key",
+        "indented-key",
+        "longer-key",
+        "commented-key",
+        "empty-value",
+        "whitespace-value",
+    ],
+)
+def test_carries_a_trigger_reads_the_line_the_counter_reads(text: str, carried: bool):
+    """The body-line case is admitted on purpose: the counter reads the whole file, so a frontmatter-only
+    rewrite here would gate what the counter does not count."""
+    assert carries_a_trigger(text) is carried
 
 
 # --- every link in the index lands on a file that exists ------------------------------------------
