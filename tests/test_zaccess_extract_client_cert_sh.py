@@ -1,10 +1,10 @@
 """`infra/scripts/zaccess-extract-client-cert.sh` writes the vaulted mTLS client bundle for a device as two 0600 files,
 `zaccess-<name>.p12` and `zaccess-<name>.p12.pass`, under `--out-dir` (default `$HOME/Downloads`, name `macbook`),
 and prints where each landed and the import instruction, never the passphrase. An unknown argument is usage at exit
-2 before any directory exists; a vault password helper that returns nothing or fails, and a bundle that does not
-decode to DER, are refused before anything is written. Driven from a copy in a scratch tree: the vault helper is a
-stub, the vault a throwaway file the script's own `ZACCESS_*` overrides point at, and `uv` a PATH stub handing
-`uv run python` to this interpreter."""
+2 before any directory exists; a bundle that does not decode to DER and a helper that returns nothing are refused,
+and a helper that exits non-zero dies on `check=True`, all three at exit 1 with nothing written. Driven from a copy
+in a scratch tree: the vault helper is a stub, the vault a throwaway file the script's own `ZACCESS_*` overrides
+point at, and `uv` a PATH stub handing `uv run python` to this interpreter."""
 
 from __future__ import annotations
 

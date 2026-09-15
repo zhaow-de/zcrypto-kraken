@@ -1,7 +1,8 @@
 """Every script under `infra/scripts/` and `.claude/skills/*/scripts/` has a test named for it: a regular `.py` or
 `.sh` file `<stem>.<ext>` is covered by `tests/test_<stem>.py` or, for a `.sh`, `tests/test_<stem>_sh.py`, with `-`
-read as `_`. The `.zsh` files are out: they are the operator's interactive-shell tooling, and the agent's shell is
-bash, which cannot drive them. No allowlist -- a script without a test is named here until it has one."""
+read as `_`. The `.zsh` files are out: they are the operator's own terminal tooling -- a tmux cockpit and a
+workstation-to-ops transport -- and nothing but the suffix excludes them. No allowlist -- a script without a test is
+named here until it has one."""
 
 from __future__ import annotations
 
@@ -9,6 +10,10 @@ import pathlib
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _SUFFIXES = {".py", ".sh"}
+# Assembled at run time, so the fixture below never reads as this tree's citation of a guidance script that does
+# not exist -- `tests/test_guidance_refs_resolve.py` walks `tests/` for that spelling, and its own literals are
+# assembled the same way.
+_SKILL_SCRIPT = ".claude" + "/skills/one/scripts/tool.py"
 
 
 def _scripts(root: pathlib.Path) -> list[pathlib.Path]:
@@ -35,7 +40,7 @@ def test_the_rule_names_the_uncovered_script_and_leaves_the_covered_and_the_zsh_
         "infra/scripts/covered-sh.sh",
         "infra/scripts/other-sh.sh",
         "infra/scripts/shell.zsh",
-        ".claude/skills/one/scripts/tool.py",
+        _SKILL_SCRIPT,
     ):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("", encoding="utf-8")
@@ -43,7 +48,7 @@ def test_the_rule_names_the_uncovered_script_and_leaves_the_covered_and_the_zsh_
     (tmp_path / "tests").mkdir()
     for name in ("test_covered_sh_sh.py", "test_other_sh.py", "test_shell.py"):
         (tmp_path / "tests" / name).write_text("", encoding="utf-8")
-    assert _missing(tmp_path) == [".claude/skills/one/scripts/tool.py", "infra/scripts/plain-py.py"]
+    assert _missing(tmp_path) == [_SKILL_SCRIPT, "infra/scripts/plain-py.py"]
 
 
 def test_the_walk_sees_both_trees():

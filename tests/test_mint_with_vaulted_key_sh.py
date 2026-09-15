@@ -4,8 +4,7 @@ copy in a scratch tree, so every path it derives from its own location lands the
 without the minter, and without the venv interpreter; its in-process stage refuses a vault password that cannot be
 read or comes back empty, and a credential absent or empty under its names; and the minter receives `-I`, the
 arguments verbatim, the two variables from the vault and the repo root as cwd. The vault helper, the vault file and
-the minter are stubs -- no key, no order -- and nothing but comments sits above the guard line, where a function named
-`exec` would shadow the builtin."""
+the minter are stubs -- no key, no order -- and nothing but comments sits above the guard line."""
 
 from __future__ import annotations
 

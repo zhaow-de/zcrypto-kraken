@@ -1,9 +1,10 @@
 """`infra/scripts/topics-index.py` renders `docs/open-topics/README.md` from the topic files: one section per
 status in the order open, partial, resolved; one bullet per topic sorted by serial, the file's own serial stripped
 from the H1, another topic's serial kept, and a live topic's `ripe_when` collapsed onto the bullet. A topic whose
-status is not one of the three, whose H1 carries a bracket, whose file carries no serial or whose text has no H1 is
-refused by name. `--check` exits 1 when the committed index differs from the render and names the command that
-regenerates it; any other argument is usage at exit 2, and writes nothing."""
+status is not one of the three, whose H1 carries a bracket or whose file carries no serial is refused by name; a
+text with no H1 is refused by `title`, which has no name to give. `--check` exits 1 when the committed index differs
+from the render and names the command that regenerates it; any other argument is usage at exit 2, and writes
+nothing."""
 
 from __future__ import annotations
 
