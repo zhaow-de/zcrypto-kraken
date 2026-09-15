@@ -16,16 +16,14 @@ const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout
 const CHECKOUT = `Run every git command with \`-C ${repo}\`. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there — you are its only user — and never create, remove or check out a worktree.`
 
 // --- schema ------------------------------------------------------------------------------------
-// A row is a site that needs a change; `graded` carries the census, so the count is paid once rather
-// than composed one "as is" row at a time.
 const PROSE = {
   type: 'object',
   properties: {
-    site: { type: 'string', description: 'path:line at the tip' },
-    survives: { type: 'string', enum: ['trim', 'cut', 'fix'] },
+    site: { type: 'string', description: 'path:line at the tip; a long site graded paragraph by paragraph returns one row per paragraph, each at its own first line' },
+    survives: { type: 'string', enum: ['trim', 'cut', 'fix', 'keep'] },
     correct: { type: 'boolean', description: 'false when a claim in it is false of the tree' },
-    duplicateOf: { type: 'string', description: 'path:line of the sibling that already carries the claim, or empty' },
-    ship: { type: 'string', description: 'the text to ship, verbatim — empty when cut' },
+    duplicateOf: { type: 'string', description: 'path:line of the sibling that already carries the claim, whatever carries it — or empty' },
+    ship: { type: 'string', description: 'the text to ship, verbatim — empty when cut; for `keep`, the one line naming what a reader would do differently without that paragraph' },
   },
   required: ['site', 'survives', 'correct', 'duplicateOf', 'ship'],
 }
@@ -64,7 +62,7 @@ const REPORT = {
     ready: { type: 'boolean', description: 'true when nothing above needs a change before a read' },
     verdict: { type: 'string', description: 'three sentences at most' },
     graded: { type: 'integer', description: 'how many prose sites were graded, including the ones that stand' },
-    prose: { type: 'array', items: PROSE, description: 'only the sites that need a change; a site that stands as written is counted in `graded` and not listed' },
+    prose: { type: 'array', items: PROSE, description: 'the sites that need a change, plus a `keep` row for every paragraph of a site longer than eight lines that stands' },
     claims: { type: 'array', items: CLAIM },
     probes: { type: 'array', items: PROBE },
     classWalk: { type: 'array', items: WALK },
@@ -78,7 +76,11 @@ const prompt = `You are the pre-reader of \`git log ${range}\` at tip \`${tip}\`
 
 Four things, each against the tree at the tip, none on trust:
 
-1. PROSE. Every comment, docstring, topic sentence and operator-facing string the range adds or changes — graded as it stands at the tip in the whole docstring or comment block a hunk lands in, plus the module docstring of each touched file, not the added lines alone, because a phrase per commit accretes into repetition. Three questions per site: would a reader do something differently without it (name what)? Is every claim in it correct against the code and data? Does the same claim already stand in the same file, in an error string, in the rule or topic it cites, or in the range's commit messages (quote the sibling with path:line)? A durable file holds STATE and DECISIONS; an EVENT — what was measured, read, found or corrected — goes to the commit message, never into the code; an operator-facing string may carry an instruction and the one reason that stops the wrong move. Return a row ONLY for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` when the length stands and a claim in it does not — with the text to ship, verbatim; a site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
+1. PROSE. Every comment, docstring, topic sentence and operator-facing string the range adds or changes — graded as it stands at the tip in the whole docstring or comment block a hunk lands in, plus the module docstring or header of each touched file, not the added lines alone, because a phrase per commit accretes into repetition. Three questions: would a reader do something differently without it (name what)? Is every claim in it correct against the code and data? Does the same claim already stand elsewhere — in the code the prose describes, in a test that drives it, in an error string, in the rule or topic it cites, or in the range's commit messages (quote the sibling with path:line)? A durable file holds STATE and DECISIONS; an EVENT — what was measured, read, found or corrected — goes to the commit message, never into the code; an operator-facing string may carry an instruction and the one reason that stops the wrong move.
+
+The first question is asked of every PARAGRAPH: a site longer than eight lines as a reader sees it, source or rendered, is graded paragraph by paragraph, each owing its own answer, and a paragraph with none is cut whatever the truth of its sentences — a long block of true sentences is the shape that passes a site-level read and fails its reader. Four shapes fail that question on sight, and each is a row: (a) a paragraph that enumerates what a table, a constant, a case list or a function's branches below it already spell out — the code is the list and the prose a copy that goes stale; what may stay is the external fact the code encodes but cannot say, such as why two branches differ or a tool's own asymmetry; (b) a specimen — a literal path, id, count, date or string that came from a measurement over the tree or its history — is an event: cut it and name the commit message as its home; (c) a sentence stating a behaviour a test drives duplicates that test, which is exhaustive and executable where the prose is a sample; (d) a rule restated from the negative side after the positive side gave it ("not X" beside "only Y"). None of the four is cut on sight where a rule names that prose as owed — a guard whose header or docstring \`CLAUDE.md\` requires to state what it refuses is graded on its reader like any other site. A site the range has already rewritten once (\`git log -p ${range} -- <path>\` shows the same paragraph changed in an earlier commit of the range), and that no rule names as owed, is graded cut unless you can ship it correct in one line: a sentence rewritten once and up for rewriting again is the signal that the code or a test states it better.
+
+Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` when the length stands and a claim in it does not — with the text to ship, verbatim; and a \`keep\` row for every paragraph of a site longer than eight lines that stands — a \`keep\` whose \`ship\` names no reason a reader would act on is not a keep, and the run reports it as a row you owe. A shorter site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
 
 2. CLAIMS. Every claim a commit message in the range makes that a command can check — a number, a count, a grep verdict, a citation, a "none left" — re-run with the command the message quotes (or the obvious one when it quotes none) and compared. A claim that does not reproduce is disposition does-not-reproduce with what the command printed.
 
@@ -86,11 +88,21 @@ Four things, each against the tree at the tip, none on trust:
 
 4. CLASS WALK. For each defect a commit says it fixed, state in one sentence the invariant the fix restores, then walk its class BOTH ways and list every member the fix left. TEXT: the defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition. SPACE: the categories the fixed code's input or state ranges over, each judged against the invariant — only categories this repo produces, driven where you can drive them, named rather than guessed where you cannot. A class walked one way is half walked.
 
-Write a Markdown report to ${reportDir}/pre-read.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
+Write a Markdown report to ${reportDir}/pre-read.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
 phase('Pre-read')
 const report = await agent(prompt, { label: 'pre-read', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
 if (!report) throw new Error('the pre-reader returned nothing')
 const n = (list, pred) => list.filter(pred).length
-log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
+// A reason is judged by what is left of it: the words a placeholder is made of, and the words any sentence
+// carries, say nothing on their own, so a ship built only from those is a count wearing a sentence's clothes.
+const SAYS_NOTHING = new Set(['none', 'nothing', 'nil', 'na', 'tbd', 'keep', 'kept', 'stand', 'stands', 'write', 'written', 'change', 'changes', 'changed', 'need', 'needed', 'needs', 'same', 'unchanged', 'ok', 'okay', 'fine', 'good', 'correct', 'right', 'already', 'still', 'reads', 'read', 'looks', 'look', 'seems', 'add', 'yes', 'x', 'y'])
+const ANY_SENTENCE = new Set(['a', 'an', 'the', 'is', 'are', 'was', 'be', 'been', 'it', 'its', 'this', 'that', 'as', 'to', 'of', 'and', 'or', 'no', 'not', 'here', 'for', 'in', 'on', 'at', 'with', 'without', 'by', 'so'])
+const saysNothing = (ship) => {
+  const said = new Set(String(ship || '').toLowerCase().split(/[^a-z]+/).filter((w) => w && !SAYS_NOTHING.has(w) && !ANY_SENTENCE.has(w)))
+  return said.size < 2
+}
+const mute = report.prose.filter((p) => p.survives === 'keep' && saysNothing(p.ship)).map((p) => p.site)
+if (mute.length) log(`OWED: ${mute.length} \`keep\` row(s) name no reason a reader would act on — ${mute.join(', ')}`)
+log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => p.survives === 'keep')} keep rows; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
 return report
