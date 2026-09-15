@@ -3,8 +3,13 @@ cannot import another; this holds the copies equal."""
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+import shutil
+import subprocess
+
+import pytest
 
 _FLOWS = pathlib.Path(__file__).resolve().parents[1] / ".claude" / "workflows"
 
@@ -20,6 +25,59 @@ def test_the_three_workflows_share_their_grading_scope_and_checkout_contract():
     for name in ("GRADING", "SCOPE", "RULES"):
         values = {f: _constant(name, t) for f, t in texts.items()}
         assert len(set(values.values())) == 1, f"{name} differs between {sorted(values)}"
+
+
+def test_a_keep_row_that_says_nothing_is_reported_as_owed():
+    """A wrong predicate parses, so the check is driven rather than read, and the log call runs under a stub
+    because it is the only part of it anyone sees."""
+    if shutil.which("node") is None:
+        pytest.skip("node not available, so the workflow's own predicate cannot be run")
+    text = (_FLOWS / "pre-read.js").read_text()
+    check = re.search(r"^const SAYS_NOTHING = .*?^if \(mute\.length\) log\(.*?\)$", text, re.M | re.S)
+    assert check, "the owed-keep check must be the block the test drives, ending in its log call"
+    nothing = [
+        "",
+        "  ",
+        "—",
+        "N.A.",
+        "None.",
+        "(none)",
+        "TBD",
+        "keep",
+        "Keep.",
+        "It stands as written.",
+        "KEEP AS WRITTEN",
+        "None needed.",
+        "No changes.",
+        "stands as is",
+        "no change needed",
+        "Good as is.",
+        "reads fine",
+        "Nothing to add.",
+    ]
+    something = [
+        "a reader would not know the unit is the block",
+        "without it the count is unattributed",
+        "names the one tool whose refusals no test carries",
+    ]
+    rows = "const ROWS = CASES.map((ship, i) => ({ site: `p.py:${i}`, survives: 'keep', ship }))"
+    program = "\n".join(
+        (
+            f"const CASES = {json.dumps(nothing + something)}",
+            "const SAID = []",
+            "const log = (line) => SAID.push(line)",
+            rows,
+            check.group(0).replace("report.prose", "ROWS"),
+            "console.log(JSON.stringify([CASES.map(saysNothing), mute, SAID]))",
+        )
+    )
+    done = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    flags, owed, said = json.loads(done.stdout)
+    assert flags == [True] * len(nothing) + [False] * len(something), done.stdout
+    assert owed == [f"p.py:{i}" for i in range(len(nothing))], "every row that says nothing is owed"
+    assert len(said) == 1 and said[0].startswith(f"OWED: {len(nothing)} "), said
+    for site in owed:
+        assert site in said[0], f"{site} is owed but the coordinator is not told"
 
 
 def test_the_grading_grades_prose_by_consequence():
