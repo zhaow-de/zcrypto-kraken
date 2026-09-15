@@ -1,11 +1,13 @@
-"""The PreToolUse[Bash] guard's two arms -- the git hook bypasses, and a stream a cap has already shortened being
-counted or compared -- driven with synthetic stdin JSON.
+"""The PreToolUse[Bash] guard's three arms -- the git hook bypasses, a stream a cap has already shortened being
+counted or compared, and `$?` read after a pipeline no `pipefail` covers -- driven with synthetic stdin JSON.
 
 The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
 family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
 the ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
 comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
-pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks.
+pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks; the
+`pipefail` set ahead of the pipeline, the command that ran between the pipeline and the read, and the `$?` that is a
+character of a longer word rather than a word of its own.
 """
 
 from __future__ import annotations
@@ -142,6 +144,20 @@ REFUSED = [
     ('if [ "$(git diff --name-only | tail -1)" = x ]; then echo one; fi', "tail -1"),
     # the bypass arm still judges the rest of a command line whose test holds a body that does not tokenise
     ('[ -n "$(git log --grep=doesn\'t)" ] && git commit -n -m x', "-n"),
+    # `$?` read after a pipeline nothing set `pipefail` for: the assignment, the bare word, behind a test, out of a
+    # substitution, over each separator that ends a pipeline
+    ("ls | sort; rc=$?", "rc=$?"),
+    ("ls | sort\nrc=$?", "rc=$?"),
+    ("ls | sort; status=$?", "status=$?"),
+    ("ls | sort; echo $?", "$?"),
+    ("ls |& sort; rc=$?", "rc=$?"),
+    ("git ls-files | xargs grep -l TODO && echo $?", "$?"),
+    ("git ls-files | xargs grep -l TODO || exit $?", "$?"),
+    ("make 2>&1 | tee build.log; if [ $? -ne 0 ]; then exit 1; fi", "$?"),
+    ("cat f | sort -u; [[ $? -eq 0 ]] && echo ok", "$?"),
+    ("x=$(git log --oneline | sort); echo $?", "$?"),
+    ("set -e; ls | sort; rc=$?", "rc=$?"),  # -e is not -o pipefail
+    ("ls | sort; rc=$?; set -o pipefail", "rc=$?"),  # set after the read, which has already taken the wrong status
 ]
 
 ADMITTED = [
@@ -246,6 +262,26 @@ ADMITTED = [
     'echo "git log | head -5 | wc -l"',
     "cat <<'EOF'\nls | head -2 | wc -l\nEOF",
     'uv run pytest tests/test_bash_guard.py -k "head or tail"',  # the ids are the commands, so this is the selector
+    # `pipefail` set ahead of the pipeline, in each spelling that sets it
+    "set -o pipefail; ls | sort; rc=$?",
+    "set -eo pipefail\nls | sort\nrc=$?",
+    "set -euo pipefail; uv run pytest -q | tee /tmp/log; rc=$?",
+    "set -o errexit -o pipefail; ls | sort; echo $?",
+    "bash -o pipefail -c 'ls | sort'; echo $?",
+    # the status `$?` holds is not the pipeline's: another command ran between, or none ran before
+    "ls | sort; echo done; echo $?",
+    "ls | sort; cd /tmp; rc=$?",
+    "make; rc=$?",
+    "uv run pytest -q tests/test_bash_guard.py; echo $?",
+    "echo $?",
+    "ls | sort",
+    # `${PIPESTATUS[@]}`, the spelling that reads every stage
+    'ls | sort; echo "${PIPESTATUS[@]}"',
+    "ls | sort\nstatus=${PIPESTATUS[0]}",
+    # `$?` as a character of a longer word: a message, an echo, a quoted heredoc body -- never a word bash expands
+    'git log --oneline | sort; git commit -m "rc=$? reads the last stage"',
+    'ls | sort; echo "rc=$?"',
+    "cat <<'EOF'\nls | sort\nrc=$?\nEOF",
 ]
 
 
@@ -271,16 +307,19 @@ def test_a_refused_shape_is_blocked_and_the_message_names_it(tmp_path: Path, com
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr
     # Where the message names the spelling: a flag as a word of the first backtick pair (`git <sub> <tok>`), never the
-    # later echo of the whole command; a capping stage as that pair entire; a key or a variable before " sets ".
+    # later echo of the whole command; a capping stage and a status read as that pair entire; a key or a variable
+    # before " sets ".
     named = r.stderr.partition("`")[2].partition("`")[0]
     capping = spelling.split()[0] in ("head", "tail")
-    if capping:
+    reading = "$?" in spelling
+    if capping or reading:
         assert named == spelling, r.stderr
     elif spelling.startswith("-"):
         assert spelling in named.split(), r.stderr
     else:
         assert spelling in r.stderr.partition(" sets ")[0], r.stderr
-    assert ("cap" if capping else "hooks") in r.stderr  # what the shape costs
+    cost = "pipefail" if reading else "cap" if capping else "hooks"
+    assert cost in r.stderr  # what the shape costs
     assert r.stdout == ""
 
 
