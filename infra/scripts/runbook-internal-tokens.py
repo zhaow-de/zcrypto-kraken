@@ -21,7 +21,7 @@ Neither half of the reading is defined here, and that is the point -- one defini
   carries `# T0096` and `# spec 00052` as examples, so a copy of it living under `infra/scripts/`
   would read as an operator-facing leak and turn the test red on its own definition.
 * the BULLET -- a wrapped item's continuation lines joined, fenced code set aside -- comes from
-  `infra/scripts/guidance-guard.py`'s `bullets()`, which the universal gate beside it borrows whole.
+  `infra/scripts/guidance-guard.py`'s `bullets()`, which the universal gate in that same file calls.
   The page reader borrows that module's `BULLET` and `without_html_comments` and keeps its own fence
   blanker, so the marker and the comment mean one thing to all three readers while the joined item is
   this instrument's and the gate's.
