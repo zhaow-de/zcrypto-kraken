@@ -121,7 +121,7 @@ Residual (b) is invisible to the early-close counter, and that is arithmetic rat
 
 ### Retire when
 
-All three of these hold in `cli/capture/segment_writer.py`, at which point this section describes nothing: the witness quorum is above two, the wall clock can no longer second an hour on its own, and `_enter_hour`'s first-event branch refuses an hour behind our own. Closing one residual does not retire the other two, nor the alert sections below that cover them — retire each with the mechanism it describes. The decision to accept all three, and what each closing knob would starve, is on record in the topic that accepted them<!-- T0037 -->.
+All three of these hold in `cli/capture/segment_writer.py`, at which point this section describes nothing: the witness quorum is above two, the wall clock can no longer second an hour on its own, and `_enter_hour`'s first-event branch refuses an hour behind our own. Closing one residual does not retire the other two, nor the alert sections below that cover them — retire each with the mechanism it describes. The decision to accept all three, and what each closing knob would starve, is recorded outside this page<!-- T0037 -->.
 
 ______________________________________________________________________
 
