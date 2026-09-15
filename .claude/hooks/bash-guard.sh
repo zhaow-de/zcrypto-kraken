@@ -1,41 +1,32 @@
 #!/usr/bin/env bash
-# PreToolUse[Bash] guard: a command that would skip the repo's commit-time hooks is refused before it runs --
-# exit 2, the spelling found and what it bypasses on stderr; anything else exits 0 silently. One arm today, the
-# git hook-bypass arm; a later arm is one more judge over the same simple commands, one verdict each.
-#   commit           --no-verify and the prefixes git accepts or calls ambiguous (--no-v .. --no-verif); -n alone
-#                    or inside a short bundle (-an, -qn, -anm). A value-taking option (-m, -F, -C, -c, -t,
-#                    --message, --file, --author, --date, --template, --reuse-message, --reedit-message, --fixup,
-#                    --squash, --trailer, --cleanup, --pathspec-from-file) consumes its value, so `-m -n` is a
-#                    message; `--` ends options.
-#   merge/rebase     --no-verify and its prefixes; not -n, which is --no-stat there.
-#   am               --no-verify and its prefixes, and -n, which is --no-verify there too.
-#   config           a SET of core.hooksPath: the key followed by a value, bare or after any of --local, --global,
-#                    --system, --worktree, --file <f>, --add, --replace-all, or the `config set` verb. Not --get,
-#                    --get-all, --unset, --unset-all, `config get`/`unset`, nor the bare read `git config core.hooksPath`.
-#   before the subcommand and in the environment: `-c core.hooksPath=..`, `--config-env core.hooksPath=..`, and a
-#                    GIT_CONFIG_KEY_<n>=core.hooksPath or GIT_CONFIG_PARAMETERS assignment where git would see it:
-#                    a NAME=value word before `git` in the same simple command -- the prefix of git itself or of
-#                    whatever reaches it (sudo, env, timeout, nice, ...) -- and an argument of export, which
-#                    outlives the command. Not an assignment in a command with no `git` word -- `grep
-#                    'GIT_CONFIG_KEY_0=..' docs/` is a search; one naming a file `../git` is refused, the price of
-#                    listing no wrapper -- and not a bare assignment (`GIT_CONFIG_KEY_0=..; git commit` is a shell
-#                    variable git never sees).
-# Argv, not text. The command is cut of its heredoc bodies, split into simple commands on && || ; | & and newlines,
-# each tokenised by shlex, and git's own options before the subcommand (-C <dir>, --git-dir, --work-tree, -c,
-# --no-pager, ...) are stepped over -- so a flag inside a quoted message, a heredoc or a comment is never an argv
-# element, and `git -C <dir> commit -n`, `/usr/bin/git commit -n`, `cd <dir> && git commit -n`, `PATH=.. git
-# commit -n` and `-n` behind `--amend` are the same command as the bare one. An ANSI-C quoted word, `$'..'`, which
-# shlex does not know, reaches it as one double-quoted word with its escapes decoded: `-m $'it\'s'` is a message,
-# `$'-n'` and `$'\x2dn'` are `-n`. A substitution is a command of its own and is judged as one wherever bash
-# performs it, and nowhere else: `$( .. )` and backticks bare, inside a double quote, and inside a heredoc whose
-# delimiter is unquoted, which bash expands; `<( .. )` and `>( .. )` bare only -- inside a quote of either kind, a
-# `$'..'` or a heredoc body, bash performs no process substitution. Outside, deliberately: `git push --no-verify`
-# (no hook runs at push here), the pre-commit framework's SKIP=<hook> door (used on purpose), an edit of
-# .git/hooks/ or of this file, a git alias, a shell string handed to `sh -c`, `eval` or a Python subprocess, and a
-# program or a flag arriving through a variable or a substitution (`"$(which git)" commit -n`, `F=--no-verify; git
-# commit $F`) -- none is an argv of `git` in the command. A failure of the hook's own -- stdin that is not the tool
-# call's JSON, an unbalanced quote -- admits with a note on stderr, never blocks: exit 2 would refuse every Bash
-# call in the session.
+# PreToolUse[Bash] guard: a refusal is exit 2, the one code the harness blocks on, with the spelling found and
+# what it costs on stderr; anything else exits 0 silently.
+# `tests/test_bash_guard.py` drives every family in both directions and IS the list of what is refused and what
+# is admitted; what follows is only what neither the code nor that corpus can say.
+#
+# Argv, not text. The command is cut of its heredoc bodies, split into pipelines and into stages, and tokenised,
+# so a flag inside a quoted message, a heredoc or a comment is never an argv element. A substitution -- `$( .. )`,
+# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else.
+# A wrapper is transparent to the bypass arm and opaque to the cap arm: the first finds `git` at any position in a
+# simple command, so `timeout 5 git commit -n` and `/usr/bin/git commit --no-verify` are that one call in its
+# wrapper, path and option spellings; the second reads a stage's program as its first word alone, so
+# `timeout 5 head -5 f | wc -l` holds no cap -- the direction that does not refuse ordinary work.
+#
+# git's own asymmetries, which the per-subcommand arms encode and a reader would otherwise "fix": `-n` is
+# `--no-verify` on commit and on am, `--no-stat` on merge and rebase; a config SET of core.hooksPath bypasses the
+# hooks and a read does not; an assignment reaches git only as a prefix of the command that runs it, or through
+# `export`.
+#
+# Outside, deliberately: `git push --no-verify` (no hook runs at push here), the pre-commit framework's
+# `SKIP=<hook>` door (used on purpose), an edit of `.git/hooks/` or of this file, a git alias, a shell string
+# handed to `sh -c`, `eval` or a Python subprocess, a program or a flag arriving through a variable or a
+# substitution, a cap first in its pipeline, which truncates what it opened rather than what the command computed
+# (`head -1 VERSION`), and a truncation that is neither head nor tail -- none is an argv this guard judges.
+#
+# A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
+# admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
+# class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
+# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
@@ -71,15 +62,24 @@ CONFIG_READ = {"get", "get-all", "get-regexp", "get-urlmatch", "get-color", "get
 CONFIG_SET = {"add", "replace-all"}
 CONFIG_VALUE = {"file", "blob", "type", "default", "comment", "value", "url"}
 CONFIG_VERBS = {"list", "get", "set", "unset", "rename-section", "remove-section", "edit"}
+CAPS = {"head", "tail"}
+GREPS = {"grep", "egrep", "fgrep", "rg"}
+COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
+TESTS = {"[", "[[", "test"}
+COMPARE = {"=", "==", "!="}
+KEYWORDS = {"if", "elif", "while", "until", "then", "do", "!", "{"}
+TERMINATORS = {"]", "]]"} | COMPARE  # the test's own words an unquoted `$( .. )` inside it leaves glued to the last stage
 OPS = ["&>>", ";;&", "<<<", "&&", "||", "|&", ";;", ";&", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "|", "&", ";", "\n", "<", ">", "(", ")"]
 SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
+PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator starts a new one
 REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 
 
 def expansions(body):
-    # The lines of a heredoc bash expands: `$( .. )` and backticks are commands there, but quotes and `#` are text,
-    # so the main scan's rules would close a body at the wrong place.
+    # Every `$( .. )` and backtick body inside a span bash expands: the lines of a heredoc whose delimiter is
+    # unquoted, and a word the main scan kept whole (`"$( .. )"`). Quotes and `#` are text in both, so the main
+    # scan's rules would close a body at the wrong place.
     found, stack, i, n = [], [], 0, len(body)
     while i < n:
         ch, st = body[i], stack[-1][0] if stack else "top"
@@ -242,31 +242,36 @@ def cut_heredocs(text):
     return "".join(out), bodies
 
 
-def simple_commands(text):
+def pipelines(text):
+    # Each pipeline as its stages, in order: the second arm judges what one stage hands the next, and the first
+    # arm reads every stage on its own.
     cut, bodies = cut_heredocs(text)
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
-    cmds, skip = [[]], False
+    pipes, skip = [[[]]], False
     for tok in lex:
         if skip:
             skip = False
             continue
         if not tok or not set(tok) <= PUNCT:
-            cmds[-1].append(tok)
+            pipes[-1][-1].append(tok)
             continue
         last = ""
         while tok:
             last = next(op for op in OPS if tok.startswith(op))
-            if last in SEP and cmds[-1]:
-                cmds.append([])
+            if last in PIPE and pipes[-1][-1]:
+                pipes[-1].append([])
+            elif last in SEP and pipes[-1][-1]:
+                pipes.append([[]])
             tok = tok[len(last) :]
         skip = last in REDIRECT
-    cmds = [c for c in cmds if c]
+    out = [[stage for stage in pipe if stage] for pipe in pipes]
+    out = [pipe for pipe in out if pipe]
     for body in bodies:
-        cmds.extend(simple_commands(body))
-    return cmds
+        out.extend(pipelines(body))
+    return out
 
 
 def refuse(text):
@@ -274,9 +279,21 @@ def refuse(text):
     sys.exit(2)
 
 
-def spelled(words):
-    line = shlex.join(words)
+def clip(line):
     return line if len(line) <= 120 else line[:117] + "..."
+
+
+def spelled(words):
+    return clip(shlex.join(words))
+
+
+def stage_name(words):
+    out = []
+    for w in words:
+        if w in TERMINATORS:
+            break
+        out.append(w)
+    return spelled(out)
 
 
 def judge_options(sub, rest, words):
@@ -354,6 +371,97 @@ def judge_config(rest, words):
     refuse(f"`{spelled(words)}` sets core.hooksPath to `{value}`, which points git away from .git/hooks so the repo's hooks never run. Read it with `git config --get core.hooksPath`; undo it with `git config --unset core.hooksPath`.")
 
 
+def argv_of(words):
+    # A stage's program and its arguments: leading NAME=value assignments and shell keywords stepped over, the
+    # program path-stripped. A word in any other position is never the program.
+    i = 0
+    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS):
+        i += 1
+    if i == len(words):
+        return "", []
+    return words[i].rpartition("/")[2], words[i + 1 :]
+
+
+def capping(words):
+    p, rest = argv_of(words)
+    if p not in CAPS:
+        return False
+    # `tail +2`, `-n +2`, `-n+2`, `--lines=+2`: the stream from line 2 on, which caps nothing.
+    return p == "head" or not any(a.startswith(("+", "-n+", "--lines=+")) for a in rest)
+
+
+def counting(words):
+    p, rest = argv_of(words)
+    if p == "wc":
+        return True
+    if p not in GREPS:
+        return False
+    for a in rest:
+        if a == "--":
+            break  # a pattern, not a flag: `grep -- -c` searches for `-c`
+        if a in COUNT_FLAGS or (a.startswith("-") and not a.startswith("--") and "c" in a[1:]):
+            return True
+    return False
+
+
+def testing(words):
+    return argv_of(words)[0] in TESTS
+
+
+def comparing(words):
+    # The words of a test, in the order the shell hands them: a `=`, `==` or `!=` -- COMPARE holds no other
+    # operator -- against a non-empty operand, which is the verdict a cap can change. An emptiness test (`-z`,
+    # `-n`, `= ""`, `!= ""`) reads a capped stream and an uncapped one alike, because `$( .. )` strips the trailing
+    # newlines and `head -1` of a non-empty stream is non-empty. A numeric comparison (`-eq`, `-gt`) is in neither
+    # class and is admitted: over a substitution it almost always holds a count the count arm already refuses.
+    return any(w in COMPARE and 0 < j < len(words) - 1 and words[j - 1] and words[j + 1] for j, w in enumerate(words))
+
+
+def capped_stage(body):
+    # The stage of a substitution body that caps a stream it did not open, or None -- None too for a body that does
+    # not tokenise on its own, which the quote around it can hide from the top-level scan (`$(git log
+    # --grep=doesn't)` holds one apostrophe). Skipping such a body leaves every other stage and the first arm
+    # judged; letting the error out of here fails the whole hook open instead, and with it the bypass arm.
+    try:
+        subs = pipelines(body)
+    except ValueError:
+        return None
+    return next((stage for sub in subs for i, stage in enumerate(sub) if i and capping(stage)), None)
+
+
+def refuse_capped_test(cap, test, raw):
+    refuse(
+        f"`{stage_name(cap)}` caps the stream a `{argv_of(test)[0]}` then compares -- the verdict is the cap's line, "
+        f"not what the whole stream holds; in `{raw}`. Compare the whole stream, or keep the cap and read the lines "
+        f"instead of comparing them."
+    )
+
+
+def judge_cap(pipe, raw):
+    capped = [i for i, stage in enumerate(pipe) if i and capping(stage)]
+    tested = [i for i, stage in enumerate(pipe) if testing(stage)]
+    for i in capped:
+        for stage in pipe[i + 1 :]:
+            if counting(stage):
+                refuse(
+                    f"`{stage_name(pipe[i])}` caps the stream `{argv_of(stage)[0]}` then counts -- the number can only "
+                    f"be the cap, not what the tree holds; in `{raw}`. Count the whole stream, or keep the cap and read "
+                    f"the lines instead of counting them."
+                )
+        # An unquoted `$( .. )` leaves the test's own words spread over the stages after it, so the comparison is
+        # read over the pipeline from the test on, not over that first stage alone.
+        if tested and i > tested[0] and comparing([w for stage in pipe[tested[0] :] for w in stage]):
+            refuse_capped_test(pipe[i], pipe[tested[0]], raw)
+    for stage in pipe:
+        if not testing(stage):
+            continue
+        for w in stage:
+            for body in expansions(w):
+                inner = capped_stage(body)
+                if inner and comparing(stage):
+                    refuse_capped_test(inner, stage, raw)
+
+
 def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
@@ -410,12 +518,15 @@ except (ValueError, AttributeError) as exc:
     print(f"stdin is not the tool call's JSON ({exc})")
     sys.exit(3)
 try:
-    commands = simple_commands(command)
+    commands = pipelines(command)
 except ValueError as exc:
     print(f"the command does not tokenise ({exc})")
     sys.exit(3)
-for words in commands:
-    judge(words)
+raw = clip(" ".join(command.split()))
+for pipe in commands:
+    for words in pipe:
+        judge(words)
+    judge_cap(pipe, raw)
 PY
 )"
 if out="$(printf '%s' "$input" | python3 -c "$prog" 2>/dev/null)"; then

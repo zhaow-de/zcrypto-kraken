@@ -7,35 +7,60 @@
 # The `.local/` swept is the MAIN checkout's, whichever checkout you call this from: a linked worktree
 # carries a `.local/` of its own holding nothing but the tracked `.gitignore`, and sweeping that one returns
 # the silent clean this script exists to end.
-# Usage: infra/scripts/sweep.sh [grep flags] <pattern>   rc: 0 a hit, 1 none, 2 an error.
+# A clean is reported only over a sweep proven able to see: `--control <pattern>` names a known positive, and rc 1
+# is reported when that control hit -- an empty result over a file list that opened nothing reads exactly like an
+# absent needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
+# The control is the caller's own words with its own pattern standing where the sweep's did, so what it proves is
+# the matcher the sweep ran: a control has to hit under the caller's own flags, and under `-w` a substring won't.
+# What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
+# opened only when the pattern is one that directory alone holds. An empty control is refused below; a broad one
+# cannot be -- `--control '-f*'`, which the default matcher reads as a dash and any run of `f`, hits on a bare
+# dash, and a control the tree cannot fail to hold licenses a clean nothing tested. Breadth is the caller's: this
+# script asks only that the control hit. Whether `.local/` was in the list at all is the other door: the
+# `no <path>/.local` line below.
+# Usage: infra/scripts/sweep.sh [grep flags] -e <pattern> [--control <known-positive>]
+#   rc: 0 a hit, 1 none (control hit), 2 an error.
 set -euo pipefail
-# Given no pattern -- none at all, or flags alone -- grep takes the first path as its regex and answers
-# whatever that earns, a hit or a clean, never the error this is. Deciding this needs grep's option table:
-# `--include '*.py'` has a bare operand that is not a pattern, so the flags below that take one AS A
-# SEPARATE WORD consume it. `--color`'s argument is optional and grep reads it only attached, so it is not
-# one of them. The table is the short list anyone sweeping would reach for, in the spelling it is written
-# here: a flag outside it, a long spelling of one inside it (`--after-context 3`), or one clustered into
-# `-lm 5`, still reads its operand as a pattern and passes. An attached `-eNEEDLE` is refused although grep
-# accepts it -- a loud refusal naming the spelling that works, which is the recoverable error of the two.
-# A pattern flag records the pattern from its OPERAND: `sweep.sh -e` supplies none, and grep would then bind the script's own `--` as the regex.
-pattern=0
-skip=0     # the next word is a flag's operand, to be stepped over
-carries=0  # ...and that operand is the pattern, so a dangling `-e` never records one
+# `+(...)` below, where a `*` would swallow the letter the glob has to stop at.
+shopt -s extglob
+# The pattern is REQUIRED as `-e <pattern>`, its own word, and with `--control` and the two refusals below that is
+# the whole of what this script reads out of the caller's words: which word the control replaces is then a lookup.
+# What survives the refusals reaches grep in place -- a word that is neither a flag nor `-e`'s operand among them,
+# where grep takes it for one more FILE to search on top of the list built below, never a narrowing of it. A
+# pattern spelt any other way records none here and reaches a refusal naming the spelling that works.
+control=0
+known=""
+pat_at=-1  # where the sweep's pattern stands in `args` -- the one word the control puts its own in place of
+take=""    # the next word is the operand of `--control` or of `-e`
+args=()    # what grep is handed: the caller's words, `--control <pattern>` removed
 for a in "$@"; do
-  if [ "$skip" -eq 1 ]; then
-    skip=0
-    if [ "$carries" -eq 1 ]; then pattern=1; carries=0; fi
-    continue
-  fi
-  case "$a" in
-    -e|-f|--regexp|--file) skip=1; carries=1 ;;
-    --regexp=*|--file=*) pattern=1 ;;
-    -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
-    -*) ;;
-    *) pattern=1 ;;
+  case "$take" in
+    control) known="$a"; take=""; continue ;;
+    pattern) [ "$pat_at" -ge 0 ] || pat_at="${#args[@]}"; args+=("$a"); take=""; continue ;;
   esac
+  case "$a" in
+    --control) control=1; take=control; continue ;;
+    --control=*) control=1; known="${a#--control=}"; continue ;;
+    -e) take=pattern ;;
+    -e?*)
+      echo "sweep: '$a' attaches the pattern to its flag -- give it as -e <pattern>, its own word" >&2; exit 2 ;;
+    # A pattern FILE is refused rather than opened: no sweep prescribed here uses one. `--file` is written out
+    # because it is a prefix of `--files-with-matches` and `--files-without-match`, which name no pattern file.
+    # A cluster is read only as far as its `X`: grep binds the rest of a cluster to its first operand-taking
+    # letter, so the `f` of `-lXfgrep` stands inside a matcher name and names nothing.
+    -f*|--file|--file=*|-+([!-X])f*)
+      echo "sweep: '$a' carries an 'f' this sweep does not read -- grep's pattern FILE, or, inside a cluster, another flag's operand; give the pattern as -e <pattern>, its own word" >&2; exit 2 ;;
+    # Both short globs are needed: a cluster inverts wherever its letter sits. `--inv` and `--files-witho` are
+    # where grep's long-option prefixes stop being ambiguous, so every spelling from there to the full name is
+    # the same flag.
+    -[vL]*|-[!-]*[vL]*|--inv*|--files-witho*)
+      echo "sweep: '$a' inverts the selection, and a control run under it hits whatever the tree holds -- the clean it would license proves nothing; sweep for the pattern itself" >&2; exit 2 ;;
+  esac
+  args+=("$a")
 done
-[ "$pattern" -eq 1 ] || { echo "sweep: no pattern in '$*' -- a pattern is a bare word that is not a flag's operand, or follows -e/-f/--regexp/--file as its own word; usage: sweep.sh [grep flags] <pattern>" >&2; exit 2; }
+[ "$pat_at" -ge 0 ] || { echo "sweep: no pattern in '$*' -- the pattern is required as -e <pattern>, its own word; usage: sweep.sh [grep flags] -e <pattern> [--control <known-positive>]" >&2; exit 2; }
+# A dangling `--control`, or `--control=`, records the empty pattern, which every line matches and cannot miss.
+[ "$control" -eq 0 ] || [ -n "$known" ] || { echo "sweep: --control takes its known positive as its own word -- something this tree certainly holds, e.g. --control 'NEEDLE'" >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 main="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
 # Under `--separate-git-dir`, or a worktree of a bare repo, that dirname is not a checkout: refuse rather
@@ -60,6 +85,25 @@ for f in ${listed[@]+"${listed[@]}"}; do
 done
 [ "${#files[@]}" -gt 0 ] || { echo "sweep: no files to search under $PWD" >&2; exit 2; }
 set +e
-grep -I -H "$@" -- "${files[@]}"
+grep -I -H "${args[@]}" -- "${files[@]}"
 rc=$?
+if [ "$rc" -eq 1 ]; then
+  if [ "$control" -eq 0 ]; then
+    echo "sweep: nothing matched in ${#files[@]} files, and nothing here proves this sweep could see them -- re-run with --control <pattern> naming something the tree certainly holds, and the clean is reported when that control hits" >&2
+    exit 2
+  fi
+  probe=("${args[@]}")
+  probe[pat_at]="$known"
+  grep -I -q "${probe[@]}" -- "${files[@]}"
+  crc=$?
+  if [ "$crc" -ne 0 ]; then
+    # rc 1 is the honest miss, or the invalid `-d` ACTION grep answers 1 to.
+    if [ "$crc" -eq 2 ]; then
+      echo "sweep: grep refused the control pattern '$known' -- every other word here is the sweep's own, which grep has just compiled, so the pattern is what to fix: give a control grep compiles, naming something this tree holds" >&2
+    else
+      echo "sweep: the control '$known' matched nothing either in ${#files[@]} files -- this sweep is not proven able to see, so its clean is no evidence; pick a control this tree holds, and read any grep complaint above, which is what a sweep whose words opened no file leaves" >&2
+    fi
+    exit 2
+  fi
+fi
 exit $rc
