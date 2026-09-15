@@ -61,6 +61,7 @@ def _repo(tmp_path: Path, *, tagged: bool) -> Path:
     git("init", "-q", "-b", "develop")
     git("config", "user.email", "t@example.invalid")
     git("config", "user.name", "t")
+    git("config", "commit.gpgsign", "false")
     (repo / "seed").write_text("x\n", encoding="utf-8")
     git("add", "seed")
     git("commit", "-qm", "seed")
