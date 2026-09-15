@@ -1,5 +1,5 @@
 """The PreToolUse[Bash] guard's two arms -- the git hook bypasses, and a stream a cap has already shortened being
-counted or tested -- driven with synthetic stdin JSON.
+counted or compared -- driven with synthetic stdin JSON.
 
 The hook is `.claude/hooks/bash-guard.sh`; its header states what each arm refuses and what it leaves. Every family
 is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside the
@@ -129,17 +129,19 @@ REFUSED = [
     ("git log | head -20 | sort -u | wc -l", "head -20"),  # the count need not be the next stage
     ("git grep -n TODO | head -10 | grep -c cli/", "head -10"),
     ("git log --oneline | head -5 | grep --count fix", "head -5"),
+    ("git log --oneline | head -5 | rg --count-matches fix", "head -5"),
     ("uv run pytest -q | tail -1 | grep -c passed", "tail -1"),
     ("find . -name '*.py' | head -100 | wc -l", "head -100"),
     ("x=$(git log | head -3 | wc -l)", "head -3"),
     ('echo "$(git log | head -3 | wc -l)"', "head -3"),
     ("cat <<EOF\n$(ls | head -2 | wc -l)\nEOF", "head -2"),
-    # a cap on a piped stream a test then decides on: quoted, unquoted, backticked, behind `if`
-    ('[ "$(git status --porcelain | head -1)" = "" ]', "head -1"),
-    ("[[ -n $(git ls-files | head -1) ]]", "head -1"),
+    # a cap on a piped stream a test then compares: quoted, unquoted, backticked, behind `if`
     ('test "$(ls | tail -1)" = x', "tail -1"),
-    ('[ -n "`ls | head -1`" ]', "head -1"),
-    ('if [ -z "$(git diff --name-only | head -1)" ]; then echo clean; fi', "head -1"),
+    ("[[ $(git ls-files | tail -1) = x ]]", "tail -1"),
+    ('[ "`ls | head -1`" = x ]', "head -1"),
+    ('if [ "$(git diff --name-only | tail -1)" = x ]; then echo one; fi', "tail -1"),
+    # the bypass arm still judges the rest of a command line whose test holds a body that does not tokenise
+    ('[ -n "$(git log --grep=doesn\'t)" ] && git commit -n -m x', "-n"),
 ]
 
 ADMITTED = [
@@ -222,6 +224,12 @@ ADMITTED = [
     "head -c 20 /dev/urandom | base64",
     "head -50 data/catalog.jsonl | wc -l",  # the cap opens the file it counts: a bounded read, not a stream unseen
     '[ "$(head -1 VERSION)" = 3.14 ]',
+    # an emptiness test over a capped substitution: `$( .. )` strips the trailing newlines, so `head -1` of a
+    # non-empty stream is non-empty and capped and uncapped give the same verdict
+    '[ "$(git status --porcelain | head -1)" = "" ]',
+    "[[ -n $(git ls-files | head -1) ]]",
+    '[ -n "`ls | head -1`" ]',
+    'if [ -z "$(git diff --name-only | head -1)" ]; then echo clean; fi',
     "git log --oneline | tail -n +2 | wc -l",
     "ls | tail +2 | wc -l",
     # the count without a cap, the count before one, the two in separate commands
