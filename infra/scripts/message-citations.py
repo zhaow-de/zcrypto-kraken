@@ -52,7 +52,7 @@ import sys
 from collections.abc import Sequence
 
 SCISSORS = "# ------------------------ >8 ------------------------"
-URL = re.compile(r"\b\w+://\S+")
+URL = re.compile(r"\b\w+://[^\s`]+")
 SPAN = re.compile(r"`[^`\n]*`")
 _PATH = r"(?<![\w./-])(?P<path>[\w./-]*[\w-]\.(?P<ext>[A-Za-z]\w*))"
 LINE = re.compile(_PATH + r":(?P<lines>\d+(?:[,-]\d+)*)(?!\w)")

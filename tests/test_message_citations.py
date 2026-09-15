@@ -204,6 +204,10 @@ def test_a_dead_coordinate_between_two_whitespace_free_spans_is_refused():
     assert _judge("`judge` lists lines, cli/engine/gone.py:3 is dead, and `strip` ends\n") == [
         "cli/engine/gone.py:3: no tracked file is or ends with cli/engine/gone.py, on either side of the commit"
     ]
+    # A URL ends at a backtick: a span holding one keeps its closing backtick, so the next span pairs with its own
+    assert _judge("see `https://x/y` and cli/gone.py:99 beside `judge`\n") == [
+        "cli/gone.py:99: no tracked file is or ends with cli/gone.py, on either side of the commit"
+    ]
 
 
 def test_a_message_with_no_candidate_token_lists_no_tree():
