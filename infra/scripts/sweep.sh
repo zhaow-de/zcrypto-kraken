@@ -22,8 +22,11 @@ set -euo pipefail
 shopt -s extglob
 # The pattern is REQUIRED as `-e <pattern>`, its own word, and with `--control` and the two refusals below that is
 # the whole of what this script reads out of the caller's words: which word the control replaces is then a lookup.
-# Every other word goes to grep unexamined, its operands riding along in place; a pattern spelt any other way
-# records none here and reaches a refusal naming the spelling that works.
+# The two refusals are matched against every word, an operand included, so a `-f*` or a `-v` written as one is
+# refused where it stands. What survives them reaches grep in place -- a word that is neither a flag nor `-e`'s
+# operand among them, where grep takes it for one more FILE to search on top of the list built below, never a
+# narrowing of it. A pattern spelt any other way records none here and reaches a refusal naming the spelling that
+# works.
 control=0
 known=""
 pat_at=-1  # where the sweep's pattern stands in `args` -- the one word the control puts its own in place of
