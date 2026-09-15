@@ -1,13 +1,13 @@
 """The user-unit templates under `infra/systemd/` render by placeholder substitution and parse as units.
 
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
-units are filled in by hand (`<repo>`, `<uv>`), so the render here is a substitution, and what is
-checked is that every placeholder a unit carries is named in its header's `Placeholders:` line, that
-no `<...>` token of any spelling -- a whitespace-bearing `<data root>` included -- survives the render,
-and that the directives a timer-driven oneshot needs sit in the section systemd reads them from -- a
-`Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze verify`, which reads
-`ExecStart=` and `WorkingDirectory=` off
-disk and refuses the example paths this render fills in."""
+units are rendered into a copy by the install's `sed` (`<repo>`, `<uv>`), so the render here is a
+substitution, and what is checked is that every placeholder a unit carries is named in its header's
+`Placeholders:` line, that no `<...>` token of any spelling -- a whitespace-bearing `<data root>`
+included -- survives the render, and that the directives a timer-driven oneshot needs sit in the
+section systemd reads them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked:
+`systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the
+example paths this render fills in."""
 
 from __future__ import annotations
 
