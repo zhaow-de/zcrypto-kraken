@@ -3,11 +3,7 @@ counted or compared, and `$?` read after a pipeline no `pipefail` covers -- driv
 
 The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
 family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
-the ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
-comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
-pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks; the
-`pipefail` set ahead of the pipeline, the command that ran between the pipeline and the read, and the `$?` that is a
-character of a longer word rather than a word of its own.
+the ordinary shape nearest to it that it must admit (exit 0, silent).
 """
 
 from __future__ import annotations
@@ -158,6 +154,10 @@ REFUSED = [
     ("x=$(git log --oneline | sort); echo $?", "$?"),
     ("set -e; ls | sort; rc=$?", "rc=$?"),  # -e is not -o pipefail
     ("ls | sort; rc=$?; set -o pipefail", "rc=$?"),  # set after the read, which has already taken the wrong status
+    # the substitution IS the command: assignments alone run nothing of their own, so the status stays the
+    # pipeline's, in both spellings of a substitution
+    ("x=`git log --oneline | sort`; echo $?", "$?"),
+    ('ls | sort; echo "$?"', "$?"),  # a double quote expands, so this is the read a single quote is not
 ]
 
 ADMITTED = [
@@ -282,6 +282,15 @@ ADMITTED = [
     'git log --oneline | sort; git commit -m "rc=$? reads the last stage"',
     'ls | sort; echo "rc=$?"',
     "cat <<'EOF'\nls | sort\nrc=$?\nEOF",
+    # the pipeline ran inside a substitution the command's own program then consumed, so the status is that
+    # program's: an argument, a process substitution, a backtick pair
+    "wc -l $(git ls-files | grep py); echo $?",
+    "diff <(ls | sort) <(ls -a | sort); rc=$?",
+    "wc -l `git ls-files | grep py`; echo $?",
+    "x=$(git log --oneline | sort; echo done); echo $?",  # the substitution's own last command is not a pipeline
+    # `$?` inside a single quote, the one quoting bash never expands: a search string and an echo, not a read
+    "ls | sort; grep -rn '$?' docs/",
+    "git log --oneline | head -3; echo '$?'",
 ]
 
 
