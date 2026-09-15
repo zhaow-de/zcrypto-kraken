@@ -6,9 +6,12 @@
 # is admitted; what follows is only what neither the code nor that corpus can say.
 #
 # Argv, not text. The command is cut of its heredoc bodies, split into pipelines and into stages, and tokenised,
-# so a flag inside a quoted message, a heredoc or a comment is never an argv element, and the wrapper, path and
-# option spellings of one call are one command. A substitution -- `$( .. )`, backticks, `<( .. )`, `>( .. )` -- is
-# a command of its own wherever bash performs one, and nowhere else.
+# so a flag inside a quoted message, a heredoc or a comment is never an argv element. A substitution -- `$( .. )`,
+# backticks, `<( .. )`, `>( .. )` -- is a command of its own wherever bash performs one, and nowhere else.
+# A wrapper is transparent to the bypass arm and opaque to the cap arm: the first finds `git` at any position in a
+# simple command, so `timeout 5 git commit -n` and `/usr/bin/git commit --no-verify` are that one call in its
+# wrapper, path and option spellings; the second reads a stage's program as its first word alone, so
+# `timeout 5 head -5 f | wc -l` holds no cap -- the direction that does not refuse ordinary work.
 #
 # git's own asymmetries, which the per-subcommand arms encode and a reader would otherwise "fix": `-n` is
 # `--no-verify` on commit and on am, `--no-stat` on merge and rebase; a config SET of core.hooksPath bypasses the
@@ -19,12 +22,12 @@
 # `SKIP=<hook>` door (used on purpose), an edit of `.git/hooks/` or of this file, a git alias, a shell string
 # handed to `sh -c`, `eval` or a Python subprocess, a program or a flag arriving through a variable or a
 # substitution, a cap first in its pipeline, which truncates what it opened rather than what the command computed
-# (`head -1 VERSION`), a truncation that is neither head nor tail, and a stage behind a wrapper, whose program
-# reads as the wrapper (`timeout 5 head -5 f | wc -l`) -- none is an argv this guard judges, and the last is the
-# direction that does not refuse ordinary work.
+# (`head -1 VERSION`), and a truncation that is neither head nor tail -- none is an argv this guard judges.
 #
-# A failure of the hook's own -- stdin that is not the tool call's JSON, an unbalanced quote -- admits with a note
-# on stderr, never blocks: exit 2 would refuse every Bash call in the session.
+# A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
+# admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
+# class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
+# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
@@ -407,10 +410,11 @@ def testing(words):
 
 
 def comparing(words):
-    # The words of a test, in the order the shell hands them: a comparison against anything but the empty string,
-    # which is the verdict a cap can change. An emptiness test -- `-z`, `-n`, `= ""`, `!= ""` -- reads a capped
-    # stream and an uncapped one alike, because `$( .. )` strips the trailing newlines and `head -1` of a non-empty
-    # stream is non-empty.
+    # The words of a test, in the order the shell hands them: a `=`, `==` or `!=` -- COMPARE holds no other
+    # operator -- against a non-empty operand, which is the verdict a cap can change. An emptiness test (`-z`,
+    # `-n`, `= ""`, `!= ""`) reads a capped stream and an uncapped one alike, because `$( .. )` strips the trailing
+    # newlines and `head -1` of a non-empty stream is non-empty. A numeric comparison (`-eq`, `-gt`) is in neither
+    # class and is admitted: over a substitution it almost always holds a count the count arm already refuses.
     return any(w in COMPARE and 0 < j < len(words) - 1 and words[j - 1] and words[j + 1] for j, w in enumerate(words))
 
 
