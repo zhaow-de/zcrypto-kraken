@@ -137,17 +137,20 @@ def ansi_decode(raw):
     return "".join(out)
 
 
-def cut_heredocs(text):
+def cut_heredocs(text, literal_dollars=True):
     # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
     # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
     # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
+    # `literal_dollars=False` drops the `$` of a single-quoted span, the one quoting bash never expands: shlex
+    # strips the quotes, so a caller that judges what an expansion yields cannot otherwise tell `'$?'` from `"$?"`.
     out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
         if st == "sq":
             if ch == "'":
                 stack.pop()
-            out.append(ch)
+            if literal_dollars or ch != "$":
+                out.append(ch)
             i += 1
             continue
         if st == "ansi":
@@ -470,39 +473,75 @@ def judge_cap(pipe, raw):
                     refuse_capped_test(inner, stage, raw)
 
 
+def status_level(backtick=False):
+    # One level of the status walk. `piped`: the pipeline being read now has a second stage. `closed`: the last
+    # thing to have COMPLETED here was such a pipeline, which is what a `$?` at this point would hold. `sub`: the
+    # verdict the last substitution among this command's words closed with, or None. `seen`/`lead`: a word has
+    # arrived, and every word so far is an assignment or a keyword -- so the command has no program of its own.
+    return {"piped": False, "closed": False, "sub": None, "seen": False, "lead": True, "backtick": backtick}
+
+
+def ran_piped(level):
+    # Whether the last thing to complete at this level was a pipeline. A command with a program runs AFTER every
+    # substitution among its words, so its own pipeline is what `$?` holds and the substitutions are spent; a
+    # command that is assignments alone runs nothing of its own, and `$?` keeps the last substitution's status.
+    if not level["lead"]:
+        return level["piped"]
+    if level["sub"] is not None:
+        return level["sub"]
+    return level["piped"] if level["seen"] else level["closed"]
+
+
 def judge_status(command, raw):
     # The tokens in the order bash meets them, which `pipelines` cannot give: it returns each substitution's body
     # after the whole top level, and what this arm reads is what stands AFTER a pipeline -- `x=$(a | b)` then the
     # read among it. `$?` is the LAST command's status, so the read counts only while the pipeline is still the last
     # thing to have run: inside it, or with another command between, `$?` is some other command's status.
-    piped = closed = pipefail = seen = False
-    lead, prev = True, ""
-    for tok in lexer(cut_heredocs(command)[0]):
+    # A substitution is a level of its own, because it runs before the command whose word it is: after
+    # `wc -l $(a | b)` the last thing to have run is `wc`. A `( .. )` subshell is not -- it IS the command.
+    levels, pipefail, prev = [status_level()], False, ""
+    for tok in lexer(cut_heredocs(command, literal_dollars=False)[0]):
         if tok and set(tok) <= PUNCT:
+            op = ""
             while tok:
-                op = next(o for o in OPS if tok.startswith(o))
-                if op in SEP:
-                    if op in PIPE and seen:
-                        piped = True
-                    elif piped:
-                        closed, piped = True, False
-                    elif seen:
-                        closed = False
-                    lead, seen = True, False
+                before, op = op, next(o for o in OPS if tok.startswith(o))
+                if op == "(" and (prev.endswith("$") or before in ("<", ">")):
+                    levels.append(status_level())
+                elif op == ")" and len(levels) > 1 and not levels[-1]["backtick"]:
+                    closed_sub = ran_piped(levels.pop())
+                    levels[-1]["sub"] = closed_sub
+                elif op in SEP:
+                    level = levels[-1]
+                    if op in PIPE and level["seen"]:
+                        level["piped"] = True
+                    else:
+                        level["closed"], level["piped"], level["sub"] = ran_piped(level), False, None
+                    level["lead"], level["seen"] = True, False
                 tok = tok[len(op) :]
             prev = ""
             continue
-        assign = ASSIGN.match(tok)
-        if tok == PIPEFAIL and SET_O.match(prev):
-            pipefail = True
-        elif closed and not pipefail and (tok == STATUS or (lead and assign and assign.group(2) == STATUS)):
-            refuse(
-                f"`{tok}` reads the status of a pipeline no `pipefail` covers, so it is the LAST stage's and a failing "
-                f"earlier stage reads as success; in `{raw}`. Set `-o pipefail` ahead of the pipeline, or read "
-                f"`${{PIPESTATUS[@]}}` instead."
-            )
-        lead = lead and bool(assign or tok in KEYWORDS)
-        prev, seen = tok, True
+        # A backtick pair opens and closes its level inside a word, where the lexer leaves it glued to what
+        # surrounds it (`x=` + `` ` `` + `ls`), so the word is walked in the fragments the backticks cut it into.
+        for nth, word in enumerate(tok.split("`")):
+            if nth:
+                if levels[-1]["backtick"]:
+                    closed_sub = ran_piped(levels.pop())
+                    levels[-1]["sub"] = closed_sub
+                else:
+                    levels.append(status_level(backtick=True))
+            if not word:
+                continue
+            level, assign = levels[-1], ASSIGN.match(word)
+            if word == PIPEFAIL and SET_O.match(prev):
+                pipefail = True
+            elif level["closed"] and not pipefail and (word == STATUS or (level["lead"] and assign and assign.group(2) == STATUS)):
+                refuse(
+                    f"`{word}` reads the status of a pipeline no `pipefail` covers, so it is the LAST stage's and a failing "
+                    f"earlier stage reads as success; in `{raw}`. Set `-o pipefail` ahead of the pipeline, or read "
+                    f"`${{PIPESTATUS[@]}}` instead."
+                )
+            level["lead"] = level["lead"] and bool(assign or word in KEYWORDS)
+            prev, level["seen"] = word, True
 
 
 def is_git(w):
