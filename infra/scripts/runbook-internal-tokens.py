@@ -20,10 +20,11 @@ Neither half of the reading is defined here, and that is the point -- one defini
   because `infra/scripts/` is inside the very set that test scans for leaks: its `VERBOSE` pattern
   carries `# T0096` and `# spec 00052` as examples, so a copy of it living under `infra/scripts/`
   would read as an operator-facing leak and turn the test red on its own definition.
-* the BULLET -- a wrapped item's continuation lines joined, fenced code set aside and HTML comments
-  blanked before the fence state is decided -- comes from `infra/scripts/guidance-guard.py`'s
-  `bullets()`, which the universal gate and that page reader both borrow, so "inside a bullet" and
-  "inside a comment" each mean one thing across all three.
+* the BULLET -- a wrapped item's continuation lines joined, fenced code set aside -- comes from
+  `infra/scripts/guidance-guard.py`'s `bullets()`, which the universal gate beside it borrows whole.
+  The page reader borrows that module's `BULLET` and `without_html_comments` and keeps its own fence
+  blanker, so the marker and the comment mean one thing to all three readers while the joined item is
+  this instrument's and the gate's.
 
 Both are loaded by path because neither filename is importable (a hyphen, and a test module outside
 any package). A page this cannot read is reported on stderr and exits 2, so a typo in the count
@@ -52,12 +53,12 @@ def _load(path: pathlib.Path, name: str) -> types.ModuleType:
 
 def hits(text: str, guard: types.ModuleType, vocabulary: types.ModuleType) -> list[tuple[int, str]]:
     """One (line, tokens) per offending bullet, its line the item's first and its tokens comma-joined
-    in the order they appear, so the caller counts bullets and still reads what each one carries.
+    in the order they appear.
 
-    A bullet arrives with its HTML comments already blanked, because that is where this instrument's
-    own rule sends a bullet's provenance: counting the comment would present a compliant bullet as a
-    finding named "bullets to fix", whose obvious remedy is deleting the provenance the rule asked
-    for. Blanking there rather than here also reads a comment that opens or closes outside the item."""
+    No window of the bullet is cut round the hit, as the page reader's failure message cuts one, and
+    the readers differ here on purpose: this row is read by someone who has just named the page, so
+    `path:line` is a jump target and the tokens are what to search for once there. The page reader's
+    is a pytest assertion, read off a CI log with no checkout behind it."""
     found = []
     for line, bullet in guard.bullets(text):
         tokens = [token.strip() for token in vocabulary._leaks(bullet)]

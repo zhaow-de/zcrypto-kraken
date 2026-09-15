@@ -139,11 +139,13 @@ def without_html_comments(text: str) -> str:
 
 
 def bullets(text: str) -> list[tuple[int, str]]:
-    """Each bullet, nested ones included and fenced blocks skipped, as its first line number and its text with continuation lines joined -- an indented fence keeps its list item open, so a step's prose under its command block is read.
+    """Each bullet, nested ones included and fenced blocks skipped, as its first line number and its
+    text with continuation lines joined.
 
-    HTML comments are blanked before any fence state is decided, so a bullet's provenance comment
-    cannot open a block over the bullets under it; the page reader of this same rule blanks in that
-    order too, and the two agree on where a fence begins.
+    A blank line ends an item, an indented fence does not: a step's prose under its command block is
+    the step's, and only while the page writes the block tight against it. Spaced out -- the loose
+    list Markdown still renders as one item -- the prose under the fence is no bullet's and is read
+    only by the page walker in `tests/test_internal_terms_not_operator_visible.py`.
     """
     out: list[tuple[int, str]] = []
     open_bullet = fenced = False
