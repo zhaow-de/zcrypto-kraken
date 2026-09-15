@@ -2325,11 +2325,19 @@ def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_a
     loop shows the answer is a `Future` and not the value -- treated as the value it would be
     journalled, counted and judged as the account's state. Only the read-only public listing call;
     nothing that moves money is ever driven against the live venue from a test.
+
+    The client here carries NO credentials, unlike `_real_client()`'s dummy pair: the adapter signs
+    `request_instruments` whenever a credential is present, so only an uncredentialed client takes
+    the public path this test means to exercise. A dummy secret fails at signing before a request
+    leaves, and a well-formed dummy one reaches the venue as an invalid key -- neither answers the
+    question this asks.
     """
     import inspect
 
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
     async def _probe():
-        answer = _real_client().request_instruments()
+        answer = KrakenSpotHttpClient().request_instruments()
         assert inspect.isawaitable(answer), f"request_instruments answered {type(answer).__name__}, not an awaitable"
         return await answer
 
