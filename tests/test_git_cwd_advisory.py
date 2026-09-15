@@ -54,9 +54,14 @@ def run_hook(command: str, cwd: Path, project: Path | None) -> subprocess.Comple
 
 
 def advised(result: subprocess.CompletedProcess) -> str:
-    """The systemMessage of a report; rc, clean stderr and the additionalContext copy on the way through."""
+    """The systemMessage of a report, with rc and the additionalContext copy checked on the way through.
+
+    Neither helper asserts on stderr: the hook silences its reader (`python3 -c "$prog" 2>/dev/null`), so no
+    input a case can write reaches stderr and such an assertion could not fail. `assert result.stdout` here is
+    what catches a reader that died -- which is why a shape whose expectation is silence is driven beside the
+    nearest shape that must speak, and never alone.
+    """
     assert result.returncode == 0
-    assert result.stderr == ""
     assert result.stdout, "expected an advisory"
     out = json.loads(result.stdout)
     msg = out["systemMessage"]
@@ -68,7 +73,6 @@ def advised(result: subprocess.CompletedProcess) -> str:
 def assert_silent(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0
     assert result.stdout == ""
-    assert result.stderr == ""
 
 
 def test_a_bare_git_from_another_checkout_names_the_directory_and_the_pin(checkouts):
@@ -154,8 +158,7 @@ def test_a_literal_tab_in_a_quoted_argument_reaches_the_report_whole(checkouts):
 
 def test_a_multi_line_command_reports_all_of_it_and_a_pin(checkouts):
     main, wt = checkouts
-    # The shape every commit in this repository takes, and the one a line-and-field channel truncates
-    # into a half-command with an empty suggestion.
+    # The shape every commit in this repository takes.
     msg = advised(run_hook('git commit -m "feat: x\n\nbody line"', cwd=wt, project=main))
     assert "body line" in msg.split("pin it:")[1]
     assert f"pin it: `git -C {wt} commit -m 'feat: x\n\nbody line'`" in msg
@@ -196,6 +199,67 @@ def test_a_popd_returns_the_call_to_where_the_command_started(checkouts):
     msg = advised(run_hook("pushd sub && popd && git status", cwd=wt, project=main))
     assert f"ran in {wt}," in msg
     assert f"`git -C {wt} status`" in msg
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if false; then cd sub; fi\ngit status",
+        "while false; do cd sub; done\ngit status",
+        "if true; then :; else cd sub; fi\ngit status",
+        "if [ ! -d build ]; then pushd sub; fi\ngit status",
+        "if [ ! -d build ]; then cd /tmp; fi\ngit status",
+    ],
+    ids=[
+        "an_if_body",
+        "a_loop_body",
+        "an_else_branch",
+        "a_pushd_in_an_if_body",
+        "an_absolute_cd_in_an_if_body",
+    ],
+)
+def test_a_cd_the_command_may_never_have_reached_silences_the_rest(checkouts, command: str):
+    main, wt = checkouts
+    # Every command here ends in the same bare `git status` the row below reports, and the only
+    # difference is the keyword: the reader did not evaluate the condition and cannot, so naming
+    # either directory would be a coin toss printed as an answer.
+    assert_silent(run_hook(command, cwd=wt, project=main))
+
+
+def test_the_same_cd_reached_by_no_branch_moves_the_directory(checkouts):
+    main, wt = checkouts
+    msg = advised(run_hook("cd sub\ngit status", cwd=wt, project=main))
+    assert f"ran in {wt / 'sub'}," in msg
+
+
+def test_a_brace_group_is_not_a_branch_and_its_cd_is_kept(checkouts):
+    main, wt = checkouts
+    # `{ ... }` runs in this shell and exactly once, which is why it is a keyword the walk steps over
+    # but not one that makes the `cd` unplaceable.
+    msg = advised(run_hook("{ cd sub; }\ngit status", cwd=wt, project=main))
+    assert f"ran in {wt / 'sub'}," in msg
+
+
+def test_a_cd_inside_a_subshell_does_not_outlive_it(checkouts):
+    main, wt = checkouts
+    msg = advised(run_hook("(cd docs && true) && git status", cwd=wt, project=main))
+    assert f"ran in {wt}," in msg
+    assert f"`git -C {wt} status`" in msg
+
+
+def test_a_git_call_inside_the_subshell_answers_from_where_its_cd_moved(checkouts):
+    main, wt = checkouts
+    # The other direction of the same rule: inside the parentheses the `cd` is in force.
+    msg = advised(run_hook("(cd sub && git status)", cwd=wt, project=main))
+    assert f"ran in {wt / 'sub'}," in msg
+    assert f"`git -C {wt / 'sub'} status`" in msg
+
+
+def test_an_absolute_cd_inside_a_subshell_pins_only_that_subshell(checkouts):
+    main, wt = checkouts
+    # An absolute `cd` is read as a pin, and the pin is undone with the subshell that held it.
+    msg = advised(run_hook("(cd /tmp && true) && git status", cwd=wt, project=main))
+    assert f"ran in {wt}," in msg
 
 
 def test_an_absolute_cd_into_another_checkout_pins_it(checkouts):
