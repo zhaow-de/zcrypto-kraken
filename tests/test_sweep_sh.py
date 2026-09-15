@@ -1,4 +1,5 @@
-"""`infra/scripts/sweep.sh` — the sweep that opens what a bare one does not: `.local/`, and a file not yet added."""
+"""`infra/scripts/sweep.sh` — the sweep that opens what a bare one does not (`.local/`, a file not yet added), and
+reports a clean only over a `--control` pattern that hit."""
 
 from __future__ import annotations
 
@@ -39,9 +40,60 @@ def test_the_sweep_sees_the_tracked_tree_and_local_and_not_the_ignored_rest(tmp_
     assert done.returncode == 0
 
 
-def test_a_pattern_nothing_holds_exits_1(tmp_path):
-    done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere")
+def test_a_pattern_nothing_holds_exits_1_over_a_control_that_hit(tmp_path):
+    done = _sweep(_repo(tmp_path), "-l", "--control", "NEEDLE", "no-such-string-anywhere")
     assert done.returncode == 1 and done.stdout == "", done.stdout + done.stderr
+
+
+def test_a_clean_with_no_control_is_an_error(tmp_path):
+    """An empty result over a file list that opened nothing reads exactly like an absent needle."""
+    done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere")
+    assert done.returncode == 2 and "--control" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_control_that_misses_makes_the_clean_an_error(tmp_path):
+    """The known positive is what proves the sweep could see; one the tree does not hold proves nothing."""
+    done = _sweep(_repo(tmp_path), "-l", "--control", "no-such-control-either", "no-such-string-anywhere")
+    assert done.returncode == 2 and "no-such-control-either" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_hit_needs_no_control(tmp_path):
+    """A hit is its own proof the sweep saw, so the flag is the clean's price alone."""
+    done = _sweep(_repo(tmp_path), "-l", "NEEDLE")
+    assert done.returncode == 0 and ".local/memo.md" in done.stdout, done.stdout + done.stderr
+
+
+def test_the_control_flag_never_reaches_grep(tmp_path):
+    """grep has no `--control`: passed through, it would make a usage error of every sweep that carries one."""
+    done = _sweep(_repo(tmp_path), "-l", "--control", "NEEDLE", "NEEDLE")
+    assert done.returncode == 0 and done.stderr == "", done.stdout + done.stderr
+    assert sorted(done.stdout.split()) == [".local/memo.md", "cli/thing.py"], done.stdout
+
+
+def test_the_controls_own_operand_is_not_the_swept_pattern(tmp_path):
+    """Counting it as the pattern would sweep for the known positive, which hits by construction."""
+    done = _sweep(_repo(tmp_path), "-l", "--control", "NEEDLE")
+    assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
+
+
+def test_a_control_with_no_pattern_of_its_own_is_an_error(tmp_path):
+    """A dangling `--control` records the empty pattern, which every line matches: the control that proves nothing."""
+    done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere", "--control")
+    assert done.returncode == 2 and "--control" in done.stderr, done.stdout + done.stderr
+
+
+def test_the_control_is_matched_with_the_callers_flags(tmp_path):
+    """What the control must prove is the matcher the sweep ran: under `-w` a substring of a word is no proof."""
+    repo = _repo(tmp_path)
+    under_w = _sweep(repo, "-w", "--control", "NEEDL", "no-such-string-anywhere")
+    assert under_w.returncode == 2 and "NEEDL" in under_w.stderr, under_w.stdout + under_w.stderr
+    plain = _sweep(repo, "--control", "NEEDL", "no-such-string-anywhere")
+    assert plain.returncode == 1, plain.stdout + plain.stderr
+
+
+def test_the_attached_spelling_of_the_control_is_read(tmp_path):
+    done = _sweep(_repo(tmp_path), "-l", "--control=NEEDLE", "no-such-string-anywhere")
+    assert done.returncode == 1, done.stdout + done.stderr
 
 
 def test_a_hit_names_its_file_when_the_list_is_one_file(tmp_path):
