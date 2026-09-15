@@ -250,11 +250,19 @@ if [ "$rc" -eq 1 ]; then
     # rc 1 like an honest miss -- and they want opposite next moves, so which it was is asked rather than read off
     # `crc`: the control's words, put to grep with no file list, where nothing but a refusal can make it write.
     # (Over the file list it could also write about a file it could not open, which is no refusal and belongs to
-    # the sweep's own grep above.) Now that the control carries the sweep's operand-taking words, this is the
-    # ordinary end of a typed ACTION rather than a rare one.
+    # the sweep's own grep above.)
     refusal="$(grep -I -q ${flags[@]+"${flags[@]}"} -e "$known" --directories=skip </dev/null 2>&1 >/dev/null)" || true
-    if [ -n "$refusal" ]; then
+    # A refusal of those words is of the caller's or of the control's OWN pattern, and those two want opposite
+    # moves again: the caller's word refused the sweep's grep too, so its rc 1 is no absence, while a control
+    # pattern grep cannot compile leaves that rc standing and unproven. Which it was is asked the same way, the
+    # same words with `-e ''` where the control's pattern stood: nothing there is the caller's to refuse but the
+    # caller's own words. Not read off the first probe above, whose silence would have to mean grep never writes
+    # while exiting 0 or 1 -- a claim about grep this script need not make.
+    theirs="$(grep -I -q ${flags[@]+"${flags[@]}"} -e '' --directories=skip </dev/null 2>&1 >/dev/null)" || true
+    if [ -n "$refusal" ] && [ -n "$theirs" ]; then
       echo "sweep: grep refused the control's words -- '${refusal%%$'\n'*}' -- and they are the sweep's own, so the sweep's grep was refused the same way and its rc 1 is no absence. Fix the word grep names above; the control '$known' is not what is wrong here" >&2
+    elif [ -n "$refusal" ]; then
+      echo "sweep: grep refused the control pattern '$known' -- '${refusal%%$'\n'*}' -- so the control never ran and this clean stays unproven. The sweep's own words grep accepts: put to it with a pattern in the control's place they draw no complaint, so the pattern is what to fix -- give a control grep compiles, naming something this tree holds" >&2
     else
       echo "sweep: the control '$known' matched nothing either in ${#files[@]} files (grep rc $crc) -- this sweep is not proven able to see, so its clean is no evidence; pick a control this tree holds" >&2
       # Without this the operator's next move is to replace a control that was never wrong: a cluster held back

@@ -635,7 +635,7 @@ def test_a_stream_beside_an_ordinary_pattern_file_is_refused_rather_than_swept(t
 
 def test_a_control_grep_refused_is_not_reported_as_a_control_that_missed(tmp_path):
     """The two arrive as the same rc from the same grep -- an invalid `-d` ACTION is rc 1, exactly like an honest
-    miss -- and they want opposite next moves: a refused control is the one thing here that was never wrong, and
+    miss -- and they want opposite next moves: a control refused by a word of the CALLER'S was never wrong, and
     replacing it is the move that cannot help. The control carrying the sweep's operand-taking words is what makes
     a mistyped ACTION end here routinely."""
     repo = _repo(tmp_path)
@@ -647,6 +647,23 @@ def test_a_control_grep_refused_is_not_reported_as_a_control_that_missed(tmp_pat
     assert missed.returncode == 2, missed.stdout + missed.stderr
     assert "pick a control this tree holds" in missed.stderr, missed.stdout + missed.stderr
     assert "refused the control's words" not in missed.stderr, missed.stdout + missed.stderr
+
+
+def test_a_control_refused_for_its_own_pattern_is_not_blamed_on_the_callers_words(tmp_path):
+    """The words put to grep are the sweep's own PLUS the control's pattern, so a refusal of them is of one or the
+    other, and again the two want opposite moves. Refused for the caller's word, the sweep's own grep was refused
+    the same way and its rc 1 is no absence -- the sibling above. Refused for the pattern, that rc stands unproven
+    and replacing the control is the whole fix, which is the move the sibling's message tells the operator not to
+    make. An unescaped `(` or `[` in a regex is an ordinary typo, so this is the category the two share a door
+    with most often."""
+    repo = _repo(tmp_path)
+    for control in ("NEEDLE\\(", "["):
+        done = _sweep(repo, "-l", "--control", control, "no-such-string-anywhere")
+        assert done.returncode == 2, control + ": " + done.stdout + done.stderr
+        assert "refused the control pattern" in done.stderr, control + ": " + done.stdout + done.stderr
+        assert "is not what is wrong here" not in done.stderr, control + ": " + done.stdout + done.stderr
+    theirs = _sweep(repo, "-ld", "recursive", "NEEDLE", "--control", "NEEDLE")
+    assert "refused the control pattern" not in theirs.stderr, theirs.stdout + theirs.stderr
 
 
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):
