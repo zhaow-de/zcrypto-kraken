@@ -76,11 +76,23 @@ def _flat(text: str) -> str:
     return re.sub(r"[\s\u2502]+", " ", text)
 
 
-def _leaks(text: str) -> list[str]:
-    """Vocabulary hits, ignoring any inside a path, after collapsing whitespace."""
+def _leak_spans(text: str) -> list[tuple[int, str]]:
+    """Each hit as its offset into `_flat(text)` and its text, ignoring any inside a path.
+
+    The offset is the only way back to WHICH occurrence was the hit: the same token may appear twice
+    in one unit, once inside an exempt path and once bare, and searching the flattened text for the
+    hit's characters lands on the exempt one.
+    """
     flat = _flat(text)
     spans = [m.span() for m in PATH_LIKE.finditer(flat)]
-    return [m.group(0) for m in VOCABULARY.finditer(flat) if not any(s <= m.start() and m.end() <= e for s, e in spans)]
+    return [
+        (m.start(), m.group(0)) for m in VOCABULARY.finditer(flat) if not any(s <= m.start() and m.end() <= e for s, e in spans)
+    ]
+
+
+def _leaks(text: str) -> list[str]:
+    """Vocabulary hits, ignoring any inside a path, after collapsing whitespace."""
+    return [hit for _, hit in _leak_spans(text)]
 
 
 def test_a_sentence_initial_token_is_the_same_token():
@@ -353,28 +365,25 @@ def _paragraphs(text: str) -> list[tuple[int, str]]:
 _PREVIEW = 110
 
 
-def _preview(para: str, hit: str) -> str:
-    """At most `_PREVIEW` characters of the unit, centred on its first hit and flattened as `_leaks`
-    reads it, so the operator is shown the token the failure names and not whatever the unit opens
-    with -- these pages do not hard-wrap, and a unit is routinely longer than the window."""
+def _preview(para: str, at: int, hit: str) -> str:
+    """At most `_PREVIEW` characters of the unit, flattened as `_leaks` reads it and centred on `at`
+    -- the offset `_leak_spans` matched, not the first place the hit's characters appear, or a unit
+    that cites an exempt path before its real leak shows a window round the path the rule permits.
+    These pages do not hard-wrap, and a unit is routinely longer than the window."""
     flat = _flat(para)
     if len(flat) <= _PREVIEW:
         return flat
-    start = min(max(flat.find(hit) - (_PREVIEW - len(hit)) // 2, 0), len(flat) - _PREVIEW)
+    start = min(max(at - (_PREVIEW - len(hit)) // 2, 0), len(flat) - _PREVIEW)
     return ("…" if start else "") + flat[start : start + _PREVIEW] + ("…" if start + _PREVIEW < len(flat) else "")
 
 
 def _page_leaks(text: str) -> list[tuple[int, str, list[str]]]:
-    """A page's leaking units as (first lineno, preview, hits).
-
-    Comments are blanked before fences: a fence marker inside an HTML comment is invisible to the fence
-    blanker, so left standing it toggles the block open and blanks every line below it. What the order
-    costs is a `<!--` inside a fenced block, which now pairs with the next `-->` under it.
-    """
+    """A page's leaking units as (first lineno, preview, hits) -- comments blanked before fences, for
+    the reason `without_html_comments` gives."""
     return [
-        (i, _preview(para, hits[0]), hits)
+        (i, _preview(para, *spans[0]), [hit for _, hit in spans])
         for i, para in _paragraphs(_without_fenced_blocks(_without_html_comments(text)))
-        if (hits := _leaks(para))
+        if (spans := _leak_spans(para))
     ]
 
 
@@ -429,6 +438,18 @@ def test_the_preview_is_cut_around_the_token_not_around_the_unit_s_opening():
     ((line, preview, hits),) = _page_leaks(f"# P\n\n- A first step.\n- {filler}and it records T0123 at the end.\n")
     assert (line, hits) == (4, ["T0123"])
     assert "T0123" in preview and preview.startswith("…") and len(preview) <= _PREVIEW + 2
+
+
+def test_the_preview_centres_on_the_reported_hit_not_on_an_exempt_path_before_it():
+    """A step that opens a topic file and leaks the same token in prose further along: the hit is the
+    prose one, so a window cut where the token's characters first appear lands on the path instead and
+    tells the operator to rename a reference the rule exempts, while the leak it named stays."""
+    filler = "the step runs on, as these pages write it, " * 5
+    step = f"- Open `docs/open-topics/T0123-live-venue.md` first. {filler}and then it records T0123."
+    ((line, preview, hits),) = _page_leaks(f"# P\n\n{step}\n")
+    assert (line, hits) == (3, ["T0123"])
+    assert preview.endswith("and then it records T0123."), preview
+    assert "docs/open-topics" not in preview, preview
 
 
 def _runbook_pages() -> list[Path]:
