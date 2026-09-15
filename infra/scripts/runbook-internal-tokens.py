@@ -15,7 +15,7 @@ A declaration's `why` is inside its bullet and takes the rule with it.
 
 Neither half of the reading is defined here, and that is the point -- one definition, two readers:
 
-* the TOKEN CLASSES and the path exemption come from `tests/test_internal_terms_not_operator_visible.py`,
+* the TOKEN CLASSES, the path exemption and the HTML-comment blanking come from `tests/test_internal_terms_not_operator_visible.py`,
   which is the rule's holder for every other surface. They stay in that file rather than moving here
   because `infra/scripts/` is inside the very set that test scans for leaks: its `VERBOSE` pattern
   carries `# T0096` and `# spec 00052` as examples, so a copy of it living under `infra/scripts/`
@@ -51,10 +51,14 @@ def _load(path: pathlib.Path, name: str) -> types.ModuleType:
 
 def hits(text: str, guard: types.ModuleType, vocabulary: types.ModuleType) -> list[tuple[int, str]]:
     """One (line, tokens) per offending bullet, its line the item's first and its tokens comma-joined
-    in the order they appear, so the caller counts bullets and still reads what each one carries."""
+    in the order they appear, so the caller counts bullets and still reads what each one carries.
+
+    The bullet's HTML comments are blanked first, because that is where this instrument's own rule
+    sends a bullet's provenance: counting the comment would present a compliant bullet as a finding
+    named "bullets to fix", whose obvious remedy is deleting the provenance the rule asked for."""
     found = []
     for line, bullet in guard.bullets(text):
-        tokens = [token.strip() for token in vocabulary._leaks(bullet)]
+        tokens = [token.strip() for token in vocabulary._leaks(vocabulary._without_html_comments(bullet))]
         if tokens:
             found.append((line, ", ".join(dict.fromkeys(tokens))))
     return found

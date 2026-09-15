@@ -50,6 +50,15 @@ def test_a_token_on_a_wrapped_item_s_continuation_line_is_the_item_s_hit(instrum
     assert found == [(1, "T0123")], found
 
 
+def test_the_provenance_comment_the_rule_prescribes_is_not_a_hit_and_its_neighbour_is(instrument):
+    """`infra/runbooks/README.md` sends a bullet's provenance into an HTML comment on the line it
+    supports, so the instrument that counts bullets has to read that bullet as clean -- otherwise the
+    first author who follows the rule is handed a finding whose obvious fix is deleting the comment.
+    The same bullet with the token in its visible text is the neighbour that stays a hit."""
+    assert instrument("- **Disarm the band** before the window closes.<!-- T0123 -->\n") == []
+    assert instrument("- **Disarm the band** before the window closes, per T0123.\n") == [(1, "T0123")]
+
+
 def test_a_token_inside_a_real_path_is_the_operand_it_looks_like(instrument):
     """You need the exact name to open the file — the vocabulary test's own PATH_LIKE rule, which
     this instrument reads rather than restates."""
