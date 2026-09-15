@@ -13,18 +13,26 @@
 #                    --system, --worktree, --file <f>, --add, --replace-all, or the `config set` verb. Not --get,
 #                    --get-all, --unset, --unset-all, `config get`/`unset`, nor the bare read `git config core.hooksPath`.
 #   before the subcommand and in the environment: `-c core.hooksPath=..`, `--config-env core.hooksPath=..`, and a
-#                    GIT_CONFIG_KEY_<n>=core.hooksPath or GIT_CONFIG_PARAMETERS assignment anywhere in the command.
+#                    GIT_CONFIG_KEY_<n>=core.hooksPath or GIT_CONFIG_PARAMETERS assignment where git would see it:
+#                    the assignment prefix of a command whose program is git, or a wrapper (sudo, env, command,
+#                    exec, nice, nohup, time) with git among its words; and an argument of export, env or sudo,
+#                    which take NAME=value words (export outlives the command). Not an argument of any other
+#                    program -- `grep 'GIT_CONFIG_KEY_0=..'` is a search -- and not a bare assignment
+#                    (`GIT_CONFIG_KEY_0=..; git commit` is a shell variable git never sees).
 # Argv, not text. The command is cut of its heredoc bodies, split into simple commands on && || ; | & and newlines,
 # each tokenised by shlex, and git's own options before the subcommand (-C <dir>, --git-dir, --work-tree, -c,
 # --no-pager, ...) are stepped over -- so a flag inside a quoted message, a heredoc or a comment is never an argv
-# element, and `git -C <dir> commit -n`, `/usr/bin/git commit -n`, `cd <dir> && git commit -n` and `-n` behind
-# `--amend` are the same command as the bare one. A command substitution -- `$( .. )` or backticks, quoted or not,
-# and inside a heredoc whose delimiter is unquoted, which bash expands -- is a command of its own and is judged as
-# one. Outside, deliberately: `git push --no-verify` (no hook runs at push here), the pre-commit framework's
-# SKIP=<hook> door (used on purpose), an edit of .git/hooks/ or of this file, a git alias, and a shell string
-# handed to `sh -c`, `eval` or a Python subprocess -- none is an argv of `git` in the command. A failure of the
-# hook's own -- stdin that is not the tool call's JSON, an unbalanced quote -- admits with a note on stderr, never
-# blocks: exit 2 would refuse every Bash call in the session.
+# element, and `git -C <dir> commit -n`, `/usr/bin/git commit -n`, `cd <dir> && git commit -n`, `PATH=.. git
+# commit -n` and `-n` behind `--amend` are the same command as the bare one. An ANSI-C quoted word, `$'..'`, which
+# shlex does not know, reaches it as one double-quoted word: `-m $'it\'s'` is a message, `$'-n'` is `-n`. A
+# command substitution -- `$( .. )` or backticks, quoted or not, and inside a heredoc whose delimiter is unquoted,
+# which bash expands -- is a command of its own and is judged as one. Outside, deliberately: `git push --no-verify`
+# (no hook runs at push here), the pre-commit framework's SKIP=<hook> door (used on purpose), an edit of
+# .git/hooks/ or of this file, a git alias, a shell string handed to `sh -c`, `eval` or a Python subprocess, and a
+# program or a flag arriving through a variable or a substitution (`"$(which git)" commit -n`, `F=--no-verify; git
+# commit $F`) -- none is an argv of `git` in the command. A failure of the hook's own -- stdin that is not the tool
+# call's JSON, an unbalanced quote -- admits with a note on stderr, never blocks: exit 2 would refuse every Bash
+# call in the session.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
@@ -35,8 +43,11 @@ import sys
 
 KEY = "core.hookspath"
 NO_VERIFY = "--no-verify"
+ANSI = "$'"
 ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 CONFIG_KEY_ENV = re.compile(r"^GIT_CONFIG_KEY_\d+$")
+WRAPPERS = {"sudo", "env", "command", "exec", "nice", "nohup", "time"}
+TAKES_ASSIGNMENTS = {"export", "env", "sudo"}
 HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([^\s'\"]+))")
 GLOBAL_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--attr-source"}
 GLOBAL_TERMINAL = {"-v", "--version", "-h", "--help", "--exec-path", "--html-path", "--man-path", "--info-path", "--list-cmds"}
@@ -104,10 +115,28 @@ def cut_heredocs(text):
             out.append(ch)
             i += 1
             continue
+        if st == "ansi":
+            # shlex has no $'..': the span reaches it as one double-quoted word -- bare inside a double quote, where
+            # a `"` would close it.
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "'":
+                body = text[stack.pop()[1] : i].replace("\\", "\\\\").replace('"', '\\"')
+                out.append(body if any(s == "dq" for s, _ in stack) else f'"{body}"')
+            i += 1
+            continue
         if ch == "\\" and i + 1 < n:
             if text[i + 1] != "\n":
                 out.append(text[i : i + 2])
             i += 2
+            continue
+        if st != "dq" and text.startswith(ANSI, i):
+            stack.append(("ansi", i + 2))
+            i += 2
+            continue
+        if st != "dq" and text.startswith('$"', i):
+            i += 1
             continue
         if st == "bq":
             if ch == "`":
@@ -176,6 +205,7 @@ def cut_heredocs(text):
 def simple_commands(text):
     cut, bodies = cut_heredocs(text)
     lex = shlex.shlex(cut, posix=True, punctuation_chars="".join(sorted(PUNCT)))
+    lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
     cmds, skip = [[]], False
@@ -284,12 +314,30 @@ def judge_config(rest, words):
     refuse(f"`{spelled(words)}` sets core.hooksPath to `{value}`, which points git away from .git/hooks so the repo's hooks never run. Read it with `git config --get core.hooksPath`; undo it with `git config --unset core.hooksPath`.")
 
 
+def is_git(w):
+    return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
+
+
+def env_assignments(words):
+    k = 0
+    while k < len(words) and ASSIGN.match(words[k]):
+        k += 1
+    if k == len(words):
+        return []  # a bare assignment is a shell variable git never sees
+    program, seen = words[k].rpartition("/")[2], []
+    if is_git(words[k]) or (program in WRAPPERS and any(is_git(w) for w in words[k + 1 :])):
+        seen.extend(words[:k])
+    if program in TAKES_ASSIGNMENTS:
+        seen.extend(w for w in words[k + 1 :] if ASSIGN.match(w))
+    return seen
+
+
 def judge(words):
-    for w in words:
+    for w in env_assignments(words):
         m = ASSIGN.match(w)
-        if m and ((CONFIG_KEY_ENV.match(m.group(1)) and m.group(2).lower() == KEY) or (m.group(1) == "GIT_CONFIG_PARAMETERS" and KEY in m.group(2).lower())):
+        if (CONFIG_KEY_ENV.match(m.group(1)) and m.group(2).lower() == KEY) or (m.group(1) == "GIT_CONFIG_PARAMETERS" and KEY in m.group(2).lower()):
             refuse(f"`{w}` sets core.hooksPath through git's environment, which points git away from .git/hooks so the repo's hooks never run; in `{spelled(words)}`.")
-    at = next((i for i, w in enumerate(words) if w == "git" or w.endswith("/git")), None)
+    at = next((i for i, w in enumerate(words) if is_git(w)), None)
     if at is None:
         return
     argv = words[at:]
