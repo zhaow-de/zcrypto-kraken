@@ -16,9 +16,10 @@
 #                    GIT_CONFIG_KEY_<n>=core.hooksPath or GIT_CONFIG_PARAMETERS assignment where git would see it:
 #                    a NAME=value word before `git` in the same simple command -- the prefix of git itself or of
 #                    whatever reaches it (sudo, env, timeout, nice, ...) -- and an argument of export, which
-#                    outlives the command. Not an assignment in a command that never reaches git -- `grep
-#                    'GIT_CONFIG_KEY_0=..'` is a search -- and not a bare assignment (`GIT_CONFIG_KEY_0=..; git
-#                    commit` is a shell variable git never sees).
+#                    outlives the command. Not an assignment in a command with no `git` word -- `grep
+#                    'GIT_CONFIG_KEY_0=..' docs/` is a search; one naming a file `../git` is refused, the price of
+#                    listing no wrapper -- and not a bare assignment (`GIT_CONFIG_KEY_0=..; git commit` is a shell
+#                    variable git never sees).
 # Argv, not text. The command is cut of its heredoc bodies, split into simple commands on && || ; | & and newlines,
 # each tokenised by shlex, and git's own options before the subcommand (-C <dir>, --git-dir, --work-tree, -c,
 # --no-pager, ...) are stepped over -- so a flag inside a quoted message, a heredoc or a comment is never an argv
@@ -104,7 +105,8 @@ def expansions(body):
 
 def ansi_decode(raw):
     # The escapes bash decodes inside $'..' -- \xHH, \NNN, \uHHHH, \UHHHHHHHH and the letter escapes -- so
-    # $'\x2dn' reaches the judge as the -n bash hands git; an escape bash does not know stays as written.
+    # $'\x2dn' reaches the judge as the -n bash hands git; an escape this decoder does not know (`\cX`, a control
+    # character, never a `-`) stays as written.
     out, i, n = [], 0, len(raw)
     while i < n:
         ch = raw[i]
@@ -135,7 +137,7 @@ def cut_heredocs(text):
     # A scan that knows quotes and $(...) -- the heredoc inside the documented `-m "$(cat <<'EOF' ... EOF)"` is a
     # heredoc, and its body carries whatever the message says. Returns the cut text and the command substitutions
     # it closed -- `$( .. )` and backticks, each a command of its own; an unclosed one is bash's to refuse.
-    out, bodies, pending, stack, i, n = [], [], [], [("top", 0)], 0, len(text)
+    out, bodies, pending, stack, i, n, sub_close = [], [], [], [("top", 0)], 0, len(text), -1
     while i < n:
         ch, st = text[i], stack[-1][0]
         if st == "sq":
@@ -197,7 +199,9 @@ def cut_heredocs(text):
             stack.pop()
         elif ch == ")" and st == "sub":
             bodies.append(text[stack.pop()[1] : i])
-        elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            sub_close = i
+        elif ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|(" or (text[i - 1] == ")" and sub_close != i - 1)):
+            # after a subshell's `)` bash starts a comment; after the `)` that closes `$( .. )` it continues the word
             end = text.find("\n", i)
             i = n if end == -1 else end
             continue
