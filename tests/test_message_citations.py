@@ -1,6 +1,6 @@
 """message-citations.py: a commit message whose `path:line`, `path::symbol` / `path:symbol` or `T<NNNN>` resolves on neither side of the commit is refused, and every shape the hook leaves alone is admitted.
 
-Driven with synthetic messages over a fake tree for the judgement, and over a repository of its own for the git-facing arms: the index against HEAD, a file the commit lands or takes away, an ignored path, a topic at a sibling branch tip, `--range`, and the message as git records it. The wiring test reads the pre-commit config, so the hook cannot fall out of the commit-msg stage unnoticed."""
+Driven with synthetic messages over a fake tree for the judgement, and over a repository of its own for the git-facing arms: the index against HEAD, a file the commit lands or takes away, an ignored path, a topic at a sibling branch tip, the script run from a subdirectory, and `--range`. The wiring test reads the pre-commit config, so the hook cannot fall out of the commit-msg stage unnoticed."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def _judge(message: str, *trees: FakeTree, tips: tuple[FakeTree, ...] = ()) -> l
     return guard.judge(message, trees or (TREE,), tips)
 
 
-# --- the brief's probe, both directions -------------------------------------------------------
+# --- a dead citation refused, a live one admitted --------------------------------------------
 
 
 def test_a_dead_path_line_is_refused_and_a_live_one_is_admitted():
@@ -235,9 +235,11 @@ def _repo(tmp_path: pathlib.Path) -> pathlib.Path:
     return repo
 
 
-def _run(repo: pathlib.Path, message: str, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(repo: pathlib.Path, message: str, *args: str, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
     (repo / "MSG").write_text(message)
-    return subprocess.run([sys.executable, str(_SCRIPT), *(args or ("MSG",))], cwd=repo, capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, str(_SCRIPT), *(args or (str(repo / "MSG"),))], cwd=cwd or repo, capture_output=True, text=True
+    )
 
 
 def test_the_script_refuses_a_dead_citation_and_admits_a_live_one(tmp_path):
@@ -245,6 +247,9 @@ def test_the_script_refuses_a_dead_citation_and_admits_a_live_one(tmp_path):
     refused = _run(repo, "fix: see cli/y.py:3\n")
     assert refused.returncode == 1 and refused.stdout.startswith("message-citations: refused\n  - cli/y.py:3: "), (
         refused.stdout + refused.stderr
+    )
+    assert refused.stdout.endswith(
+        "\n  a coordinate quoted on purpose goes in a fenced block, or in a code span with a space in it\n"
     )
     passed = _run(repo, "fix: see cli/x.py:3, tests/test_x.py::TestB::test_c and T0002\n")
     assert passed.returncode == 0 and passed.stdout == "", passed.stdout + passed.stderr
@@ -266,6 +271,17 @@ def test_the_script_reads_the_index_and_head(tmp_path):
 def test_an_ignored_path_is_left_alone(tmp_path):
     repo = _repo(tmp_path)
     assert _run(repo, "docs: data/x.jsonl:99 is the dataset\n").returncode == 0
+
+
+def test_the_script_run_from_a_subdirectory_reads_the_whole_tree(tmp_path):
+    """git lists, names and ignores paths from the working directory; the script moves to the top before it reads."""
+    repo = _repo(tmp_path)
+    refused = _run(repo, "fix: T0001 and cli/y.py:3\n", cwd=repo / "infra")
+    assert refused.returncode == 1 and "cli/y.py:3: no tracked file" in refused.stdout and "T0001" not in refused.stdout, (
+        refused.stdout + refused.stderr
+    )
+    passed = _run(repo, "fix: T0001 and cli/x.py:3\n", cwd=repo / "infra")
+    assert passed.returncode == 0, passed.stdout + passed.stderr
 
 
 def test_a_topic_at_a_sibling_branch_tip_resolves(tmp_path):

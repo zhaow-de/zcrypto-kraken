@@ -13,9 +13,9 @@ away); under `--range` the two sides are the commit and its first parent. What i
   nor at the tip of any local or remote-tracking branch -- a topic another session registered on a branch not yet merged
   is cited by serial here before the merge, and is not a dead citation;
 - a `path::symbol` or `path:symbol` token on a Python or shell file whose symbol no line of the file defines on either
-  side -- for Python a `def`, an `async def`, a `class` or a module-level `name =` / `name: type =`; for shell a `name()`
-  function, a `function name`, or `name=`; a `test_a::TestB::test_c` chain is read segment by segment and a `[param]`
-  suffix is not read.
+  side -- for Python a `def`, an `async def`, a `class` or a `name =` / `name: type =` at any indentation; for shell a
+  `name()` function, a `function name`, or a `name=` with an optional `export`/`readonly`/`local`; a `::`-joined chain
+  (`path::Class::method`) is read segment by segment and a `[param]` suffix is not read.
 
 What it deliberately leaves alone -- the false-positive shapes considered and excluded, each one the tree's own usage:
 - a URL; anything inside a ``` or ~~~ fenced block; a code span with whitespace in it, which is a quoted command
@@ -33,7 +33,7 @@ What it deliberately leaves alone -- the false-positive shapes considered and ex
 - a suffix that resolves to several files: the token stands when any of them has the line or defines the symbol.
 
 The hook covers commit messages alone: dispatch text and PR bodies leave no record in the tree. `--range <a>..<b>` judges
-every non-merge commit's message of the range, for a gate to run over a branch."""
+every non-merge commit's message against its own two sides, by hand over a branch; nothing in the tree calls it."""
 
 from __future__ import annotations
 
@@ -136,7 +136,7 @@ def _resolvable(path: str) -> bool:
 
 
 def judge(text: str, trees: Sequence[Tree], tips: Sequence[Tree] = ()) -> list[str]:
-    """Each citation of the message that resolves on none of `trees` -- the staged tree and HEAD, or a commit and its parent -- once per token, in the message's order; a topic id also stands when a `tips` tree holds its file."""
+    """Each citation of the message that resolves on none of `trees` -- the staged tree and HEAD, or a commit and its parent -- once per token, lines then symbols then topics; a topic id also stands when a `tips` tree holds its file."""
     body = strip(text)
     if not (LINE.search(body) or SYMBOL.search(body) or TOPIC.search(body)):
         return []
@@ -235,7 +235,10 @@ def main(argv: list[str]) -> int:
     except OSError as exc:
         print(f"message-citations: cannot read {argv[1]}: {exc.strerror or exc}", file=sys.stderr)
         return 2
-    os.chdir(top.stdout.strip())  # `git check-ignore` reads paths from the working directory; the index and a commit's tree do not
+    # git reads paths from the working directory -- check-ignore's argument, the subtree ls-files and ls-tree list and the
+    # pathspec they take, the names ls-tree prints; only `show <rev>:<path>` is root-relative -- so from a subdirectory no
+    # topic resolves and a dead path outside it passes
+    os.chdir(top.stdout.strip())
     sides = [Tree()]
     if _git("rev-parse", "--verify", "-q", "HEAD").returncode == 0:
         sides.append(Tree("HEAD", "at HEAD"))
@@ -244,6 +247,7 @@ def main(argv: list[str]) -> int:
         print("message-citations: refused")
         for fail in fails:
             print("  - " + fail)
+        print("  a coordinate quoted on purpose goes in a fenced block, or in a code span with a space in it")
         return 1
     return 0
 
