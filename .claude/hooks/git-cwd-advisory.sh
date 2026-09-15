@@ -15,8 +15,6 @@
 # hook is silent rather than guessing one. A repository NESTED under the project directory resolves
 # to its own toplevel and is advised: a bare git there answers about the nested checkout, which is
 # the belief this exists to correct, whatever the path prefix suggests.
-# Silent, deliberately, and one miss bought with it: a bare git made from the project directory's own
-# checkout, even where the reader meant a worktree -- that is the default cwd, and the case above.
 # Which command shapes count as a git call at all, and which stay silent, is driven shape by shape in
 # `tests/test_git_cwd_advisory.py`.
 # `gh` is outside this hook by decision, not by oversight: `gh pr create`, `gh pr merge` and `gh pr
@@ -27,8 +25,9 @@
 # crosses back into the shell and no byte a command can hold -- a tab, a newline -- can be re-read as
 # a separator. `set -e` is deliberately absent and the last statement is `exit 0`: a PostToolUse arm
 # that exits non-zero reports a failure against a Bash call it was never meant to judge. The price is
-# that the reader's own stderr is discarded, so a bug in it is silence; the cases catch that as a
-# missing advisory.
+# that the reader's own stderr is discarded, so a bug in it is silence -- which the cases expecting an
+# advisory catch and the ones expecting silence cannot tell from a correct answer, and is why every
+# silent shape is driven beside the nearest shape that must speak.
 set -uo pipefail
 prog="$(cat <<'PY'
 import json
@@ -44,9 +43,17 @@ HEREDOC = re.compile(r"<<(-?)\s*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([\w./-]+))")
 WRAPPERS = {"sudo", "doas", "env", "timeout", "nice", "ionice", "stdbuf", "setsid", "nohup", "command", "time"}
 # The shell words that can stand immediately BEFORE a command word inside one simple command, and so
 # would otherwise be read as one: `if git diff --quiet; then`, `do git status`, `{ git status; }`.
-# `fi`, `done`, `esac` and `in` are not here -- nothing follows them in the same simple command, and a
-# word skipped for nothing is a git call attributed to the wrong one.
+# `for`, `select`, `case`, `[[` and `function` are deliberately outside the set: what follows those is
+# a variable name or a word list, never a command word, so skipping one would attribute a git call to
+# the wrong command -- `for f in git log` invokes no git, and that, not the word `in`, is what keeps
+# it silent.
 KEYWORDS = {"if", "elif", "while", "until", "then", "else", "do", "{", "!"}
+# Of those, the ones that head a condition or a body which may run no times, or many: a command word
+# reached past one of them may never have been reached at all. `{` and `!` neither branch nor loop --
+# what follows them runs, in this shell, exactly once -- so they are not in here. The distinction
+# decides nothing for a git call (the hook judges a command that has already run) and everything for a
+# `cd`, whose effect on the next call depends on whether the branch was taken.
+BRANCHING = KEYWORDS - {"{", "!"}
 PIN_ENV = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"}
 PIN_OPT = {"-C", "--git-dir", "--work-tree"}
 GLOBAL_VALUE = {"-c", "--config-env", "--namespace", "--super-prefix", "--attr-source", "--exec-path"}
@@ -76,22 +83,25 @@ def cut_heredocs(text):
 
 def simple_commands(text):
     # Words, not text: a `git` inside a quoted word is an argument and never a command word, and a
-    # `$( .. )` or backtick body is a command of its own -- bash runs it in the same cwd, so a bare
-    # git there is as unpinned as one outside, and the `$(` is opened before the enclosing quote is
-    # ever tested, so `x="$(git status)"` is advised exactly as `x=$(git status)` is. A redirect and
-    # its target are dropped.
-    cmds, word, started, stack, i, n = [[]], [], False, [["top", None]], 0, len(text)
+    # `$( .. )`, backtick or `( .. )` body is a command of its own -- bash runs it in the same cwd, so
+    # a bare git there is as unpinned as one outside, and the `$(` test runs ahead of the
+    # enclosing-quote branch, so a substitution inside a double quote is opened too. A redirect and
+    # its target are dropped. Each command is returned with the nesting depth it was read at, which is
+    # what lets `read()` undo a `cd` the subshell it stood in did not outlive.
+    cmds, word, started, stack, i, n = [[0, []]], [], False, [["top", None]], 0, len(text)
 
     def flush():
         nonlocal word, started
         if started:
-            cmds[-1].append("".join(word))
+            if not cmds[-1][1]:
+                cmds[-1][0] = len(stack)
+            cmds[-1][1].append("".join(word))
         word, started = [], False
 
     def sep():
         flush()
-        if cmds[-1]:
-            cmds.append([])
+        if cmds[-1][1]:
+            cmds.append([0, []])
 
     while i < n:
         ch, quote = text[i], stack[-1][1]
@@ -176,7 +186,7 @@ def simple_commands(text):
         started = True
         i += 1
     flush()
-    return [c for c in cmds if c]
+    return [(level, c) for level, c in cmds if c]
 
 
 def is_git(w):
@@ -184,11 +194,13 @@ def is_git(w):
 
 
 def head(words):
-    """Where the command word is, after the shell keywords, the assignments and the wrappers, and
-    whether git's directory is already pinned in the environment."""
-    i, pinned = 0, False
+    """Where the command word is, after the shell keywords, the assignments and the wrappers; whether
+    git's directory is already pinned in the environment; and whether a BRANCHING keyword was stepped
+    over on the way, which decides nothing for a git call and everything for a `cd`."""
+    i, pinned, branched = 0, False, False
     while i < len(words):
         if words[i] in KEYWORDS:
+            branched = branched or words[i] in BRANCHING
             i += 1
             continue
         m = ASSIGN.match(words[i])
@@ -206,12 +218,12 @@ def head(words):
                 i += 2 if short else 1
             continue
         break
-    return i, pinned
+    return i, pinned, branched
 
 
 def git_call(words):
     """The argv of an unpinned git invocation whose answer depends on the cwd, or None."""
-    i, pinned = head(words)
+    i, pinned, _ = head(words)
     if pinned or i >= len(words) or not is_git(words[i]):
         return None
     argv, j = words[i:], 1
@@ -232,15 +244,19 @@ def git_call(words):
 
 def cd_target(words):
     """Where a leading `cd` or `pushd` moves to and which verb moved there, or ("", "") for anything
-    else; `popd` names its verb and no target, since what it moves to is on the stack."""
-    i, _ = head(words)
+    else; `popd` names its verb and no target, since what it moves to is on the stack. A verb reached
+    only past a BRANCHING keyword is ("", "?"), a directory change this reader cannot place: `then cd
+    sub` is one branch of a condition it did not evaluate and has no way to."""
+    i, _, branched = head(words)
     if i >= len(words):
         return "", ""
     verb = words[i].rpartition("/")[2]
+    if verb not in ("cd", "pushd", "popd"):
+        return "", ""
+    if branched:
+        return "", "?"
     if verb == "popd":
         return "", "popd"
-    if verb not in ("cd", "pushd"):
-        return "", ""
     return next((w for w in words[i + 1 :] if not w.startswith("-")), "~"), verb
 
 
@@ -249,10 +265,22 @@ def read(command, cwd):
     # directory by another spelling and silences the rest of the command; a relative one leaves the
     # answer as cwd-dependent as it was and only moves where it points. `pushd` saves what it leaves
     # and `popd` restores it, because a git call after the pop ran where the command started: naming
-    # the pushed directory there would be a WRONG answer, which costs more than a missing one.
-    base, pinned, stack = cwd, False, []
-    for words in simple_commands(cut_heredocs(command)):
+    # the pushed directory there would be a WRONG answer, which costs more than a missing one. Two
+    # more directory changes are not the command's to keep, and cost the same if kept: one the reader
+    # cannot place -- `then cd sub`, a branch it did not evaluate -- silences the rest rather than
+    # guess which way it went; and one made inside a subshell, which bash discards when the subshell
+    # closes, so every level keeps its own (base, pinned, pushd stack) and gets it back on the way out.
+    base, pinned, stack, frames = cwd, False, [], []
+    for level, words in simple_commands(cut_heredocs(command)):
+        while level > len(frames) + 1:
+            frames.append((base, pinned, stack))
+            stack = list(stack)
+        while level < len(frames) + 1:
+            base, pinned, stack = frames.pop()
         target, verb = cd_target(words)
+        if verb == "?":
+            pinned = True
+            continue
         if verb == "popd":
             if stack:
                 base, pinned = stack.pop()
@@ -274,13 +302,19 @@ def read(command, cwd):
 
 def toplevel(directory):
     """The work-tree root a directory belongs to, as git itself answers it -- a linked worktree's root
-    is not a path prefix of the checkout it belongs to, so no comparison of paths stands in for it."""
+    is not a path prefix of the checkout it belongs to, so no comparison of paths stands in for it.
+
+    3s per call, and a judgement makes two of them, so the reader bounds itself at 6s: under the 10s
+    `timeout` the registration in `.claude/settings.json` gives this hook, which is what would kill it
+    otherwise. Raise one number and raise the other -- a reader killed by the harness is a PostToolUse
+    arm that reports nothing and says nothing about why, while a timeout here returns "" and is the
+    silence the rest of this file means by it."""
     try:
         done = subprocess.run(
             ["git", "-C", directory, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=3,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
