@@ -129,9 +129,8 @@ def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
 
 
 def test_a_refused_control_names_the_cluster_the_sweep_held_back(tmp_path):
-    """One cluster is still withheld: the one whose binding letter takes the sweep's own pattern, which the
-    control cannot inherit and cannot be handed the letter without. The separate-word spelling is the recovery
-    the refusal advertises, and it is asserted here rather than only advertised."""
+    """The separate-word spelling is the recovery the refusal advertises, and it is asserted here rather than
+    only advertised."""
     repo = _repo(tmp_path)
     done = _sweep(repo, "-ive", ".", "--control", "needle")
     assert done.returncode == 2, done.stdout + done.stderr
@@ -140,10 +139,10 @@ def test_a_refused_control_names_the_cluster_the_sweep_held_back(tmp_path):
     assert kept.returncode == 1, kept.stdout + kept.stderr
 
 
-def test_a_cluster_whose_operand_is_greps_own_goes_to_the_control_with_it(tmp_path):
-    """The other cluster -- the one whose binding letter takes a NUM, an ACTION or a matcher name -- is handed
-    over whole, its operand behind it, so the control runs the matcher the sweep ran. `-i` is what the withholding
-    used to cost here: a control in the other case found nothing, and the sweep's clean was refused for it."""
+def test_a_cluster_whose_binding_letter_takes_a_num_an_action_or_a_matcher_goes_over_whole(tmp_path):
+    """The other cluster -- the one whose binding letter takes a NUM, an ACTION or a matcher name, grep's own
+    operand rather than the sweep's pattern -- is handed over whole, its operand behind it, so the control runs
+    the matcher the sweep ran."""
     repo = _repo(tmp_path)
     kept = _sweep(repo, "-ivm", "5", ".", "--control", "needle")
     assert kept.returncode == 1, kept.stdout + kept.stderr
@@ -430,11 +429,10 @@ def test_a_flag_whose_operand_is_supplied_is_an_ordinary_sweep(tmp_path):
 
 
 # One sweep whose grep opens no file at all, written every way grep accepts it. `-d` with an ACTION grep refuses
-# is the only operand in this script's table GNU grep 3.11 rejects at rc 1 rather than 2 -- `-D`, `-m`, `-A`,
-# `-B`, `-C`, `-X`, `-f`, `-e`, `--binary-files` and `--exclude-from` all answer 2, which the probe refuses before
-# the sweep runs -- so rc 1 here is the sweep's grep saying "nothing matched" about files it never opened. Every
-# row must be a refusal; the standalone and long spellings are rows because the clustered ones were the only leak
-# and nothing else would notice if they stopped being.
+# is the one operand in this script's table GNU grep 3.11 rejects at rc 1 rather than 2, so rc 1 here is the
+# sweep's grep saying "nothing matched" about files it never opened. Every row must be a refusal; the standalone
+# and long spellings are rows because the clustered ones were the only leak and nothing else would notice if they
+# stopped being.
 _OPENED_NOTHING = [
     ("-ld", "recursive", "NEEDLE"),  # `recurse` misspelt: the typo this costs
     ("-ld", "bogus", "no-such-string-anywhere"),
@@ -459,11 +457,11 @@ _OPENED_EVERYTHING = [
 
 
 def test_a_grep_that_opened_no_file_is_never_reported_as_a_clean(tmp_path):
-    """rc 1 means the pattern is absent from files that were read. A grep that refused its own words read none of
-    them, and the control is the whole of what tells the two apart -- so the control has to carry the words the
-    sweep carried, operands and all. Held back instead, it runs a laxer matcher, hits, and licenses a clean over a
-    grep that opened nothing: a one-letter typo then reads as an absence, visible only to a human watching stderr
-    and invisible to anything reading rc."""
+    """A grep that refused its own words read none of the files, and the control is the whole of what tells that
+    from an absence -- so the control has to carry the words the sweep carried, operands and all. Held back
+    instead, it runs a laxer matcher, hits, and licenses a clean over a grep that opened nothing: a one-letter
+    typo then reads as an absence, visible only to a human watching stderr and invisible to anything reading
+    rc."""
     repo = _repo(tmp_path)
     wrong = []
     for words in _OPENED_NOTHING:
