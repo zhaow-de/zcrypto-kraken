@@ -1,13 +1,15 @@
-"""message-citations.py: a commit message whose `path:line`, `path::symbol` / `path:symbol` or `T<NNNN>` resolves on neither side of the commit is refused, and every shape the hook leaves alone is admitted.
+"""message-citations.py: a commit message whose `path:line`, `path::symbol` / `path:symbol`, `T<NNNN>` or hex id resolves on neither side of the commit is refused, and every shape the hook leaves alone is admitted.
 
-Driven with synthetic messages over a fake tree for the judgement, and over a repository of its own for the git-facing arms: the index against HEAD, a file the commit lands or takes away, an ignored path, a topic at a sibling branch tip, the script run from a subdirectory, `--range`, and a message file that is not UTF-8. The wiring test reads the pre-commit config, so the hook cannot fall out of the commit-msg stage unnoticed."""
+Driven with synthetic messages over a fake tree for the judgement, and over a repository of its own for the git-facing arms: the index against HEAD, a file the commit lands or takes away, an ignored path, a topic at a sibling branch tip, an id in the object store or in a tracked file, the script run from a subdirectory, `--range`, and a message file that is not UTF-8. The wiring test reads the pre-commit config, so the hook cannot fall out of the commit-msg stage unnoticed."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import pathlib
 import subprocess
 import sys
+from unittest import mock
 
 import yaml
 
@@ -27,10 +29,12 @@ guard = _load(_SCRIPT, "message_citations")
 
 
 class FakeTree:
-    """A side of a commit as a dict of path -> text; `ignored` is a set of paths git would ignore."""
+    """A side of a commit as a dict of path -> text; `ignored` is a set of paths git would ignore, `objects` the full ids of the object store."""
 
-    def __init__(self, files: dict[str, str], label: str = "staged", ignored: set[str] = frozenset()) -> None:
-        self.files, self.label, self._ignored = files, label, set(ignored)
+    def __init__(
+        self, files: dict[str, str], label: str = "staged", ignored: set[str] = frozenset(), objects: set[str] = frozenset()
+    ) -> None:
+        self.files, self.label, self._ignored, self.objects = files, label, set(ignored), set(objects)
 
     @property
     def paths(self) -> list[str]:
@@ -46,7 +50,22 @@ class FakeTree:
     def ignored(self, path: str) -> bool:
         return path in self._ignored
 
+    def has_object(self, hex_id: str) -> bool:
+        return any(o.startswith(hex_id) for o in self.objects)
 
+    def carries(self, token: str) -> bool:
+        return any(token in text for text in self.files.values())
+
+    @property
+    def digests(self) -> set[str]:
+        return {hashlib.sha256(text.encode()).hexdigest() for text in self.files.values()}
+
+
+COMMIT = "40ff64783c3be42bc815804299af06539bee1823"
+UPSTREAM = "a52de0f914770b635701ae8961994e0f9b9067db"
+SPEC_HASH = "305f6b005cdd25c22a3e3c992364153be25a3adb3d10f44f2db295a4566fcc6a"
+RECORD_HASH = "8f5025fd647cbd3982ea7cc2e0cee18eaf837724bd071343da79f9c86ccd44c0"
+DEAD40, DEAD64 = "deadbee1" * 5, "deadbee1" * 8
 PY = "import os\n\nasync def fetch():\n    pass\n\ndef run():\n    pass\n\nclass Foo:\n    pass\nLIMIT: int = 3\nNAME = 'x'\n"
 SH = "c_a() { true; }\nfunction c_b {\n  true\n}\nexport TOKEN=1\n"
 FILES = {
@@ -59,8 +78,11 @@ FILES = {
     "docs/open-topics/archive/T0002-archived.md": "x\n",
     "README.md": "a\nb",
     "data/.gitignore": "*\n",
+    "docs/reference/fleet-pins.md": "| 2026-09-07 19:04:29 | `ac6172b9ffb2` |\n",
+    "docs/specs/00100-adapter-design.md": f"upstream pinned at {UPSTREAM}\n",
+    "docs/reference/trial-registry.jsonl": f'{{"record_hash":"{RECORD_HASH}","spec_hash":"{SPEC_HASH}"}}\n',
 }
-TREE = FakeTree(FILES, ignored={"data/x.jsonl", ".local/memo.md"})
+TREE = FakeTree(FILES, ignored={"data/x.jsonl", ".local/memo.md"}, objects={COMMIT, "7ae7d1e8" + "0" * 32})
 
 
 def _judge(message: str, *trees: FakeTree, tips: tuple[FakeTree, ...] = ()) -> list[str]:
@@ -162,6 +184,61 @@ def test_a_symbol_on_a_file_that_is_not_python_or_shell_and_an_entry_name_are_no
     assert _judge("README.md:badge and nas.md:Heading and count-list.sh:live-topics-without-a-trigger\n") == []
 
 
+# --- hex ids -----------------------------------------------------------------------------------
+
+
+def test_a_dead_hex_id_is_refused_and_one_the_object_store_has_is_admitted():
+    assert _judge(f"`{COMMIT[:8]}`, `{COMMIT[:12]}`, `7ae7d1e`, `{COMMIT}` and bare {COMMIT}\n") == []
+    assert _judge("`deadbee1` twice, `deadbee1`\n") == [
+        "deadbee1: no object has that id, and no tracked file carries it, on either side of the commit"
+    ], "one refusal per token"
+    assert _judge("`deadbe1`\n") == ["deadbe1: no object has that id, and no tracked file carries it, on either side of the commit"]
+    assert _judge(f"{DEAD40} bare and `{DEAD40}` quoted\n") == [
+        f"{DEAD40}: no object has that id, and no tracked file carries it, on either side of the commit"
+    ]
+    dead = f"{DEAD40}: no object has that id, and no tracked file carries it, on either side of the commit"
+    for tail in (".", ",", ")", "-", ".)", "'s", " done"):
+        assert _judge(f"the upstream commit {DEAD40}{tail}\n") == [dead], f"a 40-hex ending a sentence: {tail!r}"
+
+
+def test_an_ambiguous_short_id_is_one_the_store_holds():
+    """`git cat-file -e` refuses every peel of an ambiguous prefix, so the id resolves by the disambiguation instead."""
+    calls: list[tuple[str, ...]] = []
+
+    def fake_git(*args: str):
+        calls.append(args)
+        listed = "1d5ed0c74a\n1d5ed0ca1b\n" if args[-1].endswith("1d5ed0c") else ""
+        return subprocess.CompletedProcess(args, 0 if listed else 1, listed, "")
+
+    tree = guard.Tree()
+    with mock.patch.object(guard, "_git", fake_git):
+        assert tree.has_object("1d5ed0c") is True, "two objects share the prefix, so the store holds it"
+        assert tree.has_object("deadbee1") is False
+    assert calls == [("rev-parse", "--disambiguate=1d5ed0c"), ("rev-parse", "--disambiguate=deadbee1")]
+
+
+def test_a_hex_a_tracked_file_carries_stands_on_either_side():
+    assert _judge(f"`ac6172b9ffb2`, its prefix `ac6172b9`, and the upstream {UPSTREAM} a spec pins\n") == []
+    repinned = FakeTree({p: t for p, t in FILES.items() if p != "docs/reference/fleet-pins.md"})
+    assert _judge("`ac6172b9ffb2` goes\n", repinned, TREE) == [], "the digest the commit takes away is at HEAD"
+    assert _judge("`ac6172b9ffb2`\n", repinned) == [
+        "ac6172b9ffb2: no object has that id, and no tracked file carries it, on either side of the commit"
+    ]
+    assert _judge("`deadbeef0000`\n") == [
+        "deadbeef0000: no object has that id, and no tracked file carries it, on either side of the commit"
+    ]
+
+
+def test_a_quoted_64_hex_is_a_registry_hash_or_a_file_digest_and_a_bare_one_is_left_alone():
+    assert _judge(f"`{SPEC_HASH}`, `{RECORD_HASH}` and `{hashlib.sha256(PY.encode()).hexdigest()}`\n") == []
+    assert _judge(f"`{DEAD64}`\n") == [f"{DEAD64}: no tracked file carries it or hashes to it, on either side of the commit"]
+    assert _judge(f"ast {DEAD64} (unchanged), stmt {DEAD64}, HEAD {DEAD64}\n") == [], "a bare 64-hex is a digest of derived text"
+    head = FakeTree({**FILES, "cli/old.py": "def gone():\n    pass\n"}, label="at HEAD")
+    assert _judge(f"`{hashlib.sha256(b'def gone():\n    pass\n').hexdigest()}` goes\n", TREE, head) == [], (
+        "the digest of the file the commit deletes is at HEAD"
+    )
+
+
 # --- the excluded shapes -----------------------------------------------------------------------
 
 
@@ -169,10 +246,19 @@ def test_the_excluded_shapes_are_not_citations():
     shapes = {
         "a URL": "https://github.com/x/y/blob/main/cli/z.py:99 and https://x/T0009",
         "a URL with a coordinate in its query": "https://github.com/search?q=cli/x.py:99+T0009 and https://x/s?q=cli/x.py::nope",
-        "a fenced block": "before\n```\ncli/x.py:99 T0009 cli/x.py::nope\n```\nafter",
+        "a fenced block": "before\n```\ncli/x.py:99 T0009 cli/x.py::nope `deadbee1`\n```\nafter",
         "a tilde fence": "~~~bash\ncli/x.py:99\n~~~",
         "an unclosed fence": "```\ncli/x.py:99",
-        "a quoted command": "`sed -n '99p' cli/x.py:99` and `git show HEAD:cli/x.py:99`",
+        "a quoted command": "`sed -n '99p' cli/x.py:99` and `git show HEAD:cli/x.py:99` and `git show deadbee1`",
+        "a hex in a URL": f"https://github.com/x/y/commit/{DEAD40} and https://x/deadbee1",
+        "an unquoted short hex": "deadbee1, ac6172b9ffb2 and deadbee1deadbee1 in prose",
+        "a bare 64-hex": f"ast {DEAD64} (unchanged) and sha256:{DEAD64}",
+        "a span that is a word or a number": "`deadbeef`, `defaced`, `500000000`, `20260915` and `2147483648`",
+        "a sha256-labelled span": "sha256 `9ca1382c84a5`, sha256:`3cc4c1a149df`, sha256: `20ccc4496c9a` and sha256\n`20ccc4496c9b`",
+        "a sha256 label spaced or quoted": "sha256  `9ca1382c84a5`, the `sha256` `3cc4c1a149df` and sha256 :\n `20ccc4496c9a`",
+        "a 40-hex path segment": f"commit/{DEAD40}, {DEAD40}/x, x-{DEAD40}, {DEAD40}.py, {DEAD40}-slug and v1.{DEAD40}",
+        "a span holding more than the id": "`deadbee1..deadbee2`, `deadbee1^` and `deadbee1:cli/x.py`",
+        "a hex of another length": f"`abc123`, `deadbee1deadbee1` and `{DEAD40}1`",
         "a host and port": "status.kraken.com:443 and grafana.example.com:3000",
         "a version": "ruff 0.16.0:3 and nautilus 2.x:1 and python3.14:1",
         "an absolute path": "/home/x/cli/x.py:99 and ~/cli/x.py:99 and /cli/x.py:99",
@@ -195,6 +281,9 @@ def test_a_citation_beside_an_excluded_one_is_still_judged():
     assert _judge("`cli/x.py:99`\n") == [f"cli/x.py:99: cli/x.py has {guard._line_count(PY.encode())} lines staged"], (
         "a span holding one token is a citation"
     )
+    assert _judge("```\n`deadbee1`\n```\nand `deadbee1` outside, sha256 `deadbee1` labelled\n") == [
+        "deadbee1: no object has that id, and no tracked file carries it, on either side of the commit"
+    ]
 
 
 def test_a_dead_coordinate_between_two_whitespace_free_spans_is_refused():
@@ -263,7 +352,7 @@ def test_the_script_refuses_a_dead_citation_and_admits_a_live_one(tmp_path):
         refused.stdout + refused.stderr
     )
     assert refused.stdout.endswith(
-        "\n  a coordinate quoted on purpose goes in a fenced block, or in a code span with a space in it\n"
+        "\n  a coordinate or id quoted on purpose goes in a fenced block, or in a code span with a space in it\n"
     )
     passed = _run(repo, "fix: see cli/x.py:3, tests/test_x.py::TestB::test_c and T0002\n")
     assert passed.returncode == 0 and passed.stdout == "", passed.stdout + passed.stderr
@@ -280,6 +369,42 @@ def test_the_script_reads_the_index_and_head(tmp_path):
     (repo / "cli" / "unstaged.py").write_text("x\n")
     refused = _run(repo, "feat: cli/unstaged.py:1\n")
     assert refused.returncode == 1 and "cli/unstaged.py:1: no tracked file" in refused.stdout, refused.stdout + refused.stderr
+
+
+def test_the_script_resolves_a_hex_id_in_the_object_store_and_in_a_tracked_file(tmp_path):
+    """The store holds the repository's own commit; a digest resolves through the pin row a file carries, staged or at HEAD, or by hashing a blob."""
+    repo = _repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    tree, blob = (_git(repo, "rev-parse", "--short=8", rev).stdout.strip() for rev in ("HEAD^{tree}", "HEAD:README.md"))
+    readme = hashlib.sha256(FILES["README.md"].encode()).hexdigest()
+    passed = _run(
+        repo,
+        f"fix: after `{head[:8]}`, {head}, tree `{tree}` and blob `{blob}`, the pin `ac6172b9ffb2`, `{SPEC_HASH}` and README's `{readme}`\n",
+    )
+    assert passed.returncode == 0 and passed.stdout == "", passed.stdout + passed.stderr
+    refused = _run(repo, f"fix: `deadbee1`, `{DEAD40}` and `{DEAD64}`\n")
+    assert refused.returncode == 1 and refused.stdout.count("\n  - ") == 3, refused.stdout + refused.stderr
+    assert f"  - {DEAD64}: no tracked file carries it or hashes to it" in refused.stdout
+    (repo / "docs" / "reference" / "deploy-log.jsonl").write_text('{"digest":"06998998e876"}\n')
+    _git(repo, "add", "docs/reference/deploy-log.jsonl")
+    _git(repo, "rm", "-q", "docs/reference/fleet-pins.md")
+    passed = _run(repo, "fix: `06998998e876` lands, `ac6172b9ffb2` goes\n")
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    (repo / "README.md").write_text("`0badc0de0000`\n")
+    refused = _run(repo, "fix: `0badc0de0000`\n")
+    assert refused.returncode == 1 and "0badc0de0000: no object" in refused.stdout, "the working tree is not read"
+
+
+def test_the_range_mode_resolves_an_id_at_the_commit_or_its_parent(tmp_path):
+    repo = _repo(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "rm", "-q", "docs/reference/fleet-pins.md")
+    _git(repo, "commit", "-q", "-m", f"docs: after `{base[:8]}`, `ac6172b9ffb2` goes")
+    assert _run(repo, "", "--range", f"{base}..HEAD").returncode == 0
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "docs: `ac6172b9ffb2` is gone and `deadbee1` never was")
+    refused = _run(repo, "", "--range", f"{base}..HEAD")
+    assert refused.returncode == 1 and refused.stdout.count("\n  - ") == 2, refused.stdout + refused.stderr
+    assert ": ac6172b9ffb2: no object has that id" in refused.stdout and ": deadbee1: no object has that id" in refused.stdout
 
 
 def test_an_ignored_path_is_left_alone(tmp_path):
