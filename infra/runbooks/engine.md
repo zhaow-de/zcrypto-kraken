@@ -191,7 +191,7 @@ Nothing fires this. You are reading `docker logs zcrypto-engine` on the engine h
 
 The engine's Kraken **data** socket is idle by design while disarmed: nothing is subscribed between intents, and the executor subscribes quotes per intent.
 
-The idle timer is off: `cli/engine/node.py::_data_client_config` sets `ws_idle_timeout_ms=0` (spec `00101` D1), so a quiet socket is never timed out; `docs/reference/fleet-pins.md`'s engine row records which revision is deployed. The lines mean:
+The idle timer is off: `cli/engine/node.py::_data_client_config` sets `ws_idle_timeout_ms=0` by design<!-- spec 00101 D1 -->, so a quiet socket is never timed out; `docs/reference/fleet-pins.md`'s engine row records which revision is deployed. The lines mean:
 
 - **`Read idle timeout: no data received for 10.0s`**: the timer has been turned back on. That is a config regression, not a venue event: the literal `0` was replaced (writing `None` does it, silently). Nothing to do on the host; fix the config and redeploy.
 - **`Reconnecting` → `Reconnect succeeded`**, without a preceding `Read idle timeout` or `Heartbeat timeout` line: a real drop. Read it against `zcrypto_capture_reconnects_total{host="zcrypto"}` on the integrity board's "Capture counters — cumulative since process start" panel: both moving means the venue or the host's network moved; the engine alone moving is the engine's problem.
@@ -221,7 +221,7 @@ None of these lines reaches Loki (the engine ships only the `zcrypto` logger), s
 
 ### Retire when
 
-`ws_idle_timeout_ms=0` is no longer set in `cli/engine/node.py::_data_client_config` (a standing subscription landed and spec `00101` D5's restore rule applied), or the socket lines reach Loki, whichever comes first.
+`ws_idle_timeout_ms=0` is no longer set in `cli/engine/node.py::_data_client_config` (a standing subscription landed and the design's restore rule applied<!-- spec 00101 D5 -->), or the socket lines reach Loki, whichever comes first.
 
 ______________________________________________________________________
 

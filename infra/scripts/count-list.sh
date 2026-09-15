@@ -248,7 +248,7 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # The bullets and numbered steps of the top-level runbook pages, `infra/runbooks/README.md` aside, whose own bullets
 # state the rule rather than an operator's step: an internal token --
 # `Phase <N>`, `T<NNNN>`, `iter-<N>`, `spec <NNNNN>`, `WP<N>`, `D<N>` -- inside one is a reference an operator who
-# reached the page from an alert description cannot resolve. A paragraph and a table row may carry one; a
+# reached the page from an alert description cannot resolve. An HTML comment on the line may carry one; a
 # declaration's why is inside its bullet and takes the rule with it. The classes and the path exemption are
 # `tests/test_internal_terms_not_operator_visible.py`'s. One line per bullet, its tokens joined, so the count is
 # bullets to fix and not tokens.

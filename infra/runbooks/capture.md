@@ -70,7 +70,7 @@ You are reading `containing_dark_window` in `cli/archive/settle.py`, or reconcil
 
 ### What it means
 
-`containing_dark_window` clamps to `hour_start`, so a stream whose silence began in the previous hour is measured from the boundary rather than its true start. The share is small; the measurement lives in the comment at the clamp in `cli/archive/settle.py` and in T0103. It is not structurally bounded by `min_gap_seconds`. What bounds it is the measured silence distribution, which `infra/scripts/gap_distribution.py` re-measures.
+`containing_dark_window` clamps to `hour_start`, so a stream whose silence began in the previous hour is measured from the boundary rather than its true start. The share is small; the measurement lives in the comment at the clamp in `cli/archive/settle.py`<!-- and in T0103 -->. It is not structurally bounded by `min_gap_seconds`. What bounds it is the measured silence distribution, which `infra/scripts/gap_distribution.py` re-measures.
 
 ### What to do
 
@@ -121,7 +121,7 @@ Residual (b) is invisible to the early-close counter, and that is arithmetic rat
 
 ### Retire when
 
-All three of these hold in `cli/capture/segment_writer.py`, at which point this section describes nothing: the witness quorum is above two, the wall clock can no longer second an hour on its own, and `_enter_hour`'s first-event branch refuses an hour behind our own. Closing one residual does not retire the other two, nor the alert sections below that cover them — retire each with the mechanism it describes. The decision to accept all three, and what each closing knob would starve, is recorded in \[[T0037]\].
+All three of these hold in `cli/capture/segment_writer.py`, at which point this section describes nothing: the witness quorum is above two, the wall clock can no longer second an hour on its own, and `_enter_hour`'s first-event branch refuses an hour behind our own. Closing one residual does not retire the other two, nor the alert sections below that cover them — retire each with the mechanism it describes. The decision to accept all three, and what each closing knob would starve, is recorded outside this page<!-- T0037 -->.
 
 ______________________________________________________________________
 
@@ -304,7 +304,7 @@ A **critical** Grafana alert, one instance per capture host. The *minimum* of `z
 
 ### What it means
 
-**Check the venue's published maintenance calendar before anything else.** The known cause is a published "Kraken Website and API Maintenance" window, on both hosts at once; the record is T0129.
+**Check the venue's published maintenance calendar before anything else.** The known cause is a published "Kraken Website and API Maintenance" window, on both hosts at once<!-- the record is T0129 -->.
 
 It is nonetheless a **true positive, not noise**. The venue emitted nothing, so no host missed anything that existed, but L2 is unbackfillable and the hours are genuinely short. Expect the reconciler's loss page about two hours later.
 

@@ -9,7 +9,7 @@ set clause both say, so a bullet carrying three tokens is one finding to fix and
 prints `path:line <tokens>` per offending bullet and exits 0 whether or not it found any: this is an instrument the
 count list reads, not a gate, and a refusal here would block a runbook fix during an incident. A
 non-zero count is the finding -- an operator reaching the page from an alert description cannot
-resolve `T0160` or `spec 00106`, while a paragraph and a table row may carry one, because provenance
+resolve `T0160` or `spec 00106`, while an HTML comment on the line may carry one, because provenance
 for a claim the tree cannot otherwise re-derive is worth keeping (the owner's ruling of 2026-09-12).
 A declaration's `why` is inside its bullet and takes the rule with it.
 
@@ -20,9 +20,11 @@ Neither half of the reading is defined here, and that is the point -- one defini
   because `infra/scripts/` is inside the very set that test scans for leaks: its `VERBOSE` pattern
   carries `# T0096` and `# spec 00052` as examples, so a copy of it living under `infra/scripts/`
   would read as an operator-facing leak and turn the test red on its own definition.
-* the BULLET, with a wrapped item's continuation lines joined and fenced code set aside, comes from
-  `infra/scripts/guidance-guard.py`'s `bullets()` -- the same reader the universal test uses, so
-  "inside a bullet" means one thing across both instruments.
+* the BULLET -- a wrapped item's continuation lines joined, fenced code set aside -- comes from
+  `infra/scripts/guidance-guard.py`'s `bullets()`, which the universal gate in that same file calls.
+  The page reader borrows that module's `BULLET` and `without_html_comments` and keeps its own fence
+  blanker, so the marker and the comment mean one thing to all three readers while the joined item is
+  this instrument's and the gate's.
 
 Both are loaded by path because neither filename is importable (a hyphen, and a test module outside
 any package). A page this cannot read is reported on stderr and exits 2, so a typo in the count
@@ -51,7 +53,12 @@ def _load(path: pathlib.Path, name: str) -> types.ModuleType:
 
 def hits(text: str, guard: types.ModuleType, vocabulary: types.ModuleType) -> list[tuple[int, str]]:
     """One (line, tokens) per offending bullet, its line the item's first and its tokens comma-joined
-    in the order they appear, so the caller counts bullets and still reads what each one carries."""
+    in the order they appear.
+
+    No window of the bullet is cut round the hit, as the page reader's failure message cuts one, and
+    the readers differ here on purpose: this row is read by someone who has just named the page, so
+    `path:line` is a jump target and the tokens are what to search for once there. The page reader's
+    is a pytest assertion, read off a CI log with no checkout behind it."""
     found = []
     for line, bullet in guard.bullets(text):
         tokens = [token.strip() for token in vocabulary._leaks(bullet)]

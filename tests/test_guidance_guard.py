@@ -226,6 +226,20 @@ def test_plus_and_numbered_items_are_read_and_a_fenced_block_is_not():
     assert guard.uncounted_universals(RULE, fenced) == []
 
 
+def test_a_fence_marker_inside_a_comment_hides_no_bullet_and_a_comment_declares_no_count():
+    """A stale command block commented out leaves an odd marker; deciding the fence state before
+    blanking comments opens a block there, and every bullet below it goes unread -- the gate then
+    passes a universal it never looked at. The second half is the same blanking seen from the bullet's
+    own text: a declaration an operator cannot see is not one, so it does not count."""
+    page = "<!--\n```\nconverge.sh --tags nas\n-->\n\n" + BARE
+    assert guard.bullets(page) == [(6, BARE.rstrip("\n"))]
+    assert guard.uncounted_universals(RULE, page) == [(6, "Never")]
+    hidden = (
+        "- Never wrap `converge.sh` in `timeout`.<!-- count: `infra/scripts/count-list.sh converge-sh-wrapped-in-timeout` -->\n"
+    )
+    assert guard.uncounted_universals(RULE, hidden) == [(1, "Never")]
+
+
 def test_a_universal_inside_a_code_span_is_not_a_universal():
     assert guard.uncounted_universals(RULE, "- Run `uv sync --only-group dev` and `any()` before the gate.\n") == []
     assert [w for _, w in guard.uncounted_universals(RULE, "- Run `uv sync` only before the gate.\n")] == ["only"]
