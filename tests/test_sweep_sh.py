@@ -546,22 +546,23 @@ _NOT_A_PATTERN_SOURCE = [
 
 # What the admission takes, and the one kind outside it that is admitted anyway. A symlink is a row because the
 # admission follows one. `/dev/null` is the exception and its rc says why it is safe to make: it reads empty to
-# every reader, so the empty-set refusal above owns it and gives the diagnosis that helps.
+# every reader, so the empty-set refusal above owns it and gives the diagnosis that helps. The exception is over
+# the resolved name, so a re-spelling of it lands on the same diagnosis rather than on a refusal about its kind.
 _ADMITTED_AS_A_PATTERN_SOURCE = [
     (("-l", "-f", "pat.txt", "--control", "NEEDLE"), 0),
     (("-lf", "pat.txt"), 0),
     (("-l", "--file=pat.txt", "--control", "NEEDLE"), 0),
     (("-l", "-f", "link.txt", "--control", "NEEDLE"), 0),
     (("-l", "-f", "/dev/null", "--control", "NEEDLE"), 2),
+    (("-l", "-f", "/dev//null", "--control", "NEEDLE"), 2),
 ]
 
 
 def test_only_a_regular_file_is_admitted_as_a_pattern_source(tmp_path):
     """This script reads the caller's pattern source before the sweep does -- three times -- so what it needs is
-    a source all four reads answer alike, and only a regular file under a name that means one file to each of
-    them is that. The check is which kind it IS and not which way it could differ, because the ways of differing
-    have no end and a list of them admits the next spelling; measuring instead is no option at all, since every
-    measurement of a source is itself one of the reads."""
+    a source all four reads answer alike, and a regular file under a name that means one file to each of them is
+    the one thing that is. The rows here are the kinds, in the spellings that reach the kind test; the names that
+    pass that test and still hand each reader a different file are the case two below."""
     repo = _repo(tmp_path)
     (repo / "pat.txt").write_text("NEEDLE\n")
     (repo / "link.txt").symlink_to(repo / "pat.txt")
@@ -604,6 +605,42 @@ def test_a_source_named_as_stdin_is_refused_where_no_stat_could_tell(tmp_path):
         assert "is not a pattern source this sweep can use" in done.stderr, spelt + ": " + done.stdout + done.stderr
 
 
+def test_a_name_that_answers_per_reader_is_refused_whatever_its_spelling(tmp_path):
+    """The kind test cannot reach these: every row here IS a regular file to the stat the admission makes, and a
+    different file to each of the four greps -- `/proc/self` is whichever of them is asking, and the descriptor
+    names resolve against the stdin each one was handed. Every row is driven beside an ordinary `-f`, the
+    arrangement nothing downstream catches: the pattern set is not empty, so the sweep runs and answers 1 with an
+    empty stderr, which this script reports as a clean. None of the spellings is a name any list held -- they are
+    re-spellings of the two filesystems, which is what the arm tests -- and one of them climbs there from the
+    toplevel by a relative path, so a test of the word as written would walk past it. The procfs rows stand only
+    where procfs does; the `/dev` rows need only `/dev` itself, which is where the resolution happens."""
+    repo = _repo(tmp_path)
+    pats = repo.parent / "pats.txt"
+    pats.write_text("NEEDLE\n")
+    ordinary = repo.parent / "absent.txt"
+    ordinary.write_text("no-such-string-anywhere\n")
+    # Lexical, from the physical toplevel the script `cd`s to, so the climb lands where the script resolves it.
+    climb = os.path.relpath("/dev/stdin", os.path.realpath(repo))
+    rows = ["/dev//stdin", "/dev/./stdin", "//dev/stdin", "/dev/./fd/0", climb]
+    rows += [p for p in ("/proc/self/cmdline", "/proc/self/maps", "/proc/thread-self/stat") if os.path.isfile(p)]
+    wrong = []
+    for row in rows:
+        words = ("-l", "-f", str(ordinary), "-f", row, "--control", "NEEDLE")
+        with pats.open() as fh:
+            done = subprocess.run(["bash", str(SCRIPT), *words], cwd=repo, capture_output=True, text=True, stdin=fh)
+        if done.returncode != 2 or "is not a pattern source this sweep can use" not in done.stderr:
+            wrong.append(f"-f {row}: rc {done.returncode}, want 2 -- {(done.stdout + done.stderr).strip()[:80]}")
+    # `/dev/stdout` is a regular file to the stat only when stdout is one, which is also the only run where a
+    # miss here would be a silent clean rather than a refusal about its kind -- so the drive redirects it.
+    written = repo.parent / "stdout.txt"
+    words = ("-l", "-f", str(ordinary), "-f", "/dev/stdout", "--control", "NEEDLE")
+    with pats.open() as fh, written.open("w") as out:
+        done = subprocess.run(["bash", str(SCRIPT), *words], cwd=repo, stdout=out, stderr=subprocess.PIPE, text=True, stdin=fh)
+    if done.returncode != 2 or "is not a pattern source this sweep can use" not in done.stderr:
+        wrong.append(f"-f /dev/stdout: rc {done.returncode}, want 2 -- {(written.read_text() + done.stderr).strip()[:80]}")
+    assert not wrong, "\n".join(wrong)
+
+
 def test_a_fifo_and_a_socket_are_refused_before_a_reader_drains_them(tmp_path):
     """The half no name can do: a pipe or a socket reaches `-f` under a path of its own -- a `mkfifo`, or a
     process substitution on a shell that has no `/dev/fd` -- and what refuses them is being no regular file. The
@@ -637,8 +674,12 @@ def test_a_character_device_is_refused_though_no_reader_drains_it(tmp_path):
     neither `-p` nor `-S`, and it is what a rule written as the kinds that fail lets through. Each of the four
     greps opens it afresh and the sweep's own, reading last, gets whatever is there then. It is driven beside an
     ordinary `-f` because that is the arrangement no measurement downstream catches, which the sibling below
-    prices. The writer feeds one EOF per reader so a tree without the admission ANSWERS instead of blocking on a
-    read no writer ends, and the timeout bounds the case whatever the tree does; neither is asserted on."""
+    prices. The device is reached through a LINK in the tree, because the only path an unprivileged tree can make
+    one at is under `/dev`, where the name arm would refuse it before its kind was ever asked; the link's own
+    name is the toplevel's, so the kind test is what answers it -- and the `/dev/pts` path is driven too, for
+    the refusal an operator naming the device directly actually gets. The writer feeds one EOF per reader so a
+    tree without the admission ANSWERS instead of blocking on a read no writer ends, and the timeout bounds the
+    case whatever the tree does; neither is asserted on."""
     repo = _repo(tmp_path)
     ordinary = repo.parent / "absent.txt"
     ordinary.write_text("no-such-string-anywhere\n")
@@ -654,22 +695,27 @@ def test_a_character_device_is_refused_though_no_reader_drains_it(tmp_path):
 
     writer = threading.Thread(target=eof_per_reader, daemon=True)
     writer.start()
+    (repo / "tty-link").symlink_to(os.ttyname(slave))
     try:
-        done = subprocess.run(
-            ["bash", str(SCRIPT), "-l", "-f", str(ordinary), "-f", os.ttyname(slave), "--control", "NEEDLE"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=30,
-        )
+        runs = [
+            subprocess.run(
+                ["bash", str(SCRIPT), "-l", "-f", str(ordinary), "-f", named, "--control", "NEEDLE"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=30,
+            )
+            for named in ("tty-link", os.ttyname(slave))
+        ]
     finally:
         stop.set()
         writer.join(timeout=5)
         os.close(master)
         os.close(slave)
-    assert done.returncode == 2, done.stdout + done.stderr
-    assert "is not a pattern source this sweep can use" in done.stderr, done.stdout + done.stderr
+    for done in runs:
+        assert done.returncode == 2, done.stdout + done.stderr
+        assert "is not a pattern source this sweep can use" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_stream_beside_an_ordinary_pattern_file_is_refused_rather_than_swept(tmp_path):
