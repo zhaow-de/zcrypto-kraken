@@ -56,6 +56,10 @@ REFUSED = [
     ("git commit -m $(date)#x -n", "-n"),
     ("git add . && git commit -m $(date)#msg --no-verify", "--no-verify"),
     ("echo $(date)#c; git commit -n", "-n"),
+    ("git commit -m <(date)#x -n", "-n"),
+    ("git commit -m <(date)#x --no-verify", "--no-verify"),
+    ("echo >(true)#c; git commit --no-verify", "--no-verify"),
+    ("cat <(git commit -n)", "-n"),
     # a compound command, a redirect, a heredoc message beside the flag
     ("cd /repo && git commit --no-verify -m msg", "--no-verify"),
     ("git add . ; git commit -n -m msg", "-n"),
@@ -137,6 +141,8 @@ ADMITTED = [
     "git commit -m $'a\\tb\\x21'",
     "(echo hi)# git commit -n",
     "echo $(date)#c; git status",
+    "echo >(true)#c; git status",
+    'echo "<(git commit -n)"',
     "echo GIT_CONFIG_KEY_0=core.hooksPath",
     "git commit -uno -m msg",  # -u<mode>: `no` is the mode, not a bundle carrying n
     "git commit --no-status -m msg",
