@@ -7,6 +7,15 @@
     "superpowers@claude-plugins-official": true
   },
   "permissions": {
+    "deny": [
+      "Bash(git commit --no-verify*)",
+      "Bash(git commit -n *)",
+      "Bash(git commit -n)",
+      "Bash(git -c core.hooksPath=*)",
+      "Bash(git config core.hooksPath *)",
+      "Bash(git config --local core.hooksPath *)",
+      "Bash(git config --global core.hooksPath *)"
+    ],
     "allow": [
       "Bash(infra/scripts/probe-with-vaulted-key.sh --probes:*)",
       "Bash(./infra/scripts/probe-with-vaulted-key.sh --probes:*)",
@@ -46,6 +55,17 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/memo-guard.sh pre-write",
             "timeout": 10,
             "statusMessage": "memo-guard: freshness check"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/bash-guard.sh",
+            "timeout": 10,
+            "statusMessage": "bash-guard: hook-bypass check"
           }
         ]
       }
