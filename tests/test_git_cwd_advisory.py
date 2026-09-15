@@ -3,11 +3,9 @@ worktree of it: a `git` call that neither `-C`, `--git-dir`/`--work-tree`, a GIT
 an absolute `cd` pins is reported -- the directory it answered about and the `-C` spelling that would have
 pinned it -- as hook JSON on stdout with rc 0, and every other shape is silent.
 
-Two things decide a case and both are pinned in every one of them: the command, and the pair (the cwd the
-call ran in, CLAUDE_PROJECT_DIR) the hook compares checkouts across. The command corpus is the one
-`.claude/hooks/bash-guard.sh` taught -- a wrapper, a path-spelled git, a git word inside a quoted word, a
-git in a substitution, a git in a heredoc body -- read here for whether git is the command word rather than
-for its flags.
+Two things decide a case and both are written into every one: the command, and the pair (the cwd the call
+ran in, CLAUDE_PROJECT_DIR) the hook compares checkouts across. The command corpus is
+`.claude/hooks/bash-guard.sh`'s, read here only for whether git is the command word.
 """
 
 from __future__ import annotations
@@ -98,6 +96,11 @@ def test_a_bare_git_from_another_checkout_names_the_directory_and_the_pin(checko
         "git -c color.ui=never status",
         "git --no-pager status",
         'git commit -m "run git -C /elsewhere status later"',
+        'x="$(git status)"',
+        'echo "$(git rev-parse HEAD)"',
+        "if git diff --quiet; then echo clean; fi",
+        "for d in a b; do git status; done",
+        "{ git status; }",
     ],
     ids=[
         "bare",
@@ -115,6 +118,11 @@ def test_a_bare_git_from_another_checkout_names_the_directory_and_the_pin(checko
         "value_taking_global_option",
         "valueless_global_option",
         "a_git_word_inside_the_message",
+        "a_substitution_inside_a_double_quote",
+        "a_substitution_inside_a_double_quoted_argument",
+        "a_git_word_after_if",
+        "a_git_word_in_a_for_body",
+        "a_git_word_in_a_brace_group",
     ],
 )
 def test_every_shape_where_git_is_the_command_word_is_advised(checkouts, command: str):
@@ -135,6 +143,22 @@ def test_the_advisory_names_the_first_unpinned_call_of_a_compound_command(checko
     msg = advised(run_hook(f"git -C {main} log -1 && git status && git diff", cwd=wt, project=main))
     assert "`git status`" in msg
     assert "git log" not in msg and "git diff" not in msg
+
+
+def test_a_literal_tab_in_a_quoted_argument_reaches_the_report_whole(checkouts):
+    main, wt = checkouts
+    msg = advised(run_hook('git commit -m "a\tb"', cwd=wt, project=main))
+    assert "a\tb" in msg
+    assert f"pin it: `git -C {wt} commit -m 'a\tb'`" in msg
+
+
+def test_a_multi_line_command_reports_all_of_it_and_a_pin(checkouts):
+    main, wt = checkouts
+    # The shape every commit in this repository takes, and the one a line-and-field channel truncates
+    # into a half-command with an empty suggestion.
+    msg = advised(run_hook('git commit -m "feat: x\n\nbody line"', cwd=wt, project=main))
+    assert "body line" in msg.split("pin it:")[1]
+    assert f"pin it: `git -C {wt} commit -m 'feat: x\n\nbody line'`" in msg
 
 
 @pytest.mark.parametrize(
@@ -167,6 +191,13 @@ def test_a_command_that_pins_its_directory_is_silent(checkouts, command: str):
     assert_silent(run_hook(command.format(main=main, wt=wt), cwd=wt, project=main))
 
 
+def test_a_popd_returns_the_call_to_where_the_command_started(checkouts):
+    main, wt = checkouts
+    msg = advised(run_hook("pushd sub && popd && git status", cwd=wt, project=main))
+    assert f"ran in {wt}," in msg
+    assert f"`git -C {wt} status`" in msg
+
+
 def test_an_absolute_cd_into_another_checkout_pins_it(checkouts):
     main, wt = checkouts
     # From the project directory, so the resolved directory differs from it and only the `cd` being read as a
@@ -190,6 +221,8 @@ def test_an_absolute_cd_into_another_checkout_pins_it(checkouts):
         "git --version",
         "git -v",
         "git help log",
+        "echo '$(git status)'",
+        "echo if git status",
     ],
     ids=[
         "no_git_at_all",
@@ -204,6 +237,8 @@ def test_an_absolute_cd_into_another_checkout_pins_it(checkouts):
         "version",
         "version_short",
         "help",
+        "a_substitution_inside_a_single_quote",
+        "a_keyword_word_as_an_argument",
     ],
 )
 def test_a_command_that_invokes_no_cwd_dependent_git_is_silent(checkouts, command: str):
@@ -221,12 +256,28 @@ def test_only_a_call_from_another_checkout_is_advised(checkouts, where: str):
     main, wt = checkouts
     cwd = wt if where == "wt" else main / "docs" if where.endswith("docs") else main
     result = run_hook("git status", cwd=cwd, project=main)
-    # The subdirectory row is the reason the comparison is between checkouts and not between
-    # directories: `cd docs && git status` answers about the project's own repository.
     if where == "wt":
         assert str(wt) in advised(result)
     else:
         assert_silent(result)
+
+
+def test_a_repository_nested_under_the_project_directory_is_another_checkout(checkouts):
+    main, _ = checkouts
+    vendored = main / "vendored"
+    vendored.mkdir()
+    git(vendored, "init", "-q", "-b", "main")
+    assert f"ran in {vendored}," in advised(run_hook("git status", cwd=vendored, project=main))
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["gh pr view 1", "gh pr create --fill", "gh pr merge --squash"],
+    ids=["view", "create", "merge"],
+)
+def test_a_gh_call_is_outside_this_advisory_and_stays_silent(checkouts, command: str):
+    main, wt = checkouts
+    assert_silent(run_hook(command, cwd=wt, project=main))
 
 
 def test_with_no_project_directory_there_is_no_default_to_differ_from(checkouts):
