@@ -1,9 +1,9 @@
 """The PreToolUse[Bash] guard's two arms -- the git hook bypasses, and a stream a cap has already shortened being
 counted or compared -- driven with synthetic stdin JSON.
 
-The hook is `.claude/hooks/bash-guard.sh`; its header states what each arm refuses and what it leaves. Every family
-is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside the
-ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
+The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
+family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
+the ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
 comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
 pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks.
 """
@@ -307,7 +307,8 @@ def test_a_call_with_no_command_is_admitted_silently(tmp_path: Path):
 
 
 def test_a_command_that_does_not_tokenise_admits_with_a_note(tmp_path: Path):
-    # An unbalanced quote fails in the shell too; the hook's own parse failure is never a block.
+    # The hook's own parse failure is never a block. Bash refuses this spelling too; the class is wider than that,
+    # and the header says how.
     r = run_hook(call('git commit -n -m "unterminated'), cwd=tmp_path)
     assert r.returncode == 0
     assert "bash-guard: NOTE" in r.stderr
