@@ -46,19 +46,16 @@ def test_a_pattern_nothing_holds_exits_1_over_a_control_that_hit(tmp_path):
 
 
 def test_a_clean_with_no_control_is_an_error(tmp_path):
-    """An empty result over a file list that opened nothing reads exactly like an absent needle."""
     done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere")
     assert done.returncode == 2 and "--control" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_control_that_misses_makes_the_clean_an_error(tmp_path):
-    """The known positive is what proves the sweep could see; one the tree does not hold proves nothing."""
     done = _sweep(_repo(tmp_path), "-l", "--control", "no-such-control-either", "no-such-string-anywhere")
     assert done.returncode == 2 and "no-such-control-either" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_hit_needs_no_control(tmp_path):
-    """A hit is its own proof the sweep saw, so the flag is the clean's price alone."""
     done = _sweep(_repo(tmp_path), "-l", "NEEDLE")
     assert done.returncode == 0 and ".local/memo.md" in done.stdout, done.stdout + done.stderr
 
@@ -71,13 +68,13 @@ def test_the_control_flag_never_reaches_grep(tmp_path):
 
 
 def test_the_controls_own_operand_is_not_the_swept_pattern(tmp_path):
-    """Counting it as the pattern would sweep for the known positive, which hits by construction."""
+    """`--control`'s operand is stepped over without recording a pattern, so a sweep carrying only a control is the
+    no-pattern error."""
     done = _sweep(_repo(tmp_path), "-l", "--control", "NEEDLE")
     assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
 
 
 def test_a_control_with_no_pattern_of_its_own_is_an_error(tmp_path):
-    """A dangling `--control` records the empty pattern, which every line matches: the control that proves nothing."""
     done = _sweep(_repo(tmp_path), "-l", "no-such-string-anywhere", "--control")
     assert done.returncode == 2 and "--control" in done.stderr, done.stdout + done.stderr
 
