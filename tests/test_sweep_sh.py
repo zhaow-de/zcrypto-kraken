@@ -111,6 +111,18 @@ def test_an_inverting_flag_clustered_with_another_is_not_matched_either(tmp_path
     assert separate.returncode == 2 and "no-such-control-either" in separate.stderr, separate.stdout + separate.stderr
 
 
+def test_an_inverting_cluster_keeps_the_letters_that_still_select(tmp_path):
+    """Only the inverting letters leave the control, so `-iv` and `-i -v` are one sweep: the tree holds the
+    control in the other case, which `-i` is what finds."""
+    repo = _repo(tmp_path)
+    clustered = _sweep(repo, "-iv", "--control", "needle", ".")
+    separate = _sweep(repo, "-i", "-v", "--control", "needle", ".")
+    assert clustered.returncode == 1, clustered.stdout + clustered.stderr
+    assert separate.returncode == 1, separate.stdout + separate.stderr
+    uncased = _sweep(repo, "-v", "--control", "needle", ".")
+    assert uncased.returncode == 2 and "needle" in uncased.stderr, uncased.stdout + uncased.stderr
+
+
 def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
     """The arm reads a cluster only for `v` and `L`: under `-il` the control keeps the `-i` the sweep ran, so a
     control in the other case still hits, and dropping the cluster would make this clean an error."""
@@ -321,7 +333,9 @@ def test_a_pattern_flag_with_no_operand_is_an_error(tmp_path):
 
 
 # A prescribing line names the script and carries the control, over a backslash continuation where it has one.
-_PRESCRIBED = re.compile(r"sweep\.sh(?:[^\n]|\\\n)*?--control +'([^']+)'")
+# Both spellings the script accepts, quoted either way or bare, so a prescriber cannot leave the scan by rewriting
+# its own quotes.
+_PRESCRIBED = re.compile(r"""sweep\.sh(?:[^\n]|\\\n)*?--control[ =]+(?:'([^']+)'|"([^"]+)"|(\S+))""")
 
 
 def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
@@ -336,10 +350,22 @@ def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
         (path, pattern)
         for path in git("grep", "-l", "--fixed-strings", "sweep.sh").stdout.split()
         if path not in outside
-        for pattern in _PRESCRIBED.findall((root / path).read_text())
+        for groups in _PRESCRIBED.findall((root / path).read_text())
+        # `<pattern>` is this repo's usage convention, the script's own line included: a line showing the flag
+        # prescribes no control, and reading one out of it would fail the case over a word nobody sweeps for.
+        for pattern in [next(g for g in groups if g)]
+        if not pattern.startswith("<")
     ]
     assert prescribed, "no prescribed sweep control found: the scan has gone blind, which is not the tree clean"
-    carried = [(path, pattern, git("grep", "-l", "-e", pattern).stdout.split()) for path, pattern in prescribed]
+    carried = []
+    for path, pattern in prescribed:
+        # Case-folded, and without the prescriber's own selecting flags: both widen what counts as a carrier, and
+        # a check that errs wide refuses a control the sweep would have accepted rather than passing one it holds.
+        done = git("grep", "-l", "-i", "-e", pattern)
+        assert done.returncode in (0, 1), (
+            f"{path}: git grep could not read {pattern!r} -- rc {done.returncode}, {done.stderr.strip()}"
+        )
+        carried.append((path, pattern, done.stdout.split()))
     assert not [c for c in carried if c[2]], "\n".join(
-        f"{path} prescribes {pattern!r}, which these tracked files carry: {files}" for path, pattern, files in carried if files
+        f"{path} prescribes {pattern!r}, which these files carry: {files}" for path, pattern, files in carried if files
     )

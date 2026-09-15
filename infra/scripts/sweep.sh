@@ -17,8 +17,10 @@
 # it does not inherit: a control is a positive probe, and under `-v` a pattern nothing holds selects every line of
 # every file.
 # What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
-# opened only when the pattern is one that directory alone holds -- `git grep` finding no tracked carrier is that
-# check. Whether `.local/` was in the list at all is the other door: the `no <path>/.local` line below.
+# opened only when the pattern is one that directory alone holds. `git grep` finding no carrier settles the
+# tracked half of that; the list also holds the untracked files git does not ignore and everything under
+# `.local/`, and a carrier there is outside what any tracked-file check can see. Whether `.local/` was in the
+# list at all is the other door: the `no <path>/.local` line below.
 # Usage: infra/scripts/sweep.sh [grep flags] --control <known-positive> <pattern>   rc: 0 a hit, 1 none (control hit), 2 an error.
 set -euo pipefail
 # Given no pattern -- none at all, or flags alone -- grep takes the first path as its regex and answers
@@ -59,7 +61,13 @@ for a in "$@"; do
     # word this reads is one with its operand attached (`-eNEEDLE`), whose pattern the control must not inherit
     # either, and grep's own `-d`/`-D`/`-m`/`-A`/`-B`/`-C` operands carry neither letter.
     -v|-L|--invert-match|--files-without-match) args+=("$a"); continue ;;
-    -[!-]*) case "$a" in *[vL]*) args+=("$a"); continue ;; esac ;;
+    -[!-]*[vL]*)
+      args+=("$a")
+      # A cluster carrying `e` or `f` holds or takes a pattern, which the control must not inherit at all.
+      case "$a" in *[ef]*) continue ;; esac
+      selecting="${a#-}"; selecting="${selecting//[vL]/}"
+      [ -z "$selecting" ] || flags+=("-$selecting")
+      continue ;;
     -*) ;;
     *) pattern=1; args+=("$a"); continue ;;
   esac
