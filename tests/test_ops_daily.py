@@ -1,4 +1,6 @@
-"""TDD for `infra/scripts/ops_daily.py` — the daily pass's instrument.
+"""TDD for `infra/scripts/ops_daily.py` — the daily pass's instrument — and, at the end of the file, for
+its CLI entry point `infra/scripts/ops-daily.py`, which `tests/test_scripts_have_tests.py` names as the
+test file for both scripts.
 
 A standalone script, not a package module, so it loads via `spec_from_file_location`; every fixture
 here is shaped to what the live Grafana API returns, never to what the parser expects."""
@@ -2453,3 +2455,43 @@ def test_the_runbook_corpus_reads_identically_under_the_identity_resolver():
         "grep -A3 group_add /etc/zcrypto-ops/alloy/compose.yaml",
     ):
         assert ops_daily.classify_action(cmd, host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS, cmd
+
+
+_SHIM = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "ops-daily.py"
+_STUB_EXIT = 7
+_STUB = f"""import json
+import sys
+
+# The shim registers the module under `ops_daily` BEFORE it execs it, so this body can already find
+# itself there; without that registration the name resolves to nothing.
+_SELF_REGISTERED = getattr(sys.modules.get("ops_daily"), "__dict__", None) is globals()
+
+
+def main(argv):
+    print(json.dumps(dict(argv=argv, registered=_SELF_REGISTERED)))
+    return {_STUB_EXIT}
+"""
+
+
+def _run_shim(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """The shim run as the operator runs it, over a stub `ops_daily.py` that reports its argv and
+    what the shim had registered, and returns a code no default path produces."""
+    (tmp_path / "ops-daily.py").write_text(_SHIM.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "ops_daily.py").write_text(_STUB, encoding="utf-8")
+    return subprocess.run([sys.executable, str(tmp_path / "ops-daily.py"), *args], capture_output=True, text=True, cwd=tmp_path)
+
+
+def test_the_shim_registers_the_module_it_loads_under_the_name_ops_daily(tmp_path):
+    done = _run_shim(tmp_path)
+    assert json.loads(done.stdout)["registered"] is True, (done.stdout, done.stderr)
+
+
+def test_the_shim_forwards_its_arguments_verbatim(tmp_path):
+    argv = ["--host", "ops", "--", "-x", "a b"]
+    done = _run_shim(tmp_path, *argv)
+    assert json.loads(done.stdout)["argv"] == argv, (done.stdout, done.stderr)
+
+
+def test_the_shim_exits_with_what_main_returns(tmp_path):
+    done = _run_shim(tmp_path)
+    assert done.returncode == _STUB_EXIT, (done.returncode, done.stderr)
