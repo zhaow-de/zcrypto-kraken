@@ -1,9 +1,11 @@
-"""The PreToolUse[Bash] guard over the git hook bypasses, driven with synthetic stdin JSON.
+"""The PreToolUse[Bash] guard's two arms -- the git hook bypasses, and a stream a cap has already shortened being
+counted or tested -- driven with synthetic stdin JSON.
 
-The hook is `.claude/hooks/bash-guard.sh`; its header states what the arm refuses and what it leaves. Every family
-is driven in both directions: the spelling the arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside the
+The hook is `.claude/hooks/bash-guard.sh`; its header states what each arm refuses and what it leaves. Every family
+is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside the
 ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
-comment, after `--`, or on a subcommand where it means something else.
+comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
+pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks.
 """
 
 from __future__ import annotations
@@ -117,6 +119,27 @@ REFUSED = [
     ("git config core.HooksPath /x", "core.HooksPath"),
     ("git config core.hooksPath ''", "core.hooksPath"),
     ("git -C /repo config core.hooksPath /x", "core.hooksPath"),
+    # a cap on a piped stream, then a count of it: in the pipeline, inside a substitution, through a heredoc
+    ("git log --oneline | head -5 | wc -l", "head -5"),
+    ("git ls-files | head -20 | wc -l", "head -20"),
+    ("git log --oneline | tail -3 | grep -c fix", "tail -3"),
+    ("grep -rn NEEDLE . | head | wc -l", "head"),
+    ("cat f | head -n 5 | wc -l", "head -n 5"),
+    ("git status --porcelain | head -1 | wc -c", "head -1"),
+    ("git log | head -20 | sort -u | wc -l", "head -20"),  # the count need not be the next stage
+    ("git grep -n TODO | head -10 | grep -c cli/", "head -10"),
+    ("git log --oneline | head -5 | grep --count fix", "head -5"),
+    ("uv run pytest -q | tail -1 | grep -c passed", "tail -1"),
+    ("find . -name '*.py' | head -100 | wc -l", "head -100"),
+    ("x=$(git log | head -3 | wc -l)", "head -3"),
+    ('echo "$(git log | head -3 | wc -l)"', "head -3"),
+    ("cat <<EOF\n$(ls | head -2 | wc -l)\nEOF", "head -2"),
+    # a cap on a piped stream a test then decides on: quoted, unquoted, backticked, behind `if`
+    ('[ "$(git status --porcelain | head -1)" = "" ]', "head -1"),
+    ("[[ -n $(git ls-files | head -1) ]]", "head -1"),
+    ('test "$(ls | tail -1)" = x', "tail -1"),
+    ('[ -n "`ls | head -1`" ]', "head -1"),
+    ('if [ -z "$(git diff --name-only | head -1)" ]; then echo clean; fi', "head -1"),
 ]
 
 ADMITTED = [
@@ -188,6 +211,32 @@ ADMITTED = [
     "git status",
     "which git",
     "git --version",
+    # a cap that only looks, a cap that opens a file rather than a pipe, a cap that caps nothing
+    "git log --oneline | head -20",
+    "cat f | head -3 | cut -d, -f1",
+    "git log | head -5 | grep fix",
+    "git log | head -5 | grep -C 3 fix",  # -C is context, not --count
+    "tail -f logs/engine.log",
+    "tail -20 infra/runbooks/gate.md",
+    "head -1 .python-version",
+    "head -c 20 /dev/urandom | base64",
+    "head -50 data/catalog.jsonl | wc -l",  # the cap opens the file it counts: a bounded read, not a stream unseen
+    '[ "$(head -1 VERSION)" = 3.14 ]',
+    "git log --oneline | tail -n +2 | wc -l",
+    "ls | tail +2 | wc -l",
+    # the count without a cap, the count before one, the two in separate commands
+    "git log --oneline | wc -l",
+    "grep -c NEEDLE file",
+    "git log | wc -l | head -1",
+    "git ls-files | wc -l; head -3 README.md",
+    "git log --oneline | head -5 && git status",
+    '[ -n "$(git rev-parse HEAD)" ]',
+    "sed -n 1,5p file | wc -l",  # another truncation, outside the arm
+    # the shape as text: a message, an echo, a quoted heredoc body, a pytest selector
+    'git commit -m "head -5 | wc -l is the defect"',
+    'echo "git log | head -5 | wc -l"',
+    "cat <<'EOF'\nls | head -2 | wc -l\nEOF",
+    "uv run pytest tests/test_bash_guard.py -k head_tail",
 ]
 
 
@@ -208,18 +257,21 @@ def call(command: str) -> dict:
 
 
 @pytest.mark.parametrize(("command", "spelling"), REFUSED, ids=[c for c, _ in REFUSED])
-def test_a_hook_bypass_is_refused_and_the_message_names_it(tmp_path: Path, command: str, spelling: str):
+def test_a_refused_shape_is_blocked_and_the_message_names_it(tmp_path: Path, command: str, spelling: str):
     r = run_hook(call(command), cwd=tmp_path)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr
     # Where the message names the spelling: a flag as a word of the first backtick pair (`git <sub> <tok>`), never the
-    # later echo of the whole command; a key or a variable before " sets ".
+    # later echo of the whole command; a capping stage as that pair entire; a key or a variable before " sets ".
     named = r.stderr.partition("`")[2].partition("`")[0]
-    if spelling.startswith("-"):
+    capping = spelling.split()[0] in ("head", "tail")
+    if capping:
+        assert named == spelling, r.stderr
+    elif spelling.startswith("-"):
         assert spelling in named.split(), r.stderr
     else:
         assert spelling in r.stderr.partition(" sets ")[0], r.stderr
-    assert "hooks" in r.stderr  # what the spelling bypasses
+    assert ("cap" if capping else "hooks") in r.stderr  # what the shape costs
     assert r.stdout == ""
 
 
