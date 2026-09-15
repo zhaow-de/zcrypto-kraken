@@ -246,12 +246,12 @@ def test_the_refusals_leave_an_ordinary_sweep_alone(tmp_path):
 # row must be the no-pattern refusal rather than a sweep for whatever grep would have bound.
 _NOT_A_PATTERN = [
     ("-l",),
-    ("-l", "NEEDLE"),  # a bare word: which word is the pattern is exactly what is no longer asked
+    ("-l", "NEEDLE"),
     ("-l", "--include", "*.py"),
     ("-l", "-m", "5"),
     ("-lm5",),
     ("-l", "-X", "grep"),
-    ("-l", "-e"),  # a promise no word keeps
+    ("-l", "-e"),
     ("-le", "NEEDLE"),  # `-e` clustered: grep binds it, this script does not read it
     ("-l", "--regexp", "NEEDLE"),
     ("-l", "--regexp=NEEDLE"),
@@ -535,9 +535,6 @@ _PRESCRIPTIONS = [
     ("sweep.sh -l --control \\\n  'PAT' -e x", ["PAT"]),
     ("sweep.sh -l --control '<pattern>' -e x", []),
     ("git grep -l --control 'PAT' x", []),
-    # A control given through a shell variable is read, but as the literal `$CTL`: what it expands to is outside
-    # anything a scan of the tracked text can see, so the exclusivity below is checked over a word nobody sweeps
-    # for. The comment above says so, and this is the row that makes the saying testable.
     ('sweep.sh -l --control "$CTL" -e x', ["$CTL"]),
     # A bare newline is not a continuation: a control on the next line of a fenced block is a prescription this
     # scan does not reach, and the line above it is not read as prescribing the words below.
@@ -603,8 +600,8 @@ def _prescribing(root: pathlib.Path) -> list[tuple[str, str]]:
 
 def test_every_prescribed_sweep_carries_the_pattern_the_script_requires():
     """The pattern is required as `-e <pattern>`, its own word, so a prescribing line carrying none is an rc 2
-    before it sweeps: the operator gets a refusal where the line promised an answer. Both prescriptions in this
-    tree were that until the commit that required it, and nothing else holds them repaired as the tree moves."""
+    before it sweeps: the operator gets a refusal where the line promised an answer. Nothing else holds the
+    prescriptions in this tree carrying one as the tree moves."""
     prescribing = _prescribing(SCRIPT.parents[2])
     assert [t for _, t in prescribing if _controls(t)], "no prescribed sweep found: the scan has gone blind"
     patternless = [(path, inv) for path, text in prescribing for inv in _patternless(text)]
