@@ -1,61 +1,30 @@
 #!/usr/bin/env bash
-# PreToolUse[Bash] guard: a command that would skip the repo's commit-time hooks, or believe a number a `head`
-# truncated, is refused before it runs -- exit 2, the spelling found and what it costs on stderr; anything else
-# exits 0 silently. Two arms today; a later arm is one more judge over the same commands, one verdict each.
-#   commit           --no-verify and the prefixes git accepts or calls ambiguous (--no-v .. --no-verif); -n alone
-#                    or inside a short bundle (-an, -qn, -anm). A value-taking option (-m, -F, -C, -c, -t,
-#                    --message, --file, --author, --date, --template, --reuse-message, --reedit-message, --fixup,
-#                    --squash, --trailer, --cleanup, --pathspec-from-file) consumes its value, so `-m -n` is a
-#                    message; `--` ends options.
-#   merge/rebase     --no-verify and its prefixes; not -n, which is --no-stat there.
-#   am               --no-verify and its prefixes, and -n, which is --no-verify there too.
-#   config           a SET of core.hooksPath: the key followed by a value, bare or after any of --local, --global,
-#                    --system, --worktree, --file <f>, --add, --replace-all, or the `config set` verb. Not --get,
-#                    --get-all, --unset, --unset-all, `config get`/`unset`, nor the bare read `git config core.hooksPath`.
-#   before the subcommand and in the environment: `-c core.hooksPath=..`, `--config-env core.hooksPath=..`, and a
-#                    GIT_CONFIG_KEY_<n>=core.hooksPath or GIT_CONFIG_PARAMETERS assignment where git would see it:
-#                    a NAME=value word before `git` in the same simple command -- the prefix of git itself or of
-#                    whatever reaches it (sudo, env, timeout, nice, ...) -- and an argument of export, which
-#                    outlives the command. Not an assignment in a command with no `git` word -- `grep
-#                    'GIT_CONFIG_KEY_0=..' docs/` is a search; one naming a file `../git` is refused, the price of
-#                    listing no wrapper -- and not a bare assignment (`GIT_CONFIG_KEY_0=..; git commit` is a shell
-#                    variable git never sees).
-# The second arm reads one pipeline at a time: a stage that CAPS what passes through it -- `head` in any spelling,
-# `tail` but for `-n +N`, which starts at line N and caps nothing -- and reads a PIPE rather than opening a file, so
-# it is never the pipeline's first stage, is refused when what it feeds is
-#   a count         `wc` in any spelling, or grep/egrep/fgrep/rg carrying -c, --count or rg's own --count-matches
-#                   before a `--`, anywhere later in the pipeline: `| head -5 | wc -l`, `| tail -3 | grep -c fix`.
-#                   The number is then the cap.
-#   a comparison    a `[`, `[[` or `test` stage comparing (`=`, `==`, `!=`) against anything but the empty string,
-#                   whose words hold a substitution that caps (`[ "$( .. | tail -1)" = x ]`), or that stands earlier
-#                   in the same pipeline than the cap, which is what an unquoted `$( .. )` leaves behind
-#                   (`[[ $( .. | tail -1) = x ]]`). The verdict is then the cap's.
-# A stage's program is read after its leading NAME=value assignments and shell keywords (if, while, then, ...) and
-# with its path stripped, so `grep -c head docs/` is a search for the word and `timeout 5 head -5 f | wc -l` reaches
-# the judge as `timeout` -- the price of listing no wrapper, and the direction that does not refuse ordinary work.
-# Outside, deliberately: `| head -20` to LOOK at output, `head -1 VERSION` and every head/tail first in its pipeline,
-# `| tail -n +2 | wc -l` (no cap), a grep with no count flag after a cap, a count BEFORE one (`| wc -l | head -1`),
-# a cap and a count in two commands joined by && or ;, every other truncation (`sed -n 1,5p`, `awk NR<5`, `-m 5`);
-# an emptiness test over a capped substitution (`[ -z "$( .. | head -1)" ]`, `-n`, `= ""`), where `$( .. )` strips
-# the trailing newlines and the cap flips the verdict only on a first line that is itself blank, which `git status
-# --porcelain`, `git ls-files` and `git diff --name-only` never emit; and a substitution body that does not tokenise
-# on its own (`$(git log --grep=doesn't)`), which this arm cannot read and skips -- the command is judged without it.
-# Argv, not text. The command is cut of its heredoc bodies, split into pipelines on && || ; & and newlines and into
-# stages on |, each tokenised by shlex, and git's own options before the subcommand (-C <dir>, --git-dir, --work-tree, -c,
-# --no-pager, ...) are stepped over -- so a flag inside a quoted message, a heredoc or a comment is never an argv
-# element, and `git -C <dir> commit -n`, `/usr/bin/git commit -n`, `cd <dir> && git commit -n`, `PATH=.. git
-# commit -n` and `-n` behind `--amend` are the same command as the bare one. An ANSI-C quoted word, `$'..'`, which
-# shlex does not know, reaches it as one double-quoted word with its escapes decoded: `-m $'it\'s'` is a message,
-# `$'-n'` and `$'\x2dn'` are `-n`. A substitution is a command of its own and is judged as one wherever bash
-# performs it, and nowhere else: `$( .. )` and backticks bare, inside a double quote, and inside a heredoc whose
-# delimiter is unquoted, which bash expands; `<( .. )` and `>( .. )` bare only -- inside a quote of either kind, a
-# `$'..'` or a heredoc body, bash performs no process substitution. Outside, deliberately: `git push --no-verify`
-# (no hook runs at push here), the pre-commit framework's SKIP=<hook> door (used on purpose), an edit of
-# .git/hooks/ or of this file, a git alias, a shell string handed to `sh -c`, `eval` or a Python subprocess, and a
-# program or a flag arriving through a variable or a substitution (`"$(which git)" commit -n`, `F=--no-verify; git
-# commit $F`) -- none is an argv of `git` in the command. A failure of the hook's own -- stdin that is not the tool
-# call's JSON, an unbalanced quote -- admits with a note on stderr, never blocks: exit 2 would refuse every Bash
-# call in the session.
+# PreToolUse[Bash] guard: a command whose argv would skip the repo's commit-time hooks, or believe a number or a
+# word that an earlier stage of its own pipeline capped, is refused before it runs -- exit 2, the one code the
+# harness blocks on, with the spelling found and what it costs on stderr; anything else exits 0 silently.
+# `tests/test_bash_guard.py` drives every family in both directions and IS the list of what is refused and what
+# is admitted; what follows is only what neither the code nor that corpus can say.
+#
+# Argv, not text. The command is cut of its heredoc bodies, split into pipelines and into stages, and tokenised,
+# so a flag inside a quoted message, a heredoc or a comment is never an argv element, and the wrapper, path and
+# option spellings of one call are one command. A substitution -- `$( .. )`, backticks, `<( .. )`, `>( .. )` -- is
+# a command of its own wherever bash performs one, and nowhere else.
+#
+# git's own asymmetries, which the per-subcommand arms encode and a reader would otherwise "fix": `-n` is
+# `--no-verify` on commit and on am, `--no-stat` on merge and rebase; a config SET of core.hooksPath bypasses the
+# hooks and a read does not; an assignment reaches git only as a prefix of the command that runs it, or through
+# `export`.
+#
+# Outside, deliberately: `git push --no-verify` (no hook runs at push here), the pre-commit framework's
+# `SKIP=<hook>` door (used on purpose), an edit of `.git/hooks/` or of this file, a git alias, a shell string
+# handed to `sh -c`, `eval` or a Python subprocess, a program or a flag arriving through a variable or a
+# substitution, a cap first in its pipeline, which truncates what it opened rather than what the command computed
+# (`head -1 VERSION`), a truncation that is neither head nor tail, and a stage behind a wrapper, whose program
+# reads as the wrapper (`timeout 5 head -5 f | wc -l`) -- none is an argv this guard judges, and the last is the
+# direction that does not refuse ordinary work.
+#
+# A failure of the hook's own -- stdin that is not the tool call's JSON, an unbalanced quote -- admits with a note
+# on stderr, never blocks: exit 2 would refuse every Bash call in the session.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
