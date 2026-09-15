@@ -235,11 +235,10 @@ probe="$(grep -I -H ${args[@]+"${args[@]}"} --directories=skip </dev/null 2>&1 >
 # carries a pattern of its own, so it hits over a sweep whose grep opened nothing. `-f`/`--file` naming a file that
 # holds no pattern is the way left to it -- every other pattern source is a pattern by being written, and of the
 # sources that are files only a regular one and `/dev/null` get past the admission above -- and grep with none
-# reads no file, refuses nothing, and answers 1: the rc this
-# script reports as an absence. What it also does not do is stat a file operand, which is the question here. One
-# path that cannot exist stands in for the list (`/dev/null` is a character device, so anything under it is ENOTDIR
-# wherever this runs): words carrying a pattern are refused over it at rc 2, words carrying none answer 1 in
-# silence.
+# reads no file, refuses nothing, and answers 1: the rc this script reports as an absence. What it also does not
+# do is stat a file operand, which is the question here. One path that cannot exist stands in for the list
+# (`/dev/null` is a character device, so anything under it is ENOTDIR wherever this runs): words carrying a
+# pattern are refused over it at rc 2, words carrying none answer 1 in silence.
 # The second run is that question's own control, and it is what keeps this refusal off an ordinary sweep: it adds a
 # pattern and asks again, so a 1 is read as "no pattern" only where a pattern DOES reach the path. `-m 0` stops
 # before the stat with a pattern and without one alike and answers 1 twice -- a sweep that opens nothing for its
@@ -289,10 +288,9 @@ if [ "$rc" -eq 1 ]; then
     # probe above, whose silence would have to mean grep never writes while exiting 0 or 1 -- a claim about grep
     # this script need not make.
     theirs="$(grep -I -q ${flags[@]+"${flags[@]}"} -e '' --directories=skip </dev/null 2>&1 >/dev/null)" || true
-    # Both can be waiting at once, and this arm is where that lands: grep names the first refusal it reaches,
-    # which is the option error, before any pattern is compiled. Sending the operator to that word is right --
-    # it is the refusal grep named, and the sweep's grep hit it too -- so what the message must not add is that
-    # the control is sound, because the next pass refuses it.
+    # Both can be waiting at once, and this arm is where that lands: grep names the option error before it
+    # compiles any pattern. Sending the operator to that word is right, so what the message must not add is that
+    # the control is sound -- the next pass refuses it.
     if [ -n "$refusal" ] && [ -n "$theirs" ]; then
       echo "sweep: grep refused the control's words -- '${refusal%%$'\n'*}' -- and they are the sweep's own, so the sweep's grep was refused the same way and its rc 1 is no absence. Fix the word grep names above; the control '$known' is not the refusal grep named" >&2
     elif [ -n "$refusal" ]; then
