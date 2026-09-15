@@ -11,9 +11,10 @@
 # is reported when that control hit -- an empty result over a file list that opened nothing reads exactly like an
 # absent needle, and it is the clean that gets believed. A hit needs no control: it is its own proof the sweep saw.
 # The control is matched with the caller's own flags (`-i`, `-w`, `--include`) and its pattern in place of the
-# sweep's, so what it proves is the matcher the sweep actually ran, not a second, laxer one. It never inherits a
-# word that would make a positive probe vacuous -- a selection the sweep inverts, or a pattern of the sweep's own
-# -- nor a clustered letter whose operand stays behind; the arms below say which words those are.
+# sweep's, so what it proves is a matcher the sweep ran rather than a bare grep. It never inherits a word that
+# would make a positive probe vacuous -- a selection the sweep inverts, or a pattern of the sweep's own -- nor a
+# cluster whose operand stays behind, which is held back WHOLE and takes its narrowing letters with it: the
+# control is then laxer than the sweep, and the refusal below names what it lost rather than blaming the control.
 # What a control's hit proves is that this matcher could hit SOMEWHERE in the file list; that one directory was
 # opened only when the pattern is one that directory alone holds. `git grep` finding no carrier settles the
 # tracked half of that; the list also holds the untracked files git does not ignore and everything under
@@ -27,8 +28,10 @@ set -euo pipefail
 # SEPARATE WORD consume it. `--color`'s argument is optional and grep reads it only attached, so it is not
 # one of them. The table is the short list anyone sweeping would reach for, in the spelling it is written
 # here: a flag outside it, a long spelling of one inside it (`--after-context 3`), or one clustered into
-# `-lm 5`, still reads its operand as a pattern and passes. An attached `-eNEEDLE` is refused although grep
-# accepts it -- a loud refusal naming the spelling that works, which is the recoverable error of the two.
+# `-lm 5`, still reads its operand as a pattern and passes this check -- and a long spelling then reaches the
+# control with its operand left behind, which refuses a clean sweep rather than licensing it. An attached
+# `-eNEEDLE` is refused although grep accepts it -- a loud refusal naming the spelling that works, which is
+# the recoverable error of the two.
 # A pattern flag records the pattern from its OPERAND: `sweep.sh -e` supplies none, and grep would then bind the script's own `--` as the regex.
 pattern=0
 skip=0     # the next word is a flag's operand, to be stepped over
@@ -38,6 +41,14 @@ control=0
 known=""
 args=()    # what grep is handed: the caller's words, `--control <pattern>` removed
 flags=()   # ...those of them that are not a pattern, so the control runs under the same matcher
+held=()    # ...and those held back whole, which the refusal names rather than leaving to the control
+# grep's short options that take an operand -- every letter grep answers "requires an argument" to -- split by
+# what that operand is: a pattern letter's is the sweep's own pattern, which the control must not inherit at all;
+# an operand letter's is a NUM, an ACTION or a matcher name, a word this loop leaves in the sweep's arguments.
+# Each list is read twice below, where the option stands alone and where it is one letter of a cluster, and
+# writing it once is what keeps the two readings one set as grep's table moves.
+pattern_letters=ef
+operand_letters=mABCdDX
 for a in "$@"; do
   if [ "$skip" -eq 1 ]; then
     skip=0
@@ -49,24 +60,25 @@ for a in "$@"; do
   case "$a" in
     --control) control=1; skip=1; takes=1; continue ;;
     --control=*) control=1; known="${a#--control=}"; continue ;;
-    -e|-f|--regexp|--file) skip=1; carries=1; args+=("$a"); continue ;;
+    -["$pattern_letters"]|--regexp|--file) skip=1; carries=1; args+=("$a"); continue ;;
     --regexp=*|--file=*) pattern=1; args+=("$a"); continue ;;
-    -m|-A|-B|-C|-d|-D|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
+    -["$operand_letters"]|--include|--exclude|--exclude-dir|--exclude-from|--label|--binary-files|--devices|--directories|--group-separator) skip=1 ;;
     # The sweep may invert its selection; its control never does -- under `-v` a pattern nothing holds selects
     # every line, so the control would prove only that the files have lines. `--inv` and `--files-witho` are where
     # grep's long-option prefixes stop being ambiguous, so every spelling from there to the full name is the same
     # flag and is held back with it; a word outside grep's table that begins either way is grep's loud error.
+    # None of them narrows a matcher, so none is a word the refusal below needs to name: a control that missed
+    # missed for its own sake here, which is why these are not added to `held`.
     -v|-L|--inv*|--files-witho*) args+=("$a"); continue ;;
     # EVERY short cluster is read, wherever its inverting letter sits: `-vl` is the `-lv` sweep spelled backwards.
     # The option table above deliberately does not read clusters -- one it misses ends in grep's own loud error,
     # one missed here in a silent clean.
     -[!-]*)
       args+=("$a")
-      # A letter the control cannot carry alone withholds the cluster whole: `e` and `f` hold or take the sweep's
-      # own pattern, which the control must not inherit at all, and `m`, `A`, `B`, `C`, `d`, `D`, `X` -- grep's
-      # short options that require an operand -- have theirs in a word this loop leaves in the sweep's own
-      # arguments, so the letter handed back alone would eat the control's `-e` as its operand.
-      case "$a" in *[efmABCdDX]*) continue ;; esac
+      # A letter the control cannot carry alone withholds the cluster whole -- the two lists above, read here as
+      # one, because a letter buried in a cluster still leaves its operand behind in the sweep's own arguments,
+      # and the letter handed back alone would eat the control's `-e` as that operand.
+      case "$a" in *["$pattern_letters$operand_letters"]*) held+=("$a"); continue ;; esac
       selecting="${a#-}"; selecting="${selecting//[vL]/}"
       [ -z "$selecting" ] || flags+=("-$selecting")
       continue ;;
@@ -114,6 +126,9 @@ if [ "$rc" -eq 1 ]; then
   crc=$?
   if [ "$crc" -ne 0 ]; then
     echo "sweep: the control '$known' matched nothing either in ${#files[@]} files (grep rc $crc) -- this sweep is not proven able to see, so its clean is no evidence; pick a control this tree holds" >&2
+    # Without this the operator's next move is to replace a control that was never wrong: a cluster held back
+    # whole takes its narrowing letters with it, so the control ran under less than the sweep did.
+    [ "${#held[@]}" -eq 0 ] || echo "sweep: before replacing it: the control ran without ${held[*]}, held back whole because a letter there takes an operand this loop left in the sweep's own words -- spell that cluster as separate words ('-i -m 5' for '-ivm 5') and the control keeps every letter it can use" >&2
     exit 2
   fi
 fi

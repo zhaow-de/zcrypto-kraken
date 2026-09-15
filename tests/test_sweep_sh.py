@@ -100,8 +100,6 @@ def test_the_control_is_not_matched_under_an_inverting_flag(tmp_path):
 
 
 def test_an_inverting_flag_clustered_with_another_is_not_matched_either(tmp_path):
-    """`-lv` is the same inverting sweep as `-l -v`, written as one word, and a control inherits neither
-    spelling."""
     repo = _repo(tmp_path)
     absent = _sweep(repo, "-lv", "--control", "no-such-control-either", ".")
     assert absent.returncode == 2 and "no-such-control-either" in absent.stderr, absent.stdout + absent.stderr
@@ -128,6 +126,25 @@ def test_a_cluster_that_does_not_invert_still_reaches_the_control(tmp_path):
     sweep ran, so a control in the other case still hits."""
     done = _sweep(_repo(tmp_path), "-il", "--control", "needle", "no-such-string-anywhere")
     assert done.returncode == 1, done.stdout + done.stderr
+
+
+def test_a_refused_control_names_the_cluster_the_sweep_held_back(tmp_path):
+    """A cluster held back whole takes its narrowing letters with it, so a control the sweep's own matcher would
+    have found is refused. Named nowhere, the operator's next move is to replace a control that was never wrong;
+    the separate-word spelling is the recovery, and it is asserted here rather than only advertised."""
+    repo = _repo(tmp_path)
+    done = _sweep(repo, "-ivm", "5", "--control", "needle", ".")
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "-ivm" in done.stderr and "held back whole" in done.stderr, done.stdout + done.stderr
+    kept = _sweep(repo, "-i", "-m", "5", "-v", "--control", "needle", ".")
+    assert kept.returncode == 1, kept.stdout + kept.stderr
+
+
+def test_a_refusal_that_held_nothing_back_names_nothing(tmp_path):
+    """On an ordinary bad control the note would send the operator looking for a withholding that never happened,
+    which is the same wrong next move pointing the other way."""
+    done = _sweep(_repo(tmp_path), "-l", "--control", "no-such-control-either", "no-such-string-anywhere")
+    assert done.returncode == 2 and "held back whole" not in done.stderr, done.stdout + done.stderr
 
 
 # One sweep written every way grep accepts it. A row is the words before `--control`, the control, and the rc
@@ -382,6 +399,15 @@ def test_a_flags_operand_is_not_a_pattern(tmp_path):
     assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
 
 
+def test_the_letter_absent_from_greps_help_skips_its_operand_too(tmp_path):
+    """`-X MATCHER` is grep's obsolete matcher selection: missing from `--help`, accepted, operand-taking. Read as
+    the pattern, its operand leaves grep with none and grep binds a file path as the regex instead -- a clean
+    reported over a sweep that searched for a filename. This is the case that holds the two letter lists to one
+    set, since the letter that decides it was in the cluster reading and out of the standalone one."""
+    done = _sweep(_repo(tmp_path), "-l", "-X", "grep", "--control", "NEEDLE")
+    assert done.returncode == 2 and "no pattern" in done.stderr, done.stdout + done.stderr
+
+
 def test_the_word_form_the_refusal_advertises_works(tmp_path):
     """`-e` is the recovery the refusal names; a pattern beginning with a dash is where the arm is load-bearing."""
     repo = _repo(tmp_path)
@@ -418,7 +444,7 @@ def _controls(text: str) -> list[str]:
 
 
 # One prescription in every spelling, and what the scan must read out of it -- including the two that prescribe
-# nothing and the one shape that leaves the scan.
+# nothing, the one shape that leaves the scan, and the one it reads as a literal nothing can resolve.
 _PRESCRIPTIONS = [
     ("sweep.sh -l --control 'PAT' x", ["PAT"]),
     ('sweep.sh -l --control "PAT" x', ["PAT"]),
@@ -430,6 +456,10 @@ _PRESCRIPTIONS = [
     ("sweep.sh -l --control \\\n  'PAT' x", ["PAT"]),
     ("sweep.sh -l --control '<pattern>' x", []),
     ("git grep -l --control 'PAT' x", []),
+    # A control given through a shell variable is read, but as the literal `$CTL`: what it expands to is outside
+    # anything a scan of the tracked text can see, so the exclusivity below is checked over a word nobody sweeps
+    # for. The comment above says so, and this is the row that makes the saying testable.
+    ('sweep.sh -l --control "$CTL" x', ["$CTL"]),
     # A bare newline is not a continuation: a control on the next line of a fenced block is a prescription this
     # scan does not reach, and the line above it is not read as prescribing the words below.
     ("sweep.sh -l\n--control 'PAT' x", []),
@@ -466,8 +496,7 @@ def test_every_prescribed_sweep_control_is_a_pattern_no_tracked_file_carries():
     for path, pattern in prescribed:
         # Case-folded, and without the prescriber's own selecting flags: both widen what counts as a carrier, and
         # a check that errs wide refuses a control the sweep would have accepted rather than passing one it holds.
-        # `-E`/`-P` are the exception -- an alternation dropped to a BRE matches its own text, which is narrower --
-        # and no prescription carries either today.
+        # `-E`/`-P` are the exception -- an alternation dropped to a BRE matches its own text, which is narrower.
         done = git("grep", "-l", "-i", "-e", pattern)
         assert done.returncode in (0, 1), (
             f"{path}: git grep could not read {pattern!r} -- rc {done.returncode}, {done.stderr.strip()}"
