@@ -350,7 +350,7 @@ The container is bridge-networked with `127.0.0.1:9102:9102` published (`infra/a
 3. **Read Kraken's open orders by hand.** The order may still be resting there and nothing in this engine will cancel it: the intent is terminal, so a hand-placed kill file sweeps nothing.
 4. **Clear it deliberately.** A direct cancel in the Kraken web UI always works (no count command: the venue's behaviour; the five are `cli/engine/flatten.py`'s `BLIND_ORDER_READ_LEGS`). A restart works only on a leg its adopt pass can see; on the five the standing rules name it cancels nothing and says nothing, so a restart taken as the remedy there leaves the order working with no line to tell you. Note the wall-clock time it rested, from the disconnect to the cancel.
 
-If the property you wanted is "the order dies with the socket", that is re-cancel-on-reconnect, a build item in `T0018`, never an expectation to write against this drill.
+If the property you wanted is "the order dies with the socket", that is re-cancel-on-reconnect, a build-sequence item not yet delivered<!-- T0018 -->, never an expectation to write against this drill.
 
 ### Record
 

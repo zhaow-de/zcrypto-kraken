@@ -33,7 +33,7 @@ Run `/zcrypto-refdata-sweep` — the skill carries the procedure and the command
 4. **Never cost anything off the register's fee columns.** (no count command: a costing done by hand leaves no trace; `cli/costs/fees.py` carries its own ladder) `kraken-fee-schedule.md` owns the level; those columns are a drift detector on the endpoint. If they finally move, reconcile *back* to the fee doc rather than adopting the newer-looking API numbers.
 5. **Re-arm the next reminder** — a scheduled Slack message fires once, so schedule the following month's in `#zcrypto`. The re-arm is a convenience — the pass computes due-ness from the register whether or not the message lands, so a message that never arrives is not replaced out of band (no count command: Slack's scheduled messages are not listable from this side): the next one is scheduled here, when this section next runs.
 
-Out of scope here: MiCA status, tax rules and market-data pricing have no endpoint and are human re-reads belonging to the pre-go/no-go sweep, which lives in `T0085`, not in this cadence.
+Out of scope here: MiCA status, tax rules and market-data pricing have no endpoint and are human re-reads belonging to the pre-go/no-go sweep, which lives in the final pre-go-live topic<!-- T0085 -->, not in this cadence.
 
 ### Retire when
 

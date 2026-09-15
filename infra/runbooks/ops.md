@@ -226,7 +226,7 @@ The daily pass's report names this reminder under `## Reminders`: **OWED** when 
 
 ### What it means
 
-The `gt [600]` threshold is provisional and says so at the rule in `infra/grafana/alerts.yaml`; the fit is owed once steady-state history exists. What the events so far measured is in \[[T0103]\].
+The `gt [600]` threshold is provisional and says so at the rule in `infra/grafana/alerts.yaml`; the fit is owed once steady-state history exists. What the events so far measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
 
 ### What to do
 

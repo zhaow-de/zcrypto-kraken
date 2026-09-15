@@ -191,7 +191,7 @@ Verdicts you should see: 1 `PASS`, 2 `PASS`, 3 `PASS`, 4a–4d `DRY-RUN`, 5 `GAT
 
 #### 5.2 Probes 1–4 for real: the zero-fill sweep
 
-Get the human's explicit go (spec 00039 D4: *every order-placing probe executes attended, on the
+Get the human's explicit go (the kickoff design's rule<!-- spec 00039 D4 -->: *every order-placing probe executes attended, on the
 human's explicit go immediately before the probe script runs*), then:
 
 ```
@@ -203,7 +203,7 @@ Between the printed probes, watch for:
 | Sub-probe | Healthy | What failure looks like |
 | -- | -- | -- |
 | 4a | `accepted (<venue id>), rested, cancel confirmed; filled_qty=0.0` | any `filled_qty` > 0 — a fill 30 % from market is reportable; `cancel NOT confirmed` — an order is still working, see §8 |
-| 4b | `filled_qty=0.0` and a terminal `OrderCanceled` or post-only `OrderRejected` — either passes | `filled_qty` > 0 ⇒ post-only did not hold ⇒ spec 00039 D1's fallback; any *other* `OrderRejected` is FAIL, protection never exercised |
+| 4b | `filled_qty=0.0` and a terminal `OrderCanceled` or post-only `OrderRejected` — either passes | `filled_qty` > 0 ⇒ post-only did not hold ⇒ the kickoff design's pre-approved fallback<!-- spec 00039 D1 -->; any *other* `OrderRejected` is FAIL, protection never exercised |
 | 4b, alternative | `REVIEW`, "order RESTED instead of being protected" | the quote moved before submission and nothing crossed — protocol artifact, not adapter failure; re-run `--probes 4 --apply` |
 | 4c | `accepted … cancel confirmed` with leverage 2 accepted by the venue | a rejection naming leverage ⇒ margin semantics failure ⇒ fallback path |
 | 4d | same, for the leveraged **sell** (the short) | as 4c |
@@ -252,7 +252,7 @@ That zero is a floor, not a total, and this probe is where it matters most. Star
 | Code | Meaning | Action |
 | -- | -- | -- |
 | 0 | every executed probe passed | proceed to §7 |
-| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers spec 00039 D1's pre-approved fallback; escalate anything else |
+| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers the kickoff design's pre-approved fallback<!-- spec 00039 D1 -->; escalate anything else |
 | 2 | a probe was refused, **or** the run stopped before its sequence finished | the two need opposite actions; read the paragraph below the table before deciding which |
 | 3 | **something was left resting** | §8, immediately |
 
@@ -293,7 +293,7 @@ That boundary is normally hours away when you finish, because §1.2 puts the run
 #### 7.3 Close the IP exception
 
 Mandatory. Kraken → Settings → API → `zcrypto-engine` → edit IP restrictions → remove the workstation IP,
-restoring the engine host as the key's only allowlisted host (spec 00039 decision 3's closure step).
+restoring the engine host as the key's only allowlisted host (the key ceremony's closure step<!-- spec 00039 decision 3 -->).
 Do this in the same session as the run. Then close the credential-bearing shell.
 
 #### 7.4 Write it up
