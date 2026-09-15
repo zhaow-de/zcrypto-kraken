@@ -428,13 +428,13 @@ wheels = [
 
 [[package]]
 name = "nautilus-trader"
-version = "2.0.0rc4.dev20260825"
+version = "2.0.0rc4"
 source = { registry = "https://packages.nautechsystems.io/simple" }
 wheels = [
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4.dev20260825-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:e5ed5d2d062faf95429c10bd32c53268d3dd504c1b1f20aed22281386cd11d99" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4.dev20260825-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:40fad90dda6e07f07eabb48044dc79d22c6dee9f158839a9e0800f8fb873ad01" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4.dev20260825-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:fd81d71f6e12e25c4350387307cc01b87fbe94c3ced26dfbc4d2851837847e28" },
-    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4.dev20260825-cp314-cp314-win_amd64.whl", hash = "sha256:c5adfe684859e59137732b89b3b39a6c266b9f96ddf8bc5698421375dd4b8dc0" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:f0768d57ffef9491787330fa1890528c9c377b753bcd7369a87fbefea773679e" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4-cp314-cp314-manylinux_2_34_aarch64.whl", hash = "sha256:ca778173a35a00294369dc905b0955dfe99455029695340e41ad690e72520969" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:4b6ea797edc8caadacc551356f07234e48b9a2c8d1ea57e5bde2dd3ecb35b106" },
+    { url = "https://packages.nautechsystems.io/simple/nautilus-trader/nautilus_trader-2.0.0rc4-cp314-cp314-win_amd64.whl", hash = "sha256:aa791350a57cc90aa5d17fa1623e5b4824c301c8d86bb56d74a16407159f0302" },
 ]
 
 [[package]]
@@ -908,7 +908,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "nautilus-trader", specifier = "===2.0.0rc4.dev20260825", index = "https://packages.nautechsystems.io/simple" },
+    { name = "nautilus-trader", specifier = "===2.0.0rc4", index = "https://packages.nautechsystems.io/simple" },
     { name = "numpy", specifier = ">=2.5.2" },
     { name = "polars", specifier = ">=1.44.0" },
     { name = "prometheus-client", specifier = ">=0.26.0" },
