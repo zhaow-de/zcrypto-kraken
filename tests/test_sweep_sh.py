@@ -720,9 +720,24 @@ def test_a_control_refused_for_its_own_pattern_is_not_blamed_on_the_callers_word
         done = _sweep(repo, "-l", "--control", control, "no-such-string-anywhere")
         assert done.returncode == 2, control + ": " + done.stdout + done.stderr
         assert "refused the control pattern" in done.stderr, control + ": " + done.stdout + done.stderr
-        assert "is not what is wrong here" not in done.stderr, control + ": " + done.stdout + done.stderr
+        assert "refused the control's words" not in done.stderr, control + ": " + done.stdout + done.stderr
     theirs = _sweep(repo, "-ld", "recursive", "NEEDLE", "--control", "NEEDLE")
     assert "refused the control pattern" not in theirs.stderr, theirs.stdout + theirs.stderr
+
+
+def test_a_control_that_is_itself_bad_too_is_not_called_sound(tmp_path):
+    """Both refusals can be waiting at once, and grep names the option error first, so this arrives at the arm
+    that blames the caller's word -- rightly, since that word refused the sweep's grep too and fixing it is the
+    move that helps. What the message must not do there is clear the control, which is what the operator then
+    keeps: the next pass refuses it, and a message that called it sound has cost the round it was meant to save.
+    The second drive is that next pass, and it is what makes the claim false rather than merely unproven."""
+    repo = _repo(tmp_path)
+    both = _sweep(repo, "-ld", "recursive", "NEEDLE", "--control", "[")
+    assert both.returncode == 2, both.stdout + both.stderr
+    assert "refused the control's words" in both.stderr, both.stdout + both.stderr
+    assert "is not what is wrong here" not in both.stderr, both.stdout + both.stderr
+    after = _sweep(repo, "-l", "no-such-string-anywhere", "--control", "[")
+    assert "refused the control pattern" in after.stderr, after.stdout + after.stderr
 
 
 def test_the_attached_spelling_of_the_control_is_read(tmp_path):

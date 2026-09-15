@@ -261,8 +261,12 @@ if [ "$rc" -eq 1 ]; then
     # caller's own words. Not read off the first probe above, whose silence would have to mean grep never writes
     # while exiting 0 or 1 -- a claim about grep this script need not make.
     theirs="$(grep -I -q ${flags[@]+"${flags[@]}"} -e '' --directories=skip </dev/null 2>&1 >/dev/null)" || true
+    # Both can be waiting at once, and this arm is where that lands: grep names the first refusal it reaches,
+    # which is the option error, before any pattern is compiled. Sending the operator to that word is right --
+    # it is the refusal grep named, and the sweep's grep hit it too -- so what the message must not add is that
+    # the control is sound, because the next pass refuses it.
     if [ -n "$refusal" ] && [ -n "$theirs" ]; then
-      echo "sweep: grep refused the control's words -- '${refusal%%$'\n'*}' -- and they are the sweep's own, so the sweep's grep was refused the same way and its rc 1 is no absence. Fix the word grep names above; the control '$known' is not what is wrong here" >&2
+      echo "sweep: grep refused the control's words -- '${refusal%%$'\n'*}' -- and they are the sweep's own, so the sweep's grep was refused the same way and its rc 1 is no absence. Fix the word grep names above; the control '$known' is not the refusal grep named" >&2
     elif [ -n "$refusal" ]; then
       echo "sweep: grep refused the control pattern '$known' -- '${refusal%%$'\n'*}' -- so the control never ran and this clean stays unproven. The sweep's own words grep accepts: put to it with a pattern in the control's place they draw no complaint, so the pattern is what to fix -- give a control grep compiles, naming something this tree holds" >&2
     else
