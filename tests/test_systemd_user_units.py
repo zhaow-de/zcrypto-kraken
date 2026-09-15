@@ -5,7 +5,8 @@ units are filled in by hand (`<repo>`, `<uv>`), so the render here is a substitu
 checked is that every placeholder a unit carries is named in its header's `Placeholders:` line, that
 no `<...>` token of any spelling -- a whitespace-bearing `<data root>` included -- survives the render,
 and that the directives a timer-driven oneshot needs sit in the section systemd reads them from -- a
-`Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off
+`Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze verify`, which reads
+`ExecStart=` and `WorkingDirectory=` off
 disk and refuses the example paths this render fills in."""
 
 from __future__ import annotations

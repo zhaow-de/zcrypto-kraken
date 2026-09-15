@@ -129,13 +129,13 @@ zcrypto engine <subcommand> [OPTIONS]
 
 #### Shadow soak service (systemd user unit)<a name="shadow-soak-service-systemd-user-unit"></a>
 
-`infra/systemd/zcrypto-engine-shadow.service` is a systemd **user**-unit template that keeps `zcrypto engine run` alive on a workstation (`Restart=on-failure`, `RestartSec=30`, `WantedBy=default.target`). Fill in its `<repo>`/`<uv>` placeholders (absolute paths), then:
+`infra/systemd/zcrypto-engine-shadow.service` is a systemd **user**-unit template that keeps `zcrypto engine run` alive on a workstation (`Restart=on-failure`, `RestartSec=30`, `WantedBy=default.target`). Its `<repo>`/`<uv>` placeholders are filled into a copy at install time — the tracked file is never edited; its render is a test — from the checkout root:
 
 ```bash
 loginctl enable-linger $USER            # prerequisite: without lingering the user service dies on logout
 loginctl show-user $USER -p Linger      # verify: prints Linger=yes
 mkdir -p ~/.config/systemd/user
-cp infra/systemd/zcrypto-engine-shadow.service ~/.config/systemd/user/
+sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|" infra/systemd/zcrypto-engine-shadow.service > ~/.config/systemd/user/zcrypto-engine-shadow.service
 systemctl --user daemon-reload
 systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)

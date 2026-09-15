@@ -131,6 +131,12 @@ _DATA_ABSENT_REASONS = [
     "trade archive absent at data/trades — data-bearing workstation only",
     "no BTC/EUR trade segments under data/trades",
     "no heal-complete BTC/EUR day inside the REST window (REST reaches 2026-09-01..2026-09-14; archive holds 2026-08-01..2026-08-30)",
+    "no local datasets (CI)",
+    "no {PAIR} trade segments under {PRIMARY_ROOT}",
+    "trade archive absent at {PRIMARY_ROOT} \u2014 data-bearing workstation only",
+    "{dataset} not on this host \u2014 data-bearing workstation only",
+    "{manifest} absent -- the set is gitignored and not present on this machine",
+    "{name} not present on this node",
 ]
 _OWN_GATE_REASONS = [
     "needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it",
@@ -145,6 +151,18 @@ _OWN_GATE_REASONS = [
     "no schema-4 records yet — nothing in the registry cites observed bytes",
     "could not import 'jinja2': No module named 'jinja2'",
     "unconditional skip",
+    "EOrder:Unknown order",
+    "five counts read the develop ref by name, and this checkout has none",
+    "mocked internals rebuild degrade",
+    "no internals rebuild provided",
+    "reaches Kraken's public listing endpoint -- set {_LIVE_OPT_IN}=1 to run it",
+    "rebuild passed through a stale universe and was PROVEN inconsistent",
+    "refresh_deadline",
+    "root bypasses file permissions",
+    "sed not available",
+    "stale_pair",
+    "{LIVE_OPT_IN}=1 not set; this reaches the live venue",
+    "{_LIVE_OPT_IN}=1 deliberately opens the doors this asserts are shut",
 ]
 
 

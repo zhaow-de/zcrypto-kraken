@@ -27,6 +27,7 @@ The unit passes nothing: the extra args are for a hand run (`-- -k soak`), never
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -152,13 +153,15 @@ def run_suite(repo: Path, uv: str, extra_args: list[str], timeout: float | None)
     try:
         output, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
         output, _ = proc.communicate()
         return command, None, output, f"timed out after {timeout:g} s; pytest was killed"
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:  # the group may already be gone; nothing to forward then
         # Its own session, so the terminal's SIGINT reached this runner alone: forwarded, and pytest's
         # own interrupt summary is what gets recorded.
-        os.killpg(proc.pid, signal.SIGINT)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGINT)
         output, _ = proc.communicate()
     return command, proc.returncode, output, None
 
