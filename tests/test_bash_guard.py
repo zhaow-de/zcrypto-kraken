@@ -47,6 +47,12 @@ REFUSED = [
     ("GIT_EDITOR=true git commit --no-verify", "--no-verify"),
     ("sudo git commit -n", "-n"),
     ("PATH=/opt/git git commit -n", "-n"),
+    ("GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x timeout 5 git commit -m x", "GIT_CONFIG_KEY_0"),
+    ("GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/x'\" setsid git commit -m x", "GIT_CONFIG_PARAMETERS"),
+    ("nice env GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/x git commit -m x", "GIT_CONFIG_KEY_0"),
+    ("git commit -m x $'\\x2dn'", "-n"),
+    ("git commit -m x $'\\055n'", "-n"),
+    ("git commit -n && (echo x)# don't", "-n"),
     # a compound command, a redirect, a heredoc message beside the flag
     ("cd /repo && git commit --no-verify -m msg", "--no-verify"),
     ("git add . ; git commit -n -m msg", "-n"),
@@ -125,6 +131,9 @@ ADMITTED = [
     'git commit -m "a#b"',
     "git commit -m $'it\\'s -n'",  # the flag inside an ANSI-C quoted value
     "git commit -m $'plain' -m more",
+    "git commit -m $'a\\tb\\x21'",
+    "(echo hi)# git commit -n",
+    "echo GIT_CONFIG_KEY_0=core.hooksPath",
     "git commit -uno -m msg",  # -u<mode>: `no` is the mode, not a bundle carrying n
     "git commit --no-status -m msg",
     "git commit -m msg && git push",
