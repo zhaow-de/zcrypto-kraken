@@ -101,6 +101,11 @@ def test_the_pin_covers_every_nautilus_name_cli_imports():
 # changes corrupts every persisted row carrying the old one, while a member that empties to bare
 # `None` changes what a read returns with nothing renamed and nothing to break at import. Which of
 # the two an entry is here for is not uniform -- `PositionSide` is the member-set case and says so.
+# The map is a SUBSET for most entries (TimeInForce pins 4 of 7, AccountType 3 of 4, OrderStatus 6
+# of 15 -- exactly the members cli/engine references), so the parametrised test below checks only
+# that what is listed still resolves and still carries its integer. `EXHAUSTIVE_MEMBERS` names the
+# entries where the real member set must EQUAL the listed one, and a new variant is a finding here
+# rather than something met live.
 # `OrderSide` carries no `NO_ORDER_SIDE` entry: the name resolves to bare `None` rather than an enum
 # member -- "no side" is `Option`-shaped throughout the library now -- and nothing under cli/ has
 # ever persisted its value, so the entry was dropped rather than widened to accept `None`, which
@@ -121,6 +126,30 @@ PINNED_ENUM_VALUES = {
 }
 
 
+# Entries whose real member set must EQUAL the pinned one. Only `PositionSide` today, and the reason
+# is what it costs to learn about a new variant at the venue instead of here: `cli/engine/flatten.py`
+# files a side it cannot derive a close from as `unrecognised_position_side` and exits 2 -- correct
+# behaviour, and it means an unrecognised side leaves a POSITION OPEN on the one command whose whole
+# job is to leave nothing open.
+EXHAUSTIVE_MEMBERS = {"PositionSide"}
+
+
+@pytest.mark.parametrize("enum_name", sorted(EXHAUSTIVE_MEMBERS))
+def test_an_exhaustive_enums_real_member_set_is_the_pinned_one(enum_name):
+    """The half the value pin cannot see: it walks the names the map lists, so a member ADDED
+    upstream is simply absent from the walk and every assertion still passes."""
+    import nautilus_trader.model as nt_enums
+
+    enum_cls = getattr(nt_enums, enum_name)
+    real = {name for name in dir(enum_cls) if name.isupper() and getattr(enum_cls, name, None) is not None}
+    assert real == set(PINNED_ENUM_VALUES[enum_name]), (
+        f"{enum_name}'s real member set is {sorted(real)} against the pinned "
+        f"{sorted(PINNED_ENUM_VALUES[enum_name])}. A new variant reaches cli/engine/flatten.py as a "
+        f"side it cannot close from: the row is filed unclosable and the press exits 2 with the "
+        f"position still open. Decide what the member means before pinning it"
+    )
+
+
 @pytest.mark.parametrize("enum_name", sorted(PINNED_ENUM_VALUES))
 def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
     import nautilus_trader.model as nt_enums
@@ -128,7 +157,12 @@ def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
     enum_cls = getattr(nt_enums, enum_name)
     for member_name, expected in PINNED_ENUM_VALUES[enum_name].items():
         member = getattr(enum_cls, member_name, None)
-        assert member is not None, f"{enum_name}.{member_name} is gone -- stored rows reference it"
+        assert member is not None, (
+            f"{enum_name}.{member_name} is gone, or has emptied to bare `None` as the library's "
+            f"Option-shaped redesign did to the NO_* members. Why that matters is per entry, and "
+            f"the map says which: a persisted VALUE no stored row can still mean, or a MEMBER a "
+            f"live read depends on -- for PositionSide, cli/engine/flatten.py's exit-3 abort"
+        )
         assert int(member) == expected, (
             f"{enum_name}.{member_name} changed from {expected} to {int(member)} -- every persisted "
             f"row carrying the old value now means something else"
@@ -231,7 +265,11 @@ def test_every_exec_engine_default_is_the_one_we_measured():
     from nautilus_trader.config import LiveExecutionEngineConfig
 
     config = LiveExecutionEngineConfig()
-    live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_") and not callable(getattr(config, name))}
+    # No `callable` filter. The pyo3 class carries no public methods -- all 37 public attributes are
+    # plain values -- so filtering on callability excludes nothing today while silently dropping a
+    # NEW field whose default is a factory or a type, which is the one shape this could least reason
+    # about and exactly the shape the field-set arm below claims to catch.
+    live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
     assert set(live) == set(EXEC_ENGINE_DEFAULTS), (
         "the exec engine's FIELD SET moved -- added "
         f"{sorted(set(live) - set(EXEC_ENGINE_DEFAULTS))}, removed "
