@@ -10,19 +10,18 @@
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"
 
-# A WHITELIST, not a parser. This fleet's converges are enumerable -- one image into four cases
-# across the hosts below -- and every argument outside the grammar is refused before the preview,
-# so no spelling can reach a host recorded as something it is not. The sets are what the tree
-# publishes and what `deploy-log.jsonl` records; a new variable or host is added HERE, and until it
-# is, passing it refuses loudly instead of converging while ansible ignores it.
+# A WHITELIST, not a parser. This fleet's converges are enumerable, and every argument outside the
+# grammar is refused before the preview, so no spelling can reach a host recorded as something it is
+# not. The sets are what the tree EXPOSES -- site.yml's tags, the inventory's hosts, the keys the
+# roles read -- never what a converge has happened to carry; a new variable or host is added HERE,
+# and until it is, passing it refuses loudly instead of converging while ansible ignores it.
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess"
-# site.yml's OWN tags, all of them: a set built from the converges anyone has run so far refuses the
-# roles nobody has had to re-converge yet -- `--tags chrony` is the capture runbook's repair for a
-# drifting clock on unbackfillable L2. `tests/test_converge_sh.py` holds this against the playbook.
+# site.yml's OWN tags, all of them: a set built from the converges anyone has run refuses the roles
+# nobody has had to re-converge yet -- `--tags chrony` is the capture runbook's repair for a
+# drifting clock on unbackfillable L2.
 TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops access nas"
-# The variables the roles and host_vars publish as overridable, not the ones a converge has happened
-# to carry: `ops_reconcile_mint` is the reconciler's mint kill-switch and `docker_apt_distribution`
-# the repo escape hatch, both published in the tree and neither ever passed here before.
+# The variables the roles and host_vars publish as overridable: `ops_reconcile_mint` is the
+# reconciler's mint kill-switch and `docker_apt_distribution` the repo escape hatch.
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack rebootstrap \
@@ -222,9 +221,8 @@ if _vars.is_file():
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
-    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` counts the rule
-    # "never run site.yml un-tagged on the primary", and `--skip-tags engine` is the Alloy bump's
-    # published primary form -- an empty tags cell would book it as the violation it is not.
+    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` reads both, and
+    # `--skip-tags engine` is the Alloy bump's published primary form, not the violation.
     "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }

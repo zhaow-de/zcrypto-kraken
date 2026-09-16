@@ -390,13 +390,14 @@ OUTSIDE = [
     (["-e", "canary_override=why this cannot wait"], "a reason that truncates at the first space", "an override is a reason"),
     (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect", "not JSON"),
     (["-e", '{"canary_override": "short"}'], "a reason of 8 characters or fewer", "longer than 8"),
-    (["-e", '{"canary_override": "true"}'], "a boolean where a reason belongs", "longer than 8"),
+    (["-e", '{"canary_override": "true"}'], "a reason of four characters", "longer than 8"),
     # Padded past the length arm, or the boolean arm is never the one that fires.
     (["-e", '{"canary_override": "      true      "}'], "a padded boolean", "not a boolean"),
     (["-e", '{"canary_override": 5}'], "a number where prose belongs", "not int"),
     (["-e", '{"canary_override": ["a reason here"]}'], "a list where prose belongs", "not list"),
     (["-e", '{"canary_override": null}'], "a null where prose belongs", "not NoneType"),
     (["-e", '{"canary_override": "a b", "pins_override": "c d"}'], "two overrides in one operand", ""),
+    (["-e", '{"capture_image_digest": "sha256:a reason"}'], "a braced operand that is not an override", "is not an override name"),
     (["-e", f"nas_capture_image_digest={DIGEST}"], "a key no role reads", "not in this script's key set"),
     (["-e", "capture_image_digest="], "an empty digest value", ""),
     (["--limit", "zcrypto", "--limit", "zcrypto-red"], "--limit twice", ""),
@@ -516,8 +517,13 @@ def test_every_operand_the_tree_publishes_is_inside_the_grammar():
     import subprocess as sp
 
     root = SCRIPT.parent.parent.parent.parent
+    keyspec = [".claude", "infra", "docs/reference"]
+    # Both sweeps below take a pathspec, and `git grep` searches the paths that exist and exits 0
+    # over one that does not (measured, git 2.47.3: `git grep -q canary_override -- .claude
+    # no/such/dir docs/reference` → rc 0). A drifted entry is silent in either, so both are checked.
+    assert all((root / spec).is_dir() for spec in keyspec), keyspec
     done = sp.run(
-        ["git", "grep", "-rhoE", "--", "-e '?[a-z_][a-z0-9_]*=", "--", ".claude", "infra", "docs/reference"],
+        ["git", "grep", "-rhoE", "--", "-e '?[a-z_][a-z0-9_]*=", "--", *keyspec],
         cwd=root,
         capture_output=True,
         text=True,
@@ -541,9 +547,8 @@ def test_every_operand_the_tree_publishes_is_inside_the_grammar():
         assert done.returncode in (0, 1), (pattern, done.returncode, done.stderr)
         return done.stdout.split()
 
-    # An absence is only evidence over a corpus that was opened. `git grep` given a path that does
-    # not exist searches the others and exits 0 (measured), so a drifted entry is silent: each path
-    # is checked on disk, and the same pattern must FIND the override names somewhere across them.
+    # An absence is only evidence over a corpus that was opened, so the same pattern must FIND the
+    # override names somewhere across these paths before their absence in a `k=v` means anything.
     assert all((root / spec).is_dir() for spec in pagespec), pagespec
     assert swept(names), pagespec
     assert swept("-e '?(" + names + ")=") == [], swept("-e '?(" + names + ")=")
