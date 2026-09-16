@@ -109,7 +109,10 @@ def _unmeasurable(why: str) -> NoReturn:
     in CI. Deciding it on an environment name instead would put a second opt-in key behind a skip,
     which `tests/test_live_venue_opt_in.py` exists to refuse.
     """
-    pytest.fail(f"{why} — this guard needs the whole first-parent history; see coverage.yml")
+    pytest.fail(
+        f"{why} — this guard needs the whole first-parent history: `git fetch --unshallow` "
+        "in a shallow clone, or `git fetch origin develop` where the ref is missing"
+    )
 
 
 def test_an_unmeasurable_corpus_fails_rather_than_skips() -> None:

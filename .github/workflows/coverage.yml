@@ -18,6 +18,10 @@ jobs:
     # Named for what it gates -- the whole suite; the coverage upload is a by-product.
     name: Full test suite
     runs-on: ubuntu-latest
+    # The suite reads; nothing here writes. `actions/checkout` persists this token in .git/config
+    # for every later step, so bounding it is worth the line whatever the repository default is.
+    permissions:
+      contents: read
     steps:
       # The whole history, not the tip: at fetch-depth 1 the clone is shallow, and
       # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` reads the
@@ -34,11 +38,7 @@ jobs:
       # `develop`, which left nine of `tests/test_count_list.py`'s cases skipping here.
       - run: git branch --force develop origin/develop
       - run: uv sync
-      # `merged-prs-without-a-floor-read-30d` calls `gh pr list`, and one of those nine cases runs
-      # the whole count list. The run's own scoped, ephemeral token: read-only on a fork PR.
       - run: uv run coverage run -m pytest
-        env:
-          GH_TOKEN: ${{ github.token }}
       - run: uv run coverage lcov -o coverage.lcov
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2

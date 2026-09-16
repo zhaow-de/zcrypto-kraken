@@ -27,6 +27,10 @@ about, because three rounds of this file's prose claimed more than its code deli
   what the one-name assertion misses;
 - `unittest` is half in scope: `raise unittest.SkipTest` yields a gate, `@unittest.skipIf(...)` and
   `self.skipTest(...)` yield none;
+- an env read moved INSIDE a skip helper is invisible: the helper's call sites are found, but the
+  name it reads is attributed to none of them, so the gate shows `env=()` and passes both assertions
+  while a second opt-in name decides the outcome (measured on `fix/ci-shallow-checkout`, where the
+  read was deleted rather than kept);
 - gate DISCOVERY is not asserted at all, and cannot be from inside this file -- see
   `test_the_fixture_carries_every_position_a_skip_can_sit`;
 - and nothing in the tree holds the recognition this file most recently gained: six mutation probes,

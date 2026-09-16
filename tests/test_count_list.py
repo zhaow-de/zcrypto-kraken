@@ -473,14 +473,38 @@ def test_a_named_entry_runs_alone_and_an_unknown_name_is_refused():
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="five counts read the develop ref by name, and this checkout has none")
-def test_the_script_prints_one_shaped_line_per_entry():
-    """Run against a recorded feed, so the maintenance count reaches no venue from a test."""
+def test_the_script_prints_one_shaped_line_per_entry(tmp_path):
+    """Run against recorded inputs, so the whole list reaches no venue and no API from a test.
+
+    `Full test suite` is a required check, so a count that calls github.com here would hand the API
+    a veto over every merge — the shape this job's own comment refuses for coveralls. The PR
+    snapshot is the arm `count-list.sh` already carries for that; one row older than the window
+    keeps the saturation check satisfied.
+    """
+    prs = tmp_path / "prs.json"
+    prs.write_text(
+        json.dumps(
+            [
+                {
+                    "headRefName": "feat/old",
+                    "mergedAt": "2026-01-01T00:00:00Z",
+                    "headRefOid": "0" * 40,
+                    "files": [],
+                    "body": "## Summary\n",
+                }
+            ]
+        )
+    )
     done = subprocess.run(
         ["bash", str(SCRIPT)],
         cwd=REPO,
         capture_output=True,
         text=True,
-        env={**os.environ, "COUNT_LIST_FEED_SNAPSHOT": str(FEED)},
+        env={
+            **os.environ,
+            "COUNT_LIST_FEED_SNAPSHOT": str(FEED),
+            "COUNT_LIST_PRS_SNAPSHOT": str(prs),
+        },
         timeout=1800,
     )
     assert done.returncode == 0, done.stdout + done.stderr
