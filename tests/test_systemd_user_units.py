@@ -4,9 +4,9 @@
 units are rendered into a copy by the install's `sed`, so the render here is a substitution, and
 what is checked is that every placeholder a unit carries is named in its header's `Placeholders:`
 line and filled, from the expression `FILLS` names, by every tracked copy of the install command --
-found by `git grep`, so a copy pasted into a runbook is held too, each copy being one physical line
--- that no `<...>` token of any spelling -- a whitespace-bearing `<data root>` included -- survives
-the render, and that the directives a timer-driven oneshot needs sit in the section systemd reads
+found by `git grep`, so a copy pasted into a runbook is held too -- that no `<...>` token of any
+spelling -- a whitespace-bearing `<data root>` included -- survives the render, and that the
+directives a timer-driven oneshot needs sit in the section systemd reads
 them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze
 verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the example paths
 this render fills in."""
@@ -41,6 +41,9 @@ _PLACEHOLDER = re.compile(r"<[^<>]+>")
 # `s<d><token><d><replacement><d>` for any delimiter the install picks: a `|` in $PATH kills a
 # `s|…|` expression, and hardening against that by switching to `s#…#` must not read as no install.
 _SED_CLAUSE = re.compile(r"s(.)(<[^<>]+>)\1(.*?)\1")
+# The command, as a word: `used`, `closed` and `based` all carry `sed` as a substring, and a prose
+# line about the install would then be read as one.
+_SED_CMD = re.compile(r"\bsed\b")
 # What the install fills each placeholder FROM. Checked beside the token, or a clause rendering
 # <path> from $PWD -- a unit whose PATH is the checkout, so no node and a red night -- reads as a
 # match. One spelling each, the one the tree uses; another lands here with the edit that wants it.
@@ -56,29 +59,57 @@ def body(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("#"))
 
 
-def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
-    """Every tracked line that renders `unit` through `sed`, as (where, {token: replacement}).
+def _logical_lines(text: str):
+    """(first line number, line) with `\\` continuations joined, the way a shell reads a command.
 
-    Found rather than listed, so a copy of the install pasted into a runbook or a skill is held to
-    the unit the way the header's and README.md's are -- README.md is how this drift got in. A copy
-    is one physical line: a command wrapped across two reads as none, and fails loudly."""
+    A wrapped install is one command; read as two physical lines it is neither, and this guard's
+    whole subject is drift nobody is told about."""
+    buf, start = "", 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        if not buf:
+            start = n
+        if raw.endswith("\\"):
+            buf += raw[:-1]
+            continue
+        yield start, buf + raw
+        buf = ""
+    if buf:
+        yield start, buf
+
+
+def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
+    """Every tracked command that renders `unit` through `sed`, as (where, {token: replacement}).
+
+    Found rather than listed, so a copy pasted into a runbook or a skill is held to the unit the way
+    the header's and README.md's are -- README.md is how this drift got in. A command is held when
+    it names `sed` and the unit and fills at least one placeholder; prose ABOUT the install reads as
+    prose, and a copy naming the unit only through a variable is not found at all."""
     found = subprocess.run(
-        ["git", "-C", str(REPO), "grep", "-n", "--no-color", "-e", f"infra/systemd/{unit.name}"],
+        ["git", "-C", str(REPO), "grep", "-l", "--no-color", "-e", unit.name],
         capture_output=True,
         text=True,
         check=False,
     )
-    # rc 1 is "no line names it", which the caller reads; anything above is a checkout this guard
+    # rc 1 is "nothing names it", which the caller reads; anything above is a checkout this guard
     # cannot search, and it says so rather than reporting every copy missing.
     assert found.returncode < 2, f"`git grep` could not search this checkout: {found.stderr.strip()!r}"
     here = str(Path(__file__).resolve().relative_to(REPO))
     copies = []
-    for raw in found.stdout.splitlines():
-        path, _, rest = raw.partition(":")
-        lineno, _, text = rest.partition(":")
-        if path == here or not _SED_CLAUSE.search(text):
+    for path in found.stdout.splitlines():
+        if path == here:
             continue
-        copies.append((f"{path}:{lineno}", {tok: rep for _, tok, rep in _SED_CLAUSE.findall(text)}))
+        try:
+            text = (REPO / path).read_text(encoding="utf-8")
+        except OSError, UnicodeDecodeError:
+            continue
+        for lineno, line in _logical_lines(text):
+            if not _SED_CMD.search(line) or unit.name not in line:
+                continue
+            clauses: dict[str, str] = {}
+            for _, token, replacement in _SED_CLAUSE.findall(line):
+                clauses.setdefault(token, replacement)  # sed applies the FIRST clause for a token
+            if clauses:
+                copies.append((f"{path}:{lineno}", clauses))
     return copies
 
 
@@ -180,6 +211,8 @@ def test_every_copy_of_the_install_fills_exactly_what_the_body_carries(unit):
             f"{sorted(carried)} -- rendered verbatim into the installed copy: "
             f"{sorted(carried - set(clauses))}; clause(s) filling nothing: {sorted(set(clauses) - carried)}"
         )
+        unnamed = sorted(set(clauses) - set(FILLS))
+        assert not unnamed, f"{unit.name}: the install at {where} fills {unnamed}, which `FILLS` does not name"
         wrong = {tok: rep for tok, rep in clauses.items() if rep != FILLS[tok]}
         assert not wrong, f"{unit.name}: the install at {where} fills " + ", ".join(
             f"{tok} from {rep!r}, not {FILLS[tok]!r}" for tok, rep in sorted(wrong.items())
