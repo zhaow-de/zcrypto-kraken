@@ -1279,8 +1279,8 @@ _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
         "agentboard publishes no /metrics and is scraped by nothing, so no such series exists. The cap "
         "is a systemd `MemoryMax=`, which no metric on this fleet carries either -- cadvisor is "
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
-        "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service`, which "
-        "reads MemoryMax, MemoryHigh, MemoryPeak and NRestarts off the host rather than off a series."
+        "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service` "
+        "(`AGENTBOARD_PROPERTIES` in infra/scripts/ops_daily.py), off the host rather than off a series."
     )
 }
 

@@ -2224,6 +2224,19 @@ def test_the_staleness_arm_reads_the_stamp_the_upgrade_itself_writes():
     assert f"stat -c %Y {_UPGRADE_STAMP} " in ops_daily.UPGRADE_COMMAND[-1], ops_daily.UPGRADE_COMMAND
 
 
+def test_the_upgrade_command_asks_for_every_field_its_reader_consumes():
+    """The command and `read_unattended_upgrades` name these fields independently, so one dropped from
+    the command raises KeyError in the reader, which `_UNREACHABLE` turns into `unreadable` -- a daily
+    silent row, the shape the agentboard read removes by having a single property list.
+
+    Spelt out rather than derived from the command, which a drop would carry with it.
+    """
+    body = ops_daily.UPGRADE_COMMAND[-1]
+    assert " -p Result -p ExecMainStatus -p ExecMainExitTimestamp;" in body, body
+    for echoed in ("StampEpoch", "RebootRequired", "RebootPkgs"):
+        assert f'echo "{echoed}=' in body, (echoed, body)
+
+
 def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
     """`Result=success` and `ExecMainStatus=0` are what systemd reports for a unit that has NEVER run,
     with `ExecMainExitTimestamp` empty -- so the timestamp is parsed rather than merely printed, and
@@ -2635,15 +2648,17 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
     assert "BatchMode=yes" in ops_daily.AGENTBOARD_COMMAND
     body = ops_daily.AGENTBOARD_COMMAND[-1]
     assert body.startswith("systemctl show "), body
-    # The `-p` list is what the reader's key tuple consumes. Dropping one keeps every test green --
-    # the fake answers from a dict, not from the command -- while EVERY live read raises KeyError and
-    # reports `unreadable`, daily, until someone reads the source. So the two are pinned equal here,
-    # derived from the module rather than restated: a property added to one and not the other fails.
-    requested = {tok[2:] or nxt for tok, nxt in zip(body.split(), body.split()[1:] + [""]) if tok.startswith("-p")}
-    assert requested == set(ops_daily.AGENTBOARD_PROPERTIES), (
-        f"the command requests {sorted(requested)} against AGENTBOARD_PROPERTIES "
-        f"{sorted(ops_daily.AGENTBOARD_PROPERTIES)} -- the reader consumes that same tuple"
+    # Both LITERALS, for the reason the host assertion above gives: the command is built by joining
+    # AGENTBOARD_PROPERTIES, so parsing the `-p` names back out and comparing them to that tuple is a
+    # set equal to itself -- it passes under any change that moves both, and `-pMemoryMax` parses to
+    # the same name as `-p MemoryMax`. The tuple's ORDER is load-bearing on its own: the reader unpacks
+    # it positionally, and a name added without one in that unpack raises, which `_UNREACHABLE` turns
+    # into the daily `unreadable` this check exists to prevent.
+    assert ops_daily.AGENTBOARD_PROPERTIES == ("MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts"), (
+        "read_agentboard_cgroup unpacks these positionally as hard, soft, peak, restarts -- move both"
     )
+    spelled_out = "systemctl show zaccess-agentboard.service -p MemoryMax -p MemoryHigh -p MemoryPeak -p NRestarts"
+    assert body == spelled_out, body
     assert not any(sep in body for sep in (";", "&&", "||", "|", "`", "$(", "\n")), f"the read is chained: {body}"
     assert all(
         tok == "systemctl" or tok == "show" or tok.startswith("-p") or tok == ops_daily.AGENTBOARD_UNIT or tok[0].isupper()

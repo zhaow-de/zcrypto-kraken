@@ -1413,9 +1413,9 @@ def _directives(unit: str) -> dict[str, list[str]]:
 
 
 def _render_agentboard(path: Path) -> str:
-    """The unit as the templar produces it, not as it was typed.
+    """The file as the templar produces it, not as it was typed.
 
-    Reading the raw text lets a cap survive a guard while `{% if false %}` deletes it at deploy time,
+    Reading the raw text lets a guarded line survive while `{% if false %}` deletes it at deploy time,
     and this file's premise (spec 00082) is that a guard reads the REAL rendered condition. Same
     placeholder shape as `_render_nas_env`: every bare `{{ name }}` gets a stand-in so an undefined
     is not a red that says nothing about the claim.
@@ -1432,13 +1432,6 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     nothing else couples the two files: dropping it restores the control-group SIGKILL that takes the
     operator's tmux sessions, and reverting to the shim leaves the server holding `:4040` so the next
     start cannot bind."""
-    # RENDERED, not raw: the raw text keeps a cap that `{% if false %}` deletes at deploy time, and
-    # this file's whole premise (spec 00082) is that a guard reads what the templar produces rather
-    # than what the author typed. `{{ }}` values the unit carries are irrelevant here -- the walk
-    # below reads directive names and their values, and none of them interpolates.
-    # BOTH rendered. The start script is a Jinja template too (`{{ access_ops_agentboard_nvm_sh }}`),
-    # and reading it raw let a `{% if false %}` around its `exec` survive this guard while the templar
-    # deletes it at deploy time -- the same hole as the unit's, in the line directly below the fix.
     unit = _render_agentboard(AGENTBOARD_UNIT)
     start = _render_agentboard(AGENTBOARD_START)
 
