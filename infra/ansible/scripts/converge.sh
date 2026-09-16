@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# The documented converge path (traceability: spec 00083 D1): preview first, typed-limit confirm,
-# then the real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
+# The documented converge path (traceability: spec 00083 D1 for the preview, the typed confirm and
+# the record; its `[more ansible args...]` tail is superseded by the grammar below, on the owner's
+# ruling that this fleet's converges are enumerable): preview first, typed-limit confirm, then the
+# real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
 # Usage: converge.sh <playbook.yml> --limit <host> [--tags <list> | --skip-tags engine] [--check]
 #        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...
 # rc 2 usage, or an argument outside that grammar | rc 3 confirm-abort / no tty
@@ -14,10 +16,17 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 # publishes and what `deploy-log.jsonl` records; a new variable or host is added HERE, and until it
 # is, passing it refuses loudly instead of converging while ansible ignores it.
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess"
-TAGNAMES="capture engine ops nas access"
+# site.yml's OWN tags, all of them: a set built from the converges anyone has run so far refuses the
+# roles nobody has had to re-converge yet -- `--tags chrony` is the capture runbook's repair for a
+# drifting clock on unbackfillable L2. `tests/test_converge_sh.py` holds this against the playbook.
+TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops access nas"
+# The variables the roles and host_vars publish as overridable, not the ones a converge has happened
+# to carry: `ops_reconcile_mint` is the reconciler's mint kill-switch and `docker_apt_distribution`
+# the repo escape hatch, both published in the tree and neither ever passed here before.
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
-liquidations_decision nas_apply_compose daemon_json_ack rebootstrap"
+ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack rebootstrap \
+docker_apt_distribution access_ops_agentboard_live ansible_user ansible_port"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 
@@ -36,7 +45,10 @@ refuse() {
 PLAYBOOK="$1"; shift
 case "$PLAYBOOK" in site.yml | bootstrap.yml) : ;; *) refuse "unknown playbook: $PLAYBOOK" ;; esac
 
+# Each flag's own "seen" marker, never the emptiness of its value: `--tags "" --tags engine` passes
+# a `[ -z "$TAGS" ]` test twice and books the second silently.
 LIMIT=""; TAGS=""; SKIP=""; CHECK_ONLY=0; EV=""; want=""
+SAW_LIMIT=0; SAW_TAGS=0; SAW_SKIP=0
 for a in "$@"; do
   if [ -n "$want" ]; then
     case "$want" in
@@ -49,20 +61,26 @@ for a in "$@"; do
     continue
   fi
   case "$a" in
-    --limit) [ -z "$LIMIT" ] || refuse "--limit twice"; want=limit ;;
-    --limit=*) [ -z "$LIMIT" ] || refuse "--limit twice"; LIMIT="${a#--limit=}" ;;
-    --tags) [ -z "$TAGS" ] || refuse "--tags twice"; want=tags ;;
-    --skip-tags) [ -z "$SKIP" ] || refuse "--skip-tags twice"; want=skip ;;
+    --limit) [ "$SAW_LIMIT" -eq 0 ] || refuse "--limit twice"; SAW_LIMIT=1; want=limit ;;
+    --limit=*) [ "$SAW_LIMIT" -eq 0 ] || refuse "--limit twice"; SAW_LIMIT=1; LIMIT="${a#--limit=}" ;;
+    --tags) [ "$SAW_TAGS" -eq 0 ] || refuse "--tags twice"; SAW_TAGS=1; want=tags ;;
+    --skip-tags) [ "$SAW_SKIP" -eq 0 ] || refuse "--skip-tags twice"; SAW_SKIP=1; want=skip ;;
     --check) CHECK_ONLY=1 ;;
     -e) want=ev ;;
     *) refuse "outside the grammar: $a" ;;
   esac
 done
-[ -z "$want" ] || refuse "--$want with no value"
+case "$want" in
+  limit) refuse "--limit with no value" ;;
+  tags) refuse "--tags with no value" ;;
+  skip) refuse "--skip-tags with no value" ;;
+  ev) refuse "-e with no operand" ;;
+esac
 
 [ -n "$LIMIT" ] || refuse "--limit is required"
 in_set "$LIMIT" "$HOSTS" || refuse "unknown host: $LIMIT"
-[ -z "$TAGS" ] || [ -z "$SKIP" ] || refuse "--tags and --skip-tags together"
+[ "$SAW_TAGS" -eq 0 ] || [ "$SAW_SKIP" -eq 0 ] || refuse "--tags and --skip-tags together"
+[ "$SAW_TAGS" -eq 0 ] || [ -n "$TAGS" ] || refuse "--tags with an empty value"
 [ -z "$SKIP" ] || [ "$SKIP" = "engine" ] || refuse "--skip-tags takes only engine, not $SKIP"
 if [ -n "$TAGS" ]; then
   OLDIFS="$IFS"; IFS=,
@@ -80,19 +98,30 @@ for op in $EV; do
   IFS="$OLDIFS"
   case "$op" in
     '{'*)
-      python3 - "$op" "$OVERRIDES" <<'PYCHK' || refuse "not a one-line override operand: $op"
+      # The check prints its own one-line reason; a traceback at the terminal reads as a crash.
+      why="$(python3 - "$op" "$OVERRIDES" <<'PYCHK'
 import json, sys
+
 operand, names = sys.argv[1], sys.argv[2].split()
-parsed = json.loads(operand)
-assert isinstance(parsed, dict) and len(parsed) == 1, "exactly one key"
+try:
+    parsed = json.loads(operand)
+except ValueError as exc:
+    raise SystemExit(f"not JSON ({exc.msg})")
+if not isinstance(parsed, dict) or len(parsed) != 1:
+    raise SystemExit("a braced operand carries exactly one override")
 (key, value), = parsed.items()
-assert key in names, f"{key} is not an override name"
-assert isinstance(value, str) and len(value) > 8, "the reason is prose, longer than 8 characters"
-assert value.strip().lower() not in ("true", "false", "yes", "no", "1", "0"), "a reason, not a boolean"
+if key not in names:
+    raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
+if not isinstance(value, str) or len(value) <= 8:
+    raise SystemExit("the reason is prose, longer than 8 characters")
+if value.strip().lower() in ("true", "false", "yes", "no", "1", "0"):
+    raise SystemExit("a reason, not a boolean")
 PYCHK
+)" || refuse "$why: $op"
       ;;
     *=*)
       key="${op%%=*}"
+      in_set "$key" "$OVERRIDES" && refuse "an override is a reason: -e '{\"$key\": \"<why>\"}'"
       in_set "$key" "$EVKEYS" || refuse "no role reads $key — ansible would accept it and converge nothing"
       [ -n "${op#*=}" ] || refuse "empty value: $op"
       case "$op" in *[[:space:]]*) refuse "an operand carries whitespace; pass a reason as JSON: $op" ;; esac
@@ -158,9 +187,9 @@ fi
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
-python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" -- "$PLAYBOOK" "$@" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" "$SKIP" -- "$PLAYBOOK" "$@" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
 import json, pathlib, sys, datetime as dt
-log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
+log, playbook, limit, tags, rev, dirty, rc, ev, adir, skip = sys.argv[1:11]
 argv_words = sys.argv[sys.argv.index("--", 1) + 1 :]
 # Every operand was checked against the grammar BEFORE the pass, so there is nothing to fail on and
 # nothing to guess: the two accepted forms are one-line JSON and a single `KEY=VALUE`.
@@ -186,7 +215,10 @@ if _vars.is_file():
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
-    "argv": argv_words, "committed_pins": committed,
+    # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` counts the rule
+    # "never run site.yml un-tagged on the primary", and `--skip-tags engine` is the Alloy bump's
+    # published primary form -- an empty tags cell would book it as the violation it is not.
+    "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }
 line = json.dumps(rec, sort_keys=True)

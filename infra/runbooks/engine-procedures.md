@@ -160,7 +160,7 @@ PY
    ```
    infra/ansible/scripts/converge.sh site.yml --limit zcrypto --tags engine \
      -e converge_primary=true \
-     -e engine_image_digest=sha256:<the digest from step 1>
+     -e engine_image_digest=sha256:<digest-from-step-1>
    ```
 
    `converge.sh` runs the `--check --diff` preview first and then takes a typed confirm of the literal string `zcrypto`. **Read the preview**: exactly one line of `/opt/zcrypto-engine/zcrypto.toml` changes, `exec_armed = false` → `exec_armed = true`. Anything else in that diff means your tree does not match the fleet — abort and reconcile the tree first.

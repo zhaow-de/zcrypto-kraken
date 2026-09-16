@@ -6,7 +6,6 @@ import shutil
 import signal
 import stat
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -315,6 +314,8 @@ PUBLISHED = [
         {"ops_image_digest": DIGEST, "ops_alloy_digest": DIGEST, "liquidations_decision": "roll-after"},
     ),
     (["--limit", "zaccess", "--tags", "access"], "zaccess", "access", {}),
+    (["--limit", "zcrypto", "--tags", "chrony"], "zcrypto", "chrony", {}),
+    (["--limit", "zcrypto-ops", "-e", "ops_reconcile_mint=false"], "zcrypto-ops", "", {"ops_reconcile_mint": "false"}),
     (
         ["--limit", "zcrypto", "--skip-tags", "engine", "-e", f"capture_alloy_digest={DIGEST}"],
         "zcrypto",
@@ -398,6 +399,9 @@ OUTSIDE = [
     (["--limit", "capture_host"], "an inventory group where a host belongs"),
     (["--limit", "zcrypt"], "a mistyped host"),
     (["--limit", "zcrypto", "--tags", "captur"], "a mistyped tag"),
+    (["--limit", "zcrypto", "--tags", ""], "an empty tag list ansible reads as a tag"),
+    (["--limit", "zcrypto", "--tags", "", "--tags", "capture"], "--tags twice, the first empty"),
+    (["--limit", "zcrypto", "-e"], "a dangling -e"),
     (["--limit", "zcrypto", "-vvv"], "a passthrough flag"),
     (["--limit", "zcrypto", "-i", "hosts.ini"], "an inventory flag"),
     (["--limit", "zcrypto", "--diff"], "a flag the preview composes itself"),
@@ -425,6 +429,102 @@ def test_a_playbook_outside_the_two_is_refused(tmp_path):
     r = run_no_tty(script, ["other.yml", "--limit", "zcrypto"])
     assert r.returncode == 2
     assert invocations(tmp_path) == []
+
+
+SITE_YML = SCRIPT.parent.parent / "site.yml"
+
+
+def _grammar_set(name):
+    """One whitelist out of converge.sh, read as the script reads it."""
+    text = SCRIPT.read_text()
+    body = text.split(f'{name}="', 1)[1].split('"', 1)[0]
+    return set(body.replace("\\\n", " ").split())
+
+
+def test_the_tag_whitelist_is_the_playbook_s_own_tags():
+    """A tag set drawn from the converges anyone has run refuses the roles nobody has re-converged.
+
+    That is how `--tags chrony` — `infra/runbooks/capture.md`'s repair for a drifting clock on the
+    capture hosts — came to be refused. site.yml is the source; `always` is ansible's, not a role's.
+    """
+    import re
+
+    published = set()
+    for match in re.finditer(r"tags:\s*\[([^]]*)\]", SITE_YML.read_text()):
+        published |= {t.strip() for t in match.group(1).split(",") if t.strip()}
+    published.discard("always")
+    assert _grammar_set("TAGNAMES") == published, sorted(published ^ _grammar_set("TAGNAMES"))
+
+
+def test_every_key_the_grammar_admits_is_read_somewhere_under_ansible():
+    """A stale key admits an operand that converges nothing — the failure the whitelist exists for.
+
+    The reverse direction is the refusal's own message, which names the key and says to add it.
+    """
+    tree = SCRIPT.parent.parent
+    haystack = "\n".join(
+        path.read_text(errors="replace")
+        for path in tree.rglob("*")
+        if path.is_file() and path.suffix in {".yml", ".yaml", ".j2", ".cfg"}
+    )
+    unread = sorted(k for k in _grammar_set("EVKEYS") if k not in haystack)
+    assert unread == [], unread
+
+
+def test_every_operand_the_tree_publishes_is_inside_the_grammar():
+    """A published invocation the grammar refuses is the grammar's defect, not the operator's.
+
+    The corpus is every `-e KEY=` in the guidance, the roles and the reference pages. Single-letter
+    keys are prose placeholders (`-e k=v`) and are skipped.
+    """
+    import re
+    import subprocess as sp
+
+    root = SCRIPT.parent.parent.parent.parent
+    out = sp.run(
+        ["git", "grep", "-rhoE", "--", "-e '?[a-z_]+=", "--", ".claude", "infra", "docs/reference"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    ).stdout
+    keys = {m.group(1) for m in re.finditer(r"-e '?([a-z_]+)=", out) if len(m.group(1)) > 1}
+    known = _grammar_set("EVKEYS") | _grammar_set("OVERRIDES")
+    assert keys <= known, sorted(keys - known)
+
+
+def test_a_skip_tags_run_is_not_booked_as_an_un_tagged_one(tmp_path):
+    """`--skip-tags engine` is the Alloy bump's published primary form, and it is not un-tagged.
+
+    `count-list.sh un-tagged-primary-runs` counts the rule "never run site.yml un-tagged on the
+    primary" over rows whose tags cell is empty; the skip goes in its own cell so that count stays
+    the violations it is named for.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--skip-tags", "engine", "-e", f"capture_alloy_digest={DIGEST}"],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["skip_tags"] == "engine" and rec["tags"] == "", rec
+
+
+def test_an_override_passed_as_k_equals_v_is_told_where_to_put_it(tmp_path):
+    """The refusal names the fix, because the key IS read — it just cannot travel as `k=v`."""
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", "canary_override=whatever"])
+    assert r.returncode == 2
+    assert "an override is a reason" in r.stderr, r.stderr
+    assert "no role reads" not in r.stderr, r.stderr
+
+
+def test_a_refused_override_operand_prints_a_reason_not_a_traceback(tmp_path):
+    """A traceback at the terminal reads as a crash, and sends the operator to the wrong question."""
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", '{canary_override: "a reason here"}'])
+    assert r.returncode == 2
+    assert "Traceback" not in r.stderr, r.stderr
+    assert "not JSON" in r.stderr, r.stderr
 
 
 def test_the_row_carries_the_argv_verbatim(tmp_path):

@@ -254,9 +254,9 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
-# The bypasses the ROW names. `converge.sh` books the spellings its arms read -- the two option names
-# matched exactly, in both argparse forms -- and announces the rest at the console, so a bypass passed
-# as an abbreviation, as `@file` or in a non-JSON braced dialect leaves a row this count reads as 0.
+# The bypasses the ROW names, which is every bypass a converge can have taken: `converge.sh` accepts
+# an override as one-line JSON and refuses every other spelling before the pass, so a bypass that
+# applied and a row that names it are the same set.
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
 
 # COUNT_LIST_FEED_SNAPSHOT is the snapshot arm of the audit: set it and the count reads a recorded
@@ -272,7 +272,9 @@ c_converges_inside_a_kraken_window() {
 # shellcheck disable=SC2016  # the backticks are the drill-log row's literal Markdown fences
 c_drills_on_the_primary() { grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md; }
 
-c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="")' docs/reference/deploy-log.jsonl | wc -l; }
+# `--skip-tags engine` is the Alloy bump's published primary form and names no tag, so it books an
+# empty `tags` and its own `skip_tags` cell; counting it here would read a violation that never was.
+c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="" and (.skip_tags // "")=="")' docs/reference/deploy-log.jsonl | wc -l; }
 
 c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'; }
 
@@ -343,9 +345,8 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # operator's keystroke is not the set, and an act nothing records cannot be counted.
 
 # A converge that passed `-e <role>_digest=` with nothing after the `=`: the role reads it as defined and
-# renders a broken image ref. `converge.sh` stores the `-e k=v` operands its arms read, stripped; an
-# abbreviation, `@file` and a braced operand that is not JSON record nothing (announced at the
-# console), so this 0 is over the spellings it collects.
+# renders a broken image ref. `converge.sh` refuses an empty value before the pass now, so this
+# counts the rows written before that arm landed.
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
 # The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the
