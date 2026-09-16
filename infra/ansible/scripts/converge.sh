@@ -2,7 +2,8 @@
 # The documented converge path (traceability: spec 00083 D1): preview first, typed-limit confirm,
 # then the real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
 # Usage: converge.sh <playbook.yml> --limit <target> [more ansible args...]
-# rc 2 usage | rc 3 confirm-abort / no tty | rc 4 preview failed | else the real pass's own exit.
+# rc 2 usage | rc 3 confirm-abort / no tty | rc 4 preview failed | rc 5 argv ansible refuses
+# | else the real pass's own exit.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"
 
@@ -16,24 +17,32 @@ usage() {
 PLAYBOOK="$1"; shift
 case "$PLAYBOOK" in --*) usage ;; esac
 
-LIMIT=""; CHECK_ONLY=0; prev=""
-for a in "$@"; do
-  [ "$prev" = "--limit" ] && LIMIT="$a"
-  case "$a" in
-    --limit=*) LIMIT="${a#--limit=}" ;;
-    # Every spelling that puts ansible in check mode, or the pass converges nothing and the row below
-    # says it did: `--ch` … `--check` (`--c` argparse calls ambiguous), `-C`, and a cluster carrying
-    # it. A word carrying a non-letter is a flag with its VALUE attached, never a cluster.
-    --ch*) CHECK_ONLY=1 ;;
-    -[a-zA-Z]*)
-      case "$a" in
-        *[!a-zA-Z-]*) : ;;
-        *C*) CHECK_ONLY=1 ;;
-      esac
-      ;;
+# ANSIBLE parses this argv, never a pattern here: `--limit`/`-l`, `--tags`/`-t`, `--check`/`-C` and
+# `-e` each have spellings, abbreviations and clusters a `case` arm cannot reproduce, and every one
+# it gets wrong either books a row for a pass that converged nothing or names the wrong host in it.
+# Both streams to files: ansible refuses to start on a non-blocking stdout.
+PYBIN="${ZCRYPTO_PYTHON:-$SD/../../../.venv/bin/python}"
+if [ ! -x "$PYBIN" ]; then
+  echo "converge.sh: no project interpreter at $PYBIN — run uv sync, or set ZCRYPTO_PYTHON" >&2
+  exit 5
+fi
+CLI_OUT="$(mktemp)"; CLI_ERR="$(mktemp)"
+trap 'rm -f "$CLI_OUT" "$CLI_ERR"' EXIT
+if ! "$PYBIN" "$SD/parse-argv.py" "$PLAYBOOK" "$@" > "$CLI_OUT" 2> "$CLI_ERR"; then
+  echo "converge.sh: ansible refuses this argv — nothing ran:" >&2
+  cat "$CLI_ERR" >&2
+  exit 5
+fi
+LIMIT=""; CHECK_ONLY=0; TAGS=""; EV=""; ARGV=""
+while IFS=$'\t' read -r key value; do
+  case "$key" in
+    ARGV) ARGV="$value" ;;
+    LIMIT) LIMIT="$value" ;;
+    CHECK) if [ "$value" = "1" ]; then CHECK_ONLY=1; fi ;;
+    TAGS) TAGS="$value" ;;
+    EXTRA) EV="$value" ;;
   esac
-  prev="$a"
-done
+done < "$CLI_OUT"
 [ -n "$LIMIT" ] || usage
 
 echo "== preview: --check --diff =="
@@ -68,38 +77,6 @@ set +e
 rc=$?
 set -e
 LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
-# `--tags` APPENDS in ansible: two flags run both sets, so the cell joins them and never overwrites.
-add_tags() { if [ -z "$TAGS" ]; then TAGS="$1"; else TAGS="$TAGS,$1"; fi; }
-TAGS=""; EV=""; UNREAD=""; prev=""
-for a in "$@"; do
-  # Exact arms, never a prefix: `--extra-var*` matches the attached `--extra-vars=K=V` too, and then
-  # books the NEXT argv word as a variable. The abbreviations `allow_abbrev` honours (`--e` …
-  # `--extra-var`, `--ta`, `-ve`) are not collected -- they leave a short row, which the drill pages
-  # read as "nothing was overridden", so the last arms name them for the warning below. RS, never a
-  # newline: an operand carries its own.
-  case "$prev" in -e | --extra-vars) EV="$EV$a"$'\x1e' ;; esac
-  case "$prev" in --tags | -t) add_tags "$a" ;; esac
-  case "$a" in
-    --tags | -t) : ;;                         # value is the next word; `prev` above takes it
-    --tags=*) add_tags "${a#--tags=}" ;;
-    -t?*) v="${a#-t}"; add_tags "${v#=}" ;;   # attached short form; argparse drops `-t=`'s `=`
-    -e | --extra-vars) : ;;
-    -e?*) v="${a#-e}"; EV="$EV${v#=}"$'\x1e' ;;
-    --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\x1e' ;;
-    --e* | --ta*) UNREAD="$UNREAD $a" ;;      # an abbreviation ansible honours and this loop does not
-    -[a-zA-Z]*)                               # a cluster carrying one, e.g. `-ve`; `-ihosts.ini` is
-      case "$a" in                            # a flag with its value attached, and overrides nothing
-        *[!a-zA-Z-]*) : ;;
-        *[et]*) UNREAD="$UNREAD $a" ;;
-      esac
-      ;;
-  esac
-  prev="$a"
-done
-if [ -n "$UNREAD" ]; then
-  echo "converge.sh: NOT RECORDED:$UNREAD — ansible honours the spelling and this collector does not;" \
-    "the row will read as though nothing was overridden" >&2
-fi
 ADIR="${ZCRYPTO_ANSIBLE_DIR:-$SD/..}"
 REV="$(git -C "$SD" rev-parse HEAD 2>/dev/null || echo unknown)"
 # `dirty` answers "does REV fully describe what was deployed?" -- ansible renders from the working
@@ -123,46 +100,13 @@ fi
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
-python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
-import json, pathlib, shlex, sys, datetime as dt
-log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
-# A braced operand never reaches the `=` split, which would mint a key out of its own text. Ansible
-# YAML-loads `{`/`[`; this runs under the system `python3`, which has no PyYAML, so a YAML-only
-# spelling records a short row.
-extra, unread = {}, []
-for operand in ev.split("\x1e"):  # never splitlines(): an operand may carry newlines of its own
-    if not operand.strip():
-        continue
-    booked = {}
-    # The RAW first character, as `load_extra_vars` tests it: ` {…}` is not braced to ansible.
-    if operand[:1] in "{[":
-        try:
-            parsed = json.loads(operand)
-        except ValueError:
-            parsed = None
-        if isinstance(parsed, dict):
-            booked = {str(k): v for k, v in parsed.items()}
-    else:
-        # One `-e` may carry several vars (`-e "a=1 b=2"`), and ansible's `split_args` breaks them on
-        # the SPACE and the NEWLINE only -- a tab stays inside the value (measured). A token with no
-        # `=` is the remainder ansible books as `_raw_params`; it names no variable the operator set.
-        lex = shlex.shlex(operand, posix=True)
-        lex.whitespace, lex.whitespace_split, lex.commenters = " \n", True, ""
-        try:
-            tokens = list(lex)
-        except ValueError:  # an unbalanced quote: ansible refused this operand, so record nothing
-            tokens = []
-        for token in tokens:
-            if "=" in token:
-                k, v = token.split("=", 1)
-                booked[k.strip()] = v.strip()
-    if booked:
-        extra.update(booked)
-    else:
-        unread.append(operand)
-if unread:
-    print("converge.sh: NOT RECORDED: " + " | ".join(unread) + " — no variable this recorder reads;"
-          " the row will read as though nothing was overridden", file=sys.stderr)
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" "$ARGV" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+import json, pathlib, sys, datetime as dt
+log, playbook, limit, tags, rev, dirty, rc, ev, adir, argv = sys.argv[1:11]
+# Both come from `parse-argv.py`, i.e. from ansible's own parser: this script no longer has an
+# opinion about argv. A field it cannot read is a bug there, not a dialect to add here.
+extra = json.loads(ev) if ev else {}
+argv_words = json.loads(argv) if argv else []
 # The pins this converge deployed that no `-e` carries. Read from the PLAINTEXT vars.yml with a
 # regex, never `ansible-inventory --host`, which decrypts the vault and prints every secret
 # (CLAUDE.md). The value must be bare -- unquoted, no trailing YAML comment -- or the regex silently
@@ -176,7 +120,7 @@ if _vars.is_file():
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
-    "committed_pins": committed,
+    "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }
 line = json.dumps(rec, sort_keys=True)
