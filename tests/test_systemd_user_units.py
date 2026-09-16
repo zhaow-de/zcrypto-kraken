@@ -41,10 +41,12 @@ _PLACEHOLDER = re.compile(r"<[^<>]+>")
 # `s<d><token><d><replacement><d>` for any delimiter the install picks: a `|` in $PATH kills a
 # `s|…|` expression, and hardening against that by switching to `s#…#` must not read as no install.
 _SED_CLAUSE = re.compile(r"s(.)(<[^<>]+>)\1(.*?)\1")
-# The command WITH its script argument. `used`, `closed` and `based` carry `sed` as a substring, and
-# prose naming the command carries it as a word -- the read-back step this file's own header tells
-# the operator to run says "renders wrong through sed", one clause away from reading as an install.
-_SED_CMD = re.compile(r"""\bsed\b\s+(?:-\w+\s+)*["']""")
+# The command as a word -- `used`, `closed` and `based` carry `sed` as a substring. What separates an
+# install from prose naming one is not how it quotes or flags its script, which is a spelling this
+# guard has no business ruling on: the install WRITES A COPY, so it redirects, and the read-back step
+# this file's own header tells the operator to run does not.
+# A placeholder carries its own `>`, so the redirect is looked for with the placeholders taken out.
+_SED_CMD = re.compile(r"\bsed\b")
 # What the install fills each placeholder FROM. Checked beside the token, or a clause rendering
 # <path> from $PWD -- a unit whose PATH is the checkout, so no node and a red night -- reads as a
 # match. One spelling each, the one the tree uses; another lands here with the edit that wants it.
@@ -83,8 +85,9 @@ def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
 
     Found rather than listed, so a copy pasted into a runbook or a skill is held to the unit the way
     the header's and README.md's are -- README.md is how this drift got in. A command is held when it
-    names the unit and runs `sed` over a quoted script filling at least one placeholder; prose about
-    the install reads as prose, and a copy reaching the unit through a variable is not found."""
+    names the unit, runs `sed`, fills at least one placeholder and redirects. Not found: a copy that
+    reaches the unit through a variable, and one that renders in place rather than into a copy --
+    which the units' own headers forbid, the tracked file keeping its placeholders."""
     found = subprocess.run(
         ["git", "-C", str(REPO), "grep", "-l", "--no-color", "-e", unit.name],
         capture_output=True,
@@ -104,7 +107,7 @@ def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
         except OSError, UnicodeDecodeError:
             continue
         for lineno, line in _logical_lines(text):
-            if not _SED_CMD.search(line) or unit.name not in line:
+            if not _SED_CMD.search(line) or ">" not in _PLACEHOLDER.sub("", line) or unit.name not in line:
                 continue
             clauses: dict[str, str] = {}
             for _, token, replacement in _SED_CLAUSE.findall(line):
