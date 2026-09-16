@@ -496,11 +496,9 @@ def test_every_key_the_grammar_admits_is_read_somewhere_under_ansible():
     The reverse direction is the refusal's own message, which names the key and says to add it.
     """
     tree = SCRIPT.parent.parent
-    haystack = "\n".join(
-        path.read_text(errors="replace")
-        for path in tree.rglob("*")
-        if path.is_file() and path.suffix in {".yml", ".yaml", ".j2", ".cfg"}
-    )
+    # Every file, not a suffix list: a key read from a script, a template or a plain-text unit
+    # would otherwise read as unread and be dropped from the whitelist as stale.
+    haystack = "\n".join(path.read_text(errors="replace") for path in tree.rglob("*") if path.is_file())
     unread = sorted(k for k in _grammar_set("EVKEYS") if k not in haystack)
     assert unread == [], unread
 
@@ -517,47 +515,69 @@ def test_every_operand_the_tree_publishes_is_inside_the_grammar():
     import subprocess as sp
 
     root = SCRIPT.parent.parent.parent.parent
-    # The WHOLE tree, minus the places a dead spelling is allowed to rest. A pathspec listing the
-    # live areas cannot see a key published somewhere it does not name, and `git grep` searches the
-    # paths that exist and exits 0 over one that does not (measured, git 2.47.3), so the drift is
-    # silent: the corpus is everything, and each exclusion is named with the reason it is dead.
-    buried = (
-        ":!docs/plans",  # a plan is the record of work already done or dropped
-        ":!docs/specs",
-        ":!docs/research",
-        ":!docs/open-topics/archive",
-        ":!tests",  # the refusal table publishes the spellings it exists to refuse
-    )
+    # The WHOLE tree, with no pathspec at all: a corpus that names directories cannot see a key
+    # published outside them, and a directory dropped from the list changes the count only if it
+    # held a key no other path did — which is how a narrowing stays silent. Every key is therefore
+    # either inside the grammar or named below, with the page that retired it.
+    RETIRED = {
+        "engine_metrics_enabled": "docs/plans/00043-observability.md, a plan not delivered",
+        "obs_alloy_digest": "docs/plans/00043-observability.md, the same plan",
+        "obs_proxy_digest": "docs/plans/00043-observability.md, the same plan",
+        "nas_alloy_digest": "docs/specs/00102, which records that no such variable exists",
+        "x_override": "docs/research/14.phase6-decisions.md, a worked example",
+        "key": "prose: `-e key=value` as a shape, not a name",
+    }
+    patterns = ("-e '?[a-z_][a-z0-9_]*=", '-e \'?\\{"[a-z_][a-z0-9_]*"')
+    keys = set()
+    for pattern in patterns:
+        done = sp.run(["git", "grep", "-rhoE", "--", pattern, "--", "."], cwd=root, capture_output=True, text=True)
+        # `keys <= known` is satisfied by an empty `keys`, so the corpus is checked before trusted.
+        assert done.returncode == 0, (pattern, done.returncode, done.stderr)
+        keys |= {m.group(1) for m in re.finditer(r"-e '?\{?\"?([a-z_][a-z0-9_]*)\"?[=:]", done.stdout) if len(m.group(1)) > 1}
+    assert len(keys) >= 20, sorted(keys)
+    known = _grammar_set("EVKEYS") | _grammar_set("OVERRIDES") | set(RETIRED)
+    assert keys <= known, sorted(keys - known)
+
+    # The `k=v` arm REFUSES every override name, so a page publishing one publishes a spelling the
+    # script rejects. Whole tree again; the roles and site.yml are the exemption, because their
+    # fail_msgs name the spelling to explain the refusal, which is the one place it belongs.
+    names = "|".join(sorted(_grammar_set("OVERRIDES")))
+    done = sp.run(["git", "grep", "-rlE", "--", "-e '?(" + names + ")=", "--", "."], cwd=root, capture_output=True, text=True)
+    assert done.returncode in (0, 1), (done.returncode, done.stderr)
+    allowed = {"infra/ansible/site.yml"}
+    offenders = [
+        f
+        for f in done.stdout.split()
+        if f not in allowed
+        and not f.startswith(
+            ("infra/ansible/roles/", "docs/plans/", "docs/specs/", "docs/research/", "docs/open-topics/archive/", "tests/")
+        )
+    ]
+    assert offenders == [], offenders
+
+
+def test_the_override_names_are_the_ones_the_roles_read():
+    """The fourth set, and the only one no guard held: a fifth override would be refused both ways.
+
+    As JSON it is not an override name; as `k=v` it is not in the key set — the shape of the three
+    refusals of legitimate operations this branch already had to fix.
+    """
+    import re
+    import subprocess as sp
+
+    root = SCRIPT.parent.parent.parent.parent
+    # converge.sh lives under infra/ansible, so the set under test would otherwise be its own
+    # evidence: adding a name to OVERRIDES would add it to the corpus and the equality would hold.
     done = sp.run(
-        ["git", "grep", "-rhoE", "--", "-e '?[a-z_][a-z0-9_]*=", "--", ".", *buried],
+        ["git", "grep", "-hoE", "[a-z_]+_override", "--", "infra/ansible", ":!infra/ansible/scripts/converge.sh"],
         cwd=root,
         capture_output=True,
         text=True,
     )
-    # The corpus is checked before it is trusted: `keys <= known` is satisfied by an EMPTY `keys`,
-    # so a drifted pathspec, pattern or cwd would read green over a corpus never read.
     assert done.returncode == 0, (done.returncode, done.stderr)
-    keys = {m.group(1) for m in re.finditer(r"-e '?([a-z_][a-z0-9_]*)=", done.stdout) if len(m.group(1)) > 1}
-    assert len(keys) >= 12, sorted(keys)
-    known = _grammar_set("EVKEYS") | _grammar_set("OVERRIDES")
-    assert keys <= known, sorted(keys - known)
-
-    # The `k=v` arm REFUSES every override name, so a page publishing one publishes a spelling the
-    # script rejects. The roles and site.yml are excluded: their fail_msgs name it to explain the
-    # refusal, which is the one place the string belongs.
-    pagespec = [".claude", "infra/runbooks", "docs/reference"]
-    names = "|".join(sorted(_grammar_set("OVERRIDES")))
-
-    def swept(pattern):
-        done = sp.run(["git", "grep", "-rlE", "--", pattern, "--", *pagespec], cwd=root, capture_output=True, text=True)
-        assert done.returncode in (0, 1), (pattern, done.returncode, done.stderr)
-        return done.stdout.split()
-
-    # An absence is only evidence over a corpus that was opened, so the same pattern must FIND the
-    # override names somewhere across these paths before their absence in a `k=v` means anything.
-    assert all((root / spec).is_dir() for spec in pagespec), pagespec
-    assert swept(names), pagespec
-    assert swept("-e '?(" + names + ")=") == [], swept("-e '?(" + names + ")=")
+    read_by_roles = set(done.stdout.split())
+    assert len(read_by_roles) >= 4, sorted(read_by_roles)
+    assert _grammar_set("OVERRIDES") == read_by_roles, sorted(read_by_roles ^ _grammar_set("OVERRIDES"))
 
 
 def test_the_host_whitelist_is_the_inventory_s_own_hosts():
