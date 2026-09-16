@@ -389,6 +389,11 @@ OUTSIDE = [
     ),
     (["--limit", "zcrypto", "--tags", "fail2ban"], "a role tag this fleet has never converged", "unknown tag"),
     (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any value but engine", "takes only engine"),
+    (
+        ["--limit", "zcrypto", "--skip-tags", "capture", "--skip-tags", "engine"],
+        "two skip flags, which ansible appends and the cell booked as engine alone",
+        "takes only engine",
+    ),
     (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", "--tags and --skip-tags together"),
     (
         ["-e", f"nas_capture_image_digest={DIGEST}"],

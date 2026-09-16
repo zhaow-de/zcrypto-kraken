@@ -63,7 +63,7 @@ for a in "$@"; do
     case "$want" in
       limit) LIMIT="$a" ;;
       tags) TAGS="${TAGS:+$TAGS,}$a" ;;   # `--tags` is append to ansible, so the cell joins too
-      skip) SKIP="$a" ;;
+      skip) SKIP="${SKIP:+$SKIP,}$a" ;;  # append too: `--skip-tags` is the same action to ansible
       ev) EV="$EV$a"$'\x1e' ;;   # RS, never a newline: a JSON reason may carry one
     esac
     want=""
@@ -80,9 +80,11 @@ for a in "$@"; do
   esac
 done
 case "$want" in
+  "") : ;;
   limit | tags) refuse "--$want with no value" ;;
   skip) refuse "--skip-tags with no value" ;;
   ev) refuse "-e with no operand" ;;
+  *) refuse "$want with no value" ;;   # a branch added above and not here would pass silently
 esac
 
 [ -n "$LIMIT" ] || refuse "--limit is required"
