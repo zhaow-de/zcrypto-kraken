@@ -384,11 +384,15 @@ OUTSIDE = [
     (["-econverge_primary=true"], "the attached short operand", ""),
     (["-e=converge_primary=true"], "an = after the short flag", ""),
     (["-e", "@vars.json"], "a file the confirm never shows the operator", ""),
-    (["-e", "pins_override=stale nas_apply_compose=true"], "two variables in one operand", ""),
+    (["-e", "pins_override=stale nas_apply_compose=true"], "two variables in one operand", "an override is a reason"),
+    # Neither key is an override, so the whitespace arm is the one that has to fire.
+    (["-e", f"capture_image_digest={DIGEST} converge_primary=true"], "two plain variables in one operand", "carries whitespace"),
     (["-e", "canary_override=why this cannot wait"], "a reason that truncates at the first space", "an override is a reason"),
     (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect", "not JSON"),
     (["-e", '{"canary_override": "short"}'], "a reason of 8 characters or fewer", "longer than 8"),
-    (["-e", '{"canary_override": "true"}'], "a boolean where a reason belongs", ""),
+    (["-e", '{"canary_override": "true"}'], "a boolean where a reason belongs", "longer than 8"),
+    # Padded past the length arm, or the boolean arm is never the one that fires.
+    (["-e", '{"canary_override": "      true      "}'], "a padded boolean", "not a boolean"),
     (["-e", '{"canary_override": 5}'], "a number where prose belongs", "not int"),
     (["-e", '{"canary_override": ["a reason here"]}'], "a list where prose belongs", "not list"),
     (["-e", '{"canary_override": null}'], "a null where prose belongs", "not NoneType"),
@@ -529,24 +533,20 @@ def test_every_operand_the_tree_publishes_is_inside_the_grammar():
     # The `k=v` arm REFUSES every override name, so a page publishing one publishes a spelling the
     # script rejects. The roles and site.yml are excluded: their fail_msgs name it to explain the
     # refusal, which is the one place the string belongs.
-    pages = sp.run(
-        [
-            "git",
-            "grep",
-            "-rlE",
-            "--",
-            "-e '?(" + "|".join(sorted(_grammar_set("OVERRIDES"))) + ")=",
-            "--",
-            ".claude",
-            "infra/runbooks",
-            "docs/reference",
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    assert pages.returncode in (0, 1), (pages.returncode, pages.stderr)
-    assert pages.stdout.split() == [], pages.stdout
+    pagespec = [".claude", "infra/runbooks", "docs/reference"]
+    names = "|".join(sorted(_grammar_set("OVERRIDES")))
+
+    def swept(pattern):
+        done = sp.run(["git", "grep", "-rlE", "--", pattern, "--", *pagespec], cwd=root, capture_output=True, text=True)
+        assert done.returncode in (0, 1), (pattern, done.returncode, done.stderr)
+        return done.stdout.split()
+
+    # An absence is only evidence over a corpus that was opened. `git grep` given a path that does
+    # not exist searches the others and exits 0 (measured), so a drifted entry is silent: each path
+    # is checked on disk, and the same pattern must FIND the override names somewhere across them.
+    assert all((root / spec).is_dir() for spec in pagespec), pagespec
+    assert swept(names), pagespec
+    assert swept("-e '?(" + names + ")=") == [], swept("-e '?(" + names + ")=")
 
 
 def test_the_host_whitelist_is_the_inventory_s_own_hosts():
