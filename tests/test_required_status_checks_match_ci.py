@@ -105,19 +105,35 @@ def test_every_required_context_is_a_job_that_runs_on_prs_into_develop(context):
     )
 
 
-def test_the_suite_job_gives_the_checkout_what_the_guards_measure_from():
-    """Two steps, and a guard goes quiet without either — quietly, which is the point.
+def _required_job(branch: str) -> tuple[str, dict]:
+    """The job behind the required check, found the way the other cases find it."""
+    names, _ = _check_names_reported_on_prs_into(branch)
+    context = _required_contexts(branch)[0]
+    path = names[context]
+    wf = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for job_id, job in wf["jobs"].items():
+        if (job.get("name") or job_id) == context:
+            return context, job
+    raise AssertionError(f"no job in {path.name} reports as {context!r}")
+
+
+def test_the_required_job_gives_the_checkout_what_the_guards_measure_from():
+    """Two steps, and without either a guard measures nothing.
 
     `fetch-depth: 0` is what `tests/test_change_index.py`'s completeness guard reads; the local
     `develop` ref is what `count-list.sh` refuses to run without, and nine `tests/test_count_list.py`
     cases skip on. A `pull_request` checkout is detached at the merge ref with `origin/develop`
-    alone, so neither comes for free, and neither failing is visible in a green summary line.
+    alone, so neither comes for free. Written is not run: a step-level `if:` satisfies a required
+    check without doing the thing, which is why `_job_disqualifier` refuses the job-level one.
     """
-    job = yaml.safe_load((WORKFLOWS / "coverage.yml").read_text(encoding="utf-8"))["jobs"]["coverage"]
+    context, job = _required_job("develop")
     steps = job["steps"]
     checkout = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
-    assert checkout.get("with", {}).get("fetch-depth") == 0, checkout
-    assert any("git branch --force develop origin/develop" in str(s.get("run", "")) for s in steps), steps
+    assert checkout.get("with", {}).get("fetch-depth") == 0, (context, checkout)
+    ref = next((s for s in steps if "git branch --force develop origin/develop" in str(s.get("run", ""))), None)
+    assert ref is not None, (context, steps)
+    for step in (checkout, ref):
+        assert "if" not in step and not step.get("continue-on-error"), (context, step)
 
 
 def test_the_suite_check_is_required_so_a_red_run_cannot_merge():
