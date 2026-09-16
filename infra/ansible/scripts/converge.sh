@@ -12,20 +12,21 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 
 # A WHITELIST, not a parser. This fleet's converges are enumerable, and every argument outside the
 # grammar is refused before the preview, so no spelling can reach a host recorded as something it is
-# not. The sets are what the tree EXPOSES -- site.yml's tags, the inventory's hosts, the keys the
-# roles read -- never what a converge has happened to carry; a new variable or host is added HERE,
-# and until it is, passing it refuses loudly instead of converging while ansible ignores it.
+# not. The sets are what this fleet USES -- what the deploy log and the operator's history record,
+# plus what a skill or runbook publishes as a procedure to run. A tag, host or variable that exists
+# but has never been converged is not here: when a new case arises, this is where it is added, and
+# until then passing it refuses loudly instead of converging while ansible ignores it.
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess"
-# site.yml's OWN tags, all of them: a set built from the converges anyone has run refuses the roles
-# nobody has had to re-converge yet -- `--tags chrony` is the capture runbook's repair for a
-# drifting clock on unbackfillable L2.
-TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops access nas"
-# The variables the roles and host_vars publish as overridable: `ops_reconcile_mint` is the
-# reconciler's mint kill-switch and `docker_apt_distribution` the repo escape hatch.
+# The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
+# as the repair for a stopped or hand-edited chrony on a capture host.
+TAGNAMES="capture engine ops nas access chrony"
+# Every key the deploy log and the shell history carry, plus the ones a skill or runbook publishes:
+# `daemon_json_ack`, `rebootstrap` and `ops_panel_timer_hold` from the rollout skill,
+# `ops_reconcile_mint` from the ops host_vars, `docker_apt_distribution` from the docker role.
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack rebootstrap \
-docker_apt_distribution access_ops_agentboard_live ansible_user ansible_port"
+docker_apt_distribution"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 
@@ -126,9 +127,9 @@ PYCHK
     *=*)
       key="${op%%=*}"
       in_set "$key" "$OVERRIDES" && refuse "an override is a reason: -e '{\"$key\": \"<why>\"}'"
-      # The whitelist is what is short, not the role: ansible accepts an unknown `-e` silently and
-      # converges nothing, which is why the key is named rather than passed through.
-      in_set "$key" "$EVKEYS" || refuse "$key is not in this script's key set — add it there if a role reads it"
+      # Ansible accepts an unknown `-e` silently and converges nothing, so the key is named here
+      # rather than passed through. A key this fleet has not used yet is added to EVKEYS above.
+      in_set "$key" "$EVKEYS" || refuse "$key is not in this script's key set — add it there if you need it"
       [ -n "${op#*=}" ] || refuse "empty value: $op"
       case "$op" in *[[:space:]]*) refuse "an operand carries whitespace; pass a reason as JSON: $op" ;; esac
       ;;
