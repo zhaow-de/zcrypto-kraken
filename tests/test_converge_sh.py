@@ -381,6 +381,12 @@ OUTSIDE = [
     (["--limit", "capture_host"], "an inventory group where a host belongs", "unknown host"),
     (["--limit", "zcrypto zcrypto-red"], "two hosts, which ansible reads as two and this as none", "unknown host"),
     (["--limit", "zcrypto", "--tags", "captur"], "a mistyped tag", "unknown tag"),
+    (["-e", "capture_image_digest="], "an unsubstituted placeholder, which ansible reads as defined", "empty value"),
+    (
+        ["-e", f"capture_image_digest={DIGEST} converge_primary=true"],
+        "two variables in one operand, which the row would book as one",
+        "carries whitespace",
+    ),
     (["--limit", "zcrypto", "--tags", "fail2ban"], "a role tag this fleet has never converged", "unknown tag"),
     (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any value but engine", "takes only engine"),
     (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", "--tags and --skip-tags together"),
@@ -490,6 +496,22 @@ def test_a_refused_override_operand_prints_a_reason_not_a_traceback(tmp_path):
     # either way, so a capture that reads stdout leaves the refusal itself saying nothing.
     refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
     assert "not JSON" in refusal, refusal
+
+
+def test_two_tag_flags_book_both_because_ansible_runs_both(tmp_path):
+    """`--tags` is `action="append"` to ansible, so a second flag adds rather than replaces.
+
+    Booking the last one alone left the row describing a pass that did not happen, and
+    `count-list.sh engine-rows-outside-the-gap` selects rows whose `tags` cell names `engine`.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "capture", "--tags", "engine"],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["tags"] == "capture,engine", rec["tags"]
 
 
 def test_the_row_carries_the_argv_verbatim(tmp_path):

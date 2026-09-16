@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The documented converge path (traceability: spec 00083 D1 for the preview, the typed confirm and
-# the record; its `[more ansible args...]` tail is superseded by the grammar below, on the owner's
-# ruling that this fleet's converges are enumerable): preview first, typed-limit confirm, then the
-# real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
+# The documented converge path (traceability: spec 00083 D1 for the preview and the typed confirm;
+# its `[more ansible args...]` tail is superseded by the grammar below, on the owner's ruling that
+# this fleet's converges are enumerable): preview first, typed-limit confirm, then the real pass
+# through run.sh (which loads the vaulted deploy keys into a throwaway agent).
 # Usage: converge.sh site.yml --limit <host> (or --limit=<host>) [--tags <list> | --skip-tags engine]
 #        [--check]
 #        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...   (the braced form is JSON, spanning lines or not)
@@ -62,7 +62,7 @@ for a in "$@"; do
   if [ -n "$want" ]; then
     case "$want" in
       limit) LIMIT="$a" ;;
-      tags) TAGS="$a" ;;
+      tags) TAGS="${TAGS:+$TAGS,}$a" ;;   # `--tags` is append to ansible, so the cell joins too
       skip) SKIP="$a" ;;
       ev) EV="$EV$a"$'\x1e' ;;   # RS, never a newline: a JSON reason may carry one
     esac
@@ -79,7 +79,11 @@ for a in "$@"; do
     *) refuse "outside the grammar: $a" ;;
   esac
 done
-[ -z "$want" ] || refuse "--$want with no value"
+case "$want" in
+  limit | tags) refuse "--$want with no value" ;;
+  skip) refuse "--skip-tags with no value" ;;
+  ev) refuse "-e with no operand" ;;
+esac
 
 [ -n "$LIMIT" ] || refuse "--limit is required"
 in_set "$LIMIT" "$HOSTS" || refuse "unknown host: $LIMIT"
