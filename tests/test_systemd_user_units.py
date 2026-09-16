@@ -27,7 +27,11 @@ REGISTERED = {
     "zcrypto-engine-shadow.service",
 }
 # The placeholders a header may name, with the absolute paths the render fills them with.
-KNOWN = {"<repo>": "/home/you/Projects/zcrypto-kraken", "<uv>": "/home/you/.local/bin/uv"}
+KNOWN = {
+    "<repo>": "/home/you/Projects/zcrypto-kraken",
+    "<uv>": "/home/you/.local/bin/uv",
+    "<path>": "/home/you/.nvm/versions/node/v26.5.0/bin:/usr/local/bin:/usr/bin",
+}
 _PLACEHOLDER = re.compile(r"<[^<>]+>")
 
 

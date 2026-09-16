@@ -30,8 +30,13 @@ def test_the_three_workflows_share_their_grading_scope_and_checkout_contract():
 def test_a_keep_row_that_says_nothing_is_reported_as_owed():
     """A wrong predicate parses, so the check is driven rather than read, and the log call runs under a stub
     because it is the only part of it anyone sees."""
-    if shutil.which("node") is None:
-        pytest.skip("node not available, so the workflow's own predicate cannot be run")
+    # Never a skip: node is on the runner and on the workstation, so its absence means the caller
+    # cannot run this case rather than that it need not — and a skip reads as a pass in a summary
+    # line. The nightly unit found none for want of a PATH, and the night read clean.
+    assert shutil.which("node") is not None, (
+        "no node on PATH, so the workflow's own predicate cannot be run: in the nightly user unit "
+        "this means `Environment=PATH=` is stale — re-render it after an nvm upgrade"
+    )
     text = (_FLOWS / "pre-read.js").read_text()
     check = re.search(r"^const SAYS_NOTHING = .*?^if \(mute\.length\) log\(.*?\)$", text, re.M | re.S)
     assert check, "the owed-keep check must be the block the test drives, ending in its log call"

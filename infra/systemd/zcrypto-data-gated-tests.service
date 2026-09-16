@@ -5,10 +5,15 @@
 # beside this file is what gets enabled; the service carries no [Install] section on purpose, so it
 # cannot be enabled to run at login by mistake.
 #
-# Placeholders: <repo> and <uv> are ABSOLUTE paths the install below fills into a COPY -- this
-# tracked file keeps them, and tests/test_systemd_user_units.py reads it with them in place --
+# Placeholders: <repo>, <uv> and <path> are filled into a COPY by the install below -- this tracked
+# file keeps them, and tests/test_systemd_user_units.py reads it with them in place --
 #   <repo> = the MAIN zcrypto-kraken checkout, the one with data/ (e.g. /home/you/Projects/zcrypto-kraken)
 #   <uv>   = the uv binary (find it with `command -v uv`, e.g. /home/you/.local/bin/uv)
+#   <path> = your login PATH. A user unit gets the manager's, which on this workstation is
+#            /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin -- it carries jq, bash and sed but
+#            NOT nvm's node, so `tests/test_review_workflows.py` found none and the night read clean
+#            while the one case that executes `pre-read.js`'s predicate never ran. Re-render after
+#            an nvm upgrade: the path carries the node version, and a stale one fails that case.
 #
 # Prerequisite -- lingering. Without it the user manager stops at logout, the timer sleeps with it,
 # and a night nobody was logged in produces no result:
@@ -18,7 +23,7 @@
 # Install, from the main checkout's root -- the render fills the placeholders into the copy under
 # ~/.config/systemd/user/, never into this file; the timer has none and is copied as it is:
 #   mkdir -p ~/.config/systemd/user
-#   sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|" infra/systemd/zcrypto-data-gated-tests.service > ~/.config/systemd/user/zcrypto-data-gated-tests.service
+#   sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|; s|<path>|$PATH|" infra/systemd/zcrypto-data-gated-tests.service > ~/.config/systemd/user/zcrypto-data-gated-tests.service
 #   cp infra/systemd/zcrypto-data-gated-tests.timer ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now zcrypto-data-gated-tests.timer
@@ -32,4 +37,5 @@ Description=zcrypto data-gated tests: the whole suite nightly from the workstati
 [Service]
 Type=oneshot
 WorkingDirectory=<repo>
+Environment=PATH=<path>
 ExecStart=<uv> run python infra/scripts/data-gated-run.py
