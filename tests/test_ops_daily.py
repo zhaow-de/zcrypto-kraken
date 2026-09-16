@@ -2522,6 +2522,38 @@ def test_the_shim_exits_with_what_main_returns(tmp_path):
 # --- the agentboard cgroup read: the source `zcrypto-fleet-daemon-restarted` lacks ------------------
 
 
+def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
+    """The reader is wired into the report `main` prints: a check nothing appends reports nothing.
+    Driven because deleting that one `verdict.append` line left every other test in this file green."""
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    fresh = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())))
+    monkeypatch.setattr(ops_daily, "ssh_read", fresh)
+    assert ops_daily.main(["report"]) == 0
+    assert f"- PASS {ops_daily.AGENTBOARD_CHECK}: MemoryMax=24.0 GiB" in capsys.readouterr().out
+
+
+def test_an_uncapped_bridge_moves_the_pass_to_attention(monkeypatch, capsys):
+    """The wiring proved in the direction that matters: an uncapped cgroup must reach `exit_code`,
+    not merely be appended somewhere the verdict never reads."""
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    uncapped = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())), MemoryMax="infinity")
+    monkeypatch.setattr(ops_daily, "ssh_read", uncapped)
+    assert ops_daily.main(["report"]) == 1
+    assert "UNCAPPED" in capsys.readouterr().out
+
+
 def test_a_capped_and_quiet_bridge_passes():
     check = ops_daily.read_agentboard_cgroup(runner=_host_answering())
     assert check.ok, check.value
@@ -2596,7 +2628,13 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
     this read wants is `NRestarts`, which carries `restart` as a substring, so a substring ban trips
     on the very name it exists to fetch. A verb only acts when the shell can reach it as a command.
     """
-    assert ops_daily.AGENTBOARD_COMMAND[-2] == ops_daily.AGENTBOARD_HOST
+    # The LITERAL, not the constant the command is built from: comparing the command against
+    # AGENTBOARD_HOST is a self-comparison that passes whatever the host is renamed to.
+    assert ops_daily.AGENTBOARD_COMMAND[-2] == "hp", "the ops node's ssh alias, per docs/reference/fleet.md"
+    # Stdin is inherited, so without this a password prompt or a first-contact host-key confirmation
+    # holds the read until the timeout instead of failing it -- the same reason the upgrade read
+    # spells it out.
+    assert "BatchMode=yes" in ops_daily.AGENTBOARD_COMMAND
     body = ops_daily.AGENTBOARD_COMMAND[-1]
     assert body.startswith("systemctl show "), body
     assert not any(sep in body for sep in (";", "&&", "||", "|", "`", "$(", "\n")), f"the read is chained: {body}"

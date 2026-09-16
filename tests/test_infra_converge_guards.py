@@ -1465,8 +1465,12 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
         assert set(seen) <= {"[Service]"}, f"{key} outside [Service] is silently ignored: {seen}"
         assert seen.get("[Service]"), f"the unit must carry an active {key} in [Service]"
         last = seen["[Service]"][-1]
-        assert last.lower() != "infinity", (
-            f"the LAST {key} in [Service] is `infinity` -- that is no cap at all: {seen['[Service]']}"
+        # Two spellings mean "no limit", and the EMPTY one is what a regression reaches for: a bare
+        # `MemoryMax=` RESETS the directive, exactly as a bare `ExecStart=` resets that one -- the
+        # reset this same test already refuses a few lines below. `infinity` is the explicit form.
+        assert last.lower() not in ("", "infinity"), (
+            f"the LAST {key} in [Service] is {last!r} -- an empty value RESETS the directive and "
+            f"`infinity` states no limit; either way the cgroup is uncapped: {seen['[Service]']}"
         )
 
     # ExecStart: strip before matching, because systemd does. An INDENTED `  ExecStart=` empty-value

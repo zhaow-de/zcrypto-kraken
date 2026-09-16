@@ -583,7 +583,8 @@ UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 # is the source, and this is the one unit in the tree that can host unbounded operator work.
 AGENTBOARD_HOST = "hp"
 AGENTBOARD_UNIT = "zaccess-agentboard.service"
-AGENTBOARD_CHECK = f"agentboard cgroup on {AGENTBOARD_HOST}"
+# The row names the fleet host an operator recognises; the command uses the ssh alias.
+AGENTBOARD_CHECK = "agentboard cgroup on zcrypto-ops"
 AGENTBOARD_COMMAND = (
     "ssh",
     "-o",
@@ -665,7 +666,7 @@ def read_agentboard_cgroup(*, runner) -> Check:
     # -- so it is narration, not a fault. It is worth narrating because nothing else on this fleet
     # records that something in the operator's workspace tried to run away.
     if peak.isdigit() and soft.isdigit() and int(peak) >= int(soft):
-        value += f"; peak reached MemoryHigh -- something was throttled"
+        value += "; peak reached MemoryHigh -- something was throttled"
     if restarts.isdigit() and int(restarts):
         value += f"; the bridge restarted on its own {restarts}x since it was last started"
     # `infinity` is the literal systemd prints for no limit, and it is the 2026-09-15 state exactly:

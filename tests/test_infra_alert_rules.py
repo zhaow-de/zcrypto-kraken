@@ -1305,8 +1305,22 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
             *REPO.glob("infra/systemd/*.service*"),
         }
     )
-    assert len(unit_sources) >= 16, f"the unit walk found only {len(unit_sources)} files -- the globs are broken"
-    capped_units = sorted(str(p.relative_to(REPO)) for p in unit_sources if "MemoryMax=" in p.read_text())
+    # Each glob carries its own floor: one number over the union stays satisfied by the templates
+    # alone, so a broken `files/` or `systemd/` glob would read green behind it.
+    for pattern, floor in (
+        ("infra/ansible/roles/*/templates/*.service*", 14),
+        ("infra/ansible/roles/*/files/*.service*", 2),
+        ("infra/systemd/*.service*", 2),
+    ):
+        assert len(list(REPO.glob(pattern))) >= floor, f"the unit glob {pattern} found too few files -- it is broken"
+    # Every spelling that caps memory, not only the one this tree happens to use: `MemoryHigh=` alone
+    # IS a cap -- it throttles, which is the spelling this repo argues does the work -- and
+    # `MemoryLimit=` is the legacy name systemd still honours.
+    capped_units = sorted(
+        str(p.relative_to(REPO))
+        for p in unit_sources
+        if any(k in p.read_text() for k in ("MemoryMax=", "MemoryHigh=", "MemoryLimit="))
+    )
     assert capped_units == sorted(_LIMITED_UNITS), f"the memory-capped unit templates changed: {capped_units} -- update the map"
     exprs = " ".join(
         str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]
