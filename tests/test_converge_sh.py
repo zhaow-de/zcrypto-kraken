@@ -234,6 +234,34 @@ def test_a_real_pass_appends_one_machine_line(tmp_path):
     assert set(rec) >= {"ts", "playbook", "limit", "tags", "extra_vars", "revision", "dirty", "rc"}
 
 
+def test_a_json_extra_var_is_recorded_beside_the_k_equals_v_ones(tmp_path):
+    """A `-e` carrying JSON lands in the row, and a JSON value holding `=` is not split on it.
+
+    `fleet-deploys.md` specifies `canary_override` as a reason rather than a boolean, and a reason
+    is prose: apostrophes and colons make ansible's own `-e k=v` splitter refuse it, so the operand
+    the rules most require to be booked is the one that arrives as JSON. Reading `k=v` alone dropped
+    the first bypass this fleet took and left its counter reading 0 over the event it exists to
+    count. The `=` in the reason below is the second half: split-on-`=` would mint a garbage key and
+    the row would look populated rather than empty.
+    """
+    reason = "rolled back: the venue answers EGeneral:Permission denied, so exec_armed=0 stands"
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto-red",
+            "-e",
+            "capture_image_digest=sha256:abc123",
+            "-e",
+            json.dumps({"canary_override": reason}),
+        ],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123", "canary_override": reason}
+
+
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):
     """A failed converge may have half-applied; the record says it happened and how it ended."""
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"])
