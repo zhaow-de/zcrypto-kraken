@@ -1280,7 +1280,7 @@ _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
         "is a systemd `MemoryMax=`, which no metric on this fleet carries either -- cadvisor is "
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
         "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service`, which "
-        "reads MemoryMax, MemoryPeak and NRestarts off the host rather than off a series."
+        "reads MemoryMax, MemoryHigh, MemoryPeak and NRestarts off the host rather than off a series."
     )
 }
 

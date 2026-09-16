@@ -1412,7 +1412,7 @@ def _directives(unit: str) -> dict[str, list[str]]:
     return out
 
 
-def _render_agentboard_unit() -> str:
+def _render_agentboard(path: Path) -> str:
     """The unit as the templar produces it, not as it was typed.
 
     Reading the raw text lets a cap survive a guard while `{% if false %}` deletes it at deploy time,
@@ -1422,7 +1422,7 @@ def _render_agentboard_unit() -> str:
     """
     from ansible.template import trust_as_template
 
-    text = AGENTBOARD_UNIT.read_text()
+    text = path.read_text()
     variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)\b(?!\s*\()", text))}
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
 
@@ -1436,8 +1436,11 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     # this file's whole premise (spec 00082) is that a guard reads what the templar produces rather
     # than what the author typed. `{{ }}` values the unit carries are irrelevant here -- the walk
     # below reads directive names and their values, and none of them interpolates.
-    unit = _render_agentboard_unit()
-    start = AGENTBOARD_START.read_text()
+    # BOTH rendered. The start script is a Jinja template too (`{{ access_ops_agentboard_nvm_sh }}`),
+    # and reading it raw let a `{% if false %}` around its `exec` survive this guard while the templar
+    # deletes it at deploy time -- the same hole as the unit's, in the line directly below the fix.
+    unit = _render_agentboard(AGENTBOARD_UNIT)
+    start = _render_agentboard(AGENTBOARD_START)
 
     # Section-aware and LAST-WINS, because three regressions all leave a bare `KillMode=process`
     # somewhere in the file: commenting it out; appending a second `KillMode=control-group` (a scalar

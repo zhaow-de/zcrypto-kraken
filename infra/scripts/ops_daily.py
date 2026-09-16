@@ -582,6 +582,11 @@ UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 # not the fix, this read is. It is the one unit in the tree that can host unbounded operator work.
 AGENTBOARD_HOST = "hp"
 AGENTBOARD_UNIT = "zaccess-agentboard.service"
+# ONE list, read by the command that asks and by the reader that consumes. Asserting two spellings
+# equal in a test leaves the third way to drift -- add a property to the reader and to the fake but
+# not to the command, and every test stays green while every LIVE read raises KeyError and reports
+# `unreadable`, daily, until someone reads the source. A single source cannot drift.
+AGENTBOARD_PROPERTIES = ("MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts")
 # The row names the fleet host an operator recognises; the command uses the ssh alias.
 AGENTBOARD_CHECK = "agentboard cgroup on zcrypto-ops"
 AGENTBOARD_COMMAND = (
@@ -589,7 +594,7 @@ AGENTBOARD_COMMAND = (
     "-o",
     "BatchMode=yes",
     AGENTBOARD_HOST,
-    f"systemctl show {AGENTBOARD_UNIT} -p MemoryMax -p MemoryHigh -p MemoryPeak -p NRestarts",
+    f"systemctl show {AGENTBOARD_UNIT} " + " ".join(f"-p {p}" for p in AGENTBOARD_PROPERTIES),
 )
 
 # One ssh for every value, and every key printed unconditionally: an absent file then reads as an
@@ -652,7 +657,7 @@ def read_agentboard_cgroup(*, runner) -> Check:
 
     try:
         fields = dict(line.split("=", 1) for line in runner(AGENTBOARD_COMMAND).splitlines() if "=" in line)
-        hard, soft, peak, restarts = (fields[k] for k in ("MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts"))
+        hard, soft, peak, restarts = (fields[k] for k in AGENTBOARD_PROPERTIES)
     # Same convention as the upgrade read: an unreachable host, a timeout and a non-zero ssh are
     # `unreadable`, never a FAIL. A FAIL here says the bridge is uncapped, which a dropped connection
     # does not show. A MISSING key lands here too; a non-numeric VALUE does not, because `_scale`

@@ -2640,8 +2640,10 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
     # reports `unreadable`, daily, until someone reads the source. So the two are pinned equal here,
     # derived from the module rather than restated: a property added to one and not the other fails.
     requested = {tok[2:] or nxt for tok, nxt in zip(body.split(), body.split()[1:] + [""]) if tok.startswith("-p")}
-    consumed = {"MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts"}
-    assert requested == consumed, f"the command requests {sorted(requested)} but the reader consumes {sorted(consumed)}"
+    assert requested == set(ops_daily.AGENTBOARD_PROPERTIES), (
+        f"the command requests {sorted(requested)} against AGENTBOARD_PROPERTIES "
+        f"{sorted(ops_daily.AGENTBOARD_PROPERTIES)} -- the reader consumes that same tuple"
+    )
     assert not any(sep in body for sep in (";", "&&", "||", "|", "`", "$(", "\n")), f"the read is chained: {body}"
     assert all(
         tok == "systemctl" or tok == "show" or tok.startswith("-p") or tok == ops_daily.AGENTBOARD_UNIT or tok[0].isupper()
