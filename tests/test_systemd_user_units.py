@@ -3,17 +3,19 @@
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
 units are rendered into a copy by the install's `sed`, so the render here is a substitution, and
 what is checked is that every placeholder a unit carries is named in its header's `Placeholders:`
-line and filled by every copy of the install command, that no `<...>` token of any spelling -- a
-whitespace-bearing `<data root>` included -- survives the render, and that the directives a
-timer-driven oneshot needs sit in the section systemd reads them from -- a `Persistent=` under
-`[Unit]` is silently ignored. Not checked:
-`systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the
-example paths this render fills in."""
+line and filled, from the expression `FILLS` names, by every tracked copy of the install command --
+found by `git grep`, so a copy pasted into a runbook is held too, each copy being one physical line
+-- that no `<...>` token of any spelling -- a whitespace-bearing `<data root>` included -- survives
+the render, and that the directives a timer-driven oneshot needs sit in the section systemd reads
+them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze
+verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the example paths
+this render fills in."""
 
 from __future__ import annotations
 
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,7 +38,13 @@ KNOWN = {
     "<path>": "/home/you/.local/bin:/usr/local/bin:/usr/bin",
 }
 _PLACEHOLDER = re.compile(r"<[^<>]+>")
-_SED_CLAUSE = re.compile(r"s\|(<[^<>]+>)\|")
+# `s<d><token><d><replacement><d>` for any delimiter the install picks: a `|` in $PATH kills a
+# `s|…|` expression, and hardening against that by switching to `s#…#` must not read as no install.
+_SED_CLAUSE = re.compile(r"s(.)(<[^<>]+>)\1(.*?)\1")
+# What the install fills each placeholder FROM. Checked beside the token, or a clause rendering
+# <path> from $PWD -- a unit whose PATH is the checkout, so no node and a red night -- reads as a
+# match. One spelling each, the one the tree uses; another lands here with the edit that wants it.
+FILLS = {"<repo>": "$PWD", "<uv>": "$(command -v uv)", "<path>": "$PATH"}
 
 
 def units() -> list[Path]:
@@ -48,13 +56,30 @@ def body(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("#"))
 
 
-def install_sed_clauses(text: str, unit: Path) -> list[set[str]]:
-    """The tokens each `sed` line in `text` that renders `unit` fills, one set per line."""
-    return [
-        set(_SED_CLAUSE.findall(line))
-        for line in text.splitlines()
-        if f"infra/systemd/{unit.name}" in line and _SED_CLAUSE.search(line)
-    ]
+def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
+    """Every tracked line that renders `unit` through `sed`, as (where, {token: replacement}).
+
+    Found rather than listed, so a copy of the install pasted into a runbook or a skill is held to
+    the unit the way the header's and README.md's are -- README.md is how this drift got in. A copy
+    is one physical line: a command wrapped across two reads as none, and fails loudly."""
+    found = subprocess.run(
+        ["git", "-C", str(REPO), "grep", "-n", "--no-color", "-e", f"infra/systemd/{unit.name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # rc 1 is "no line names it", which the caller reads; anything above is a checkout this guard
+    # cannot search, and it says so rather than reporting every copy missing.
+    assert found.returncode < 2, f"`git grep` could not search this checkout: {found.stderr.strip()!r}"
+    here = str(Path(__file__).resolve().relative_to(REPO))
+    copies = []
+    for raw in found.stdout.splitlines():
+        path, _, rest = raw.partition(":")
+        lineno, _, text = rest.partition(":")
+        if path == here or not _SED_CLAUSE.search(text):
+            continue
+        copies.append((f"{path}:{lineno}", {tok: rep for _, tok, rep in _SED_CLAUSE.findall(text)}))
+    return copies
 
 
 def directives(text: str) -> dict[str, dict[str, str]]:
@@ -130,25 +155,35 @@ def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
         assert parsed.get("[Install]", {}).get("WantedBy") == "timers.target", f"{unit.name}: a timer is wanted by timers.target"
 
 
+def test_every_known_placeholder_names_what_the_install_fills_it_from():
+    assert set(FILLS) == set(KNOWN), "a placeholder in KNOWN with no FILLS entry is unchecked in every install copy"
+
+
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
 def test_every_copy_of_the_install_fills_exactly_what_the_body_carries(unit):
-    """The install `sed` is written twice, in the unit's own header and in README.md, and neither
-    copy is the unit: a clause short renders its placeholder into ~/.config verbatim, a clause extra
-    outlives the placeholder it filled, and the `Placeholders:` line reads correct either way."""
-    text = unit.read_text()
-    carried = set(_PLACEHOLDER.findall(body(text)))
-    for where, source in (("its own header", text), ("README.md", (REPO / "README.md").read_text())):
-        clauses = install_sed_clauses(source, unit)
-        assert len(clauses) == (1 if carried else 0), (
-            f"{unit.name}: {where} holds {len(clauses)} install `sed` line(s) naming it, expected "
-            f"{1 if carried else 0} for a body carrying {sorted(carried) or 'no placeholder'}"
+    """No copy of the install command is the unit, and each drifts from it on its own: a clause
+    short renders its placeholder into ~/.config verbatim, a clause extra outlives the placeholder
+    it filled, and a clause filling the right token from the wrong expression renders a unit that
+    starts and fails. The `Placeholders:` line reads correct through all three."""
+    carried = set(_PLACEHOLDER.findall(body(unit.read_text())))
+    copies = install_copies(unit)
+    if not carried:
+        assert not copies, f"{unit.name} carries no placeholder, yet {[w for w, _ in copies]} render it through `sed`"
+        return
+    assert copies, (
+        f"{unit.name}: body carries {sorted(carried)} and no tracked `sed` line renders it. A copy is "
+        f"read as ONE physical line -- a wrapped command is not seen"
+    )
+    for where, clauses in copies:
+        assert set(clauses) == carried, (
+            f"{unit.name}: the install at {where} fills {sorted(clauses)} but the body carries "
+            f"{sorted(carried)} -- rendered verbatim into the installed copy: "
+            f"{sorted(carried - set(clauses))}; clause(s) filling nothing: {sorted(set(clauses) - carried)}"
         )
-        if carried:
-            assert clauses[0] == carried, (
-                f"{unit.name}: {where}'s install `sed` fills {sorted(clauses[0])} but the body carries "
-                f"{sorted(carried)} -- rendered verbatim into the installed copy: "
-                f"{sorted(carried - clauses[0])}; clause(s) filling nothing: {sorted(clauses[0] - carried)}"
-            )
+        wrong = {tok: rep for tok, rep in clauses.items() if rep != FILLS[tok]}
+        assert not wrong, f"{unit.name}: the install at {where} fills " + ", ".join(
+            f"{tok} from {rep!r}, not {FILLS[tok]!r}" for tok, rep in sorted(wrong.items())
+        )
 
 
 def test_the_data_gated_service_is_a_oneshot_the_timer_owns():
