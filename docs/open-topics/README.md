@@ -14,7 +14,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0201 — The store's type door cannot see a wrong instant, and the store leg then degrades at rc 0](T0201-store-type-door-cannot-see-a-wrong-instant.md) — ripe when: a soak-check run renders `window_bound : store` with a `store last bar` that is not on a 4h boundary (00/04/08/12/16/20 UTC) -- the shape a wrong-instant store frame produces, and one a legitimately short store cannot.
 - [T0202 — The canonical root's only join has no door, so `data rebuild ohlc-reach` tracebacks on a foreign-typed frame](T0202-the-canonical-roots-only-join-has-no-door.md) — ripe when: either arm: the quarterly canonical dump is republished (a foreign-typed frame is how one would arrive), or `cli/ohlc/reach.py` is next touched.
 - [T0203 — The release skill has never run, and three of its steps are broken as written](T0203-the-release-skill-has-never-run-and-three-steps-are-broken.md) — ripe when: a release is being cut: `git branch -a --list "*release/*"` prints a branch, or `git log --oneline main | wc -l` reads more than 1.
-- [T0204 — Nine count-list gates skip on every CI run](T0204-count-list-gates-skip-in-ci.md) — ripe when: the owner has ruled on giving the `Full test suite` job a `GH_TOKEN` — check `grep -c 'GH_TOKEN' .github/workflows/coverage.yml`, which is 0 while the ruling is outstanding
 
 ## Partially done
 

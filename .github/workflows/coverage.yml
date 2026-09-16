@@ -29,8 +29,16 @@ jobs:
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.14"
+      # The branch under the name the tooling reads: a pull_request checkout is detached at the
+      # merge ref with only `origin/develop`, and `count-list.sh` refuses a checkout with no local
+      # `develop`, which left nine of `tests/test_count_list.py`'s cases skipping here.
+      - run: git branch --force develop origin/develop
       - run: uv sync
+      # `merged-prs-without-a-floor-read-30d` calls `gh pr list`, and one of those nine cases runs
+      # the whole count list. The run's own scoped, ephemeral token: read-only on a fork PR.
       - run: uv run coverage run -m pytest
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: uv run coverage lcov -o coverage.lcov
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
