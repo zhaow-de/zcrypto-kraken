@@ -283,6 +283,41 @@ def test_a_braced_operand_that_is_not_json_is_dropped_rather_than_split_into_a_k
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
 
 
+def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
+    """A spelling this collector misses is a var the row never mentions, which reads as absent.
+
+    `drills-order-path.md` and `drill-log.md` take an empty `extra_vars` as positive proof that
+    nothing was overridden, so a missed operand is indistinguishable from an operand never passed --
+    the same end state as the bypass this branch had to book by hand, reached through a different
+    door. `-e @file` is the one spelling that still does not reach the row: the recorder cannot open
+    it, so the row is short by that operand. Asserted here so the gap is a stated bound rather than
+    a surprise; nothing in this tree passes one.
+    """
+    reason = "secondary unreachable, incident rollback"
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto-red",
+            "--extra-vars",
+            json.dumps({"canary_override": reason}),
+            "--extra-vars=capture_image_digest=sha256:abc123",
+            "-e",
+            "converge_primary=true",
+            "-e",
+            "@vars.json",
+        ],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {
+        "canary_override": reason,
+        "capture_image_digest": "sha256:abc123",
+        "converge_primary": "true",
+    }, rec["extra_vars"]
+
+
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):
     """A failed converge may have half-applied; the record says it happened and how it ended."""
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"])

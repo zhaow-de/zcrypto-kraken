@@ -65,7 +65,13 @@ LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
 TAGS=""; EV=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--tags" ] && TAGS="$a"
+  # All four spellings ansible honours for an inline extra var, because a spelling this loop misses
+  # is a var the row never mentions -- and the drill pages read an empty `extra_vars` as positive
+  # proof that nothing was overridden, so a missed operand is read as an absent one. `-e @file` is
+  # collected here and then DROPPED by the recorder below, which cannot open it: the row is short by
+  # that operand, and nothing in this tree passes one.
   [ "$prev" = "-e" ] && EV="$EV$a"$'\n'
+  [ "$prev" = "--extra-vars" ] && EV="$EV$a"$'\n'
   case "$a" in
     --tags=*) TAGS="${a#--tags=}" ;;
     --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\n' ;;
