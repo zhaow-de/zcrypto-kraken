@@ -19,9 +19,10 @@ jobs:
     name: Full test suite
     runs-on: ubuntu-latest
     steps:
-      # The whole history, not the tip: at fetch-depth 1 the clone is shallow and
-      # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` takes its
-      # shallow skip on the very run that judges whether this PR owes an index row.
+      # The whole history, not the tip: at fetch-depth 1 the clone is shallow, and
+      # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` reads the
+      # first-parent merges of `develop` — a rowless merge already there is what it catches, and
+      # it cannot see one at all in a depth-1 clone.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0

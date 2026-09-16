@@ -7,10 +7,10 @@ path by construction, which is what keeps a rename sweep from ever having to edi
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -101,29 +101,28 @@ def test_pr_numbers_are_unique_and_ascending() -> None:
     )
 
 
-def _refuse_or_skip(why: str) -> None:
-    """Unmeasurable is a skip on a workstation and a failure in CI, which asked for the history."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        pytest.fail(f"{why} — CI checks out the whole history for this guard; see coverage.yml")
-    pytest.skip(f"{why}, so completeness is unmeasurable")
+def _unmeasurable(why: str) -> NoReturn:
+    """A corpus this guard cannot read fails, everywhere, and never skips.
+
+    A skip is indistinguishable from a pass in a summary line, so a checkout that cannot answer
+    must say so out loud; `coverage.yml` asks for the whole history precisely so this never fires
+    in CI. Deciding it on an environment name instead would put a second opt-in key behind a skip,
+    which `tests/test_live_venue_opt_in.py` exists to refuse.
+    """
+    pytest.fail(f"{why} — this guard needs the whole first-parent history; see coverage.yml")
 
 
-def test_an_unmeasurable_corpus_fails_in_ci_and_skips_by_hand(monkeypatch) -> None:
-    """The two outcomes of `_refuse_or_skip`, so the CI arm cannot quietly stop refusing."""
+def test_an_unmeasurable_corpus_fails_rather_than_skips() -> None:
+    """`_unmeasurable` fails and never skips, in any environment."""
     # Caught by hand, never `pytest.raises`: a `Skipped` raised inside it is not caught, so it
     # would propagate and SKIP this case — green while driving nothing.
-    for env, want in (("true", pytest.fail.Exception), (None, pytest.skip.Exception)):
-        if env is None:
-            monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        else:
-            monkeypatch.setenv("GITHUB_ACTIONS", env)
-        try:
-            _refuse_or_skip("driven")
-        except want:
-            continue
-        except BaseException as exc:  # noqa: BLE001 -- a Skipped here must not skip this case
-            raise AssertionError(f"GITHUB_ACTIONS={env!r} raised {type(exc).__name__}, wanted {want.__name__}") from exc
-        raise AssertionError(f"GITHUB_ACTIONS={env!r} returned instead of raising {want.__name__}")
+    try:
+        _unmeasurable("driven")
+    except pytest.fail.Exception:
+        return
+    except BaseException as exc:  # noqa: BLE001 -- a Skipped here must not skip this case
+        raise AssertionError(f"raised {type(exc).__name__}, wanted Failed") from exc
+    raise AssertionError("returned instead of failing")
 
 
 def test_every_keyed_merge_on_develop_has_a_row() -> None:
@@ -135,7 +134,7 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         check=True,
     ).stdout.strip()
     if shallow == "true":
-        _refuse_or_skip("shallow clone: develop's merge history is absent here")
+        _unmeasurable("shallow clone: develop's merge history is absent here")
     ref = next(
         (
             candidate
@@ -145,7 +144,7 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         None,
     )
     if ref is None:
-        _refuse_or_skip("no develop ref in this checkout")
+        _unmeasurable("no develop ref in this checkout")
     subjects = subprocess.run(
         ["git", "-C", str(REPO), "log", "--merges", "--first-parent", "--format=%s", ref],
         capture_output=True,
