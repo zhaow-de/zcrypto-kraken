@@ -101,11 +101,8 @@ def test_the_pin_covers_every_nautilus_name_cli_imports():
 # changes corrupts every persisted row carrying the old one, while a member that empties to bare
 # `None` changes what a read returns with nothing renamed and nothing to break at import. Which of
 # the two an entry is here for is not uniform -- `PositionSide` is the member-set case and says so.
-# The map is a SUBSET for most entries (TimeInForce pins 4 of 7, AccountType 3 of 4, OrderStatus 6
-# of 15 -- exactly the members cli/engine references), so the parametrised test below checks only
-# that what is listed still resolves and still carries its integer. `EXHAUSTIVE_MEMBERS` names the
-# entries where the real member set must EQUAL the listed one, and a new variant is a finding here
-# rather than something met live.
+# The map is a SUBSET of most of these enums, so the parametrised test below checks only that what
+# is listed still resolves and still carries its integer.
 # `OrderSide` carries no `NO_ORDER_SIDE` entry: the name resolves to bare `None` rather than an enum
 # member -- "no side" is `Option`-shaped throughout the library now -- and nothing under cli/ has
 # ever persisted its value, so the entry was dropped rather than widened to accept `None`, which
@@ -126,11 +123,8 @@ PINNED_ENUM_VALUES = {
 }
 
 
-# Entries whose real member set must EQUAL the pinned one. Only `PositionSide` today, and the reason
-# is what it costs to learn about a new variant at the venue instead of here: `cli/engine/flatten.py`
-# files a side it cannot derive a close from as `unrecognised_position_side` and exits 2 -- correct
-# behaviour, and it means an unrecognised side leaves a POSITION OPEN on the one command whose whole
-# job is to leave nothing open.
+# Entries whose real member set must EQUAL the pinned one. `PositionSide` alone: it is the one whose
+# new variant a live read ACTS on rather than stores, and the assertion below says what that costs.
 EXHAUSTIVE_MEMBERS = {"PositionSide"}
 
 
@@ -265,10 +259,9 @@ def test_every_exec_engine_default_is_the_one_we_measured():
     from nautilus_trader.config import LiveExecutionEngineConfig
 
     config = LiveExecutionEngineConfig()
-    # No `callable` filter. The pyo3 class carries no public methods -- all 37 public attributes are
-    # plain values -- so filtering on callability excludes nothing today while silently dropping a
-    # NEW field whose default is a factory or a type, which is the one shape this could least reason
-    # about and exactly the shape the field-set arm below claims to catch.
+    # No `callable` filter: this config's public attributes are all plain values, and filtering on
+    # callability would silently drop a NEW field defaulting to a factory or a type -- exactly the
+    # shape the field-set arm below exists to catch.
     live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
     assert set(live) == set(EXEC_ENGINE_DEFAULTS), (
         "the exec engine's FIELD SET moved -- added "
