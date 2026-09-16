@@ -364,7 +364,7 @@
       The digest this converge replaces ({{ ops_running_digest_probe.stdout }}) is not recorded in
       docs/reference/fleet-pins.md — ops_image_digest has no repo default, so that row is the only
       rollback operand this host has. Record the CURRENT digest there first (or pass
-      -e pins_override="<reason>" and record it immediately after).
+      -e '{"pins_override": "<reason>"}' and record it immediately after).
   when: ops_image_digest is defined and ops_running_digest_probe.rc == 0 and ops_fleet_pins_text is defined
 
 # spec 00082 D1 (second half), same shape as the capture and engine roles' pins echo: the reason

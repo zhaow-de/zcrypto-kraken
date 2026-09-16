@@ -176,7 +176,7 @@
     fail_msg: >-
       The digest this converge replaces ({{ capture_running_digest_probe.stdout }}) is not recorded in
       docs/reference/fleet-pins.md — an unrecorded pin is one docker-prune from an unrecoverable
-      rollback. Record the CURRENT digest there first (or pass -e pins_override="<reason>" and
+      rollback. Record the CURRENT digest there first (or pass -e '{"pins_override": "<reason>"}' and
       record it immediately after).
   when: capture_running_digest_probe.rc == 0 and capture_fleet_pins_text is defined
 

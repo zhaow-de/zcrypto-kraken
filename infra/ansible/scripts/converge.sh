@@ -65,16 +65,18 @@ LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
 TAGS=""; EV=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--tags" ] && TAGS="$a"
-  # All four spellings ansible honours for an inline extra var, because a spelling this loop misses
-  # is a var the row never mentions -- and the drill pages read an empty `extra_vars` as positive
-  # proof that nothing was overridden, so a missed operand is read as an absent one. `-e @file` is
-  # collected here and then DROPPED by the recorder below, which cannot open it: the row is short by
-  # that operand, and nothing in this tree passes one.
-  [ "$prev" = "-e" ] && EV="$EV$a"$'\n'
-  [ "$prev" = "--extra-vars" ] && EV="$EV$a"$'\n'
+  # EVERY inline spelling ansible honours -- `-e V`, `-eV`, `--extra-vars V`, `--extra-vars=V` and
+  # the abbreviations of that flag it accepts -- because a spelling this loop misses is a var the row
+  # never mentions, and the drill pages read an empty `extra_vars` as positive proof that nothing was
+  # overridden. A missed operand is therefore not just absent: it is evidence of the opposite.
+  # `-e @file` is collected here and DROPPED by the recorder below, which cannot open it: the row is
+  # short by that operand, and nothing in this tree passes one.
+  case "$prev" in -e | --extra-var*) EV="$EV$a"$'\n' ;; esac
   case "$a" in
     --tags=*) TAGS="${a#--tags=}" ;;
-    --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\n' ;;
+    -e) : ;;                                   # value is the next word; `prev` above takes it
+    -e*) EV="$EV${a#-e}"$'\n' ;;                # attached short form, `-eK=V`
+    --extra-var*=*) EV="$EV${a#*=}"$'\n' ;;     # `--extra-vars=…` and every accepted abbreviation
   esac
   prev="$a"
 done
@@ -102,7 +104,7 @@ fi
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
 python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
-import json, pathlib, sys, datetime as dt
+import json, pathlib, shlex, sys, datetime as dt
 log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
 # A `{`- or `[`-prefixed operand NEVER reaches the `=` split below, and that is the load-bearing
 # line here. `fleet-deploys.md` specifies `canary_override` as a reason rather than a boolean, and a
@@ -133,9 +135,20 @@ for line in ev.splitlines():
             for k, v in parsed.items():
                 extra[str(k)] = v
         continue
-    if "=" in line:
-        k, v = line.split("=", 1)
-        extra[k.strip()] = v.strip()
+    # `shlex` because ONE `-e` may carry several vars: ansible's own `parse_kv` reads
+    # `-e "a=1 b=2"` as two, and splitting on the first `=` instead yields the single key `a` with
+    # the value `1 b=2` -- a populated-looking wrong row, the same failure mode as the braced case
+    # above. A token with no `=` is ansible's `_raw_params` remainder, which it discards: an
+    # unquoted `k=two words` truncates at the space THERE too, so dropping it here matches what the
+    # pass actually received rather than what the operator meant.
+    try:
+        tokens = shlex.split(line)
+    except ValueError:  # an unbalanced quote: ansible refused this operand, so record nothing
+        tokens = []
+    for token in tokens:
+        if "=" in token:
+            k, v = token.split("=", 1)
+            extra[k.strip()] = v.strip()
 # The pins this converge deployed that no `-e` carries. Read from the PLAINTEXT vars.yml with a
 # regex, never `ansible-inventory --host`, which decrypts the vault and prints every secret
 # (CLAUDE.md). The value must be bare -- unquoted, no trailing YAML comment -- or the regex silently

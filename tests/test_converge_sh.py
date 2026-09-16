@@ -303,8 +303,11 @@ def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
             "--extra-vars",
             json.dumps({"canary_override": reason}),
             "--extra-vars=capture_image_digest=sha256:abc123",
+            "--extra-var",
+            "engine_window_override=incident",
+            "-econverge_primary=true",
             "-e",
-            "converge_primary=true",
+            "pins_override=stale nas_apply_compose=true",
             "-e",
             "@vars.json",
         ],
@@ -314,7 +317,10 @@ def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
     assert rec["extra_vars"] == {
         "canary_override": reason,
         "capture_image_digest": "sha256:abc123",
+        "engine_window_override": "incident",
         "converge_primary": "true",
+        "pins_override": "stale",
+        "nas_apply_compose": "true",
     }, rec["extra_vars"]
 
 

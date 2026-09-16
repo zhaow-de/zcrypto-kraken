@@ -257,7 +257,7 @@
     fail_msg: >-
       The digest this converge replaces ({{ engine_running_digest_probe.stdout }}) is not recorded in
       docs/reference/fleet-pins.md — an unrecorded pin is one docker-prune from an unrecoverable
-      rollback. Record the CURRENT digest there first (or pass -e pins_override="<reason>" and
+      rollback. Record the CURRENT digest there first (or pass -e '{"pins_override": "<reason>"}' and
       record it immediately after).
   when: engine_running_digest_probe.rc == 0 and engine_fleet_pins_text is defined
 
@@ -330,7 +330,7 @@
       The adapter's margin/short/post-only and reconciliation behaviour is native and no test here
       places an order, so this version's order path is unmeasured. Run the probes, write the
       docs/reference/adapter-verification/<version>.md record, add the version to that file — or pass
-      -e arming_override="<why this cannot wait>" (a reason, not a flag).
+      -e '{"arming_override": "<why this cannot wait>"}' (a reason, not a flag).
 
 - name: arming override accepted — the reason, on the record
   ansible.builtin.debug:
