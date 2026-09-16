@@ -429,14 +429,14 @@ def test_a_spelling_the_collector_does_not_read_is_announced_not_swallowed(tmp_p
     `--extra-var k=v` is a real extra var to ansible (`allow_abbrev`) and is not collected here;
     the operator sees that at the console, at the moment of the pass.
     """
-    rc, out, log = run_recording(
-        tmp_path,
-        ["site.yml", "--limit", "zcrypto-red", "--extra-var", "canary_override=abcdefghij"],
-    )
-    assert rc == 0
-    rec = json.loads(log.read_text().splitlines()[0])
-    assert rec["extra_vars"] == {}, rec["extra_vars"]
-    assert "NOT RECORDED" in out and "--extra-var" in out
+    for spelling in ("--extra-var", "-ve"):
+        path = tmp_path / spelling.strip("-")
+        path.mkdir()
+        rc, out, log = run_recording(path, ["site.yml", "--limit", "zcrypto-red", spelling, "canary_override=abcdefghij"])
+        assert rc == 0
+        rec = json.loads(log.read_text().splitlines()[0])
+        assert rec["extra_vars"] == {}, (spelling, rec["extra_vars"])
+        assert "NOT RECORDED" in out and spelling in out, (spelling, out)
 
 
 def test_an_operand_that_books_nothing_is_announced_not_swallowed(tmp_path):
@@ -453,6 +453,47 @@ def test_an_operand_that_books_nothing_is_announced_not_swallowed(tmp_path):
     rec = json.loads(log.read_text().splitlines()[0])
     assert rec["extra_vars"] == {}, rec["extra_vars"]
     assert "NOT RECORDED" in out and "canary_override" in out
+
+
+def test_two_tag_flags_join_the_cell_the_way_ansible_unions_them(tmp_path):
+    """`--tags` appends in ansible: both sets run, so the cell names both.
+
+    Overwriting kept the last flag only, and `count-list.sh engine-rows-outside-the-gap` selects
+    rows whose `tags` cell names `engine` — an engine converge invoked with two tag flags dropped
+    out of the count that watches it, with nothing on the console.
+    """
+    rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red", "-t", "engine", "--tags", "capture"])
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["tags"] == "engine,capture", rec["tags"]
+
+
+def test_every_check_mode_spelling_stops_before_the_real_pass(tmp_path):
+    """`-C` and `--che` are check mode to ansible, so a row for them would say a pass converged.
+
+    The preview runs, nothing else does, and no row is appended — the same as the literal `--check`.
+    """
+    for flag in ("-C", "--che", "--chec", "-vC"):
+        path = tmp_path / flag.strip("-")
+        path.mkdir()
+        script = make_harness(path)
+        r = run_no_tty(script, ["site.yml", "--limit", "zcrypto-red", flag])
+        assert r.returncode == 0, (flag, r.returncode, r.stderr)
+        inv = invocations(path)
+        assert len(inv) == 1 and "--check" in inv[0], (flag, inv)
+
+
+def test_an_ordinary_attached_short_is_not_announced(tmp_path):
+    """The cluster arm reads short FLAGS, never the value attached to one.
+
+    `-ihosts.ini` overrides nothing; announcing it teaches the operator to read past the line that
+    matters, which is the whole value of the announcement.
+    """
+    rc, out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red", "-ihosts.ini", "-e", "a=1"])
+    assert rc == 0
+    assert "NOT RECORDED" not in out, out
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"a": "1"}, rec["extra_vars"]
 
 
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):

@@ -21,7 +21,16 @@ for a in "$@"; do
   [ "$prev" = "--limit" ] && LIMIT="$a"
   case "$a" in
     --limit=*) LIMIT="${a#--limit=}" ;;
-    --check) CHECK_ONLY=1 ;;
+    # Every spelling that puts ansible in check mode, or the pass converges nothing and the row below
+    # says it did: `--ch` … `--check` (`--c` argparse calls ambiguous), `-C`, and a cluster carrying
+    # it. A word carrying a non-letter is a flag with its VALUE attached, never a cluster.
+    --ch*) CHECK_ONLY=1 ;;
+    -[a-zA-Z]*)
+      case "$a" in
+        *[!a-zA-Z-]*) : ;;
+        *C*) CHECK_ONLY=1 ;;
+      esac
+      ;;
   esac
   prev="$a"
 done
@@ -59,6 +68,8 @@ set +e
 rc=$?
 set -e
 LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
+# `--tags` APPENDS in ansible: two flags run both sets, so the cell joins them and never overwrites.
+add_tags() { if [ -z "$TAGS" ]; then TAGS="$1"; else TAGS="$TAGS,$1"; fi; }
 TAGS=""; EV=""; UNREAD=""; prev=""
 for a in "$@"; do
   # Exact arms, never a prefix: `--extra-var*` matches the attached `--extra-vars=K=V` too, and then
@@ -67,16 +78,21 @@ for a in "$@"; do
   # read as "nothing was overridden", so the last arms name them for the warning below. RS, never a
   # newline: an operand carries its own.
   case "$prev" in -e | --extra-vars) EV="$EV$a"$'\x1e' ;; esac
-  case "$prev" in --tags | -t) TAGS="$a" ;; esac
+  case "$prev" in --tags | -t) add_tags "$a" ;; esac
   case "$a" in
     --tags | -t) : ;;                         # value is the next word; `prev` above takes it
-    --tags=*) TAGS="${a#--tags=}" ;;
-    -t?*) v="${a#-t}"; TAGS="${v#=}" ;;       # attached short form; argparse drops `-t=`'s `=`
+    --tags=*) add_tags "${a#--tags=}" ;;
+    -t?*) v="${a#-t}"; add_tags "${v#=}" ;;   # attached short form; argparse drops `-t=`'s `=`
     -e | --extra-vars) : ;;
     -e?*) v="${a#-e}"; EV="$EV${v#=}"$'\x1e' ;;
     --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\x1e' ;;
     --e* | --ta*) UNREAD="$UNREAD $a" ;;      # an abbreviation ansible honours and this loop does not
-    -[a-zA-Z]*[et]*) UNREAD="$UNREAD $a" ;;   # a clustered short carrying one, e.g. `-ve`
+    -[a-zA-Z]*)                               # a cluster carrying one, e.g. `-ve`; `-ihosts.ini` is
+      case "$a" in                            # a flag with its value attached, and overrides nothing
+        *[!a-zA-Z-]*) : ;;
+        *[et]*) UNREAD="$UNREAD $a" ;;
+      esac
+      ;;
   esac
   prev="$a"
 done
