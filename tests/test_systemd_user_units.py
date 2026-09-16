@@ -41,9 +41,10 @@ _PLACEHOLDER = re.compile(r"<[^<>]+>")
 # `s<d><token><d><replacement><d>` for any delimiter the install picks: a `|` in $PATH kills a
 # `s|…|` expression, and hardening against that by switching to `s#…#` must not read as no install.
 _SED_CLAUSE = re.compile(r"s(.)(<[^<>]+>)\1(.*?)\1")
-# The command, as a word: `used`, `closed` and `based` all carry `sed` as a substring, and a prose
-# line about the install would then be read as one.
-_SED_CMD = re.compile(r"\bsed\b")
+# The command WITH its script argument. `used`, `closed` and `based` carry `sed` as a substring, and
+# prose naming the command carries it as a word -- the read-back step this file's own header tells
+# the operator to run says "renders wrong through sed", one clause away from reading as an install.
+_SED_CMD = re.compile(r"""\bsed\b\s+(?:-\w+\s+)*["']""")
 # What the install fills each placeholder FROM. Checked beside the token, or a clause rendering
 # <path> from $PWD -- a unit whose PATH is the checkout, so no node and a red night -- reads as a
 # match. One spelling each, the one the tree uses; another lands here with the edit that wants it.
@@ -81,9 +82,9 @@ def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
     """Every tracked command that renders `unit` through `sed`, as (where, {token: replacement}).
 
     Found rather than listed, so a copy pasted into a runbook or a skill is held to the unit the way
-    the header's and README.md's are -- README.md is how this drift got in. A command is held when
-    it names `sed` and the unit and fills at least one placeholder; prose ABOUT the install reads as
-    prose, and a copy naming the unit only through a variable is not found at all."""
+    the header's and README.md's are -- README.md is how this drift got in. A command is held when it
+    names the unit and runs `sed` over a quoted script filling at least one placeholder; prose about
+    the install reads as prose, and a copy reaching the unit through a variable is not found."""
     found = subprocess.run(
         ["git", "-C", str(REPO), "grep", "-l", "--no-color", "-e", unit.name],
         capture_output=True,
@@ -202,8 +203,9 @@ def test_every_copy_of_the_install_fills_exactly_what_the_body_carries(unit):
         assert not copies, f"{unit.name} carries no placeholder, yet {[w for w, _ in copies]} render it through `sed`"
         return
     assert copies, (
-        f"{unit.name}: body carries {sorted(carried)} and no tracked `sed` line renders it. A copy is "
-        f"read as ONE physical line -- a wrapped command is not seen"
+        f"{unit.name}: body carries {sorted(carried)} and no tracked `sed` command renders it -- a copy "
+        f"reaching the unit only through a variable is not found, and neither is one whose `sed` carries "
+        f"no quoted script"
     )
     for where, clauses in copies:
         assert set(clauses) == carried, (
