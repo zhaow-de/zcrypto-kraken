@@ -273,11 +273,12 @@ def test_a_braced_operand_that_is_not_json_is_dropped_rather_than_split_into_a_k
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
 
 
-def test_the_four_spellings_this_tree_publishes_reach_the_row(tmp_path):
+def test_both_option_names_in_both_argparse_forms_reach_the_row(tmp_path):
     """A spelling this collector misses is a var the row never mentions, which reads as absent.
 
     `docs/reference/drill-log.md` takes an empty `extra_vars` as proof that nothing was overridden.
-    These are the four this tree publishes; the `allow_abbrev` forms and `@file` are the bound.
+    The boundary is the two option names matched exactly, in both of argparse's forms; outside it
+    are the `allow_abbrev` spellings and `@file`.
     """
     reason = "secondary unreachable, incident rollback"
     rc, _out, log = run_recording(
@@ -386,6 +387,72 @@ def test_an_equals_after_the_short_flag_is_dropped_the_way_argparse_drops_it(tmp
     assert rc == 0
     rec = json.loads(log.read_text().splitlines()[0])
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
+
+
+def test_a_tab_inside_an_operand_stays_in_the_value_and_a_newline_splits_it(tmp_path):
+    """Ansible's `split_args` breaks an operand on the space and the newline, never the tab.
+
+    Measured: `-e $'a=1\tb=2'` books `{'a': '1\tb=2'}`, `-e $'a=1\nb=2'` books both. Plain
+    `shlex.split` splits on the tab too and would name a variable the pass never received.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "-e", "a=1\tb=2", "-e", "c=3\nd=4"],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"a": "1\tb=2", "c": "3", "d": "4"}, rec["extra_vars"]
+
+
+def test_the_short_tags_spellings_reach_the_row(tmp_path):
+    """Three counters read the `tags` cell, and `-t engine` is `--tags engine` to ansible.
+
+    `count-list.sh engine-rows-outside-the-gap` is scoped by `fleet-deploys.md` to rows whose tags
+    include `engine`, so a tag cell left empty drops the run out of the count that watches it.
+    """
+    for args, expected in (
+        (["-t", "capture,engine"], "capture,engine"),
+        (["-tcapture,engine"], "capture,engine"),
+        (["--tags=capture,engine"], "capture,engine"),
+    ):
+        path = tmp_path / args[0].strip("-=,")[:6]
+        path.mkdir()
+        rc, _out, log = run_recording(path, ["site.yml", "--limit", "zcrypto-red", *args])
+        assert rc == 0
+        rec = json.loads(log.read_text().splitlines()[0])
+        assert rec["tags"] == expected, (args, rec["tags"])
+
+
+def test_a_spelling_the_collector_does_not_read_is_announced_not_swallowed(tmp_path):
+    """A short row is read as proof nothing was overridden, so the drop cannot be silent.
+
+    `--extra-var k=v` is a real extra var to ansible (`allow_abbrev`) and is not collected here;
+    the operator sees that at the console, at the moment of the pass.
+    """
+    rc, out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "--extra-var", "canary_override=abcdefghij"],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {}, rec["extra_vars"]
+    assert "NOT RECORDED" in out and "--extra-var" in out
+
+
+def test_an_operand_that_books_nothing_is_announced_not_swallowed(tmp_path):
+    """The YAML-flow dialect ansible accepts and this recorder cannot read leaves the same proof.
+
+    It is dropped rather than split on the `=` inside it, and the drop is printed: without that,
+    the row is indistinguishable from a converge that overrode nothing.
+    """
+    rc, out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "-e", '{canary_override: "rolled back, x=0"}'],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {}, rec["extra_vars"]
+    assert "NOT RECORDED" in out and "canary_override" in out
 
 
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):

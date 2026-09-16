@@ -254,6 +254,9 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
+# The bypasses the ROW names. `converge.sh` books the spellings its arms read -- the two option names
+# matched exactly, in both argparse forms -- and announces the rest at the console, so a bypass passed
+# as an abbreviation, as `@file` or in a non-JSON braced dialect leaves a row this count reads as 0.
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
 
 # COUNT_LIST_FEED_SNAPSHOT is the snapshot arm of the audit: set it and the count reads a recorded
@@ -340,8 +343,9 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # operator's keystroke is not the set, and an act nothing records cannot be counted.
 
 # A converge that passed `-e <role>_digest=` with nothing after the `=`: the role reads it as defined and
-# renders a broken image ref. `converge.sh` stores the `-e k=v` operands its arms read, stripped;
-# the abbreviations and `@file` record nothing, so this 0 is over the spellings it collects.
+# renders a broken image ref. `converge.sh` stores the `-e k=v` operands its arms read, stripped; an
+# abbreviation, `@file` and a braced operand that is not JSON record nothing (announced at the
+# console), so this 0 is over the spellings it collects.
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
 # The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the
