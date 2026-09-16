@@ -15,7 +15,7 @@ Reading rules:
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `06998998e876` — revision `c7067af3` | 2026-09-07 19:04:29 | `ac6172b9ffb2` |
-| capture | zcrypto-red | `06998998e876` — revision `c7067af3` | 2026-09-07 15:55:10 | `ac6172b9ffb2` |
+| capture | zcrypto-red | `7ccd97eb7e3c` — revision `8d00ead9` | 2026-09-16 09:34:57 | `06998998e876` |
 | engine | zcrypto | `ac6172b9ffb2` — revision `4925e060` | 2026-09-04 17:14:08 | `6ece9ceb1c18` |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` — v1.18.0 | 2026-07-27 | `4f6ddc56ffdc` — v1.17.1 |
 | ops (timers + liquidations) | zcrypto-ops | `6ece9ceb1c18` — revision `8f4ac521` | 2026-09-01 14:26:42 | `08f6abb379a7` |
@@ -38,7 +38,8 @@ A constraint lives where it is enforced or executed: the NAS `-compat` rule and 
 
 The current pins and their operands; older digests are in this file's git log.
 
-- `06998998e876` = `sha256:06998998e8760edecb3b98dccafcd5f28b0f257b7c1f2a881cecebd7d32a2b1d` — revision `c7067af3`; capture on both hosts
+- `7ccd97eb7e3c` = `sha256:7ccd97eb7e3c134bd51b09caf9182dc64642fbf7c76b795fe1c9d6c79c51679e` — revision `8d00ead9`; capture on the secondary, baking
+- `06998998e876` = `sha256:06998998e8760edecb3b98dccafcd5f28b0f257b7c1f2a881cecebd7d32a2b1d` — revision `c7067af3`; capture on the primary, and the rollback operand on both
 - `ac6172b9ffb2` = `sha256:ac6172b9ffb2c1693fa4b55a2498b1ec93ecbb6d13eb4109c5d81a6e7a0e69dd` — revision `4925e060`; the engine, and the capture pair's operand
 - `6ece9ceb1c18` = `sha256:6ece9ceb1c181888daf403329d567041ac3481ce7926d03eb32d137d30a7e912` — revision `8f4ac521`, AVX; ops, and the engine's operand
 - `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, `-compat`; the NAS archive-pull
