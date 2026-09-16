@@ -51,8 +51,9 @@ if [ "$reply" != "$LIMIT" ]; then
   exit 3
 fi
 # The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
-# appends, never re-typed from memory, and that line carries every `-e k=v` operand -- so no -e
-# operand is ever a secret, and none travels on the command line. The line is written by THIS process
+# appends, never re-typed from memory, and that line carries every `-e` operand it can read -- every
+# `k=v` one, and a braced one that parses as JSON (see the recorder below, which states what it
+# drops) -- so no -e operand is ever a secret, and none travels on the command line. The line is written by THIS process
 # after the pass returns, so a wrapper killed mid-pass leaves an orphaned ansible child converging
 # with NO record -- the container's `.State.StartedAt` is the evidence then, and the line is
 # appended by hand from it.
@@ -97,19 +98,27 @@ fi
 python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
 import json, pathlib, sys, datetime as dt
 log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
-# BOTH `-e` spellings, because a bypass reason needs the JSON one. `k=v` cannot carry a value with
-# an apostrophe or a colon -- ansible's own splitter refuses it -- and `fleet-deploys.md` specifies
-# `canary_override` as a reason, not a boolean, so the operand the rules most require to be booked
-# is the one most likely to arrive as JSON. Reading only `k=v` dropped the first such bypass this
-# fleet took, leaving `count-list.sh canary-bypasses-on-the-primary` reading 0 over it; and a JSON
-# value that happened to contain `=` would have been split into a garbage key instead, which is
-# worse than dropping it because the row then looks populated.
+# A `{`- or `[`-prefixed operand NEVER reaches the `=` split below, and that is the load-bearing
+# line here. `fleet-deploys.md` specifies `canary_override` as a reason rather than a boolean, and a
+# multi-word reason cannot travel as `k=v`: ansible's `parse_kv` truncates at the first SPACE
+# (`canary_override=rolled back: ...` yields `rolled` plus a `_raw_params` remainder) and raises
+# outright on an apostrophe. So the operand the rules most require to be booked is the one that
+# arrives braced -- and splitting a braced operand on an `=` inside it mints a key out of the
+# operand's own text, leaving the row looking populated rather than short. Dropping is the safe
+# failure; garbage is not.
+#
+# Braced operands are recovered only when they parse as JSON. `ansible.utils.vars.load_extra_vars`
+# YAML-loads anything starting with `{` or `[`, so JSON is a SUBSET of what ansible accepts, and
+# this recorder cannot close the gap: it runs under the system `python3`, which carries no PyYAML.
+# A YAML-only spelling is therefore dropped and the row is visibly short -- which `count-list.sh
+# canary-bypasses-on-the-primary` reads as 0, the same way it read 0 over the bypass of
+# 2026-09-16 that this branch had to book by hand. Pass a bypass reason as JSON.
 extra = {}
 for line in ev.splitlines():
     line = line.strip()
     if not line:
         continue
-    if line.startswith("{"):
+    if line[:1] in "{[":
         try:
             parsed = json.loads(line)
         except ValueError:
@@ -117,7 +126,7 @@ for line in ev.splitlines():
         if isinstance(parsed, dict):
             for k, v in parsed.items():
                 extra[str(k)] = v
-            continue
+        continue
     if "=" in line:
         k, v = line.split("=", 1)
         extra[k.strip()] = v.strip()

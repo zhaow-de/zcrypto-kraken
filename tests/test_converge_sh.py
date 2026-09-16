@@ -262,6 +262,27 @@ def test_a_json_extra_var_is_recorded_beside_the_k_equals_v_ones(tmp_path):
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123", "canary_override": reason}
 
 
+def test_a_braced_operand_that_is_not_json_is_dropped_rather_than_split_into_a_key(tmp_path):
+    """The safe failure for an unreadable `-e` is a SHORT row, never a populated-looking wrong one.
+
+    `ansible.utils.vars.load_extra_vars` YAML-loads any operand starting with `{` or `[`, so JSON is
+    a subset of what ansible accepts and this recorder -- running under the system `python3`, which
+    carries no PyYAML -- cannot read the rest. The hazard is the `=` inside the reason: falling
+    through to the `k=v` split would mint the key `{canary_override: "rolled back, exec_armed` and
+    the row would look populated. A short row reads as 0 through
+    `count-list.sh canary-bypasses-on-the-primary`, which is the same answer as no bypass and is
+    wrong in the direction an operator can see.
+    """
+    yaml_flow = '{canary_override: "rolled back, exec_armed=0 stands"}'
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "-e", "capture_image_digest=sha256:abc123", "-e", yaml_flow],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
+
+
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):
     """A failed converge may have half-applied; the record says it happened and how it ended."""
     rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto-red"])

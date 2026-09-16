@@ -131,7 +131,9 @@
     fail_msg: >-
       The secondary does not run {{ capture_image_digest }} — the primary's canary gate is that digest
       running as capture on the secondary. Converge the secondary first and let it bake, or pass
-      -e canary_override="<why this cannot wait>" (a reason, not a boolean; it lands in this log).
+      the reason as JSON: -e '{"canary_override": "<why this cannot wait>"}' (a reason, not a
+      boolean). JSON, because a multi-word reason through -e canary_override=... is truncated at
+      the first space by ansible's splitter, and the deploy-log recorder reads only the JSON form.
   when: >-
     inventory_hostname in groups['engine_host']
     and capture_secondary_digest_probe is not skipped
