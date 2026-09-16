@@ -99,7 +99,7 @@ for op in $EV; do
   case "$op" in
     '{'*)
       # The check prints its own one-line reason; a traceback at the terminal reads as a crash.
-      why="$(python3 - "$op" "$OVERRIDES" <<'PYCHK'
+      why="$(python3 - "$op" "$OVERRIDES" 2>&1 <<'PYCHK'
 import json, sys
 
 operand, names = sys.argv[1], sys.argv[2].split()
@@ -122,7 +122,9 @@ PYCHK
     *=*)
       key="${op%%=*}"
       in_set "$key" "$OVERRIDES" && refuse "an override is a reason: -e '{\"$key\": \"<why>\"}'"
-      in_set "$key" "$EVKEYS" || refuse "no role reads $key — ansible would accept it and converge nothing"
+      # The whitelist is what is short, not the role: ansible accepts an unknown `-e` silently and
+      # converges nothing, which is why the key is named rather than passed through.
+      in_set "$key" "$EVKEYS" || refuse "$key is not in this script's key set — add it there if a role reads it"
       [ -n "${op#*=}" ] || refuse "empty value: $op"
       case "$op" in *[[:space:]]*) refuse "an operand carries whitespace; pass a reason as JSON: $op" ;; esac
       ;;

@@ -437,8 +437,11 @@ SITE_YML = SCRIPT.parent.parent / "site.yml"
 def _grammar_set(name):
     """One whitelist out of converge.sh, read as the script reads it."""
     text = SCRIPT.read_text()
+    assert f'{name}="' in text, f"{name} is not assigned in {SCRIPT.name}"
     body = text.split(f'{name}="', 1)[1].split('"', 1)[0]
-    return set(body.replace("\\\n", " ").split())
+    found = set(body.replace("\\\n", " ").split())
+    assert found, f"{name} is empty"
+    return found
 
 
 def test_the_tag_whitelist_is_the_playbook_s_own_tags():
@@ -449,10 +452,14 @@ def test_the_tag_whitelist_is_the_playbook_s_own_tags():
     """
     import re
 
+    # Both spellings ansible accepts: the flow sequence `tags: [a, b]` and the bare `tags: a, b`.
+    # Reading only the bracket form lets a role tagged the other way go missing from the corpus,
+    # and a short corpus makes a short TAGNAMES look correct.
     published = set()
-    for match in re.finditer(r"tags:\s*\[([^]]*)\]", SITE_YML.read_text()):
-        published |= {t.strip() for t in match.group(1).split(",") if t.strip()}
+    for match in re.finditer(r"^\s*tags:\s*(\[[^]]*\]|[A-Za-z0-9_,\- ]+)$", SITE_YML.read_text(), re.M):
+        published |= {t.strip() for t in match.group(1).strip("[]").split(",") if t.strip()}
     published.discard("always")
+    assert len(published) >= 10, sorted(published)
     assert _grammar_set("TAGNAMES") == published, sorted(published ^ _grammar_set("TAGNAMES"))
 
 
@@ -474,22 +481,58 @@ def test_every_key_the_grammar_admits_is_read_somewhere_under_ansible():
 def test_every_operand_the_tree_publishes_is_inside_the_grammar():
     """A published invocation the grammar refuses is the grammar's defect, not the operator's.
 
-    The corpus is every `-e KEY=` in the guidance, the roles and the reference pages. Single-letter
-    keys are prose placeholders (`-e k=v`) and are skipped.
+    The corpus is every `-e key=` in the guidance, the roles and the reference pages. Lower-case
+    only: `docker run -e COINALYZE_API_KEY=` is the same two characters and not this script's
+    operand, and ansible's own var-naming rule keeps every real key lower-case. Single-letter keys
+    are prose placeholders (`-e k=v`) and are skipped.
     """
     import re
     import subprocess as sp
 
     root = SCRIPT.parent.parent.parent.parent
-    out = sp.run(
-        ["git", "grep", "-rhoE", "--", "-e '?[a-z_]+=", "--", ".claude", "infra", "docs/reference"],
+    done = sp.run(
+        ["git", "grep", "-rhoE", "--", "-e '?[a-z_][a-z0-9_]*=", "--", ".claude", "infra", "docs/reference"],
         cwd=root,
         capture_output=True,
         text=True,
-    ).stdout
-    keys = {m.group(1) for m in re.finditer(r"-e '?([a-z_]+)=", out) if len(m.group(1)) > 1}
+    )
+    # The corpus is checked before it is trusted: `keys <= known` is satisfied by an EMPTY `keys`,
+    # so a drifted pathspec, pattern or cwd would read green over a corpus never read.
+    assert done.returncode == 0, (done.returncode, done.stderr)
+    keys = {m.group(1) for m in re.finditer(r"-e '?([a-z_][a-z0-9_]*)=", done.stdout) if len(m.group(1)) > 1}
+    assert len(keys) >= 12, sorted(keys)
     known = _grammar_set("EVKEYS") | _grammar_set("OVERRIDES")
     assert keys <= known, sorted(keys - known)
+
+
+def test_the_host_whitelist_is_the_inventory_s_own_hosts():
+    """The set left unheld is the set that drifts: a host added to the inventory would be refused.
+
+    `--limit` names a host, never a group — `capture_host` would restart both capture hosts close
+    together, which `fleet-deploys.md` forbids — so the corpus is the inventory's `hosts:` leaves.
+    """
+    import re
+
+    inventory = (SCRIPT.parent.parent / "inventory" / "hosts.yml").read_text()
+    leaves, child_indent = set(), None
+    for line in inventory.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        here = len(line) - len(line.lstrip())
+        if re.match(r"^\s*hosts:\s*$", line):
+            child_indent = here + 2  # the group's own hosts, not the vars nested under each one
+            continue
+        if child_indent is None:
+            continue
+        if here == child_indent:
+            leaves.add(line.strip().split(":")[0])
+        elif here < child_indent:
+            child_indent = None
+    # `localhost` is the control node: it is in the inventory for a delegated task, never converged
+    # through this path, and `run.sh` would load the vaulted deploy keys to reach nothing.
+    leaves.discard("localhost")
+    assert len(leaves) >= 5, sorted(leaves)
+    assert _grammar_set("HOSTS") == leaves, sorted(leaves ^ _grammar_set("HOSTS"))
 
 
 def test_a_skip_tags_run_is_not_booked_as_an_un_tagged_one(tmp_path):
@@ -524,7 +567,10 @@ def test_a_refused_override_operand_prints_a_reason_not_a_traceback(tmp_path):
     r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", '{canary_override: "a reason here"}'])
     assert r.returncode == 2
     assert "Traceback" not in r.stderr, r.stderr
-    assert "not JSON" in r.stderr, r.stderr
+    # On the refusal LINE, not merely somewhere on stderr: the checker writes its reason to stderr
+    # either way, so a capture that reads stdout leaves the refusal itself saying nothing.
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "not JSON" in refusal, refusal
 
 
 def test_the_row_carries_the_argv_verbatim(tmp_path):
