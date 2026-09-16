@@ -53,10 +53,10 @@ fi
 # The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
 # appends, never re-typed from memory, and that line carries every `-e` operand it can read -- every
 # `k=v` one, and a braced one that parses as JSON (see the recorder below, which states what it
-# drops) -- so no -e operand is ever a secret, and none travels on the command line. The line is written by THIS process
-# after the pass returns, so a wrapper killed mid-pass leaves an orphaned ansible child converging
-# with NO record -- the container's `.State.StartedAt` is the evidence then, and the line is
-# appended by hand from it.
+# drops) -- so no -e operand is ever a secret, and none travels on the command line. The line is
+# written by THIS process after the pass returns, so a wrapper killed mid-pass leaves an orphaned
+# ansible child converging with NO record -- the container's `.State.StartedAt` is the evidence
+# then, and the line is appended by hand from it.
 set +e
 "$SD/run.sh" "$PLAYBOOK" "$@"
 rc=$?
@@ -65,11 +65,11 @@ LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
 TAGS=""; EV=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--tags" ] && TAGS="$a"
-  # EXACT arms, never a prefix: `--extra-var*` also matches the attached `--extra-vars=K=V`, and the
-  # next argv word is then booked as a variable. BOUND: ansible's `allow_abbrev` accepts `--e` …
-  # `--extra-var` and clustered `-ve`; those and `-e @file` record a short row, which the drill pages
-  # read as "nothing was overridden". Operands are separated by RS, never a newline: a braced one
-  # may carry newlines, and splitting there hands the recorder a fragment it can only mis-book.
+  # EXACT arms, never a prefix: `--extra-var*` also matches the attached `--extra-vars=K=V`, and
+  # the next argv word is then booked as a variable. BOUND: ansible's `allow_abbrev` accepts `--e`
+  # … `--extra-var` and clustered `-ve`; those and `-e @file` record a short row, which the drill
+  # pages read as "nothing was overridden". Operands are separated by RS, never a newline: a braced
+  # one may carry newlines, and splitting there hands the recorder a fragment it can only mis-book.
   case "$prev" in -e | --extra-vars) EV="$EV$a"$'\x1e' ;; esac
   case "$a" in
     --tags=*) TAGS="${a#--tags=}" ;;
@@ -111,9 +111,11 @@ log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
 # `python3`, which has no PyYAML. Pass a bypass reason as JSON.
 extra = {}
 for operand in ev.split("\x1e"):  # never splitlines(): an operand may carry newlines of its own
-    operand = operand.strip()
-    if not operand:
+    if not operand.strip():
         continue
+    # The RAW first character, never a stripped one: `load_extra_vars` tests `extra_vars_opt[0]`,
+    # so ` {"canary_override": "…"}` is not braced to ansible -- it sets nothing, and booking it
+    # would name an override the pass never received.
     if operand[:1] in "{[":
         try:
             parsed = json.loads(operand)
@@ -124,7 +126,8 @@ for operand in ev.split("\x1e"):  # never splitlines(): an operand may carry new
                 extra[str(k)] = v
         continue
     # `shlex` because one `-e` may carry several vars: `-e "a=1 b=2"` is two, and a first-`=` split
-    # makes it one wrong key. A token with no `=` is the `_raw_params` remainder ansible discards.
+    # makes it one wrong key. A token with no `=` is the remainder ansible books as `_raw_params`;
+    # the row drops it because it names no variable the operator passed.
     try:
         tokens = shlex.split(operand)
     except ValueError:  # an unbalanced quote: ansible refused this operand, so record nothing
