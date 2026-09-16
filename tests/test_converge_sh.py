@@ -425,6 +425,13 @@ OUTSIDE = [
     (["--limit", "zcrypto", "--tags", "capture engine"], "two tags and no comma", "carries no spaces"),
     (["--limit", "zcrypto", "--tags", ""], "an empty tag list ansible reads as a tag", "empty value"),
     (["--limit", "zcrypto", "--tags", "", "--tags", "capture"], "--tags twice, the first empty", ""),
+    (
+        ["--limit", "zcrypto", "--skip-tags", ""],
+        "--skip-tags with an empty value, which ansible reads as a tag",
+        "--skip-tags with an empty value",
+    ),
+    (["--limit=zcrypto", "--limit=zcrypto-red"], "--limit= twice", "--limit twice"),
+    (["--limit", "zcrypto", "--skip-tags", "engine", "--skip-tags", "engine"], "--skip-tags twice", "--skip-tags twice"),
     (["--limit", "zcrypto", "-e"], "a dangling -e", ""),
     (["--limit", "zcrypto", "-vvv"], "a passthrough flag", ""),
     (["--limit", "zcrypto", "-i", "hosts.ini"], "an inventory flag", ""),

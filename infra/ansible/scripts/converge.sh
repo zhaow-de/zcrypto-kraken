@@ -96,6 +96,7 @@ case "$LIMIT" in *[[:space:]]*) refuse "--limit names one host, and this is a li
 in_set "$LIMIT" "$HOSTS" || refuse "unknown host: $LIMIT"
 [ "$SAW_TAGS" -eq 0 ] || [ "$SAW_SKIP" -eq 0 ] || refuse "--tags and --skip-tags together"
 [ "$SAW_TAGS" -eq 0 ] || [ -n "$TAGS" ] || refuse "--tags with an empty value"
+[ "$SAW_SKIP" -eq 0 ] || [ -n "$SKIP" ] || refuse "--skip-tags with an empty value"
 [ -z "$SKIP" ] || [ "$SKIP" = "engine" ] || refuse "--skip-tags takes only engine, not $SKIP"
 if [ -n "$TAGS" ]; then
   OLDIFS="$IFS"; IFS=,
