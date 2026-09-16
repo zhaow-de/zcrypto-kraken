@@ -131,15 +131,15 @@
     fail_msg: >-
       The secondary does not run {{ capture_image_digest }} — the primary's canary gate is that digest
       running as capture on the secondary. Converge the secondary first and let it bake, or pass
-      -e canary_override="<why this cannot wait>" (a reason, not a boolean; it lands in this log).
+      the reason as JSON: -e '{"canary_override": "<why this cannot wait>"}' (a reason, not a
+      boolean). JSON, because -e canary_override=... truncates at the first space.
   when: >-
     inventory_hostname in groups['engine_host']
     and capture_secondary_digest_probe is not skipped
 
-# spec 00082 D1 (second half): an ACCEPTED override lands its reason in the play log — the assert
-# above literally promises "it lands in this log". Gated on the override having been ACCEPTED (the
-# fragment true AND the parity check failing), never on the override merely being PRESENT: the
-# latter would print a "why" on runs that overrode nothing.
+# spec 00082 D1 (second half): an ACCEPTED override lands its reason in the play log. Gated on the
+# override having been ACCEPTED (the fragment true AND the parity check failing), never on the
+# override merely being PRESENT: the latter would print a "why" on runs that overrode nothing.
 - name: canary override accepted — the reason, on the record
   ansible.builtin.debug:
     msg: "canary_override accepted: {{ canary_override }}"
@@ -174,7 +174,7 @@
     fail_msg: >-
       The digest this converge replaces ({{ capture_running_digest_probe.stdout }}) is not recorded in
       docs/reference/fleet-pins.md — an unrecorded pin is one docker-prune from an unrecoverable
-      rollback. Record the CURRENT digest there first (or pass -e pins_override="<reason>" and
+      rollback. Record the CURRENT digest there first (or pass -e '{"pins_override": "<reason>"}' and
       record it immediately after).
   when: capture_running_digest_probe.rc == 0 and capture_fleet_pins_text is defined
 

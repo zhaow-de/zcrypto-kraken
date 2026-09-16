@@ -99,7 +99,7 @@ PY
 
    **This step is enforced mechanically in TWO places, and they are complementary — do not delete either as duplicative of the other.** Both read the same committed record, `cli/engine/order-semantics-verified.json` (it lives under `cli/` because the engine image copies only that directory, so a record under `infra/` would be unreachable from the running engine):
 
-   - **The converge** — the engine Ansible role refuses a converge that would render `exec_armed = true` on a version absent from the record. Bypass `-e arming_override="<reason>"`, reason-required, like `canary_override` and `pins_override`.
+   - **The converge** — the engine Ansible role refuses a converge that would render `exec_armed = true` on a version absent from the record. Bypass `-e '{"arming_override": "<reason>"}'`, reason-required, like `canary_override` and `pins_override`.
    - **The arming** — the execution gate refuses at runtime when the *running* interpreter's `nautilus_trader` is absent from the record: `level=none`, `reasons=…,nautilus_unverified`, journaled into `exec-<HH>.json` like every other reason (no count command: `_load_or_new` in `cli/engine/execledger.py` writes the verdict's reasons whole).
 
    Neither subsumes the other. Arming takes two keys, and the arm file is placed by hand long after any converge — so a host that converged armed on a verified version and later took a newer image would pass the converge assert and still be arming an unverified adapter; the gate catches exactly that. Conversely the gate cannot stop a converge from *rendering* an armed config. If either fires it is telling you what this step says; do not override it to get a probe window started.
@@ -160,7 +160,7 @@ PY
    ```
    infra/ansible/scripts/converge.sh site.yml --limit zcrypto --tags engine \
      -e converge_primary=true \
-     -e engine_image_digest=sha256:<the digest from step 1>
+     -e engine_image_digest=sha256:<digest-from-step-1>
    ```
 
    `converge.sh` runs the `--check --diff` preview first and then takes a typed confirm of the literal string `zcrypto`. **Read the preview**: exactly one line of `/opt/zcrypto-engine/zcrypto.toml` changes, `exec_armed = false` → `exec_armed = true`. Anything else in that diff means your tree does not match the fleet — abort and reconcile the tree first.

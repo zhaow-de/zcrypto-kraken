@@ -9,6 +9,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parent.parent / "infra" / "ansible" / "scripts" / "converge.sh"
 
 FAKE_RUN_SH = """#!/usr/bin/env bash
@@ -232,6 +234,301 @@ def test_a_real_pass_appends_one_machine_line(tmp_path):
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123", "converge_primary": "true"}
     assert rec["ts"].endswith("Z") and "T" in rec["ts"]
     assert set(rec) >= {"ts", "playbook", "limit", "tags", "extra_vars", "revision", "dirty", "rc"}
+
+
+def test_a_json_extra_var_is_recorded_beside_the_k_equals_v_ones(tmp_path):
+    """A `-e` carrying JSON lands in the row, and a JSON value holding `=` is not split on it.
+
+    `canary_override` is a reason (`fleet-deploys.md`), and `k=v` truncates one at the first space.
+    """
+    reason = "rolled back: the venue answers EGeneral:Permission denied, so exec_armed=0 stands"
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto-red",
+            "-e",
+            "capture_image_digest=sha256:abc123",
+            "-e",
+            json.dumps({"canary_override": reason}),
+        ],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123", "canary_override": reason}
+
+
+def test_a_braced_operand_carrying_newlines_is_recorded_whole(tmp_path):
+    """A pretty-printed `-e '{...}'` books `canary_override` exactly as the one-line form does.
+
+    Measured against `load_extra_vars`; operands therefore travel RS-separated, not newline-joined.
+    """
+    reason = "rolled back, exec_armed=0 stands"
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "-e", json.dumps({"canary_override": reason}, indent=2)],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"canary_override": reason}, rec["extra_vars"]
+
+
+DIGEST = "sha256:" + "a" * 64
+
+PUBLISHED = [
+    # Every shape ~/.zsh_history, the deploy log and the skills between them record. The engine leg
+    # is the four-operand maximum; `--limit=` is the one attached spelling spec 00083 commits to.
+    (
+        [
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "capture,engine",
+            "-e",
+            "converge_primary=true",
+            "-e",
+            f"capture_image_digest={DIGEST}",
+            "-e",
+            f"engine_image_digest={DIGEST}",
+        ],
+        "zcrypto",
+        "capture,engine",
+        {"converge_primary": "true", "capture_image_digest": DIGEST, "engine_image_digest": DIGEST},
+    ),
+    (["--limit=zcrypto-red", "-e", f"capture_image_digest={DIGEST}"], "zcrypto-red", "", {"capture_image_digest": DIGEST}),
+    (["--limit", "nas", "--tags", "nas", "-e", "nas_apply_compose=true"], "nas", "nas", {"nas_apply_compose": "true"}),
+    (
+        [
+            "--limit",
+            "zcrypto-ops",
+            "-e",
+            f"ops_image_digest={DIGEST}",
+            "-e",
+            f"ops_alloy_digest={DIGEST}",
+            "-e",
+            "liquidations_decision=roll-after",
+        ],
+        "zcrypto-ops",
+        "",
+        {"ops_image_digest": DIGEST, "ops_alloy_digest": DIGEST, "liquidations_decision": "roll-after"},
+    ),
+    (["--limit", "zaccess", "--tags", "access"], "zaccess", "access", {}),
+    (["--limit", "zcrypto", "--tags", "chrony"], "zcrypto", "chrony", {}),
+    (["--limit", "zcrypto-ops", "-e", "ops_reconcile_mint=false"], "zcrypto-ops", "", {"ops_reconcile_mint": "false"}),
+    (
+        ["--limit", "zcrypto-ops", "-e", "access_ops_agentboard_live=true"],
+        "zcrypto-ops",
+        "",
+        {"access_ops_agentboard_live": "true"},
+    ),
+    (
+        ["--limit", "zcrypto", "--skip-tags", "engine", "-e", f"capture_alloy_digest={DIGEST}"],
+        "zcrypto",
+        "",
+        {"capture_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-ops",
+            "--tags",
+            "ops",
+            "-e",
+            "ops_grafana_watchdog_probe_url=https://grafana-watchdog-drill.invalid/api/health",
+        ],
+        "zcrypto-ops",
+        "ops",
+        {"ops_grafana_watchdog_probe_url": "https://grafana-watchdog-drill.invalid/api/health"},
+    ),
+]
+
+
+@pytest.mark.parametrize("args,limit,tags,extra", PUBLISHED)
+def test_every_invocation_this_fleet_publishes_records_its_operands(tmp_path, args, limit, tags, extra):
+    """The grammar is a whitelist, so its floor is every shape the fleet actually converges with.
+
+    Drawn from the recorded runs and the published ones: the four-operand engine leg, the NAS
+    render, the ops roll, the bridgehead, `--limit=`, and `--skip-tags engine`.
+    """
+    rc, _out, log = run_recording(tmp_path, ["site.yml", *args], reply=limit)
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert (rec["limit"], rec["tags"], rec["extra_vars"]) == (limit, tags, extra), rec
+
+
+def test_the_json_override_operand_is_recorded_whole(tmp_path):
+    """A reason is prose and `k=v` truncates it at the first space, so the four names travel as JSON.
+
+    `count-list.sh canary-bypasses-on-the-primary` counts the row this operand writes.
+    """
+    reason = "rolled back: the venue answers EGeneral:Permission denied, so exec_armed=0 stands"
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "-e", f"capture_image_digest={DIGEST}", "-e", json.dumps({"canary_override": reason})],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"capture_image_digest": DIGEST, "canary_override": reason}
+
+
+OUTSIDE = [
+    # Two callers type this script's argv: a session, or the operator pasting the line it wrote.
+    # So these are the WRONG names and stale spellings either could reach for — not malformed
+    # input, which neither would type and no arm defends against.
+    (["--limit", "zcrypt"], "a mistyped host", "unknown host"),
+    (["--limit", "capture_host"], "an inventory group where a host belongs", "unknown host"),
+    (["--limit", "zcrypto zcrypto-red"], "two hosts, which ansible reads as two and this as none", "unknown host"),
+    (["--limit", "zcrypto", "--tags", "captur"], "a mistyped tag", "unknown tag"),
+    (["-e", "capture_image_digest="], "an unsubstituted placeholder, which ansible reads as defined", "empty value"),
+    (
+        ["-e", f"capture_image_digest={DIGEST} converge_primary=true"],
+        "two variables in one operand, which the row would book as one",
+        "carries whitespace",
+    ),
+    (["--limit", "zcrypto", "--tags", "fail2ban"], "a role tag this fleet has never converged", "unknown tag"),
+    (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any value but engine", "takes only engine"),
+    (
+        ["--limit", "zcrypto", "--skip-tags", "capture", "--skip-tags", "engine"],
+        "two skip flags, which ansible appends and the cell booked as engine alone",
+        "takes only engine",
+    ),
+    (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", "--tags and --skip-tags together"),
+    (
+        ["-e", f"nas_capture_image_digest={DIGEST}"],
+        "the key one real converge passed and no role reads",
+        "not in this script's key set",
+    ),
+    (["-e", "ansible_user=root"], "a variable ansible reads but no converge here has passed", "not in this script's key set"),
+    (["-e", "rebootstrap=true"], "a variable only a bootstrap run would carry", "not in this script's key set"),
+    (["-e", "canary_override=why this cannot wait"], "an override as k=v, which truncates at the space", "an override is a reason"),
+    (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect ansible reads and this cannot", "not JSON"),
+    (["-e", '{"capture_image_digest": "sha256:a reason"}'], "a braced operand that is not an override", "is not an override name"),
+    (["-e", '{"canary_override": "a b", "pins_override": "c d"}'], "two overrides in one operand", "exactly one override"),
+    (["-e", "@vars.json"], "a file the confirm never shows the operator", "KEY=VALUE or a braced"),
+    (["--limit", "zcrypto", "-vvv"], "a passthrough flag", "outside the grammar"),
+    (["--limit", "zcrypto", "--diff"], "a flag the preview composes itself", "outside the grammar"),
+    (["-ve", "canary_override=abcdefghij"], "a cluster carrying -e", "outside the grammar"),
+    (["-C"], "the short check flag, which converges while the row says otherwise", "outside the grammar"),
+    (["-l", "zcrypto"], "the short limit", "outside the grammar"),
+    (["-t", "engine"], "the short tags", "outside the grammar"),
+    (["--extra-vars", "converge_primary=true"], "the long extra-vars spelling", "outside the grammar"),
+    (["--limit"], "a flag with no value", "--limit with no value"),
+]
+
+
+@pytest.mark.parametrize("args,why,reason", OUTSIDE)
+def test_every_spelling_outside_the_grammar_is_refused_before_anything_runs(tmp_path, args, why, reason):
+    """Refusing is the safe failure: the operator is still at the terminal, and no host was touched.
+
+    Each of these is honoured by ansible and would have been recorded as something it is not. Where
+    the entry names a `reason`, the refusal LINE must carry it: an arm that refuses for the WRONG
+    reason still exits 2, so asserting the rc alone cannot see a message regression.
+    """
+    script = make_harness(tmp_path)
+    limited = args if any(a.startswith("--limit") for a in args) else ["--limit", "zcrypto", *args]
+    r = run_no_tty(script, ["site.yml", *limited])
+    assert r.returncode == 2, (why, r.returncode, r.stdout, r.stderr)
+    assert invocations(tmp_path) == [], why
+    refusal = next((line for line in r.stderr.splitlines() if line.startswith("converge.sh:")), "")
+    assert refusal, (why, r.stderr)
+    if reason:
+        assert reason in refusal, (why, refusal)
+
+
+def test_a_playbook_other_than_site_yml_is_refused(tmp_path):
+    """`site.yml` is what this fleet converges: every deploy-log row and every published procedure.
+
+    `bootstrap.yml` was accepted on the strength of the role's existence rather than any published
+    run through this script, and its `-e ansible_user=root` is refused here in any case.
+    """
+    for playbook in ("other.yml", "bootstrap.yml"):
+        path = tmp_path / playbook.split(".")[0]
+        path.mkdir()
+        r = run_no_tty(make_harness(path), [playbook, "--limit", "zcrypto"])
+        assert r.returncode == 2, (playbook, r.returncode)
+        assert invocations(path) == [], playbook
+
+
+def test_an_unknown_key_is_refused_by_naming_the_whitelist_not_the_role(tmp_path):
+    """`capture_retention_days` IS read by the capture role; it is this script's set that is short.
+
+    The whitelist going short is the refusal an operator meets on a legitimate converge, so the
+    message has to send them to the set rather than to a role that reads the key perfectly well.
+    """
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", "capture_retention_days=9"])
+    assert r.returncode == 2
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "is not in this script's key set" in refusal, refusal
+    assert "no role reads" not in refusal, refusal
+
+
+def test_a_skip_tags_run_is_not_booked_as_an_un_tagged_one(tmp_path):
+    """`--skip-tags engine` is the Alloy bump's published primary form, and it is not un-tagged.
+
+    `count-list.sh un-tagged-primary-runs` counts the rule "never run site.yml un-tagged on the
+    primary" over rows whose tags cell is empty; the skip goes in its own cell so that count stays
+    the violations it is named for.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--skip-tags", "engine", "-e", f"capture_alloy_digest={DIGEST}"],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["skip_tags"] == "engine" and rec["tags"] == "", rec
+
+
+def test_an_override_passed_as_k_equals_v_is_told_where_to_put_it(tmp_path):
+    """The refusal names the fix, because the key IS read — it just cannot travel as `k=v`."""
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", "canary_override=whatever"])
+    assert r.returncode == 2
+    assert "an override is a reason" in r.stderr, r.stderr
+    assert "no role reads" not in r.stderr, r.stderr
+
+
+def test_a_refused_override_operand_prints_a_reason_not_a_traceback(tmp_path):
+    """A traceback at the terminal reads as a crash, and sends the operator to the wrong question."""
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", '{canary_override: "a reason here"}'])
+    assert r.returncode == 2
+    assert "Traceback" not in r.stderr, r.stderr
+    # On the refusal LINE, not merely somewhere on stderr: the checker writes its reason to stderr
+    # either way, so a capture that reads stdout leaves the refusal itself saying nothing.
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "not JSON" in refusal, refusal
+
+
+def test_two_tag_flags_book_both_because_ansible_runs_both(tmp_path):
+    """`--tags` is `action="append"` to ansible, so a second flag adds rather than replaces.
+
+    Booking the last one alone left the row describing a pass that did not happen, and
+    `count-list.sh engine-rows-outside-the-gap` selects rows whose `tags` cell names `engine`.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "capture", "--tags", "engine"],
+        reply="zcrypto",
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["tags"] == "capture,engine", rec["tags"]
+
+
+def test_the_row_carries_the_argv_verbatim(tmp_path):
+    """Whatever a later reader asks of a pass, argv answers it without a parser.
+
+    The parsed cells are ansible's reading of these words; this is the words.
+    """
+    args = ["site.yml", "--limit", "zcrypto-red", "-e", "capture_image_digest=sha256:abc123"]
+    rc, _out, log = run_recording(tmp_path, args)
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["argv"] == args, rec["argv"]
 
 
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):

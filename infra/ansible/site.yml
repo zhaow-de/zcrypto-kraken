@@ -124,7 +124,7 @@
           belong to the running cycle — or, when the boundary cycle has journaled its completion,
           until 5 min past that completion, whichever the journal shows — and the last 10 min are
           too close to the next). Wait for the gap, or pass
-          -e engine_window_override="<why this cannot wait>" (a reason, not a boolean).
+          -e '{"engine_window_override": "<why this cannot wait>"}' (a reason, not a boolean).
       when: not ansible_check_mode and engine_epoch_probe.stdout is defined
       tags: [engine]
 

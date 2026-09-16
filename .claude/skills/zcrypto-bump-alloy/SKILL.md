@@ -80,13 +80,13 @@ Pass the **currently-running capture digest** — read it with `ssh red 'sudo do
 ```bash
 # secondary
 ./scripts/converge.sh site.yml --limit zcrypto-red \
-  -e capture_image_digest=<current running capture digest> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
+  -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh red 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'   # role renders only — never starts
 
 # primary — converge_primary is required; --skip-tags engine satisfies site.yml's un-tagged-run refusal.
 # Never answer that refusal with -e engine_image_digest: it restarts the LIVE trade engine.
 ./scripts/converge.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true \
-  -e capture_image_digest=<current running capture digest> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
+  -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh zcrypto 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'
 ```
 

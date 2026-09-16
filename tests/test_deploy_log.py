@@ -1,7 +1,9 @@
 """docs/reference/deploy-log.jsonl: the machine record every real converge appends (converge.sh).
 
-One JSON object per line, append-only, never hand-edited: the digest and timestamp a rollback needs
-come from the pass that set them, not from an operator's memory."""
+One JSON object per line, appended by that script: the digest and timestamp a rollback needs come
+from the pass that set them, not from an operator's memory. A row is amended by hand only to record
+an operand the recorder could not read, on the owner's word, with the amendment named in its commit
+-- never to change what a pass did."""
 
 import json
 from pathlib import Path
