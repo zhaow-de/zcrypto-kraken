@@ -123,9 +123,20 @@ PINNED_ENUM_VALUES = {
 }
 
 
-# Entries whose real member set must EQUAL the pinned one. `PositionSide` alone: it is the one whose
-# new variant a live read ACTS on rather than stores, and the assertion below says what that costs.
+# Entries whose real member set must EQUAL the pinned one. `PositionSide` is the only one that needs
+# it HERE: a new variant is acted on by a live read, and the assertion below says what that costs.
+# `LiquiditySide` is acted on too -- `cli/engine/tracking.py` raises on a name outside its three --
+# but its member set is already walked from `LiquiditySide.variants()` by tests/test_engine_executor.py
+# and tests/test_engine_metrics.py, so an added variant is red there and a second guard here would
+# only move where it is caught.
 EXHAUSTIVE_MEMBERS = {"PositionSide"}
+
+
+def test_the_exhaustive_member_walk_is_not_vacuous():
+    """Parametrising over an empty set collects one SKIP and summarises green, so pruning the literal
+    below to `set()` would take the only member-set guard out of the suite with no red run -- while
+    `docs/open-topics/T0159-engine-flatten-the-red-button.md` still leans on it in prose."""
+    assert EXHAUSTIVE_MEMBERS, "EXHAUSTIVE_MEMBERS is empty -- the walk below would skip, not fail"
 
 
 @pytest.mark.parametrize("enum_name", sorted(EXHAUSTIVE_MEMBERS))

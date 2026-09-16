@@ -828,11 +828,12 @@ _ORDER_STREAM_WIDENERS = {
 
 
 def test_no_module_widens_the_engines_order_event_stream():
-    """No file under cli/ carries any of the widener texts, anywhere: the engine's
+    """No file under cli/ carries a widener text beyond what the map allows it: the engine's
     order-event stream is the strategy's own subscription plus the observer registered under the
-    reserved external identity, and neither needs a bus or a claim to exist. A red run is a widening
-    to remove, never an allowance to add. Text, not imports -- a reference in a comment is one a
-    refactor can activate."""
+    reserved external identity, and neither needs a bus or a claim to exist. Default to reading a
+    red run as a widening to remove; an allowance is argued for, not reached for, and the map holds
+    exactly one -- `cli/engine/node.py` twice, the sealed method's own def and the name it refuses.
+    Text, not imports -- a reference in a comment is one a refactor can activate."""
     offenders = []
     files = sorted(Path("cli").rglob("*.py"))
     assert len(files) > 100, f"the walk found only {len(files)} files -- vacuous"
