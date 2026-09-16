@@ -2328,9 +2328,7 @@ def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_a
 
     The client here carries NO credentials, unlike `_real_client()`'s dummy pair: the adapter signs
     `request_instruments` whenever a credential is present, so only an uncredentialed client takes
-    the public path this test means to exercise. A dummy secret fails at signing before a request
-    leaves, and a well-formed dummy one reaches the venue as an invalid key -- neither answers the
-    question this asks.
+    the public path this test means to exercise.
     """
     import inspect
 

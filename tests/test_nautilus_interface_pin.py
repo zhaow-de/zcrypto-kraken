@@ -98,15 +98,11 @@ def test_the_pin_covers_every_nautilus_name_cli_imports():
 
 # Name -> integer, for every enum whose VALUE we persist into a durable record or compare across a
 # restart. A rename is loud; a silent value change corrupts stored rows, so both halves are pinned.
-# `OrderSide` carries no `NO_ORDER_SIDE` entry: under nautilus-trader 2.0.0rc6.dev20260915 that name
-# resolves to bare `None`, not an enum member -- `OrderSide.from_str("NO_ORDER_SIDE")` and
-# `OrderSide(0)` both fail the same way -- because "no side" is now `Option`-shaped throughout, per
-# the upstream "Use Option for missing sides across model and adapter boundaries" change. Measured:
-# `grep -rn 'OrderSide\.' cli/` finds only `.SELL` and `.BUY` (flatten.py, executor.py), and grepping
-# order_side against journal/record/store/write/json.dump/serial across cli/engine finds nothing --
-# no persisted row has ever carried this value, so there is nothing here for a rename to corrupt.
-# `LiquiditySide.NO_LIQUIDITY_SIDE` is the sibling that IS persisted (tracking.py, executor.py) and
-# stays pinned below; its value is unchanged (still 0) on this wheel.
+# `OrderSide` carries no `NO_ORDER_SIDE` entry: the name resolves to bare `None` rather than an enum
+# member -- "no side" is `Option`-shaped throughout the library now -- and nothing under cli/ has
+# ever persisted its value, so the entry was dropped rather than widened to accept `None`, which
+# `int()` cannot pin. `LiquiditySide.NO_LIQUIDITY_SIDE` IS persisted (tracking.py, executor.py) and
+# stays pinned below.
 PINNED_ENUM_VALUES = {
     "LiquiditySide": {"NO_LIQUIDITY_SIDE": 0, "MAKER": 1, "TAKER": 2},
     "OrderSide": {"BUY": 1, "SELL": 2},

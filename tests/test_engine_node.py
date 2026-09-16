@@ -800,9 +800,9 @@ def test_no_strategy_claims_external_orders(tmp_path):
         assert strategy.config.external_order_instrument_ids is None
 
 
-# Each banned text mapped to the cli/ paths allowed to carry it and how many times; every entry is
-# allowed nowhere, so the values are empty -- a map rather than a set because an allowance, if one is
-# ever argued for, must be spelled as a path AND a count, so a reviewer sees the widening.
+# Each banned text mapped to the cli/ paths allowed to carry it and how many times; an entry allowed
+# nowhere carries an empty map -- a map rather than a set because an allowance, if one is ever
+# argued for, must be spelled as a path AND a count, so a reviewer sees the widening.
 #
 # `external_order_instrument_ids`: a claim routes the account owner's own hand-placed settling fills
 # onto a strategy's OWN order topic and straight into the unknown-order trip. The library's field of
