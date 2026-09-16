@@ -40,6 +40,25 @@ def _corpus_entries() -> set[str]:
     return {name for path in CORPUS for name in _CORPUS_ENTRY.findall(path.read_text())}
 
 
+def test_this_checkout_carries_what_the_counts_measure_from():
+    """The STATE the guards need, asked of the checkout rather than read off a workflow file.
+
+    Reading `.github/workflows/coverage.yml` can only see that a step is written: `|| true`, an
+    `echo` prefix, a commented-out command in a block `run:` or a later shallow re-checkout all
+    leave such a case green while the state never arrives. This asks the one question instead — and
+    a `pull_request` checkout is detached at the merge ref with `origin/develop` alone, so both
+    halves are things CI has to be told to provide.
+    """
+    shallow = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--is-shallow-repository"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert shallow == "false", "a shallow clone: `git fetch --unshallow`, or `fetch-depth: 0` in CI"
+    assert _develop_resolves(), (
+        "no local `develop`: `git branch --force develop origin/develop`, which is what CI runs "
+        "after its checkout — `count-list.sh` refuses without it and the nine gates below skip"
+    )
+
+
 def _develop_resolves() -> bool:
     done = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", "develop"], capture_output=True)
     return done.returncode == 0
