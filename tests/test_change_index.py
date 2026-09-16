@@ -7,6 +7,7 @@ path by construction, which is what keeps a rename sweep from ever having to edi
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -100,6 +101,36 @@ def test_pr_numbers_are_unique_and_ascending() -> None:
     )
 
 
+def _refuse_or_skip(why: str) -> None:
+    """Unmeasurable is a skip on a workstation and a failure in CI, which asked for the history."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.fail(f"{why} — CI checks out the whole history for this guard; see coverage.yml")
+    pytest.skip(f"{why}, so completeness is unmeasurable")
+
+
+def test_an_unmeasurable_corpus_fails_in_ci_and_skips_by_hand(monkeypatch) -> None:
+    """The guard below is the one CI runs at the moment a PR that owes a row is judged.
+
+    Driven against a real shallow clone: without `GITHUB_ACTIONS` it skips, with it set it fails.
+    A skip reads as a pass in a summary line, which is how #508 merged rowless on 2026-09-13.
+    """
+    # Caught by hand, never `pytest.raises`: a `Skipped` raised inside it is not caught, so it
+    # propagates and SKIPS this case — the arm would read green while doing nothing, which is the
+    # failure mode this whole guard exists to name.
+    for env, want in (("true", pytest.fail.Exception), (None, pytest.skip.Exception)):
+        if env is None:
+            monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        else:
+            monkeypatch.setenv("GITHUB_ACTIONS", env)
+        try:
+            _refuse_or_skip("driven")
+        except want:
+            continue
+        except BaseException as exc:  # noqa: BLE001 -- a Skipped here must not skip this case
+            raise AssertionError(f"GITHUB_ACTIONS={env!r} raised {type(exc).__name__}, wanted {want.__name__}") from exc
+        raise AssertionError(f"GITHUB_ACTIONS={env!r} returned instead of raising {want.__name__}")
+
+
 def test_every_keyed_merge_on_develop_has_a_row() -> None:
     """Every first-parent merge whose branch name carries a key is a row in the index."""
     shallow = subprocess.run(
@@ -109,7 +140,10 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         check=True,
     ).stdout.strip()
     if shallow == "true":
-        pytest.skip("shallow clone: develop's merge history is absent here, so completeness is unmeasurable")
+        # A skip is indistinguishable from a pass in a summary line, and this is the guard CI runs
+        # at the moment a PR that owes a row is judged. So it is a skip in a hand clone and a
+        # FAILURE in CI, where `coverage.yml` asks for the whole history on purpose.
+        _refuse_or_skip("shallow clone: develop's merge history is absent here")
     ref = next(
         (
             candidate
@@ -119,7 +153,7 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         None,
     )
     if ref is None:
-        pytest.skip("no develop ref in this checkout, so completeness is unmeasurable")
+        _refuse_or_skip("no develop ref in this checkout")
     subjects = subprocess.run(
         ["git", "-C", str(REPO), "log", "--merges", "--first-parent", "--format=%s", ref],
         capture_output=True,

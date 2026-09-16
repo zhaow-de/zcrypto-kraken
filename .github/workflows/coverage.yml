@@ -19,7 +19,13 @@ jobs:
     name: Full test suite
     runs-on: ubuntu-latest
     steps:
+      # The whole history, not the tip: at fetch-depth 1 the clone is shallow and
+      # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` takes its
+      # shallow skip on every PR — the run that judges whether this PR owes an index row. That
+      # skip is what let #508 merge rowless and turn `develop` red on 2026-09-13.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.14"
