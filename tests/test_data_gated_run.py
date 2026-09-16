@@ -142,8 +142,6 @@ _OWN_GATE_REASONS = [
     "root bypasses directory permissions",
     "root ignores the directory's write bit",
     "main() refuses a checkout with no develop ref before any entry runs",
-    "shallow clone: develop's merge history is absent here, so completeness is unmeasurable",
-    "no develop ref in this checkout, so completeness is unmeasurable",
     "pre-existing; see _GRANDFATHERED",
     "jq not available, so the push's own payload program cannot be run",
     "bash not available",
