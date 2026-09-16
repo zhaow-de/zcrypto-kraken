@@ -51,7 +51,7 @@ if [ "$reply" != "$LIMIT" ]; then
   exit 3
 fi
 # The real pass, RECORDED: fleet-pins.md is re-trued from the line this appends, never from memory.
-# Every `-e` operand reaches that line, so never pass a secret as one. The line is written after the
+# An `-e` operand can reach that line, so never pass a secret as one. The line is written after the
 # pass returns: a wrapper killed mid-pass leaves an orphaned child converging with NO record, and
 # the line is then appended by hand from the container's `.State.StartedAt`.
 set +e

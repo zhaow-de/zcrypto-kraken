@@ -237,9 +237,7 @@ def test_a_real_pass_appends_one_machine_line(tmp_path):
 def test_a_json_extra_var_is_recorded_beside_the_k_equals_v_ones(tmp_path):
     """A `-e` carrying JSON lands in the row, and a JSON value holding `=` is not split on it.
 
-    `fleet-deploys.md` specifies `canary_override` as a reason, and ansible's `k=v` splitter
-    truncates a multi-word one at the first space -- so the operand the rules most require to be
-    booked is the one that arrives as JSON.
+    `canary_override` is a reason (`fleet-deploys.md`), and `k=v` truncates one at the first space.
     """
     reason = "rolled back: the venue answers EGeneral:Permission denied, so exec_armed=0 stands"
     rc, _out, log = run_recording(
@@ -279,8 +277,7 @@ def test_the_four_spellings_this_tree_publishes_reach_the_row(tmp_path):
     """A spelling this collector misses is a var the row never mentions, which reads as absent.
 
     `docs/reference/drill-log.md` takes an empty `extra_vars` as proof that nothing was overridden.
-    The four driven here are the four this tree publishes, not every spelling ansible honours: the
-    `allow_abbrev` forms and `-e @file` record a short row, the bound stated in the collector.
+    These are the four this tree publishes; the `allow_abbrev` forms and `@file` are the bound.
     """
     reason = "secondary unreachable, incident rollback"
     rc, _out, log = run_recording(
@@ -352,10 +349,8 @@ def test_a_braced_operand_carrying_newlines_is_recorded_whole(tmp_path):
 def test_a_brace_behind_a_leading_space_is_not_braced_here_either(tmp_path):
     """`load_extra_vars` tests the operand's RAW first character, so a leading space is not JSON.
 
-    Measured, this operand: ansible books `{'"rolled back, exec_armed': '0 stands"}',
-    '_raw_params': '{"canary_override":'}` -- a garbage key and NO `canary_override`, so the canary
-    assert fires and the converge does not proceed. The row mirrors that, differing only in the
-    quotes `shlex` strips.
+    Measured, this operand: ansible books a garbage key and NO `canary_override`, so the canary
+    assert fires and the converge does not proceed. The row mirrors that.
     """
     rc, _out, log = run_recording(
         tmp_path,
