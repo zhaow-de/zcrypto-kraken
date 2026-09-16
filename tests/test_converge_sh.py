@@ -289,9 +289,12 @@ def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
     `drills-order-path.md` and `drill-log.md` take an empty `extra_vars` as positive proof that
     nothing was overridden, so a missed operand is indistinguishable from an operand never passed --
     the same end state as the bypass this branch had to book by hand, reached through a different
-    door. `-e @file` is the one spelling that still does not reach the row: the recorder cannot open
-    it, so the row is short by that operand. Asserted here so the gap is a stated bound rather than
-    a surprise; nothing in this tree passes one.
+    door. This drives the four spellings this tree uses and publishes, NOT every spelling ansible
+    honours: `argparse` runs with `allow_abbrev`, so `--e` through `--extra-var` and the clustered
+    `-ve` are accepted by ansible and record a short row here. That bound is stated in the
+    collector, and it is a bound rather than a bug because the failure is a short row and not a
+    wrong one -- the alternative, prefix-matching the flag, books the NEXT argv word as a variable.
+    `-e @file` is short for the same reason: the recorder cannot open it.
     """
     reason = "secondary unreachable, incident rollback"
     rc, _out, log = run_recording(
@@ -303,7 +306,7 @@ def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
             "--extra-vars",
             json.dumps({"canary_override": reason}),
             "--extra-vars=capture_image_digest=sha256:abc123",
-            "--extra-var",
+            "--extra-vars",
             "engine_window_override=incident",
             "-econverge_primary=true",
             "-e",
@@ -322,6 +325,31 @@ def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
         "pins_override": "stale",
         "nas_apply_compose": "true",
     }, rec["extra_vars"]
+
+
+def test_the_word_after_an_attached_extra_vars_is_not_booked_as_a_variable(tmp_path):
+    """`--extra-vars=K=V` carries its own value, so the NEXT argv word is a flag, not a var.
+
+    Guarding a regression this branch introduced and the wide read caught: matching the separated
+    form by prefix (`--extra-var*`) also matches the attached one, and the word after it — here
+    `--tags=…`, in practice `--limit=…` just as easily — was then split on its `=` and booked.
+    That is the populated-looking wrong row the recorder exists to avoid, arriving through the
+    collector instead, and it is worse than the short row it replaced because the key looks real.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        [
+            "site.yml",
+            "--limit",
+            "zcrypto-red",
+            "--extra-vars=capture_image_digest=sha256:abc123",
+            "--tags=capture,engine",
+        ],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
+    assert rec["tags"] == "capture,engine"
 
 
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):

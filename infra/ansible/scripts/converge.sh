@@ -65,18 +65,25 @@ LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
 TAGS=""; EV=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--tags" ] && TAGS="$a"
-  # EVERY inline spelling ansible honours -- `-e V`, `-eV`, `--extra-vars V`, `--extra-vars=V` and
-  # the abbreviations of that flag it accepts -- because a spelling this loop misses is a var the row
-  # never mentions, and the drill pages read an empty `extra_vars` as positive proof that nothing was
-  # overridden. A missed operand is therefore not just absent: it is evidence of the opposite.
-  # `-e @file` is collected here and DROPPED by the recorder below, which cannot open it: the row is
-  # short by that operand, and nothing in this tree passes one.
-  case "$prev" in -e | --extra-var*) EV="$EV$a"$'\n' ;; esac
+  # The four spellings this tree USES and publishes: `-e V`, `-eV`, `--extra-vars V`,
+  # `--extra-vars=V`. A spelling this loop misses is a var the row never mentions, and the drill
+  # pages read an empty `extra_vars` as positive proof that nothing was overridden -- so a missed
+  # operand is not merely absent, it is evidence of the opposite. Hence the SAFE failure is a short
+  # row, and the arms below are exact rather than prefix-matched.
+  #
+  # STATED BOUND, because the safe failure still costs a bypass its booking: `argparse` runs with
+  # `allow_abbrev`, so ansible also honours `--e`, `--ex`, `--ext`, `--extra`, `--extra-v`,
+  # `--extra-va`, `--extra-var` and the clustered `-ve`; those record a short row. They are matched
+  # EXACTLY rather than by prefix on purpose -- a `--extra-var*` prefix also matches the attached
+  # `--extra-vars=K=V`, and then the NEXT argv word (`--tags=…`, `--limit=…`) is booked as a
+  # variable, which is the populated-looking wrong row this recorder exists to avoid.
+  # `-e @file` is collected here and DROPPED by the recorder below, which cannot open it.
+  case "$prev" in -e | --extra-vars) EV="$EV$a"$'\n' ;; esac
   case "$a" in
     --tags=*) TAGS="${a#--tags=}" ;;
-    -e) : ;;                                   # value is the next word; `prev` above takes it
-    -e*) EV="$EV${a#-e}"$'\n' ;;                # attached short form, `-eK=V`
-    --extra-var*=*) EV="$EV${a#*=}"$'\n' ;;     # `--extra-vars=…` and every accepted abbreviation
+    -e | --extra-vars) : ;;                   # value is the next word; `prev` above takes it
+    -e?*) EV="$EV${a#-e}"$'\n' ;;              # attached short form, `-eK=V`
+    --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\n' ;;
   esac
   prev="$a"
 done
