@@ -1445,6 +1445,30 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     requires = [sec for sec, keys in _directives(unit).items() for k in keys if k == "Requires=wg-quick@zaccess0.service"]
     assert requires == ["[Unit]"], f"Requires=wg-quick must live in [Unit] or systemd ignores it: {requires or 'absent'}"
 
+    # The memory cap is coupled to KillMode too, and in the direction that costs: because a forked
+    # child inherits this cgroup for life, the cap bounds the operator's whole tmux workspace, and an
+    # UNCAPPED one let a runaway reach 58.4 GiB and take a global oom-kill on 2026-09-15. The same
+    # three regressions apply -- commented out, re-asserted as `infinity` later in the file, or moved
+    # to [Unit] where systemd ignores it -- so the walk is section-aware and last-wins like KillMode's.
+    for key in ("MemoryMax", "MemoryHigh"):
+        seen: dict[str | None, list[str]] = {}
+        sect = None
+        for raw in unit.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sect = line
+                continue
+            if re.match(rf"{key}\s*=", line):
+                seen.setdefault(sect, []).append(line.split("=", 1)[1].strip())
+        assert set(seen) <= {"[Service]"}, f"{key} outside [Service] is silently ignored: {seen}"
+        assert seen.get("[Service]"), f"the unit must carry an active {key} in [Service]"
+        last = seen["[Service]"][-1]
+        assert last.lower() != "infinity", (
+            f"the LAST {key} in [Service] is `infinity` -- that is no cap at all: {seen['[Service]']}"
+        )
+
     # ExecStart: strip before matching, because systemd does. An INDENTED `  ExecStart=` empty-value
     # reset followed by a shim ExecStart loads clean with the last one in effect, so an unstripped
     # startswith() would see one good line and miss the override entirely.

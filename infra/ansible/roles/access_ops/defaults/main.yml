@@ -9,7 +9,7 @@ access_ops_wg_listen_port: 51820
 # agentboard (spec 00075 D13), the web terminal onto the operator tmux. The role installs this pin
 # and renders its unit on every converge; whether the unit is ever enabled or started is
 # `access_ops_agentboard_live` below.
-access_ops_agentboard_version: "0.4.23"
+access_ops_agentboard_version: "0.5.3"
 # D13 gate -- stays false until the owner's spike proves agentboard cannot hibernate/kill/resize a
 # discovered session; the owner sets it true (host_vars or -e) to bring the unit live, and it then
 # stays enabled+started idempotently. false also means the unit is explicitly disabled+stopped on

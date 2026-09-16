@@ -577,6 +577,27 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
+# The agentboard cgroup, read off the host because no series can answer it. agentboard publishes no
+# /metrics and is scraped by nothing, and the cap is a systemd `MemoryMax=`, which no metric on this
+# fleet carries -- cadvisor is deliberately absent and the ops unix exporter runs no systemd
+# collector. So `zcrypto-fleet-daemon-restarted` cannot see its restarts either: that rule's shape is
+# already right (`changes(process_start_time_seconds[15m]) > 0`, `for: 2m`) and it failed on 2026-09-15
+# for want of a SOURCE, not a threshold. This read is the source.
+#
+# Why this unit and no other: `KillMode=process` makes every forked child inherit its cgroup for life,
+# so the operator's tmux server and every agent session started through the web terminal are accounted
+# here. It is the one unit in this tree that can host unbounded operator work.
+AGENTBOARD_HOST = "hp"
+AGENTBOARD_UNIT = "zaccess-agentboard.service"
+AGENTBOARD_CHECK = f"agentboard cgroup on {AGENTBOARD_HOST}"
+AGENTBOARD_COMMAND = (
+    "ssh",
+    "-o",
+    "BatchMode=yes",
+    AGENTBOARD_HOST,
+    f"systemctl show {AGENTBOARD_UNIT} -p MemoryMax -p MemoryHigh -p MemoryPeak -p NRestarts",
+)
+
 # One ssh for every value, and every key printed unconditionally: an absent file then reads as an
 # empty VALUE, where a conditional `echo` would leave a missing key indistinguishable from a command
 # that never ran. Read-only by construction -- `systemctl show`, `stat`, `test`, `tr` -- because this
@@ -614,6 +635,44 @@ def ssh_resolve(host: str, operands: list[str]) -> list[str]:
     """
     command = ("ssh", "-o", "BatchMode=yes", host, "readlink", "-f", "--", *operands)
     return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT, check=True).stdout.splitlines()
+
+
+def read_agentboard_cgroup(*, runner) -> Check:
+    """Whether the operator bridge's cgroup is still capped, and whether it has been throttled or
+    restarted since the last read.
+
+    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
+    """
+    try:
+        fields = dict(line.split("=", 1) for line in runner(AGENTBOARD_COMMAND).splitlines() if "=" in line)
+        hard, soft = fields["MemoryMax"], fields["MemoryHigh"]
+        peak, restarts = int(fields["MemoryPeak"]), int(fields["NRestarts"])
+    # Same convention as the upgrade read: an unreachable host, a timeout and a non-zero ssh are
+    # `unreadable`, never a FAIL. A FAIL here says the bridge is uncapped, which a dropped connection
+    # does not show.
+    except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
+        return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=False, value=f"unreadable: {exc}")
+
+    gib = 1024**3
+    faults = []
+    # `infinity` is the literal systemd prints for no limit, and it is the 2026-09-15 state exactly:
+    # a runaway reached 58.4 GiB inside this cgroup and the kernel took a GLOBAL oom-kill.
+    if hard == "infinity":
+        faults.append("MemoryMax=infinity -- the cgroup is UNCAPPED")
+    elif soft != "infinity" and peak >= int(soft):
+        # Reaching MemoryHigh is not a failure of the cap, it is the cap working: the kernel throttled
+        # and reclaimed instead of killing. It is reported because something in there tried.
+        faults.append(f"peak {peak / gib:.1f} GiB reached MemoryHigh {int(soft) / gib:.0f} GiB -- something was throttled")
+    if restarts:
+        faults.append(f"NRestarts={restarts} -- the bridge restarted on its own")
+    value = (
+        f"MemoryMax={'infinity' if hard == 'infinity' else f'{int(hard) / gib:.0f} GiB'}, "
+        f"MemoryHigh={'infinity' if soft == 'infinity' else f'{int(soft) / gib:.0f} GiB'}, "
+        f"peak {peak / gib:.1f} GiB, NRestarts={restarts}"
+    )
+    if faults:
+        value += "; " + "; ".join(faults)
+    return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=not faults, value=value)
 
 
 def read_unattended_upgrades(*, now: datetime, runner) -> Check:
@@ -853,6 +912,7 @@ def main(argv: list[str]) -> int:
         return 2
     verdict = read_verdict(token)
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
+    verdict.append(read_agentboard_cgroup(runner=ssh_read))
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
