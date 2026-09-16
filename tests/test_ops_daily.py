@@ -2225,17 +2225,10 @@ def test_the_staleness_arm_reads_the_stamp_the_upgrade_itself_writes():
 
 
 def test_no_field_the_upgrade_reader_reads_is_dropped_from_the_command():
-    """ONE direction: what the command asks for, against the six names spelt out here. The other half
-    -- a field added to the reader and not to the command -- is not covered, and cannot be by reading
-    the command alone; the reader restates its keys as literals and nothing derives one from the other.
-
-    Dropping one is two different failures, and the quieter one is why the echoed keys are pinned at
-    all. `Result`, `ExecMainStatus`, `ExecMainExitTimestamp` and `StampEpoch` are taken with
-    `fields[...]`, so dropping one raises KeyError, which `_UNREACHABLE` turns into an `unreadable`
-    row. `RebootRequired` and `RebootPkgs` are taken with `fields.get(...)`, so dropping either raises
-    nothing: the pending-reboot narration just vanishes from a row that still reads PASS.
-
-    Spelt out rather than derived from the command, which a drop would carry with it.
+    """Two of the six are pinned for a quieter reason than the other four: the reader takes
+    `RebootRequired` and `RebootPkgs` with `fields.get(...)`, so dropping either raises nothing at all
+    and the row still reads PASS, one flag or one package list poorer. The four it takes with
+    `fields[...]` raise KeyError, which `_UNREACHABLE` turns into an `unreadable` row.
     """
     body = ops_daily.UPGRADE_COMMAND[-1]
     assert " -p Result -p ExecMainStatus -p ExecMainExitTimestamp;" in body, body
