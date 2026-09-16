@@ -589,7 +589,7 @@ class RunState:
 def _probe_strategy_config() -> StrategyConfig:
     """The strategy's whole configuration: the probe's order-id tag, and nothing else.
 
-    `external_order_claims` stays at its `None` default, so this strategy structurally never claims
+    `external_order_instrument_ids` stays at its `None` default, so this strategy structurally never claims
     an order it did not submit.
 
     The tag is set rather than left unset so that even an id this harness did NOT mint carries the

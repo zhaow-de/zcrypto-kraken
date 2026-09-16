@@ -797,15 +797,22 @@ def test_no_strategy_claims_external_orders(tmp_path):
         node.ExternalOrderObserver(lambda event: None),
     )
     for strategy in strategies:
-        assert strategy.config.external_order_claims is None
+        assert strategy.config.external_order_instrument_ids is None
 
 
-# Each banned text mapped to the cli/ paths allowed to carry it and how many times; every entry is
-# allowed nowhere, so the values are empty -- a map rather than a set because an allowance, if one is
-# ever argued for, must be spelled as a path AND a count, so a reviewer sees the widening.
+# Each banned text mapped to the cli/ paths allowed to carry it and how many times; an entry allowed
+# nowhere carries an empty map -- a map rather than a set because an allowance, if one is ever
+# argued for, must be spelled as a path AND a count, so a reviewer sees the widening.
 #
-# `external_order_claims`: a claim routes the account owner's own hand-placed settling fills onto a
-# strategy's OWN order topic and straight into the unknown-order trip.
+# `external_order_instrument_ids`: a claim routes the account owner's own hand-placed settling fills
+# onto a strategy's OWN order topic and straight into the unknown-order trip. The library's field of
+# this name replaced `external_order_claims` under nautilus-trader 2.0.0rc6.dev20260915 -- same
+# default (`None`), same meaning, new spelling; the old name is kept banned below since it is still
+# the literal spec 00098/00100 cite, and a rename this guard did not follow would have gone quiet.
+# `cli/engine/node.py` carries it twice -- `set_external_order_instrument_ids`'s def and its own
+# `_refuse` call -- the library's order-mutating METHOD of the same root name, sealed on the
+# observer exactly like every other one below; the seal's presence is what makes the name safe to
+# carry, and the count is exact so a third occurrence is still red.
 # `msgbus`: nothing under cli/ reaches the raw message bus -- the second order stream is a
 # registered strategy whose events the library routes by identity, so there is no topic to
 # subscribe.
@@ -813,6 +820,7 @@ def test_no_strategy_claims_external_orders(tmp_path):
 # D3) -- submitted orders then freeze at INITIALIZED, no event fires and nothing raises; a separate
 # ban because `"MessageBus".count("msgbus")` is 0.
 _ORDER_STREAM_WIDENERS = {
+    "external_order_instrument_ids": {"cli/engine/node.py": 2},
     "external_order_claims": {},
     "msgbus": {},
     "MessageBus": {},
@@ -820,11 +828,12 @@ _ORDER_STREAM_WIDENERS = {
 
 
 def test_no_module_widens_the_engines_order_event_stream():
-    """No file under cli/ carries any of the widener texts, anywhere: the engine's
+    """No file under cli/ carries a widener text beyond what the map allows it: the engine's
     order-event stream is the strategy's own subscription plus the observer registered under the
-    reserved external identity, and neither needs a bus or a claim to exist. A red run is a widening
-    to remove, never an allowance to add. Text, not imports -- a reference in a comment is one a
-    refactor can activate."""
+    reserved external identity, and neither needs a bus or a claim to exist. Default to reading a
+    red run as a widening to remove; an allowance is argued for, not reached for, and the map holds
+    exactly one -- `cli/engine/node.py` twice, the sealed method's own def and the name it refuses.
+    Text, not imports -- a reference in a comment is one a refactor can activate."""
     offenders = []
     files = sorted(Path("cli").rglob("*.py"))
     assert len(files) > 100, f"the walk found only {len(files)} files -- vacuous"

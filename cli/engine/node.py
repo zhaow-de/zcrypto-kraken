@@ -401,6 +401,9 @@ class ExternalOrderObserver(Strategy):
     def post_market_exit(self, *args, **kwargs) -> None:
         self._refuse("post_market_exit")
 
+    def set_external_order_instrument_ids(self, *args, **kwargs) -> None:
+        self._refuse("set_external_order_instrument_ids")
+
 
 def _logging_config() -> LoggerConfig:
     """Stdout at INFO, stated explicitly: it is the engine's only log sink and docker collects it."""

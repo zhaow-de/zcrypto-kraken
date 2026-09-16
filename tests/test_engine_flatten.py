@@ -404,8 +404,7 @@ def test_a_flat_row_is_not_a_leg():
 def test_an_unrecognised_position_side_is_named_and_never_read_as_flat_or_aborted_on():
     """Neither failure: reading an unrecognised side as 'nothing to do' would call an open position
     flat, and raising on it would abort the sweep before the cancel and cost every other leg -- so
-    the row is named (`NO_POSITION_SIDE` is a member the installed `PositionSide` carries) and the
-    rest of the account is still flattened."""
+    the row is named and the rest of the account is still flattened."""
     legs, unclosable = flatten.margin_legs(
         [
             flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "NO_POSITION_SIDE", 1.0),
@@ -1663,7 +1662,7 @@ def test_a_missing_field_on_a_pre_write_read_exits_three_and_the_cancel_never_go
 
 
 def test_an_unrecognised_position_side_never_aborts_the_button_and_exits_two(tmp_path):
-    """The row the venue answers with a side this build knows (`NO_POSITION_SIDE`) and this command
+    """The row the venue answers with a side this build does not enumerate and this command
     cannot close from. Aborting would leave the resting orders resting, every balance held and the
     engine already stopped; reading it as flat would exit 0 over an open position. So: the cancel
     goes out, every other leg is sent, the row is named in the record, and the account reads 2."""
@@ -2325,11 +2324,17 @@ def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_a
     loop shows the answer is a `Future` and not the value -- treated as the value it would be
     journalled, counted and judged as the account's state. Only the read-only public listing call;
     nothing that moves money is ever driven against the live venue from a test.
+
+    The client here carries NO credentials, unlike `_real_client()`'s dummy pair: the adapter signs
+    `request_instruments` whenever a credential is present, so only an uncredentialed client takes
+    the public path this test means to exercise.
     """
     import inspect
 
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
     async def _probe():
-        answer = _real_client().request_instruments()
+        answer = KrakenSpotHttpClient().request_instruments()
         assert inspect.isawaitable(answer), f"request_instruments answered {type(answer).__name__}, not an awaitable"
         return await answer
 

@@ -116,7 +116,7 @@ PY
 
    1. **Measure it.** With the engine **disarmed**, read the counter immediately before and immediately after one clean engine start and record the difference — that difference is the healthy-boot baseline. From the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total{host="zcrypto"}'`. `(no series)` is a FAIL of the telemetry path, never a zero (no count command: `infra/scripts/grafana-query.py` prints `(no series)` for an empty result, not a zero). Write the number into this version's `docs/reference/adapter-verification/<version>.md` record, beside the probe table, where the next reader of that version will look for it.
 
-      **For `2.0.0rc4.dev20260825` this is TAKEN: the baseline is 0** — read from the metric's own history rather than from a live pair, a counter resetting on restart being why what decides the question is the new process's value once startup reconciliation has run; the reading is in that version's record. The step stays written in before/after form because that is the cheaper procedure at a window you are already holding open; either route answers it.
+      **The baseline belongs to the version, and does not carry across a bump.** It is a property of a process running that wheel, so a reading taken on one version says nothing about the next: look for it in the record of the version you are arming, and take it if it is not there — `2.0.0rc4.dev20260825`'s reading of 0 is in that version's record. The step stays written in before/after form because that is the cheaper procedure at a window you are already holding open; either route answers it.
 
       **What that 0 does NOT cover, and what to do about it here rather than anywhere else:** it was measured on a FLAT account — no open orders, no positions. That is every boot before rung 1 and none after it. **The first disarmed boot that carries live orders or positions is a reading to take**, because startup reconciliation then has something to reconcile and may count it; take it the same way, and write it beside the 0 in that version's record. Until it exists, no threshold may assume a boot on a live account behaves like this one.
 
@@ -530,8 +530,6 @@ sudo zcrypto-flatten
 ```
 
 4. **Record it**, in the shape drill G's extra reading uses: discharged into `docs/reference/adapter-verification/<the running version>.md` beside that version's probe table, as a row proving the five read shapes against the real venue. When a margin position is present, record what the positions read returned **against a position known to be there** — that is the first time this read has been exercised with something to find, and a position seen is the whole proof. Record the venue's own handling of the client order ids in the same row: the ids the minter sends are longer than any this repository has measured the venue accepting (no count command: `docs/open-topics/T0163-client-order-id-length-unmeasured.md` holds the lengths), and none has ever been read back from the venue, so quote each id verbatim, both as the minter sent it and as Kraken's own order pages show it — the resting leg's id under Open Orders, the two market legs' under Closed Orders, since those are IOC and are gone before the run ends — and note whether each was accepted, refused, or came back shortened.
-
-That row is the operand the nautilus-bump topic's ripeness evaluates<!-- T0160, its bump sub-item --> — it is the operand that completes that trigger, so it is live, not a stale record to tidy away.
 
 ### Retire when
 

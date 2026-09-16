@@ -319,3 +319,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #511 | 2026-09-13 | fix(engine): T0194 — every journal reader validates per caller | — | — | T0194 |
 | #512 | 2026-09-13 | chore(counts): the five non-zero counts, resolved or narrowed | — | — | T0178, T0183 |
 | #514 | 2026-09-13 | fix(engine): T0193 — the five exits of one broken-input class | — | — | T0193 |
+| #542 | 2026-09-16 | fix(engine): nautilus-trader 2.0.0rc6.dev20260915, armed and verified | — | — | T0160 |

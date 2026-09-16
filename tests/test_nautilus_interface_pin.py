@@ -96,16 +96,63 @@ def test_the_pin_covers_every_nautilus_name_cli_imports():
     assert sorted(modules_imported - pinned_modules) == [], "module imported under cli/ and not pinned"
 
 
-# Name -> integer, for every enum whose VALUE we persist into a durable record or compare across a
-# restart. A rename is loud; a silent value change corrupts stored rows, so both halves are pinned.
+# Name -> integer for every enum whose VALUE a stored row depends on, and for any whose MEMBER SET a
+# live decision depends on. The two are not the same criterion and the map holds both: a value that
+# changes corrupts every persisted row carrying the old one, while a member that empties to bare
+# `None` changes what a read returns with nothing renamed and nothing to break at import. Which of
+# the two an entry is here for is not uniform -- `PositionSide` is the member-set case and says so.
+# The map is a SUBSET of most of these enums, so the parametrised test below checks only that what
+# is listed still resolves and still carries its integer.
+# `OrderSide` carries no `NO_ORDER_SIDE` entry: the name resolves to bare `None` rather than an enum
+# member -- "no side" is `Option`-shaped throughout the library now -- and nothing under cli/ has
+# ever persisted its value, so the entry was dropped rather than widened to accept `None`, which
+# `int()` cannot pin. `LiquiditySide.NO_LIQUIDITY_SIDE` IS persisted (tracking.py, executor.py) and
+# stays pinned below.
 PINNED_ENUM_VALUES = {
     "LiquiditySide": {"NO_LIQUIDITY_SIDE": 0, "MAKER": 1, "TAKER": 2},
-    "OrderSide": {"NO_ORDER_SIDE": 0, "BUY": 1, "SELL": 2},
+    "OrderSide": {"BUY": 1, "SELL": 2},
     "TimeInForce": {"GTC": 1, "IOC": 2, "FOK": 3, "GTD": 4},
     "AccountType": {"CASH": 1, "MARGIN": 2, "BETTING": 3},
+    # Not a persisted value: `cli/engine/flatten.py` reads a row's side as `str(position_side)` and
+    # `_required` turns a `None` there into exit 3, so `FLAT` has to stay a real member -- the
+    # Option-shaped redesign above reached `NO_POSITION_SIDE` and could reach `FLAT` next.
+    # `test_a_position_report_refuses_a_none_side` below pins the other half.
+    "PositionSide": {"FLAT": 1, "LONG": 2, "SHORT": 3},
     # Exactly the members cli/engine references. Generated from the installed wheel, never typed.
     "OrderStatus": {"CANCELED": 8, "DENIED": 2, "EXPIRED": 9, "FILLED": 14, "REJECTED": 7, "VOIDED": 15},
 }
+
+
+# Entries whose real member set must EQUAL the pinned one. `PositionSide` is the only one that needs
+# it HERE: a new variant is acted on by a live read, and the assertion below says what that costs.
+# `LiquiditySide` is acted on too -- `cli/engine/tracking.py` raises on a name outside its three --
+# but its member set is already walked from `LiquiditySide.variants()` by tests/test_engine_executor.py
+# and tests/test_engine_metrics.py, so an added variant is red there and a second guard here would
+# only move where it is caught.
+EXHAUSTIVE_MEMBERS = {"PositionSide"}
+
+
+def test_the_exhaustive_member_walk_is_not_vacuous():
+    """Parametrising over an empty set collects one SKIP and summarises green, so pruning the literal
+    below to `set()` would take the only member-set guard out of the suite with no red run -- while
+    `docs/open-topics/T0159-engine-flatten-the-red-button.md` still leans on it in prose."""
+    assert EXHAUSTIVE_MEMBERS, "EXHAUSTIVE_MEMBERS is empty -- the walk below would skip, not fail"
+
+
+@pytest.mark.parametrize("enum_name", sorted(EXHAUSTIVE_MEMBERS))
+def test_an_exhaustive_enums_real_member_set_is_the_pinned_one(enum_name):
+    """The half the value pin cannot see: it walks the names the map lists, so a member ADDED
+    upstream is simply absent from the walk and every assertion still passes."""
+    import nautilus_trader.model as nt_enums
+
+    enum_cls = getattr(nt_enums, enum_name)
+    real = {name for name in dir(enum_cls) if name.isupper() and getattr(enum_cls, name, None) is not None}
+    assert real == set(PINNED_ENUM_VALUES[enum_name]), (
+        f"{enum_name}'s real member set is {sorted(real)} against the pinned "
+        f"{sorted(PINNED_ENUM_VALUES[enum_name])}. A new variant reaches cli/engine/flatten.py as a "
+        f"side it cannot close from: the row is filed unclosable and the press exits 2 with the "
+        f"position still open. Decide what the member means before pinning it"
+    )
 
 
 @pytest.mark.parametrize("enum_name", sorted(PINNED_ENUM_VALUES))
@@ -115,7 +162,12 @@ def test_enum_member_names_and_integer_values_are_unchanged(enum_name):
     enum_cls = getattr(nt_enums, enum_name)
     for member_name, expected in PINNED_ENUM_VALUES[enum_name].items():
         member = getattr(enum_cls, member_name, None)
-        assert member is not None, f"{enum_name}.{member_name} is gone -- stored rows reference it"
+        assert member is not None, (
+            f"{enum_name}.{member_name} is gone, or has emptied to bare `None` as the library's "
+            f"Option-shaped redesign did to the NO_* members. Why that matters is per entry, and "
+            f"the map says which: a persisted VALUE no stored row can still mean, or a MEMBER a "
+            f"live read depends on -- for PositionSide, cli/engine/flatten.py's exit-3 abort"
+        )
         assert int(member) == expected, (
             f"{enum_name}.{member_name} changed from {expected} to {int(member)} -- every persisted "
             f"row carrying the old value now means something else"
@@ -144,6 +196,94 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "unclaimed external orders would stop materialising -- the external-order stream, the "
         "adopted-row sweep and the unmatched counter all go dark at once"
     )
+    assert config.generate_missing_orders is True, (
+        "this one is INHERITED rather than stated, and it gates the synthetic adjustment that "
+        "aligns the Cache's startup position with the venue -- the position cli/engine/venuestate.py "
+        "freezes into the VenueState the cycle sizes off. False would let the two disagree silently"
+    )
+    assert config.filter_position_reports is False, (
+        "also inherited. True makes the library's reconciliation skip reconcile_position_report "
+        "entirely, so startup creates NO position from the venue's own position reports and the "
+        "Cache the VenueState is frozen from reads empty against an open position. Upstream "
+        "documents the flag for accounts several nodes trade -- which is this account's shape, so "
+        "it is a plausible thing for someone to reach for rather than a theoretical flip"
+    )
+    assert config.allow_overfills is False, (
+        "also inherited, and cli/engine/executor.py names it in the paragraph bounding what covers "
+        "a fill that did not happen: upstream's check_overfill, with this False, refuses an "
+        "application past the order's own quantity. True removes one of the three bounds that "
+        "paragraph and specs 00098 and 00100 rest on"
+    )
+
+
+# Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
+# `cli/engine/node.py` states five of these and inherits the other thirty-two, so a default that
+# moves upstream moves production here silently, with no import to break and no rename to notice.
+# The three that carry a reasoned assertion below say WHY they matter; this map says only what a
+# wheel reported, which is the one claim it can make honestly about fields whose behaviour nothing
+# in this repo has established.
+EXEC_ENGINE_DEFAULTS = {
+    "allow_overfills": False,
+    "debug": False,
+    "external_clients": None,
+    "filter_position_reports": False,
+    "filter_unclaimed_external_orders": False,
+    "filtered_client_order_ids": None,
+    "generate_missing_orders": True,
+    "inflight_check_interval_ms": 2000,
+    "inflight_check_retries": 5,
+    "inflight_check_threshold_ms": 5000,
+    "load_cache": True,
+    "manage_own_order_books": False,
+    "max_single_order_queries_per_cycle": 10,
+    "open_check_interval_secs": None,
+    "open_check_lookback_mins": 60,
+    "open_check_missing_retries": 5,
+    "open_check_open_only": True,
+    "open_check_threshold_ms": 5000,
+    "own_books_audit_interval_secs": None,
+    "position_check_interval_secs": None,
+    "position_check_lookback_mins": 60,
+    "position_check_retries": 3,
+    "position_check_threshold_ms": 5000,
+    "purge_account_events_interval_mins": None,
+    "purge_account_events_lookback_mins": None,
+    "purge_closed_orders_buffer_mins": None,
+    "purge_closed_orders_interval_mins": None,
+    "purge_closed_positions_buffer_mins": None,
+    "purge_closed_positions_interval_mins": None,
+    "reconciliation": True,
+    "reconciliation_instrument_ids": None,
+    "reconciliation_lookback_mins": None,
+    "reconciliation_startup_delay_secs": 10.0,
+    "single_order_query_delay_ms": 100,
+    "snapshot_orders": False,
+    "snapshot_positions": False,
+    "snapshot_positions_interval_secs": None,
+}
+
+
+def test_every_exec_engine_default_is_the_one_we_measured():
+    """The tripwire over the whole config, in both directions. A value that moved is the obvious
+    half. A field that APPEARED is the other: a knob upstream adds is a behaviour someone chose a
+    default for on our behalf, and the bump that adds it is the only cheap moment to read it."""
+    from nautilus_trader.config import LiveExecutionEngineConfig
+
+    config = LiveExecutionEngineConfig()
+    # No `callable` filter: this config's public attributes are all plain values, and filtering on
+    # callability would silently drop a NEW field defaulting to a factory or a type -- exactly the
+    # shape the field-set arm below exists to catch.
+    live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
+    assert set(live) == set(EXEC_ENGINE_DEFAULTS), (
+        "the exec engine's FIELD SET moved -- added "
+        f"{sorted(set(live) - set(EXEC_ENGINE_DEFAULTS))}, removed "
+        f"{sorted(set(EXEC_ENGINE_DEFAULTS) - set(live))}. Read what the new one does before "
+        "re-measuring this map: an inherited default is production behaviour nobody chose here"
+    )
+    moved = {
+        name: (EXEC_ENGINE_DEFAULTS[name], live[name]) for name in EXEC_ENGINE_DEFAULTS if live[name] != EXEC_ENGINE_DEFAULTS[name]
+    }
+    assert moved == {}, f"exec engine defaults moved (was, now): {moved}"
 
 
 def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
@@ -156,6 +296,21 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     assert config.inflight_check_interval_ms == 2000
     assert config.inflight_check_threshold_ms == 5000
     assert config.inflight_check_retries == 5
+
+
+def test_a_position_report_refuses_a_none_side():
+    """The other half of `PositionSide`'s pin, and the half an enum-value map cannot state: the red
+    button's abort path stays unreachable only while the library refuses to BUILD a report carrying
+    no side. Let a future wheel accept `None` there and `cli/engine/flatten.py`'s `_required` raises
+    on it -- `run_flatten` exits 3, refusing to flatten an account, rather than naming the row and
+    flattening the rest."""
+    from nautilus_trader.model import AccountId, InstrumentId, PositionSide, PositionStatusReport, Quantity
+
+    head = (AccountId("KRAKEN-901"), InstrumentId.from_str("BTC/EUR.KRAKEN"))
+    tail = (Quantity.from_str("0"), 0, 0)
+    assert str(PositionStatusReport(*head, PositionSide.FLAT, *tail).position_side) == "FLAT"
+    with pytest.raises(TypeError):
+        PositionStatusReport(*head, None, *tail)
 
 
 def test_every_order_event_the_executor_routes_on_carries_the_reconciliation_flag():
