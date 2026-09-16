@@ -34,7 +34,14 @@ docker_apt_distribution access_ops_agentboard_live"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 
-in_set() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
+# A needle carrying whitespace is never ONE member, whatever the haystack contains: `--limit
+# "zcrypto zcrypto-red"` is a substring of HOSTS and two hosts to ansible, which restarts both
+# capture daemons in a pass `--limit capture_host` is refused for.
+in_set() {
+  case "$1" in *[[:space:]]*) return 1 ;; esac
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
 
 refuse() {
   echo "converge.sh: $1" >&2
@@ -85,6 +92,7 @@ case "$want" in
 esac
 
 [ -n "$LIMIT" ] || refuse "--limit is required"
+case "$LIMIT" in *[[:space:]]*) refuse "--limit names one host, and this is a list: $LIMIT" ;; esac
 in_set "$LIMIT" "$HOSTS" || refuse "unknown host: $LIMIT"
 [ "$SAW_TAGS" -eq 0 ] || [ "$SAW_SKIP" -eq 0 ] || refuse "--tags and --skip-tags together"
 [ "$SAW_TAGS" -eq 0 ] || [ -n "$TAGS" ] || refuse "--tags with an empty value"

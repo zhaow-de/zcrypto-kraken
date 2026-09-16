@@ -412,6 +412,11 @@ OUTSIDE = [
     (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", "--tags and --skip-tags together"),
     (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any other value", ""),
     (["--limit", "capture_host"], "an inventory group where a host belongs", ""),
+    # A host pair is a substring of the host set and two hosts to ansible, which restarts both
+    # capture daemons in the one pass `fleet-deploys.md` forbids.
+    (["--limit", "zcrypto zcrypto-red"], "two hosts in one --limit", "names one host"),
+    (["--limit", "nas zaccess"], "two hosts that are adjacent in the set", "names one host"),
+    (["--limit", "zcrypto", "--tags", "capture engine"], "two tags with no comma", "carries no spaces"),
     (["--limit", "zcrypt"], "a mistyped host", ""),
     (["--limit", "zcrypto", "--tags", "fail2ban"], "a role tag this fleet has never converged", "unknown tag"),
     (["-e", "ansible_user=root"], "a variable ansible reads but no converge here has passed", "not in this script's key set"),
