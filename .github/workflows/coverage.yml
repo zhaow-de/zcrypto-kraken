@@ -18,11 +18,25 @@ jobs:
     # Named for what it gates -- the whole suite; the coverage upload is a by-product.
     name: Full test suite
     runs-on: ubuntu-latest
+    # The suite reads; nothing here writes. `actions/checkout` persists this token in .git/config
+    # for every later step, so bounding it is worth the line whatever the repository default is.
+    permissions:
+      contents: read
     steps:
+      # The whole history, not the tip: at fetch-depth 1 the clone is shallow, and
+      # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` reads the
+      # first-parent merges of `develop` — a rowless merge already there is what it catches, and
+      # it cannot see one at all in a depth-1 clone.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.14"
+      # The branch under the name the tooling reads: a pull_request checkout is detached at the
+      # merge ref with only `origin/develop`, and `count-list.sh` refuses a checkout with no local
+      # `develop`, which left nine of `tests/test_count_list.py`'s cases skipping here.
+      - run: git branch --force develop origin/develop
       - run: uv sync
       - run: uv run coverage run -m pytest
       - run: uv run coverage lcov -o coverage.lcov

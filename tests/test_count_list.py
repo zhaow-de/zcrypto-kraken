@@ -40,6 +40,25 @@ def _corpus_entries() -> set[str]:
     return {name for path in CORPUS for name in _CORPUS_ENTRY.findall(path.read_text())}
 
 
+def test_this_checkout_carries_what_the_counts_measure_from():
+    """The STATE the guards need, asked of the checkout rather than read off a workflow file.
+
+    Reading `.github/workflows/coverage.yml` can only see that a step is written: `|| true`, an
+    `echo` prefix, a commented-out command in a block `run:` or a later shallow re-checkout all
+    leave such a case green while the state never arrives. This asks the one question instead — and
+    a `pull_request` checkout is detached at the merge ref with `origin/develop` alone, so both
+    halves are things CI has to be told to provide.
+    """
+    shallow = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "--is-shallow-repository"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert shallow == "false", "a shallow clone: `git fetch --unshallow`, or `fetch-depth: 0` in CI"
+    assert _develop_resolves(), (
+        "no local `develop`: `git branch --force develop origin/develop`, which is what CI runs "
+        "after its checkout — `count-list.sh` refuses without it and the nine gates below skip"
+    )
+
+
 def _develop_resolves() -> bool:
     done = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", "develop"], capture_output=True)
     return done.returncode == 0
@@ -473,14 +492,38 @@ def test_a_named_entry_runs_alone_and_an_unknown_name_is_refused():
 
 
 @pytest.mark.skipif(not _develop_resolves(), reason="five counts read the develop ref by name, and this checkout has none")
-def test_the_script_prints_one_shaped_line_per_entry():
-    """Run against a recorded feed, so the maintenance count reaches no venue from a test."""
+def test_the_script_prints_one_shaped_line_per_entry(tmp_path):
+    """Run against recorded inputs, so the whole list reaches no venue and no API from a test.
+
+    `Full test suite` is a required check, so a count that calls github.com here would hand the API
+    a veto over every merge — the shape this job's own comment refuses for coveralls. The PR
+    snapshot is the arm `count-list.sh` already carries for that; one row older than the window
+    keeps the saturation check satisfied.
+    """
+    prs = tmp_path / "prs.json"
+    prs.write_text(
+        json.dumps(
+            [
+                {
+                    "headRefName": "feat/old",
+                    "mergedAt": "2026-01-01T00:00:00Z",
+                    "headRefOid": "0" * 40,
+                    "files": [],
+                    "body": "## Summary\n",
+                }
+            ]
+        )
+    )
     done = subprocess.run(
         ["bash", str(SCRIPT)],
         cwd=REPO,
         capture_output=True,
         text=True,
-        env={**os.environ, "COUNT_LIST_FEED_SNAPSHOT": str(FEED)},
+        env={
+            **os.environ,
+            "COUNT_LIST_FEED_SNAPSHOT": str(FEED),
+            "COUNT_LIST_PRS_SNAPSHOT": str(prs),
+        },
         timeout=1800,
     )
     assert done.returncode == 0, done.stdout + done.stderr

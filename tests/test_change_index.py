@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -100,6 +101,33 @@ def test_pr_numbers_are_unique_and_ascending() -> None:
     )
 
 
+def _unmeasurable(why: str) -> NoReturn:
+    """A corpus this guard cannot read fails, everywhere, and never skips.
+
+    A skip is indistinguishable from a pass in a summary line, so a checkout that cannot answer
+    must say so out loud; `coverage.yml` asks for the whole history precisely so this never fires
+    in CI. Deciding it on an environment name instead would put a second opt-in key behind a skip,
+    which `tests/test_live_venue_opt_in.py` exists to refuse.
+    """
+    pytest.fail(
+        f"{why} — this guard needs the whole first-parent history: `git fetch --unshallow` "
+        "in a shallow clone, or `git fetch origin develop` where the ref is missing"
+    )
+
+
+def test_an_unmeasurable_corpus_fails_rather_than_skips() -> None:
+    """`_unmeasurable` fails and never skips, in any environment."""
+    # Caught by hand, never `pytest.raises`: a `Skipped` raised inside it is not caught, so it
+    # would propagate and SKIP this case — green while driving nothing.
+    try:
+        _unmeasurable("driven")
+    except pytest.fail.Exception:
+        return
+    except BaseException as exc:  # noqa: BLE001 -- a Skipped here must not skip this case
+        raise AssertionError(f"raised {type(exc).__name__}, wanted Failed") from exc
+    raise AssertionError("returned instead of failing")
+
+
 def test_every_keyed_merge_on_develop_has_a_row() -> None:
     """Every first-parent merge whose branch name carries a key is a row in the index."""
     shallow = subprocess.run(
@@ -109,7 +137,7 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         check=True,
     ).stdout.strip()
     if shallow == "true":
-        pytest.skip("shallow clone: develop's merge history is absent here, so completeness is unmeasurable")
+        _unmeasurable("shallow clone: develop's merge history is absent here")
     ref = next(
         (
             candidate
@@ -119,7 +147,7 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         None,
     )
     if ref is None:
-        pytest.skip("no develop ref in this checkout, so completeness is unmeasurable")
+        _unmeasurable("no develop ref in this checkout")
     subjects = subprocess.run(
         ["git", "-C", str(REPO), "log", "--merges", "--first-parent", "--format=%s", ref],
         capture_output=True,
