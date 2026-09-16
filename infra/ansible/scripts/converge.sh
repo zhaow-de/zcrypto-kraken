@@ -1,49 +1,107 @@
 #!/usr/bin/env bash
 # The documented converge path (traceability: spec 00083 D1): preview first, typed-limit confirm,
 # then the real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
-# Usage: converge.sh <playbook.yml> --limit <target> [more ansible args...]
-# rc 2 usage | rc 3 confirm-abort / no tty | rc 4 preview failed | rc 5 argv ansible refuses
-# | else the real pass's own exit.
+# Usage: converge.sh <playbook.yml> --limit <host> [--tags <list> | --skip-tags engine] [--check]
+#        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...
+# rc 2 usage, or an argument outside that grammar | rc 3 confirm-abort / no tty
+# | rc 4 preview failed | else the real pass's own exit.
 set -euo pipefail
 SD="$(cd "$(dirname "$0")" && pwd)"
 
-usage() {
-  echo "converge.sh requires a playbook and --limit — a bare site.yml still runs every play." >&2
-  echo "usage: converge.sh <playbook.yml> --limit <host> [more ansible args...]" >&2
+# A WHITELIST, not a parser. This fleet's converges are enumerable -- one image into four cases
+# across the hosts below -- and every argument outside the grammar is refused before the preview,
+# so no spelling can reach a host recorded as something it is not. The sets are what the tree
+# publishes and what `deploy-log.jsonl` records; a new variable or host is added HERE, and until it
+# is, passing it refuses loudly instead of converging while ansible ignores it.
+HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess"
+TAGNAMES="capture engine ops nas access"
+EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
+ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
+liquidations_decision nas_apply_compose daemon_json_ack rebootstrap"
+# A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
+OVERRIDES="canary_override pins_override engine_window_override arming_override"
+
+in_set() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
+
+refuse() {
+  echo "converge.sh: $1" >&2
+  echo "usage: converge.sh <playbook.yml> --limit <host> [--tags <list> | --skip-tags engine]" >&2
+  echo "                  [--check] [-e KEY=VALUE | -e '{\"KEY\": \"<reason>\"}'] ..." >&2
+  echo "hosts: $HOSTS" >&2
+  echo "tags:  $TAGNAMES" >&2
   exit 2
 }
 
-[ "$#" -ge 1 ] || usage
+[ "$#" -ge 1 ] || refuse "no playbook — a bare site.yml still runs every play"
 PLAYBOOK="$1"; shift
-case "$PLAYBOOK" in --*) usage ;; esac
+case "$PLAYBOOK" in site.yml | bootstrap.yml) : ;; *) refuse "unknown playbook: $PLAYBOOK" ;; esac
 
-# ANSIBLE parses this argv, never a pattern here: `--limit`/`-l`, `--tags`/`-t`, `--check`/`-C` and
-# `-e` each have spellings, abbreviations and clusters a `case` arm cannot reproduce, and every one
-# it gets wrong either books a row for a pass that converged nothing or names the wrong host in it.
-# Both streams to files: ansible refuses to start on a non-blocking stdout.
-PYBIN="${ZCRYPTO_PYTHON:-$SD/../../../.venv/bin/python}"
-if [ ! -x "$PYBIN" ]; then
-  echo "converge.sh: no project interpreter at $PYBIN — run uv sync, or set ZCRYPTO_PYTHON" >&2
-  exit 5
-fi
-CLI_OUT="$(mktemp)"; CLI_ERR="$(mktemp)"
-trap 'rm -f "$CLI_OUT" "$CLI_ERR"' EXIT
-if ! "$PYBIN" "$SD/parse-argv.py" "$PLAYBOOK" "$@" > "$CLI_OUT" 2> "$CLI_ERR"; then
-  echo "converge.sh: ansible refuses this argv — nothing ran:" >&2
-  cat "$CLI_ERR" >&2
-  exit 5
-fi
-LIMIT=""; CHECK_ONLY=0; TAGS=""; EV=""; ARGV=""
-while IFS=$'\t' read -r key value; do
-  case "$key" in
-    ARGV) ARGV="$value" ;;
-    LIMIT) LIMIT="$value" ;;
-    CHECK) if [ "$value" = "1" ]; then CHECK_ONLY=1; fi ;;
-    TAGS) TAGS="$value" ;;
-    EXTRA) EV="$value" ;;
+LIMIT=""; TAGS=""; SKIP=""; CHECK_ONLY=0; EV=""; want=""
+for a in "$@"; do
+  if [ -n "$want" ]; then
+    case "$want" in
+      limit) LIMIT="$a" ;;
+      tags) TAGS="$a" ;;
+      skip) SKIP="$a" ;;
+      ev) EV="$EV$a"$'\x1e' ;;   # RS, never a newline: a JSON reason may carry one
+    esac
+    want=""
+    continue
+  fi
+  case "$a" in
+    --limit) [ -z "$LIMIT" ] || refuse "--limit twice"; want=limit ;;
+    --limit=*) [ -z "$LIMIT" ] || refuse "--limit twice"; LIMIT="${a#--limit=}" ;;
+    --tags) [ -z "$TAGS" ] || refuse "--tags twice"; want=tags ;;
+    --skip-tags) [ -z "$SKIP" ] || refuse "--skip-tags twice"; want=skip ;;
+    --check) CHECK_ONLY=1 ;;
+    -e) want=ev ;;
+    *) refuse "outside the grammar: $a" ;;
   esac
-done < "$CLI_OUT"
-[ -n "$LIMIT" ] || usage
+done
+[ -z "$want" ] || refuse "--$want with no value"
+
+[ -n "$LIMIT" ] || refuse "--limit is required"
+in_set "$LIMIT" "$HOSTS" || refuse "unknown host: $LIMIT"
+[ -z "$TAGS" ] || [ -z "$SKIP" ] || refuse "--tags and --skip-tags together"
+[ -z "$SKIP" ] || [ "$SKIP" = "engine" ] || refuse "--skip-tags takes only engine, not $SKIP"
+if [ -n "$TAGS" ]; then
+  OLDIFS="$IFS"; IFS=,
+  for t in $TAGS; do
+    IFS="$OLDIFS"
+    in_set "$t" "$TAGNAMES" || refuse "unknown tag: $t"
+    IFS=,
+  done
+  IFS="$OLDIFS"
+fi
+# Each operand, before the preview: the only two forms the fleet uses, checked where the operator is
+# still standing at the terminal rather than in a row read weeks later.
+OLDIFS="$IFS"; IFS=$'\x1e'
+for op in $EV; do
+  IFS="$OLDIFS"
+  case "$op" in
+    '{'*)
+      python3 - "$op" "$OVERRIDES" <<'PYCHK' || refuse "not a one-line override operand: $op"
+import json, sys
+operand, names = sys.argv[1], sys.argv[2].split()
+parsed = json.loads(operand)
+assert isinstance(parsed, dict) and len(parsed) == 1, "exactly one key"
+(key, value), = parsed.items()
+assert key in names, f"{key} is not an override name"
+assert isinstance(value, str) and len(value) > 8, "the reason is prose, longer than 8 characters"
+assert value.strip().lower() not in ("true", "false", "yes", "no", "1", "0"), "a reason, not a boolean"
+PYCHK
+      ;;
+    *=*)
+      key="${op%%=*}"
+      in_set "$key" "$EVKEYS" || refuse "no role reads $key — ansible would accept it and converge nothing"
+      [ -n "${op#*=}" ] || refuse "empty value: $op"
+      case "$op" in *[[:space:]]*) refuse "an operand carries whitespace; pass a reason as JSON: $op" ;; esac
+      ;;
+    *) refuse "an -e operand is KEY=VALUE or one-line JSON: $op" ;;
+  esac
+  IFS=$'\x1e'
+done
+IFS="$OLDIFS"
 
 echo "== preview: --check --diff =="
 "$SD/run.sh" "$PLAYBOOK" --check --diff "$@" || {
@@ -100,13 +158,21 @@ fi
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
-python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" "$ARGV" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" -- "$PLAYBOOK" "$@" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
 import json, pathlib, sys, datetime as dt
-log, playbook, limit, tags, rev, dirty, rc, ev, adir, argv = sys.argv[1:11]
-# Both come from `parse-argv.py`, i.e. from ansible's own parser: this script no longer has an
-# opinion about argv. A field it cannot read is a bug there, not a dialect to add here.
-extra = json.loads(ev) if ev else {}
-argv_words = json.loads(argv) if argv else []
+log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
+argv_words = sys.argv[sys.argv.index("--", 1) + 1 :]
+# Every operand was checked against the grammar BEFORE the pass, so there is nothing to fail on and
+# nothing to guess: the two accepted forms are one-line JSON and a single `KEY=VALUE`.
+extra = {}
+for operand in ev.split("\x1e"):
+    if not operand:
+        continue
+    if operand[:1] == "{":
+        extra.update(json.loads(operand))
+    else:
+        key, value = operand.split("=", 1)
+        extra[key] = value
 # The pins this converge deployed that no `-e` carries. Read from the PLAINTEXT vars.yml with a
 # regex, never `ansible-inventory --host`, which decrypts the vault and prints every secret
 # (CLAUDE.md). The value must be bare -- unquoted, no trailing YAML comment -- or the regex silently
