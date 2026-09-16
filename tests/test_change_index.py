@@ -109,14 +109,9 @@ def _refuse_or_skip(why: str) -> None:
 
 
 def test_an_unmeasurable_corpus_fails_in_ci_and_skips_by_hand(monkeypatch) -> None:
-    """The guard below is the one CI runs at the moment a PR that owes a row is judged.
-
-    Driven against a real shallow clone: without `GITHUB_ACTIONS` it skips, with it set it fails.
-    A skip reads as a pass in a summary line, which is how #508 merged rowless on 2026-09-13.
-    """
+    """The two outcomes of `_refuse_or_skip`, so the CI arm cannot quietly stop refusing."""
     # Caught by hand, never `pytest.raises`: a `Skipped` raised inside it is not caught, so it
-    # propagates and SKIPS this case — the arm would read green while doing nothing, which is the
-    # failure mode this whole guard exists to name.
+    # would propagate and SKIP this case — green while driving nothing.
     for env, want in (("true", pytest.fail.Exception), (None, pytest.skip.Exception)):
         if env is None:
             monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
@@ -140,9 +135,6 @@ def test_every_keyed_merge_on_develop_has_a_row() -> None:
         check=True,
     ).stdout.strip()
     if shallow == "true":
-        # A skip is indistinguishable from a pass in a summary line, and this is the guard CI runs
-        # at the moment a PR that owes a row is judged. So it is a skip in a hand clone and a
-        # FAILURE in CI, where `coverage.yml` asks for the whole history on purpose.
         _refuse_or_skip("shallow clone: develop's merge history is absent here")
     ref = next(
         (

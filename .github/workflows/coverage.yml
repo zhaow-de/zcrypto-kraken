@@ -21,8 +21,7 @@ jobs:
     steps:
       # The whole history, not the tip: at fetch-depth 1 the clone is shallow and
       # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` takes its
-      # shallow skip on every PR — the run that judges whether this PR owes an index row. That
-      # skip is what let #508 merge rowless and turn `develop` red on 2026-09-13.
+      # shallow skip on the very run that judges whether this PR owes an index row.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
