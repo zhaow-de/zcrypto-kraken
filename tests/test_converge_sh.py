@@ -370,57 +370,67 @@ def test_the_json_override_operand_is_recorded_whole(tmp_path):
 OUTSIDE = [
     # The five wide reads of this branch each found one of these mis-parsed. None appears in any
     # invocation the tree publishes or the log records, so the grammar refuses rather than guesses.
-    (["-C"], "check-mode alias"),
-    (["-vC"], "check-mode cluster"),
-    (["-Cf5"], "check-mode cluster with an attached value"),
-    (["--che"], "an abbreviation argparse honours"),
-    (["-l", "zcrypto"], "the short limit"),
-    (["-t", "engine"], "the short tags"),
-    (["-tengine"], "the attached short tags"),
-    (["--tags=engine"], "the attached long tags"),
-    (["-ve", "converge_primary=true"], "a cluster carrying -e"),
-    (["--extra-vars", "converge_primary=true"], "the long extra-vars spelling"),
-    (["--extra-var", "converge_primary=true"], "an extra-vars abbreviation"),
-    (["-econverge_primary=true"], "the attached short operand"),
-    (["-e=converge_primary=true"], "an = after the short flag"),
-    (["-e", "@vars.json"], "a file the confirm never shows the operator"),
-    (["-e", "pins_override=stale nas_apply_compose=true"], "two variables in one operand"),
-    (["-e", "canary_override=why this cannot wait"], "a reason that truncates at the first space"),
-    (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect"),
-    (["-e", '{"canary_override": "short"}'], "a reason of 8 characters or fewer"),
-    (["-e", '{"canary_override": "true"}'], "a boolean where a reason belongs"),
-    (["-e", '{"canary_override": "a b", "pins_override": "c d"}'], "two overrides in one operand"),
-    (["-e", f"nas_capture_image_digest={DIGEST}"], "a key no role reads"),
-    (["-e", "capture_image_digest="], "an empty digest value"),
-    (["--limit", "zcrypto", "--limit", "zcrypto-red"], "--limit twice"),
-    (["--limit", "zcrypto", "--tags", "capture", "--tags", "engine"], "--tags twice"),
-    (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags"),
-    (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any other value"),
-    (["--limit", "capture_host"], "an inventory group where a host belongs"),
-    (["--limit", "zcrypt"], "a mistyped host"),
-    (["--limit", "zcrypto", "--tags", "captur"], "a mistyped tag"),
-    (["--limit", "zcrypto", "--tags", ""], "an empty tag list ansible reads as a tag"),
-    (["--limit", "zcrypto", "--tags", "", "--tags", "capture"], "--tags twice, the first empty"),
-    (["--limit", "zcrypto", "-e"], "a dangling -e"),
-    (["--limit", "zcrypto", "-vvv"], "a passthrough flag"),
-    (["--limit", "zcrypto", "-i", "hosts.ini"], "an inventory flag"),
-    (["--limit", "zcrypto", "--diff"], "a flag the preview composes itself"),
-    (["--limit"], "a flag with no value"),
+    (["-C"], "check-mode alias", ""),
+    (["-vC"], "check-mode cluster", ""),
+    (["-Cf5"], "check-mode cluster with an attached value", ""),
+    (["--che"], "an abbreviation argparse honours", ""),
+    (["-l", "zcrypto"], "the short limit", ""),
+    (["-t", "engine"], "the short tags", ""),
+    (["-tengine"], "the attached short tags", ""),
+    (["--tags=engine"], "the attached long tags", ""),
+    (["-ve", "converge_primary=true"], "a cluster carrying -e", ""),
+    (["--extra-vars", "converge_primary=true"], "the long extra-vars spelling", ""),
+    (["--extra-var", "converge_primary=true"], "an extra-vars abbreviation", ""),
+    (["-econverge_primary=true"], "the attached short operand", ""),
+    (["-e=converge_primary=true"], "an = after the short flag", ""),
+    (["-e", "@vars.json"], "a file the confirm never shows the operator", ""),
+    (["-e", "pins_override=stale nas_apply_compose=true"], "two variables in one operand", ""),
+    (["-e", "canary_override=why this cannot wait"], "a reason that truncates at the first space", "an override is a reason"),
+    (["-e", '{canary_override: "why this cannot wait"}'], "the YAML-flow dialect", "not JSON"),
+    (["-e", '{"canary_override": "short"}'], "a reason of 8 characters or fewer", "longer than 8"),
+    (["-e", '{"canary_override": "true"}'], "a boolean where a reason belongs", ""),
+    (["-e", '{"canary_override": 5}'], "a number where prose belongs", "not int"),
+    (["-e", '{"canary_override": ["a reason here"]}'], "a list where prose belongs", "not list"),
+    (["-e", '{"canary_override": null}'], "a null where prose belongs", "not NoneType"),
+    (["-e", '{"canary_override": "a b", "pins_override": "c d"}'], "two overrides in one operand", ""),
+    (["-e", f"nas_capture_image_digest={DIGEST}"], "a key no role reads", "not in this script's key set"),
+    (["-e", "capture_image_digest="], "an empty digest value", ""),
+    (["--limit", "zcrypto", "--limit", "zcrypto-red"], "--limit twice", ""),
+    (["--limit", "zcrypto", "--tags", "capture", "--tags", "engine"], "--tags twice", ""),
+    (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", ""),
+    (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any other value", ""),
+    (["--limit", "capture_host"], "an inventory group where a host belongs", ""),
+    (["--limit", "zcrypt"], "a mistyped host", ""),
+    (["--limit", "zcrypto", "--tags", "captur"], "a mistyped tag", ""),
+    (["--limit", "zcrypto", "--tags", "capture, engine"], "a tag list with a space", "carries no spaces"),
+    (["--limit", "zcrypto", "--tags", "capture engine"], "two tags and no comma", "carries no spaces"),
+    (["--limit", "zcrypto", "--tags", ""], "an empty tag list ansible reads as a tag", "empty value"),
+    (["--limit", "zcrypto", "--tags", "", "--tags", "capture"], "--tags twice, the first empty", ""),
+    (["--limit", "zcrypto", "-e"], "a dangling -e", ""),
+    (["--limit", "zcrypto", "-vvv"], "a passthrough flag", ""),
+    (["--limit", "zcrypto", "-i", "hosts.ini"], "an inventory flag", ""),
+    (["--limit", "zcrypto", "--diff"], "a flag the preview composes itself", ""),
+    (["--limit"], "a flag with no value", ""),
 ]
 
 
-@pytest.mark.parametrize("args,why", OUTSIDE)
-def test_every_spelling_outside_the_grammar_is_refused_before_anything_runs(tmp_path, args, why):
+@pytest.mark.parametrize("args,why,reason", OUTSIDE)
+def test_every_spelling_outside_the_grammar_is_refused_before_anything_runs(tmp_path, args, why, reason):
     """Refusing is the safe failure: the operator is still at the terminal, and no host was touched.
 
-    Each of these is honoured by ansible and would have been recorded as something it is not.
+    Each of these is honoured by ansible and would have been recorded as something it is not. Where
+    the entry names a `reason`, the refusal LINE must carry it: an arm that refuses for the WRONG
+    reason still exits 2, so asserting the rc alone cannot see a message regression.
     """
     script = make_harness(tmp_path)
     limited = args if any(a.startswith("--limit") for a in args) else ["--limit", "zcrypto", *args]
     r = run_no_tty(script, ["site.yml", *limited])
     assert r.returncode == 2, (why, r.returncode, r.stdout, r.stderr)
     assert invocations(tmp_path) == [], why
-    assert "converge.sh:" in r.stderr, why
+    refusal = next((line for line in r.stderr.splitlines() if line.startswith("converge.sh:")), "")
+    assert refusal, (why, r.stderr)
+    if reason:
+        assert reason in refusal, (why, refusal)
 
 
 def test_a_playbook_outside_the_two_is_refused(tmp_path):

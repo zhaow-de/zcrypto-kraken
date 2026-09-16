@@ -87,7 +87,7 @@ if [ -n "$TAGS" ]; then
   for t in $TAGS; do
     IFS="$OLDIFS"
     case "$t" in
-      *[[:space:]]*) refuse "a tag list carries no spaces: --tags ${TAGS// /}" ;;
+      *[[:space:]]*) refuse "a tag list carries no spaces, and this one does: $TAGS" ;;
     esac
     in_set "$t" "$TAGNAMES" || refuse "unknown tag: $t"
     IFS=,
@@ -116,7 +116,7 @@ if not isinstance(parsed, dict) or len(parsed) != 1:
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
 if not isinstance(value, str):
-    raise SystemExit(f"the reason is prose, and this is a {type(value).__name__}")
+    raise SystemExit(f"the reason is prose, not {type(value).__name__}")
 if len(value) <= 8:
     raise SystemExit("the reason is prose, longer than 8 characters")
 if value.strip().lower() in ("true", "false", "yes", "no", "1", "0"):
@@ -133,7 +133,7 @@ PYCHK
       [ -n "${op#*=}" ] || refuse "empty value: $op"
       case "$op" in *[[:space:]]*) refuse "an operand carries whitespace; pass a reason as JSON: $op" ;; esac
       ;;
-    *) refuse "an -e operand is KEY=VALUE or one-line JSON: $op" ;;
+    *) refuse "an -e operand is KEY=VALUE or a braced JSON override: $op" ;;
   esac
   IFS=$'\x1e'
 done
@@ -199,7 +199,7 @@ import json, pathlib, sys, datetime as dt
 log, playbook, limit, tags, rev, dirty, rc, ev, adir, skip = sys.argv[1:11]
 argv_words = sys.argv[sys.argv.index("--", 1) + 1 :]
 # Every operand was checked against the grammar BEFORE the pass, so there is nothing to fail on and
-# nothing to guess: the two accepted forms are one-line JSON and a single `KEY=VALUE`.
+# nothing to guess: the two accepted forms are a braced JSON override and a single `KEY=VALUE`.
 extra = {}
 for operand in ev.split("\x1e"):
     if not operand:
