@@ -400,9 +400,9 @@ OUTSIDE = [
     (["-e", '{"capture_image_digest": "sha256:a reason"}'], "a braced operand that is not an override", "is not an override name"),
     (["-e", f"nas_capture_image_digest={DIGEST}"], "a key no role reads", "not in this script's key set"),
     (["-e", "capture_image_digest="], "an empty digest value", ""),
-    (["--limit", "zcrypto", "--limit", "zcrypto-red"], "--limit twice", ""),
-    (["--limit", "zcrypto", "--tags", "capture", "--tags", "engine"], "--tags twice", ""),
-    (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", ""),
+    (["--limit", "zcrypto", "--limit", "zcrypto-red"], "--limit twice", "--limit twice"),
+    (["--limit", "zcrypto", "--tags", "capture", "--tags", "engine"], "--tags twice", "--tags twice"),
+    (["--limit", "zcrypto", "--tags", "capture", "--skip-tags", "engine"], "both tag flags", "--tags and --skip-tags together"),
     (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any other value", ""),
     (["--limit", "capture_host"], "an inventory group where a host belongs", ""),
     (["--limit", "zcrypt"], "a mistyped host", ""),
@@ -517,13 +517,19 @@ def test_every_operand_the_tree_publishes_is_inside_the_grammar():
     import subprocess as sp
 
     root = SCRIPT.parent.parent.parent.parent
-    keyspec = [".claude", "infra", "docs/reference"]
-    # Both sweeps below take a pathspec, and `git grep` searches the paths that exist and exits 0
-    # over one that does not (measured, git 2.47.3: `git grep -q canary_override -- .claude
-    # no/such/dir docs/reference` → rc 0). A drifted entry is silent in either, so both are checked.
-    assert all((root / spec).is_dir() for spec in keyspec), keyspec
+    # The WHOLE tree, minus the places a dead spelling is allowed to rest. A pathspec listing the
+    # live areas cannot see a key published somewhere it does not name, and `git grep` searches the
+    # paths that exist and exits 0 over one that does not (measured, git 2.47.3), so the drift is
+    # silent: the corpus is everything, and each exclusion is named with the reason it is dead.
+    buried = (
+        ":!docs/plans",  # a plan is the record of work already done or dropped
+        ":!docs/specs",
+        ":!docs/research",
+        ":!docs/open-topics/archive",
+        ":!tests",  # the refusal table publishes the spellings it exists to refuse
+    )
     done = sp.run(
-        ["git", "grep", "-rhoE", "--", "-e '?[a-z_][a-z0-9_]*=", "--", *keyspec],
+        ["git", "grep", "-rhoE", "--", "-e '?[a-z_][a-z0-9_]*=", "--", ".", *buried],
         cwd=root,
         capture_output=True,
         text=True,
