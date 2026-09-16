@@ -50,13 +50,10 @@ if [ "$reply" != "$LIMIT" ]; then
   echo "converge.sh: aborted — confirmation did not match the --limit value; nothing executed" >&2
   exit 3
 fi
-# The real pass, RECORDED into a git-tracked log: fleet-pins.md is re-trued from the line this
-# appends, never re-typed from memory, and that line carries every `-e` operand it can read -- every
-# `k=v` one, and a braced one that parses as JSON (see the recorder below, which states what it
-# drops) -- so no -e operand is ever a secret, and none travels on the command line. The line is
-# written by THIS process after the pass returns, so a wrapper killed mid-pass leaves an orphaned
-# ansible child converging with NO record -- the container's `.State.StartedAt` is the evidence
-# then, and the line is appended by hand from it.
+# The real pass, RECORDED: fleet-pins.md is re-trued from the line this appends, never from memory.
+# Every `-e` operand reaches that line, so never pass a secret as one. The line is written after the
+# pass returns: a wrapper killed mid-pass leaves an orphaned child converging with NO record, and
+# the line is then appended by hand from the container's `.State.StartedAt`.
 set +e
 "$SD/run.sh" "$PLAYBOOK" "$@"
 rc=$?
@@ -65,11 +62,10 @@ LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
 TAGS=""; EV=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--tags" ] && TAGS="$a"
-  # EXACT arms, never a prefix: `--extra-var*` also matches the attached `--extra-vars=K=V`, and
-  # the next argv word is then booked as a variable. BOUND: ansible's `allow_abbrev` accepts `--e`
-  # … `--extra-var` and clustered `-ve`; those and `-e @file` record a short row, which the drill
-  # pages read as "nothing was overridden". Operands are separated by RS, never a newline: a braced
-  # one may carry newlines, and splitting there hands the recorder a fragment it can only mis-book.
+  # Exact arms, never a prefix: `--extra-var*` matches the attached `--extra-vars=K=V` too, and then
+  # books the NEXT argv word as a variable. The abbreviations `allow_abbrev` honours (`--e` …
+  # `--extra-var`, `-ve`) and `-e @file` are not collected: they leave a short row, which the drill
+  # pages read as "nothing was overridden". RS, never a newline: an operand carries its own.
   case "$prev" in -e | --extra-vars) EV="$EV$a"$'\x1e' ;; esac
   case "$a" in
     --tags=*) TAGS="${a#--tags=}" ;;
@@ -105,17 +101,14 @@ fi
 python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
 import json, pathlib, shlex, sys, datetime as dt
 log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
-# A braced operand never reaches the `=` split: splitting one mints a key out of its own text, and a
-# wrong-looking-right row is worse than a short one. Ansible YAML-loads `{`/`[` operands, so JSON is
-# a subset of what it accepts and a YAML-only spelling drops here -- this runs under the system
-# `python3`, which has no PyYAML. Pass a bypass reason as JSON.
+# A braced operand never reaches the `=` split, which would mint a key out of its own text. Ansible
+# YAML-loads `{`/`[`; this runs under the system `python3`, which has no PyYAML, so a YAML-only
+# spelling records a short row.
 extra = {}
 for operand in ev.split("\x1e"):  # never splitlines(): an operand may carry newlines of its own
     if not operand.strip():
         continue
-    # The RAW first character, never a stripped one: `load_extra_vars` tests `extra_vars_opt[0]`,
-    # so ` {"canary_override": "…"}` is not braced to ansible -- it sets nothing, and booking it
-    # would name an override the pass never received.
+    # The RAW first character, as `load_extra_vars` tests it: ` {…}` is not braced to ansible.
     if operand[:1] in "{[":
         try:
             parsed = json.loads(operand)
@@ -125,9 +118,8 @@ for operand in ev.split("\x1e"):  # never splitlines(): an operand may carry new
             for k, v in parsed.items():
                 extra[str(k)] = v
         continue
-    # `shlex` because one `-e` may carry several vars: `-e "a=1 b=2"` is two, and a first-`=` split
-    # makes it one wrong key. A token with no `=` is the remainder ansible books as `_raw_params`;
-    # the row drops it because it names no variable the operator passed.
+    # `shlex` because one `-e` may carry several vars (`-e "a=1 b=2"`). A token with no `=` is the
+    # remainder ansible books as `_raw_params`; it names no variable the operator passed.
     try:
         tokens = shlex.split(operand)
     except ValueError:  # an unbalanced quote: ansible refused this operand, so record nothing

@@ -237,11 +237,9 @@ def test_a_real_pass_appends_one_machine_line(tmp_path):
 def test_a_json_extra_var_is_recorded_beside_the_k_equals_v_ones(tmp_path):
     """A `-e` carrying JSON lands in the row, and a JSON value holding `=` is not split on it.
 
-    `fleet-deploys.md` specifies `canary_override` as a reason rather than a boolean, and a reason
-    is prose: apostrophes and spaces make ansible's own `-e k=v` splitter refuse or truncate it, so
-    the operand the rules most require to be booked is the one that arrives as JSON. The `=` in the
-    reason below is the second half: split-on-`=` mints a garbage key, and a row that looks
-    populated is worse than a short one.
+    `fleet-deploys.md` specifies `canary_override` as a reason, and ansible's `k=v` splitter
+    truncates a multi-word one at the first space -- so the operand the rules most require to be
+    booked is the one that arrives as JSON.
     """
     reason = "rolled back: the venue answers EGeneral:Permission denied, so exec_armed=0 stands"
     rc, _out, log = run_recording(
@@ -264,13 +262,8 @@ def test_a_json_extra_var_is_recorded_beside_the_k_equals_v_ones(tmp_path):
 def test_a_braced_operand_that_is_not_json_is_dropped_rather_than_split_into_a_key(tmp_path):
     """The safe failure for an unreadable `-e` is a SHORT row, never a populated-looking wrong one.
 
-    `ansible.utils.vars.load_extra_vars` YAML-loads any operand starting with `{` or `[`, so JSON is
-    a subset of what ansible accepts and this recorder -- running under the system `python3`, which
-    carries no PyYAML -- cannot read the rest. The hazard is the `=` inside the reason: falling
-    through to the `k=v` split would mint the key `{canary_override: "rolled back, exec_armed` and
-    the row would look populated. A short row reads as 0 through
-    `count-list.sh canary-bypasses-on-the-primary`, which is the same answer as no bypass and is
-    wrong in the direction an operator can see.
+    Ansible YAML-loads `{`/`[`; this recorder runs under the system `python3`, which has no PyYAML,
+    so a YAML-only spelling is dropped rather than split on the `=` inside the reason.
     """
     yaml_flow = '{canary_override: "rolled back, exec_armed=0 stands"}'
     rc, _out, log = run_recording(
@@ -285,11 +278,9 @@ def test_a_braced_operand_that_is_not_json_is_dropped_rather_than_split_into_a_k
 def test_the_four_spellings_this_tree_publishes_reach_the_row(tmp_path):
     """A spelling this collector misses is a var the row never mentions, which reads as absent.
 
-    `docs/reference/drill-log.md` takes an empty `extra_vars` as positive proof that nothing was
-    overridden. The four driven here are the four this tree publishes, NOT every spelling ansible
-    honours: `allow_abbrev` also accepts `--e` through `--extra-var` and the clustered `-ve`, and
-    those record a short row -- the bound stated in the collector, alongside `-e @file`, which the
-    recorder cannot open.
+    `docs/reference/drill-log.md` takes an empty `extra_vars` as proof that nothing was overridden.
+    The four driven here are the four this tree publishes, not every spelling ansible honours: the
+    `allow_abbrev` forms and `-e @file` record a short row, the bound stated in the collector.
     """
     reason = "secondary unreachable, incident rollback"
     rc, _out, log = run_recording(
@@ -325,9 +316,7 @@ def test_the_four_spellings_this_tree_publishes_reach_the_row(tmp_path):
 def test_the_word_after_an_attached_extra_vars_is_not_booked_as_a_variable(tmp_path):
     """`--extra-vars=K=V` carries its own value, so the NEXT argv word is a flag, not a var.
 
-    Matching the separated form by prefix (`--extra-var*`) also matches the attached one, and the
-    word after it — `--tags=…`, `--limit=…` — is then split on its `=` and booked as a variable:
-    the populated-looking wrong row, arriving through the collector instead of the recorder.
+    A `--extra-var*` prefix arm matches the attached form too and books `--tags=…` as a variable.
     """
     rc, _out, log = run_recording(
         tmp_path,
@@ -348,10 +337,7 @@ def test_the_word_after_an_attached_extra_vars_is_not_booked_as_a_variable(tmp_p
 def test_a_braced_operand_carrying_newlines_is_recorded_whole(tmp_path):
     """A pretty-printed `-e '{...}'` books `canary_override` exactly as the one-line form does.
 
-    Measured against `load_extra_vars`. Operands therefore travel RS-separated: split them on the
-    newline and the fragment carrying the reason's own `=` mints a key, leaving a populated row
-    with no `canary_override` in it — which `count-list.sh canary-bypasses-on-the-primary` counts
-    as no bypass at all.
+    Measured against `load_extra_vars`; operands therefore travel RS-separated, not newline-joined.
     """
     reason = "rolled back, exec_armed=0 stands"
     rc, _out, log = run_recording(
@@ -367,11 +353,9 @@ def test_a_brace_behind_a_leading_space_is_not_braced_here_either(tmp_path):
     """`load_extra_vars` tests the operand's RAW first character, so a leading space is not JSON.
 
     Measured, this operand: ansible books `{'"rolled back, exec_armed': '0 stands"}',
-    '_raw_params': '{"canary_override":'}` — a garbage key and NO `canary_override`, so the canary
-    assert fires and the converge does not proceed. The row mirrors that (differing only in the
-    quote characters `shlex` strips, which name no variable either way); a recorder that stripped
-    the operand first booked the reason whole, naming an override the pass never received and
-    counting a bypass on the primary that never applied, off one space inside the quotes.
+    '_raw_params': '{"canary_override":'}` -- a garbage key and NO `canary_override`, so the canary
+    assert fires and the converge does not proceed. The row mirrors that, differing only in the
+    quotes `shlex` strips.
     """
     rc, _out, log = run_recording(
         tmp_path,
@@ -398,8 +382,7 @@ def test_an_equals_after_the_short_flag_is_dropped_the_way_argparse_drops_it(tmp
     """`-e=K=V` is `K=V` to ansible -- argparse strips the `=` -- so the row books `K`, not `""`.
 
     Measured against `load_extra_vars`, which returns `{"canary_override": "x"}` for
-    `-e=canary_override=x`. Recording the remainder verbatim books the empty key with the whole
-    operand as its value: a row that reads as an override without naming the variable set.
+    `-e=canary_override=x`.
     """
     rc, _out, log = run_recording(
         tmp_path,
