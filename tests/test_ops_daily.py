@@ -2,8 +2,9 @@
 its CLI entry point `infra/scripts/ops-daily.py`, which `tests/test_scripts_have_tests.py` names as the
 test file for both scripts.
 
-A standalone script, not a package module, so it loads via `spec_from_file_location`; every fixture
-here is shaped to what the live source returns, never to what the parser expects."""
+A standalone script, not a package module, so it loads via `spec_from_file_location`; a canned source
+reply here — an API body, an ssh answer, a file under `fixtures/` — is shaped to what the live source
+returns, never to what the parser expects."""
 
 from __future__ import annotations
 
