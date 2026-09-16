@@ -1412,13 +1412,28 @@ def _directives(unit: str) -> dict[str, list[str]]:
     return out
 
 
+def _render_agentboard(path: Path) -> str:
+    """The file as the templar produces it, not as it was typed.
+
+    Reading the raw text lets a guarded line survive while `{% if false %}` deletes it at deploy time,
+    and this file's premise (spec 00082) is that a guard reads the REAL rendered condition. Same
+    placeholder shape as `_render_nas_env`: every bare `{{ name }}` gets a stand-in so an undefined
+    is not a red that says nothing about the claim.
+    """
+    from ansible.template import trust_as_template
+
+    text = path.read_text()
+    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)\b(?!\s*\()", text))}
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+
+
 def test_agentboard_killmode_and_mainpid_stay_coupled():
     """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim, and
     nothing else couples the two files: dropping it restores the control-group SIGKILL that takes the
     operator's tmux sessions, and reverting to the shim leaves the server holding `:4040` so the next
     start cannot bind."""
-    unit = AGENTBOARD_UNIT.read_text()
-    start = AGENTBOARD_START.read_text()
+    unit = _render_agentboard(AGENTBOARD_UNIT)
+    start = _render_agentboard(AGENTBOARD_START)
 
     # Section-aware and LAST-WINS, because three regressions all leave a bare `KillMode=process`
     # somewhere in the file: commenting it out; appending a second `KillMode=control-group` (a scalar
@@ -1444,6 +1459,34 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
     # green. Same walk as above.
     requires = [sec for sec, keys in _directives(unit).items() for k in keys if k == "Requires=wg-quick@zaccess0.service"]
     assert requires == ["[Unit]"], f"Requires=wg-quick must live in [Unit] or systemd ignores it: {requires or 'absent'}"
+
+    # The memory cap is coupled to KillMode too, and in the direction that costs: because a forked
+    # child inherits this cgroup for life, the cap bounds the operator's whole tmux workspace, and an
+    # UNCAPPED one let a runaway reach 58.4 GiB and take a global oom-kill on 2026-09-15. The same
+    # three regressions apply -- commented out, re-asserted as `infinity` later in the file, or moved
+    # to [Unit] where systemd ignores it -- so the walk is section-aware and last-wins like KillMode's.
+    for key in ("MemoryMax", "MemoryHigh"):
+        seen: dict[str | None, list[str]] = {}
+        sect = None
+        for raw in unit.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                sect = line
+                continue
+            if re.match(rf"{key}\s*=", line):
+                seen.setdefault(sect, []).append(line.split("=", 1)[1].strip())
+        assert set(seen) <= {"[Service]"}, f"{key} outside [Service] is silently ignored: {seen}"
+        assert seen.get("[Service]"), f"the unit must carry an active {key} in [Service]"
+        last = seen["[Service]"][-1]
+        # Two spellings mean "no limit", and the EMPTY one is what a regression reaches for: a bare
+        # `MemoryMax=` RESETS the directive, exactly as a bare `ExecStart=` resets that one -- the
+        # reset this same test already refuses a few lines below. `infinity` is the explicit form.
+        assert last.lower() not in ("", "infinity"), (
+            f"the LAST {key} in [Service] is {last!r} -- an empty value RESETS the directive and "
+            f"`infinity` states no limit; either way the cgroup is uncapped: {seen['[Service]']}"
+        )
 
     # ExecStart: strip before matching, because systemd does. An INDENTED `  ExecStart=` empty-value
     # reset followed by a shim ExecStart loads clean with the last one in effect, so an unstripped

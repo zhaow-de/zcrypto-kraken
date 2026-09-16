@@ -34,5 +34,22 @@ ExecStart=/usr/local/sbin/zaccess-agentboard-start
 KillMode=process
 Restart=on-failure
 
+# The cap bounds what KillMode=process above admits: the operator's whole tmux workspace lives in
+# this cgroup, so without a limit one runaway takes the HOST rather than the service -- which is what
+# happened on 2026-09-15, at 58.4 GiB, on a 62 GiB box.
+#
+# MemoryHigh is the one that does the work: it throttles and reclaims rather than killing, and the
+# runaway passed 12G in well under a second, so back-pressure arrives long before anything dies.
+# MemoryMax is the backstop for an allocation faster than reclaim. The gap between them is
+# deliberate -- a single figure would kill where throttling would have been enough.
+#
+# Sized against measurement, not taste: the cgroup's steady draw is ~3.4 GiB, and the headroom above
+# it carries a full `uv run pytest` plus concurrent workflow agents inside a web-terminal pane. Do
+# not tighten these without re-measuring that peak -- a cap that throttles the normal pass teaches
+# the operator to raise it, and a raised cap is the one that is not there when it matters.
+MemoryAccounting=yes
+MemoryHigh=12G
+MemoryMax=24G
+
 [Install]
 WantedBy=multi-user.target

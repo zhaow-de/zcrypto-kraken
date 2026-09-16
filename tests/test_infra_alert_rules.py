@@ -1266,8 +1266,23 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/nas/compose.yaml": (("nas", "integrations/self"),),
     "infra/docker/compose.yaml": (),
 }
+# A cap is a cap wherever it is written. Compose `memory:` is not the only shape: a systemd unit can
+# carry `MemoryMax=`, and the first one in this tree -- agentboard's -- was invisible here while the
+# walk below covered compose files alone, which is exactly the state this invariant exists to refuse.
+_LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
+}
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
-_HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {}
+_HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
+    ("ops", "zaccess-agentboard"): (
+        "No headroom leg is possible: the rules divide `process_resident_memory_bytes` by a limit, and "
+        "agentboard publishes no /metrics and is scraped by nothing, so no such series exists. The cap "
+        "is a systemd `MemoryMax=`, which no metric on this fleet carries either -- cadvisor is "
+        "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
+        "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service` "
+        "(`AGENTBOARD_PROPERTIES` in infra/scripts/ops_daily.py), off the host rather than off a series."
+    )
+}
 
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
 
@@ -1279,6 +1294,34 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
     # config-selector-ok: presence of any `memory:` line is the question, not a value to parse
     limited = sorted(str(p.relative_to(REPO)) for p in REPO.glob("infra/**/*compose*.y*ml*") if "memory:" in p.read_text())
     assert limited == sorted(_LIMITED_JOBS), f"the memory-limited compose sources changed: {limited} -- update the map"
+    # The same question asked of unit files, which the compose glob cannot see.
+    # Every place this repo ships a unit from, not just role templates: `roles/*/files/` and
+    # `infra/systemd/` carry units too, and a cap added to one of those would have been invisible
+    # here in exactly the way agentboard's was invisible to the compose glob above.
+    unit_sources = sorted(
+        {
+            *REPO.glob("infra/ansible/roles/*/templates/*.service*"),
+            *REPO.glob("infra/ansible/roles/*/files/*.service*"),
+            *REPO.glob("infra/systemd/*.service*"),
+        }
+    )
+    # Each glob carries its own floor: one number over the union stays satisfied by the templates
+    # alone, so a broken `files/` or `systemd/` glob would read green behind it.
+    for pattern, floor in (
+        ("infra/ansible/roles/*/templates/*.service*", 14),
+        ("infra/ansible/roles/*/files/*.service*", 2),
+        ("infra/systemd/*.service*", 2),
+    ):
+        assert len(list(REPO.glob(pattern))) >= floor, f"the unit glob {pattern} found too few files -- it is broken"
+    # Every spelling that caps memory, not only the one this tree happens to use: `MemoryHigh=` alone
+    # IS a cap -- it throttles, which is the spelling this repo argues does the work -- and
+    # `MemoryLimit=` is the legacy name systemd still honours.
+    capped_units = sorted(
+        str(p.relative_to(REPO))
+        for p in unit_sources
+        if any(k in p.read_text() for k in ("MemoryMax=", "MemoryHigh=", "MemoryLimit="))
+    )
+    assert capped_units == sorted(_LIMITED_UNITS), f"the memory-capped unit templates changed: {capped_units} -- update the map"
     exprs = " ".join(
         str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]
     )
@@ -1294,7 +1337,7 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
                 return True
         return False
 
-    pairs = [pair for pairs in _LIMITED_JOBS.values() for pair in pairs]
+    pairs = [pair for pairs in (*_LIMITED_JOBS.values(), *_LIMITED_UNITS.values()) for pair in pairs]
     missing = [pair for pair in pairs if not covered(*pair) and pair not in _HEADROOM_DELIBERATELY_ABSENT]
     assert not missing, f"memory-limited but no headroom leg and no recorded absence: {missing}"
     stale = [pair for pair in _HEADROOM_DELIBERATELY_ABSENT if covered(*pair)]

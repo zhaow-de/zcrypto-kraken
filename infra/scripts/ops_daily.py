@@ -577,6 +577,24 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
+# The agentboard cgroup, read off the host because no series can answer it: nothing scrapes this unit.
+# `zcrypto-fleet-daemon-restarted` is blind to it for want of a SOURCE, not a threshold -- a rule is
+# not the fix, this read is. It is the one unit in the tree that can host unbounded operator work.
+AGENTBOARD_HOST = "hp"
+AGENTBOARD_UNIT = "zaccess-agentboard.service"
+# ONE list: the command asks for exactly these, and `read_agentboard_cgroup` unpacks them in this
+# ORDER -- positionally -- so a name added or moved here needs the matching name in that unpack.
+AGENTBOARD_PROPERTIES = ("MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts")
+# The row names the fleet host an operator recognises; the command uses the ssh alias.
+AGENTBOARD_CHECK = "agentboard cgroup on zcrypto-ops"
+AGENTBOARD_COMMAND = (
+    "ssh",
+    "-o",
+    "BatchMode=yes",
+    AGENTBOARD_HOST,
+    f"systemctl show {AGENTBOARD_UNIT} " + " ".join(f"-p {p}" for p in AGENTBOARD_PROPERTIES),
+)
+
 # One ssh for every value, and every key printed unconditionally: an absent file then reads as an
 # empty VALUE, where a conditional `echo` would leave a missing key indistinguishable from a command
 # that never ran. Read-only by construction -- `systemctl show`, `stat`, `test`, `tr` -- because this
@@ -614,6 +632,52 @@ def ssh_resolve(host: str, operands: list[str]) -> list[str]:
     """
     command = ("ssh", "-o", "BatchMode=yes", host, "readlink", "-f", "--", *operands)
     return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT, check=True).stdout.splitlines()
+
+
+def read_agentboard_cgroup(*, runner) -> Check:
+    """Whether the operator bridge's cgroup is still capped, and where its peak and restart counters
+    stand.
+
+    Only the CAP decides `ok`. The peak and the restart count are cumulative since the unit was last
+    started, and this read keeps no previous value, so treating either as a fault would hold the pass
+    at attention every day until someone restarted the unit by hand -- the same trap
+    `read_unattended_upgrades` avoids by keeping a pending reboot out of its `ok`. They are reported
+    in the value, which is where an operator reading the row wants them.
+
+    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
+    """
+    gib = 1024**3
+
+    def _scale(raw: str) -> str:
+        """systemd prints a byte count, `infinity` for no limit, or `[not set]` for a counter it has
+        no value for -- MemoryPeak on a loaded-but-stopped unit. Only the first is arithmetic."""
+        return f"{int(raw) / gib:.1f} GiB" if raw.isdigit() else raw
+
+    try:
+        fields = dict(line.split("=", 1) for line in runner(AGENTBOARD_COMMAND).splitlines() if "=" in line)
+        hard, soft, peak, restarts = (fields[k] for k in AGENTBOARD_PROPERTIES)
+    # Same convention as the upgrade read: an unreachable host, a timeout and a non-zero ssh are
+    # `unreadable`, never a FAIL. A FAIL here says the bridge is uncapped, which a dropped connection
+    # does not show. A MISSING key lands here too; a non-numeric VALUE does not, because `_scale`
+    # renders it verbatim rather than parsing it -- a stopped bridge must still report its cap.
+    except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
+        return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=False, value=f"unreadable: {exc}")
+
+    value = f"MemoryMax={_scale(hard)}, MemoryHigh={_scale(soft)}, peak {_scale(peak)}, NRestarts={restarts}"
+    # Reaching MemoryHigh is the cap WORKING -- the kernel throttled and reclaimed instead of killing
+    # -- so it is narration, not a fault. It is worth narrating because nothing else on this fleet
+    # records that something in the operator's workspace tried to run away.
+    if peak.isdigit() and soft.isdigit() and int(peak) >= int(soft):
+        value += "; peak reached MemoryHigh -- something was throttled"
+    if restarts.isdigit() and int(restarts):
+        value += f"; the bridge restarted on its own {restarts}x since it was last started"
+    # `infinity` is the literal systemd prints for no limit, and it is the 2026-09-15 state exactly:
+    # a runaway reached 58.4 GiB inside this cgroup and the kernel took a GLOBAL oom-kill. This is the
+    # one condition that is actionable and that CLEARS when acted on, which is why it alone sets ok.
+    uncapped = hard == "infinity"
+    if uncapped:
+        value += "; MemoryMax=infinity -- the cgroup is UNCAPPED"
+    return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=not uncapped, value=value)
 
 
 def read_unattended_upgrades(*, now: datetime, runner) -> Check:
@@ -853,6 +917,7 @@ def main(argv: list[str]) -> int:
         return 2
     verdict = read_verdict(token)
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
+    verdict.append(read_agentboard_cgroup(runner=ssh_read))
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),

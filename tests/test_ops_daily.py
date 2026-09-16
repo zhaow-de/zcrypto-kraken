@@ -2,8 +2,9 @@
 its CLI entry point `infra/scripts/ops-daily.py`, which `tests/test_scripts_have_tests.py` names as the
 test file for both scripts.
 
-A standalone script, not a package module, so it loads via `spec_from_file_location`; every fixture
-here is shaped to what the live Grafana API returns, never to what the parser expects."""
+A standalone script, not a package module, so it loads via `spec_from_file_location`; a canned source
+reply here — an API body, an ssh answer, a file under `fixtures/` — is shaped to what the live source
+returns, never to what the parser expects."""
 
 from __future__ import annotations
 
@@ -2104,25 +2105,47 @@ _MEASURED_STAMP = datetime(2026, 9, 6, 6, 38, 58, tzinfo=timezone.utc)
 _UPGRADE_NOW = datetime(2026, 9, 6, 12, 0, tzinfo=timezone.utc)
 
 
-def _host_answering(**overrides):
-    """A runner answering ONE command with the host's `key=value` lines.
+_GIB = 1024**3
 
-    Each mode overrides a different field, so no two modes get the same reply.
+
+def _host_answering(**overrides):
+    """A runner answering each host read with that read's own `key=value` lines.
+
+    Routed on the command, not merged into one reply: two readers ask the same runner for disjoint
+    key sets, and a single dict carrying both would let either reader pass while asking for the
+    other's keys. An override lands on whichever answer already owns that key, so a mode still
+    overrides exactly one field.
     """
-    answer = {
-        "Result": "success",
-        "ExecMainStatus": "0",
-        "ExecMainExitTimestamp": _MEASURED_RAN,
-        "StampEpoch": str(int(_MEASURED_STAMP.timestamp())),
-        "RebootRequired": "",
-        "RebootPkgs": "",
-        **overrides,
+    answers = {
+        "upgrade": {
+            "Result": "success",
+            "ExecMainStatus": "0",
+            "ExecMainExitTimestamp": _MEASURED_RAN,
+            "StampEpoch": str(int(_MEASURED_STAMP.timestamp())),
+            "RebootRequired": "",
+            "RebootPkgs": "",
+        },
+        # A healthy bridge: capped at the unit's own 24/12 GiB, peak at the steady draw, no restart.
+        "agentboard": {
+            "MemoryMax": str(24 * _GIB),
+            "MemoryHigh": str(12 * _GIB),
+            "MemoryPeak": str(3645800448),
+            "NRestarts": "0",
+        },
     }
+    for key, value in overrides.items():
+        for answer in answers.values():
+            if key in answer:
+                answer[key] = value
+                break
+        else:
+            raise AssertionError(f"override {key!r} matches no host read -- it would be silently dropped")
     calls = []
 
     def runner(command):
         calls.append(command)
-        return "".join(f"{key}={value}\n" for key, value in answer.items())
+        which = "agentboard" if any(ops_daily.AGENTBOARD_UNIT in part for part in command) else "upgrade"
+        return "".join(f"{key}={value}\n" for key, value in answers[which].items())
 
     runner.calls = calls
     return runner
@@ -2200,6 +2223,17 @@ def test_the_staleness_arm_reads_the_stamp_the_upgrade_itself_writes():
     an arm pointed there would read fresh on exactly the stopped-timer host it exists to catch."""
     assert ops_daily.UPGRADE_STAMP == _UPGRADE_STAMP, ops_daily.UPGRADE_STAMP
     assert f"stat -c %Y {_UPGRADE_STAMP} " in ops_daily.UPGRADE_COMMAND[-1], ops_daily.UPGRADE_COMMAND
+
+
+def test_no_field_the_upgrade_reader_reads_is_dropped_from_the_command():
+    """`RebootRequired` and `RebootPkgs` are read with `fields.get(...)`, so dropping either costs
+    narration and no verdict: the row still reads PASS. The four read with `fields[...]` raise
+    KeyError, which `_UNREACHABLE` turns into an `unreadable` row.
+    """
+    body = ops_daily.UPGRADE_COMMAND[-1]
+    assert " -p Result -p ExecMainStatus -p ExecMainExitTimestamp;" in body, body
+    for echoed in ("StampEpoch", "RebootRequired", "RebootPkgs"):
+        assert f'echo "{echoed}=' in body, (echoed, body)
 
 
 def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
@@ -2495,3 +2529,137 @@ def test_the_shim_forwards_its_arguments_verbatim(tmp_path):
 def test_the_shim_exits_with_what_main_returns(tmp_path):
     done = _run_shim(tmp_path)
     assert done.returncode == _STUB_EXIT, (done.returncode, done.stderr)
+
+
+# --- the agentboard cgroup read: the source `zcrypto-fleet-daemon-restarted` lacks ------------------
+
+
+def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
+    """The cgroup row reaches the report `main` prints -- nothing else in this file drives that wiring."""
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    fresh = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())))
+    monkeypatch.setattr(ops_daily, "ssh_read", fresh)
+    assert ops_daily.main(["report"]) == 0
+    assert f"- PASS {ops_daily.AGENTBOARD_CHECK}: MemoryMax=24.0 GiB" in capsys.readouterr().out
+
+
+def test_an_uncapped_bridge_moves_the_pass_to_attention(monkeypatch, capsys):
+    """The wiring proved in the direction that matters: an uncapped cgroup must reach `exit_code`,
+    not merely be appended somewhere the verdict never reads."""
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    uncapped = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())), MemoryMax="infinity")
+    monkeypatch.setattr(ops_daily, "ssh_read", uncapped)
+    assert ops_daily.main(["report"]) == 1
+    assert "UNCAPPED" in capsys.readouterr().out
+
+
+def test_a_capped_and_quiet_bridge_passes():
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering())
+    assert check.ok, check.value
+    assert "MemoryMax=24.0 GiB" in check.value and "NRestarts=0" in check.value
+
+
+def test_an_uncapped_cgroup_is_the_only_condition_that_sets_the_verdict():
+    """`MemoryMax=infinity` is the 2026-09-15 state exactly: a runaway reached 58.4 GiB inside this
+    cgroup and the kernel took a global oom-kill. It alone decides `ok` because it alone is
+    actionable AND clears when acted on -- a merged cap that was never converged reads here."""
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryMax="infinity"))
+    assert not check.ok
+    assert "UNCAPPED" in check.value
+
+
+def test_a_peak_that_reached_memoryhigh_is_narrated_but_does_not_fail_the_pass():
+    """Throttling is the cap WORKING. It is also cumulative since the unit was last started, so
+    faulting on it would hold the pass at attention every day until someone restarted the bridge by
+    hand -- the trap `read_unattended_upgrades` already avoids with a pending reboot."""
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak=str(13 * _GIB)))
+    assert check.ok, check.value
+    assert "throttled" in check.value and "13.0 GiB" in check.value
+
+
+def test_a_restart_is_narrated_because_no_prometheus_series_can_see_it():
+    """`zcrypto-fleet-daemon-restarted` cannot watch this unit -- nothing scrapes it -- so this row
+    is the only place a restart surfaces. Cumulative, so narrated rather than faulted."""
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering(NRestarts="2"))
+    assert check.ok, check.value
+    assert "restarted on its own 2x" in check.value
+
+
+def test_a_stopped_bridge_still_reports_its_cap_rather_than_reading_unreadable():
+    """systemd prints `MemoryPeak=[not set]` for a loaded-but-stopped unit. Parsing it as an integer
+    would raise, and the raise would be caught as `unreadable` -- hiding whether the cap is there at
+    all, on exactly the occasion the bridge is down."""
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak="[not set]"))
+    assert check.ok, check.value
+    assert "peak [not set]" in check.value
+    assert not check.value.startswith("unreadable")
+
+
+def test_a_stopped_AND_uncapped_bridge_still_reports_uncapped():
+    runner = _host_answering(MemoryPeak="[not set]")
+    runner_uncapped = _host_answering(MemoryPeak="[not set]", MemoryMax="infinity")
+    assert ops_daily.read_agentboard_cgroup(runner=runner).ok
+    check = ops_daily.read_agentboard_cgroup(runner=runner_uncapped)
+    assert not check.ok and "UNCAPPED" in check.value
+
+
+def test_an_unreachable_host_is_unreadable_and_never_a_verdict_on_the_cap():
+    def refuse(command):
+        raise OSError("ssh: connect to host hp port 22: Connection refused")
+
+    check = ops_daily.read_agentboard_cgroup(runner=refuse)
+    assert not check.ok
+    assert check.value.startswith("unreadable:")
+    assert "UNCAPPED" not in check.value
+
+
+def test_the_agentboard_reader_takes_its_runner_and_never_defaults_one():
+    runner = inspect.signature(ops_daily.read_agentboard_cgroup).parameters["runner"]
+    assert runner.kind is inspect.Parameter.KEYWORD_ONLY and runner.default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        ops_daily.read_agentboard_cgroup()
+
+
+def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
+    """This instrument never acts on a host: `systemctl show` reads properties and nothing else.
+
+    Asked as "one command, no chaining", NOT as "no acting verb appears anywhere" -- the property
+    this read wants is `NRestarts`, which carries `restart` as a substring, so a substring ban trips
+    on the very name it exists to fetch. A verb only acts when the shell can reach it as a command.
+    """
+    # The LITERAL, not the constant the command is built from: comparing the command against
+    # AGENTBOARD_HOST is a self-comparison that passes whatever the host is renamed to.
+    assert ops_daily.AGENTBOARD_COMMAND[-2] == "hp", "the ops node's ssh alias, per docs/reference/fleet.md"
+    # BatchMode for the reason `UPGRADE_COMMAND` spells out: a prompt holds the read until the
+    # timeout instead of failing it.
+    assert "BatchMode=yes" in ops_daily.AGENTBOARD_COMMAND
+    body = ops_daily.AGENTBOARD_COMMAND[-1]
+    assert body.startswith("systemctl show "), body
+    # Both LITERALS, for the reason the host assertion above gives: the command is built by joining
+    # AGENTBOARD_PROPERTIES, so parsing the `-p` names back out and comparing them to that tuple is a
+    # set equal to itself -- it passes under any change that moves both, and `-pMemoryMax` parses to
+    # the same name as `-p MemoryMax`. The tuple's ORDER is load-bearing on its own: the reader unpacks
+    # it positionally, and a name added without one in that unpack raises, which `_UNREACHABLE` turns
+    # into the daily `unreadable` this check exists to prevent.
+    assert ops_daily.AGENTBOARD_PROPERTIES == ("MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts"), (
+        "read_agentboard_cgroup unpacks these positionally as hard, soft, peak, restarts -- move both"
+    )
+    spelled_out = "systemctl show zaccess-agentboard.service -p MemoryMax -p MemoryHigh -p MemoryPeak -p NRestarts"
+    assert body == spelled_out, body
+    assert not any(sep in body for sep in (";", "&&", "||", "|", "`", "$(", "\n")), f"the read is chained: {body}"
+    assert all(
+        tok == "systemctl" or tok == "show" or tok.startswith("-p") or tok == ops_daily.AGENTBOARD_UNIT or tok[0].isupper()
+        for tok in body.split()
+    ), body
