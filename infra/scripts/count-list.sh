@@ -340,7 +340,8 @@ c_ambient_bytes() { uv run python infra/scripts/guidance-guard.py --ambient-byte
 # operator's keystroke is not the set, and an act nothing records cannot be counted.
 
 # A converge that passed `-e <role>_digest=` with nothing after the `=`: the role reads it as defined and
-# renders a broken image ref. `converge.sh` stores every `-e k=v` it was handed in the row, stripped.
+# renders a broken image ref. `converge.sh` stores the `-e k=v` operands it can read in the row,
+# stripped -- the spellings outside its arms (the argparse abbreviations, `@file`) record nothing.
 c_deploy_rows_with_an_empty_digest_var() { jq -s '[.[] | select((.extra_vars // {}) | to_entries | any((.key | endswith("_digest")) and ((.value | tostring) | test("^[[:space:]]*$"))))] | length' docs/reference/deploy-log.jsonl; }
 
 # The read-only healthchecks key reaching a host: today only `hc_prometheus_metrics_path` renders, and the

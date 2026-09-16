@@ -133,15 +133,15 @@
       running as capture on the secondary. Converge the secondary first and let it bake, or pass
       the reason as JSON: -e '{"canary_override": "<why this cannot wait>"}' (a reason, not a
       boolean). JSON, because a multi-word reason through -e canary_override=... is truncated at
-      the first space by ansible's splitter, and the deploy-log recorder reads only the JSON form.
+      the first space by ansible's splitter, and because the deploy-log recorder reads the braced
+      form only when it is JSON.
   when: >-
     inventory_hostname in groups['engine_host']
     and capture_secondary_digest_probe is not skipped
 
-# spec 00082 D1 (second half): an ACCEPTED override lands its reason in the play log — the assert
-# above literally promises "it lands in this log". Gated on the override having been ACCEPTED (the
-# fragment true AND the parity check failing), never on the override merely being PRESENT: the
-# latter would print a "why" on runs that overrode nothing.
+# spec 00082 D1 (second half): an ACCEPTED override lands its reason in the play log. Gated on the
+# override having been ACCEPTED (the fragment true AND the parity check failing), never on the
+# override merely being PRESENT: the latter would print a "why" on runs that overrode nothing.
 - name: canary override accepted — the reason, on the record
   ansible.builtin.debug:
     msg: "canary_override accepted: {{ canary_override }}"

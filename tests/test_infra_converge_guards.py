@@ -183,10 +183,9 @@ def test_pins_recording_semantics(pins_text, override, expected):
     assert truthy(assert_that(task), variables) is expected
 
 
-# --- spec 00082 D1's second half: an ACCEPTED override must reach the play log, or the canary
-# fail_msg's own promise ("it lands in this log") is false. The echo's `when:` is the assert's
-# scoping AND the override fragment AND the primary condition NEGATED -- an echo firing whenever
-# the override is merely PRESENT would log a "why" on runs that overrode nothing.
+# --- spec 00082 D1's second half: an ACCEPTED override must reach the play log. The echo's `when:`
+# is the assert's scoping AND the override fragment AND the primary condition NEGATED -- an echo
+# firing whenever the override is merely PRESENT would log a "why" on runs that overrode nothing.
 CANARY_ECHO_BASE = {
     "inventory_hostname": "zcrypto",
     "groups": {"engine_host": ["zcrypto"], "capture_host": ["zcrypto", "zcrypto-red"]},

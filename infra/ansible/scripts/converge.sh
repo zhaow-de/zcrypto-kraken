@@ -65,25 +65,17 @@ LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
 TAGS=""; EV=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--tags" ] && TAGS="$a"
-  # The four spellings this tree USES and publishes: `-e V`, `-eV`, `--extra-vars V`,
-  # `--extra-vars=V`. A spelling this loop misses is a var the row never mentions, and the drill
-  # pages read an empty `extra_vars` as positive proof that nothing was overridden -- so a missed
-  # operand is not merely absent, it is evidence of the opposite. Hence the SAFE failure is a short
-  # row, and the arms below are exact rather than prefix-matched.
-  #
-  # STATED BOUND, because the safe failure still costs a bypass its booking: `argparse` runs with
-  # `allow_abbrev`, so ansible also honours `--e`, `--ex`, `--ext`, `--extra`, `--extra-v`,
-  # `--extra-va`, `--extra-var` and the clustered `-ve`; those record a short row. They are matched
-  # EXACTLY rather than by prefix on purpose -- a `--extra-var*` prefix also matches the attached
-  # `--extra-vars=K=V`, and then the NEXT argv word (`--tags=…`, `--limit=…`) is booked as a
-  # variable, which is the populated-looking wrong row this recorder exists to avoid.
-  # `-e @file` is collected here and DROPPED by the recorder below, which cannot open it.
-  case "$prev" in -e | --extra-vars) EV="$EV$a"$'\n' ;; esac
+  # EXACT arms, never a prefix: `--extra-var*` also matches the attached `--extra-vars=K=V`, and the
+  # next argv word is then booked as a variable. BOUND: ansible's `allow_abbrev` accepts `--e` …
+  # `--extra-var` and clustered `-ve`; those and `-e @file` record a short row, which the drill pages
+  # read as "nothing was overridden". Operands are separated by RS, never a newline: a braced one
+  # may carry newlines, and splitting there hands the recorder a fragment it can only mis-book.
+  case "$prev" in -e | --extra-vars) EV="$EV$a"$'\x1e' ;; esac
   case "$a" in
     --tags=*) TAGS="${a#--tags=}" ;;
     -e | --extra-vars) : ;;                   # value is the next word; `prev` above takes it
-    -e?*) EV="$EV${a#-e}"$'\n' ;;              # attached short form, `-eK=V`
-    --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\n' ;;
+    -e?*) v="${a#-e}"; EV="$EV${v#=}"$'\x1e' ;;  # attached short form; argparse drops `-e=`'s `=`
+    --extra-vars=*) EV="$EV${a#--extra-vars=}"$'\x1e' ;;
   esac
   prev="$a"
 done
@@ -113,43 +105,28 @@ fi
 python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
 import json, pathlib, shlex, sys, datetime as dt
 log, playbook, limit, tags, rev, dirty, rc, ev, adir = sys.argv[1:10]
-# A `{`- or `[`-prefixed operand NEVER reaches the `=` split below, and that is the load-bearing
-# line here. `fleet-deploys.md` specifies `canary_override` as a reason rather than a boolean, and a
-# multi-word reason cannot travel as `k=v`: ansible's `parse_kv` truncates at the first SPACE
-# (`canary_override=rolled back: ...` yields `rolled` plus a `_raw_params` remainder) and raises
-# outright on an apostrophe. So the operand the rules most require to be booked is the one that
-# arrives braced -- and splitting a braced operand on an `=` inside it mints a key out of the
-# operand's own text, leaving the row looking populated rather than short. Dropping is the safe
-# failure; garbage is not.
-#
-# Braced operands are recovered only when they parse as JSON. `ansible.utils.vars.load_extra_vars`
-# YAML-loads anything starting with `{` or `[`, so JSON is a SUBSET of what ansible accepts, and
-# this recorder cannot close the gap: it runs under the system `python3`, which carries no PyYAML.
-# A YAML-only spelling is therefore dropped and the row is visibly short -- which `count-list.sh
-# canary-bypasses-on-the-primary` reads as 0, the same way it read 0 over the bypass of
-# 2026-09-16 that this branch had to book by hand. Pass a bypass reason as JSON.
+# A braced operand never reaches the `=` split: splitting one mints a key out of its own text, and a
+# wrong-looking-right row is worse than a short one. Ansible YAML-loads `{`/`[` operands, so JSON is
+# a subset of what it accepts and a YAML-only spelling drops here -- this runs under the system
+# `python3`, which has no PyYAML. Pass a bypass reason as JSON.
 extra = {}
-for line in ev.splitlines():
-    line = line.strip()
-    if not line:
+for operand in ev.split("\x1e"):  # never splitlines(): an operand may carry newlines of its own
+    operand = operand.strip()
+    if not operand:
         continue
-    if line[:1] in "{[":
+    if operand[:1] in "{[":
         try:
-            parsed = json.loads(line)
+            parsed = json.loads(operand)
         except ValueError:
             parsed = None
         if isinstance(parsed, dict):
             for k, v in parsed.items():
                 extra[str(k)] = v
         continue
-    # `shlex` because ONE `-e` may carry several vars: ansible's own `parse_kv` reads
-    # `-e "a=1 b=2"` as two, and splitting on the first `=` instead yields the single key `a` with
-    # the value `1 b=2` -- a populated-looking wrong row, the same failure mode as the braced case
-    # above. A token with no `=` is ansible's `_raw_params` remainder, which it discards: an
-    # unquoted `k=two words` truncates at the space THERE too, so dropping it here matches what the
-    # pass actually received rather than what the operator meant.
+    # `shlex` because one `-e` may carry several vars: `-e "a=1 b=2"` is two, and a first-`=` split
+    # makes it one wrong key. A token with no `=` is the `_raw_params` remainder ansible discards.
     try:
-        tokens = shlex.split(line)
+        tokens = shlex.split(operand)
     except ValueError:  # an unbalanced quote: ansible refused this operand, so record nothing
         tokens = []
     for token in tokens:

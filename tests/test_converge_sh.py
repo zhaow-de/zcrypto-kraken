@@ -283,18 +283,14 @@ def test_a_braced_operand_that_is_not_json_is_dropped_rather_than_split_into_a_k
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
 
 
-def test_every_extra_var_spelling_ansible_honours_reaches_the_row(tmp_path):
+def test_the_four_spellings_this_tree_publishes_reach_the_row(tmp_path):
     """A spelling this collector misses is a var the row never mentions, which reads as absent.
 
-    `drills-order-path.md` and `drill-log.md` take an empty `extra_vars` as positive proof that
-    nothing was overridden, so a missed operand is indistinguishable from an operand never passed --
-    the same end state as the bypass this branch had to book by hand, reached through a different
-    door. This drives the four spellings this tree uses and publishes, NOT every spelling ansible
-    honours: `argparse` runs with `allow_abbrev`, so `--e` through `--extra-var` and the clustered
-    `-ve` are accepted by ansible and record a short row here. That bound is stated in the
-    collector, and it is a bound rather than a bug because the failure is a short row and not a
-    wrong one -- the alternative, prefix-matching the flag, books the NEXT argv word as a variable.
-    `-e @file` is short for the same reason: the recorder cannot open it.
+    `docs/reference/drill-log.md` takes an empty `extra_vars` as positive proof that nothing was
+    overridden. The four driven here are the four this tree publishes, NOT every spelling ansible
+    honours: `allow_abbrev` also accepts `--e` through `--extra-var` and the clustered `-ve`, and
+    those record a short row -- the bound stated in the collector, alongside `-e @file`, which the
+    recorder cannot open.
     """
     reason = "secondary unreachable, incident rollback"
     rc, _out, log = run_recording(
@@ -350,6 +346,42 @@ def test_the_word_after_an_attached_extra_vars_is_not_booked_as_a_variable(tmp_p
     rec = json.loads(log.read_text().splitlines()[0])
     assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
     assert rec["tags"] == "capture,engine"
+
+
+def test_a_braced_operand_carrying_newlines_is_recorded_whole(tmp_path):
+    """Ansible YAML-loads a braced operand whatever whitespace it holds; so must this row.
+
+    Measured against `load_extra_vars`: a pretty-printed `-e '{...}'` books `canary_override`
+    exactly as the one-line form does. Separating the collector's operands by newline split this
+    one into fragments, and the fragment carrying the reason's own `=` minted the key
+    `rolled back, exec_armed` -- a populated-looking row with no `canary_override` in it, which
+    `count-list.sh canary-bypasses-on-the-primary` counts as no bypass at all.
+    """
+    reason = "rolled back, exec_armed=0 stands"
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "-e", json.dumps({"canary_override": reason}, indent=2)],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"canary_override": reason}, rec["extra_vars"]
+
+
+def test_an_equals_after_the_short_flag_is_dropped_the_way_argparse_drops_it(tmp_path):
+    """`-e=K=V` is `K=V` to ansible -- argparse strips the `=` -- so the row books `K`, not `""`.
+
+    Measured against `load_extra_vars`, which returns `{"canary_override": "x"}` for
+    `-e=canary_override=x`. Recording the remainder verbatim booked the empty key with the whole
+    operand as its value: a row that reads as an override to anything walking it, without naming
+    the variable that was actually set.
+    """
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto-red", "-e=capture_image_digest=sha256:abc123"],
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["extra_vars"] == {"capture_image_digest": "sha256:abc123"}, rec["extra_vars"]
 
 
 def test_a_failed_real_pass_is_recorded_with_its_rc_and_the_rc_propagates(tmp_path):
