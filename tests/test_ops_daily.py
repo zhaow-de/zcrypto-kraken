@@ -2224,10 +2224,16 @@ def test_the_staleness_arm_reads_the_stamp_the_upgrade_itself_writes():
     assert f"stat -c %Y {_UPGRADE_STAMP} " in ops_daily.UPGRADE_COMMAND[-1], ops_daily.UPGRADE_COMMAND
 
 
-def test_the_upgrade_command_asks_for_every_field_its_reader_consumes():
-    """The command and `read_unattended_upgrades` name these fields independently, so one dropped from
-    the command raises KeyError in the reader, which `_UNREACHABLE` turns into `unreadable` -- a daily
-    silent row, the shape the agentboard read removes by having a single property list.
+def test_no_field_the_upgrade_reader_reads_is_dropped_from_the_command():
+    """ONE direction: what the command asks for, against the six names spelt out here. The other half
+    -- a field added to the reader and not to the command -- is not covered, and cannot be by reading
+    the command alone; the reader restates its keys as literals and nothing derives one from the other.
+
+    Dropping one is two different failures, and the quieter one is why the echoed keys are pinned at
+    all. `Result`, `ExecMainStatus`, `ExecMainExitTimestamp` and `StampEpoch` are taken with
+    `fields[...]`, so dropping one raises KeyError, which `_UNREACHABLE` turns into an `unreadable`
+    row. `RebootRequired` and `RebootPkgs` are taken with `fields.get(...)`, so dropping either raises
+    nothing: the pending-reboot narration just vanishes from a row that still reads PASS.
 
     Spelt out rather than derived from the command, which a drop would carry with it.
     """
