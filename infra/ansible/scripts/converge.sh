@@ -34,14 +34,9 @@ docker_apt_distribution access_ops_agentboard_live"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 
-# A needle carrying whitespace is never ONE member, whatever the haystack contains: `--limit
-# "zcrypto zcrypto-red"` is a substring of HOSTS and two hosts to ansible, which restarts both
-# capture daemons in a pass `--limit capture_host` is refused for.
-in_set() {
-  case "$1" in *[[:space:]]*) return 1 ;; esac
-  case " $2 " in *" $1 "*) return 0 ;; esac
-  return 1
-}
+# EXACT, word by word: a substring test answers true for `zcrypto zcrypto-red`, which is two hosts
+# to ansible and both capture daemons restarted in one pass.
+in_set() { for m in $2; do [ "$m" = "$1" ] && return 0; done; return 1; }
 
 refuse() {
   echo "converge.sh: $1" >&2
@@ -59,10 +54,10 @@ PLAYBOOK="$1"; shift
 # bare `ansible-playbook` carrying `-e ansible_user=root`, which this grammar refuses anyway.
 case "$PLAYBOOK" in site.yml) : ;; *) refuse "this script converges site.yml: $PLAYBOOK" ;; esac
 
-# Each flag's own "seen" marker, never the emptiness of its value: `--tags "" --tags engine` passes
-# a `[ -z "$TAGS" ]` test twice and books the second silently.
+# Two callers type this: a session, or the operator pasting the line that session wrote. So the
+# arms below catch a WRONG name -- a host, tag or variable that is stale, mistyped or read from
+# nothing -- and not a malformed one; a spelling neither caller would type takes no arm of its own.
 LIMIT=""; TAGS=""; SKIP=""; CHECK_ONLY=0; EV=""; want=""
-SAW_LIMIT=0; SAW_TAGS=0; SAW_SKIP=0
 for a in "$@"; do
   if [ -n "$want" ]; then
     case "$want" in
@@ -75,36 +70,25 @@ for a in "$@"; do
     continue
   fi
   case "$a" in
-    --limit) [ "$SAW_LIMIT" -eq 0 ] || refuse "--limit twice"; SAW_LIMIT=1; want=limit ;;
-    --limit=*) [ "$SAW_LIMIT" -eq 0 ] || refuse "--limit twice"; SAW_LIMIT=1; LIMIT="${a#--limit=}" ;;
-    --tags) [ "$SAW_TAGS" -eq 0 ] || refuse "--tags twice"; SAW_TAGS=1; want=tags ;;
-    --skip-tags) [ "$SAW_SKIP" -eq 0 ] || refuse "--skip-tags twice"; SAW_SKIP=1; want=skip ;;
+    --limit) want=limit ;;
+    --limit=*) LIMIT="${a#--limit=}" ;;
+    --tags) want=tags ;;
+    --skip-tags) want=skip ;;
     --check) CHECK_ONLY=1 ;;
     -e) want=ev ;;
     *) refuse "outside the grammar: $a" ;;
   esac
 done
-case "$want" in
-  limit) refuse "--limit with no value" ;;
-  tags) refuse "--tags with no value" ;;
-  skip) refuse "--skip-tags with no value" ;;
-  ev) refuse "-e with no operand" ;;
-esac
+[ -z "$want" ] || refuse "--$want with no value"
 
 [ -n "$LIMIT" ] || refuse "--limit is required"
-case "$LIMIT" in *[[:space:]]*) refuse "--limit names one host, and this is a list: $LIMIT" ;; esac
 in_set "$LIMIT" "$HOSTS" || refuse "unknown host: $LIMIT"
-[ "$SAW_TAGS" -eq 0 ] || [ "$SAW_SKIP" -eq 0 ] || refuse "--tags and --skip-tags together"
-[ "$SAW_TAGS" -eq 0 ] || [ -n "$TAGS" ] || refuse "--tags with an empty value"
-[ "$SAW_SKIP" -eq 0 ] || [ -n "$SKIP" ] || refuse "--skip-tags with an empty value"
+[ -z "$TAGS" ] || [ -z "$SKIP" ] || refuse "--tags and --skip-tags together"
 [ -z "$SKIP" ] || [ "$SKIP" = "engine" ] || refuse "--skip-tags takes only engine, not $SKIP"
 if [ -n "$TAGS" ]; then
   OLDIFS="$IFS"; IFS=,
   for t in $TAGS; do
     IFS="$OLDIFS"
-    case "$t" in
-      *[[:space:]]*) refuse "a tag list carries no spaces, and this one does: $TAGS" ;;
-    esac
     in_set "$t" "$TAGNAMES" || refuse "unknown tag: $t"
     IFS=,
   done
@@ -131,17 +115,9 @@ if not isinstance(parsed, dict) or len(parsed) != 1:
 (key, value), = parsed.items()
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
-if not isinstance(value, str):
-    raise SystemExit(f"the reason is prose, not {type(value).__name__}")
-if not value.strip():
-    raise SystemExit("a reason of whitespace is not a reason")
-if len(value) <= 8:
-    # Length on the RAW value, matching the roles' own `| string | length > 8`; the blank case is
-    # its own arm above, or stripping here would put every boolean word under the length arm and
-    # leave the boolean one below unreachable.
-    raise SystemExit("the reason is prose, longer than 8 characters")
-if value.strip().lower() in ("true", "false", "yes", "no", "1", "0"):
-    raise SystemExit("a reason, not a boolean")
+# What the reason SAYS is the roles' gate, not this script's: each of the four asserts
+# `| string | length > 8` and refuses a boolean word, and that refusal is the one an operator must
+# meet. Here it only has to parse and name an override, or the row cannot record it.
 PYCHK
 )" || refuse "$why: $op"
       ;;
