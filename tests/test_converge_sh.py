@@ -408,6 +408,7 @@ OUTSIDE = [
     (["--limit", "zcrypt"], "a mistyped host", ""),
     (["--limit", "zcrypto", "--tags", "fail2ban"], "a role tag this fleet has never converged", "unknown tag"),
     (["-e", "ansible_user=root"], "a variable ansible reads but no converge here has passed", "not in this script's key set"),
+    (["-e", "rebootstrap=true"], "a variable only a bootstrap run would carry", "not in this script's key set"),
     (["--limit", "zcrypto", "--tags", "captur"], "a mistyped tag", ""),
     (["--limit", "zcrypto", "--tags", "capture, engine"], "a tag list with a space", "carries no spaces"),
     (["--limit", "zcrypto", "--tags", "capture engine"], "two tags and no comma", "carries no spaces"),
@@ -440,12 +441,19 @@ def test_every_spelling_outside_the_grammar_is_refused_before_anything_runs(tmp_
         assert reason in refusal, (why, refusal)
 
 
-def test_a_playbook_outside_the_two_is_refused(tmp_path):
-    """`site.yml` and `bootstrap.yml` are the playbooks this fleet converges, and nothing else is."""
+def test_a_playbook_other_than_site_yml_is_refused(tmp_path):
+    """`site.yml` is what this fleet converges: every deploy-log row and every published procedure.
+
+    `bootstrap.yml` was accepted on the strength of the role's existence rather than any published
+    run through this script, and its `-e ansible_user=root` is refused here in any case.
+    """
     script = make_harness(tmp_path)
-    r = run_no_tty(script, ["other.yml", "--limit", "zcrypto"])
-    assert r.returncode == 2
-    assert invocations(tmp_path) == []
+    for playbook in ("other.yml", "bootstrap.yml"):
+        path = tmp_path / playbook.split(".")[0]
+        path.mkdir()
+        r = run_no_tty(make_harness(path), [playbook, "--limit", "zcrypto"])
+        assert r.returncode == 2, (playbook, r.returncode)
+        assert invocations(path) == [], playbook
 
 
 def test_an_unknown_key_is_refused_by_naming_the_whitelist_not_the_role(tmp_path):

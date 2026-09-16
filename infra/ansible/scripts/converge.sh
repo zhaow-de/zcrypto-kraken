@@ -16,16 +16,18 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 # plus what a skill or runbook publishes as a procedure to run. A tag, host or variable that exists
 # but has never been converged is not here: when a new case arises, this is where it is added, and
 # until then passing it refuses loudly instead of converging while ansible ignores it.
+# The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its only
+# converge, `--limit zaccess --tags access`.
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host.
 TAGNAMES="capture engine ops nas access chrony"
 # Every key the deploy log and the shell history carry, plus the ones a skill or runbook publishes:
-# `daemon_json_ack`, `rebootstrap` and `ops_panel_timer_hold` from the rollout skill,
+# `daemon_json_ack` and `ops_panel_timer_hold` from the rollout skill,
 # `ops_reconcile_mint` from the ops host_vars, `docker_apt_distribution` from the docker role.
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
-ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack rebootstrap \
+ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
@@ -43,7 +45,10 @@ refuse() {
 
 [ "$#" -ge 1 ] || refuse "no playbook — a bare site.yml still runs every play"
 PLAYBOOK="$1"; shift
-case "$PLAYBOOK" in site.yml | bootstrap.yml) : ;; *) refuse "unknown playbook: $PLAYBOOK" ;; esac
+# `site.yml` alone: every row in the deploy log and every published procedure names it, and no
+# guidance publishes a `bootstrap.yml` run through this script -- the one published bootstrap is a
+# bare `ansible-playbook` carrying `-e ansible_user=root`, which this grammar refuses anyway.
+case "$PLAYBOOK" in site.yml) : ;; *) refuse "this script converges site.yml: $PLAYBOOK" ;; esac
 
 # Each flag's own "seen" marker, never the emptiness of its value: `--tags "" --tags engine` passes
 # a `[ -z "$TAGS" ]` test twice and books the second silently.
