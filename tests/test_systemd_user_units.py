@@ -3,9 +3,9 @@
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
 units are rendered into a copy by the install's `sed`, so the render here is a substitution, and
 what is checked is that every placeholder a unit carries is named in its header's `Placeholders:`
-line and filled, from the expression `FILLS` names, by every tracked copy of the install command --
-found by `git grep`, so a copy pasted into a runbook is held too -- that no `<...>` token of any
-spelling -- a whitespace-bearing `<data root>` included -- survives the render, and that the
+line and filled, from the expression `FILLS` names, by both copies of the install command -- the
+unit's own header and README.md's -- that no `<...>` token of any spelling -- a whitespace-bearing
+`<data root>` included -- survives the render, and that the
 directives a timer-driven oneshot needs sit in the section systemd reads
 them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze
 verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the example paths
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -41,12 +40,6 @@ _PLACEHOLDER = re.compile(r"<[^<>]+>")
 # `s<d><token><d><replacement><d>` for any delimiter the install picks: a `|` in $PATH kills a
 # `s|…|` expression, and hardening against that by switching to `s#…#` must not read as no install.
 _SED_CLAUSE = re.compile(r"s(.)(<[^<>]+>)\1(.*?)\1")
-# The command as a word -- `used`, `closed` and `based` carry `sed` as a substring. What separates an
-# install from prose naming one is not how it quotes or flags its script, which is a spelling this
-# guard has no business ruling on: the install WRITES A COPY, so it redirects, and the read-back step
-# this file's own header tells the operator to run does not.
-# A placeholder carries its own `>`, so the redirect is looked for with the placeholders taken out.
-_SED_CMD = re.compile(r"\bsed\b")
 # What the install fills each placeholder FROM. Checked beside the token, or a clause rendering
 # <path> from $PWD -- a unit whose PATH is the checkout, so no node and a red night -- reads as a
 # match. One spelling each, the one the tree uses; another lands here with the edit that wants it.
@@ -62,59 +55,17 @@ def body(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("#"))
 
 
-def _logical_lines(text: str):
-    """(first line number, line) with `\\` continuations joined, the way a shell reads a command.
-
-    A wrapped install is one command; read as two physical lines it is neither, and this guard's
-    whole subject is drift nobody is told about."""
-    buf, start = "", 0
-    for n, raw in enumerate(text.splitlines(), 1):
-        if not buf:
-            start = n
-        if raw.endswith("\\"):
-            buf += raw[:-1]
+def install_clauses(text: str, unit: Path) -> list[dict[str, str]]:
+    """The {token: replacement} each `sed` line of `text` that renders `unit` fills."""
+    out = []
+    for line in text.splitlines():
+        if f"infra/systemd/{unit.name}" not in line or not _SED_CLAUSE.search(line):
             continue
-        yield start, buf + raw
-        buf = ""
-    if buf:
-        yield start, buf
-
-
-def install_copies(unit: Path) -> list[tuple[str, dict[str, str]]]:
-    """Every tracked command that renders `unit` through `sed`, as (where, {token: replacement}).
-
-    Found rather than listed, so a copy pasted into a runbook or a skill is held to the unit the way
-    the header's and README.md's are -- README.md is how this drift got in. A command is held when it
-    names the unit, runs `sed`, fills at least one placeholder and redirects. Not found: a copy that
-    reaches the unit through a variable, and one that renders in place rather than into a copy --
-    which the units' own headers forbid, the tracked file keeping its placeholders."""
-    found = subprocess.run(
-        ["git", "-C", str(REPO), "grep", "-l", "--no-color", "-e", unit.name],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    # rc 1 is "nothing names it", which the caller reads; anything above is a checkout this guard
-    # cannot search, and it says so rather than reporting every copy missing.
-    assert found.returncode < 2, f"`git grep` could not search this checkout: {found.stderr.strip()!r}"
-    here = str(Path(__file__).resolve().relative_to(REPO))
-    copies = []
-    for path in found.stdout.splitlines():
-        if path == here:
-            continue
-        try:
-            text = (REPO / path).read_text(encoding="utf-8")
-        except OSError, UnicodeDecodeError:
-            continue
-        for lineno, line in _logical_lines(text):
-            if not _SED_CMD.search(line) or ">" not in _PLACEHOLDER.sub("", line) or unit.name not in line:
-                continue
-            clauses: dict[str, str] = {}
-            for _, token, replacement in _SED_CLAUSE.findall(line):
-                clauses.setdefault(token, replacement)  # sed applies the FIRST clause for a token
-            if clauses:
-                copies.append((f"{path}:{lineno}", clauses))
-    return copies
+        clauses: dict[str, str] = {}
+        for _, token, replacement in _SED_CLAUSE.findall(line):
+            clauses.setdefault(token, replacement)  # sed applies the FIRST clause for a token
+        out.append(clauses)
+    return out
 
 
 def directives(text: str) -> dict[str, dict[str, str]]:
@@ -196,21 +147,22 @@ def test_every_known_placeholder_names_what_the_install_fills_it_from():
 
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
 def test_every_copy_of_the_install_fills_exactly_what_the_body_carries(unit):
-    """No copy of the install command is the unit, and each drifts from it on its own: a clause
-    short renders its placeholder into ~/.config verbatim, a clause extra outlives the placeholder
-    it filled, and a clause filling the right token from the wrong expression renders a unit that
-    starts and fails. The `Placeholders:` line reads correct through all three."""
-    carried = set(_PLACEHOLDER.findall(body(unit.read_text())))
-    copies = install_copies(unit)
-    if not carried:
-        assert not copies, f"{unit.name} carries no placeholder, yet {[w for w, _ in copies]} render it through `sed`"
-        return
-    assert copies, (
-        f"{unit.name}: body carries {sorted(carried)} and no tracked `sed` command renders it -- a copy "
-        f"reaching the unit only through a variable is not found, and neither is one whose `sed` carries "
-        f"no quoted script"
-    )
-    for where, clauses in copies:
+    """The install command is written twice, in the unit's own header and in README.md, and neither
+    copy is the unit: a clause short renders its placeholder into ~/.config verbatim, a clause extra
+    outlives the placeholder it filled, and a clause filling the right token from the wrong
+    expression renders a unit that starts and fails. The `Placeholders:` line reads correct through
+    all three. Both copies are written here and nowhere else; a third would not be found."""
+    text = unit.read_text()
+    carried = set(_PLACEHOLDER.findall(body(text)))
+    for where, source in (("its own header", text), ("README.md", (REPO / "README.md").read_text())):
+        found = install_clauses(source, unit)
+        assert len(found) == (1 if carried else 0), (
+            f"{unit.name}: {where} holds {len(found)} install `sed` line(s) naming it, expected "
+            f"{1 if carried else 0} for a body carrying {sorted(carried) or 'no placeholder'}"
+        )
+        if not carried:
+            continue
+        clauses = found[0]
         assert set(clauses) == carried, (
             f"{unit.name}: the install at {where} fills {sorted(clauses)} but the body carries "
             f"{sorted(carried)} -- rendered verbatim into the installed copy: "
