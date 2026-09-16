@@ -2525,29 +2525,51 @@ def test_the_shim_exits_with_what_main_returns(tmp_path):
 def test_a_capped_and_quiet_bridge_passes():
     check = ops_daily.read_agentboard_cgroup(runner=_host_answering())
     assert check.ok, check.value
-    assert "MemoryMax=24 GiB" in check.value and "NRestarts=0" in check.value
+    assert "MemoryMax=24.0 GiB" in check.value and "NRestarts=0" in check.value
 
 
-def test_an_uncapped_cgroup_is_the_finding_this_check_exists_for():
+def test_an_uncapped_cgroup_is_the_only_condition_that_sets_the_verdict():
     """`MemoryMax=infinity` is the 2026-09-15 state exactly: a runaway reached 58.4 GiB inside this
-    cgroup and the kernel took a global oom-kill. A merged cap that was never converged reads here."""
+    cgroup and the kernel took a global oom-kill. It alone decides `ok` because it alone is
+    actionable AND clears when acted on -- a merged cap that was never converged reads here."""
     check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryMax="infinity"))
     assert not check.ok
     assert "UNCAPPED" in check.value
 
 
-def test_a_peak_that_reached_memoryhigh_is_reported_though_nothing_died():
-    """Throttling is the cap working, not failing -- and it is still the only trace that something in
-    the operator's workspace tried to run away, since nothing scrapes this unit."""
+def test_a_peak_that_reached_memoryhigh_is_narrated_but_does_not_fail_the_pass():
+    """Throttling is the cap WORKING. It is also cumulative since the unit was last started, so
+    faulting on it would hold the pass at attention every day until someone restarted the bridge by
+    hand -- the trap `read_unattended_upgrades` already avoids with a pending reboot."""
     check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak=str(13 * _GIB)))
-    assert not check.ok
+    assert check.ok, check.value
     assert "throttled" in check.value and "13.0 GiB" in check.value
 
 
-def test_a_restart_is_reported_because_no_prometheus_series_can_see_it():
+def test_a_restart_is_narrated_because_no_prometheus_series_can_see_it():
+    """`zcrypto-fleet-daemon-restarted` cannot watch this unit -- nothing scrapes it -- so this row
+    is the only place a restart surfaces. Cumulative, so narrated rather than faulted."""
     check = ops_daily.read_agentboard_cgroup(runner=_host_answering(NRestarts="2"))
-    assert not check.ok
-    assert "NRestarts=2" in check.value
+    assert check.ok, check.value
+    assert "restarted on its own 2x" in check.value
+
+
+def test_a_stopped_bridge_still_reports_its_cap_rather_than_reading_unreadable():
+    """systemd prints `MemoryPeak=[not set]` for a loaded-but-stopped unit. Parsing it as an integer
+    would raise, and the raise would be caught as `unreadable` -- hiding whether the cap is there at
+    all, on exactly the occasion the bridge is down."""
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak="[not set]"))
+    assert check.ok, check.value
+    assert "peak [not set]" in check.value
+    assert not check.value.startswith("unreadable")
+
+
+def test_a_stopped_AND_uncapped_bridge_still_reports_uncapped():
+    runner = _host_answering(MemoryPeak="[not set]")
+    runner_uncapped = _host_answering(MemoryPeak="[not set]", MemoryMax="infinity")
+    assert ops_daily.read_agentboard_cgroup(runner=runner).ok
+    check = ops_daily.read_agentboard_cgroup(runner=runner_uncapped)
+    assert not check.ok and "UNCAPPED" in check.value
 
 
 def test_an_unreachable_host_is_unreadable_and_never_a_verdict_on_the_cap():

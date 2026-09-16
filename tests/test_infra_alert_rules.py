@@ -1268,7 +1268,7 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
 }
 # A cap is a cap wherever it is written. Compose `memory:` is not the only shape: a systemd unit can
 # carry `MemoryMax=`, and the first one in this tree -- agentboard's -- was invisible here while the
-# glob below walked compose files alone, which is exactly the state this invariant exists to refuse.
+# walk below covered compose files alone, which is exactly the state this invariant exists to refuse.
 _LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
 }
@@ -1295,9 +1295,18 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
     limited = sorted(str(p.relative_to(REPO)) for p in REPO.glob("infra/**/*compose*.y*ml*") if "memory:" in p.read_text())
     assert limited == sorted(_LIMITED_JOBS), f"the memory-limited compose sources changed: {limited} -- update the map"
     # The same question asked of unit files, which the compose glob cannot see.
-    capped_units = sorted(
-        str(p.relative_to(REPO)) for p in REPO.glob("infra/ansible/roles/*/templates/*.service.j2") if "MemoryMax=" in p.read_text()
+    # Every place this repo ships a unit from, not just role templates: `roles/*/files/` and
+    # `infra/systemd/` carry units too, and a cap added to one of those would have been invisible
+    # here in exactly the way agentboard's was invisible to the compose glob above.
+    unit_sources = sorted(
+        {
+            *REPO.glob("infra/ansible/roles/*/templates/*.service*"),
+            *REPO.glob("infra/ansible/roles/*/files/*.service*"),
+            *REPO.glob("infra/systemd/*.service*"),
+        }
     )
+    assert len(unit_sources) >= 16, f"the unit walk found only {len(unit_sources)} files -- the globs are broken"
+    capped_units = sorted(str(p.relative_to(REPO)) for p in unit_sources if "MemoryMax=" in p.read_text())
     assert capped_units == sorted(_LIMITED_UNITS), f"the memory-capped unit templates changed: {capped_units} -- update the map"
     exprs = " ".join(
         str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]

@@ -577,16 +577,10 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
-# The agentboard cgroup, read off the host because no series can answer it. agentboard publishes no
-# /metrics and is scraped by nothing, and the cap is a systemd `MemoryMax=`, which no metric on this
-# fleet carries -- cadvisor is deliberately absent and the ops unix exporter runs no systemd
-# collector. So `zcrypto-fleet-daemon-restarted` cannot see its restarts either: that rule's shape is
-# already right (`changes(process_start_time_seconds[15m]) > 0`, `for: 2m`) and it failed on 2026-09-15
-# for want of a SOURCE, not a threshold. This read is the source.
-#
-# Why this unit and no other: `KillMode=process` makes every forked child inherit its cgroup for life,
-# so the operator's tmux server and every agent session started through the web terminal are accounted
-# here. It is the one unit in this tree that can host unbounded operator work.
+# The agentboard cgroup, read off the host because no series can answer it: nothing scrapes this unit,
+# and no metric on this fleet carries a systemd `MemoryMax=`. `zcrypto-fleet-daemon-restarted` is
+# therefore blind to it for want of a SOURCE, not a threshold -- its shape is already right. This read
+# is the source, and this is the one unit in the tree that can host unbounded operator work.
 AGENTBOARD_HOST = "hp"
 AGENTBOARD_UNIT = "zaccess-agentboard.service"
 AGENTBOARD_CHECK = f"agentboard cgroup on {AGENTBOARD_HOST}"
@@ -638,41 +632,49 @@ def ssh_resolve(host: str, operands: list[str]) -> list[str]:
 
 
 def read_agentboard_cgroup(*, runner) -> Check:
-    """Whether the operator bridge's cgroup is still capped, and whether it has been throttled or
-    restarted since the last read.
+    """Whether the operator bridge's cgroup is still capped, and where its peak and restart counters
+    stand.
+
+    Only the CAP decides `ok`. The peak and the restart count are cumulative since the unit was last
+    started, and this read keeps no previous value, so treating either as a fault would hold the pass
+    at attention every day until someone restarted the unit by hand -- the same trap
+    `read_unattended_upgrades` avoids by keeping a pending reboot out of its `ok`. They are reported
+    in the value, which is where an operator reading the row wants them.
 
     Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
     """
+    gib = 1024**3
+
+    def _scale(raw: str) -> str:
+        """systemd prints a byte count, `infinity` for no limit, or `[not set]` for a counter it has
+        no value for -- MemoryPeak on a loaded-but-stopped unit. Only the first is arithmetic."""
+        return f"{int(raw) / gib:.1f} GiB" if raw.isdigit() else raw
+
     try:
         fields = dict(line.split("=", 1) for line in runner(AGENTBOARD_COMMAND).splitlines() if "=" in line)
-        hard, soft = fields["MemoryMax"], fields["MemoryHigh"]
-        peak, restarts = int(fields["MemoryPeak"]), int(fields["NRestarts"])
+        hard, soft, peak, restarts = (fields[k] for k in ("MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts"))
     # Same convention as the upgrade read: an unreachable host, a timeout and a non-zero ssh are
     # `unreadable`, never a FAIL. A FAIL here says the bridge is uncapped, which a dropped connection
-    # does not show.
+    # does not show. A MISSING key lands here too; a non-numeric VALUE does not, because `_scale`
+    # renders it verbatim rather than parsing it -- a stopped bridge must still report its cap.
     except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
         return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=False, value=f"unreadable: {exc}")
 
-    gib = 1024**3
-    faults = []
+    value = f"MemoryMax={_scale(hard)}, MemoryHigh={_scale(soft)}, peak {_scale(peak)}, NRestarts={restarts}"
+    # Reaching MemoryHigh is the cap WORKING -- the kernel throttled and reclaimed instead of killing
+    # -- so it is narration, not a fault. It is worth narrating because nothing else on this fleet
+    # records that something in the operator's workspace tried to run away.
+    if peak.isdigit() and soft.isdigit() and int(peak) >= int(soft):
+        value += f"; peak reached MemoryHigh -- something was throttled"
+    if restarts.isdigit() and int(restarts):
+        value += f"; the bridge restarted on its own {restarts}x since it was last started"
     # `infinity` is the literal systemd prints for no limit, and it is the 2026-09-15 state exactly:
-    # a runaway reached 58.4 GiB inside this cgroup and the kernel took a GLOBAL oom-kill.
-    if hard == "infinity":
-        faults.append("MemoryMax=infinity -- the cgroup is UNCAPPED")
-    elif soft != "infinity" and peak >= int(soft):
-        # Reaching MemoryHigh is not a failure of the cap, it is the cap working: the kernel throttled
-        # and reclaimed instead of killing. It is reported because something in there tried.
-        faults.append(f"peak {peak / gib:.1f} GiB reached MemoryHigh {int(soft) / gib:.0f} GiB -- something was throttled")
-    if restarts:
-        faults.append(f"NRestarts={restarts} -- the bridge restarted on its own")
-    value = (
-        f"MemoryMax={'infinity' if hard == 'infinity' else f'{int(hard) / gib:.0f} GiB'}, "
-        f"MemoryHigh={'infinity' if soft == 'infinity' else f'{int(soft) / gib:.0f} GiB'}, "
-        f"peak {peak / gib:.1f} GiB, NRestarts={restarts}"
-    )
-    if faults:
-        value += "; " + "; ".join(faults)
-    return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=not faults, value=value)
+    # a runaway reached 58.4 GiB inside this cgroup and the kernel took a GLOBAL oom-kill. This is the
+    # one condition that is actionable and that CLEARS when acted on, which is why it alone sets ok.
+    uncapped = hard == "infinity"
+    if uncapped:
+        value += "; MemoryMax=infinity -- the cgroup is UNCAPPED"
+    return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=not uncapped, value=value)
 
 
 def read_unattended_upgrades(*, now: datetime, runner) -> Check:
