@@ -4,7 +4,7 @@
 # ruling that this fleet's converges are enumerable): preview first, typed-limit confirm, then the
 # real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
 # Usage: converge.sh <playbook.yml> --limit <host> [--tags <list> | --skip-tags engine] [--check]
-#        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...
+#        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...   (the braced form is JSON, spanning lines or not)
 # rc 2 usage, or an argument outside that grammar | rc 3 confirm-abort / no tty
 # | rc 4 preview failed | else the real pass's own exit.
 set -euo pipefail
@@ -86,6 +86,9 @@ if [ -n "$TAGS" ]; then
   OLDIFS="$IFS"; IFS=,
   for t in $TAGS; do
     IFS="$OLDIFS"
+    case "$t" in
+      *[[:space:]]*) refuse "a tag list carries no spaces: --tags ${TAGS// /}" ;;
+    esac
     in_set "$t" "$TAGNAMES" || refuse "unknown tag: $t"
     IFS=,
   done
@@ -112,7 +115,9 @@ if not isinstance(parsed, dict) or len(parsed) != 1:
 (key, value), = parsed.items()
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
-if not isinstance(value, str) or len(value) <= 8:
+if not isinstance(value, str):
+    raise SystemExit(f"the reason is prose, and this is a {type(value).__name__}")
+if len(value) <= 8:
     raise SystemExit("the reason is prose, longer than 8 characters")
 if value.strip().lower() in ("true", "false", "yes", "no", "1", "0"):
     raise SystemExit("a reason, not a boolean")

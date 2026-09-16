@@ -455,9 +455,21 @@ def test_the_tag_whitelist_is_the_playbook_s_own_tags():
     # Both spellings ansible accepts: the flow sequence `tags: [a, b]` and the bare `tags: a, b`.
     # Reading only the bracket form lets a role tagged the other way go missing from the corpus,
     # and a short corpus makes a short TAGNAMES look correct.
-    published = set()
-    for match in re.finditer(r"^\s*tags:\s*(\[[^]]*\]|[A-Za-z0-9_,\- ]+)$", SITE_YML.read_text(), re.M):
-        published |= {t.strip() for t in match.group(1).strip("[]").split(",") if t.strip()}
+    published, lines_seen, lines_read = set(), 0, 0
+    sources = [SITE_YML, SITE_YML.parent / "bootstrap.yml", *(SITE_YML.parent / "roles").rglob("*.yml")]
+    for source in sources:
+        for line in source.read_text().splitlines():
+            if not re.match(r"^\s*tags:", line):
+                continue
+            lines_seen += 1
+            body = re.sub(r"\s#.*$", "", line).split(":", 1)[1].strip()  # a trailing comment is not a tag
+            if not re.fullmatch(r"\[[^]]*\]|[A-Za-z0-9_,\- ]+", body):
+                continue
+            lines_read += 1
+            published |= {t.strip() for t in body.strip("[]").split(",") if t.strip()}
+    # Every `tags:` line must be READ, not merely matched: the regex silently skipping one is how a
+    # short TAGNAMES would look correct, and site.yml already carries a line with a trailing comment.
+    assert lines_read == lines_seen, (lines_read, lines_seen)
     published.discard("always")
     assert len(published) >= 10, sorted(published)
     assert _grammar_set("TAGNAMES") == published, sorted(published ^ _grammar_set("TAGNAMES"))
@@ -504,6 +516,28 @@ def test_every_operand_the_tree_publishes_is_inside_the_grammar():
     known = _grammar_set("EVKEYS") | _grammar_set("OVERRIDES")
     assert keys <= known, sorted(keys - known)
 
+    # The `k=v` arm REFUSES every override name, so a page publishing one publishes a spelling the
+    # script rejects. The roles and site.yml are excluded: their fail_msgs name it to explain the
+    # refusal, which is the one place the string belongs.
+    pages = sp.run(
+        [
+            "git",
+            "grep",
+            "-rlE",
+            "--",
+            "-e '?(" + "|".join(sorted(_grammar_set("OVERRIDES"))) + ")=",
+            "--",
+            ".claude",
+            "infra/runbooks",
+            "docs/reference",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert pages.returncode in (0, 1), (pages.returncode, pages.stderr)
+    assert pages.stdout.split() == [], pages.stdout
+
 
 def test_the_host_whitelist_is_the_inventory_s_own_hosts():
     """The set left unheld is the set that drifts: a host added to the inventory would be refused.
@@ -533,6 +567,20 @@ def test_the_host_whitelist_is_the_inventory_s_own_hosts():
     leaves.discard("localhost")
     assert len(leaves) >= 5, sorted(leaves)
     assert _grammar_set("HOSTS") == leaves, sorted(leaves ^ _grammar_set("HOSTS"))
+
+
+def test_an_unknown_key_is_refused_by_naming_the_whitelist_not_the_role(tmp_path):
+    """`capture_retention_days` IS read by the capture role; it is this script's set that is short.
+
+    The whitelist going short is the refusal an operator meets on a legitimate converge, so the
+    message has to send them to the set rather than to a role that reads the key perfectly well.
+    """
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", "capture_retention_days=9"])
+    assert r.returncode == 2
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "is not in this script's key set" in refusal, refusal
+    assert "no role reads" not in refusal, refusal
 
 
 def test_a_skip_tags_run_is_not_booked_as_an_un_tagged_one(tmp_path):

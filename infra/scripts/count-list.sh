@@ -254,9 +254,9 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
-# The bypasses the ROW names, which is every bypass a converge can have taken: `converge.sh` accepts
-# an override as one-line JSON and refuses every other spelling before the pass, so a bypass that
-# applied and a row that names it are the same set.
+# The bypasses the ROW names. `converge.sh` accepts an override as JSON and refuses every other
+# spelling before the pass, so every bypass THROUGH IT is here; `run.sh` takes raw ansible argv and
+# writes no row at all, which is the hole this count cannot see and the confirm gate is why.
 c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
 
 # COUNT_LIST_FEED_SNAPSHOT is the snapshot arm of the audit: set it and the count reads a recorded
