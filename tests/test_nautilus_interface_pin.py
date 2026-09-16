@@ -96,8 +96,11 @@ def test_the_pin_covers_every_nautilus_name_cli_imports():
     assert sorted(modules_imported - pinned_modules) == [], "module imported under cli/ and not pinned"
 
 
-# Name -> integer, for every enum whose VALUE we persist into a durable record or compare across a
-# restart. A rename is loud; a silent value change corrupts stored rows, so both halves are pinned.
+# Name -> integer for every enum whose VALUE a stored row depends on, and for any whose MEMBER SET a
+# live decision depends on. The two are not the same criterion and the map holds both: a value that
+# changes corrupts every persisted row carrying the old one, while a member that empties to bare
+# `None` changes what a read returns with nothing renamed and nothing to break at import. Which of
+# the two an entry is here for is not uniform -- `PositionSide` is the member-set case and says so.
 # `OrderSide` carries no `NO_ORDER_SIDE` entry: the name resolves to bare `None` rather than an enum
 # member -- "no side" is `Option`-shaped throughout the library now -- and nothing under cli/ has
 # ever persisted its value, so the entry was dropped rather than widened to accept `None`, which
@@ -108,6 +111,11 @@ PINNED_ENUM_VALUES = {
     "OrderSide": {"BUY": 1, "SELL": 2},
     "TimeInForce": {"GTC": 1, "IOC": 2, "FOK": 3, "GTD": 4},
     "AccountType": {"CASH": 1, "MARGIN": 2, "BETTING": 3},
+    # Not a persisted value: `cli/engine/flatten.py` reads a row's side as `str(position_side)` and
+    # `_required` turns a `None` there into exit 3, so `FLAT` has to stay a real member -- the
+    # Option-shaped redesign above reached `NO_POSITION_SIDE` and could reach `FLAT` next.
+    # `test_a_position_report_refuses_a_none_side` below pins the other half.
+    "PositionSide": {"FLAT": 1, "LONG": 2, "SHORT": 3},
     # Exactly the members cli/engine references. Generated from the installed wheel, never typed.
     "OrderStatus": {"CANCELED": 8, "DENIED": 2, "EXPIRED": 9, "FILLED": 14, "REJECTED": 7, "VOIDED": 15},
 }
@@ -166,6 +174,21 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     assert config.inflight_check_interval_ms == 2000
     assert config.inflight_check_threshold_ms == 5000
     assert config.inflight_check_retries == 5
+
+
+def test_a_position_report_refuses_a_none_side():
+    """The other half of `PositionSide`'s pin, and the half an enum-value map cannot state: the red
+    button's abort path stays unreachable only while the library refuses to BUILD a report carrying
+    no side. Let a future wheel accept `None` there and `cli/engine/flatten.py`'s `_required` raises
+    on it -- `run_flatten` exits 3, refusing to flatten an account, rather than naming the row and
+    flattening the rest."""
+    from nautilus_trader.model import AccountId, InstrumentId, PositionSide, PositionStatusReport, Quantity
+
+    head = (AccountId("KRAKEN-901"), InstrumentId.from_str("BTC/EUR.KRAKEN"))
+    tail = (Quantity.from_str("0"), 0, 0)
+    assert str(PositionStatusReport(*head, PositionSide.FLAT, *tail).position_side) == "FLAT"
+    with pytest.raises(TypeError):
+        PositionStatusReport(*head, None, *tail)
 
 
 def test_every_order_event_the_executor_routes_on_carries_the_reconciliation_flag():

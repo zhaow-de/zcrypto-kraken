@@ -418,11 +418,11 @@ def margin_legs(positions: list[PositionRow], listing: dict[str, Any]) -> tuple[
     """One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
 
     A FLAT row is not a leg. Every other row this code cannot act on -- a side that is none of the
-    three (the installed `PositionSide` carries a fourth member and which ones the adapter emits is
-    unmeasured), a pair the listing does not carry -- is NAMED rather than raised on and never read
-    as flat: nothing can be sized for it, and one such row must not abort a button that has not yet
-    cancelled an order, closed another position or sold a single balance. `judge_final` reads both
-    classes back out of the final snapshot, so neither can leave the run reading 0.
+    three, whatever the adapter answers with, a pair the listing does not carry -- is NAMED rather
+    than raised on and never read as flat: nothing can be sized for it, and one such row must not
+    abort a button that has not yet cancelled an order, closed another position or sold a balance.
+    `judge_final` reads both classes back out of the final snapshot, so neither can leave the run
+    reading 0.
     """
     sides = {"LONG": "SELL", "SHORT": "BUY"}
     out = []

@@ -404,8 +404,7 @@ def test_a_flat_row_is_not_a_leg():
 def test_an_unrecognised_position_side_is_named_and_never_read_as_flat_or_aborted_on():
     """Neither failure: reading an unrecognised side as 'nothing to do' would call an open position
     flat, and raising on it would abort the sweep before the cancel and cost every other leg -- so
-    the row is named (`NO_POSITION_SIDE` is a member the installed `PositionSide` carries) and the
-    rest of the account is still flattened."""
+    the row is named and the rest of the account is still flattened."""
     legs, unclosable = flatten.margin_legs(
         [
             flatten.PositionRow("BTC/EUR", "BTC/EUR.KRAKEN", "NO_POSITION_SIDE", 1.0),
@@ -1663,7 +1662,7 @@ def test_a_missing_field_on_a_pre_write_read_exits_three_and_the_cancel_never_go
 
 
 def test_an_unrecognised_position_side_never_aborts_the_button_and_exits_two(tmp_path):
-    """The row the venue answers with a side this build knows (`NO_POSITION_SIDE`) and this command
+    """The row the venue answers with a side this build does not enumerate and this command
     cannot close from. Aborting would leave the resting orders resting, every balance held and the
     engine already stopped; reading it as flat would exit 0 over an open position. So: the cancel
     goes out, every other leg is sent, the row is named in the record, and the account reads 2."""
