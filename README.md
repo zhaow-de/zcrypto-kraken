@@ -143,15 +143,16 @@ systemctl --user status zcrypto-engine-shadow.service    # confirm: active (runn
 
 #### Nightly data-gated tests (systemd user unit)<a name="nightly-data-gated-tests-systemd-user-unit"></a>
 
-`infra/systemd/zcrypto-data-gated-tests.service` and `.timer` are a systemd **user**-unit pair that runs the whole test suite nightly (02:30 UTC, `Persistent=true`) from a checkout where `data/` is present — the tests CI skips for want of local data run for real here — through `infra/scripts/data-gated-run.py`, which writes `.local/data-gated-runs/<UTC stamp>.json` and `latest.json` (counts, failing ids, the git sha, whether `data/` was there, the skips whose reason says a dataset was absent, and an `ok` flag that neither a run without a summary line nor a data-gated skip earns). The daily operations pass reads `latest.json` and reports a missing, stale (older than 26 h) or failed result. Enable lingering, then, from the main checkout's root, render a copy of the service with its `<repo>`/`<uv>` placeholders filled into `~/.config/systemd/user/` — the tracked template keeps them, so the units test reads it as committed — and copy the timer, which has none:
+`infra/systemd/zcrypto-data-gated-tests.service` and `.timer` are a systemd **user**-unit pair that runs the whole test suite nightly (02:30 UTC, `Persistent=true`) from a checkout where `data/` is present — the tests CI skips for want of local data run for real here — through `infra/scripts/data-gated-run.py`, which writes `.local/data-gated-runs/<UTC stamp>.json` and `latest.json` (counts, failing ids, the git sha, whether `data/` was there, the skips whose reason says a dataset was absent, and an `ok` flag that neither a run without a summary line nor a data-gated skip earns). The daily operations pass reads `latest.json` and reports a missing, stale (older than 26 h) or failed result. Enable lingering, then, from the main checkout's root, render a copy of the service with its `<repo>`/`<uv>`/`<path>` placeholders filled into `~/.config/systemd/user/` — the tracked template keeps them, so the units test reads it as committed — and copy the timer, which has none:
 
 ```bash
 loginctl enable-linger $USER            # prerequisite: without lingering the timer dies at logout
 loginctl show-user $USER -p Linger      # verify: prints Linger=yes
 mkdir -p ~/.config/systemd/user
-sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|" infra/systemd/zcrypto-data-gated-tests.service > ~/.config/systemd/user/zcrypto-data-gated-tests.service
+sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|; s|<path>|$PATH|" infra/systemd/zcrypto-data-gated-tests.service > ~/.config/systemd/user/zcrypto-data-gated-tests.service
 cp infra/systemd/zcrypto-data-gated-tests.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
+systemctl --user show -p Environment zcrypto-data-gated-tests.service   # read it back: a PATH carrying & or | renders wrong through sed; confirm it is yours and node is on it
 systemctl --user enable --now zcrypto-data-gated-tests.timer
 systemctl --user list-timers zcrypto-data-gated-tests.timer   # confirm the next fire
 systemctl --user start --no-block zcrypto-data-gated-tests.service   # a first run by hand, so tomorrow's read has a file; returns at once

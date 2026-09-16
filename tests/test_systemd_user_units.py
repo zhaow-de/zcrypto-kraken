@@ -1,11 +1,12 @@
 """The user-unit templates under `infra/systemd/` render by placeholder substitution and parse as units.
 
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
-units are rendered into a copy by the install's `sed` (`<repo>`, `<uv>`), so the render here is a
-substitution, and what is checked is that every placeholder a unit carries is named in its header's
-`Placeholders:` line, that no `<...>` token of any spelling -- a whitespace-bearing `<data root>`
-included -- survives the render, and that the directives a timer-driven oneshot needs sit in the
-section systemd reads them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked:
+units are rendered into a copy by the install's `sed`, so the render here is a substitution, and
+what is checked is that every placeholder a unit carries is named in its header's `Placeholders:`
+line and filled by every copy of the install command, that no `<...>` token of any spelling -- a
+whitespace-bearing `<data root>` included -- survives the render, and that the directives a
+timer-driven oneshot needs sit in the section systemd reads them from -- a `Persistent=` under
+`[Unit]` is silently ignored. Not checked:
 `systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the
 example paths this render fills in."""
 
@@ -35,10 +36,25 @@ KNOWN = {
     "<path>": "/home/you/.local/bin:/usr/local/bin:/usr/bin",
 }
 _PLACEHOLDER = re.compile(r"<[^<>]+>")
+_SED_CLAUSE = re.compile(r"s\|(<[^<>]+>)\|")
 
 
 def units() -> list[Path]:
     return sorted(p for p in UNITS.iterdir() if p.is_file())
+
+
+def body(text: str) -> str:
+    """The unit as systemd reads it -- the header is comments."""
+    return "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+
+
+def install_sed_clauses(text: str, unit: Path) -> list[set[str]]:
+    """The tokens each `sed` line in `text` that renders `unit` fills, one set per line."""
+    return [
+        set(_SED_CLAUSE.findall(line))
+        for line in text.splitlines()
+        if f"infra/systemd/{unit.name}" in line and _SED_CLAUSE.search(line)
+    ]
 
 
 def directives(text: str) -> dict[str, dict[str, str]]:
@@ -83,8 +99,7 @@ def test_every_unit_is_registered():
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
 def test_every_placeholder_is_known_and_named_in_the_header(unit):
     text = unit.read_text()
-    body = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
-    carried = set(_PLACEHOLDER.findall(body))
+    carried = set(_PLACEHOLDER.findall(body(text)))
     assert carried <= set(KNOWN), f"{unit.name}: placeholder(s) the render cannot fill: {sorted(carried - set(KNOWN))}"
     if carried:
         named = [line for line in header_lines(text) if line.startswith("# Placeholders:")]
@@ -100,8 +115,7 @@ def test_every_placeholder_is_known_and_named_in_the_header(unit):
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
 def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
     rendered = render(unit.read_text())
-    body = "\n".join(line for line in rendered.splitlines() if not line.startswith("#"))
-    assert not _PLACEHOLDER.search(body), f"{unit.name}: a placeholder survived the render"
+    assert not _PLACEHOLDER.search(body(rendered)), f"{unit.name}: a placeholder survived the render"
     parsed = directives(rendered)
     assert "Description" in parsed.get("[Unit]", {}), f"{unit.name}: no Description= under [Unit]"
     if unit.suffix == ".service":
@@ -114,6 +128,27 @@ def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
         assert timer.get("Persistent") == "true", f"{unit.name}: Persistent=true must sit under [Timer], where systemd reads it"
         assert (UNITS / timer.get("Unit", "")).is_file(), f"{unit.name}: Unit= must name a service beside it"
         assert parsed.get("[Install]", {}).get("WantedBy") == "timers.target", f"{unit.name}: a timer is wanted by timers.target"
+
+
+@pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
+def test_every_copy_of_the_install_fills_exactly_what_the_body_carries(unit):
+    """The install `sed` is written twice, in the unit's own header and in README.md, and neither
+    copy is the unit: a clause short renders its placeholder into ~/.config verbatim, a clause extra
+    outlives the placeholder it filled, and the `Placeholders:` line reads correct either way."""
+    text = unit.read_text()
+    carried = set(_PLACEHOLDER.findall(body(text)))
+    for where, source in (("its own header", text), ("README.md", (REPO / "README.md").read_text())):
+        clauses = install_sed_clauses(source, unit)
+        assert len(clauses) == (1 if carried else 0), (
+            f"{unit.name}: {where} holds {len(clauses)} install `sed` line(s) naming it, expected "
+            f"{1 if carried else 0} for a body carrying {sorted(carried) or 'no placeholder'}"
+        )
+        if carried:
+            assert clauses[0] == carried, (
+                f"{unit.name}: {where}'s install `sed` fills {sorted(clauses[0])} but the body carries "
+                f"{sorted(carried)} -- rendered verbatim into the installed copy: "
+                f"{sorted(carried - clauses[0])}; clause(s) filling nothing: {sorted(clauses[0] - carried)}"
+            )
 
 
 def test_the_data_gated_service_is_a_oneshot_the_timer_owns():

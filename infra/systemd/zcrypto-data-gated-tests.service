@@ -9,11 +9,9 @@
 # file keeps them, and tests/test_systemd_user_units.py reads it with them in place --
 #   <repo> = the MAIN zcrypto-kraken checkout, the one with data/ (e.g. /home/you/Projects/zcrypto-kraken)
 #   <uv>   = the uv binary (find it with `command -v uv`, e.g. /home/you/.local/bin/uv)
-#   <path> = your login PATH. A user unit gets the manager's, which on this workstation is
-#            /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin -- it carries jq, bash and sed but
-#            NOT nvm's node, so `tests/test_review_workflows.py` found none and the night read clean
-#            while the one case that executes `pre-read.js`'s predicate never ran. Re-render after
-#            an nvm upgrade: the path carries the node version, and a stale one fails that case.
+#   <path> = your LOGIN PATH -- a user unit otherwise gets the manager's, which carries jq, bash
+#            and sed but not nvm's node, and a test asserts node. The rendered value pins the node
+#            version's directory: re-render when that directory goes.
 #
 # Prerequisite -- lingering. Without it the user manager stops at logout, the timer sleeps with it,
 # and a night nobody was logged in produces no result:
