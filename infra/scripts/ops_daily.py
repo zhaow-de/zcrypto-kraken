@@ -577,10 +577,9 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
-# The agentboard cgroup, read off the host because no series can answer it: nothing scrapes this unit,
-# and no metric on this fleet carries a systemd `MemoryMax=`. `zcrypto-fleet-daemon-restarted` is
-# therefore blind to it for want of a SOURCE, not a threshold -- its shape is already right. This read
-# is the source, and this is the one unit in the tree that can host unbounded operator work.
+# The agentboard cgroup, read off the host because no series can answer it: nothing scrapes this unit.
+# `zcrypto-fleet-daemon-restarted` is blind to it for want of a SOURCE, not a threshold -- a rule is
+# not the fix, this read is. It is the one unit in the tree that can host unbounded operator work.
 AGENTBOARD_HOST = "hp"
 AGENTBOARD_UNIT = "zaccess-agentboard.service"
 # The row names the fleet host an operator recognises; the command uses the ssh alias.

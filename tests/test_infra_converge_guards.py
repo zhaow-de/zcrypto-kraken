@@ -1412,12 +1412,31 @@ def _directives(unit: str) -> dict[str, list[str]]:
     return out
 
 
+def _render_agentboard_unit() -> str:
+    """The unit as the templar produces it, not as it was typed.
+
+    Reading the raw text lets a cap survive a guard while `{% if false %}` deletes it at deploy time,
+    and this file's premise (spec 00082) is that a guard reads the REAL rendered condition. Same
+    placeholder shape as `_render_nas_env`: every bare `{{ name }}` gets a stand-in so an undefined
+    is not a red that says nothing about the claim.
+    """
+    from ansible.template import trust_as_template
+
+    text = AGENTBOARD_UNIT.read_text()
+    variables = {name: f"<{name}>" for name in set(re.findall(r"{{\s*(\w+)\b(?!\s*\()", text))}
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
+
+
 def test_agentboard_killmode_and_mainpid_stay_coupled():
     """`KillMode=process` is only safe because the unit ExecStarts the SERVER, not the node shim, and
     nothing else couples the two files: dropping it restores the control-group SIGKILL that takes the
     operator's tmux sessions, and reverting to the shim leaves the server holding `:4040` so the next
     start cannot bind."""
-    unit = AGENTBOARD_UNIT.read_text()
+    # RENDERED, not raw: the raw text keeps a cap that `{% if false %}` deletes at deploy time, and
+    # this file's whole premise (spec 00082) is that a guard reads what the templar produces rather
+    # than what the author typed. `{{ }}` values the unit carries are irrelevant here -- the walk
+    # below reads directive names and their values, and none of them interpolates.
+    unit = _render_agentboard_unit()
     start = AGENTBOARD_START.read_text()
 
     # Section-aware and LAST-WINS, because three regressions all leave a bare `KillMode=process`

@@ -2523,8 +2523,7 @@ def test_the_shim_exits_with_what_main_returns(tmp_path):
 
 
 def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
-    """The reader is wired into the report `main` prints: a check nothing appends reports nothing.
-    Driven because deleting that one `verdict.append` line left every other test in this file green."""
+    """The cgroup row reaches the report `main` prints -- nothing else in this file drives that wiring."""
     monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
@@ -2631,12 +2630,18 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
     # The LITERAL, not the constant the command is built from: comparing the command against
     # AGENTBOARD_HOST is a self-comparison that passes whatever the host is renamed to.
     assert ops_daily.AGENTBOARD_COMMAND[-2] == "hp", "the ops node's ssh alias, per docs/reference/fleet.md"
-    # Stdin is inherited, so without this a password prompt or a first-contact host-key confirmation
-    # holds the read until the timeout instead of failing it -- the same reason the upgrade read
-    # spells it out.
+    # BatchMode for the reason `UPGRADE_COMMAND` spells out: a prompt holds the read until the
+    # timeout instead of failing it.
     assert "BatchMode=yes" in ops_daily.AGENTBOARD_COMMAND
     body = ops_daily.AGENTBOARD_COMMAND[-1]
     assert body.startswith("systemctl show "), body
+    # The `-p` list is what the reader's key tuple consumes. Dropping one keeps every test green --
+    # the fake answers from a dict, not from the command -- while EVERY live read raises KeyError and
+    # reports `unreadable`, daily, until someone reads the source. So the two are pinned equal here,
+    # derived from the module rather than restated: a property added to one and not the other fails.
+    requested = {tok[2:] or nxt for tok, nxt in zip(body.split(), body.split()[1:] + [""]) if tok.startswith("-p")}
+    consumed = {"MemoryMax", "MemoryHigh", "MemoryPeak", "NRestarts"}
+    assert requested == consumed, f"the command requests {sorted(requested)} but the reader consumes {sorted(consumed)}"
     assert not any(sep in body for sep in (";", "&&", "||", "|", "`", "$(", "\n")), f"the read is chained: {body}"
     assert all(
         tok == "systemctl" or tok == "show" or tok.startswith("-p") or tok == ops_daily.AGENTBOARD_UNIT or tok[0].isupper()
