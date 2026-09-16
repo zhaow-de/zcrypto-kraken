@@ -105,6 +105,21 @@ def test_every_required_context_is_a_job_that_runs_on_prs_into_develop(context):
     )
 
 
+def test_the_suite_job_gives_the_checkout_what_the_guards_measure_from():
+    """Two steps, and a guard goes quiet without either — quietly, which is the point.
+
+    `fetch-depth: 0` is what `tests/test_change_index.py`'s completeness guard reads; the local
+    `develop` ref is what `count-list.sh` refuses to run without, and nine `tests/test_count_list.py`
+    cases skip on. A `pull_request` checkout is detached at the merge ref with `origin/develop`
+    alone, so neither comes for free, and neither failing is visible in a green summary line.
+    """
+    job = yaml.safe_load((WORKFLOWS / "coverage.yml").read_text(encoding="utf-8"))["jobs"]["coverage"]
+    steps = job["steps"]
+    checkout = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
+    assert checkout.get("with", {}).get("fetch-depth") == 0, checkout
+    assert any("git branch --force develop origin/develop" in str(s.get("run", "")) for s in steps), steps
+
+
 def test_the_suite_check_is_required_so_a_red_run_cannot_merge():
     # The whole point of the branch rule: CI is the only place the full suite runs, so a green
     # merge button must mean a green suite. Named explicitly rather than inferred from the list,
