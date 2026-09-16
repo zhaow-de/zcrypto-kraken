@@ -30,7 +30,9 @@ REGISTERED = {
 KNOWN = {
     "<repo>": "/home/you/Projects/zcrypto-kraken",
     "<uv>": "/home/you/.local/bin/uv",
-    "<path>": "/home/you/.nvm/versions/node/v26.5.0/bin:/usr/local/bin:/usr/bin",
+    # A substitution source, not a reading of this machine: the real value is the installing
+    # shell's $PATH, and pinning a node version here would read as a fact about it.
+    "<path>": "/home/you/.local/bin:/usr/local/bin:/usr/bin",
 }
 _PLACEHOLDER = re.compile(r"<[^<>]+>")
 
@@ -89,6 +91,10 @@ def test_every_placeholder_is_known_and_named_in_the_header(unit):
         assert named, f"{unit.name}: carries {sorted(carried)} but its header has no `# Placeholders:` line"
         missing = [t for t in sorted(carried) if t not in named[0]]
         assert not missing, f"{unit.name}: placeholder(s) not named on the `# Placeholders:` line: {missing}"
+    # And the other direction, or a body that LOSES a placeholder keeps a header documenting it and
+    # every case still passes — which is how the `Environment=PATH=` line's own probe survived.
+    for token in _PLACEHOLDER.findall(" ".join(line for line in header_lines(text) if line.startswith("# Placeholders:"))):
+        assert token in carried, f"{unit.name}: header names {token} and the body no longer carries it"
 
 
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)

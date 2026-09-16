@@ -26,6 +26,9 @@
 #   sed "s|<repo>|$PWD|; s|<uv>|$(command -v uv)|; s|<path>|$PATH|" infra/systemd/zcrypto-data-gated-tests.service > ~/.config/systemd/user/zcrypto-data-gated-tests.service
 #   cp infra/systemd/zcrypto-data-gated-tests.timer ~/.config/systemd/user/
 #   systemctl --user daemon-reload
+#   systemctl --user show -p Environment zcrypto-data-gated-tests.service   # READ IT BACK: the
+#     render is a `sed`, so a PATH carrying `&` silently re-inserts the match and one carrying `|`
+#     kills the expression -- confirm the value is your PATH and that node is on it
 #   systemctl --user enable --now zcrypto-data-gated-tests.timer
 #   systemctl --user list-timers zcrypto-data-gated-tests.timer    # confirm: NEXT is tonight
 #   systemctl --user start --no-block zcrypto-data-gated-tests.service   # a first run by hand, so tomorrow's read has a file; returns at once

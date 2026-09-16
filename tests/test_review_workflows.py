@@ -9,8 +9,6 @@ import re
 import shutil
 import subprocess
 
-import pytest
-
 _FLOWS = pathlib.Path(__file__).resolve().parents[1] / ".claude" / "workflows"
 
 
