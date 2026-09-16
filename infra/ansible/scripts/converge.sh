@@ -3,7 +3,8 @@
 # the record; its `[more ansible args...]` tail is superseded by the grammar below, on the owner's
 # ruling that this fleet's converges are enumerable): preview first, typed-limit confirm, then the
 # real pass through run.sh (which loads the vaulted deploy keys into a throwaway agent).
-# Usage: converge.sh <playbook.yml> --limit <host> [--tags <list> | --skip-tags engine] [--check]
+# Usage: converge.sh site.yml --limit <host> (or --limit=<host>) [--tags <list> | --skip-tags engine]
+#        [--check]
 #        [-e KEY=VALUE | -e '{"KEY": "<reason>"}'] ...   (the braced form is JSON, spanning lines or not)
 # rc 2 usage, or an argument outside that grammar | rc 3 confirm-abort / no tty
 # | rc 4 preview failed | else the real pass's own exit.
@@ -22,13 +23,14 @@ HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host.
 TAGNAMES="capture engine ops nas access chrony"
-# Every key the deploy log and the shell history carry, plus the ones a skill or runbook publishes:
-# `daemon_json_ack` and `ops_panel_timer_hold` from the rollout skill,
-# `ops_reconcile_mint` from the ops host_vars, `docker_apt_distribution` from the docker role.
+# The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
+# row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
+# `daemon_json_ack` and `ops_panel_timer_hold` (the rollout skill), `ops_reconcile_mint` (the ops
+# host_vars), `docker_apt_distribution` and `access_ops_agentboard_live` (their role defaults).
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
-docker_apt_distribution"
+docker_apt_distribution access_ops_agentboard_live"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 
@@ -122,7 +124,12 @@ if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
 if not isinstance(value, str):
     raise SystemExit(f"the reason is prose, not {type(value).__name__}")
+if not value.strip():
+    raise SystemExit("a reason of whitespace is not a reason")
 if len(value) <= 8:
+    # Length on the RAW value, matching the roles' own `| string | length > 8`; the blank case is
+    # its own arm above, or stripping here would put every boolean word under the length arm and
+    # leave the boolean one below unreachable.
     raise SystemExit("the reason is prose, longer than 8 characters")
 if value.strip().lower() in ("true", "false", "yes", "no", "1", "0"):
     raise SystemExit("a reason, not a boolean")

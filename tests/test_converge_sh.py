@@ -317,6 +317,12 @@ PUBLISHED = [
     (["--limit", "zcrypto", "--tags", "chrony"], "zcrypto", "chrony", {}),
     (["--limit", "zcrypto-ops", "-e", "ops_reconcile_mint=false"], "zcrypto-ops", "", {"ops_reconcile_mint": "false"}),
     (
+        ["--limit", "zcrypto-ops", "-e", "access_ops_agentboard_live=true"],
+        "zcrypto-ops",
+        "",
+        {"access_ops_agentboard_live": "true"},
+    ),
+    (
         ["--limit", "zcrypto", "--skip-tags", "engine", "-e", f"capture_alloy_digest={DIGEST}"],
         "zcrypto",
         "",
@@ -393,6 +399,7 @@ OUTSIDE = [
     (["-e", '{"canary_override": "true"}'], "a reason of four characters", "longer than 8"),
     # Padded past the length arm, or the boolean arm is never the one that fires.
     (["-e", '{"canary_override": "      true      "}'], "a padded boolean", "not a boolean"),
+    (["-e", '{"canary_override": "         "}'], "a reason of nine spaces", "whitespace is not a reason"),
     (["-e", '{"canary_override": 5}'], "a number where prose belongs", "not int"),
     (["-e", '{"canary_override": ["a reason here"]}'], "a list where prose belongs", "not list"),
     (["-e", '{"canary_override": null}'], "a null where prose belongs", "not NoneType"),
@@ -447,7 +454,6 @@ def test_a_playbook_other_than_site_yml_is_refused(tmp_path):
     `bootstrap.yml` was accepted on the strength of the role's existence rather than any published
     run through this script, and its `-e ansible_user=root` is refused here in any case.
     """
-    script = make_harness(tmp_path)
     for playbook in ("other.yml", "bootstrap.yml"):
         path = tmp_path / playbook.split(".")[0]
         path.mkdir()
