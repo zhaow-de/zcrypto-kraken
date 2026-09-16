@@ -162,6 +162,86 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "aligns the Cache's startup position with the venue -- the position cli/engine/venuestate.py "
         "freezes into the VenueState the cycle sizes off. False would let the two disagree silently"
     )
+    assert config.filter_position_reports is False, (
+        "also inherited. True makes the library's reconciliation skip reconcile_position_report "
+        "entirely, so startup creates NO position from the venue's own position reports and the "
+        "Cache the VenueState is frozen from reads empty against an open position. Upstream "
+        "documents the flag for accounts several nodes trade -- which is this account's shape, so "
+        "it is a plausible thing for someone to reach for rather than a theoretical flip"
+    )
+    assert config.allow_overfills is False, (
+        "also inherited, and cli/engine/executor.py names it in the paragraph bounding what covers "
+        "a fill that did not happen: upstream's check_overfill, with this False, refuses an "
+        "application past the order's own quantity. True removes one of the three bounds that "
+        "paragraph and specs 00098 and 00100 rest on"
+    )
+
+
+# Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
+# `cli/engine/node.py` states five of these and inherits the other thirty-two, so a default that
+# moves upstream moves production here silently, with no import to break and no rename to notice.
+# The three that carry a reasoned assertion below say WHY they matter; this map says only what a
+# wheel reported, which is the one claim it can make honestly about fields whose behaviour nothing
+# in this repo has established.
+EXEC_ENGINE_DEFAULTS = {
+    "allow_overfills": False,
+    "debug": False,
+    "external_clients": None,
+    "filter_position_reports": False,
+    "filter_unclaimed_external_orders": False,
+    "filtered_client_order_ids": None,
+    "generate_missing_orders": True,
+    "inflight_check_interval_ms": 2000,
+    "inflight_check_retries": 5,
+    "inflight_check_threshold_ms": 5000,
+    "load_cache": True,
+    "manage_own_order_books": False,
+    "max_single_order_queries_per_cycle": 10,
+    "open_check_interval_secs": None,
+    "open_check_lookback_mins": 60,
+    "open_check_missing_retries": 5,
+    "open_check_open_only": True,
+    "open_check_threshold_ms": 5000,
+    "own_books_audit_interval_secs": None,
+    "position_check_interval_secs": None,
+    "position_check_lookback_mins": 60,
+    "position_check_retries": 3,
+    "position_check_threshold_ms": 5000,
+    "purge_account_events_interval_mins": None,
+    "purge_account_events_lookback_mins": None,
+    "purge_closed_orders_buffer_mins": None,
+    "purge_closed_orders_interval_mins": None,
+    "purge_closed_positions_buffer_mins": None,
+    "purge_closed_positions_interval_mins": None,
+    "reconciliation": True,
+    "reconciliation_instrument_ids": None,
+    "reconciliation_lookback_mins": None,
+    "reconciliation_startup_delay_secs": 10.0,
+    "single_order_query_delay_ms": 100,
+    "snapshot_orders": False,
+    "snapshot_positions": False,
+    "snapshot_positions_interval_secs": None,
+}
+
+
+def test_every_exec_engine_default_is_the_one_we_measured():
+    """The tripwire over the whole config, in both directions. A value that moved is the obvious
+    half. A field that APPEARED is the other: a knob upstream adds is a behaviour someone chose a
+    default for on our behalf, and the bump that adds it is the only cheap moment to read it."""
+    from nautilus_trader.config import LiveExecutionEngineConfig
+
+    config = LiveExecutionEngineConfig()
+    live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_") and not callable(getattr(config, name))}
+    assert set(live) == set(EXEC_ENGINE_DEFAULTS), (
+        "the exec engine's FIELD SET moved -- added "
+        f"{sorted(set(live) - set(EXEC_ENGINE_DEFAULTS))}, removed "
+        f"{sorted(set(EXEC_ENGINE_DEFAULTS) - set(live))}. Read what the new one does before "
+        "re-measuring this map: an inherited default is production behaviour nobody chose here"
+    )
+    moved = {
+        name: (EXEC_ENGINE_DEFAULTS[name], live[name]) for name in EXEC_ENGINE_DEFAULTS if live[name] != EXEC_ENGINE_DEFAULTS[name]
+    }
+    assert moved == {}, f"exec engine defaults moved (was, now): {moved}"
 
 
 def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
