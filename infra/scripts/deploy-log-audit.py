@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 import urllib.request
 
@@ -40,12 +41,23 @@ def load_rows(path: pathlib.Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+# Same word-boundary shape as `cli/snapshot/delistings.py`'s `_mentions`, for the same reason.
+_NAMES_AN_API = re.compile(r"(?<![A-Za-z0-9])(?:websocket|rest)(?![A-Za-z0-9])", re.IGNORECASE)
+
+
 def api_impacting(maintenances: list[dict]) -> list[dict]:
-    """The entries naming WebSocket or REST in a component or in their own name -- an empty `components` is not an absent impact."""
+    """The entries naming WebSocket or REST in a component or in their own name -- an empty
+    `components` is not an absent impact.
+
+    Case-folded because the venue spells the same component `WebSocket` and `Websocket` across
+    entries, and word-bounded because `REST` is an API: a substring test reads `restart`,
+    `Restricted` and `Interest` as API-impacting and books a converge against a window that
+    constrains nothing.
+    """
     out = []
     for entry in maintenances:
         names = [c.get("name", "") for c in entry.get("components", [])] + [entry.get("name", "")]
-        if any("WebSocket" in name or "REST" in name for name in names):
+        if any(_NAMES_AN_API.search(name) for name in names):
             out.append(entry)
     return out
 
