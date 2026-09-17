@@ -77,7 +77,7 @@ Its consequence: ${f.consequence}
 
 Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- ledger: the order of reviews is refused, not remembered ------------------------------------
+// --- Ledger -------------------------------------------------------------------------------------
 const LEDGER_ENTRY = {
   type: 'object',
   properties: {
@@ -151,7 +151,7 @@ const recorded = await agent(
   `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
   { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
 )
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this review — the next read refuses ${tip} until it carries {"kind":"review","tip":"${tip}"}; append it by hand`)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this review — a re-review of this branch refuses until a review row exists; append it by hand`)
 
 return {
   range,

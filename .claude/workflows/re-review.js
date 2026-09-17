@@ -90,7 +90,7 @@ Its consequence: ${f.consequence}
 
 ${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- ledger: the order of reviews is refused, not remembered ------------------------------------
+// --- Ledger -------------------------------------------------------------------------------------
 const LEDGER_ENTRY = {
   type: 'object',
   properties: {
