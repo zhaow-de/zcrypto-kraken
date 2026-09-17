@@ -1,9 +1,15 @@
 # syntax=docker/dockerfile:1
+
+# A stage rather than a `COPY --from=<image>`, which is the same build and a different pin:
+# dependabot's Dockerfile parser anchors on `^FROM`, so an image named only on a COPY line is
+# invisible to it and `.github/dependabot.yml`'s docker ecosystem would propose nothing.
+FROM ghcr.io/astral-sh/uv:0.12.5 AS uv
+
 FROM python:3.14-slim
 LABEL org.opencontainers.image.source="https://github.com/zhaow-de/zcrypto-kraken"
 
 # Pinned, static uv binary copied from the official image — no apt/curl install step needed.
-COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /uvx /usr/local/bin/
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 # rsync + ssh client: the archive-pull service (Role A, spec 00048) shells out to `rsync -e ssh`
 # to pull segments from the VPS. The capture/engine services don't use them but share this image.

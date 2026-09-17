@@ -24,3 +24,16 @@ updates:
     target-branch: "develop"
     schedule:
       interval: "weekly"
+
+  # `uv`'s binary is the pin nothing else tracks, and it is a `FROM` stage in the Dockerfile
+  # because this parser reads no other line. The base image is deliberately EXCLUDED: its tag is
+  # mutable on purpose, so a patch-level CPython arrives at the next image build with no PR, and a
+  # minor bump is not a dependency decision -- it asserts every PyPI dependency is ready for the
+  # new interpreter, which no proposal can establish (owner's ruling).
+  - package-ecosystem: "docker"
+    directory: "/infra/docker"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "python"
