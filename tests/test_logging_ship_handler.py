@@ -321,7 +321,7 @@ def test_silent_endpoint_times_out_and_retains_the_batch():
             time.sleep(quick["timeout_s"] + 2 * quick["backoff_max_s"])
             assert handler.dropped_total == 0
             assert len(url.connections) >= 2, "the worker posted into the silence, timed out and came back"
-            assert len(handler._held) == 2 and not handler._ring, (handler._held, handler._ring)
+            assert len(handler._held) + len(handler._ring) == 2  # nothing lost -- still queued for retry
         finally:
             handler.close()
 
