@@ -48,11 +48,18 @@ def test_api_impacting_reads_a_component_name_and_the_entrys_own_name():
 
 
 def test_api_impacting_matches_the_venues_other_spelling_of_websocket():
-    """The venue spells it `WebSocket` on one entry and `Websocket` on another. The fixture's
-    `Derivatives Platform Maintenance` carries the second spelling and no REST component, so a
-    case-sensitive test admits it through nothing and the window goes unseen."""
+    """The venue spells it `WebSocket` on one entry and `Websocket` on another, so the match folds case."""
     entry = {"name": "x", "components": [{"name": "Websocket API"}]}
     assert audit.api_impacting([entry]) == [entry]
+
+
+@pytest.mark.parametrize(
+    "name", ["Scheduled restart of the status page", "Website Restoration", "Restricted trading", "Interest accrual maintenance"]
+)
+def test_api_impacting_does_not_read_rest_inside_a_word(name):
+    """`REST` is an API, so the match is word-bounded: folding case alone would read every one of
+    these as API-impacting and book a converge against a window that constrains nothing."""
+    assert audit.api_impacting([{"name": name, "components": []}]) == []
 
 
 def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, capsys):
