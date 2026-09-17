@@ -3,8 +3,10 @@ export const meta = {
   description: 'The single-lens review of a fix range: every prior closed, left, or open',
   whenToUse: 'After the fixes a review asked for, each fix its own commit and never an amend, so the range exists; after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}',
   phases: [
+    { title: 'Ledger', detail: 'the order of reviews, refused rather than remembered' },
     { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important, new or reopened' },
+    { title: 'Record', detail: 'the row that says this re-review happened, written once it has' },
   ],
 }
 
@@ -88,7 +90,7 @@ Its consequence: ${f.consequence}
 
 ${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- ledger: the order of reviews is refused, not remembered ------------------------------------
+// --- ledger: the order of reviews is refused, not remembered; a row is written once the read is done ---
 const LEDGER_ENTRY = {
   type: 'object',
   properties: {
@@ -98,14 +100,17 @@ const LEDGER_ENTRY = {
   required: ['kind', 'range', 'tip', 'ts', 'coversTip'],
 }
 const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
+const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
 const ledgerPath = `${reportDir}/ledger.jsonl`
+phase('Ledger')
 const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}. For each existing entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Then append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"re-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return the entries that existed BEFORE your append. No other file, no other command.`,
-  { label: 'ledger', phase: 'Re-read', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
+  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Return the entries. Write nothing; no other command.`,
+  { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
-const seen = (ledger && ledger.entries) || []
-const covered = (kind) => seen.some((e) => e.kind === kind && e.coversTip)
-if (!seen.some((e) => e.kind === 'review')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch — a fix range follows a whole-branch review, never replaces it`)
+if (!ledger) throw new Error(`re-review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-read; retry`)
+const entries = ledger.entries || []
+const covered = (kind) => entries.some((e) => e.kind === kind && e.coversTip)
+if (!entries.some((e) => e.kind === 'review')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch — a fix range follows a whole-branch review, never replaces it`)
 if (!covered('pre-read')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-read of this tip or an ancestor — run pre-read on the fix range first`)
 
 // --- Re-read -----------------------------------------------------------------------------------
@@ -147,9 +152,18 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
+// --- Record: the row that says this re-review happened, written once it has -------------------------
+phase('Record')
+const recorded = await agent(
+  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"re-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
+)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this re-review — the next read refuses ${tip} until it carries {"kind":"re-review","tip":"${tip}"}; append it by hand`)
+
 return {
   range,
   tip,
+  recorded: Boolean(recorded && recorded.appended),
   verdict: report.verdict,
   reportPath: report.reportPath,
   executed: report.executed,

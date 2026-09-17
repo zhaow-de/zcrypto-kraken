@@ -1,8 +1,11 @@
 export const meta = {
   name: 'pre-read',
   description: 'The author’s prose and message claims graded by a different agent before any review',
-  whenToUse: 'Before every review or re-review of a range — over the fix range after the first review, never the whole branch again: one agent grades the range’s prose, re-runs the commands and probes its messages quote, and checks each fix’s class walk. args: {repo, range, tip, reportDir, worktree, model?}',
-  phases: [{ title: 'Pre-read', detail: 'one read-only grader over the range’s prose and message claims' }],
+  whenToUse: 'Before every review or re-review of a range — over the fix range after the first review, never the whole branch again: one agent grades the range’s prose, re-runs the commands and probes its messages quote, and checks each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?}',
+  phases: [
+    { title: 'Pre-read', detail: 'one read-only grader over the range’s prose and message claims' },
+    { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
+  ],
 }
 
 // --- inputs ------------------------------------------------------------------------------------
@@ -86,27 +89,11 @@ Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` wh
 
 2. CLAIMS. Every claim a commit message in the range makes that a command can check — a number, a count, a grep verdict, a citation, a "none left" — re-run with the command the message quotes (or the obvious one when it quotes none) and compared. A claim that does not reproduce is disposition does-not-reproduce with what the command printed.
 
-3. PROBES. Every mutate-probe verdict a message records: apply the quoted mutation to a copy of the file and compile it (python -m py_compile, bash -n, node --check as the file demands) — a mutation that does not parse voids the verdict whatever the script printed; then re-run the probe as quoted in the worktree and read what the killed case died on: a collection error, an import error or a SyntaxError is not a kill by the guard.
+3. PROBES. Every mutate-probe verdict a message records: apply the quoted mutation to a copy of the file and compile it (python -m py_compile, bash -n, node --check as the file demands) — a mutation that does not parse voids the verdict whatever the script printed; then re-run the probe as quoted and read what the killed case died on: a collection error, an import error or a SyntaxError is not a kill by the guard.
 
 4. CLASS WALK. For each defect a commit says it fixed, state in one sentence the invariant the fix restores, then walk its class BOTH ways and list every member the fix left. TEXT: the defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition. SPACE: the categories the fixed code's input or state ranges over, each judged against the invariant — only categories this repo produces, driven where you can drive them, named rather than guessed where you cannot. A class walked one way is half walked. Each fix also names, in its \`fix\` sentence, what it DELETED from the sites it touched — a fix over a site this range already rewrote that deletes nothing is the fourth-round shape, and is reported as one.
 
 Write a Markdown report to ${reportDir}/pre-read.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
-
-// --- ledger: this read records itself; it refuses nothing ---------------------------------------
-const LEDGER_ENTRY = {
-  type: 'object',
-  properties: {
-    kind: { type: 'string' }, range: { type: 'string' }, tip: { type: 'string' }, ts: { type: 'string' },
-    coversTip: { type: 'boolean', description: 'true when this entry\'s tip is the current tip or an ancestor of it' },
-  },
-  required: ['kind', 'range', 'tip', 'ts', 'coversTip'],
-}
-const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
-const ledgerPath = `${reportDir}/ledger.jsonl`
-const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}. For each existing entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Then append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-read","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return the entries that existed BEFORE your append. No other file, no other command.`,
-  { label: 'ledger', phase: 'Pre-read', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
-)
 
 phase('Pre-read')
 const report = await agent(prompt, { label: 'pre-read', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
@@ -123,4 +110,15 @@ const saysNothing = (ship) => {
 const mute = report.prose.filter((p) => p.survives === 'keep' && saysNothing(p.ship)).map((p) => p.site)
 if (mute.length) log(`OWED: ${mute.length} \`keep\` row(s) name no reason a reader would act on — ${mute.join(', ')}`)
 log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => p.survives === 'keep')} keep rows; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
-return report
+// --- ledger: this read refuses nothing; it records itself for the review that follows ---------
+const ledgerPath = `${reportDir}/ledger.jsonl`
+const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
+
+// --- Record: the row that says this pre-read happened, written once it has -------------------------
+phase('Record')
+const recorded = await agent(
+  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-read","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
+)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this pre-read — the next read refuses ${tip} until it carries {"kind":"pre-read","tip":"${tip}"}; append it by hand`)
+return { ...report, recorded: Boolean(recorded && recorded.appended) }

@@ -3,8 +3,10 @@ export const meta = {
   description: 'The wide review of a whole branch: two lenses, one skeptic per Critical or Important',
   whenToUse: 'The wide review a branch owes once it is complete, after its pre-read; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, lenses?, drive?, model?}',
   phases: [
+    { title: 'Ledger', detail: 'the order of reviews, refused rather than remembered' },
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important' },
+    { title: 'Record', detail: 'the row that says this review happened, written once it has' },
   ],
 }
 
@@ -75,7 +77,7 @@ Its consequence: ${f.consequence}
 
 Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- ledger: the order of reviews is refused, not remembered ------------------------------------
+// --- ledger: the order of reviews is refused, not remembered; a row is written once the read is done ---
 const LEDGER_ENTRY = {
   type: 'object',
   properties: {
@@ -85,13 +87,16 @@ const LEDGER_ENTRY = {
   required: ['kind', 'range', 'tip', 'ts', 'coversTip'],
 }
 const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
+const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
 const ledgerPath = `${reportDir}/ledger.jsonl`
+phase('Ledger')
 const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}. For each existing entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Then append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return the entries that existed BEFORE your append. No other file, no other command.`,
-  { label: 'ledger', phase: 'Read', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
+  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Return the entries. Write nothing; no other command.`,
+  { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
-const seen = (ledger && ledger.entries) || []
-const covered = (kind) => seen.some((e) => e.kind === kind && e.coversTip)
+if (!ledger) throw new Error(`review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-read; retry`)
+const entries = ledger.entries || []
+const covered = (kind) => entries.some((e) => e.kind === kind && e.coversTip)
 if (!covered('pre-read')) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-read of this tip or an ancestor — run pre-read on it first`)
 
 // --- Read: one reader per lens; the union needs all of them, so the barrier is right ------------
@@ -140,9 +145,18 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important / ${count('Minor', standing)} Minor standing, ${graded.length - standing.length} refuted`)
 
+// --- Record: the row that says this review happened, written once it has -------------------------
+phase('Record')
+const recorded = await agent(
+  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
+)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this review — the next read refuses ${tip} until it carries {"kind":"review","tip":"${tip}"}; append it by hand`)
+
 return {
   range,
   tip,
+  recorded: Boolean(recorded && recorded.appended),
   lenses: live.map((r) => ({ name: r.lens, verdict: r.verdict, reportPath: r.reportPath, executed: r.executed })),
   droppedLenses: dropped,
   counts: { Critical: count('Critical', standing), Important: count('Important', standing), Minor: count('Minor', standing), refuted: graded.length - standing.length },
