@@ -3,7 +3,7 @@
 # A stage rather than a `COPY --from=<image>`, which is the same build and a different pin:
 # dependabot's Dockerfile parser anchors on `^FROM`, so an image named only on a COPY line is
 # invisible to it and `.github/dependabot.yml`'s docker ecosystem would propose nothing.
-FROM ghcr.io/astral-sh/uv:0.12.5 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.15 AS uv
 
 FROM python:3.14-slim
 LABEL org.opencontainers.image.source="https://github.com/zhaow-de/zcrypto-kraken"
