@@ -110,11 +110,10 @@ const saysNothing = (ship) => {
 const mute = report.prose.filter((p) => p.survives === 'keep' && saysNothing(p.ship)).map((p) => p.site)
 if (mute.length) log(`OWED: ${mute.length} \`keep\` row(s) name no reason a reader would act on — ${mute.join(', ')}`)
 log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => p.survives === 'keep')} keep rows; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
-// --- ledger: this read refuses nothing; it records itself for the review that follows ---------
 const ledgerPath = `${reportDir}/ledger.jsonl`
 const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
 
-// --- Record: the row that says this pre-read happened, written once it has -------------------------
+// --- Record -------------------------------------------------------------------------------------
 phase('Record')
 const recorded = await agent(
   `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-read","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,

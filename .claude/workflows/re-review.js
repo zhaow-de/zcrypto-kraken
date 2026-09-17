@@ -90,7 +90,7 @@ Its consequence: ${f.consequence}
 
 ${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- ledger: the order of reviews is refused, not remembered; a row is written once the read is done ---
+// --- ledger: the order of reviews is refused, not remembered ------------------------------------
 const LEDGER_ENTRY = {
   type: 'object',
   properties: {
@@ -152,13 +152,13 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
-// --- Record: the row that says this re-review happened, written once it has -------------------------
+// --- Record -------------------------------------------------------------------------------------
 phase('Record')
 const recorded = await agent(
   `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"re-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
   { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
 )
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this re-review — the next read refuses ${tip} until it carries {"kind":"re-review","tip":"${tip}"}; append it by hand`)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this re-review — the ledger will not show ${tip} was re-reviewed; append the row by hand`)
 
 return {
   range,

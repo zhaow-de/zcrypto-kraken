@@ -77,7 +77,7 @@ Its consequence: ${f.consequence}
 
 Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- ledger: the order of reviews is refused, not remembered; a row is written once the read is done ---
+// --- ledger: the order of reviews is refused, not remembered ------------------------------------
 const LEDGER_ENTRY = {
   type: 'object',
   properties: {
@@ -145,7 +145,7 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important / ${count('Minor', standing)} Minor standing, ${graded.length - standing.length} refuted`)
 
-// --- Record: the row that says this review happened, written once it has -------------------------
+// --- Record -------------------------------------------------------------------------------------
 phase('Record')
 const recorded = await agent(
   `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
