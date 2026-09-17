@@ -2680,9 +2680,28 @@ def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
     )
     assert ops_daily.classify_action('ssh hp "sudo cat $HOME/x"', host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
     assert ops_daily.classify_action('ssh hp "sudo cat /etc/shadow"', host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
+    seen: list[str] = []
+
+    def _recording(target, operands):
+        seen.append(target)
+        return list(operands)
+
+    assert (
+        ops_daily.classify_action(f'ssh hp "sudo cat {_OPS_LEDGER}"', host="zcrypto", resolve=_recording)
+        is ops_daily.Tier.AUTONOMOUS
+    )
+    assert seen == ["hp"], f"the payload resolves on the ssh target, not the outer host: {seen}"
 
 
-@pytest.mark.parametrize("host", ["ops", "hp"])
+def test_quoting_admits_nothing_the_same_text_is_refused_for_unquoted():
+    """The protected-objects veto reads the whole text; a re-scan must keep reading it, or a quoted
+    payload slips a telemetry restart past a pipeline that names the engine."""
+    quoted = 'ssh hp "sudo docker restart grafana-alloy" | grep -c zcrypto-engine'
+    assert ops_daily.classify_action(quoted.replace('"', ""), host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action(quoted, host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize("host", ["ops", "hp", "zcrypto-ops"])
 def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host):
     """`Alert.hosts` prints the metrics label `ops` while a step spells the ssh name `hp`: neither
     spelling may lose a tier."""
@@ -2708,6 +2727,9 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     bare-name rows alone, so `zaccess` is unmapped -- and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
-    destinations = set(re.findall(r"^\| `[^`]+` \| `ssh ([a-z-]+)` \|", table, re.M))
-    assert destinations == {ops_daily.ssh_alias(h) for h in ("zcrypto", "zcrypto-red", "ops", "nas")}
+    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z-]+)` \|", table, re.M))
+    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"}, rows
+    for fleet_host, destination in rows.items():
+        assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
+    assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
     assert 'host = "ops"' in (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()

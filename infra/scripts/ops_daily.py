@@ -577,10 +577,24 @@ REBOOT_FLAG = "/var/run/reboot-required"
 REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
+# The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
+# print and the ssh destination -- and `zcrypto-red` two; `zaccess` has no bare-name destination.
+_SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red"}
+_HOST_LABELS = {"hp": "ops", "zcrypto-ops": "ops", "red": "zcrypto-red"}
+
+
+def host_label(host: str) -> str:
+    return _HOST_LABELS.get(host, host)
+
+
+def ssh_alias(host: str) -> str:
+    return _SSH_ALIASES.get(host_label(host), host)
+
+
 # The agentboard cgroup, read off the host because no series can answer it: nothing scrapes this unit.
 # `zcrypto-fleet-daemon-restarted` is blind to it for want of a SOURCE, not a threshold -- a rule is
 # not the fix, this read is. It is the one unit in the tree that can host unbounded operator work.
-AGENTBOARD_HOST = "hp"
+AGENTBOARD_HOST = ssh_alias("ops")
 AGENTBOARD_UNIT = "zaccess-agentboard.service"
 # ONE list: the command asks for exactly these, and `read_agentboard_cgroup` unpacks them in this
 # ORDER -- positionally -- so a name added or moved here needs the matching name in that unpack.
@@ -1223,20 +1237,6 @@ _PROTECTED_OBJECTS = (
     "@sha256:",
 )
 _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
-# A rule's `host` label and its ssh destination differ here and on `zaccess`, which has no bare-name
-# destination: the report prints the label, the resolver needs the destination, a step spells either.
-_SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red"}
-_HOST_LABELS = {alias: label for label, alias in _SSH_ALIASES.items()}
-
-
-def ssh_alias(host: str) -> str:
-    return _SSH_ALIASES.get(host, host)
-
-
-def host_label(host: str) -> str:
-    return _HOST_LABELS.get(host, host)
-
-
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1536,7 +1536,7 @@ def classify_action(text: str, *, host: str | None = None, resolve) -> Tier:
     return Tier.PREPARED
 
 
-def _classify_one(command: str, host: str | None, *, resolve) -> Tier:
+def _classify_one(command: str, host: str | None, *, resolve, text: str | None = None) -> Tier:
     stages = _scan(_strip_noise(command))
     if not stages or not all(stages):
         return Tier.PREPARED
@@ -1549,14 +1549,14 @@ def _classify_one(command: str, host: str | None, *, resolve) -> Tier:
         return Tier.PREPARED
     if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
         # A token holding a space can only be a quoted span; after `ssh <host>` it is a command line.
-        return _classify_one(tokens[0], target, resolve=resolve)
+        return _classify_one(tokens[0], target, resolve=resolve, text=text or command)
     # `target or host` is where the command really runs, so it is also the filesystem its operands
     # resolve on -- the same host the telemetry gate below reads.
     lands_on = target or host
     alias = ssh_alias(lands_on) if lands_on else None
     operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
     if operands is None and lands_on and host_label(lands_on) in _TELEMETRY_HOSTS:
-        lowered = command.lower()
+        lowered = (text or command).lower()
         if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
             operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED
