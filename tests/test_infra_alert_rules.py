@@ -1007,7 +1007,7 @@ PROVISIONAL_THRESHOLDS: set[str] = {
     # to a distribution. What derives the real value: the first leak it fires on, or thirty days of
     # floor deltas read from the fleet board's growth-per-day panel.
     "zcrypto-fleet-memory-leak",
-    # Bounded on 2026-09-17, not fitted. What derives the real value: the per-day sums from the ops host's reconcile ledger
+    # Bounded, not fitted. What derives the real value: the per-day sums from the ops host's reconcile ledger
     # under the production expression, organic days only -- a capture-tagged primary converge on the
     # day books the restart, not the host -- once three exist after 2026-08-04; the bar becomes a
     # stated multiple of their mean and the two bounds are re-measured.

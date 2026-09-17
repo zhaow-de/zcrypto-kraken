@@ -1538,13 +1538,13 @@ rules:
       # PROVISIONAL: 300 s per pair per day is BOUNDED, not fitted. Below it, the worst benign day
       # of the five post-fix days to 2026-09-17: a rollout, a same-day capture rollback and one
       # organic drop, 261 s. Above it, a degradation the size this fleet has measured: every
-      # reconnect at those 13 days' 7.5 a day turned into a 43 s silent death, 324 s, or seven such
-      # drops. Divided by the live pair count, so 300 is WALL-CLOCK seconds per pair -- undivided it
+      # reconnect at 7.5 a day, the primary's rate over the 13 days to that date, turned into a 43 s
+      # silent death, 324 s, or seven such drops. Divided by the live pair count, so 300 is WALL-CLOCK seconds per pair -- undivided it
       # is a cross-stream sum that tightens silently with every pair added. A single long silence is
       # the stream-silent rules' page, not this one's: a mean cannot exceed its largest pair, so no
-      # hour crosses 300 unless one pair did. Blind to clean-close reconnects, 2-8 s under the
-      # reconciler's 30 s floor: zcrypto_capture_reconnects_total is charted, not alerted. The
-      # reminder in infra/runbooks/ops.md counts the organic days the real fit needs.
+      # hour crosses 300 unless one pair did. Blind to any gap under the reconciler's 30 s floor,
+      # clean-close reconnects among them: zcrypto_capture_reconnects_total is charted, not alerted.
+      # The reminder in infra/runbooks/ops.md counts the organic days the real fit needs.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.

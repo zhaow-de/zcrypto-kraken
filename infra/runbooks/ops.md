@@ -226,7 +226,7 @@ The daily pass's report names this reminder under `## Reminders`: **OWED** when 
 
 ### What it means
 
-The `gt [300]` bar is bounded, not fitted, and marked `PROVISIONAL` at the rule in `infra/grafana/alerts.yaml`; the fit over organic days is owed once three exist. What the events so far measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
+The `gt [300]` bar is bounded, not fitted, and marked `PROVISIONAL` at the rule in `infra/grafana/alerts.yaml`. What the events up to 2026-08-04 measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
 
 ### What to do
 
