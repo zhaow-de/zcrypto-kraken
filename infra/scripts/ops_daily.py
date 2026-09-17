@@ -664,13 +664,13 @@ def read_agentboard_cgroup(*, runner) -> Check:
         return Check(AGENTBOARD_CHECK, " ".join(AGENTBOARD_COMMAND), ok=False, value=f"unreadable: {exc}")
 
     value = f"MemoryMax={_scale(hard)}, MemoryHigh={_scale(soft)}, peak {_scale(peak)}, NRestarts={restarts}"
+    if peak.isdigit() and hard.isdigit() and int(peak) > int(hard):
+        # A hard limit is never exceeded once set, so this peak predates the cap; `KillMode=process`
+        # keeps the cgroup populated across restarts, so nothing resets the peak.
+        value += "; peak predates the cap and hides any later excursion until the cgroup is recreated"
     # Reaching MemoryHigh is the cap WORKING -- the kernel throttled and reclaimed instead of killing
     # -- so it is narration, not a fault. It is worth narrating because nothing else on this fleet
     # records that something in the operator's workspace tried to run away.
-    if peak.isdigit() and hard.isdigit() and int(peak) > int(hard):
-        # A hard limit is never exceeded once set, so this peak predates the cap; `KillMode=process`
-        # keeps the cgroup populated across restarts, so it never clears and hides a later excursion.
-        value += "; peak predates the cap and hides any later excursion until the cgroup is recreated"
     elif peak.isdigit() and soft.isdigit() and int(peak) >= int(soft):
         value += "; peak reached MemoryHigh -- something was throttled"
     if restarts.isdigit() and int(restarts):
