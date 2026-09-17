@@ -11,7 +11,7 @@ A PR delivers **one completed, nameable component**. Before anything below: (1) 
 
 **The rider that is not a second component.** A follow-up whose trigger would name a file this PR ALREADY touches is done here, not registered: the reader is in those files, and a topic saying "next time someone is here" written by someone who is here is satisfied the moment it is filed. Both halves bind — the file must be one this branch has opened, and the work must be cheap BECAUSE you are already there. Anything needing its own design decision, its own spec, or a file this branch has not touched stays a topic and the one-component rule holds. Name the rider under `## Changes`; it needs no separate word.
 
-**A draft is not a delivery.** `.github/workflows/coverage.yml` fires on `pull_request` alone, so a branch with no PR runs no CI at all and its author pays for the whole suite by hand. Open the PR as a draft (`gh pr create --draft`) at the branch's first green commit: CI then runs the suite on every push, and `merge-pr`'s first gate refuses a draft, so nothing leaves early. The three conditions above are read at the undraft, not at the create; the body and Step 4's change-index row are written at create time, except the `Read before push by:` line, which names a read that has not happened yet and is written at the undraft — and except the row's cells, re-derived at the undraft whenever the title or the keys have moved since the draft was opened.
+**A draft is not a delivery.** `.github/workflows/coverage.yml` fires on `pull_request` alone, so a branch with no PR runs no CI at all and its author pays for the whole suite by hand. Open the PR as a draft (`gh pr create --draft`) at the branch's first green commit: CI then runs the suite on every push, and `merge-pr`'s first gate refuses a draft, so nothing leaves early. The three conditions above are read at the undraft, not at the create; the body and Step 4's change-index row are written at create time, except the `Read before push by:` line, which names a read that has not happened yet and is written at the undraft.
 
 ## Title (iteration PRs)
 
@@ -86,7 +86,7 @@ Iterations are zero-padded to three digits (`iter-007`), several keys of one kin
 
 ## Editing a PR body
 
-A title edit re-derives Step 4's change-index row from the new title and keys; nothing else re-reads it.
+A title edit and a `## Spec / Plan` edit both re-derive Step 4's change-index row — they are two of the three sources its keys come from.
 
 `gh pr edit --body/--title` **silently no-ops** in this repo (a Projects-classic GraphQL deprecation aborts the mutation while exiting 0). Update via REST instead, and always verify the edit persisted — never trust the exit code:
 
