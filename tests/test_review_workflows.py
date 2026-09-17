@@ -1,5 +1,5 @@
 """The three review workflows carry one grading, one scope and one set of rules, copied because a workflow script
-cannot import another; this holds the copies equal."""
+cannot import another."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def test_a_keep_row_that_says_nothing_is_reported_as_owed():
         "this means `Environment=PATH=` is stale — re-render it after an nvm upgrade"
     )
     text = (_FLOWS / "pre-read.js").read_text()
-    check = re.search(r"^const SAYS_NOTHING = .*?^if \(mute\.length\) log\(.*?\)$", text, re.M | re.S)
+    check = re.search(r"^const SAYS_NOTHING = .*?^if \([^\n]*\) log\(`OWED: [^\n]*$", text, re.M | re.S)
     assert check, "the owed-keep check must be the block the test drives, ending in its log call"
     nothing = [
         "",
@@ -90,7 +90,7 @@ def test_the_grading_grades_prose_by_consequence():
     assert "prose that, acted on as written, breaks something no test stops" in text
 
 
-def test_every_workflow_records_itself_once_it_has_read_and_the_two_reads_refuse_an_unread_tip():
+def test_every_workflow_records_itself_once_it_has_read_and_the_ledger_gates_the_two_reads():
     texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
     for name, text in texts.items():
         record, append = text.index("phase('Record')"), text.index("const recorded = await agent(")
@@ -168,3 +168,6 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 assert got is None, f"{flow} refused {entries}: {got}"
             else:
                 assert got and expect in got, f"{flow} over {entries}: a refusal saying {expect!r}, got {got}"
+                assert f"{flow} refuses TIP" in got and ("LEDGER records" in got or not expect.startswith("records")), (
+                    f"{flow}: a refusal names the tip it refuses and the ledger it read: {got}"
+                )
