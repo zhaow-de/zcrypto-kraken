@@ -266,9 +266,12 @@ def test_emit_never_blocks_against_a_silent_endpoint():
                 handler.emit(_make_record(f"m{i}"))
             elapsed = time.monotonic() - start
             assert [t for t in connects if t == caller] == []
-            # The control's own wait is generous for the same reason the bound below is: the worker
-            # has to be SCHEDULED, and a loaded runner is what broke the assertion this replaced.
-            assert _wait_until(lambda: any(t != caller for t in connects), timeout=_TIGHT["timeout_s"] * 10)
+            # The control names THIS handler's worker rather than "some other thread": the hook is
+            # process-global, so any connect in the interpreter would otherwise satisfy it and a
+            # handler that never posted at all could still read green. Its wait is generous for the
+            # same reason the bound below is -- the worker has to be SCHEDULED, and a loaded runner
+            # is what broke the assertion this replaced.
+            assert _wait_until(lambda: handler._worker.ident in connects, timeout=_TIGHT["timeout_s"] * 10)
             # Liveness, not the guarantee above: one blocking post costs `timeout_s`, so an `emit`
             # that posted every record would cost 2000x that -- 200x this bound.
             assert elapsed < _TIGHT["timeout_s"] * 10
