@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 
+import pytest
+
 _FLOWS = pathlib.Path(__file__).resolve().parents[1] / ".claude" / "workflows"
 
 
@@ -88,13 +90,38 @@ def test_the_grading_grades_prose_by_consequence():
     assert "prose that, acted on as written, breaks something no test stops" in text
 
 
-def test_every_workflow_records_itself_before_it_reads_and_the_two_reads_refuse_an_unread_tip():
+def test_every_workflow_records_itself_once_it_has_read_and_the_two_reads_refuse_an_unread_tip():
     texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
     for name, text in texts.items():
-        assert text.index("const ledger = await agent(") < text.index("\nphase("), (
-            f"{name}: the ledger append must precede the first phase"
+        record, append = text.index("phase('Record')"), text.index("const recorded = await agent(")
+        assert text.rindex("phase('") == record, f"{name}: Record is the last phase"
+        assert record < append < text.rindex("\nreturn ") and text.rindex("await agent(") == text.index("await agent(", append), (
+            f"{name}: the row is appended by the last agent to run and before the return, so a read that dies leaves no row"
         )
-    assert "throw new Error(`review refuses ${tip}" in texts["review"]
-    assert "throw new Error(`re-review refuses ${tip}" in texts["re-review"]
-    assert "records no review of this branch" in texts["re-review"]
-    assert "refuses ${tip}" not in texts["pre-read"], "pre-read is the first read and refuses nothing"
+    for name, phase in (("review", "Read"), ("re-review", "Re-read")):
+        text = texts[name]
+        gate, ledger = text.index("phase('Ledger')"), text.index("const ledger = await agent(")
+        assert gate < ledger < text.index(f"\nphase('{phase}')"), (
+            f"{name}: the Ledger phase gates the read, both before the first read phase"
+        )
+        assert "if (!ledger) throw new Error(" in text, (
+            f"{name}: a ledger agent that returns nothing is a named failure, never a missing pre-read"
+        )
+        assert f"throw new Error(`{name} refuses ${{tip}}: ${{ledgerPath}} records no pre-read of this tip or an ancestor" in text
+    assert "throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch" in texts["re-review"]
+    before_the_grader = texts["pre-read"][: texts["pre-read"].index("phase('Pre-read')")]
+    assert "ledger" not in before_the_grader and before_the_grader.count("throw") == 1, (
+        "pre-read is the first read: it reads no ledger and refuses nothing but its arguments"
+    )
+
+
+@pytest.mark.parametrize("flow", ["pre-read", "review", "re-review"])
+def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
+    """The harness runs the body inside an async function, where a top-level `return` is legal and a second
+    `const` of one name is not; nothing else parses a script before its first dispatch."""
+    assert shutil.which("node") is not None, "no node on PATH, so the script cannot be parsed"
+    body = (_FLOWS / f"{flow}.js").read_text().replace("export const meta", "const meta", 1)
+    program = tmp_path / f"{flow}.cjs"
+    program.write_text(f"async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {{\n{body}\n}}\n")
+    done = subprocess.run(["node", "--check", str(program)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
