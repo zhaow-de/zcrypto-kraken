@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import threading
 import time
 
 import pytest
@@ -241,15 +243,38 @@ def test_recovery_warning_exact_count_after_ring_overflow(handler_factory, ship_
 
 
 def test_emit_never_blocks_against_a_silent_endpoint():
+    """`emit` hands the record to the ring and returns; the network belongs to the worker thread.
+
+    Watched at the socket, never at the handler's opener: an assertion scoped to one attribute
+    holds only while that attribute stays the sole route to the network. The worker's own connects
+    are the control -- without them, a zero on the caller is what a dead hook reads too.
+    """
+    # One bound for both checks below; tightening it reintroduces the flake, because a loaded
+    # runner deschedules the caller's loop and the worker alike.
+    generous = _TIGHT["timeout_s"] * 10
     with SilentServer() as url:
         handler = _make_handler(url, batch_max=500, ring_capacity=4096)
+        caller, connects = threading.get_ident(), []
+        real_connect = socket.socket.connect
+
+        def watched(self, address):
+            connects.append(threading.get_ident())
+            return real_connect(self, address)
+
+        socket.socket.connect = watched
         try:
             start = time.monotonic()
             for i in range(2000):
                 handler.emit(_make_record(f"m{i}"))
             elapsed = time.monotonic() - start
-            assert elapsed < 0.5  # the structural guarantee: emit() does no network I/O
+            assert [t for t in connects if t == caller] == []
+            # The hook is process-global, so the control names THIS worker.
+            assert _wait_until(lambda: handler._worker.ident in connects, timeout=generous)
+            assert elapsed < generous  # liveness, not the guarantee above
         finally:
+            # `connect` is inherited from the C base: assigning the original back would leave an
+            # attribute where there was none.
+            del socket.socket.connect
             handler.close()
 
 
