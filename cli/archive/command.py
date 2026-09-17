@@ -602,9 +602,8 @@ def reconcile(
     30 s is validated cross-host: 2.48x the worst per-connection coalescing artifact in a 66 h /
     217-window two-host soak (12.08 s), 2.03x the single-host maximum natural quiescence
     (14.78 s), and 1.4x below the smallest real outage on record (a 41 s socket drop; the next
-    are an 83 s reboot and a 270 s WS-503 crash), so what it misses is the shorter half of the
-    22-48 s silent-death class -- and a live 25-minute drill outage healed exactly and replayed
-    clean across both splice boundaries, while a healthy hour minted nothing.
+    are an 83 s reboot and a 270 s WS-503 crash) -- and a live 25-minute drill outage healed
+    exactly and replayed clean across both splice boundaries, while a healthy hour minted nothing.
     The deployed reconciler runs `--mint`; ad-hoc runs stay detect-only.
 
     The two correlated-loss detectors run regardless of the flag and are never minted from: when BOTH
