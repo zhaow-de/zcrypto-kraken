@@ -2466,8 +2466,7 @@ def test_the_live_resolver_follows_links_batched_and_fails_a_prompt_rather_than_
 
 def test_the_classify_subcommand_resolves_through_the_live_resolver(monkeypatch):
     """The CLI is where the seam meets the host: a branch that forgot to pass it would answer
-    autonomous off the spelled path alone. The host it hands over is the ssh destination, not the
-    label the report prints."""
+    autonomous off the spelled path alone. The host it hands over is the ssh destination."""
     resolve = _resolving({"/var/log/filelink": ["/etc/shadow"]})
     monkeypatch.setattr(ops_daily, "ssh_resolve", resolve)
     assert ops_daily.main(["classify", "--host", "ops", _LINKED_READ]) == 3
@@ -2670,10 +2669,9 @@ _OPS_LEDGER = "/var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"
 
 
 def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
-    """The runbook writes a remote read as `ssh hp "sudo cat <path>"`: the payload is one token to the
-    scanner, so without a re-scan no shape matches and default-deny prepares a read the same shape
-    admits unquoted. A peeled payload is never trusted: a mutation or an expansion inside the quotes
-    stays refused."""
+    """The runbook writes a remote read as `ssh hp "sudo cat <path>"` (`infra/runbooks/ops.md`): the
+    payload is one token to the scanner, so without a re-scan default-deny prepares a read the same
+    shape admits unquoted."""
     assert ops_daily.classify_action(f"ssh hp sudo cat {_OPS_LEDGER}", host="hp", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     assert ops_daily.classify_action(f'ssh hp "sudo cat {_OPS_LEDGER}"', host="hp", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     assert (
@@ -2686,9 +2684,8 @@ def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
 
 @pytest.mark.parametrize("host", ["ops", "hp"])
 def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host):
-    """`Alert.hosts` prints the metrics label `ops` and ssh knows the host as `hp`: the telemetry tier
-    reads the label and the resolver the destination, so either spelling admits both a telemetry
-    restart and a content read."""
+    """`Alert.hosts` prints the metrics label `ops` while a step spells the ssh name `hp`: neither
+    spelling may lose a tier."""
     seen: list[str] = []
 
     def _recording(target, operands):
@@ -2707,8 +2704,8 @@ def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host)
 
 
 def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
-    """The mapping is hand-kept: `docs/reference/fleet.md`'s `ssh` column is where a destination
-    changes, and the ops role's Alloy config is where the `ops` label is set."""
+    """The mapping is hand-kept: `fleet.md`'s `ssh` column is where a destination changes -- its
+    bare-name rows alone, so `zaccess` is unmapped -- and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     destinations = set(re.findall(r"^\| `[^`]+` \| `ssh ([a-z-]+)` \|", table, re.M))

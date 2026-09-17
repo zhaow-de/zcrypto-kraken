@@ -1223,8 +1223,8 @@ _PROTECTED_OBJECTS = (
     "@sha256:",
 )
 _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
-# A rule's `host` label and the ssh destination `docs/reference/fleet.md` names differ on two hosts:
-# the report prints the label, the resolver needs the destination, and a step may spell either.
+# A rule's `host` label and its ssh destination differ here and on `zaccess`, which has no bare-name
+# destination: the report prints the label, the resolver needs the destination, a step spells either.
 _SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red"}
 _HOST_LABELS = {alias: label for label, alias in _SSH_ALIASES.items()}
 
@@ -1495,7 +1495,7 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
     while changed and tokens:
         changed = False
         if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
-            break  # `ssh <host> "<payload>"`: the caller re-scans the payload on the target
+            break  # the peel below would rsplit a quoted command line to its last path component
         # The NAS spells it `/usr/local/bin/docker`: docker is off the non-interactive ssh PATH there.
         tokens = [tokens[0].rsplit("/", 1)[-1], *tokens[1:]]
         for prefix in _PREFIXES:
@@ -1548,11 +1548,10 @@ def _classify_one(command: str, host: str | None, *, resolve) -> Tier:
     if not tokens:
         return Tier.PREPARED
     if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
-        # `ssh <host> "<payload>"`: one token here, a command line on the target, matched there like
-        # any other and never trusted.
+        # A token holding a space can only be a quoted span; after `ssh <host>` it is a command line.
         return _classify_one(tokens[0], target, resolve=resolve)
     # `target or host` is where the command really runs, so it is also the filesystem its operands
-    # resolve on -- the same host the telemetry gate below reads, by its label.
+    # resolve on -- the same host the telemetry gate below reads.
     lands_on = target or host
     alias = ssh_alias(lands_on) if lands_on else None
     operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
