@@ -132,31 +132,33 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
-            ([], "no pre-read"),
-            ([{"kind": "pre-read", "coversTip": False}], "no pre-read"),
-            ([{"kind": "review", "coversTip": True}], "no pre-read"),
+            (None, "the ledger agent returned nothing"),
+            ([], "records no pre-read"),
+            ([{"kind": "pre-read", "coversTip": False}], "records no pre-read"),
+            ([{"kind": "review", "coversTip": True}], "records no pre-read"),
             ([{"kind": "pre-read", "coversTip": True}], None),
         ],
         "re-review": [
-            ([], "no review"),
-            ([{"kind": "pre-read", "coversTip": True}], "no review"),
-            ([{"kind": "review", "coversTip": True}, {"kind": "pre-read", "coversTip": False}], "no pre-read"),
+            (None, "the ledger agent returned nothing"),
+            ([], "records no review"),
+            ([{"kind": "pre-read", "coversTip": True}], "records no review"),
+            ([{"kind": "review", "coversTip": True}, {"kind": "pre-read", "coversTip": False}], "records no pre-read"),
             ([{"kind": "review", "coversTip": False}, {"kind": "pre-read", "coversTip": True}], None),
         ],
     }
     for flow, table in cases.items():
         text = (_FLOWS / f"{flow}.js").read_text()
         block = re.search(
-            r"^const entries = ledger\.entries \|\| \[\]$.*?^if \(!covered\('pre-read'\)\) throw new Error\(.*?\)$",
+            r"^if \(!ledger\) throw new Error\(.*?^if \(!covered\('pre-read'\)\) throw new Error\(.*?\)$",
             text,
             re.M | re.S,
         )
-        assert block, f"{flow}: the refusals are the block from the entries binding to the pre-read refusal"
+        assert block, f"{flow}: the refusals are the block from the null-ledger throw to the pre-read refusal"
         program = "\n".join(
             (
                 "const tip = 'TIP', ledgerPath = 'LEDGER'",
                 f"const CASES = {json.dumps([entries for entries, _ in table])}",
-                "const OUT = CASES.map((entries) => { const ledger = { entries }; try {",
+                "const OUT = CASES.map((entries) => { const ledger = entries === null ? null : { entries }; try {",
                 block.group(0),
                 "return null } catch (e) { return e.message } })",
                 "console.log(JSON.stringify(OUT))",
@@ -167,4 +169,4 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             if expect is None:
                 assert got is None, f"{flow} refused {entries}: {got}"
             else:
-                assert got and f"records {expect}" in got, f"{flow} over {entries}: a refusal naming {expect}, got {got}"
+                assert got and expect in got, f"{flow} over {entries}: a refusal saying {expect!r}, got {got}"
