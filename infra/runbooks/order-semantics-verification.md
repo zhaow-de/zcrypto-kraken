@@ -40,7 +40,7 @@ curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json \
   | python3 -c 'import json,sys; [print(m["name"], m["scheduled_for"], [c["name"] for c in m["components"]]) for m in json.load(sys.stdin)["scheduled_maintenances"]]'
 ```
 
-Abort if a window carrying `WebSocket` or `REST` (any case) in `components`, or in its `name`, overlaps your run; an empty `components` array is not an absent impact. An empty feed is never evidence the window is clear: check again immediately before the run (§5). The fleet rule for converges is the same test (`.claude/rules/fleet-deploys.md`).
+Abort if a window the converge bullet of `.claude/rules/fleet-deploys.md` names overlaps your run; an empty `components` array is not an absent impact. An empty feed is never evidence the window is clear: check again immediately before the run (§5).
 
 #### 1.2 The engine's 4-hour boundary
 
