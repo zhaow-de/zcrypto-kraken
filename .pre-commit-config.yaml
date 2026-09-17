@@ -89,6 +89,7 @@ repos:
       - id: shellcheck
         files: '^infra/'
         types: [shell]
+        exclude_types: [zsh]
 
   # Local (not the upstream hook repo) so there is ONE ansible-lint version: the one pinned in
   # pyproject/uv.lock, which dependabot's `uv` ecosystem already tracks. The upstream repo would add

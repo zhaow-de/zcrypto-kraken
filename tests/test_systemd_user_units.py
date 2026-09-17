@@ -1,13 +1,15 @@
 """The user-unit templates under `infra/systemd/` render by placeholder substitution and parse as units.
 
 `tests/test_infra_shell_templates_render.py` covers the Ansible-rendered `.sh.j2` templates; these
-units are rendered into a copy by the install's `sed` (`<repo>`, `<uv>`), so the render here is a
-substitution, and what is checked is that every placeholder a unit carries is named in its header's
-`Placeholders:` line, that no `<...>` token of any spelling -- a whitespace-bearing `<data root>`
-included -- survives the render, and that the directives a timer-driven oneshot needs sit in the
-section systemd reads them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked:
-`systemd-analyze verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the
-example paths this render fills in."""
+units are rendered into a copy by the install's `sed`, so the render here is a substitution, and
+what is checked is that every placeholder a unit carries is named in its header's `Placeholders:`
+line and filled, from the expression `FILLS` names, by both copies of the install command -- the
+unit's own header and README.md's -- that no `<...>` token of any spelling -- a whitespace-bearing
+`<data root>` included -- survives the render, and that the
+directives a timer-driven oneshot needs sit in the section systemd reads
+them from -- a `Persistent=` under `[Unit]` is silently ignored. Not checked: `systemd-analyze
+verify`, which reads `ExecStart=` and `WorkingDirectory=` off disk and refuses the example paths
+this render fills in."""
 
 from __future__ import annotations
 
@@ -27,12 +29,43 @@ REGISTERED = {
     "zcrypto-engine-shadow.service",
 }
 # The placeholders a header may name, with the absolute paths the render fills them with.
-KNOWN = {"<repo>": "/home/you/Projects/zcrypto-kraken", "<uv>": "/home/you/.local/bin/uv"}
+KNOWN = {
+    "<repo>": "/home/you/Projects/zcrypto-kraken",
+    "<uv>": "/home/you/.local/bin/uv",
+    # A substitution source, not a reading of this machine: the real value is the installing
+    # shell's $PATH, and pinning a node version here would read as a fact about it.
+    "<path>": "/home/you/.local/bin:/usr/local/bin:/usr/bin",
+}
 _PLACEHOLDER = re.compile(r"<[^<>]+>")
+# `s<d><token><d><replacement><d>` for any delimiter the install picks: a `|` in $PATH kills a
+# `s|…|` expression, and hardening against that by switching to `s#…#` must not read as no install.
+_SED_CLAUSE = re.compile(r"s(.)(<[^<>]+>)\1(.*?)\1")
+# What the install fills each placeholder FROM. Checked beside the token, or a clause rendering
+# <path> from $PWD -- a unit whose PATH is the checkout, so no node and a red night -- reads as a
+# match. One spelling each, the one the tree uses; another lands here with the edit that wants it.
+FILLS = {"<repo>": "$PWD", "<uv>": "$(command -v uv)", "<path>": "$PATH"}
 
 
 def units() -> list[Path]:
     return sorted(p for p in UNITS.iterdir() if p.is_file())
+
+
+def body(text: str) -> str:
+    """The unit as systemd reads it -- the header is comments."""
+    return "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+
+
+def install_clauses(text: str, unit: Path) -> list[dict[str, str]]:
+    """The {token: replacement} each `sed` line of `text` that renders `unit` fills."""
+    out = []
+    for line in text.splitlines():
+        if f"infra/systemd/{unit.name}" not in line or not _SED_CLAUSE.search(line):
+            continue
+        clauses: dict[str, str] = {}
+        for _, token, replacement in _SED_CLAUSE.findall(line):
+            clauses.setdefault(token, replacement)  # sed applies the FIRST clause for a token
+        out.append(clauses)
+    return out
 
 
 def directives(text: str) -> dict[str, dict[str, str]]:
@@ -77,21 +110,23 @@ def test_every_unit_is_registered():
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
 def test_every_placeholder_is_known_and_named_in_the_header(unit):
     text = unit.read_text()
-    body = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
-    carried = set(_PLACEHOLDER.findall(body))
+    carried = set(_PLACEHOLDER.findall(body(text)))
     assert carried <= set(KNOWN), f"{unit.name}: placeholder(s) the render cannot fill: {sorted(carried - set(KNOWN))}"
     if carried:
         named = [line for line in header_lines(text) if line.startswith("# Placeholders:")]
         assert named, f"{unit.name}: carries {sorted(carried)} but its header has no `# Placeholders:` line"
         missing = [t for t in sorted(carried) if t not in named[0]]
         assert not missing, f"{unit.name}: placeholder(s) not named on the `# Placeholders:` line: {missing}"
+    # And the other direction, or a body that LOSES a placeholder keeps a header documenting it and
+    # every case still passes — which is how the `Environment=PATH=` line's own probe survived.
+    for token in _PLACEHOLDER.findall(" ".join(line for line in header_lines(text) if line.startswith("# Placeholders:"))):
+        assert token in carried, f"{unit.name}: header names {token} and the body no longer carries it"
 
 
 @pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
 def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
     rendered = render(unit.read_text())
-    body = "\n".join(line for line in rendered.splitlines() if not line.startswith("#"))
-    assert not _PLACEHOLDER.search(body), f"{unit.name}: a placeholder survived the render"
+    assert not _PLACEHOLDER.search(body(rendered)), f"{unit.name}: a placeholder survived the render"
     parsed = directives(rendered)
     assert "Description" in parsed.get("[Unit]", {}), f"{unit.name}: no Description= under [Unit]"
     if unit.suffix == ".service":
@@ -104,6 +139,41 @@ def test_the_render_leaves_nothing_angle_bracketed_and_parses(unit):
         assert timer.get("Persistent") == "true", f"{unit.name}: Persistent=true must sit under [Timer], where systemd reads it"
         assert (UNITS / timer.get("Unit", "")).is_file(), f"{unit.name}: Unit= must name a service beside it"
         assert parsed.get("[Install]", {}).get("WantedBy") == "timers.target", f"{unit.name}: a timer is wanted by timers.target"
+
+
+def test_every_known_placeholder_names_what_the_install_fills_it_from():
+    assert set(FILLS) == set(KNOWN), "a placeholder in KNOWN with no FILLS entry is unchecked in every install copy"
+
+
+@pytest.mark.parametrize("unit", units(), ids=lambda p: p.name)
+def test_every_copy_of_the_install_fills_exactly_what_the_body_carries(unit):
+    """The install command is written twice, in the unit's own header and in README.md, and neither
+    copy is the unit: a clause short renders its placeholder into ~/.config verbatim, a clause extra
+    outlives the placeholder it filled, and a clause filling the right token from the wrong
+    expression renders a unit that starts and fails. The `Placeholders:` line reads correct through
+    all three. Both copies are written here and nowhere else; a third would not be found."""
+    text = unit.read_text()
+    carried = set(_PLACEHOLDER.findall(body(text)))
+    for where, source in (("its own header", text), ("README.md", (REPO / "README.md").read_text())):
+        found = install_clauses(source, unit)
+        assert len(found) == (1 if carried else 0), (
+            f"{unit.name}: {where} holds {len(found)} install `sed` line(s) naming it, expected "
+            f"{1 if carried else 0} for a body carrying {sorted(carried) or 'no placeholder'}"
+        )
+        if not carried:
+            continue
+        clauses = found[0]
+        assert set(clauses) == carried, (
+            f"{unit.name}: the install at {where} fills {sorted(clauses)} but the body carries "
+            f"{sorted(carried)} -- rendered verbatim into the installed copy: "
+            f"{sorted(carried - set(clauses))}; clause(s) filling nothing: {sorted(set(clauses) - carried)}"
+        )
+        unnamed = sorted(set(clauses) - set(FILLS))
+        assert not unnamed, f"{unit.name}: the install at {where} fills {unnamed}, which `FILLS` does not name"
+        wrong = {tok: rep for tok, rep in clauses.items() if rep != FILLS[tok]}
+        assert not wrong, f"{unit.name}: the install at {where} fills " + ", ".join(
+            f"{tok} from {rep!r}, not {FILLS[tok]!r}" for tok, rep in sorted(wrong.items())
+        )
 
 
 def test_the_data_gated_service_is_a_oneshot_the_timer_owns():
