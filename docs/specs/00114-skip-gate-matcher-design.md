@@ -1,0 +1,72 @@
+# Skip gates match an enumerated form, and the reachability half of the opt-in rule is held
+
+## Problem
+
+`CLAUDE.md` carries the venue opt-in rule as two entries. The first — one flag opens every test that reaches a venue — is held by `tests/test_live_venue_opt_in.py` through `infra/scripts/count-list.sh skip-gate-contract`. The second — no skip is decided by whether a venue answers — is held by nothing, and the entry says so: four review rounds on [[T0190]] tried to assert it and the owner ruled on 2026-09-11 that it is its own piece of work.
+
+The guard that holds the first half is a REDUCER: it walks each guard expression asking what it reads, and at every node it cannot classify it chooses between refusing and permitting. Its own docstring lists what that shape lets through, each measured by planting it: a second opt-in name reaching a gate through five bindings the scope merge does not see, `unittest`'s decorator and method forms yielding no gate, an environment read hidden inside a skip helper, and six mutation probes reverting its most recent recognition additions that all SURVIVED. A reducer's closed world is a property of every branch, and every widening added branches.
+
+A MATCHER has no branch that can leak: a guard either matches one of an enumerated set of forms, each of which names what it reads, or it is refused. The cost that stopped the matcher on T0190's branch was measured then as 18 of 61 guard expressions with no form readable off their shape. Re-measured for this spec on 2026-09-17: 22 of 66, and they are three kinds, not eighteen problems — ten calls to one helper, seven `shutil.which` results read a line later, and five bare locals over a local scan. Each takes one declaration.
+
+## Decisions
+
+**D1. The tree assertion becomes "every guard of every skip gate matches one form", and a guard that matches none is refused with the remedy.** The two assertions the reducer holds — the one name, and the refusal of what it cannot read — are both consequences of this one: the opt-in form admits only the one key, and an unmatched guard is the refusal. What the assertion adds is the half nothing held: with every guard matched to a form whose reading is named, the set of things a skip can be decided by is closed, and the venue is not in it.
+
+**D2. The forms are the shapes the tree carries, and nothing is followed.** The census below groups the 66 guards into fourteen blanked shapes. The manifest ones — a path-presence method (`exists`, `is_file`, `is_dir`) on any expression, `os.geteuid() == 0`, `shutil.which(<literal>) is None`, an environment read of a literal or plain-module-constant key compared to a literal, and membership in a plain-module-constant collection — name their reading in the form itself, whatever the operand: `not X.exists()` reads the filesystem whether `X` came from a constant or a loop. The opt-in key is resolved in exactly one way, a string literal or a plain top-level `NAME = "<literal>"` assignment; an annotated constant, a binding inside a module-level `if` or `try`, an attribute, a subscript, a name that arrived by star-import and a call are all refused, which is how the five bindings the reducer let through become refusals rather than recognitions. The alternative — following a local binding one step to its manifest form — is the reducer's design and its leak, and is not taken.
+
+**D3. A guard whose reading is not on its face declares it by calling a function of `tests/skip_gates.py`, and a call into that module is the seventh form.** Three functions cover the 22: `develop_resolves()` (the `git rev-parse` the count-list tests gate on, moved from `tests/test_count_list.py`), `no_binary(name)` (`shutil.which(name) is None`, so the seven `bash is None` gates say what they read at the gate), and `nothing_found(rows)` (`not rows`, the declaration that a local collection came from a scan of local data and is empty). The matcher resolves the callee syntactically: a name imported from `tests.skip_gates`, or an attribute on an import of that module; a call to anything else is refused. The declaration cannot verify its argument's provenance — `nothing_found(rows)` is a claim the call site makes — and that is the point: an unmatched guard forces someone to write the claim where a reviewer greps for it, which is what the topic said a matcher would have done for the tape-bars gate on day one.
+
+The alternative, a marker comment on the gate line read through the tokenizer, is not taken: a comment is not executed, is invisible to the AST the matcher already walks, and is the kind of prose this repo deletes when it stops paying; a call is code, and the module it calls into can be held closed by one test.
+
+**D4. The registry is closed-world by test, not by convention.** One test parses `tests/skip_gates.py` and asserts that its imports are within an allowlist (`shutil`, `subprocess`, `pathlib`, `typing`), that every call in it is to one of those modules or a builtin, and that every public function's body is one expression. A registry that could open a socket would be the reducer's leak moved one file over; this test is what makes D3 a declaration rather than a loophole.
+
+**D5. The reachability half is held by construction, and the count entry now holds both halves.** Under D1–D4 a skip is decided only by a form's reading or a registry call, and neither reaches a network: the forms are syntactic, and the registry cannot import a module that opens a socket. `infra/scripts/count-list.sh skip-gate-contract` runs the guard's suite and does not change. `CLAUDE.md`'s second entry, whose parenthetical says nothing asserts it, becomes true to the count once this lands; that edit is a guidance change on its own branch, on the owner's word, and this spec's closeout hands it over rather than making it.
+
+**D6. Discovery stays a walker and is widened by two forms, and its reach is asserted by the fixture alone.** The gates the matcher judges are the ones `_gates()` finds: `pytest.skip` calls under any enclosing condition, `skipif` marks, `raise unittest.SkipTest`. `@unittest.skipIf(...)` and `self.skipTest(...)` are added, closing the gap the docstring names; the tree has no such gate today (three test modules import `unittest`, none skips through it), so the widening costs no migration. Discovery cannot be asserted from inside the guard — any set it computes to check the walker is computed by the walker — so `test_the_fixture_carries_every_position_a_skip_can_sit` stays as the one guard over it, and the docstring keeps saying so.
+
+**D7. The reducer's resolution code is deleted, and its 27 planted defects become the matcher's fixture with a disposition each.** Two guards over one set diverge, and a reducer kept beside a matcher would be the permitting branch reappearing. Every fixture case the reducer carries is kept as source and re-labelled: the shapes a form accepts assert the form and its reading, and every planted defect — the five bindings, the helper-hidden read, the reachability helper and the inline probe, the computed key, the second flag in each spelling — asserts refusal. The six recognition mutations that SURVIVED against the reducer cannot survive here: a recognition the matcher loses turns a matched fixture case into a refused one, which the case asserts against.
+
+**D8. The 22 gates migrate in the same change as the matcher, and no commit of the branch is red.** The order is: registry; the 22 gates rewritten to registry calls under the reducer still in place, which reads a call into a module of ours and accepts these three; the matcher over the fixture and the tree assertion in one commit, green over the migrated tree, with the assertion run once against the pre-migration tree to record that it names the 22; the reducer's resolution deleted. `tests/test_count_list.py`'s ten gates call `develop_resolves()` from the registry; the seven `shutil.which` gates read `no_binary("bash")` or `no_binary("sed")` at the gate, keeping the local for the run that follows; the five collection gates read `nothing_found(...)` over the local they already bind. No gate's decision moves.
+
+**D9. Three probes, each on the guard's own reach.** A form widened to accept any call (mutation on the matcher; the fixture's reachability cases must fail); the registry importing `socket` (mutation on the registry; D4's test must fail); a real gate rewritten to an unmatched shape (mutation on one migrated test file; the tree assertion must fail and name the site). Each is run through `infra/scripts/mutate-probe.sh` and recorded on the commit that carries the guard it proves.
+
+## The measured basis
+
+Every figure below was produced on `develop` at `7590e60db` on 2026-09-17, by the commands named.
+
+**The census, from the guard's own walk.** `_tree_gates()` loaded from `tests/test_live_venue_opt_in.py` returns 66 gates; 6 carry an environment key and all 6 carry `ZCRYPTO_LIVE_VENUE_TESTS`. Blanking every `Name` to `_` and every string to `<lit>` in each guard's `ast` and grouping by the unparsed result gives fourteen shapes:
+
+| count | shape | reading |
+| --- | --- | --- |
+| 15 | `not _.exists()` | path presence |
+| 7 | `not _.is_dir()` | path presence |
+| 5 | `not _.is_file()` | path presence |
+| 4 | `not _('<lit>').exists()` | path presence |
+| 1 | `not (_ / _).is_dir()` | path presence |
+| 4 | `_.geteuid() == 0` | uid |
+| 3 | `_.environ.get('<lit>') != '<lit>'` | environment, literal key |
+| 2 | `_.environ.get(_) != '<lit>'` | environment, constant key |
+| 1 | `_.environ.get(_) == '<lit>'` | environment, constant key, the opt-out |
+| 1 | `_.which('<lit>') is None` | binary presence |
+| 1 | `_.name in _` | membership in a module constant |
+| 10 | `not _()` | a call: `_develop_resolves()` in `tests/test_count_list.py`, all ten |
+| 8 | `_ is None` | a local: `bash` ×4, `sed` ×2, `found` ×1, each a `shutil.which` result bound a line or two above; `day` ×1, a `next(...)` over a heal index |
+| 4 | `not _` | a local: `snaps` and `snapshots` from a glob over `data/snapshots`, `records` filtered off the trial registry, `archived` a set over the trade index |
+
+44 match a manifest form; 22 do not, and the 22 are the three kinds D3 names.
+
+**The 22's bindings**, read at each site: `tests/test_count_list.py:62` defines `_develop_resolves` as `git -C <repo> rev-parse --verify --quiet develop` returning `returncode == 0`; `tests/test_infra_archive_pull_template.py:59,100,125,196`, `tests/test_infra_tape_bars_template.py:45,101` and `tests/test_infra_verify_replay_template.py:337` bind `bash`, `sed` or `found` to `shutil.which(...)`; `tests/test_costmin_drift.py:20` and `tests/test_engine_venuestate.py:77` bind a sorted glob; `tests/test_registry_conformance.py:92` binds a filtered registry read; `tests/test_tape_bars_rest_control.py:51,78` bind a set over the index and a `next(...)` over it.
+
+**The reducer's own account of what it misses** is its module docstring at `tests/test_live_venue_opt_in.py:1-79`: five bindings uncaught and unrefused, `unittest` half in scope, the helper-hidden environment read (added `cb9f76924`, 2026-09-16), discovery unasserted, six SURVIVED recognition probes. Its fixture holds 33 shape cases and three tree assertions; `uv run pytest tests/test_live_venue_opt_in.py -q` reads `8 passed` through the count entry's selection.
+
+**`unittest` in the tree**: `grep -rln unittest tests/*.py` names three modules; `grep -rn 'skipTest\|unittest.skip' tests/*.py` outside the guard returns nothing.
+
+**The rule's two carriers**: `CLAUDE.md:32` (the one-name half, `count: infra/scripts/count-list.sh skip-gate-contract`) and `CLAUDE.md:33` (the reachability half, `no count command: nothing asserts it`); `infra/scripts/count-list.sh:275` defines the entry as `uv run pytest tests/test_live_venue_opt_in.py -q`.
+
+## Out of scope
+
+**The `CLAUDE.md` entry's parenthetical** moves from "nothing asserts it" to the count when this lands; it is a guidance change, it rides its own branch on the owner's word, and the closeout hands it over.
+
+**Gate discovery beyond the fixture.** A static analyser that proves the walker finds every skip in the tree is the same kind of work as this spec and is not it; D6 states the limit where the reducer stated it.
+
+**The registry's arguments.** `nothing_found(rows)` declares a provenance it cannot check; making it check — a scan helper that takes the path and does the glob itself — is a better registry and a larger migration, and can follow once the matcher holds.
