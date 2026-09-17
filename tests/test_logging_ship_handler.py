@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 import time
 
@@ -244,34 +245,37 @@ def test_recovery_warning_exact_count_after_ring_overflow(handler_factory, ship_
 def test_emit_never_blocks_against_a_silent_endpoint():
     """`emit` hands the record to the ring and returns; the network belongs to the worker thread.
 
-    The opener is the handler's only route to the network, so "the calling thread never reached it"
-    IS the guarantee. The worker's own calls are the control: without them a zero on the caller
-    would also be what a dead hook reads.
+    Watched at the SOCKET, not at the handler's opener: the property is about the network, and an
+    assertion scoped to one attribute holds only while that attribute stays the sole route to it.
+    The worker's own connects are the control: without them a zero on the caller would also be
+    what a dead hook reads.
     """
     with SilentServer() as url:
         handler = _make_handler(url, batch_max=500, ring_capacity=4096)
-        caller, openers = threading.get_ident(), []
-        real_open = handler._opener.open
+        caller, connects = threading.get_ident(), []
+        real_connect = socket.socket.connect
 
-        def watched(*args, **kwargs):
-            openers.append(threading.get_ident())
-            return real_open(*args, **kwargs)
+        def watched(self, address):
+            connects.append(threading.get_ident())
+            return real_connect(self, address)
 
-        handler._opener.open = watched
+        socket.socket.connect = watched
         try:
             start = time.monotonic()
             for i in range(2000):
                 handler.emit(_make_record(f"m{i}"))
             elapsed = time.monotonic() - start
-            assert [t for t in openers if t == caller] == []
+            assert [t for t in connects if t == caller] == []
             # The control's own wait is generous for the same reason the bound below is: the worker
             # has to be SCHEDULED, and a loaded runner is what broke the assertion this replaced.
-            assert _wait_until(lambda: any(t != caller for t in openers), timeout=_TIGHT["timeout_s"] * 10)
+            assert _wait_until(lambda: any(t != caller for t in connects), timeout=_TIGHT["timeout_s"] * 10)
             # Liveness, not the guarantee above: one blocking post costs `timeout_s`, so an `emit`
             # that posted every record would cost 2000x that -- 200x this bound.
             assert elapsed < _TIGHT["timeout_s"] * 10
         finally:
-            handler._opener.open = real_open
+            # `connect` is inherited from the C base, so restoring by assignment would leave an
+            # attribute where there was none; delete it back to inherited instead.
+            del socket.socket.connect
             handler.close()
 
 
