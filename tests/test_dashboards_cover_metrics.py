@@ -616,8 +616,9 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
 
 
 def _unscoped(expr: str) -> str:
-    """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`; the rule
-    reads the unscoped series. The pairing compares the two without that one matcher."""
+    """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
+    ops-only rule carries it in its own; the pairing compares the two without that one matcher on
+    either side."""
     return expr.replace('{host="ops"}', "").strip()
 
 
