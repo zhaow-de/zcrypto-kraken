@@ -14,7 +14,10 @@ REPO = "zhaow-de/zcrypto-kraken"
 GUARD = pathlib.Path(__file__).with_name("guidance-guard.py")
 INDEX = "docs/reference/change-index.md"
 JOURNAL = "docs/reference/ops-journal/"
-FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid"
+DEPENDABOT = "dependabot[bot]"
+# `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
+# fetch omits is not a missing exemption, it is a refusal on every PR of that shape.
+FIELDS = "number,headRefName,baseRefName,state,mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup,body,headRefOid,commits"
 READ_LINE = re.compile(r"^Read before push by: *(.+?) +at +([0-9a-f]{7,40}) *$", re.M)
 # The key grammar of `_keys` in tests/test_change_index.py, which decides whether a merge owes a row: only
 # its topic alternative case-folds, so a global re.I here would make `ITER-7` a key to the gate alone.
@@ -339,8 +342,20 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
 
 
 def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None) -> list[str]:
-    """The read is at the floor and names the head, or the head is the one change-index row commit past the tip it
-    names, or the head's tree is the named tip's tree (a message amend)."""
+    """The read is at the floor and names the head, unless one of the arms below exempts the PR."""
+    if (pr.get("headRefName") or "").startswith("dependabot/"):
+        commits = pr.get("commits")
+        if commits is None:
+            return ["the PR's commit list was not fetched, so the dependabot exemption cannot be scoped to a PR with no fix commit"]
+
+        def _bot_only(commit: dict) -> bool:
+            """Per commit, not over a flattened list: a commit contributing no author entries vanishes from
+            the flattened one and the exemption survives a commit nothing is known about."""
+            authors = [a.get("login") for a in (commit.get("authors") or [])]
+            return bool(authors) and all(a == DEPENDABOT for a in authors)
+
+        if commits and all(_bot_only(c) for c in commits):
+            return []  # .claude/skills/dependabot: a PR with no fix commit needs no read, and its squash bypasses this gate
     if pr.get("headRefName") == "ops-journal":
         if files is None:
             return ["the PR's file list was not fetched, so the ops-journal exemption cannot be scoped to the journal files"]

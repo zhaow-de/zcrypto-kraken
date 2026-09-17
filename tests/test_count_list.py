@@ -574,3 +574,60 @@ def test_the_topic_only_arm_counts_a_merge_only_when_every_file_it_brought_in_is
     assert _topic_only_merges(repo) == "0"
     _merge(repo, "topics-only", ["docs/open-topics/T9999-parked.md", "docs/open-topics/README.md"])
     assert _topic_only_merges(repo) == "1"
+
+
+@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_a_dependabot_bump_is_exempt_and_one_carrying_a_fix_commit_is_not(tmp_path):
+    """The gate exempts a dependabot PR whose every commit is the bot's, so the counter has to fetch those commits
+    or book every bump. The bulk list cannot carry them -- 400 rows times their authors exceeds GraphQL's node
+    ceiling and the whole fetch errors -- so they come per PR, and `COUNT_LIST_COMMITS_SNAPSHOT` stands in for
+    that fetch. Two rows, identical but for one commit of mine: only the second is counted."""
+    stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = "1234567890abcdef1234567890abcdef12345678"
+    prs = [
+        {
+            "number": 900,
+            "headRefName": "dependabot/uv/develop/polars-1.44.2",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "Bumps polars.\n",
+        },
+        {
+            "number": 901,
+            "headRefName": "dependabot/uv/develop/ansible-14.4.0",
+            "mergedAt": stamp,
+            "headRefOid": head,
+            "files": [],
+            "body": "Bumps ansible.\n",
+        },
+        # Outside the window, so the fetch is not saturated and the count is measurable at all.
+        {
+            "number": 899,
+            "headRefName": "feat/old",
+            "mergedAt": "2026-01-01T00:00:00Z",
+            "headRefOid": head,
+            "files": [],
+            "body": "## Summary\n",
+        },
+    ]
+    commits = {
+        "900": [{"authors": [{"login": "dependabot[bot]"}]}],
+        "901": [{"authors": [{"login": "dependabot[bot]"}]}, {"authors": [{"login": "claude"}]}],
+    }
+    snapshot, commit_snapshot = tmp_path / "prs.json", tmp_path / "commits.json"
+    snapshot.write_text(json.dumps(prs))
+    commit_snapshot.write_text(json.dumps(commits))
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "COUNT_LIST_PRS_SNAPSHOT": str(snapshot),
+            "COUNT_LIST_COMMITS_SNAPSHOT": str(commit_snapshot),
+        },
+        timeout=120,
+    )
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
