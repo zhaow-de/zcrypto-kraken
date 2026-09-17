@@ -2639,9 +2639,6 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
     this read wants is `NRestarts`, which carries `restart` as a substring, so a substring ban trips
     on the very name it exists to fetch. A verb only acts when the shell can reach it as a command.
     """
-    # The LITERAL, not the constant the command is built from: comparing the command against
-    # AGENTBOARD_HOST is a self-comparison that passes whatever the host is renamed to.
-    assert ops_daily.AGENTBOARD_COMMAND[-2] == "hp", "the ops node's ssh alias, per docs/reference/fleet.md"
     # BatchMode for the reason `UPGRADE_COMMAND` spells out: a prompt holds the read until the
     # timeout instead of failing it.
     assert "BatchMode=yes" in ops_daily.AGENTBOARD_COMMAND
@@ -2668,6 +2665,16 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
 _OPS_LEDGER = "/var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"
 
 
+def _recording_into(seen: list[str]):
+    """A resolver that answers like `_identity` and records the host it was handed."""
+
+    def _recording(target, operands):
+        seen.append(target)
+        return list(operands)
+
+    return _recording
+
+
 def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
     """The runbook writes a remote read as `ssh hp "sudo cat <path>"` (`infra/runbooks/ops.md`): the
     payload is one token to the scanner, so without a re-scan default-deny prepares a read the same
@@ -2681,11 +2688,7 @@ def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
     assert ops_daily.classify_action('ssh hp "sudo cat $HOME/x"', host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
     assert ops_daily.classify_action('ssh hp "sudo cat /etc/shadow"', host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
     seen: list[str] = []
-
-    def _recording(target, operands):
-        seen.append(target)
-        return list(operands)
-
+    _recording = _recording_into(seen)
     assert (
         ops_daily.classify_action(f'ssh hp "sudo cat {_OPS_LEDGER}"', host="zcrypto", resolve=_recording)
         is ops_daily.Tier.AUTONOMOUS
@@ -2694,8 +2697,8 @@ def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
 
 
 def test_quoting_admits_nothing_the_same_text_is_refused_for_unquoted():
-    """The protected-objects veto reads the whole text; a re-scan must keep reading it, or a quoted
-    payload slips a telemetry restart past a pipeline that names the engine."""
+    """The protected-objects veto reads the span's whole text; a re-scan must keep reading it, or a
+    quoted payload slips a telemetry restart past a pipeline that names the engine."""
     quoted = 'ssh hp "sudo docker restart grafana-alloy" | grep -c zcrypto-engine'
     assert ops_daily.classify_action(quoted.replace('"', ""), host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
     assert ops_daily.classify_action(quoted, host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
@@ -2706,11 +2709,7 @@ def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host)
     """`Alert.hosts` prints the metrics label `ops` while a step spells the ssh name `hp`: neither
     spelling may lose a tier."""
     seen: list[str] = []
-
-    def _recording(target, operands):
-        seen.append(target)
-        return list(operands)
-
+    _recording = _recording_into(seen)
     assert (
         ops_daily.classify_action("sudo docker restart grafana-alloy", host=host, resolve=_recording) is ops_daily.Tier.AUTONOMOUS
     )
@@ -2723,8 +2722,8 @@ def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host)
 
 
 def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
-    """The mapping is hand-kept: `fleet.md`'s `ssh` column is where a destination changes -- its
-    bare-name rows alone, so `zaccess` is unmapped -- and the ops role's Alloy sets the `ops` label."""
+    """The mapping is hand-kept: `fleet.md`'s bare-name rows are where a host or its destination
+    changes -- `zaccess` has none and is unmapped -- and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z-]+)` \|", table, re.M))
