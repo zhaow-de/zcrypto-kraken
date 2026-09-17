@@ -105,7 +105,7 @@ def _signalled(tmp_path, sig):
         env=_env(tmp_path, ansible, {"PLAYBOOK_SLEEP": str(_PLAY_HOLD_S)}),
         start_new_session=True,
     )
-    time.sleep(1.2)  # past the five key loads and into the play, which the stub holds open for _PLAY_HOLD_S
+    time.sleep(1.2)  # past the five key loads and into the play
     started = time.monotonic()
     os.kill(proc.pid, sig)
     proc.communicate(timeout=30)
