@@ -40,7 +40,19 @@ def _log(tmp_path: pathlib.Path, rows: list[dict]) -> str:
 def test_api_impacting_reads_a_component_name_and_the_entrys_own_name():
     """An empty `components` is not an absent impact -- the second window carries it in its own name."""
     windows = audit.api_impacting(json.loads(FEED.read_text())["scheduled_maintenances"])
-    assert [w["name"] for w in windows] == ["Beeks Maintenance", "REST API rate-limit change"]
+    assert [w["name"] for w in windows] == [
+        "Beeks Maintenance",
+        "REST API rate-limit change",
+        "Derivatives Platform Maintenance",
+    ]
+
+
+def test_api_impacting_matches_the_venues_other_spelling_of_websocket():
+    """The venue spells it `WebSocket` on one entry and `Websocket` on another. The fixture's
+    `Derivatives Platform Maintenance` carries the second spelling and no REST component, so a
+    case-sensitive test admits it through nothing and the window goes unseen."""
+    entry = {"name": "x", "components": [{"name": "Websocket API"}]}
+    assert audit.api_impacting([entry]) == [entry]
 
 
 def test_maintenance_counts_the_row_inside_an_api_impacting_window(tmp_path, capsys):
