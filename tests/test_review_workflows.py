@@ -89,8 +89,6 @@ def test_the_grading_grades_prose_by_consequence():
 
 
 def test_every_workflow_records_itself_before_it_reads_and_the_two_reads_refuse_an_unread_tip():
-    """The order of reviews is refused, not remembered: each script appends to `<reportDir>/ledger.jsonl` before its
-    first phase, and review and re-review throw on a tip no pre-read covers -- the drift the ledger exists to stop."""
     texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
     for name, text in texts.items():
         assert text.index("const ledger = await agent(") < text.index("\nphase("), (
