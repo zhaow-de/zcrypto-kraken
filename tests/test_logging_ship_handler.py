@@ -249,6 +249,9 @@ def test_emit_never_blocks_against_a_silent_endpoint():
     holds only while that attribute stays the sole route to the network. The worker's own connects
     are the control -- without them, a zero on the caller is what a dead hook reads too.
     """
+    # One bound for both waits below, generous because a loaded runner has to schedule the worker:
+    # tightening either of them alone is what made the assertion this replaced flake.
+    generous = _TIGHT["timeout_s"] * 10
     with SilentServer() as url:
         handler = _make_handler(url, batch_max=500, ring_capacity=4096)
         caller, connects = threading.get_ident(), []
@@ -265,10 +268,9 @@ def test_emit_never_blocks_against_a_silent_endpoint():
                 handler.emit(_make_record(f"m{i}"))
             elapsed = time.monotonic() - start
             assert [t for t in connects if t == caller] == []
-            # The hook is process-global, so the control names THIS worker; its wait is generous
-            # because that worker has to be scheduled.
-            assert _wait_until(lambda: handler._worker.ident in connects, timeout=_TIGHT["timeout_s"] * 10)
-            assert elapsed < _TIGHT["timeout_s"] * 10  # liveness, not the guarantee above
+            # The hook is process-global, so the control names THIS worker.
+            assert _wait_until(lambda: handler._worker.ident in connects, timeout=generous)
+            assert elapsed < generous  # liveness, not the guarantee above
         finally:
             # `connect` is inherited from the C base: assigning the original back would leave an
             # attribute where there was none.
