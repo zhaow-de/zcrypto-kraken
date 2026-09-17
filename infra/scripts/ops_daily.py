@@ -665,9 +665,9 @@ def read_agentboard_cgroup(*, runner) -> Check:
 
     value = f"MemoryMax={_scale(hard)}, MemoryHigh={_scale(soft)}, peak {_scale(peak)}, NRestarts={restarts}"
     if peak.isdigit() and hard.isdigit() and int(peak) > int(hard):
-        # A hard limit is never exceeded once set, so this peak predates the cap; `KillMode=process`
-        # keeps the cgroup populated across restarts, so nothing resets the peak.
-        value += "; peak predates the cap and hides any later excursion until the cgroup is recreated"
+        # A charge past the hard limit fails, so a peak above it was made under an earlier or no
+        # limit; `KillMode=process` keeps the cgroup, and the peak with it, across restarts.
+        value += "; peak was set under an earlier limit and hides any later excursion for as long as the cgroup lives, which holds the operator's sessions"
     # Reaching MemoryHigh is the cap WORKING -- the kernel throttled and reclaimed instead of killing
     # -- so it is narration, not a fault. It is worth narrating because nothing else on this fleet
     # records that something in the operator's workspace tried to run away.

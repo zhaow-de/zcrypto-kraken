@@ -2592,7 +2592,15 @@ def test_a_peak_that_reached_memoryhigh_is_narrated_but_does_not_fail_the_pass()
 def test_a_peak_above_memorymax_predates_the_cap_and_the_row_says_so():
     check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak="64159506432"))
     assert check.ok, check.value
-    assert "predates the cap" in check.value and "throttled" not in check.value, check.value
+    assert "peak 59.8 GiB" in check.value and "under an earlier limit" in check.value, check.value
+    assert "throttled" not in check.value, check.value
+
+
+def test_a_peak_at_memorymax_is_throttling_and_one_byte_over_was_set_under_an_earlier_limit():
+    at = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak=str(24 * _GIB)))
+    assert "throttled" in at.value and "earlier limit" not in at.value, at.value
+    over = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak=str(24 * _GIB + 1)))
+    assert "earlier limit" in over.value and "throttled" not in over.value, over.value
 
 
 def test_a_restart_is_narrated_because_no_prometheus_series_can_see_it():
