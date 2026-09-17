@@ -323,3 +323,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #542 | 2026-09-16 | fix(engine): nautilus-trader 2.0.0rc6.dev20260915, armed and verified | — | — | T0160 |
 | #544 | 2026-09-16 | chore(fleet): capture pair on 7ccd97eb7e3c, the engine rolled back | — | 00083 | — |
 | #561 | 2026-09-17 | docs(topics): row #301 reads its spec; T0119 names the reserved serial | — | — | T0119 |
+| #562 | 2026-09-17 | docs(topics): T0190 catches up to the guard it describes | — | — | T0190 |

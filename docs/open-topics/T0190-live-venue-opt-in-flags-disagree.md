@@ -15,14 +15,9 @@ ripe_when: 'the next branch that adds a venue-reaching test, or any change to `t
 | `ZCRYPTO_VENUE_CONTRACT` | `test_engine_flatten.py` | no | no — `skipif` only |
 | `ZCRYPTO_E1B_LIVE` | `test_e1b_order_visibility_probe.py` | no | no — `skipif` only |
 
-The `documented` column is as of 2026-09-08 and **the one `yes` in it is no longer true**; the two
-`no` cells still are. `deaa3e7c7`,
-the zero-base of the guidance corpus on 2026-09-10, deleted the paragraph quoted above along with
-eleven rule files, and `git grep -n 'ZCRYPTO_LIVE_VENUE_TESTS' -- CLAUDE.md .claude/` returns nothing
-at `608f3cc4e`. Nothing replaced it, so between that commit and this topic's resolution the rule was
-carried by no surface a session loads. The rename below never depended on it — the owner's ruling
-names the surviving flag on its own — but the argument in the next section did, and reads in the past
-tense for that reason.
+The `documented` column is as of 2026-09-08. The rename below never depended on the rule being
+written down — the owner's ruling names the surviving flag on its own — but the argument in the next
+section did, and reads in the past tense for that reason.
 
 Row 1's `fails when set` cell is wrong for one of its three files and stayed wrong until this
 resolution: `test_kraken_fixture_mint.py`'s gate is an opt-OUT, skipping when the flag IS set, and it
@@ -86,9 +81,9 @@ nothing is the defect this topic is about.
 
 - **The class has an opt-OUT member, which the table lists without distinguishing.** `test_kraken_fixture_mint.py` is named in row 1, so the file was never missing; what the table does not say is that its gate at line 667 has inverted polarity — it skips *when the flag is set*, because it asserts the live doors are shut and setting the flag deliberately opens them. "Every gate keyed on the opt-in carries a fail-when-set arm" is false for it by design, and row 1's `yes — pytest.fail` cell is the place that reads otherwise. It needed no special case in the guard: every assertion there is about what a gate's guards read, not which way they point.
 
-- **The census the guard walks**: 61 skip gates in `tests/`, of which 6 read the environment and all 6 name `ZCRYPTO_LIVE_VENUE_TESTS`. **The breakdown of the other 55 is not given here, because three successive versions of it were wrong in the same direction** — "an absent dataset, a uid or a missing binary" for all 55; then 1 binary and 15 others; then 7 and 9, where a reviewer re-derived 8 and 8. Every version was hand-classified from the guards' surface text and every version missed binaries hiding as `bash is None`, the RESULT of a `shutil.which` two lines up. A number wrong three times in one direction is a fact about the method rather than about the tree: run `_tree_gates()` and classify on what each gate REACHES, which is what the guard does and what no hand pass managed. So the degeneracy control lives in the tree rather than only in a fixture: a third test requires a non-environment gate to be present, which 55 of the 61 are, so the one-name assertion cannot pass vacuously on an empty set.
+- **The census the guard walks** is whatever `_tree_gates()` returns; take it from a run, never from here. **The breakdown of the gates that read no environment is not given, because three successive versions of it were wrong in the same direction** — "an absent dataset, a uid or a missing binary" for all of them; then 1 binary and 15 others; then 7 and 9, where a reviewer re-derived 8 and 8. Every version was hand-classified from the guards' surface text and every version missed binaries hiding as `bash is None`, the RESULT of a `shutil.which` two lines up. A number wrong three times in one direction is a fact about the method rather than about the tree: run `_tree_gates()` and classify on what each gate REACHES, which is what the guard does and what no hand pass managed.
 
-- **Where the rule lived at the moment this closed**, measured rather than assumed: in `tests/test_live_venue_opt_in.py`'s module docstring, in this file, and in no surface a session loads — `deaa3e7c7` deleted the corpus paragraph on 2026-09-10 and nothing replaced it. That is a statement about the tree on this date and not a task parked here; the guidance line is `zcrypto-marco`'s, and the PR that carries this resolution records what became of it.
+- **Where the rule lives**: `CLAUDE.md`'s guards-and-proofs entries since `73885594c` (2026-09-12) — one holding the one-name half through `infra/scripts/count-list.sh skip-gate-contract`, one stating that nothing holds the reachability half — beside the guard's module docstring and this file. Between `deaa3e7c7` (2026-09-10) and that commit no surface a session loads carried it.
 
 ## Suggested next steps
 
@@ -97,34 +92,18 @@ nothing is the defect this topic is about.
   The property is real and the repo asserts it nowhere: `tests/test_live_venue_opt_in.py` holds the one
   flag name and refuses what it cannot read, and says in its docstring that it does not hold this.
 
-  **Start from the diagnosis rather than from the current code.** A MATCHER matches a guard against
-  enumerated forms and fails when none match, so it has no branch that can leak. A REDUCER walks an
-  expression asking what it reads, and at every node it cannot classify it must choose between
-  refusing and permitting — so closed-world is a property of every branch, not of the design. The
-  shipped guard is a reducer; four rounds of widening one, and one round of a reducer claiming a
-  matcher's property in its own docstring, left thirteen of twenty-seven planted defects passing.
+  **Start from the matcher-versus-reducer diagnosis in `tests/test_live_venue_opt_in.py`'s module
+  docstring rather than from the current code.**
 
-  **The measured cost, which is why it was not paid here:** 18 of the tree's 61 guard expressions have
-  no form a matcher could accept, because their meaning is not readable off their shape — `not
-  X.exists()` is manifest whatever `X` is, `not rows` is not. Three are calls to one module-private
-  helper; fifteen are bare locals, seven of those a `shutil.which` result read one line later. Each
-  needs its predicate inlined or declared. Re-derive that number with the blanking transform over
-  `_tree_gates()` before acting on it; four hand counts on this branch were wrong.
+  **The measured cost, which is why it was not paid here:** the guard's own docstring holds it — the
+  expressions with no form a matcher could accept, and the blanking transform over `_tree_gates()`
+  that re-derives the number. Four hand counts on this branch were wrong; do not take one from here.
 
   **What it would have caught, so the value is not theoretical:** `tests/test_tape_bars_rest_control.py`
   skipped on a truncated Kraken answer with the opt-in set. It took a census, a guard, four review
   rounds and a ruling to surface; a matcher would have refused that gate on day one and made someone
   say what it reads.
 
-- **What the two surviving assertions miss, measured by planting each shape at the tip.** A second
-  opt-in name reaches a gate uncaught through five bindings — an annotated module constant, a binding
-  inside a module-level `if` or `try`, a class attribute read as `self.K`, and a name arriving by
-  star-import; only a plain module-level `K = ...` is caught, and none of the five is refused either.
-  `unittest` is half in scope: `raise unittest.SkipTest` yields a gate, `@unittest.skipIf(...)` and
-  `self.skipTest(...)` yield none. Gate DISCOVERY is asserted by nothing and cannot be asserted from
-  inside the guard — any set it computes to check the walker is computed by the walker. And six
-  mutation probes reverting the guard's most recent recognition additions all SURVIVED: the fixture
-  carries the shapes, but no assertion fails when the code stops seeing them.
-
-  These are edges of the property that DID ship, not of the one that did not, and they are listed so
-  the next attempt inherits them measured rather than rediscovering them.
+- **What the two surviving assertions miss** is listed, planted shape by planted shape, in
+  `tests/test_live_venue_opt_in.py`'s module docstring, so the next attempt inherits them measured
+  rather than rediscovering them.
