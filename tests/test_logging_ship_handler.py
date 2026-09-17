@@ -191,7 +191,7 @@ def test_non_429_4xx_drops_the_batch_and_ships_the_next_with_recovery_count(hand
             assert messages == ["good-0", "good-1", "good-2"]  # the next batch shipped, unaffected
 
             assert _wait_until(lambda: any("recovered" in r.getMessage() for r in console.records))
-            time.sleep(0.2)  # settle: >> the 0.02s ship cadence, so a handler that never stops
+            time.sleep(_TIGHT["flush_interval_s"] * 10)  # settle, so a handler that never stops
             # announcing (recovery bookkeeping not resetting) has time to emit a second one
             warnings = [r for r in console.records if "recovered" in r.getMessage()]
             assert len(warnings) == 1
@@ -227,7 +227,7 @@ def test_recovery_warning_exact_count_after_ring_overflow(handler_factory, ship_
 
             handler_cls.status_code = 200  # let the held batch succeed
             assert _wait_until(lambda: any("recovered" in r.getMessage() for r in console.records), timeout=2.0)
-            time.sleep(0.2)  # settle: >> the 0.02s ship cadence, so a handler that never stops
+            time.sleep(_TIGHT["flush_interval_s"] * 10)  # settle, so a handler that never stops
             # announcing (recovery bookkeeping not resetting) has time to emit a second one
 
             warnings = [r for r in console.records if "recovered" in r.getMessage()]
@@ -313,12 +313,14 @@ def test_post_unexpected_exception_is_treated_as_retry_worker_survives():
 
 def test_silent_endpoint_times_out_and_retains_the_batch():
     with SilentServer() as url:
-        handler = _make_handler(url, batch_max=2, ring_capacity=16, timeout_s=0.2, backoff_min_s=0.05, backoff_max_s=0.1)
+        quick = {"timeout_s": 0.2, "backoff_min_s": 0.05, "backoff_max_s": 0.1}
+        handler = _make_handler(url, batch_max=2, ring_capacity=16, **quick)
         try:
             handler.emit(_make_record("a"))
             handler.emit(_make_record("b"))
-            time.sleep(0.2 + 0.1 + 0.1)  # >= one timeout + one backoff cycle, with slack
+            time.sleep(quick["timeout_s"] + 2 * quick["backoff_max_s"])
             assert handler.dropped_total == 0
+            assert len(url.connections) >= 2, "the worker posted into the silence, timed out and came back"
             assert len(handler._held) + len(handler._ring) == 2  # nothing lost -- still queued for retry
         finally:
             handler.close()

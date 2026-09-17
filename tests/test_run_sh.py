@@ -91,6 +91,9 @@ def _play(ansible) -> list[str]:
     return log.read_text().splitlines() if log.exists() else []
 
 
+_PLAY_HOLD_S = 10
+
+
 def _signalled(tmp_path, sig):
     """run.sh in a session of its own, so a signal aimed at its pid is not the ignored-by-inheritance SIGINT a
     background job gets, then the signal, then what the play and the agent did."""
@@ -99,10 +102,10 @@ def _signalled(tmp_path, sig):
         [str(script), "site.yml"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=_env(tmp_path, ansible, {"PLAYBOOK_SLEEP": "10"}),
+        env=_env(tmp_path, ansible, {"PLAYBOOK_SLEEP": str(_PLAY_HOLD_S)}),
         start_new_session=True,
     )
-    time.sleep(1.2)  # past the five key loads and into the play, which the stub holds open for ten seconds
+    time.sleep(1.2)  # past the five key loads and into the play
     started = time.monotonic()
     os.kill(proc.pid, sig)
     proc.communicate(timeout=30)
@@ -189,6 +192,6 @@ def test_a_signal_stops_the_play_and_kills_the_agent(tmp_path, sig, rc):
     status, elapsed, play, kills = _signalled(tmp_path, sig)
     assert f"signal {sig.name}" in play, f"the play never saw the signal: {play}"
     assert "ran to completion" not in play, "the play ran on after the signal -- an unsupervised converge"
-    assert elapsed < 5, f"the play took {elapsed:.1f}s to stop: the signal did not cut it short"
+    assert elapsed < _PLAY_HOLD_S / 2, f"the play took {elapsed:.1f}s to stop: the signal did not cut it short"
     assert status == rc, f"rc {status}: the shell's status for a {sig.name} did not reach the caller"
     assert kills == ["killed pid=4242"], f"the agent outlived a signalled run: {kills}"

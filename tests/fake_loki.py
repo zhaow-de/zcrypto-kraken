@@ -61,8 +61,15 @@ def FakeLoki(handler_cls: type[BaseHTTPRequestHandler] | None = None) -> Iterato
         server.server_close()
 
 
+class SilentUrl(str):
+    """The silent endpoint's URL, carrying the connections it has accepted: a second one is a
+    client that timed out and came back."""
+
+    connections: list[socket.socket]
+
+
 @contextmanager
-def SilentServer() -> Iterator[str]:
+def SilentServer() -> Iterator[SilentUrl]:
     """Accepts the TCP connection and then goes silent -- never reads, never responds -- so callers
     can exercise the client's read-timeout path."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -83,8 +90,10 @@ def SilentServer() -> Iterator[str]:
 
     thread = threading.Thread(target=_accept_forever, daemon=True)
     thread.start()
+    url = SilentUrl(f"http://127.0.0.1:{port}")
+    url.connections = conns
     try:
-        yield f"http://127.0.0.1:{port}"
+        yield url
     finally:
         stop.set()
         thread.join()
