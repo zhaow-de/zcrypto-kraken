@@ -11,11 +11,11 @@ ripe_when: 2026-10-01 — a second fortnight of reconnects on the board to set t
 
 ## Why this matters
 
-Over the 13 days to 2026-09-17 the primary reconnected 98 times, about 15 a day against the roughly 8.2 a day `compute_backoff`'s docstring in `cli/capture/ws_client.py` records as the baseline, and moved the healable counter twice, both times at its own converges. A host reconnecting ever more often is the degrading-primary shape the healable rule was written to reveal, and this is the arm of it that rule cannot see.
+Over the 13 days to 2026-09-17 the primary reconnected 98 times, 7.5 a day against the roughly 8.2 a day `compute_backoff`'s docstring in `cli/capture/ws_client.py` records as the baseline, and moved the healable counter twice, both times at its own converges. The rate is ordinary today and nothing would say when it stops being: a host reconnecting ever more often is the degrading-primary shape the healable rule was written to reveal, and this is the arm of it that rule cannot see.
 
 ## Findings so far
 
-- Measured 2026-09-17 from the workstation: `sum by (host) (increase(zcrypto_capture_reconnects_total[13d]))` read 98 on `zcrypto` and 91 on `zcrypto-red`; over `[24h]`, 15 and 12. The counter counts loop iterations, so it bounds distinct drops from above.
+- Measured 2026-09-17 from the workstation: `sum by (host) (increase(zcrypto_capture_reconnects_total[13d]))` read 98 on `zcrypto` and 91 on `zcrypto-red`; over `[24h]`, the day after a primary converge, 15 and 12. The counter counts loop iterations, so it bounds distinct drops from above.
 - The two classes and their cost, from `cli/capture/ws_client.py` and the websockets library defaults: a clean close costs backoff plus handshake plus resubscribe, 2-8 s; a silent death is noticed by the keepalive 20-40 s after the last frame, 22-48 s in all, and only that class crosses the reconciler's floor.
 - The healable rule's comment names this blind spot since the 2026-09-17 re-derivation of its bar.
 

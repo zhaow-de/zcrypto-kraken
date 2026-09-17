@@ -402,7 +402,7 @@
       "id": 104,
       "type": "timeseries",
       "title": "Book silence — gap seconds per pair (24h increase)",
-      "description": "Which pair contributed how much book silence in the last day — the capture-side origin of every healable and residual second booked downstream. The 30-second line is the capture daemon's own derived silence bar, roughly 2.4 times the thinnest leg's worst natural spacing, and it deliberately equals the reconciler's minimum-gap setting. It is **not** an alerting bar: no rule watches this counter per pair, and the reconciler's own 360-second figure is computed on a different metric entirely — an aggregate divided by the live pair count — so it does not belong on this panel. Scoped by the capture-machine and pair pickers.",
+      "description": "Which pair contributed how much book silence in the last day — the capture-side origin of every healable and residual second booked downstream. The 30-second line is the capture daemon's own derived silence bar, roughly 2.4 times the thinnest leg's worst natural spacing, and it deliberately equals the reconciler's minimum-gap setting. It is **not** an alerting bar: no rule watches this counter per pair, and the reconciler's own 300-second figure is computed on a different metric entirely — an aggregate divided by the live pair count — so it does not belong on this panel. Scoped by the capture-machine and pair pickers.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1386,7 +1386,7 @@
       "id": 202,
       "type": "timeseries",
       "title": "Gap outcome — last 24h",
-      "description": "Did loss and healing pressure happen IN THE LAST DAY — the panel that answers \"is the red number new?\" without leaving the board. Both series carry their alerts' own reset guard, and that is load-bearing: a deliberate ledger correction reads to the time-series store as a counter reset, and a bare increase would report the whole post-reset value as fresh permanent loss — painting this panel red at the exact moment the alert, hardened against precisely this, correctly stays silent. Residual seconds are silence NEITHER mirror covered, so they can be neither healed nor backfilled; any increase above zero pages immediately, with no hold at all (`for: 0s`). A blackout happening NOW cannot appear here for about two hours: an hour is eligible only at its start plus two hours and is booked at the next :12 or :42 tick, so during a live event this panel draws a truthful zero that is not a clean bill. The healable series is divided by the live pair count exactly as its alert divides it, and pages above 360 after `for: 30m`. That divisor is plotted beside it and is the FULL pair count, not a count of desynced pairs — the gauge it counts is emitted for every pair on every scrape, so a flat twelve is health. The divisor is deliberately left unscoped, as the alert writes it: scoping it would make this panel disagree with the page whenever the two capture machines' pair sets differ, which is exactly what adding a pair creates for one converge window. Published only by the ops machine.",
+      "description": "Did loss and healing pressure happen IN THE LAST DAY — the panel that answers \"is the red number new?\" without leaving the board. Both series carry their alerts' own reset guard, and that is load-bearing: a deliberate ledger correction reads to the time-series store as a counter reset, and a bare increase would report the whole post-reset value as fresh permanent loss — painting this panel red at the exact moment the alert, hardened against precisely this, correctly stays silent. Residual seconds are silence NEITHER mirror covered, so they can be neither healed nor backfilled; any increase above zero pages immediately, with no hold at all (`for: 0s`). A blackout happening NOW cannot appear here for about two hours: an hour is eligible only at its start plus two hours and is booked at the next :12 or :42 tick, so during a live event this panel draws a truthful zero that is not a clean bill. The healable series is divided by the live pair count exactly as its alert divides it, and pages above 300 after `for: 30m`. That divisor is plotted beside it and is the FULL pair count, not a count of desynced pairs — the gauge it counts is emitted for every pair on every scrape, so a flat twelve is health. The divisor is deliberately left unscoped, as the alert writes it: scoping it would make this panel disagree with the page whenever the two capture machines' pair sets differ, which is exactly what adding a pair creates for one converge window. Published only by the ops machine.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1507,7 +1507,7 @@
                     },
                     {
                       "color": "red",
-                      "value": 360
+                      "value": 300
                     }
                   ]
                 }

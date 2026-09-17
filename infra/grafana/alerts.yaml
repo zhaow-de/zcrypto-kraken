@@ -1535,18 +1535,18 @@ rules:
       # depend on the mode. `healable` counts the seconds the secondary WITNESSED and could cover, in
       # both modes.
       #
-      # PROVISIONAL: 360 s per pair per day is BOUNDED by two measured scenarios, not fitted to a
-      # distribution. The five post-fix days to 2026-09-17 are two organic socket drops, 41-45 s on
-      # every pair at once, and three primary capture restarts, 47-108 s per pair with thin pairs'
-      # pre-stop quiet booked from their last row. Must not fire: a rollout, a same-day capture
-      # rollback and one drop, 261 s. Must fire: eight silent-death drops, or a primary reconnecting
-      # past the reconciler's 30 s floor at today's ~15 attempts a day, 465 s. Divided by the live
-      # pair count, so 360 is WALL-CLOCK seconds per pair -- undivided it is a cross-stream sum that
-      # tightens silently with every pair added. A single long silence is the stream-silent rules'
-      # page, not this one's: clipped to the hour, no hour crosses this bar unless a pair exceeded
-      # 300 s. Blind to clean-close reconnects, 2-8 s under the floor: zcrypto_capture_reconnects_total
-      # is charted, not alerted. The reminder in infra/runbooks/ops.md counts the organic days the
-      # real fit needs.
+      # PROVISIONAL: 300 s per pair per day is BOUNDED, not fitted. Below it, the worst benign day
+      # the five post-fix days to 2026-09-17 allow: a rollout, a same-day capture rollback and one
+      # organic drop, 261 s -- two of those days are organic socket drops, 41-45 s on every pair at
+      # once, three are primary capture restarts, 47-108 s per pair with thin pairs' pre-stop quiet
+      # booked from their last row. Above it, the smallest degradation the counter can see: every
+      # reconnect at the 7.6-a-day rate of those 13 days turned into a 43 s silent death, 327 s, or
+      # seven such drops. Divided by the live pair count, so 300 is WALL-CLOCK seconds per pair --
+      # undivided it is a cross-stream sum that tightens silently with every pair added. A single
+      # long silence is the stream-silent rules' page, not this one's: a mean cannot exceed its
+      # largest pair, so no hour crosses 300 unless one pair did. Blind to clean-close reconnects,
+      # 2-8 s under the reconciler's 30 s floor: zcrypto_capture_reconnects_total is charted, not
+      # alerted. The reminder in infra/runbooks/ops.md counts the organic days the real fit needs.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
@@ -1568,12 +1568,12 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [360]}
+            - evaluator: {type: gt, params: [300]}
     noDataState: OK
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "The primary needed more than 6 minutes of coverable silence per pair in the last 24h -- about eight ordinary socket drops, well above a rollout plus a same-day rollback. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted -- whether anything was actually lost is the ledger's residual_seconds. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
+      summary: "The primary needed more than 5 minutes of coverable silence per pair in the last 24h -- seven ordinary socket drops, above a rollout plus a same-day rollback. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted -- whether anything was actually lost is the ledger's residual_seconds. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of healable silence per live pair over the last day"

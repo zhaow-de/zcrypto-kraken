@@ -196,7 +196,7 @@ ______________________________________________________________________
 
 A warning-severity Grafana alert (`Reconciler · primary gap rate high (degrading host)`). It counts primary silence the secondary **witnessed and could cover** — the window a splice is admitted on, never what the splice filled: one secondary `update` row admits a whole window, and whatever it leaves unfilled is booked as residual loss on its own critical rule. The signal is that the primary needed a lot of covering.
 
-**Read the threshold correctly or you will mis-triage it.** The rule divides `increase(zcrypto_reconcile_healable_gap_seconds_total[24h])` by the live pair count — `count by (pair)` over `zcrypto_capture_book_desynced` — before comparing against `gt [360]`, so it fires on **360 s of healable silence per pair**, not 360 pair-seconds in total. Comparing a ledger total straight to 360 overstates the reading by the pair count, and the divisor is what makes the summary's "more than 6 minutes" literally true.
+**Read the threshold correctly or you will mis-triage it.** The rule divides `increase(zcrypto_reconcile_healable_gap_seconds_total[24h])` by the live pair count — `count by (pair)` over `zcrypto_capture_book_desynced` — before comparing against `gt [300]`, so it fires on **300 s of healable silence per pair**, not 300 pair-seconds in total. Comparing a ledger total straight to 300 overstates the reading by the pair count, and the divisor is what makes the summary's "more than 5 minutes" literally true.
 
 ### What it means
 
@@ -226,7 +226,7 @@ The daily pass's report names this reminder under `## Reminders`: **OWED** when 
 
 ### What it means
 
-The `gt [360]` bar is bounded by two measured scenarios and marked `PROVISIONAL` at the rule in `infra/grafana/alerts.yaml`; the fit over organic days is owed once three exist. What the events so far measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
+The `gt [300]` bar is bounded, not fitted — below it the worst benign day on record, above it the smallest degradation the counter can see — and marked `PROVISIONAL` at the rule in `infra/grafana/alerts.yaml`; the fit over organic days is owed once three exist. What the events so far measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
 
 ### What to do
 
