@@ -249,8 +249,8 @@ def test_emit_never_blocks_against_a_silent_endpoint():
     holds only while that attribute stays the sole route to the network. The worker's own connects
     are the control -- without them, a zero on the caller is what a dead hook reads too.
     """
-    # One bound for both waits below, generous because a loaded runner has to schedule the worker:
-    # tightening either of them alone is what made the assertion this replaced flake.
+    # One bound for both checks below; tightening it reintroduces the flake, because a loaded
+    # runner deschedules the caller's loop and the worker alike.
     generous = _TIGHT["timeout_s"] * 10
     with SilentServer() as url:
         handler = _make_handler(url, batch_max=500, ring_capacity=4096)
