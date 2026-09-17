@@ -245,10 +245,9 @@ def test_recovery_warning_exact_count_after_ring_overflow(handler_factory, ship_
 def test_emit_never_blocks_against_a_silent_endpoint():
     """`emit` hands the record to the ring and returns; the network belongs to the worker thread.
 
-    Watched at the SOCKET, not at the handler's opener: the property is about the network, and an
-    assertion scoped to one attribute holds only while that attribute stays the sole route to it.
-    The worker's own connects are the control: without them a zero on the caller would also be
-    what a dead hook reads.
+    Watched at the socket, never at the handler's opener: an assertion scoped to one attribute
+    holds only while that attribute stays the sole route to the network. The worker's own connects
+    are the control -- without them, a zero on the caller is what a dead hook reads too.
     """
     with SilentServer() as url:
         handler = _make_handler(url, batch_max=500, ring_capacity=4096)
@@ -266,18 +265,13 @@ def test_emit_never_blocks_against_a_silent_endpoint():
                 handler.emit(_make_record(f"m{i}"))
             elapsed = time.monotonic() - start
             assert [t for t in connects if t == caller] == []
-            # The control names THIS handler's worker rather than "some other thread": the hook is
-            # process-global, so any connect in the interpreter would otherwise satisfy it and a
-            # handler that never posted at all could still read green. Its wait is generous for the
-            # same reason the bound below is -- the worker has to be SCHEDULED, and a loaded runner
-            # is what broke the assertion this replaced.
+            # The hook is process-global, so the control names THIS worker; its wait is generous
+            # because that worker has to be scheduled.
             assert _wait_until(lambda: handler._worker.ident in connects, timeout=_TIGHT["timeout_s"] * 10)
-            # Liveness, not the guarantee above: one blocking post costs `timeout_s`, so an `emit`
-            # that posted every record would cost 2000x that -- 200x this bound.
-            assert elapsed < _TIGHT["timeout_s"] * 10
+            assert elapsed < _TIGHT["timeout_s"] * 10  # liveness, not the guarantee above
         finally:
-            # `connect` is inherited from the C base, so restoring by assignment would leave an
-            # attribute where there was none; delete it back to inherited instead.
+            # `connect` is inherited from the C base: assigning the original back would leave an
+            # attribute where there was none.
             del socket.socket.connect
             handler.close()
 
