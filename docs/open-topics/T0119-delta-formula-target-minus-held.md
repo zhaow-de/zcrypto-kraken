@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: spec `00092` is picked up, or any executor path computes a rebalance delta as `target − held`
+ripe_when: spec `00092`, whose serial is reserved for rung 3 and not yet written, is created, or an executor path sizes an open order as `target − held` — `feeders.py`'s accumulation replay and `command.py`'s simulated book are measurements, not that path
 ---
 
 # The delta formula: `target − actually held`, not `target − previously journaled intent`
@@ -18,7 +18,7 @@ This is the intent-vs-holdings drift defect: without it, the tiny-live sleeve's 
 - **Why `00092` is the trigger.** It is the first spec whose executor computes a rebalance order at all, so it is the first moment this formula has a caller; [[T0018]]'s decomposition assigns it there from the sequence's construction, and `00090`'s rung-1 executor sizes from plan-supplied intent quantities instead. Two nearby computations are deliberately NOT the trigger: a reduce-only close is sized from `held` by construction, and `feeders.py`'s `target − held` is a measurement replay whose own docstring names the executor as the intended reader.
 
 - Measured 2026-07-30: 0 of 801 journaled intended orders clear `ordermin` at §12's tiny-live size — under the current formula the sleeve would emit nothing, indefinitely.
-- The held-position source exists: Nautilus `Portfolio`/`Cache` carry live account state over the authenticated executions WS already held; startup reconciliation fail-closes the node. Consuming it is [[T0018]]'s fill-ingestion build item; this topic owns the formula and its tests.
+- The held-position source is consumed: spec `00089` landed the `held` read (iter-138), and the executor sizes a closer from the Cache's live position; startup reconciliation fail-closes the node. This topic owns the open-order formula and its tests.
 - The formula interacts with the restart→reduce-only policy ([[T0018]]): after a restart, held is re-read from the venue, so the accumulation gap survives restarts by construction — a property worth a test, not an assumption.
 
 ## Suggested next steps
