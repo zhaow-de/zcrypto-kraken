@@ -1535,11 +1535,19 @@ rules:
       # depend on the mode. `healable` counts the seconds the secondary WITNESSED and could cover, in
       # both modes.
       #
-      # 600s/24h is a starting threshold, not a measured one: ~10 minutes of primary silence a day
-      # that the secondary had to cover. Divided by the live pair count, so 600 really is 600
-      # WALL-CLOCK seconds -- undivided it is a cross-stream sum that tightens silently with every
-      # pair added. Re-derive the number only once the counters carry trustworthy steady-state
-      # history; until then treat a firing as "look at the ledger", not as a verdict.
+      # PROVISIONAL: 300 s per pair per day is BOUNDED, not fitted. Below it, the worst benign day
+      # the record allows: a rollout and a same-day capture rollback, each the size of the worst
+      # converge measured to 2026-09-17 (108 s per pair), plus one organic drop, 261 s; the worst
+      # day measured is that 108. Above it, a degradation the size this fleet has measured: every
+      # reconnect at 7.5 a day, the primary's rate over the 13 days to that date, turned into a 43 s
+      # silent death, 324 s, or seven such drops. Divided by the live pair count, so 300 is
+      # WALL-CLOCK seconds per pair -- undivided it is a cross-stream sum that tightens silently
+      # with every pair added. A single pair's long silence pages the stream-silent rules first and
+      # reaches this one only past 300 s times the pair count; a mean cannot exceed its largest
+      # pair, so a day crosses 300 only when some pair booked more than 300 s in it. Blind to any
+      # gap under the reconciler's 30 s floor, clean-close reconnects among them:
+      # zcrypto_capture_reconnects_total is charted, not alerted. The reminder in
+      # infra/runbooks/ops.md counts the organic days the real fit needs.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
@@ -1561,12 +1569,12 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: gt, params: [600]}
+            - evaluator: {type: gt, params: [300]}
     noDataState: OK
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "The primary needed more than 10 minutes of coverable silence in the last 24h. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted -- whether anything was actually lost is the ledger's residual_seconds. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
+      summary: "The primary needed more than 5 minutes of coverable silence per pair in the last 24h -- seven ordinary socket drops, above a rollout plus a same-day rollback. This counts the silence the secondary witnessed and COULD cover, not what a splice inserted -- whether anything was actually lost is the ledger's residual_seconds. A host that needs this much coverage is degrading. Check the reconcile ledger's would_mint/minted records for the pattern. Runbook: infra/runbooks/ops.md#zcrypto-reconcile-healable-gap-rate"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "202"
       unit: "seconds of healable silence per live pair over the last day"

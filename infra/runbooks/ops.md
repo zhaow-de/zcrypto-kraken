@@ -196,7 +196,7 @@ ______________________________________________________________________
 
 A warning-severity Grafana alert (`Reconciler · primary gap rate high (degrading host)`). It counts primary silence the secondary **witnessed and could cover** — the window a splice is admitted on, never what the splice filled: one secondary `update` row admits a whole window, and whatever it leaves unfilled is booked as residual loss on its own critical rule. The signal is that the primary needed a lot of covering.
 
-**Read the threshold correctly or you will mis-triage it.** The rule divides `increase(zcrypto_reconcile_healable_gap_seconds_total[24h])` by the live pair count — `count by (pair)` over `zcrypto_capture_book_desynced` — before comparing against `gt [600]`, so it fires on **600 s of healable silence per pair**, not 600 pair-seconds in total. Comparing a ledger total straight to 600 overstates the reading by the pair count, and the divisor is what makes the summary's "more than 10 minutes" literally true.
+**Read the threshold correctly or you will mis-triage it.** The rule divides `increase(zcrypto_reconcile_healable_gap_seconds_total[24h])` by the live pair count — `count by (pair)` over `zcrypto_capture_book_desynced` — before comparing against `gt [300]`, so it fires on **300 s of healable silence per pair**: comparing a ledger total straight to 300 overstates the reading by the pair count.
 
 ### What it means
 
@@ -226,7 +226,7 @@ The daily pass's report names this reminder under `## Reminders`: **OWED** when 
 
 ### What it means
 
-The `gt [600]` threshold is provisional and says so at the rule in `infra/grafana/alerts.yaml`; the fit is owed once steady-state history exists. What the events so far measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
+The `gt [300]` bar is bounded, not fitted, and marked `PROVISIONAL` at the rule in `infra/grafana/alerts.yaml`. What the events up to 2026-08-04 measured is on record in the resolved topic that fixed this counter<!-- T0103 -->.
 
 ### What to do
 
@@ -236,17 +236,17 @@ The `gt [600]` threshold is provisional and says so at the rule in `infra/grafan
    ssh hp "sudo cat /var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"
    ```
 
-   Sum per day with the **production expression** from `cli/archive/command.py` — `float(record.get("claimed_seconds") or record.get("healed_seconds") or 0.0)` — and confirm your total equals the live gauge before trusting the per-day split. A parse that misses the `healed_seconds` fallback totals wrong and mis-attributes days.
+   Sum per day with the **production expression** from `cli/archive/command.py` — `float(record.get("claimed_seconds") or record.get("healed_seconds") or 0.0)` — and confirm your total equals the live gauge before trusting the per-day split. A parse that misses the `healed_seconds` fallback totals wrong and mis-attributes days. When the counter's movement since the last pass equals what the hour of a capture-tagged primary converge booked, the recount is decided: nothing organic landed, and step 3 applies.
 
-2. **Count only days after the 2026-07-28 counter fix.** Earlier values are not fittable — the fix corrected an overstatement, and the days before it carry it (no count command: the qualifying-day count is an operator's read of the ops host's ledger).
+2. **Count only organic days after 2026-08-04.** The hour of a capture-tagged primary converge in `docs/reference/deploy-log.jsonl` books the restart, not the host: leave that hour out and count the day by what remains. The log begins 2026-08-28; days up to 2026-08-04 are in the bound already (no count command: the qualifying-day count is an operator's read of the ops host's ledger against the deploy log).
 
-3. **Fewer than three qualifying days ⇒ do nothing except re-arm.** Schedule the next reminder in `#zcrypto` — the following month, matching `refdata-sweep-due`'s cadence — and stop. The re-arm is a convenience — the pass re-evaluates the counter every time it runs whether or not the message lands (no count command: `infra/scripts/ops_daily.py` reads the counter on every run), so a message that never arrives is not replaced out of band: the next one is scheduled here, when this section next runs.
+3. **Fewer than three organic days ⇒ do nothing except re-arm.** Schedule the next reminder in `#zcrypto` — the following month, matching `refdata-sweep-due`'s cadence — and stop. The re-arm is a convenience — the pass re-evaluates the counter every time it runs whether or not the message lands (no count command: `infra/scripts/ops_daily.py` reads the counter on every run), so a message that never arrives is not replaced out of band: the next one is scheduled here, when this section next runs.
 
 4. **Three or more ⇒ the re-derivation is due, and it is real work** — fit the threshold, push it with `infra/grafana/alerts.yaml`, verify the pushed rule by reading it back from the provisioning API rather than trusting an exit code. Open a `T<NNNN>` for it if it needs a decision; this runbook holds the trigger, not the backlog.
 
 ### Retire when
 
-The `gt [600]` evaluator of `zcrypto-reconcile-healable-gap-rate` in `infra/grafana/alerts.yaml` no longer carries its "starting threshold, not a measured one" comment, or the rule is absent from `infra/grafana/alerts.yaml`.
+The evaluator of `zcrypto-reconcile-healable-gap-rate` in `infra/grafana/alerts.yaml` no longer carries its `PROVISIONAL` marker, or the rule is absent from `infra/grafana/alerts.yaml`.
 
 ______________________________________________________________________
 

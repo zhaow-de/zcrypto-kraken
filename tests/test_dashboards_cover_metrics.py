@@ -615,6 +615,13 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
     )
 
 
+def _unscoped(expr: str) -> str:
+    """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
+    ops-only rule carries it in its own; the pairing compares the two without that one matcher on
+    either side."""
+    return expr.replace('{host="ops"}', "").strip()
+
+
 def _rule_panel_pairs():
     """Every (rule, panel, target) where the panel charts exactly the rule's own expression."""
     rules = yaml.safe_load((REPO / "infra/grafana/alerts.yaml").read_text())
@@ -663,7 +670,7 @@ def _rule_panel_pairs():
                 if str(p.get("id")) != str(pid):
                     continue
                 for t in p.get("targets", []):
-                    if t.get("expr", "").strip() == expr.strip():
+                    if _unscoped(t.get("expr", "")) == _unscoped(expr):
                         yield r["uid"], p, t, ev, cond
 
 
@@ -686,9 +693,10 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     # own reading. New entries are not acceptable: the guard exists to stop this class growing.
     known = {"zcrypto-ops-tapebars-not-advancing"}
     pairs = list(_rule_panel_pairs())
-    # Pairing is exact string equality, so reformatting one expression drops that rule from
-    # coverage with no failure anywhere. The floor makes a collapse visible. Lower it only when a rule or panel is deliberately retired.
-    assert len(pairs) >= 54, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
+    # Pairing is string equality once the ops scope is dropped, so reformatting one expression drops
+    # that rule from coverage with no failure anywhere. The floor makes a collapse visible. Lower it
+    # only when a rule or panel is deliberately retired.
+    assert len(pairs) >= 63, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
     bad = []
     for uid, panel, target, evaluator, condition in pairs:
         if uid in known:
