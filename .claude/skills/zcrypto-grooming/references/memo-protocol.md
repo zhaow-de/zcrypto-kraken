@@ -45,7 +45,7 @@ The human gates below attach to the operations themselves, not to whichever skil
 |---|---|
 | `T0028` | `docs/open-topics/T0028-*.md` — or `docs/open-topics/archive/T0028-*.md` once resolved; the `docs/open-topics/README.md` index links whichever is current |
 | `spec 00060` / bare `00060` | `docs/specs/00060-*-design.md` (its plan: `docs/plans/00060-*.md`) |
-| `iter-082` | the row whose `iter` cell carries `iter-082` in `docs/reference/change-index.md`; its `PR` cell names the pull request that delivered the iteration, and `gh pr view <N>` prints that PR's description |
+| `iter-082` | the row whose `iter` cell carries `iter-082` in `docs/reference/change-index.md`; its `PR` cell names the pull request that carries the iteration — which a row written before its merge has not delivered yet, so read the PR's state before marking anything done — and `gh pr view <N>` prints that PR's description |
 | `PR #143` | `gh pr view 143` |
 
 ## Ad-hoc procedures — mechanical, single-item, nothing else
