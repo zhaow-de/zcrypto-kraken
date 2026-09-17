@@ -1,10 +1,12 @@
 export const meta = {
   name: 're-review',
-  description: 'The single-lens read of a fix range: each open Critical or Important closed at its class, left, or open',
-  whenToUse: 'After the fixes a read asked for, after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}',
+  description: 'The single-lens review of a fix range: every prior closed, left, or open',
+  whenToUse: 'After the fixes a review asked for, each fix its own commit and never an amend, so the range exists; after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}',
   phases: [
+    { title: 'Ledger', detail: 'the order of reviews, refused rather than remembered' },
     { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important, new or reopened' },
+    { title: 'Record', detail: 'the row that says this re-review happened, written once it has' },
   ],
 }
 
@@ -19,10 +21,10 @@ for (const p of prior) {
   if (/\n/.test(p.claim)) throw new Error(`prior finding ${p.id}: claim is one line -- the full text stays in the prior review's report, which the reader can open`)
 }
 if (left && !/#\d+/.test(left)) throw new Error('left names each consciously-left prior by id (#<id>) with its reason')
-if (drive && drive.length > 400) throw new Error('drive is at most 400 characters: one sentence naming what the standing brief does not cover, never a re-measurement list')
+if (drive && drive.length > 400) throw new Error(`drive is ${drive.length} characters, at most 400: one sentence naming what the standing brief does not cover — cut every clause that names a figure, a path or a command, the brief re-measures those itself`)
 
 // --- shared with pre-read.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
-const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, or prose that, acted on as written, breaks something no test stops. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
+const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
 const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
 const CHECKOUT = (label) => `Run every git command with \`-C ${repo}\`. Probes and drives run in a detached worktree of your own at the tip — \`git -C ${repo} worktree add --detach ${reportDir}/wt-${label} ${tip}\`, whose first \`uv run\` syncs it (about two minutes) — never in the checkout and never in another agent's worktree: a sibling's mutation probe rewrites its tree while it runs. Remove yours with \`git worktree remove --force\` before you finish.`
@@ -88,6 +90,29 @@ Its consequence: ${f.consequence}
 
 ${f.priorId === undefined ? '' : `This row reopens prior #${f.priorId}. Its first grading — ${f.firstGrading} — may well have been answered by the fix and is NOT the claim; what stands is why the reader left it open, the evidence above.\n\n`}Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
+// --- Ledger -------------------------------------------------------------------------------------
+const LEDGER_ENTRY = {
+  type: 'object',
+  properties: {
+    kind: { type: 'string' }, range: { type: 'string' }, tip: { type: 'string' }, ts: { type: 'string' },
+    coversTip: { type: 'boolean', description: 'true when this entry\'s tip is the current tip or an ancestor of it' },
+  },
+  required: ['kind', 'range', 'tip', 'ts', 'coversTip'],
+}
+const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
+const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
+const ledgerPath = `${reportDir}/ledger.jsonl`
+phase('Ledger')
+const ledger = await agent(
+  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Return the entries. Write nothing; no other command.`,
+  { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
+)
+if (!ledger) throw new Error(`re-review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-read; retry`)
+const entries = ledger.entries || []
+const covered = (kind) => entries.some((e) => e.kind === kind && e.coversTip)
+if (!entries.some((e) => e.kind === 'review')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch — a fix range follows a whole-branch review, never replaces it`)
+if (!covered('pre-read')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-read of this tip or an ancestor — run pre-read on the fix range first`)
+
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')
 const opts = (label, phaseName, effort) => ({ label, phase: phaseName, agentType: 'general-purpose', effort, ...(model ? { model } : {}) })
@@ -127,9 +152,18 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
+// --- Record -------------------------------------------------------------------------------------
+phase('Record')
+const recorded = await agent(
+  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"re-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
+)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this re-review — the ledger will not show ${tip} was re-reviewed; append the row by hand`)
+
 return {
   range,
   tip,
+  recorded: Boolean(recorded && recorded.appended),
   verdict: report.verdict,
   reportPath: report.reportPath,
   executed: report.executed,

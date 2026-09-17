@@ -1,6 +1,6 @@
 ---
 name: zcrypto-plan-review
-description: The review-and-fix loop for a committed spec+plan pair, run after `superpowers:writing-plans` commits the plan and before `superpowers:subagent-driven-development` Task 1 — contract pin, two lens reviewers, mechanical max-severity union, fixer, then the Minor sweep, executability pass and blind gate; exits only when no Critical or Important remains and every foldable Minor is folded. Invoke as `/zcrypto-plan-review <spec> <plan> [T<NNNN>]`; with no arguments it takes the pair the branch introduces.
+description: The review-and-fix loop for a committed spec+plan pair — after `superpowers:writing-plans` commits the plan, before `superpowers:subagent-driven-development` Task 1; exits only when no Critical or Important remains and every foldable Minor is folded. `/zcrypto-plan-review <spec> <plan> [T<NNNN>]`; with no arguments, the pair the branch introduces.
 ---
 
 # zcrypto-plan-review
