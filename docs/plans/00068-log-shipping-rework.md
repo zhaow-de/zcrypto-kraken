@@ -251,7 +251,7 @@ if ship_logs:
 
 **Files:**
 
-- Modify: `infra/docker/Dockerfile:51` — the inline ENTRYPOINT gains `${ZCRYPTO_SHIP_LOGS:+--ship-logs}` between `zcrypto` and `capture`: `exec zcrypto ${ZCRYPTO_SHIP_LOGS:+--ship-logs} capture "$@"`
+- Modify: `infra/docker/Dockerfile` — the inline ENTRYPOINT gains `${ZCRYPTO_SHIP_LOGS:+--ship-logs}` between `zcrypto` and `capture`: `exec zcrypto ${ZCRYPTO_SHIP_LOGS:+--ship-logs} capture "$@"`
 - Modify: `infra/docker/compose.yaml` (the standalone reference counterpart named in the capture template header — mirror the env additions of Task 5 so the two stay in lock-step)
 
 **Steps:**

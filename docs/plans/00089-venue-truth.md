@@ -315,7 +315,7 @@ def test_the_basket_and_the_universe_diverge_exactly_as_ruled():
 
 **Files:** Modify `.github/workflows/capture-image.yml`, `infra/docker/Dockerfile`, `tests/test_engine_metrics.py`.
 
-- [ ] **Step 1 (T0130):** In the workflow's `build-args:` block (line ~70), add `GIT_REVISION=${{ github.sha }}`. In the Dockerfile, after the existing `ARG POLARS_RUNTIME` (line ~35): `ARG GIT_REVISION=""` and `ENV ZCRYPTO_BUILD_REVISION=$GIT_REVISION`. The composing code and its tests landed in Task 4 — this step is only the delivery path. Verify the workflow parses: `uv run python -c "import yaml; yaml.safe_load(open('.github/workflows/capture-image.yml'))"`.
+- [ ] **Step 1 (T0130):** In the workflow's `build-args:` block, add `GIT_REVISION=${{ github.sha }}`. In the Dockerfile, after the existing `ARG POLARS_RUNTIME`: `ARG GIT_REVISION=""` and `ENV ZCRYPTO_BUILD_REVISION=$GIT_REVISION`. The composing code and its tests landed in Task 4 — this step is only the delivery path. Verify the workflow parses: `uv run python -c "import yaml; yaml.safe_load(open('.github/workflows/capture-image.yml'))"`.
 - [ ] **Step 2 (T0134):** `tests/test_engine_metrics.py:850`, `test_run_survives_an_unreadable_journal_record_at_metrics_seed_time` — fails alone because `cli/logging/config.py::configure()` sets the `zcrypto` logger's `propagate = False`, starving caplog's root handler. Fix inside the test, production untouched:
 
 ```python
