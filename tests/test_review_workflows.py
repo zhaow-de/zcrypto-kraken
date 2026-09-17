@@ -86,3 +86,17 @@ def test_a_keep_row_that_says_nothing_is_reported_as_owed():
 def test_the_grading_grades_prose_by_consequence():
     text = _constant("GRADING", (_FLOWS / "review.js").read_text())
     assert "prose that, acted on as written, breaks something no test stops" in text
+
+
+def test_every_workflow_records_itself_before_it_reads_and_the_two_reads_refuse_an_unread_tip():
+    """The order of reviews is refused, not remembered: each script appends to `<reportDir>/ledger.jsonl` before its
+    first phase, and review and re-review throw on a tip no pre-read covers -- the drift the ledger exists to stop."""
+    texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
+    for name, text in texts.items():
+        assert text.index("const ledger = await agent(") < text.index("\nphase("), (
+            f"{name}: the ledger append must precede the first phase"
+        )
+    assert "throw new Error(`review refuses ${tip}" in texts["review"]
+    assert "throw new Error(`re-review refuses ${tip}" in texts["re-review"]
+    assert "records no review of this branch" in texts["re-review"]
+    assert "refuses ${tip}" not in texts["pre-read"], "pre-read is the first read and refuses nothing"
