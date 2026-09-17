@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: spec `00092`, whose serial is reserved for rung 3 and not yet written, is created, or an executor path sizes an open order as `target − held` — `feeders.py`'s accumulation replay and `command.py`'s simulated book are measurements, not that path
+ripe_when: spec `00092`, whose serial is reserved for rung 3 and not yet written, is created, or an executor path sizes an open order as `target − held`
 ---
 
 # The delta formula: `target − actually held`, not `target − previously journaled intent`

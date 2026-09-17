@@ -322,4 +322,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #514 | 2026-09-13 | fix(engine): T0193 — the five exits of one broken-input class | — | — | T0193 |
 | #542 | 2026-09-16 | fix(engine): nautilus-trader 2.0.0rc6.dev20260915, armed and verified | — | — | T0160 |
 | #544 | 2026-09-16 | chore(fleet): capture pair on 7ccd97eb7e3c, the engine rolled back | — | 00083 | — |
-| #561 | 2026-09-17 | docs(topics): row #301 reads 00090; T0119 names the reserved serial | — | — | T0119 |
+| #561 | 2026-09-17 | docs(topics): row #301 reads its spec; T0119 names the reserved serial | — | — | T0119 |
