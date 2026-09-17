@@ -8,6 +8,11 @@
 # post-write on Edit|Write (invalidates + instructs the read-back). Shell writes bypass Edit/Write,
 # which is why the grooming/auto-exec skills require memo edits to go through those tools.
 set -euo pipefail
+# The two fields are read one per line, so a separator in `tool_name` desynchronises the pair and
+# `path` holds a fragment that matches no memo pattern, exiting 0. Not reachable and not fixed: the
+# harness sets `tool_name`, and a `file_path` carrying a newline names a file that is not the memo,
+# so no input both desynchronises this and writes the memo. NUL-separating the pair moves the byte
+# rather than closing the class -- a NUL in `tool_name` desynchronises that too.
 mode="${1:?mode required: pre-write|post-read|post-write}"
 { read -r tool; read -r path; } < <(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("tool_name","")); print(d.get("tool_input",{}).get("file_path",""))')
 case "$path" in

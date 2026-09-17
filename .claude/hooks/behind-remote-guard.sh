@@ -22,8 +22,11 @@ set -euo pipefail
 # first one against the last `cd <dir>` before the verb; the other global options stepped over in
 # any order and count -- any `-<letter>` or `--<word>[=<value>]`, the value-taking ones `opt` names
 # consuming the next token when not `=`-attached; else that last `cd`, one that starts a command
-# after a newline, `&&`, `||` or `;` -- a `cd` nested in `( ... )` or `bash -c` is not seen and the
-# process cwd is judged instead; else the process cwd. One line per distinct repository the command
+# after a newline, `&&`, `||` or `;`; else the process cwd. Scope is not tracked, so a `cd` the scan
+# takes outlives its subshell: `( git log ; cd /x ) ; git fetch` reports /x, a repo the fetch never
+# ran in. Left so on purpose -- tracking scope means asking bash's question of a regex, which is
+# what this family's `judge_status` arm was dropped for, and this hook only ever reports.
+# One line per distinct repository the command
 # names, keyed on its toplevel, in order.
 input="$(cat)"
 dirs="$(printf '%s' "$input" | python3 -c '
