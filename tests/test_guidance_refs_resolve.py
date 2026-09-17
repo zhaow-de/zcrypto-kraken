@@ -7,8 +7,8 @@ rules from twelve files to one; the live surfaces were swept with it, and this i
 Scope is what a session reads and acts on today. Outside it, deliberately: `docs/plans/`, `docs/specs/` and
 `docs/research/` (a plan, a spec and a closeout are the record of a change, cited during their own branch and
 frozen after), `docs/open-topics/archive/` (a resolved topic), and the append-only records under
-`docs/reference/` (a journal entry, a drill or deploy row, a change-index row — each says what was cited on the
-day it was written, and editing a merged month's record to get CI green is the wrong repair).
+`docs/reference/` (a journal entry, a drill or deploy row, a change-index row, which alone is re-derived while its pull request is
+still open — each says what was cited on the day it was written, and editing a merged month's record to get CI green is the wrong repair).
 """
 
 from __future__ import annotations
