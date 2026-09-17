@@ -1,5 +1,6 @@
-"""merge-gate.py: the read line must be at the floor and name the head, with exactly three exceptions -- the change-index
-row commit past the tip it names, a head whose tree is that tip's tree, and the ops-journal month PR -- and a keyed
+"""merge-gate.py: the read line must be at the floor and name the head, with exactly four exceptions -- the change-index
+row commit past the tip it names, a head whose tree is that tip's tree, the ops-journal month PR, and a
+dependabot branch whose every commit is the bot's -- and a keyed
 branch owes its change-index row before the merge."""
 
 from __future__ import annotations
@@ -110,6 +111,50 @@ def test_a_stale_read_with_no_head_commit_to_inspect_fails():
 
 
 JOURNAL_PR = {"headRefName": "ops-journal", "body": "## 2026-09\n\n- [x] CI green\n"}
+
+BOT = [{"authors": [{"login": "dependabot[bot]"}]}]
+BUMP_PR = {"headRefName": "dependabot/uv/develop/polars-1.44.2", "body": "Bumps polars.\n\n- [x] done\n"}
+
+
+def test_the_exemption_is_reachable_from_the_fetch_the_gate_actually_makes():
+    """The arm's input has to be in FIELDS, or it refuses every PR of that shape instead of exempting one.
+
+    The case below builds its PR from `FIELDS` alone, so a key the arm reads and `main()` does not fetch
+    cannot be smuggled in by the test: that is exactly how the arm shipped once refusing every dependabot
+    PR while four green cases and four probe verdicts said it exempted them."""
+    values = {"headRefName": "dependabot/uv/develop/polars-1.44.2", "body": "Bumps polars.\n", "headRefOid": TIP, "commits": BOT}
+    # Only what the fetch returns. `update()` puts `commits` back whether or not FIELDS asks for it, which is
+    # how the first version of this case passed while the gate refused every dependabot PR: the probe
+    # SURVIVED and said so.
+    bump = {key: values.get(key) for key in gate.FIELDS.split(",")}
+    assert "commits" in bump, "FIELDS does not fetch `commits`, so the dependabot arm refuses every such PR"
+    assert gate.read_line_fails(bump, None, ["uv.lock"]) == []
+
+
+def test_a_dependabot_bump_with_no_fix_commit_needs_no_read_line():
+    """`.claude/skills/dependabot`: a PR with no fix commit needs no read, and §2d's squash bypasses this gate
+    anyway -- so the arm exists for the counter, which applies this function to every merged PR."""
+    assert _eval(_pr(**BUMP_PR, commits=BOT), files=["uv.lock"]) == []
+
+
+def test_a_dependabot_pr_carrying_a_fix_commit_takes_every_arm():
+    """The skill grants the exemption to a PR with NO fix commit; one commit of mine is what withdraws it."""
+    mine = BOT + [{"authors": [{"login": "claude"}]}]
+    fails = _eval(_pr(**BUMP_PR, commits=mine), files=["uv.lock"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
+
+
+def test_a_dependabot_pr_with_no_commit_list_fails():
+    """Refused rather than exempted, as the ops-journal arm refuses a missing file list: an exemption that
+    cannot be scoped is not one."""
+    fails = _eval(_pr(**BUMP_PR), files=["uv.lock"])
+    assert len(fails) == 1 and "commit list was not fetched" in fails[0]
+
+
+def test_a_dependabot_branch_with_an_empty_commit_list_is_not_exempt():
+    """`all()` over an empty list is True, which would exempt a PR whose commits came back as none."""
+    fails = _eval(_pr(**BUMP_PR, commits=[]), files=["uv.lock"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")
 
 
 def test_the_ops_journal_month_pr_needs_no_read_line():
@@ -788,3 +833,10 @@ def test_a_tag_condition_6_does_not_open_hides_nothing_under_gate_6() -> None:
     assert _boxed("<summary-x> text\n- [ ] real")
     assert not _boxed("<details>\n- [ ] literal\n</details>")
     assert not _boxed("<details open>\n- [ ] literal\n</details>")
+
+
+def test_a_commit_with_no_author_entries_withdraws_the_dependabot_exemption():
+    """Flattened, such a commit contributes nothing and vanishes; the exemption then survives a commit
+    nothing is known about, which is not `every commit is the bot's`."""
+    fails = _eval(_pr(**BUMP_PR, commits=BOT + [{"authors": []}]), files=["uv.lock"])
+    assert len(fails) == 1 and fails[0].startswith("no 'Read before push by:")

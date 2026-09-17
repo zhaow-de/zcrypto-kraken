@@ -190,10 +190,41 @@ def file_paths(pr):
     return [line for line in done.stdout.splitlines() if line.strip()]
 
 
+commits_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_COMMITS_SNAPSHOT"]).read_text()) if os.environ.get(
+    "COUNT_LIST_COMMITS_SNAPSHOT") else None
+
+
+def with_commits(pr):
+    """`commits` for a dependabot branch only, fetched per PR because the bulk list cannot carry it: 400 rows
+    times their authors exceeds GraphQL's 500,000-node ceiling and the whole fetch errors. Every other branch
+    keeps `commits` absent, which the gate's arm never asks for. COUNT_LIST_COMMITS_SNAPSHOT names a recorded
+    `{number: [commit]}` map so the arm can be driven without the network."""
+    if not (pr.get("headRefName") or "").startswith("dependabot/"):
+        return pr
+    number = str(pr.get("number"))
+    if commits_snapshot is not None:
+        return {**pr, "commits": commits_snapshot.get(number, [])}
+    if offline:
+        return pr
+    done = subprocess.run(
+        ["gh", "pr", "view", number, "--json", "commits"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if done.returncode != 0:
+        print(
+            f"count-list: PR #{number} is a dependabot branch whose commits could not be fetched, so the "
+            f"no-fix-commit exemption cannot be decided: {done.stderr.strip()[:200]}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return {**pr, "commits": (json.loads(done.stdout) or {}).get("commits") or []}
+
+
 count = 0
 for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     if (pr.get("mergedAt") or "") < floor:
         continue
+    pr = with_commits(pr)
     files = file_paths(pr)
     fails = gate.read_line_fails(pr, None, files)
     if fails and all("not the head" in f for f in fails):
