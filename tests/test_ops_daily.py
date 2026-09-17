@@ -2466,11 +2466,12 @@ def test_the_live_resolver_follows_links_batched_and_fails_a_prompt_rather_than_
 
 def test_the_classify_subcommand_resolves_through_the_live_resolver(monkeypatch):
     """The CLI is where the seam meets the host: a branch that forgot to pass it would answer
-    autonomous off the spelled path alone."""
+    autonomous off the spelled path alone. The host it hands over is the ssh destination, not the
+    label the report prints."""
     resolve = _resolving({"/var/log/filelink": ["/etc/shadow"]})
     monkeypatch.setattr(ops_daily, "ssh_resolve", resolve)
     assert ops_daily.main(["classify", "--host", "ops", _LINKED_READ]) == 3
-    assert resolve.calls == [("ops", ["/var/log/filelink"])], resolve.calls
+    assert resolve.calls == [("hp", ["/var/log/filelink"])], resolve.calls
 
 
 def test_the_runbook_corpus_reads_identically_under_the_identity_resolver():
@@ -2663,3 +2664,53 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
         tok == "systemctl" or tok == "show" or tok.startswith("-p") or tok == ops_daily.AGENTBOARD_UNIT or tok[0].isupper()
         for tok in body.split()
     ), body
+
+
+_OPS_LEDGER = "/var/lib/zcrypto-ops/capture-reconciled/reconcile-ledger.jsonl"
+
+
+def test_a_quoted_ssh_payload_is_re_scanned_as_a_command_line_on_its_target():
+    """The runbook writes a remote read as `ssh hp "sudo cat <path>"`: the payload is one token to the
+    scanner, so without a re-scan no shape matches and default-deny prepares a read the same shape
+    admits unquoted. A peeled payload is never trusted: a mutation or an expansion inside the quotes
+    stays refused."""
+    assert ops_daily.classify_action(f"ssh hp sudo cat {_OPS_LEDGER}", host="hp", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f'ssh hp "sudo cat {_OPS_LEDGER}"', host="hp", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert (
+        ops_daily.classify_action('ssh hp "sudo rm -f /tmp/gate-cache.json"', host="hp", resolve=_identity)
+        is ops_daily.Tier.PREPARED
+    )
+    assert ops_daily.classify_action('ssh hp "sudo cat $HOME/x"', host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
+    assert ops_daily.classify_action('ssh hp "sudo cat /etc/shadow"', host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize("host", ["ops", "hp"])
+def test_the_ops_host_answers_both_kinds_of_step_under_either_of_its_names(host):
+    """`Alert.hosts` prints the metrics label `ops` and ssh knows the host as `hp`: the telemetry tier
+    reads the label and the resolver the destination, so either spelling admits both a telemetry
+    restart and a content read."""
+    seen: list[str] = []
+
+    def _recording(target, operands):
+        seen.append(target)
+        return list(operands)
+
+    assert (
+        ops_daily.classify_action("sudo docker restart grafana-alloy", host=host, resolve=_recording) is ops_daily.Tier.AUTONOMOUS
+    )
+    assert ops_daily.classify_action(f"sudo cat {_OPS_LEDGER}", host=host, resolve=_recording) is ops_daily.Tier.AUTONOMOUS
+    assert seen and set(seen) == {"hp"}, f"the resolver must ssh to the alias, it was given {seen}"
+    assert (
+        ops_daily.classify_action("ssh hp sudo docker restart grafana-alloy", host=None, resolve=_recording)
+        is ops_daily.Tier.AUTONOMOUS
+    )
+
+
+def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
+    """The mapping is hand-kept: `docs/reference/fleet.md`'s `ssh` column is where a destination
+    changes, and the ops role's Alloy config is where the `ops` label is set."""
+    repo = Path(__file__).resolve().parents[1]
+    table = (repo / "docs/reference/fleet.md").read_text()
+    destinations = set(re.findall(r"^\| `[^`]+` \| `ssh ([a-z-]+)` \|", table, re.M))
+    assert destinations == {ops_daily.ssh_alias(h) for h in ("zcrypto", "zcrypto-red", "ops", "nas")}
+    assert 'host = "ops"' in (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()

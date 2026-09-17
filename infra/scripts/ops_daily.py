@@ -1223,6 +1223,20 @@ _PROTECTED_OBJECTS = (
     "@sha256:",
 )
 _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
+# A rule's `host` label and the ssh destination `docs/reference/fleet.md` names differ on two hosts:
+# the report prints the label, the resolver needs the destination, and a step may spell either.
+_SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red"}
+_HOST_LABELS = {alias: label for label, alias in _SSH_ALIASES.items()}
+
+
+def ssh_alias(host: str) -> str:
+    return _SSH_ALIASES.get(host, host)
+
+
+def host_label(host: str) -> str:
+    return _HOST_LABELS.get(host, host)
+
+
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1480,6 +1494,8 @@ def _strip_prefixes(tokens: list[str]) -> tuple[list[str], str | None]:
     changed = True
     while changed and tokens:
         changed = False
+        if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
+            break  # `ssh <host> "<payload>"`: the caller re-scans the payload on the target
         # The NAS spells it `/usr/local/bin/docker`: docker is off the non-interactive ssh PATH there.
         tokens = [tokens[0].rsplit("/", 1)[-1], *tokens[1:]]
         for prefix in _PREFIXES:
@@ -1525,17 +1541,23 @@ def _classify_one(command: str, host: str | None, *, resolve) -> Tier:
     if not stages or not all(stages):
         return Tier.PREPARED
     first, *filters = stages
-    if not all(_matches(_FILTER_SHAPES, stage, first_stage=False, host=host, resolve=resolve) is not None for stage in filters):
+    alias = ssh_alias(host) if host else None
+    if not all(_matches(_FILTER_SHAPES, stage, first_stage=False, host=alias, resolve=resolve) is not None for stage in filters):
         return Tier.PREPARED
     tokens, target = _strip_prefixes(first)
     if not tokens:
         return Tier.PREPARED
+    if target and len(tokens) == 1 and any(c.isspace() for c in tokens[0]):
+        # `ssh <host> "<payload>"`: one token here, a command line on the target, matched there like
+        # any other and never trusted.
+        return _classify_one(tokens[0], target, resolve=resolve)
     # `target or host` is where the command really runs, so it is also the filesystem its operands
-    # resolve on -- the same host the telemetry gate below reads.
+    # resolve on -- the same host the telemetry gate below reads, by its label.
     lands_on = target or host
-    operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True, host=lands_on, resolve=resolve)
-    if operands is None and lands_on in _TELEMETRY_HOSTS:
+    alias = ssh_alias(lands_on) if lands_on else None
+    operands = _matches(_FIRST_STAGE_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
+    if operands is None and lands_on and host_label(lands_on) in _TELEMETRY_HOSTS:
         lowered = command.lower()
         if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
-            operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=lands_on, resolve=resolve)
+            operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED
