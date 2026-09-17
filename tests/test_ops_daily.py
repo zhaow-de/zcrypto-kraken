@@ -2589,6 +2589,15 @@ def test_a_peak_that_reached_memoryhigh_is_narrated_but_does_not_fail_the_pass()
     assert "throttled" in check.value and "13.0 GiB" in check.value
 
 
+def test_a_peak_above_memorymax_predates_the_cap_and_the_row_says_so():
+    """A hard limit is never exceeded once set, so a peak above MemoryMax was set before the cap;
+    `KillMode=process` leaves the cgroup populated across restarts, so the figure never clears and a
+    later excursion under it is invisible. The row says that instead of calling it throttling."""
+    check = ops_daily.read_agentboard_cgroup(runner=_host_answering(MemoryPeak="64159506432"))
+    assert check.ok, check.value
+    assert "predates the cap" in check.value and "throttled" not in check.value, check.value
+
+
 def test_a_restart_is_narrated_because_no_prometheus_series_can_see_it():
     """`zcrypto-fleet-daemon-restarted` cannot watch this unit -- nothing scrapes it -- so this row
     is the only place a restart surfaces. Cumulative, so narrated rather than faulted."""
