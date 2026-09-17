@@ -2736,4 +2736,5 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
     assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
-    assert 'host = "ops"' in (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()
+    alloy = (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()
+    assert any(line.strip().startswith('host = "ops"') for line in alloy.splitlines())
