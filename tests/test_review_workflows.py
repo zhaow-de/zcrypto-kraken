@@ -104,11 +104,6 @@ def test_every_workflow_records_itself_once_it_has_read_and_the_two_reads_refuse
         assert gate < ledger < text.index(f"\nphase('{phase}')"), (
             f"{name}: the Ledger phase gates the read, both before the first read phase"
         )
-        assert f"throw new Error(`{name} refuses ${{tip}}: the ledger agent returned nothing" in text, (
-            f"{name}: a ledger agent that returns nothing is a named failure, never a missing pre-read"
-        )
-        assert f"throw new Error(`{name} refuses ${{tip}}: ${{ledgerPath}} records no pre-read of this tip or an ancestor" in text
-    assert "throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch" in texts["re-review"]
     before_the_grader = texts["pre-read"][: texts["pre-read"].index("phase('Pre-read')")]
     assert "ledger" not in before_the_grader and before_the_grader.count("throw") == 1, (
         "pre-read is the first read: it reads no ledger and refuses nothing but its arguments"
@@ -148,12 +143,15 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     }
     for flow, table in cases.items():
         text = (_FLOWS / f"{flow}.js").read_text()
+        refuses = rf"^if \([^\n]*\) throw new Error\(`{flow} refuses \$\{{tip\}}: "
         block = re.search(
-            r"^if \(!ledger\) throw new Error\(.*?^if \(!covered\('pre-read'\)\) throw new Error\(.*?\)$",
+            refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-read[^\n]*$",
             text,
             re.M | re.S,
         )
-        assert block, f"{flow}: the refusals are the block from the null-ledger throw to the pre-read refusal"
+        assert block, (
+            f"{flow}: the refusals are the block from the null-ledger throw to the pre-read refusal, anchored on their words"
+        )
         program = "\n".join(
             (
                 "const tip = 'TIP', ledgerPath = 'LEDGER'",
