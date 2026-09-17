@@ -91,7 +91,7 @@ def _play(ansible) -> list[str]:
     return log.read_text().splitlines() if log.exists() else []
 
 
-_PLAY_HOLD_S = 10  # how long the stub holds the play open when nothing stops it
+_PLAY_HOLD_S = 10
 
 
 def _signalled(tmp_path, sig):
