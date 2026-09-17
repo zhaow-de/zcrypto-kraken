@@ -2639,13 +2639,14 @@ def test_the_agentboard_command_is_read_only_and_names_the_ops_host():
     this read wants is `NRestarts`, which carries `restart` as a substring, so a substring ban trips
     on the very name it exists to fetch. A verb only acts when the shell can reach it as a command.
     """
+    # The read targets the ops host; which destination that is belongs to the fleet-table pin.
+    assert ops_daily.AGENTBOARD_COMMAND[-2] == ops_daily.ssh_alias("ops")
     # BatchMode for the reason `UPGRADE_COMMAND` spells out: a prompt holds the read until the
     # timeout instead of failing it.
     assert "BatchMode=yes" in ops_daily.AGENTBOARD_COMMAND
     body = ops_daily.AGENTBOARD_COMMAND[-1]
     assert body.startswith("systemctl show "), body
-    # Both LITERALS, for the reason the host assertion above gives: the command is built by joining
-    # AGENTBOARD_PROPERTIES, so parsing the `-p` names back out and comparing them to that tuple is a
+    # Both LITERALS: the command is built by joining AGENTBOARD_PROPERTIES, so parsing the `-p` names back out and comparing them to that tuple is a
     # set equal to itself -- it passes under any change that moves both, and `-pMemoryMax` parses to
     # the same name as `-p MemoryMax`. The tuple's ORDER is load-bearing on its own: the reader unpacks
     # it positionally, and a name added without one in that unpack raises, which `_UNREACHABLE` turns
@@ -2702,6 +2703,10 @@ def test_quoting_admits_nothing_the_same_text_is_refused_for_unquoted():
     quoted = 'ssh hp "sudo docker restart grafana-alloy" | grep -c zcrypto-engine'
     assert ops_daily.classify_action(quoted.replace('"', ""), host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
     assert ops_daily.classify_action(quoted, host="hp", resolve=_identity) is ops_daily.Tier.PREPARED
+    assert (
+        ops_daily.classify_action('ssh hp "sudo docker restart grafana-alloy"', host="hp", resolve=_identity)
+        is ops_daily.Tier.AUTONOMOUS
+    )
 
 
 @pytest.mark.parametrize("host", ["ops", "hp", "zcrypto-ops"])
