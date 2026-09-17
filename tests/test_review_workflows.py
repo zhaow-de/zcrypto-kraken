@@ -104,7 +104,7 @@ def test_every_workflow_records_itself_once_it_has_read_and_the_two_reads_refuse
         assert gate < ledger < text.index(f"\nphase('{phase}')"), (
             f"{name}: the Ledger phase gates the read, both before the first read phase"
         )
-        assert "if (!ledger) throw new Error(" in text, (
+        assert f"throw new Error(`{name} refuses ${{tip}}: the ledger agent returned nothing" in text, (
             f"{name}: a ledger agent that returns nothing is a named failure, never a missing pre-read"
         )
         assert f"throw new Error(`{name} refuses ${{tip}}: ${{ledgerPath}} records no pre-read of this tip or an ancestor" in text
@@ -115,7 +115,7 @@ def test_every_workflow_records_itself_once_it_has_read_and_the_two_reads_refuse
     )
 
 
-@pytest.mark.parametrize("flow", ["pre-read", "review", "re-review"])
+@pytest.mark.parametrize("flow", sorted(p.stem for p in _FLOWS.glob("*.js")))
 def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
     """The harness runs the body inside an async function, where a top-level `return` is legal and a second
     `const` of one name is not; nothing else parses a script before its first dispatch."""
@@ -125,3 +125,46 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
     program.write_text(f"async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {{\n{body}\n}}\n")
     done = subprocess.run(["node", "--check", str(program)], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
+
+
+def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
+    """Driven, not read: a condition inverted under the right string passes every text assert above."""
+    assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
+    cases = {
+        "review": [
+            ([], "no pre-read"),
+            ([{"kind": "pre-read", "coversTip": False}], "no pre-read"),
+            ([{"kind": "review", "coversTip": True}], "no pre-read"),
+            ([{"kind": "pre-read", "coversTip": True}], None),
+        ],
+        "re-review": [
+            ([], "no review"),
+            ([{"kind": "pre-read", "coversTip": True}], "no review"),
+            ([{"kind": "review", "coversTip": True}, {"kind": "pre-read", "coversTip": False}], "no pre-read"),
+            ([{"kind": "review", "coversTip": False}, {"kind": "pre-read", "coversTip": True}], None),
+        ],
+    }
+    for flow, table in cases.items():
+        text = (_FLOWS / f"{flow}.js").read_text()
+        block = re.search(
+            r"^const entries = ledger\.entries \|\| \[\]$.*?^if \(!covered\('pre-read'\)\) throw new Error\(.*?\)$",
+            text,
+            re.M | re.S,
+        )
+        assert block, f"{flow}: the refusals are the block from the entries binding to the pre-read refusal"
+        program = "\n".join(
+            (
+                "const tip = 'TIP', ledgerPath = 'LEDGER'",
+                f"const CASES = {json.dumps([entries for entries, _ in table])}",
+                "const OUT = CASES.map((entries) => { const ledger = { entries }; try {",
+                block.group(0),
+                "return null } catch (e) { return e.message } })",
+                "console.log(JSON.stringify(OUT))",
+            )
+        )
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+        for (entries, expect), got in zip(table, json.loads(done.stdout), strict=True):
+            if expect is None:
+                assert got is None, f"{flow} refused {entries}: {got}"
+            else:
+                assert got and f"records {expect}" in got, f"{flow} over {entries}: a refusal naming {expect}, got {got}"
