@@ -21,7 +21,7 @@ def _constant(name: str, text: str) -> str:
 
 
 def test_the_three_workflows_share_their_grading_scope_and_checkout_contract():
-    texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
+    texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-review", "review", "re-review")}
     for name in ("GRADING", "SCOPE", "RULES"):
         values = {f: _constant(name, t) for f, t in texts.items()}
         assert len(set(values.values())) == 1, f"{name} differs between {sorted(values)}"
@@ -37,7 +37,7 @@ def test_a_keep_row_that_says_nothing_is_reported_as_owed():
         "no node on PATH, so the workflow's own predicate cannot be run: in the nightly user unit "
         "this means `Environment=PATH=` is stale — re-render it after an nvm upgrade"
     )
-    text = (_FLOWS / "pre-read.js").read_text()
+    text = (_FLOWS / "pre-review.js").read_text()
     check = re.search(r"^const SAYS_NOTHING = .*?^if \([^\n]*\) log\(`OWED: [^\n]*$", text, re.M | re.S)
     assert check, "the owed-keep check must be the block the test drives, ending in its log call"
     nothing = [
@@ -91,7 +91,7 @@ def test_the_grading_grades_prose_by_consequence():
 
 
 def test_every_workflow_records_itself_once_it_has_read_and_the_ledger_gates_the_two_reads():
-    texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-read", "review", "re-review")}
+    texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-review", "review", "re-review")}
     for name, text in texts.items():
         record, append = text.index("phase('Record')"), text.index("const recorded = await agent(")
         assert text.rindex("phase('") == record, f"{name}: Record is the last phase"
@@ -104,9 +104,9 @@ def test_every_workflow_records_itself_once_it_has_read_and_the_ledger_gates_the
         assert gate < ledger < text.index(f"\nphase('{phase}')"), (
             f"{name}: the Ledger phase gates the read, both before the first read phase"
         )
-    before_the_grader = texts["pre-read"][: texts["pre-read"].index("phase('Pre-read')")]
+    before_the_grader = texts["pre-review"][: texts["pre-review"].index("phase('Pre-read')")]
     assert "ledger" not in before_the_grader and before_the_grader.count("throw") == 1, (
-        "pre-read is the first read: it reads no ledger and refuses nothing but its arguments"
+        "pre-review is the first read: it reads no ledger and refuses nothing but its arguments"
     )
 
 
@@ -124,36 +124,36 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
 
 def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     """Driven, not read: a condition inverted under the right string passes every text assert above. A
-    pre-read covers the one tip it read, written short or long; the branch's first pre-read is an ancestor
+    pre-review covers the one tip it read, written short or long; the branch's first pre-review is an ancestor
     of every later tip and covers none of them."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
             (None, "the ledger agent returned nothing"),
-            ([], "records no pre-read"),
-            ([{"kind": "pre-read", "tip": "0ancestor"}], "records no pre-read"),
-            ([{"kind": "review", "tip": "abcdef012"}], "records no pre-read"),
-            ([{"kind": "pre-read", "tip": "abcdef012"}], None),
-            ([{"kind": "pre-read", "tip": "abcdef0123456789"}], None),
+            ([], "records no pre-review"),
+            ([{"kind": "pre-review", "tip": "0ancestor"}], "records no pre-review"),
+            ([{"kind": "review", "tip": "abcdef012"}], "records no pre-review"),
+            ([{"kind": "pre-review", "tip": "abcdef012"}], None),
+            ([{"kind": "pre-review", "tip": "abcdef0123456789"}], None),
         ],
         "re-review": [
             (None, "the ledger agent returned nothing"),
             ([], "records no review"),
-            ([{"kind": "pre-read", "tip": "abcdef012"}], "records no review"),
-            ([{"kind": "review", "tip": "abcdef012"}, {"kind": "pre-read", "tip": "0ancestor"}], "records no pre-read"),
-            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-read", "tip": "abcdef012"}], None),
+            ([{"kind": "pre-review", "tip": "abcdef012"}], "records no review"),
+            ([{"kind": "review", "tip": "abcdef012"}, {"kind": "pre-review", "tip": "0ancestor"}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef012"}], None),
         ],
     }
     for flow, table in cases.items():
         text = (_FLOWS / f"{flow}.js").read_text()
         refuses = rf"^if \([^\n]*\) throw new Error\(`{flow} refuses \$\{{tip\}}: "
         block = re.search(
-            refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-read[^\n]*$",
+            refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-review[^\n]*$",
             text,
             re.M | re.S,
         )
         assert block, (
-            f"{flow}: the refusals are the block from the null-ledger throw to the pre-read refusal, anchored on their words"
+            f"{flow}: the refusals are the block from the null-ledger throw to the pre-review refusal, anchored on their words"
         )
         program = "\n".join(
             (
