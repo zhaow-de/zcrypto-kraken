@@ -15,6 +15,9 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0202 — The canonical root's only join has no door, so `data rebuild ohlc-reach` tracebacks on a foreign-typed frame](T0202-the-canonical-roots-only-join-has-no-door.md) — ripe when: either arm: the quarterly canonical dump is republished (a foreign-typed frame is how one would arrive), or `cli/ohlc/reach.py` is next touched.
 - [T0203 — The release skill has never run, and three of its steps are broken as written](T0203-the-release-skill-has-never-run-and-three-steps-are-broken.md) — ripe when: a release is being cut: `git branch -a --list "*release/*"` prints a branch, or `git log --oneline main | wc -l` reads more than 1.
 - [T0205 — The primary's clean-close reconnect rate is charted and never alerted](T0205-primary-reconnect-rate-unalerted.md) — ripe when: 2026-10-01 — a second fortnight of reconnects on the board to set the bar against, read as `uv run python infra/scripts/grafana-query.py 'sum by (host) (increase(zcrypto_capture_reconnects_total[13d]))'`
+- [T0206 — The registry's arguments declare an unchecked provenance](T0206-registry-arguments-declare-an-unchecked-provenance.md) — ripe when: the next branch that adds a `nothing_found(...)` gate — the guard's own walk counts 13 of them at this registration, and the branch writing the fourteenth is already holding the claim this topic would have the helper check
+- [T0207 — Gate discovery beyond the fixture's positions](T0207-gate-discovery-beyond-the-fixtures-positions.md) — ripe when: the next branch that adds a skip in a position `_FIXTURE` does not already carry, or the next change to `_gates` in `tests/test_live_venue_opt_in.py` — either is a session already reading the walker
+- [T0208 — Guidance clauses the skip-gate matcher falsifies](T0208-guidance-clauses-the-skip-gate-matcher-falsifies.md) — ripe when: the next guidance branch — one whose diff touches `CLAUDE.md`, where these five clauses are edited in the pass that is already open
 
 ## Partially done
 
@@ -34,7 +37,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0160 — nautilus-trader nightly bump, and the flatten contract checks it must not skip](T0160-nautilus-nightly-bump-and-flatten-contract-checks.md) — ripe when: per sub-item. Cancel sweep and adopt pass: `grep nautilus-trader pyproject.toml` shows a version carrying neither `rc` nor `dev`, OR an attended engine start on the live account is planned with an order resting at the venue that the starting process did not place, on one of BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR, ETH/BTC. Unpark spec 00111: `grep nautilus-trader pyproject.toml` shows a version carrying neither `rc` nor `dev`
 - [T0183 — A reconciliation reports a perfect score when it compared nothing](T0183-reconciliation-reports-perfect-on-an-empty-set.md) — ripe when: T0187 is resolved: ls docs/open-topics/archive/T0187-*.md succeeds
 - [T0184 — The soak report averages a specified HHI sentinel as though it were a measurement](T0184-soak-hhi-aggregate-averages-a-sentinel.md) — ripe when: uv run zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir <a store pulled from the engine host, which has no replica> reports a non-zero realized no-book bar count in its null-reference block, or an hhi verdict other than consistent; on a page carrying NO VERDICT or STORE-BOUND WINDOW a non-zero no-book count still fires the first arm, while a zero count and the verdict cell evaluate nothing
-- [T0190 — Three flags implement the one live-venue opt-in](T0190-live-venue-opt-in-flags-disagree.md) — ripe when: the next branch that adds a venue-reaching test, or any change to `tests/test_live_venue_opt_in.py` — either is a moment someone is already holding this context
 
 ## Resolved
 
@@ -205,6 +207,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0186 — The soak report re-caps the book with module defaults while the builder used the configured caps](archive/T0186-soak-recaps-with-default-position-caps.md)
 - [T0188 — The soak report's identity check counts a NaN comparison as made and passed](archive/T0188-soak-identity-check-counts-a-nan-comparison-as-passed.md)
 - [T0189 — The prose ratchet converts every cut into silent headroom](archive/T0189-prose-ratchet-converts-each-cut-into-headroom.md)
+- [T0190 — Three flags implement the one live-venue opt-in](archive/T0190-live-venue-opt-in-flags-disagree.md)
 - [T0191 — The zero-price refusal's comment inverts the consequence it exists to justify](archive/T0191-flatten-zero-price-comment-inverts-its-own-consequence.md)
 - [T0192 — The week-boundary tracking fixture cannot tell its refusal arms apart](archive/T0192-tracking-fixture-cannot-tell-its-refusal-arms-apart.md)
 - [T0193 — A non-finite snapshot close escapes the soak report as a traceback](archive/T0193-nonfinite-snapshot-close-escapes-the-soak-report.md)

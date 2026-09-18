@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: 'the next branch that adds a venue-reaching test, or any change to `tests/test_live_venue_opt_in.py` — either is a moment someone is already holding this context'
+status: resolved
 ---
 
 # Three flags implement the one live-venue opt-in
@@ -40,7 +39,7 @@ The claim was written by reading the `skipif` rather than running it, and it sur
 - The fix cannot ride a docstring-pass branch: renaming a constant moves the AST, and those branches carry proven inertness as their whole value.
 - `ZCRYPTO_E1B_LIVE`'s probe is an attended live-order path, so its opt-in is doing more work than a read-only contract check — whether one flag should cover both is part of the decision, not settled here.
 
-## Done so far
+## Resolution
 
 - **Decided by the owner, 2026-09-09: one flag covers the class.** `ZCRYPTO_LIVE_VENUE_TESTS` is the opt-in for every venue-reaching test, including the order-placing probe — no second flag on blast-radius grounds, because the granularity buys nothing a reader can act on. So `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are renames, not a design question.
 
@@ -67,7 +66,7 @@ nothing is the defect this topic is about.
 
 - **The guard**, `tests/test_live_venue_opt_in.py`. What SHIPPED is `bfab0df7e`, which REPLACED the recognition engine rather than widening it: it reduces each guard expression to a reading and REFUSES what it cannot reduce, so an unrecognised shape fails by construction. `a96438b6c` wrote the first shape and `b8ae6368b`, `99f96fb0f` and `7959a5f13` widened it three times first. Naming only the early commits, which an earlier version of this bullet did, sends a reader who checks one out to a walker missing most of what shipped. TWO assertions over every skip gate in `tests/`, keyed on the shape of a gate and not on the names of the day: every gate whose guards read the environment reads `ZCRYPTO_LIVE_VENUE_TESTS` and no other name, and no gate is decided by something the guard cannot read — an unresolvable helper or a run-time-assembled key fails rather than passes.
 
-  **A third assertion was written and does not ship.** "No gate's guards reach the venue" was asserted from `a96438b6c` to `bfab0df7e` and removed in `7b920d00c` on the owner's ruling of 2026-09-11, because four review rounds could not make it hold. It is this topic's one open sub-item and `## Suggested next steps` carries it. Nothing in `## Done so far` should be read as delivering it.
+  **A third assertion was written and did not ship on that branch.** "No gate's guards reach the venue" was asserted from `a96438b6c` to `bfab0df7e` and removed in `7b920d00c` on the owner's ruling of 2026-09-11, because four review rounds could not make it hold. It was this topic's one open sub-item until spec 00114, and nothing above this paragraph should be read as delivering it — the closing paragraph of this section is what does.
 
 - **The first shape of that guard was wrong in three ways and the branch read found all three**, each demonstrated by planting the real defect and watching `pytest -q` report 7 passed: an environment read spelled `getenv(NAME)` or `NAME in os.environ` was counted as reading nothing; a `pytest.skip()` in an `else:` or an `except:` produced no gate at all, so `try: urlopen(...) except OSError: pytest.skip(...)` — the commonest reachability skip, which has no condition anywhere — was invisible; and a decision one module away was unreadable and therefore clean. It reads GUARDS now rather than conditions: a `skipif` condition, the test of every enclosing `if` whichever branch the skip sits in, and the BODY of an enclosing `try` when the skip sits in a handler.
 
@@ -85,25 +84,4 @@ nothing is the defect this topic is about.
 
 - **Where the rule lives**: `CLAUDE.md`'s guards-and-proofs entries since `73885594c` (2026-09-12) — one holding the one-name half through `infra/scripts/count-list.sh skip-gate-contract`, one stating that nothing holds the reachability half — beside the guard's module docstring and this file. Between `deaa3e7c7` (2026-09-10) and that commit no surface a session loads carried it.
 
-## Suggested next steps
-
-- **The reachability guard: a skip decided by whether the venue ANSWERS.** Not delivered, and the
-  owner ruled on 2026-09-11 that it is its own piece of work rather than a fifth round on this branch.
-  The property is real and the repo asserts it nowhere: `tests/test_live_venue_opt_in.py` holds the one
-  flag name and refuses what it cannot read, and says in its docstring that it does not hold this.
-
-  **Start from the matcher-versus-reducer diagnosis in `tests/test_live_venue_opt_in.py`'s module
-  docstring rather than from the current code.**
-
-  **The measured cost, which is why it was not paid here:** the guard's own docstring holds it — the
-  expressions with no form a matcher could accept, and the blanking transform over `_tree_gates()`
-  that re-derives the number. Four hand counts on this branch were wrong; do not take one from here.
-
-  **What it would have caught, so the value is not theoretical:** `tests/test_tape_bars_rest_control.py`
-  skipped on a truncated Kraken answer with the opt-in set. It took a census, a guard, four review
-  rounds and a ruling to surface; a matcher would have refused that gate on day one and made someone
-  say what it reads.
-
-- **What the two surviving assertions miss** is listed, planted shape by planted shape, in
-  `tests/test_live_venue_opt_in.py`'s module docstring, so the next attempt inherits them measured
-  rather than rediscovering them.
+- **Resolved by spec 00114's matcher**, branch `spec/00114-skip-gate-matcher`: `18bba7770` added the registry `tests/skip_gates.py`, held closed by its own test; `9f210e8ca` rewrote the 35 gates that read a helper, a `shutil.which` result, a bare local or an unrooted operand, so each says what it reads; `c0b00abe5` replaced the reducer's recognition with a matcher, every guard matching one of six forms or refused with the remedy; `641eda4e6` made `unittest`'s decorator and method forms gates the walker finds; and `649f395c8` deleted the reducer's resolution. That closes this topic's one open sub-item: the reachability half is held by CONSTRUCTION rather than asserted, because a skip is now decided only by a form's reading or by a call into a registry that can neither import a module opening a socket nor launch a `git` whose argv leaves this checkout. The census at the close, from `_tree_gates()`: 65 gates under `tests/`, none opaque, 30 of them declaring what they read through the registry, 6 reading the environment and all 6 naming `ZCRYPTO_LIVE_VENUE_TESTS`. Three residuals are parked as topics of their own rather than left in this file: the provenance of a registry call's argument (T0206), gate discovery beyond the fixture's positions (T0207), and the five `CLAUDE.md` clauses this change falsifies (T0208).
