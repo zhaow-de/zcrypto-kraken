@@ -192,7 +192,8 @@ def _imported(tree: ast.Module) -> dict[str, str]:
         if isinstance(node, ast.ImportFrom) and node.module:
             out.update({(a.asname or a.name): node.module for a in node.names})
         elif isinstance(node, ast.Import):
-            out.update({(a.asname or a.name.split(".")[0]): a.name for a in node.names})
+            # `import a.b` binds `a` and denotes `a`; only an `as` binds the dotted module itself.
+            out.update({(a.asname or a.name.split(".")[0]): (a.name if a.asname else a.name.split(".")[0]) for a in node.names})
     return out
 
 
@@ -822,6 +823,25 @@ def _pytest_modules(tree: ast.Module) -> set[str]:
     } or {"pytest"}
 
 
+_UNITTEST_SKIPS = ("skipIf", "skipUnless")
+
+
+def _unittest_skip(func: ast.AST, module: Module) -> bool:
+    """`skipIf`/`skipUnless` reached through `unittest` under any name it is bound to, or imported from
+    it under any name -- the alias tolerance `_pytest_modules` and `_pytest_bindings` give pytest's
+    spellings. `_imported` keeps the BOUND name and loses the imported one, so the bare form is
+    resolved off the import nodes through `_bound_to_module` (spec 00114 Task 3) rather than that dict:
+    `from unittest import skipIf as skip_if` is a fourth spelling of the construct, and a name bound
+    to anything else is not one of them. `module.imported` is asked first and answers in one lookup:
+    every name the walk below can bless is one that dict maps to `unittest`, and this function runs
+    for every bare-name call in every module walked."""
+    if isinstance(func, ast.Attribute) and func.attr in _UNITTEST_SKIPS:
+        return isinstance(func.value, ast.Name) and module.imported.get(func.value.id) == "unittest"
+    if not (isinstance(func, ast.Name) and module.imported.get(func.id) == "unittest"):
+        return False
+    return any(func.id in _bound_to_module(module, f"unittest.{n}") for n in _UNITTEST_SKIPS)
+
+
 def _skip_helpers(tree: ast.Module, attribute: str, bound: set[str], modules: set[str], parents: dict) -> set[str]:
     """Module functions that skip unconditionally, so calling one IS calling `pytest.skip`.
 
@@ -846,8 +866,9 @@ def _is_pytest_call(node: ast.AST, attribute: str, bound: set[str], modules: set
     bound it through `functools.partial`, `getattr(<alias>, "<attribute>")`, `raise
     pytest.<attribute>.Exception` and `raise unittest.SkipTest`.
 
-    `unittest` is HALF in scope and the other half is not covered: `@unittest.skipIf(...)` and
-    `self.skipTest(...)` produce no gate, so a gate spelled either way is outside both assertions."""
+    `unittest` is in scope through two arms outside this function: `self.skipTest(...)` is a skip
+    here, recognised on the receiver `self` alone, while `skipIf`/`skipUnless` are gates through
+    `_gates`' third arm rather than through this one."""
     if isinstance(node, ast.Raise) and node.exc is not None:
         raised = ast.unparse(node.exc.func if isinstance(node.exc, ast.Call) else node.exc)
         # `raise pytest.skip.Exception` and `raise unittest.SkipTest` are the two raised spellings.
@@ -874,6 +895,8 @@ def _is_pytest_call(node: ast.AST, attribute: str, bound: set[str], modules: set
         return ast.unparse(holder) in modules and isinstance(name, ast.Constant) and name.value == attribute
     if ast.unparse(func).endswith("partial") and node.args:
         return _is_pytest_call(ast.Call(func=node.args[0], args=[], keywords=[]), attribute, bound, modules)
+    if isinstance(func, ast.Attribute) and func.attr == "skipTest" and isinstance(func.value, ast.Name) and func.value.id == "self":
+        return attribute == "skip"
     return False
 
 
@@ -926,6 +949,11 @@ def _gates(source: str, label: str = "<fixture>", path: Path | None = None) -> l
     out: list[Gate] = []
     for node in ast.walk(module.tree):
         if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("mark.skipif"):
+            raw = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "condition"), None)
+            if raw is not None:
+                condition, extra = _as_expression(raw)
+                out.append(_gate(node.lineno, "skipif", [condition], module, None, extra))
+        elif isinstance(node, ast.Call) and _unittest_skip(node.func, module):
             raw = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "condition"), None)
             if raw is not None:
                 condition, extra = _as_expression(raw)
@@ -1445,6 +1473,38 @@ def test_skips_on_a_registry_module_an_attribute_store_takes_over():
 def test_skips_on_a_registry_module_an_attribute_store_takes_over_the_other_spelling():
     if also_stored.nothing_found(ROOT.iterdir()):
         pytest.skip("the same takeover written at the other module spelling")
+
+
+import unittest.mock
+import unittest as ut
+from unittest import skipUnless
+from unittest import skipIf as skip_if
+
+
+class TestOld(unittest.TestCase):
+    @unittest.skipIf(not ROOT.exists(), "no data")
+    def test_gated_by_a_unittest_decorator(self):
+        pass
+
+    @unittest.skipIf(condition=not ROOT.exists(), reason="no data")
+    def test_gated_by_a_unittest_decorator_whose_condition_is_a_keyword(self):
+        pass
+
+    @skipUnless(ROOT.exists(), "no data")
+    def test_gated_by_a_unittest_decorator_imported_by_name(self):
+        pass
+
+    @skip_if(not ROOT.exists(), "no data")
+    def test_gated_by_a_unittest_decorator_imported_under_an_alias(self):
+        pass
+
+    @ut.skipIf(not ROOT.exists(), "no data")
+    def test_gated_by_a_unittest_decorator_through_a_module_alias(self):
+        pass
+
+    def test_gated_by_a_unittest_method(self):
+        if not ROOT.exists():
+            self.skipTest("no data")
 """
 
 _FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")
@@ -1535,6 +1595,14 @@ _REGISTRY_MATCHED = (
     "test_gated_on_the_registry_by_module",
     "test_gated_on_the_registry_through_the_package",
 )
+_UNITTEST_DECORATED = (
+    "test_gated_by_a_unittest_decorator",
+    "test_gated_by_a_unittest_decorator_whose_condition_is_a_keyword",
+    "test_gated_by_a_unittest_decorator_imported_by_name",
+    "test_gated_by_a_unittest_decorator_imported_under_an_alias",
+    "test_gated_by_a_unittest_decorator_through_a_module_alias",
+)
+_UNITTEST_METHOD = ("test_gated_by_a_unittest_method",)
 # The gates that must NOT be refused for the assertions above to mean anything: the one opt-in read
 # twice, a dataset gate, and a membership of a module constant -- the last two the accepting direction
 # of the two forms whose operand rather than whose callee carries the reading: without `_LOCAL_DATASET`
@@ -1552,6 +1620,8 @@ _DISPOSED = (
     + _OPT_IN_READ
     + _LOCAL_DATASET
     + _MEMBERSHIP_MATCHED
+    + _UNITTEST_DECORATED
+    + _UNITTEST_METHOD
 )
 
 
@@ -1610,6 +1680,19 @@ def test_the_registry_is_the_one_call_a_guard_may_make():
     for name in _REGISTRY_MATCHED:
         gate = _fixture(name)
         assert gate.forms == (Form("registry"),) and gate.opaque == (), f"{name}: {gate}"
+
+
+def test_unittests_decorator_and_method_are_gates_the_walker_finds():
+    """`@unittest.skipIf`/`skipUnless` and `self.skipTest(...)` are the two `unittest` spellings the
+    reducer's docstring listed as passing uncaught (spec 00114 D6). Both are gates now, matched like
+    any other, and the decorator is recognised under each name `unittest` can be bound by -- the
+    dotted module, a module alias, and the name imported from it under its own name or an alias --
+    with its condition read from `args[0]` or from the `condition=` keyword."""
+    for name in _UNITTEST_DECORATED:
+        decorated = _fixture(name)
+        assert decorated.kind == "skipif" and decorated.forms == (Form("path"),), f"{name}: {decorated}"
+    method = _fixture(_UNITTEST_METHOD[0])
+    assert method.kind == "skip-site" and method.forms == (Form("path"),), method
 
 
 def test_the_fixture_carries_every_position_a_skip_can_sit():
