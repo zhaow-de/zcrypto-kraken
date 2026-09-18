@@ -115,9 +115,10 @@ def _imported(tree: ast.Module) -> dict[str, str]:
     """Each name bound by an import, mapped to the module it came from.
 
     Every arm that reads it asks for ONE module by name: `environ` and `getenv` from `os`, a name the
-    registry bound, and in `_rooted` a `pathlib` import, the one library whose names root an operand.
-    `_rooted` refuses every other imported name -- what such a name holds is its own module's
-    business, and no form here reads it.
+    registry bound, a name `unittest` bound (`_unittest_skip` asks it of a decorator's receiver and of
+    a bare `skipIf`/`skipUnless`), and in `_rooted` a `pathlib` import, the one library whose names
+    root an operand. `_rooted` refuses every other imported name -- what such a name holds is its own
+    module's business, and no form here reads it.
     """
     out: dict[str, str] = {}
     for node in ast.walk(tree):
