@@ -13,19 +13,11 @@ WHAT THIS FILE HOLDS, the two halves of that rule:
   refused. No form reaches a venue, which is how the other half -- no skip decided by whether the
   venue answers -- is held: by a closed set of shapes rather than by a reading of what a guard does.
 
-THE SIX FORMS, each syntactic and each constraining what it may read: `path`, a presence method --
-`exists`, `is_file`, `is_dir` -- taking no argument, on a literal-rooted receiver; `uid`,
-`os.geteuid() == 0`; `binary`, `shutil.which('<literal>') is None`; `opt-in`, a read with no default
-under a key that is a literal or a plain module constant, compared to a string literal, spelled
-`<key> in os.environ`, or tested against a module-level constant collection of literals; `membership`,
-a call-free literal-rooted expression tested against such a collection; and `registry`, a call into
-`tests/skip_gates.py`.
+THE SIX FORMS are `path`, `uid`, `binary`, `opt-in`, `membership` and `registry`; what each one
+constrains is `_REFUSAL_REMEDY` below, the text a refusal prints at the gate that needs it.
 
-The registry is where a gate whose reading has no form of its own declares it: `develop_resolves()`,
-`no_binary(...)` and `nothing_found(...)` say at the call site what the skip is decided by. A form
-that is a call into a sibling module is worth no more than that module, so
-`test_the_registry_reads_nothing_a_form_could_not` holds it closed -- its imports, the names its calls
-may reach, the one `git` it may launch, and the single `return` of every function it defines.
+The registry is the sixth form's module, and a call into it is the declaration a gate whose reading
+has no form of its own makes; `test_the_registry_reads_nothing_a_form_could_not` holds it closed.
 
 WHAT THIS FILE DOES NOT HOLD:
 
@@ -38,10 +30,9 @@ WHAT THIS FILE DOES NOT HOLD:
   filtered would decide a skip under a declaration that says otherwise. That is the one reading a gate
   may still carry unjudged.
 
-From 2026-09-11 until this change the file was a REDUCER: it followed a call into our own code and
-read what the helper it landed on reached, rather than matching the guard against a form. Its blind
-spots were hand-counted four times, each count was wrong, and that is why a closed set of forms
-replaced it.
+Until this change the file was a REDUCER -- it followed a call into our own code and read what the
+helper it landed on reached, so its closed world was a property of every branch. A closed set of
+forms replaced it.
 
 The class had three names until T0190: `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` implemented the
 same rule under their own spellings, so an agent that set the one name it had been given got the other
@@ -681,11 +672,12 @@ def _gate(line: int, kind: str, guards: list[ast.AST], module: Module, function:
 def _gates(source: str, label: str = "<fixture>", path: Path | None = None) -> list[Gate]:
     """Every gate in this module whose guards decide a `pytest.skip()`.
 
-    Two shapes reach it: the `skipif` marker, wherever it is written -- a decorator, a `condition=`
-    keyword, or a `pytest.param(..., marks=...)` entry -- and a call, whose guards are read off the
-    statements enclosing it rather than off any one condition. The call is recognised through the
-    pytest module under any alias, through a bare name imported from pytest under any alias, through
-    `raise pytest.skip.Exception`, and through a module function that skips unconditionally.
+    Three shapes reach it: the `skipif` marker, wherever it is written -- a decorator, a `condition=`
+    keyword, or a `pytest.param(..., marks=...)` entry -- `unittest`'s `skipIf`/`skipUnless` decorator,
+    and a call, whose guards are read off the statements enclosing it rather than off any one
+    condition. The call is recognised through the pytest module under any alias, through a bare name
+    imported from pytest under any alias, through `raise pytest.skip.Exception`, through
+    `self.skipTest(...)`, and through a module function that skips unconditionally.
 
     Two of pytest's three skipping names are deliberately not here. `importorskip` takes a MODULE name,
     so it cannot be keyed on a venue flag or on reachability and cannot carry this defect. `xfail`
