@@ -3,7 +3,7 @@ export const meta = {
   description: 'The author’s prose and message claims graded by a different agent before any review',
   whenToUse: 'Before every review or re-review of a range — over the fix range after the first review, never the whole branch again: one agent grades the range’s prose, re-runs the commands and probes its messages quote, and checks each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?}',
   phases: [
-    { title: 'Pre-read', detail: 'one read-only grader over the range’s prose and message claims' },
+    { title: 'Pre-review', detail: 'one read-only grader over the range’s prose and message claims' },
     { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
   ],
 }
@@ -97,8 +97,8 @@ EARLIER PRE-REVIEWS of this branch are the ${reportDir}/pre-review-*.md files (n
 
 Write a Markdown report to ${reportDir}/pre-review-${tip}.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
-phase('Pre-read')
-const report = await agent(prompt, { label: 'pre-review', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
+phase('Pre-review')
+const report = await agent(prompt, { label: 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
 if (!report) throw new Error('the pre-reviewer returned nothing')
 const n = (list, pred) => list.filter(pred).length
 // A reason is judged by what is left of it: the words a placeholder is made of, and the words any sentence
