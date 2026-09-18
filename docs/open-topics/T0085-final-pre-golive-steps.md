@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "per sub-item — arm64 re-enable: before the final go-live, never on go-live day; OS/apt upgrade + reboot round: before that; nautilus engine converge: the pin is frozen, its attended pass has PASSED and its exact string is in `cli/engine/order-semantics-verified.json` — the engine has NOT converged onto the pinned version, and what remains against it is the four open items in `docs/reference/adapter-verification/2.0.0rc6.dev20260918.md`'s owed checks, three of which gate arming rather than the converge and one of which is not collected at arming at all; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
+ripe_when: "per sub-item — arm64 re-enable: before the final go-live, never on go-live day; OS/apt upgrade + reboot round: before that; nautilus engine converge: the pin is frozen, its attended pass has PASSED and its exact string is in `cli/engine/order-semantics-verified.json` — the engine has not converged onto that pin, and what remains against it is the open items in its adapter-verification record's owed checks; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
 ---
 
 # Final pre-go-live steps — arm64 re-enable, the OS upgrade + reboot round, the `nautilus_trader` bump, and the credential rotation round
