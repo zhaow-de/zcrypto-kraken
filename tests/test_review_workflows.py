@@ -123,22 +123,25 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
 
 
 def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
-    """Driven, not read: a condition inverted under the right string passes every text assert above."""
+    """Driven, not read: a condition inverted under the right string passes every text assert above. A
+    pre-read covers the one tip it read, written short or long; the branch's first pre-read is an ancestor
+    of every later tip and covers none of them."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
             (None, "the ledger agent returned nothing"),
             ([], "records no pre-read"),
-            ([{"kind": "pre-read", "coversTip": False}], "records no pre-read"),
-            ([{"kind": "review", "coversTip": True}], "records no pre-read"),
-            ([{"kind": "pre-read", "coversTip": True}], None),
+            ([{"kind": "pre-read", "tip": "0ancestor"}], "records no pre-read"),
+            ([{"kind": "review", "tip": "abcdef012"}], "records no pre-read"),
+            ([{"kind": "pre-read", "tip": "abcdef012"}], None),
+            ([{"kind": "pre-read", "tip": "abcdef0123456789"}], None),
         ],
         "re-review": [
             (None, "the ledger agent returned nothing"),
             ([], "records no review"),
-            ([{"kind": "pre-read", "coversTip": True}], "records no review"),
-            ([{"kind": "review", "coversTip": True}, {"kind": "pre-read", "coversTip": False}], "records no pre-read"),
-            ([{"kind": "review", "coversTip": False}, {"kind": "pre-read", "coversTip": True}], None),
+            ([{"kind": "pre-read", "tip": "abcdef012"}], "records no review"),
+            ([{"kind": "review", "tip": "abcdef012"}, {"kind": "pre-read", "tip": "0ancestor"}], "records no pre-read"),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-read", "tip": "abcdef012"}], None),
         ],
     }
     for flow, table in cases.items():
@@ -154,7 +157,7 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
         )
         program = "\n".join(
             (
-                "const tip = 'TIP', ledgerPath = 'LEDGER'",
+                "const tip = 'abcdef012', ledgerPath = 'LEDGER'",
                 f"const CASES = {json.dumps([entries for entries, _ in table])}",
                 "const OUT = CASES.map((entries) => { const ledger = entries === null ? null : { entries }; try {",
                 block.group(0),
@@ -168,6 +171,6 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 assert got is None, f"{flow} refused {entries}: {got}"
             else:
                 assert got and expect in got, f"{flow} over {entries}: a refusal saying {expect!r}, got {got}"
-                assert f"{flow} refuses TIP" in got and ("LEDGER records" in got or not expect.startswith("records")), (
+                assert f"{flow} refuses abcdef012" in got and ("LEDGER records" in got or not expect.startswith("records")), (
                     f"{flow}: a refusal names the tip it refuses and the ledger it read: {got}"
                 )
