@@ -55,14 +55,16 @@ REGISTRY = TESTS / "skip_gates.py"
 # The dotted name `_registry_call` keys on, derived from the path so the two cannot drift apart.
 REGISTRY_MODULE = f"{TESTS.name}.{REGISTRY.stem}"
 REGISTRY_IMPORTS = frozenset({"shutil", "subprocess", "pathlib", "typing"})
-# The builtins the three functions use -- an allowlist, because no blocklist of the importing ones
-# holds: `__import__("socket")` is an `ast.Call` and not an `ast.Import`, so the import allowlist
-# below never sees it, and `globals()["__builtins__"]["__import__"]` reaches it without naming it.
-REGISTRY_BUILTINS = frozenset({"str"})
-# Every literal word `develop_resolves()`'s argv may carry. `git` is itself a network client, so its
-# name at argv[0] constrains nothing: `ls-remote`, `fetch` and a `-c protocol.ext.allow=<transport>`
-# all reach a remote under it, and a skip would then be decided by whether that remote answers.
-REGISTRY_GIT_ARGV = frozenset({"git", "-C", "rev-parse", "--verify", "--quiet", "develop"})
+# The builtins the registry may call: NONE -- its three functions call only what their imports bind.
+# An allowlist and not a blocklist of the importing ones, because no blocklist holds:
+# `__import__("socket")` is an `ast.Call` and not an `ast.Import`, so the import allowlist below never
+# sees it, and `globals()["__builtins__"]["__import__"]` reaches it without naming it.
+REGISTRY_BUILTINS: frozenset[str] = frozenset()
+# Every word `develop_resolves()`'s argv may carry, each of them a literal. `git` is itself a network
+# client, so its name at argv[0] constrains nothing: `ls-remote`, `fetch` and a
+# `-c protocol.ext.allow=<transport>` all reach a remote under it, and a skip would then be decided by
+# whether that remote answers. The checkout the launch runs in is `cwd=REPO` and no word of the argv.
+REGISTRY_GIT_ARGV = frozenset({"git", "rev-parse", "--verify", "--quiet", "develop"})
 ```
 
 After the control test:
@@ -79,11 +81,11 @@ def _call_root(node: ast.AST) -> str:
 def test_the_registry_reads_nothing_a_form_could_not():
     """A call into `tests/skip_gates.py` is a form (spec 00114 D3), so the module is held closed: its
     imports are within the four named, every call reaches a name one of those imports binds or a
-    builtin it is allowlisted for, the one process it may launch is a `git` whose argv carries no word
-    this test cannot read and no literal outside the allowlist, and every function it defines anywhere
-    -- private ones too -- is one `return`. A registry that could open a socket would be the reducer's
-    leak, one file over -- and `subprocess` is on the allowlist, so the launch and the walk are what
-    close that direction."""
+    builtin it is allowlisted for, the one process it may launch is a `git` every word of whose argv
+    is a literal on the allowlist -- the checkout it runs in is handed to `cwd`, never written as a
+    word -- and every function it defines anywhere -- private ones too -- is one `return`. A registry
+    that could open a socket would be the reducer's leak, one file over -- and `subprocess` is on the
+    allowlist, so the launch and the walk are what close that direction."""
     tree = ast.parse(REGISTRY.read_text(), str(REGISTRY))
     bound = {
         (alias.asname or alias.name).split(".")[0]: (node.module if isinstance(node, ast.ImportFrom) else alias.name).split(".")[0]
@@ -103,9 +105,9 @@ def test_the_registry_reads_nothing_a_form_could_not():
         argv = call.args[0] if call.args else None
         launched = isinstance(argv, ast.List) and argv.elts and isinstance(argv.elts[0], ast.Constant) and argv.elts[0].value == "git"
         assert launched, f"a process launch that is not git: {ast.unparse(call)}"
-        readable = all(isinstance(e, ast.Constant) or ast.unparse(e) == "str(REPO)" for e in argv.elts)
-        assert readable, f"a git argv word this test cannot read: {ast.unparse(argv)}"
-        words = {e.value for e in argv.elts if isinstance(e, ast.Constant)}
+        literals = all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in argv.elts)
+        assert literals, f"a git argv word that is not a string literal: {ast.unparse(argv)}"
+        words = {e.value for e in argv.elts}
         assert words <= REGISTRY_GIT_ARGV, f"a git that may leave this repo: {sorted(words - REGISTRY_GIT_ARGV)}"
     defined = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
     assert {f.name for f in defined if not f.name.startswith("_")} == {"develop_resolves", "no_binary", "nothing_found"}
@@ -115,12 +117,13 @@ def test_the_registry_reads_nothing_a_form_could_not():
 ```
 
 `bound` maps each name an import binds to the module it came from, so the import check and the call
-check read one dict: a call may reach only a name an allowlisted import bound, or a builtin on a list
-of one. EVERY clause here resolves through `bound` rather than through a literal name, and that is the
-point of the dict: measured against the plan's own registry with one line changed, `import subprocess
-as sp` with `sp.run(["curl", ...])` and `from subprocess import run` with `run(["curl", ...])` both
-pass a launch clause keyed on the literal root `subprocess`. `ast.walk` rather than `tree.body` for the
-functions, and the `git` constraint on the launch, are the two clauses that refuse a registry carrying
+check read one dict: a call may reach only a name an allowlisted import bound, or a builtin on an
+allowlist that is empty. EVERY clause here resolves through `bound` rather than through a literal
+name, and that is the point of the dict: measured against the plan's own registry with one line
+changed, `import subprocess as sp` with `sp.run(["curl", ...])` and `from subprocess import run` with
+`run(["curl", ...])` both pass a launch clause keyed on the literal root `subprocess`. `ast.walk`
+rather than `tree.body` for the functions, and the `git` constraint on the launch, are the two clauses
+that refuse a registry carrying
 `if shutil.which("curl"): def venue_answers(): return subprocess.run(["curl", ...])` — which passes
 every other clause; walking every `FunctionDef` rather than only the public ones is what stops a
 private helper from carrying a loop, a retry or a probe the three public names may not.
@@ -129,20 +132,30 @@ Two clauses are allowlists where a blocklist is the obvious shape, each because 
 measured not to hold. `REGISTRY_BUILTINS` over `dir(builtins)` minus the four importing names: `return not
 globals()["__builtins__"]["__import__"]("socket").create_connection(...)` reaches the module through a
 dict key, so neither a roots check over `dir(builtins)` nor a `Name`-load check of those four ever
-sees it, and it passed every clause. `REGISTRY_GIT_ARGV` over `argv[0] == "git"`: `git -C <repo>
-ls-remote --exit-code origin refs/heads/develop` is the natural repair for the very failure
+sees it, and it passed every clause. `REGISTRY_GIT_ARGV` over `argv[0] == "git"`: `git ls-remote
+--exit-code origin refs/heads/develop` is the natural repair for the very failure
 `develop_resolves()`'s docstring names, and under a head-only clause it passes and the ten
 `tests/test_count_list.py` gates then skip whenever the remote is unreachable.
 
-`words` is built over the argv's LITERALS, so the element shape is pinned beside it: a word that is
-neither a literal nor the one `str(REPO)` this argv needs is dropped by that comprehension and judged
-by nothing at all. Five spellings reach a remote that way, each measured against the plan's own
-registry with one line changed and each passing the import, root, launch and one-return clauses: a
-splat of a module-level list (`*_REMOTE`, `_REMOTE = ["ls-remote", "origin"]`), a concatenation
-(`"ls-" + "remote"`), an f-string (`f"ls-remote"`), a bare name (`_VERB = "ls-remote"`), and a call
-whose root IS allowlisted (`str("ls-remote")`). The element clause refuses all five naming the argv;
-requiring every element to be a `Constant` would refuse the registry itself, whose `str(REPO)` is a
-call.
+The element clause runs FIRST and admits a literal and nothing else, so `words` is built over every
+element rather than over the `Constant` ones among them and no word is judged by nothing. Five
+spellings reached a remote while the element shape was unpinned, each measured against the plan's own
+registry with one line changed: a splat of a module-level list (`*_REMOTE`, `_REMOTE = ["ls-remote",
+"origin"]`), a concatenation (`"ls-" + "remote"`), an f-string (`f"ls-remote"`), a bare name (`_VERB =
+"ls-remote"`), and a call whose root was allowlisted (`str("ls-remote")`). The first FOUR pass every
+other clause and this one refuses them naming the argv; the fifth is a call, and with the builtin
+allowlist empty the roots clause now reaches it first (`the registry calls ['str']`, measured), which
+is why Step 6's fourth probe is written as an f-string.
+
+The clause can be literals-only because the launch names this checkout with `cwd=REPO` rather than
+with a `git -C str(REPO)` in the argv. An element clause that admitted that one word by its TEXT
+judged neither what `REPO` was bound to nor where in the argv the word sat, so a registry whose
+`REPO = "ls-remote"` and whose argv was `["git", str(REPO)]` passed every clause it then had --
+measured, and the reason the path moved to `cwd` rather than the clause growing a second arm. What no
+clause PINS is the shape of the launch's keywords -- though the roots clause judges any call written
+in one, `cwd=_venue_dir()` refused as a call the registry may not make (measured) -- so what `cwd` may
+name is a literal path or the `pathlib` expression `REPO` binds: a directory, the reading the path
+form already allows, and never a remote.
 
 - [ ] **Step 2: Run it and read WHICH failure fired**
 
@@ -171,7 +184,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 def develop_resolves() -> bool:
     """`develop` is a ref this checkout can resolve; a shallow CI clone may lack it."""
-    return subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", "develop"], capture_output=True).returncode == 0
+    return subprocess.run(["git", "rev-parse", "--verify", "--quiet", "develop"], cwd=REPO, capture_output=True).returncode == 0
 
 
 def no_binary(name: str) -> bool:
@@ -222,15 +235,17 @@ The same `ls-remote` written as something other than a literal, which is the cla
 allowlist cannot hold on its own — `words` never sees the word:
 
 ```bash
-infra/scripts/mutate-probe.sh --file tests/skip_gates.py --control 's/^def nothing_found/def nothing_seen/' --mutation 's/"rev-parse"/str("ls-remote")/' -- uv run pytest tests/test_live_venue_opt_in.py -k registry_reads_nothing -q
+infra/scripts/mutate-probe.sh --file tests/skip_gates.py --control 's/^def nothing_found/def nothing_seen/' --mutation 's/"rev-parse"/f"ls-remote"/' -- uv run pytest tests/test_live_venue_opt_in.py -k registry_reads_nothing -q
 ```
 
 Expected, each: `KILLED (control proven, tree restored byte-identically)` — the first mutation adds an
 import the allowlist refuses, the second adds none and is caught by the builtin allowlist alone, the
 third leaves a `git` whose argv the word allowlist refuses, and the fourth a `git` whose `ls-remote`
-is no literal, which only the element clause sees; the control renames a public function, which the
-name assertion catches. `"rev-parse"` appears once in the registry, so the third and fourth mutations'
-`sed`s each match one line. Then `git commit --amend` adding one paragraph: `Proven with infra/scripts/mutate-probe.sh on tests/skip_gates.py: the mutations import socket, reach it through __import__, turn the local rev-parse into an ls-remote and then into a str("ls-remote") the word allowlist cannot see, the control renames a public function, the probe is -k registry_reads_nothing — KILLED (control proven) four times.`
+is an f-string rather than a literal, which only the element clause sees -- an f-string and not a
+`str("ls-remote")` because the builtin allowlist is empty, so a CALL in the argv is refused by the
+roots clause too and the probe would no longer be about the element clause; the control renames a
+public function, which the name assertion catches. `"rev-parse"` appears once in the registry, so the
+third and fourth mutations' `sed`s each match one line. Then `git commit --amend` adding one paragraph: `Proven with infra/scripts/mutate-probe.sh on tests/skip_gates.py: the mutations import socket, reach it through __import__, turn the local rev-parse into an ls-remote and then into an f"ls-remote" the word allowlist cannot see, the control renames a public function, the probe is -k registry_reads_nothing — KILLED (control proven) four times.`
 
 ---
 
@@ -815,7 +830,7 @@ _REFUSAL_REMEDY = (
 
 
 def _assignments(name: str, module: Module) -> list[ast.AST]:
-    """Every node that binds `name` anywhere in the module, so a plain constant is one that is bound once."""
+    """Every `Store` of `name` anywhere in the module, so a plain constant is one that is bound once."""
     return [n for n in ast.walk(module.tree) if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store)]
 
 
@@ -862,10 +877,9 @@ def _is_environ(node: ast.AST, module: Module) -> bool:
 def _env_read_key(node: ast.AST, module: Module) -> ast.AST | None:
     """The key of `os.environ.get(K)`, `os.getenv(K)`, `environ.get(K)`, `getenv(K)` or `os.environ[K]`
     -- of a read with NO default, positional or keyword: the key is `args[0]` and a default is read by
-    nothing, so `os.environ.get(K, _venue_up())` would be a venue call written inside the one form
-    whose reading this matcher declares fixed. The two other forms that name their reading pin their
-    own arity: `shutil.which`'s arm takes one argument, and `os.geteuid` takes none -- an argument
-    there is a run-time `TypeError`, so it cannot ship."""
+    nothing, so `os.environ.get(K, _venue_up())` would be a venue call written inside a form whose
+    reading this matcher declares fixed -- the whole-call pinning `_match` requires of every arm that
+    judges a call at the gate."""
     if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in _ENV_READS:
@@ -884,11 +898,12 @@ def _bound_to_module(module: Module, dotted: str) -> frozenset[str]:
     suite's idiom for a `tests/` helper. `_imported` keys on the bound name and maps the `from`
     spelling to the PACKAGE, so a receiver that names a module is resolved here instead: a plain
     `import tests.skip_gates` binds `tests`, which is the package and not the registry, and yields
-    nothing. An import that ANY assignment in the module rebinds yields nothing either, at any scope --
+    nothing. An import any `Store` of that name rebinds yields nothing either, at any scope --
     nothing here tracks scopes, so a local of that name in an unrelated function is enough: the
     once-bound discipline `_plain_literal` applies to a key, applied to a module over the same
-    whole-tree walk. A rebound name falls to `no form matches`, whose remedy prints the spelling the
-    author already wrote."""
+    whole-tree walk. A `Store` is what `_assignments` collects, so a `def`, a `class` or a second
+    `import ... as` of the receiver is a rebinding this does not see. A rebound name falls to `no form
+    matches`, whose remedy prints the spelling the author already wrote."""
     package, _, leaf = dotted.rpartition(".")
     bound: set[str] = set()
     for node in ast.walk(module.tree):
@@ -918,9 +933,14 @@ def _path_receiver(node: ast.Call, module: Module) -> str | None:
 
 
 def _registry_call(node: ast.Call, module: Module) -> bool:
+    """Whether this call reaches `tests/skip_gates.py` (spec 00114 D3): a name imported from it, or an
+    attribute on a name bound to the module. BOTH spellings require the name to be that import's
+    alone, so a module-level `no_binary = lambda n: venue_up()` under the registry's own import is a
+    rebinding and not a declaration. The dict lookup stays in front of `_assignments`, which walks the
+    whole module: only a name the import bound pays for that walk."""
     func = node.func
     if isinstance(func, ast.Name):
-        return module.imported.get(func.id) == REGISTRY_MODULE
+        return module.imported.get(func.id) == REGISTRY_MODULE and not _assignments(func.id, module)
     return isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in _bound_to_module(module, REGISTRY_MODULE)
 
 
@@ -932,7 +952,13 @@ def _opt_in(key_node: ast.AST, module: Module) -> list[Form] | str:
 
 
 def _match(guard: ast.AST, module: Module) -> list[Form] | str:
-    """The forms this guard is made of, or why it is refused (spec 00114 D1-D3)."""
+    """The forms this guard is made of, or why it is refused (spec 00114 D1-D3).
+
+    No arm below matches a CALL whose shape it has not pinned -- the positional count exact,
+    `keywords` empty, a splat resolving to nothing a form can read -- because a form declares what it
+    reads and an argument nothing judges is where a venue read sits: `shutil.which('bash',
+    path=_nas_bin())` reads a mount and not PATH. The registry arm is the one exception, by design: its argument is the claim the call
+    site makes, which no shape of it can check (spec 00114 D3)."""
     node = guard
     while isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         node = node.operand
@@ -953,11 +979,11 @@ def _match(guard: ast.AST, module: Module) -> list[Form] | str:
         return [Form("registry")]
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
         left, op, right = node.left, node.ops[0], node.comparators[0]
-        if isinstance(op, ast.Eq) and isinstance(left, ast.Call) and ast.unparse(left.func) in {f"{n}.geteuid" for n in module.os_names}:
+        if isinstance(op, ast.Eq) and isinstance(left, ast.Call) and not left.args and not left.keywords and ast.unparse(left.func) in {f"{n}.geteuid" for n in module.os_names}:
             if isinstance(right, ast.Constant) and right.value == 0:
                 return [Form("uid")]
         if isinstance(op, ast.Is) and isinstance(right, ast.Constant) and right.value is None and isinstance(left, ast.Call):
-            if ast.unparse(left.func) == "shutil.which" and len(left.args) == 1 and isinstance(left.args[0], ast.Constant):
+            if ast.unparse(left.func) == "shutil.which" and len(left.args) == 1 and isinstance(left.args[0], ast.Constant) and not left.keywords:
                 return [Form("binary")]
         if isinstance(op, (ast.Eq, ast.NotEq)) and isinstance(right, ast.Constant) and isinstance(right.value, str):
             key_node = _env_read_key(left, module)
@@ -975,6 +1001,17 @@ def _match(guard: ast.AST, module: Module) -> list[Form] | str:
             return [Form("membership")]
     return f"no form matches {ast.unparse(guard)!r}"
 ```
+
+FIVE arms judge a call, and each pins its own shape beside its own callee rather than through a shared
+resolver: the presence method takes nothing at all, `os.geteuid` nothing, `shutil.which` one
+positional literal, the environment read one positional key and no keyword (`_env_read_key`), and the
+registry call whatever the call site declares -- the one arm whose arguments are free, because D3
+makes a registry call's argument a claim rather than a reading. A `len(args)` count alone leaves two
+slots open, both measured on these fences: `shutil.which("bash", path=_venue_bin()) is None` matched
+`binary` and `os.geteuid(*_venue_up()) == 0` matched `uid`, while `os.geteuid(1)` is a run-time
+`TypeError` and a second POSITIONAL `which` argument was refused already -- so the keyword slot and
+the splat are what `not left.keywords` and `not left.args` close, and `shutil.which`'s real signature
+(`(cmd, mode=1, path=None)`) is why the keyword slot is the one that matters.
 
 Rewrite `_gate` and the two calls to it in `_gates`:
 
