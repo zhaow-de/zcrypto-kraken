@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: "the next guidance branch — one whose diff touches `CLAUDE.md`, where these five clauses are edited in the pass that is already open"
+status: resolved
 ---
 
 # Guidance clauses the skip-gate matcher falsifies
@@ -33,9 +32,6 @@ A session that follows the clause writes the gate, meets a red `infra/scripts/co
   - "its docstring lists the five binding shapes and two `unittest` forms that pass it uncaught and unrefused" — spec 00114 D2 refuses the five binding shapes and D6 makes the two `unittest` forms gates the walker finds, so the docstring sections that listed them were deleted with the holes they described.
 - What the entries can truthfully say instead is in the tree already: the six forms and the refusal are stated in the comment above `c_skip_gate_contract` in `infra/scripts/count-list.sh`, and the remedy a refusal prints is `_REFUSAL_REMEDY` in the guard.
 
-## Suggested next steps
+## Resolution
 
-- On a `claude(...)` commit of a guidance branch, rewrite the one-name entry's parenthetical so it names what the guard does: one opt-in name over the gates it finds; every guard one of six forms — a path presence check on a literal-rooted receiver, a uid test, a `shutil.which`, a read of the one opt-in, a membership test, or a call into `tests/skip_gates.py` — and every other shape refused with the remedy. Drop the three reducer clauses; the replacement is about the same length, so the `guidance-guard` growth reason is the correction itself.
-- Rewrite the reachability entry's parenthetical to carry the count `infra/scripts/count-list.sh skip-gate-contract` and the one reading left unjudged — a registry call's argument, T0206 — in place of "nothing asserts it" and the static-analyser sentence.
-- Read both entries back against the tree before committing: `sed -n '32,33p' CLAUDE.md` beside `uv run pytest tests/test_live_venue_opt_in.py -q` and the comment above `c_skip_gate_contract`, so the three surfaces say one thing.
-- Resolve this topic in that PR; it waits on nothing else.
+Refine round 13, on `claude/ledger-pre-read-by-tip`: `ebae58c02` rewrote both `CLAUDE.md` entries — the one-name entry names the six forms `tests/test_live_venue_opt_in.py` matches and the refusal it prints, the reachability entry carries the count `infra/scripts/count-list.sh skip-gate-contract` and the reason the count holds it, no form reaching a venue — and `8bbe0edbf`'s condensation left what the guard does not hold to the guard's docstring, which names T0206 and T0207, rather than repeating them in the entry. The five false clauses are gone; `sed -n '33,34p' CLAUDE.md`, the guard's docstring and the comment above `c_skip_gate_contract` say one thing.
