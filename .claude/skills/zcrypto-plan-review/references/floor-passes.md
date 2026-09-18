@@ -1,4 +1,4 @@
-# Floor passes — rendered once the union carries no Critical and no Important
+# Floor passes — each section is rendered where `SKILL.md`'s procedure names it
 
 Each section below is one prompt. `{SPEC_PINNED}` is the same clause `fixer.md` renders.
 
@@ -27,7 +27,7 @@ The semantic reviews are done and their findings fixed. **Do not review what the
 For every task, in order, in {EXEC_WT}:
 
 1. Apply what the task says to write — create and modify the files with the fenced content, verbatim.
-1. Run every `Run:` line and compare its output to the task's `Expected:` — the failure text, not the exit code.
+1. Run every `Run:` line and compare its output to the task's `Expected:` — the failure text, not the exit code. A measurement — a formatter shift, a coordinate — is taken from {EXEC_WT}'s root with every file an earlier task created present; a scratch root or a missing file measures a different plan.
 1. Run the **whole** test file the task touches, not only its `-k` selection — an arity change or a missing default breaks a neighbour the selection hides — and `uv run pytest --collect-only -q` for every stated count.
 1. Apply every mutation probe the task specifies and read **which** failure fired: a KILLED whose assertion text names a different reason is a control that bit for the wrong reason. Occurrence-count every `sed` pattern.
 1. Render every template through **every** publishing path the tree has, not the one the plan names.

@@ -75,6 +75,6 @@ Measurement bugs produce plausible numbers — *artifacts asserting untruths*. S
 
 ## Notes
 
-- Orchestrates: `superpowers:brainstorming`, `superpowers:writing-plans`, `zcrypto-plan-review`, `superpowers:subagent-driven-development`, `superpowers:systematic-debugging`, the `pre-read` / `review` / `re-review` workflows, `open-pr`, `merge-pr`, and `/zcrypto-grooming` (ad-hoc procedures only). All of `CLAUDE.md` and `.claude/rules/fleet-deploys.md` holds, and this skill carries the open-and-merge licence: the loop opens and merges its own PRs at item completion, never for a component it cannot complete. Unattended mode changes *who approves* — not *what gets produced*.
+- Orchestrates: `superpowers:brainstorming`, `superpowers:writing-plans`, `zcrypto-plan-review`, `superpowers:subagent-driven-development` (its task loop; the branch read is the trio, per `zcrypto-plan-review`'s Exit), `superpowers:systematic-debugging`, the `pre-review` / `review` / `re-review` workflows, `open-pr`, `merge-pr`, and `/zcrypto-grooming` (ad-hoc procedures only). All of `CLAUDE.md` and `.claude/rules/fleet-deploys.md` holds, and this skill carries the open-and-merge licence: the loop opens and merges its own PRs at item completion, never for a component it cannot complete. Unattended mode changes *who approves* — not *what gets produced*.
 - War stories behind these rules: `references/case-log.md` — read it when a rule's rationale matters to a live call.
 - Older docs and specs call this loop `research-loop`; the names are the same thing.

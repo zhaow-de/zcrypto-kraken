@@ -1,9 +1,9 @@
 export const meta = {
-  name: 'pre-read',
+  name: 'pre-review',
   description: 'The author’s prose and message claims graded by a different agent before any review',
   whenToUse: 'Before every review or re-review of a range — over the fix range after the first review, never the whole branch again: one agent grades the range’s prose, re-runs the commands and probes its messages quote, and checks each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?}',
   phases: [
-    { title: 'Pre-read', detail: 'one read-only grader over the range’s prose and message claims' },
+    { title: 'Pre-review', detail: 'one read-only grader over the range’s prose and message claims' },
     { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
   ],
 }
@@ -18,7 +18,7 @@ const SCOPE = `Re-run a probe only through the case its message records (a \`-k\
 const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
 const CHECKOUT = worktree
   ? `Run every git command with \`-C ${repo}\`. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there — you are its only user — and never create, remove or check out a worktree.`
-  : `Run every git command with \`-C ${repo}\` and read files at the tip with \`git -C ${repo} show ${tip}:<path>\`. Create a detached worktree only when a probe or a drive must execute the range's code — \`git -C ${repo} worktree add --detach ${repo}/.tmp/reads/pre-read-<tip7> ${tip}\`, removed before you return — and never for reading: a worktree costs a venv sync, and a docs range needs none.`
+  : `Run every git command with \`-C ${repo}\` and read files at the tip with \`git -C ${repo} show ${tip}:<path>\`. Create a detached worktree only when a probe or a drive must execute the range's code — \`git -C ${repo} worktree add --detach ${repo}/.tmp/reads/pre-review-<tip7> ${tip}\`, removed before you return — and never for reading: a worktree costs a venv sync, and a docs range needs none.`
 
 // --- schema ------------------------------------------------------------------------------------
 const PROSE = {
@@ -77,7 +77,7 @@ const REPORT = {
 }
 
 // --- the grader --------------------------------------------------------------------------------
-const prompt = `You are the pre-reader of \`git log ${range}\` at tip \`${tip}\` in ${repo}, a different agent from the author, run before any review. ${RULES} ${CHECKOUT} ${SCOPE} Grading: ${GRADING}
+const prompt = `You are the pre-reviewer of \`git log ${range}\` at tip \`${tip}\` in ${repo}, a different agent from the author, run before any review. ${RULES} ${CHECKOUT} ${SCOPE} Grading: ${GRADING}
 
 Four things, each against the tree at the tip, none on trust:
 
@@ -85,7 +85,7 @@ Four things, each against the tree at the tip, none on trust:
 
 The first question is asked of every PARAGRAPH of every site the range touches, whatever its length — the eight-line bar below decides only which standing paragraphs are LISTED — and it is asked BEFORE the second: a paragraph a reader would not act on is cut without its claims being checked, because correcting a sentence that should not exist is the accretion this grader exists to stop. A site longer than eight lines as a reader sees it, source or rendered, is graded paragraph by paragraph, each owing its own answer, and a paragraph with none is cut whatever the truth of its sentences — a long block of true sentences is the shape that passes a site-level read and fails its reader. Four shapes fail that question on sight, and each is a row: (a) a paragraph that enumerates what a table, a constant, a case list or a function's branches below it already spell out — the code is the list and the prose a copy that goes stale; what may stay is the external fact the code encodes but cannot say, such as why two branches differ or a tool's own asymmetry; (b) a specimen — a literal path, id, count, date or string that came from a measurement over the tree or its history — is an event: cut it and name the commit message as its home; (c) a sentence stating a behaviour a test drives duplicates that test, which is exhaustive and executable where the prose is a sample; (d) a rule restated from the negative side after the positive side gave it ("not X" beside "only Y"). None of the four is cut on sight where a rule names that prose as owed — a guard whose header or docstring \`CLAUDE.md\` requires to state what it refuses is graded on its reader like any other site. A site the range has already rewritten once (\`git log -p ${range} -- <path>\` shows the same paragraph changed in an earlier commit of the range), and that no rule names as owed, is graded cut unless you can ship it correct in one line: a sentence rewritten once and up for rewriting again is the signal that the code or a test states it better.
 
-Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` when the length stands and a claim in it does not — with the text to ship, verbatim, and never longer than what stands: a fix that lengthens a site is a \`cut\` you have not found yet; and a \`keep\` row for every paragraph of a site longer than eight lines that stands — a \`keep\` whose \`ship\` names no reason a reader would act on is not a keep, and the run reports it as a row you owe. A shorter site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
+Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` when the length stands and a claim in it does not — with the text to ship, verbatim — the WHOLE site as it should read, never a fragment with the rest declared unchanged, because the author replaces the site with it — and never longer than what stands: a fix that lengthens a site is a \`cut\` you have not found yet; and a \`keep\` row for every paragraph of a site longer than eight lines that stands — a \`keep\` whose \`ship\` names no reason a reader would act on is not a keep, and the run reports it as a row you owe. A shorter site that stands as written is counted in \`graded\` and not listed, so the report is the exceptions and \`graded\` is the census.
 
 2. CLAIMS. Every claim a commit message in the range makes that a command can check — a number, a count, a grep verdict, a citation, a "none left" — re-run with the command the message quotes (or the obvious one when it quotes none) and compared. A claim that does not reproduce is disposition does-not-reproduce with what the command printed.
 
@@ -93,11 +93,13 @@ Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` wh
 
 4. CLASS WALK. For each defect a commit says it fixed, state in one sentence the invariant the fix restores, then walk its class BOTH ways and list every member the fix left. TEXT: the defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition. SPACE: the categories the fixed code's input or state ranges over, each judged against the invariant — only categories this repo produces, driven where you can drive them, named rather than guessed where you cannot. A class walked one way is half walked. Each fix also names, in its \`fix\` sentence, what it DELETED from the sites it touched — a fix over a site this range already rewrote that deletes nothing is the fourth-round shape, and is reported as one.
 
-Write a Markdown report to ${reportDir}/pre-read.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
+EARLIER PRE-REVIEWS of this branch are the ${reportDir}/pre-review-*.md files (none on a first read). A site one of them SHIPPED — a row graded trim, cut or fix whose shipped text the range now carries — is graded keep and not re-graded: the grader does not re-grade its own dispositions, and a site graded keep by an earlier pre-review is re-graded only where the range changed it. The one exception is a shipped text that is WRONG, which is a fix like any other, with the earlier report named.
 
-phase('Pre-read')
-const report = await agent(prompt, { label: 'pre-read', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
-if (!report) throw new Error('the pre-reader returned nothing')
+Write a Markdown report to ${reportDir}/pre-review-${tip}.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
+
+phase('Pre-review')
+const report = await agent(prompt, { label: 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
+if (!report) throw new Error('the pre-reviewer returned nothing')
 const n = (list, pred) => list.filter(pred).length
 // A reason is judged by what is left of it: the words a placeholder is made of, and the words any sentence
 // carries, say nothing on their own, so a ship built only from those is a count wearing a sentence's clothes.
@@ -116,8 +118,8 @@ const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }
 // --- Record -------------------------------------------------------------------------------------
 phase('Record')
 const recorded = await agent(
-  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-read","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
   { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
 )
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this pre-read — the next read refuses ${tip} until it carries {"kind":"pre-read","tip":"${tip}"}; append it by hand`)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this pre-review — the next read refuses ${tip} until it carries {"kind":"pre-review","tip":"${tip}"}; append it by hand`)
 return { ...report, recorded: Boolean(recorded && recorded.appended) }

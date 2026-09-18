@@ -17,7 +17,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0205 — The primary's clean-close reconnect rate is charted and never alerted](T0205-primary-reconnect-rate-unalerted.md) — ripe when: 2026-10-01 — a second fortnight of reconnects on the board to set the bar against, read as `uv run python infra/scripts/grafana-query.py 'sum by (host) (increase(zcrypto_capture_reconnects_total[13d]))'`
 - [T0206 — The registry's arguments declare an unchecked provenance](T0206-registry-arguments-declare-an-unchecked-provenance.md) — ripe when: the next branch that adds a `nothing_found(...)` gate — the guard's own walk counts 13 of them at this registration, and the branch writing the fourteenth is already holding the claim this topic would have the helper check
 - [T0207 — Gate discovery beyond the fixture's positions](T0207-gate-discovery-beyond-the-fixtures-positions.md) — ripe when: the next branch that adds a skip in a position `_FIXTURE` does not already carry, or the next change to `_gates` in `tests/test_live_venue_opt_in.py` — either is a session already reading the walker
-- [T0208 — Guidance clauses the skip-gate matcher falsifies](T0208-guidance-clauses-the-skip-gate-matcher-falsifies.md) — ripe when: the next guidance branch — one whose diff touches `CLAUDE.md`, where these five clauses are edited in the pass that is already open
+- [T0209 — The branch pre-review fans out per task range](T0209-the-branch-pre-review-fans-out-per-task-range.md) — ripe when: the next spec and plan pair with four or more tasks reaches its hand-off to subagent-driven development at the Exit of `zcrypto-plan-review` — an activity the session at that Exit reads; the trigger is the branch it is about to execute, not a repo path
 
 ## Partially done
 
@@ -216,3 +216,4 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0196 — Two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](archive/T0196-cost-stress-alone-test-name-does-not-isolate.md)
 - [T0197 — The OI level-column null-density guard is unscoped, unlike its sibling zero-population guard](archive/T0197-oi-null-density-guard-is-unscoped-against-forward-refresh.md)
 - [T0198 — Gate cache reverification slice is clock keyed](archive/T0198-gate-cache-reverification-slice-is-clock-keyed.md)
+- [T0208 — Guidance clauses the skip-gate matcher falsifies](archive/T0208-guidance-clauses-the-skip-gate-matcher-falsifies.md)

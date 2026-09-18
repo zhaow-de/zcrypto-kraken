@@ -94,7 +94,7 @@ EOF
 
 If pre-commit reformats during the commit, re-stage and re-commit (NEVER `--no-verify`).
 
-A branch that carries a 2c fix commit is read before the push by a different agent from the author — the `pre-read` workflow over the fix range's prose and message claims, then `review` over the range, since a fix that has had no read yet owes the wide one and `re-review` reads only a range a read already asked to fix — and the read is edited into the PR body as `Read before push by: <model> at <sha>` (`open-pr`'s Body item 3 is the line's contract): §2d's `gh pr merge --squash` bypasses `infra/scripts/merge-gate.py`, so that line is the read's only record. A PR with no fix commit needs no read.
+A branch that carries a 2c fix commit is read before the push by a different agent from the author — the `pre-review` workflow over the fix range's prose and message claims, then `review` over the range, since a fix that has had no read yet owes the wide one and `re-review` reads only a range a read already asked to fix — and the read is edited into the PR body as `Read before push by: <model> at <sha>` (`open-pr`'s Body item 3 is the line's contract): §2d's `gh pr merge --squash` bypasses `infra/scripts/merge-gate.py`, so that line is the read's only record. A PR with no fix commit needs no read.
 
 #### 2d. Push + wait for CI + merge
 

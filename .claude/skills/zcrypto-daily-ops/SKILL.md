@@ -66,7 +66,7 @@ Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the
 - **a date** — compare with today, unless the trigger's own text says the date is a handle for a check this
   pass cannot run: `T0150` names the oldest `cycle-<HH>.json` on the engine host as its test, so it is named
   unevaluated.
-- **another topic's resolution** — run the check the trigger carries.
+- **another topic's resolution** — run the check the trigger carries, against the topic's own definitions: a change-index cell is a parse of a PR body, not the spec listing — open the topic and the spec listing before reading a cell or a word match as fired.
 - **an alert** — the report already says whether it fired; a trigger naming one is answered by the section you have just read.
 - **a file being touched** — `git -C <main checkout> log --name-only --since=<the last journal entry's date> --format= develop`
   against the paths the trigger names in backticks. Report it only when one of them is in that list: a
