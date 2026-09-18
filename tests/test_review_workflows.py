@@ -104,7 +104,7 @@ def test_every_workflow_records_itself_once_it_has_read_and_the_ledger_gates_the
         assert gate < ledger < text.index(f"\nphase('{phase}')"), (
             f"{name}: the Ledger phase gates the read, both before the first read phase"
         )
-    before_the_grader = texts["pre-review"][: texts["pre-review"].index("phase('Pre-read')")]
+    before_the_grader = texts["pre-review"][: texts["pre-review"].index("phase('Pre-review')")]
     assert "ledger" not in before_the_grader and before_the_grader.count("throw") == 1, (
         "pre-review is the first read: it reads no ledger and refuses nothing but its arguments"
     )
