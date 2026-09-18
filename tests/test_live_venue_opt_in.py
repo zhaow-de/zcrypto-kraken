@@ -318,19 +318,14 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
     """`None` when this expression is LITERAL-ROOTED, else the OPERAND that is not (spec 00114 D2).
 
     ONE predicate, applied to every operand of an expression exactly as it is applied to the
-    expression: a literal, `__file__` while nothing rebinds it, a name this module imported from
-    `pathlib` and binds nowhere else, or a name bound exactly once -- in the gate's own function,
-    else at the module's top level, and by a plain assignment -- to another expression it accepts.
-    An attribute, a subscript, a `/` join and a call are accepted only when every operand under them
-    is, so a call's callee AND its arguments are judged, which refuses every call but a `pathlib`
-    chain over operands this accepts and refuses an environment read anywhere inside as the import
-    `os` or `environ` is. That is `_plain_literal`'s discipline given to a receiver instead of a
-    key: it is what stops `marker = _venue_reads()` one line above the gate from reading as the
-    local it is written as, and what stops `ROOT / _venue_name()` written at the gate, or bound a
-    line above it, from reading as a path. There is no operand it passes over, which is the whole of
-    it: a rule that rooted the chain alone made hoisting the call into a binding the working repair
-    for its own refusal. Every refusal names what it saw, so the message says WHICH operand; `seen`
-    refuses a name bound through itself rather than following it round.
+    expression, so a call's callee AND its arguments are judged. That is `_plain_literal`'s
+    discipline given to a receiver instead of a key: it is what stops `marker = _venue_reads()` one
+    line above the gate from reading as the local it is written as, and what stops
+    `ROOT / _venue_name()` written at the gate, or bound a line above it, from reading as a path.
+    There is no operand it passes over, which is the whole of it: a rule that rooted the chain alone
+    made hoisting the call into a binding the working repair for its own refusal. Every refusal
+    names what it saw, so the message says WHICH operand; `seen` refuses a name bound through itself
+    rather than following it round.
     """
     if isinstance(node, ast.Constant):
         return None
@@ -346,7 +341,7 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
     if not isinstance(node, ast.Name):
         return f"{ast.unparse(node)}, which is not an operand this predicate reads"
     if node.id == "__file__":
-        return None if not _bindings("__file__", module.tree) else f"__file__, rebound in {module.label}"
+        return None if not _bindings("__file__", module.tree) else f"__file__, rebound or taken over in {module.label}"
     if module.imported.get(node.id, "").split(".")[0] == "pathlib":
         bound = set(_bindings(node.id, module.tree))
         if len(bound) == 1:
@@ -362,7 +357,7 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
     if not found:
         return f"{node.id}, which no assignment in {module.label} binds"
     if len(found) > 1:
-        return f"{node.id}, bound {len(found)} times in {where}"
+        return f"{node.id}, rebound or taken over in {where}"
     if isinstance(found[0], str):
         return f"{node.id}, {found[0]} of {where}"
     return _rooted(found[0], module, function, seen | {node.id})
@@ -1465,8 +1460,7 @@ _MODULE_FORMS = {
 
 def test_a_form_whose_module_is_rebound_or_taken_over_is_refused():
     """A name is the stdlib module only while its import is the name's one binding -- the discipline
-    `_registry_call` holds for the sixth form, given here to the `binary`, `uid`, `opt-in` and `path`
-    arms; two imports of the one module are the one binding."""
+    `_registry_call` holds for the sixth form, given to each form `_MODULE_FORMS` names."""
     for label, (source, takeover) in _MODULE_FORMS.items():
         (clean,) = _gates(source)
         assert clean.opaque == () and [f.name for f in clean.forms] == [label.split(" ")[0]], f"{label}: {clean}"
