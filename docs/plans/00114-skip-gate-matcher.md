@@ -121,7 +121,8 @@ def test_the_registry_reads_nothing_a_form_could_not():
         words = {e.value for e in argv.elts}
         assert words <= REGISTRY_GIT_ARGV, f"a git that may leave this repo: {sorted(words - REGISTRY_GIT_ARGV)}"
     defined = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    assert {f.name for f in defined if not f.name.startswith("_")} == {"develop_resolves", "no_binary", "nothing_found"}
+    public = {f.name for f in defined if not f.name.startswith("_")}
+    assert public == {"develop_resolves", "no_binary", "nothing_found"}, f"the registry's public functions are {sorted(public)}"
     for f in defined:
         body = [s for s in f.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
         assert len(body) == 1 and isinstance(body[0], ast.Return), f"{f.name} is more than one return"
@@ -305,14 +306,20 @@ are entries of `tests/test_data_gated_run.py`'s `_OWN_GATE_REASONS`, the corpus
 rewritten reason would leave two of its entries naming no gate and no step here could notice.
 
 Every coordinate in the table below and in Step 4's and Step 5's is PRE-IMPORT — the line as the file holds it before
-that step's own `from tests.skip_gates import ...` lands. Measured, with the import written straight under
-`import pytest` and `uv run ruff check --select I --fix` run: each of the twelve files in those three tables that takes
-such an import moves its gate lines by exactly ONE, because `ruff.toml` names no first-party package and no `src`, so
-`tests.skip_gates` sorts into the third-party block after `pytest` and no block is opened for it. Rewrite the `if`
-lines FIRST and add the import after and no coordinate ever needs that offset; what moves further is a file an EARLIER
-step has already grown, of which Step 5's `tests/test_tape_bars_rest_control.py` row is the one case and is marked
-there. Three of `tests/test_infra_archive_pull_template.py`'s four rows are the identical text `if bash is None:`, so
-the coordinate is the only thing telling them apart.
+that step's own `from tests.skip_gates import ...` lands. Measured with `tests/skip_gates.py` ON DISK, as Task 1
+leaves it — the import written straight under `import pytest` and `uv run ruff check --select I --fix` run per file:
+ruff's isort resolves `tests` under its default `src` (the project root), so `tests.skip_gates` sorts into the
+FIRST-PARTY block beside `cli.*` and NOT into the third-party block after `pytest`. A file that already carries a
+first-party block grows by ONE line; a file that carries none grows by TWO, because ruff opens the block. Thirteen
+files take such an import — the twelve in the three tables here and `tests/test_count_list.py` at Step 2 — and ten of
+them move by one. The three that move by TWO are `tests/test_count_list.py`,
+`tests/test_infra_archive_pull_template.py` and `tests/test_universe_provenance.py`, the three with no first-party
+block of their own. An earlier measurement read +1 for all of them because it was taken before Task 1 created the
+registry file, and an unresolvable `tests.skip_gates` is third-party. Rewrite the `if` lines FIRST and add the import
+after and no coordinate ever needs that offset; what moves further is a file an EARLIER step has already grown, of
+which Step 5's `tests/test_tape_bars_rest_control.py` row is the one case and is marked there. Three of
+`tests/test_infra_archive_pull_template.py`'s four rows are the identical text `if bash is None:`, so the coordinate
+is the only thing telling them apart.
 
 The ARGUMENT is the binary, never the local's name — the seven `if` lines and what each takes, because at one of them
 the two differ:
@@ -327,7 +334,10 @@ the two differ:
 | `tests/test_infra_tape_bars_template.py:102` | `sed` | `no_binary("sed")` |
 | `tests/test_infra_verify_replay_template.py:338` | `bash` | `no_binary("bash")` |
 
-`no_binary("found")` would skip unconditionally on every host, which no run of Step 6 prints a line for.
+`no_binary("found")` would skip unconditionally on every host, which ADDS an `-rs` line Step 6's comparison refuses.
+Measured: planting it gives `3 passed, 3 skipped` and one summary line,
+`SKIPPED [3] tests/test_infra_tape_bars_template.py:47: bash not available`, where the Step 1 baseline for that file
+reads `6 passed` with no summary line at all.
 
 - [ ] **Step 4: Migrate the five collection gates — four declare, the fifth splits**
 
@@ -354,8 +364,8 @@ Beside `PAIR_KEY`, the reach the split turns on:
 ```python
 # Kraken's REST answer is 720 candles, and `now - <that window>` is at most (today - 7) 12:00 at 15m
 # whatever hour a run starts at -- so every one of the last REST_REACH_DAYS whole days is wholly inside
-# a full-length window. The bound is read off the CALENDAR and never off `stamps`, which is why an
-# empty `covered` below is a statement about Kraken's answer rather than about the archive, and it is
+# a full-length window. The bound is read off the CALENDAR and never off `stamps`, which is why the
+# window check below is a statement about Kraken's answer rather than about the archive, and it is
 # computed from the interval this file already imports so a change to it cannot leave the 6 behind.
 REST_REACH_DAYS = 720 * BASE_INTERVAL_MINUTES // (60 * 24) - 1
 ```
@@ -365,8 +375,8 @@ the venue is touched:
 
 ```python
     recent = [d for d in archived if d >= datetime.now(UTC).date() - timedelta(days=REST_REACH_DAYS)]
-    healed = [d for d in recent if is_heal_complete(index, PAIR, d)]
-    if nothing_found(healed):
+    day = next((d for d in reversed(recent) if is_heal_complete(index, PAIR, d)), None)
+    if nothing_found([day] if day is not None else []):
         pytest.skip(f"no heal-complete {PAIR} day in the last {REST_REACH_DAYS} days under {PRIMARY_ROOT}")
 ```
 
@@ -374,48 +384,69 @@ That expression is 6 at today's `BASE_INTERVAL_MINUTES` of 15 — 720 x 15m is 7
 floor less one is the number of days a window of that length covers end to end whatever hour it starts
 at — and it is a floor, so a shorter interval narrows the scan rather than over-claiming the reach.
 
-`recent`, not `archived`: `is_heal_complete` is not an index read but `pl.read_parquet` over each of the day's hourly
-segments plus a neighbour each side, fed to `detect` (`cli/tick/materialize.py:112`), which raises `TradeBackfillError`
-on a null `trade_id` (`cli/trades/gaps.py:51`). Unbounded it would read the whole archive — 72 BTC/EUR days on this
+`next(... reversed(recent) ...)` and NOT a comprehension over `recent`, because the READ SET may not grow.
+`is_heal_complete` is not an index read but `pl.read_parquet` over each of the day's hourly segments plus a neighbour
+each side, fed to `detect` (`cli/tick/materialize.py:112`), which RAISES `TradeBackfillError` on a null `trade_id`
+(`cli/trades/gaps.py:50-51`) — so every day it is called on is a day this test can die in, and reading a day the gate
+it replaces never opened is a new way for this test to end, which neither of the Global Constraints' two named
+exceptions covers. The shipped gate is
+`next((d for d in reversed(covered) if is_heal_complete(index, PAIR, d)), None)`, which SHORT-CIRCUITS at the newest
+heal-complete day; the line above keeps that, newest-first over `recent` rather than over `covered` because `covered`
+is filtered by the venue's answer. The two read sets on this workstation on 2026-09-18: the shipped gate starts at the
+newest day of `covered`, which under a full-length window is 2026-09-17 — today's day-end is in the future, so today
+is never in `covered` — and `is_heal_complete` answers True there (measured), so it opens that one day and stops. The
+line above calls `is_heal_complete` on 2026-09-18 and then 2026-09-17 and opens the same one day, because the live
+edge returns False before any parquet is read (`cli/tick/materialize.py:108-110`, `if not after: return False`) — so
+today costs a dict lookup and not a read, and no day the shipped gate never opened is opened here. An eager
+`healed = [d for d in recent if ...]` would call it on all seven days of `recent` and open six of them (measured), so
+a null `trade_id` in any of those six — days the shipped gate never touches — would ERROR this test out on every
+opted-in run until that day aged past the bound.
+
+`recent`, not `archived`: the short-circuit bounds the scan only when a heal-complete day is FOUND. When none is, the
+scan runs to the end of whatever it iterates, so unbounded it would read the whole archive — 73 BTC/EUR days on this
 workstation and one more every day — before the test touches Kraken, and fail on a defect in a day the REST window can
 never reach; the production sweep bounds the same loop for the same reason (`cli/tick/materialize.py:191`, "Bounded
-candidate range"). Measured on this workstation's archive: 72 days take 5.0s and the last 6 take 0.3s, and `healed` is
-5 days, 2026-09-12..2026-09-16.
+candidate range"). Measured on this workstation's archive, 2026-09-18: the whole archive is 73 days and takes 5.0s to
+read end to end, `recent` is 7 days and takes 0.3s, and the short-circuited scan above takes 0.06s and answers
+2026-09-17.
 
-Then `covered` iterates `healed` rather than `archived`, and `day = next(...)` and its skip become:
+Then `covered`, `day = next(...)` and the `if day is None:` skip all go, and the window check the venue half owes takes
+their place:
 
 ```python
-    if not covered:
+    day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    if not (day_start >= stamps[0] and day_start + timedelta(days=1) <= stamps[-1]):
         pytest.fail(
-            f"Kraken REST reaches {stamps[0].date()}..{stamps[-1].date()} and covers none of the "
-            f"heal-complete {PAIR} days {healed[0]}..{healed[-1]}"
+            f"Kraken REST reaches {stamps[0].date()}..{stamps[-1].date()} and does not cover the newest "
+            f"heal-complete {PAIR} day {day}"
         )
-    day = covered[-1]
 ```
 
-`covered` is ascending, so `covered[-1]` is the newest heal-complete covered day — the same day `next(... reversed(covered) ...)`
-picked. The message names `healed`, not "the archive holds": `is_heal_complete` is False whenever no segment follows the
-day (`cli/tick/materialize.py:109-110`), so the live edge is never heal-complete and `healed[-1]` understates the
-archive's newest day by at least one on every run — measured, `archived` ends 2026-09-17 and `healed` 2026-09-16.
+The comment above the old `covered` comprehension STAYS, above this check: it says why `day_end <= stamps[-1]` is
+exactly the condition that every one of the day's candles is present AND closed, which is this check's second
+conjunct. The message names one day rather than a range because there is one — the local half has already chosen it,
+and the venue half only says whether Kraken reached it.
 
-The fail is venue-only, which is what the bound buys: every day in `healed` is inside `recent`, and every day of `recent`
-but today is wholly inside a full-length window, so `covered` can be empty only if Kraken's window is shorter than its
-documented reach. Without the bound the same empty `covered` means an archive that has fallen behind — a local
-condition, whose skip reason `infra/scripts/data-gated-run.py` books under `data_gated_skipped` and whose fail it books
-under `failed`.
+The fail is venue-only, which is what the bound buys: `day` is inside `recent`, every day of `recent` but today is
+wholly inside a full-length window, and today can never BE `day` — `is_heal_complete` is False whenever no segment
+follows the day (`cli/tick/materialize.py:109-110`), so the live edge is never heal-complete. The check can therefore
+fail only if Kraken's window is shorter than its documented reach. Without the bound the same failure would mean an
+archive that has fallen behind — a local condition, whose skip reason `infra/scripts/data-gated-run.py` books under
+`data_gated_skipped` and whose fail it books under `failed`.
 
 Re-true the comment above the `if stamps[-1] - stamps[0] < timedelta(days=1):` check in the same commit (it moves when
 the block above it is inserted, so find it by its text): it justified that separate `pytest.fail` by saying the two
 cases it could not separate both left `covered` empty, and under the bound above they ARE separated — an old archive
-skips at `nothing_found(healed)` and never reaches it. The check stays for the sharper diagnostic it prints; what its
-last two sentences become is that `covered` below is now a venue statement too.
+skips at the `nothing_found` gate and never reaches it. The check stays for the sharper diagnostic it prints; what its
+last two sentences become is that the window check below is now a venue statement too.
 
-Re-true this file's module docstring in the same commit. It says the day under test is "the newest heal-complete day
-wholly inside that window"; after the split the day is `covered[-1]` over `healed`, which the CALENDAR bounds to the
-last `REST_REACH_DAYS` whole days as well, so a heal-complete day inside the REST window but older than that bound is
-now skipped rather than tested. `grep -n heal-complete tests/test_tape_bars_rest_control.py` returns two lines before
-this step, `:3` in that docstring and `:81` in the skip reason this step replaces, so the docstring is the one other
-place the selection rule is written down.
+Re-true this file's module docstring in the same commit — its rewritten length is why Step 5's row for this file takes
+a text anchor rather than a number. It says the day under test is "the newest heal-complete day wholly inside that
+window"; after the split the day is the newest heal-complete day of the last `REST_REACH_DAYS` whole days, which the
+CALENDAR bounds as well, so a heal-complete day inside the REST window but older than that bound is now skipped rather
+than tested. `grep -n heal-complete tests/test_tape_bars_rest_control.py` returns two lines before this step, `:3` in
+that docstring and `:81` in the skip reason this step replaces, so the docstring is the one other place the selection
+rule is written down.
 
 Replace `tests/test_data_gated_run.py:137` in the same commit. It is verbatim the reason string of the skip this step
 turns into a `pytest.fail` ("no heal-complete BTC/EUR day inside the REST window (REST reaches ...; archive holds ...)"),
@@ -425,9 +456,10 @@ list over. The new entry is the new reason as a run prints it, `no heal-complete
 
 This file's gate count is unchanged: one skip gate leaves it and one arrives. Its four gates at the END of Step 5 are
 `opt-in`, `registry` (`nothing_found(_primary_present)`, Step 5), `registry` (`nothing_found(archived)`) and `registry`
-(`nothing_found(healed)`) — measured over the migrated source. Between this step and Step 5 the `PRIMARY_ROOT` presence
-is still REFUSED (`a path-presence method whose receiver is not literal-rooted -- load_config, imported from
-cli.config`), which is why Step 5 rewrites it; at no point does this file carry a `path` gate.
+(`nothing_found([day] if day is not None else [])`) — measured over the migrated source. Between this step and
+Step 5 the `PRIMARY_ROOT` presence is still REFUSED (`a path-presence method whose receiver is not literal-rooted
+-- load_config, imported from cli.config`), which is why Step 5 rewrites it; at no point does this file carry a
+`path` gate.
 
 - [ ] **Step 5: Rewrite the thirteen gates whose receiver or operand D2's predicate refuses**
 
@@ -448,16 +480,17 @@ for a skip site — and for the last five that is not the line to edit:
 | `tests/test_derivatives_oi.py:469` | :469 | `nothing_found(_OI_PRESENT)` |
 | `tests/test_derivatives_oi.py:482` | :482 | `nothing_found(_OI_PRESENT)` |
 | `tests/test_derivatives_funding.py:256` | :256, and `_FUNDING_PRESENT` beside :248 | `nothing_found(_FUNDING_PRESENT)` |
-| `tests/test_tape_bars_rest_control.py:48` | the `if` at :47, and one line above it | `if nothing_found(_primary_present):` |
+| `tests/test_tape_bars_rest_control.py:48` | the `if not PRIMARY_ROOT.exists():` line, and one line above it | `if nothing_found(_primary_present):` |
 | `tests/test_manifest_conformance.py:56` | the `if` at :55 | `if nothing_found([path] if path.is_file() else []):` |
 | `tests/test_registry_observed.py:146` | the `if` at :145 | `if nothing_found([root / dataset] if (root / dataset).is_dir() else []):` |
 | `tests/test_universe_provenance.py:55` | the `if` at :54 | `if nothing_found([manifest] if manifest.exists() else []):` |
 | `tests/test_config_selectors_are_parsed.py:316` | the parametrize at :313 and the `if` at :315 | the gate goes |
 
-One row's coordinates are PRE-STEP-4 as well as pre-import: Step 4 adds an import and the seven-line `REST_REACH_DAYS`
-block to `tests/test_tape_bars_rest_control.py`, so by the time this step runs the `if` written `:47` above sits at
-`:55` — measured. The other twelve rows are in files no earlier step touches, so their coordinates hold until this
-step's own import lands.
+One row's coordinates are PRE-STEP-4 as well as pre-import, and no number here would survive: Step 4 grows
+`tests/test_tape_bars_rest_control.py` above this gate three times over — the import, the `REST_REACH_DAYS` block
+beside `PAIR_KEY`, and the module docstring it re-trues, whose rewritten length nothing in that step pins. Locate that
+row by its text, `if not PRIMARY_ROOT.exists():`, the only line of that text in the file (`grep -c`). The other twelve
+rows are in files no earlier step touches, so their coordinates hold until this step's own import lands.
 
 **Four import the root.** `tests/test_record43_book.py:149,197,214` and `tests/test_record44_legs.py:45` gate on
 `not DATA_ROOT.exists()` with `DATA_ROOT` taken from `cli/portfolio/`'s import list, and an imported name is refused
@@ -491,7 +524,7 @@ the config in the venue's place. Each declares the presence it already computes 
 _OI_PRESENT = [_OI_ROOT] if _OI_ROOT.is_dir() else []
 ```
 
-and the same one line for `_FUNDING_PRESENT` beside `_FUNDING_ROOT`. The three decorators become
+and the same one line for `_FUNDING_PRESENT` beside `_FUNDING_ROOT`. The four decorators become
 `@pytest.mark.skipif(nothing_found(_OI_PRESENT), reason="derivatives-oi substrate absent")` and
 `@pytest.mark.skipif(nothing_found(_FUNDING_PRESENT), reason="derivatives-funding substrate absent")`.
 
@@ -554,7 +587,8 @@ and the same summary line and skip lines as Step 1 recorded EXCEPT for one, the
 `SKIPPED [5] tests/test_config_selectors_are_parsed.py:316: pre-existing; see _GRANDFATHERED` line Step 5 removes: five
 fewer collected, five fewer skipped, that one line gone, nothing else moved. What is compared is the `<file>: <reason>`
 pairs and the two counts, never the printed coordinates: an `-rs` line printed by a file Steps 3–5 add an import to
-moves down by that one line, and a coordinate that moved by its own file's import is not a gate rewritten wrong. The
+moves down by the one line that import costs it, or by the two it costs the three files Step 3 names, and a
+coordinate that moved by its own file's import is not a gate rewritten wrong. The
 Step 4 split does not move a line here either: without `ZCRYPTO_LIVE_VENUE_TESTS=1`,
 `test_tape_bars_match_kraken_rest_ohlc` skips at its opt-in gate before either half is reached, so this run cannot see
 the one decision that did move — read the diff for that, not the summary. Any OTHER line that moves is a gate
@@ -572,11 +606,11 @@ git commit -m "test: the 35 skip gates that read a helper, a which() result, a l
 ### Task 3: The matcher over the fixture, and the tree assertion
 
 **Files:**
-- Modify: `tests/test_live_venue_opt_in.py` — `Gate` (line 100), `Module` (line 110), `_module_of` (line 288), `_gate` (line 791), `_gates` (line 802), the tree assertion at line 878, the five fixture tests from line 1119, four new fixture tests, twenty fixture gates appended to `_FIXTURE` in twenty-three functions — the three extra are the two call sites of the skip helpers and `_live`, the environment-read helper the second of those helpers reads through, and carry no gate of their own, which is the point of those cases.
+- Modify: `tests/test_live_venue_opt_in.py` — `Gate` (line 100), `Module` (line 110), `_module_of` (line 288), `_gate` (line 791), `_gates` (line 802), the tree assertion at line 878, the five fixture tests from line 1119, four new fixture tests, twenty-four fixture gates appended to `_FIXTURE` in twenty-nine functions — the five extra are the two call sites of the skip helpers, `_live`, the environment-read helper the second of those helpers reads through, and the `def` and the `class` that shadow a registry name; each carries no gate of its own, which is the point of those cases.
 - EVERY line number in this task and in Task 4 is as of `develop` BEFORE Task 1, which is where they were read. Task 1 Step 1 inserts a constants block after `OPT_IN` at :88 and a helper and a test below the control test, and Task 3's own rewrite then moves what Task 4 names, so each coordinate is low by the time its step runs. Locate every span by the names beside it and never by the number — the warning Task 2 Step 3 carries for its own two tables, which holds within one task where this one holds across them.
 
 **Interfaces:**
-- Consumes: `REGISTRY_MODULE` and `_call_root` from Task 1; `_imported(tree) -> dict[str, str]`, `_os_aliases(tree) -> frozenset[str]`, `_as_expression`, `_guards_of`, `_is_pytest_call` (existing).
+- Consumes: `REGISTRY_MODULE` from Task 1; `_imported(tree) -> dict[str, str]`, `_os_aliases(tree) -> frozenset[str]`, `_as_expression`, `_guards_of`, `_is_pytest_call` (existing).
 - Produces: `Form(name: str, key: str | None = None)`; `_match(guard: ast.AST, module: Module, function: ast.AST | None) -> list[Form] | str`; `_bound_to_module(module, dotted) -> frozenset[str]`; the operand predicate, `_stores(target, name) -> bool`, `_bindings(name, where) -> list[ast.AST | str]` and `_rooted(node, module, function, seen=frozenset()) -> str | None`, read by the path arm and by the membership arm; `Gate.forms: tuple[Form, ...]`; `_fixture_span(f) -> tuple[int, int]` and `_fixture_case(gate: Gate) -> str` (the fixture function a gate sits in); `_REFUSAL_REMEDY` rewritten in place. `_bound_to_module` is read by `_registry_call` here and by Task 4's `_unittest_skip`, so it is written once. `_rooted` calls nothing Task 1 adds: the predicate recurses through an expression's own operands rather than walking to a root, so it needs no chain walk. `_enclosing_function` is the one reducer helper the predicate keeps: `_rooted` needs the gate's own function to resolve a local, so Step 3 leaves it where it is and the File structure lists it as staying.
 
 - [ ] **Step 1: Write the failing fixture tests**
@@ -719,6 +753,44 @@ def test_skips_on_a_presence_read_of_a_fixture_parameter(tmp_path):
 def test_skips_on_a_presence_read_of_an_imported_root():
     if not basket_fixture.exists():
         pytest.skip("an imported name is not followed across a module boundary")
+
+
+from tests.skip_gates import develop_resolves, nothing_found
+import tests.skip_gates as shadowed
+import tests.skip_gates as rebound
+import json as rebound
+
+develop_resolves = _venue_answers
+
+
+def nothing_found(rows):
+    return _venue_answers()
+
+
+class shadowed:
+    @staticmethod
+    def answers(name):
+        return _venue_answers()
+
+
+def test_skips_on_a_registry_name_a_def_shadows():
+    if nothing_found(ROOT.iterdir()):
+        pytest.skip("a `def` over the registry's own import is the binding Python runs")
+
+
+def test_skips_on_a_registry_name_an_assignment_rebinds():
+    if not develop_resolves():
+        pytest.skip("an assignment over that import is a rebinding too")
+
+
+def test_skips_on_a_registry_module_a_class_shadows():
+    if shadowed.answers("jq"):
+        pytest.skip("a `class` of the receiver's name rebinds the module")
+
+
+def test_skips_on_a_registry_module_a_second_import_rebinds():
+    if rebound.no_binary("jq"):
+        pytest.skip("a second `import ... as` names another module under the same name")
 ```
 
 Spec D2 names six shapes an opt-in key may arrive by and refuses all six; the fixture carried none of them. The
@@ -761,6 +833,16 @@ The other eight cases are the dispositions D3, D2 and D7 claim and nothing asser
   two refusing answers and pass every fixture case. Deleting it outright is caught either way:
   `..._read_by_membership_in_a_constant` routes through the same arm and reads `env=()` without it, which the
   named-spelling loop fails on.
+
+The last four are the registry arm's, one per binding form that can take a registry name over — the family a
+once-bound test over `Store` nodes alone cannot see, because an import creates no `Store` and neither does a `def`
+or a `class`. Under such a test a `def nothing_found` over `from tests.skip_gates import nothing_found`, a
+`class shadowed` over `import tests.skip_gates as shadowed` and an `import json as rebound` under
+`import tests.skip_gates as rebound` each read `forms=(Form('registry'),) opaque=()` — measured, all three — which is
+a gate deciding on whatever the shadow does, blessed as a declaration; only the assignment spelling was refused.
+`_bindings` asks the same question over every binding form the language has, so all four refuse, one case at each of
+the two call spellings. Each shadow here returns `_venue_answers()`, so what the `Store`-only test passed through is
+the reachability read this whole guard exists to refuse.
 
 Add, after `_FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")`:
 
@@ -838,6 +920,10 @@ _REACHABILITY_REFUSED = (
     "test_skips_on_a_presence_read_hoisted_to_the_line_above",
     "test_skips_on_a_presence_read_of_a_fixture_parameter",
     "test_skips_on_a_presence_read_of_an_imported_root",
+    "test_skips_on_a_registry_name_a_def_shadows",
+    "test_skips_on_a_registry_name_an_assignment_rebinds",
+    "test_skips_on_a_registry_module_a_class_shadows",
+    "test_skips_on_a_registry_module_a_second_import_rebinds",
 )
 _REGISTRY_MATCHED = (
     "test_gated_on_the_registry_by_name",
@@ -898,12 +984,16 @@ def test_every_fixture_case_carries_a_disposition():
 def test_every_reachability_spelling_is_refused():
     """A venue probe -- inline, in a helper, on a class, through a module of ours that is not the
     registry, worn as a form by putting the call in an `.exists()` receiver or on the left of an `in`,
-    or HOISTED off the receiver to the line above, where the binding is read too -- matches no form.
-    The last three are the operand predicate's refusing answers (spec 00114 D2): the hoisted call, a
-    fixture parameter, and an imported name, each a value this file cannot root in a literal and each
-    a value a venue may have decided. The `..._module_of_ours_that_resolves` case is the price of
-    following nothing: a call is a form only into the registry (spec 00114 D3), so a sibling module
-    declares itself there or is rewritten at the gate, whatever that module happens to read."""
+    or HOISTED off the receiver to the line above, where the binding is read too, or wearing a
+    registry name a `def`, a `class`, an assignment or a second `import ... as` has taken over --
+    matches no form. The `..._hoisted...`, `..._of_a_fixture_parameter` and `..._of_an_imported_root`
+    cases are the operand predicate's refusing answers (spec 00114 D2): each a value this file cannot
+    root in a literal and each a value a venue may have decided. The last four are the registry arm's,
+    one per binding form that shadows the import Python would otherwise have run: a name whose import
+    is not its ONE binding is not a declaration, whichever spelling the call uses. The
+    `..._module_of_ours_that_resolves` case is the price of following nothing: a call is a form only
+    into the registry (spec 00114 D3), so a sibling module declares itself there or is rewritten at
+    the gate, whatever that module happens to read."""
     for name in _REACHABILITY_REFUSED:
         gate = _fixture(name)
         assert gate.forms == () and gate.opaque, f"{name}: {gate}"
@@ -952,8 +1042,8 @@ the FIRST name of `_SECOND_FLAG_REFUSED`, `test_gated_on_a_second_flag_one_call_
 those twelve are the spellings both engines read, the membership-in-a-constant case included — the reducer reads it as
 `env=('ZCRYPTO_SOMETHING_ELSE',)` and so does the matcher, by a different arm. The one that PASSES is
 `test_every_fixture_case_carries_a_disposition` — it reads the walker and the tuples and not the matcher, and it is run
-here so a case name mistyped in Step 1 is caught before the matcher lands. Under the reducer the fixture yields 50
-gates in 50 distinct cases, which is what that test compares against `_DISPOSED`.
+here so a case name mistyped in Step 1 is caught before the matcher lands. Under the reducer the fixture yields 54
+gates in 54 distinct cases, which is what that test compares against `_DISPOSED`.
 
 - [ ] **Step 3: Write the matcher**
 
@@ -1105,9 +1195,10 @@ def _bound_to_module(module: Module, dotted: str) -> frozenset[str]:
     nothing. An import any `Store` of that name rebinds yields nothing either, at any scope --
     nothing here tracks scopes, so a local of that name in an unrelated function is enough: the
     once-bound discipline `_plain_literal` applies to a key, applied to a module over the same
-    whole-tree walk. A `Store` is what `_assignments` collects, so a `def`, a `class` or a second
-    `import ... as` of the receiver is a rebinding this does not see. A rebound name falls to `no form
-    matches`, whose remedy prints the spelling the author already wrote."""
+    whole-tree walk. `_bindings` is what asks it, so every binding form the language has counts -- a
+    `def`, a `class`, a second `import ... as` and a plain assignment alike -- and the import is the
+    ONE binding a blessed name may carry. A rebound name falls to `no form matches`, whose remedy
+    prints the spelling the author already wrote."""
     package, _, leaf = dotted.rpartition(".")
     bound: set[str] = set()
     for node in ast.walk(module.tree):
@@ -1115,7 +1206,7 @@ def _bound_to_module(module: Module, dotted: str) -> frozenset[str]:
             bound |= {a.asname or a.name for a in node.names if a.name == leaf}
         elif isinstance(node, ast.Import):
             bound |= {a.asname for a in node.names if a.asname and a.name == dotted}
-    return frozenset(n for n in bound if not _assignments(n, module))
+    return frozenset(n for n in bound if len(_bindings(n, module.tree)) == 1)
 
 
 def _stores(target: ast.AST, name: str) -> bool:
@@ -1135,7 +1226,10 @@ def _bindings(name: str, where: ast.AST) -> list[ast.AST | str]:
     target, and a `match` capture. `_assignments` counts the STORES of a name anywhere in the module,
     which is the once-bound test `_plain_literal` rides on; this answers the other question, what the
     ONE scope that binds a name binds it to, so a local bound once inside its own function is not
-    refused for a namesake in another.
+    refused for a namesake in another. Asked over `module.tree` it answers the once-bound question as
+    well, and over every binding form rather than over `Store` nodes alone -- which is what
+    `_registry_call` and `_bound_to_module` ask of a registry name, a `def`, a `class` and an import
+    each creating no `Store` for `_assignments` to find.
     """
     out: list[ast.AST | str] = []
     for node in ast.walk(where):
@@ -1222,16 +1316,16 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
 
 def _registry_call(node: ast.Call, module: Module) -> bool:
     """Whether this call reaches `tests/skip_gates.py` (spec 00114 D3): a name imported from it, or an
-    attribute on a name bound to the module. BOTH spellings require the name to carry no ASSIGNMENT
-    of its own, so a module-level `no_binary = lambda n: venue_up()` under the registry's own import
-    is a rebinding and not a declaration. What neither spelling sees is a `def`, a `class` or a second
-    `import ... as` of that name -- `_bound_to_module`'s own carve-out, which holds here too and which
-    spec 00114 D3 states: a module that shadows `no_binary` with a `def` is a hole this does not close.
-    The dict lookup stays in front of `_assignments`, which walks the whole module: only a name the
-    import bound pays for that walk."""
+    attribute on a name bound to the module. BOTH spellings require the registry's import to be the
+    name's ONE binding, which `_bindings` answers over every binding form the language has: a
+    module-level `no_binary = lambda n: venue_up()`, a `def no_binary`, a `class no_binary` and a
+    second `import ... as` of the receiver are each a rebinding and not a declaration, and each is
+    the binding Python runs where the import is the one this file would have read. The dict lookup
+    stays in front of `_bindings`, which walks the whole module: only a name the import bound pays
+    for that walk."""
     func = node.func
     if isinstance(func, ast.Name):
-        return module.imported.get(func.id) == REGISTRY_MODULE and not _assignments(func.id, module)
+        return module.imported.get(func.id) == REGISTRY_MODULE and len(_bindings(func.id, module.tree)) == 1
     return (
         isinstance(func, ast.Attribute)
         and isinstance(func.value, ast.Name)
@@ -1366,7 +1460,7 @@ Run: `uv run pytest tests/test_live_venue_opt_in.py -q -k "not skip_gate_in_test
 The three tree assertions carry `skip_gate_in_tests`, `the_tree` and `every_environment`; `not tree` does not deselect
 `test_no_skip_gate_in_tests_is_decided_by_something_this_file_cannot_read`, which walks all 65 tree gates — Task 2
 migrated them, so the count is 65 and not `develop`'s 66 — and would be diagnosed here against the fixture's list.
-Expected: every fixture test passes, `test_every_fixture_case_carries_a_disposition` over all 50 cases included. A fixture case whose disposition differs from its tuple is a matcher defect or a wrong tuple: the tuple is right when the case's key is a literal or a once-bound top-level string constant read straight off `os.environ`/`os.getenv`/`environ` with no default, and wrong otherwise — fix the matcher, never move the name.
+Expected: every fixture test passes, `test_every_fixture_case_carries_a_disposition` over all 54 cases included. A fixture case whose disposition differs from its tuple is a matcher defect or a wrong tuple: the tuple is right when the case's key is a literal or a once-bound top-level string constant read straight off `os.environ`/`os.getenv`/`environ` with no default, and wrong otherwise — fix the matcher, never move the name.
 
 - [ ] **Step 5: Rewrite the tree assertion**
 
@@ -1384,7 +1478,7 @@ def test_every_skip_gate_in_tests_matches_a_form():
 ```
 
 Run: `uv run pytest tests/test_live_venue_opt_in.py -q`
-Expected: all passed; `_tree_gates()` returns 65 — the tree is migrated by now, and the fixture's 50 gates are judged
+Expected: all passed; `_tree_gates()` returns 65 — the tree is migrated by now, and the fixture's 54 gates are judged
 separately, because they live in the `_FIXTURE` string literal, which no parse of this module sees as code. A tree site
 the assertion names here is a gate outside the 35 whose key is bound other than as a plain top-level literal, whose
 collection is not literal, or whose receiver Task 2 Step 5 left unrooted: rewrite that gate to the plain form in this
@@ -1397,7 +1491,7 @@ In a throwaway worktree at `develop` — never the main checkout, whose tree pee
 ```bash
 git worktree add --detach ../wt-premig develop
 cp tests/test_live_venue_opt_in.py ../wt-premig/tests/test_live_venue_opt_in.py
-( cd ../wt-premig && uv run python -c "import tests.test_live_venue_opt_in as g; [print(f'{l}:{gt.line} [{gt.kind}] {gt.guards}') for l, gt in g._unreadable(g._tree_gates())]" | sort | nl )
+( cd ../wt-premig && uv run python -c "import tests.test_live_venue_opt_in as g; [print(f'{l}:{gt.line} [{gt.kind}] {gt.opaque} :: {gt.guards}') for l, gt in g._unreadable(g._tree_gates())]" | sort | nl )
 git worktree remove --force ../wt-premig
 ```
 
@@ -1449,7 +1543,7 @@ infra/scripts/mutate-probe.sh --file tests/test_costmin_drift.py --control 's/^ 
 ```
 
 Expected: `KILLED (control proven)` — the mutation restores the bare local and the tree assertion names `tests/test_costmin_drift.py:23` — `Gate.line` for a
-skip site is the `pytest.skip` call's line, not the `if` the mutation edits, and this probe runs after Task 2, whose `from tests.skip_gates import nothing_found` ruff places beside `import pytest` and one line above the gate; the control's `or True` is a `BoolOp` whose second value no form matches, so the assertion refuses it too. Amend the commit body with both verdicts, naming the script, the files, the mutations and the selectors.
+skip site is the `pytest.skip` call's line, not the `if` the mutation edits, and this probe runs after Task 2, whose `from tests.skip_gates import nothing_found` ruff sorts into this file's existing first-party block beside `cli.engine.*`, moving the gate down by one — measured, `if not snaps:` sits at `:21` before the import and the `pytest.skip` under it at `:23` after; the control's `or True` is a `BoolOp` whose second value no form matches, so the assertion refuses it too. Amend the commit body with both verdicts, naming the script, the files, the mutations and the selectors.
 
 ---
 
@@ -1548,7 +1642,7 @@ def test_unittests_decorator_and_method_are_gates_the_walker_finds():
 ```
 
 `_FIXTURE_FUNCTIONS` already walks the whole fixture tree and spans each function from its first decorator (Task 3), so
-these six gates resolve to their cases without a change to it, and the fixture goes from 50 gates to 56.
+these six gates resolve to their cases without a change to it, and the fixture goes from 54 gates to 60.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -1713,8 +1807,12 @@ git commit -m "test(venue): the reducer's resolution goes; the docstring holds w
 
 - [ ] **Step 1: Resolve T0190 through `topic-ops`**
 
-The remainder is delivered: flip `status: partial` → `resolved`, delete `ripe_when`, rename `## Done so far` to
-`## Resolution` with one closing paragraph naming spec 00114, this branch's commits and the census (the tree's gate
+First `git merge origin/develop` and re-read `docs/open-topics/T0190-live-venue-opt-in-flags-disagree.md`: this step
+rewrites that file and `git mv`s it, and develop has changed it since the branch was cut, so a merge after the rename
+is a rename/modify conflict nobody was told to expect and resolving it toward the branch carries back text develop has
+already corrected. Entry 2 below quotes the file as develop holds it, which is what the merge puts in front of the
+editor. Then the remainder is delivered: flip `status: partial` → `resolved`, delete `ripe_when`, rename
+`## Done so far` to `## Resolution` with one closing paragraph naming spec 00114, this branch's commits and the census (the tree's gate
 count from `_tree_gates()`, six forms, 30 declarations through the registry), delete `## Suggested next steps`,
 `git mv` the file into `docs/open-topics/archive/`.
 
@@ -1744,9 +1842,12 @@ per list item, no column wrap, no filler blank lines.
 3. **The guidance clauses this branch falsifies** — the five `CLAUDE.md` clauses Step 2 quotes, carried in the topic
    rather than in the PR body. Ripe on the owner's next guidance branch.
 
-There is no fourth: a venue answer joined into a literal-rooted path is closed rather than deferred, because D2's
-predicate judges every operand. That refuses three of the tree's own parametrized dataset gates, which Task 2 Step 5
-migrates through the registry rather than parking.
+There is no fourth. A venue answer joined into a literal-rooted path is closed rather than deferred, because D2's
+predicate judges every operand; that refuses three of the tree's own parametrized dataset gates, which Task 2 Step 5
+migrates through the registry rather than parking. A venue probe wearing a registry name — a `def`, a `class`, an
+assignment or a second `import ... as` over the registry's own import — is closed rather than deferred too, because
+`_registry_call` and `_bound_to_module` ask `_bindings` whether that import is the name's ONE binding, and Task 3
+Step 1's fixture carries a case per spelling.
 
 Then run `uv run python infra/scripts/topics-index.py` once over all four changes, and
 `uv run pytest tests/test_open_topics_frontmatter.py -q`.
