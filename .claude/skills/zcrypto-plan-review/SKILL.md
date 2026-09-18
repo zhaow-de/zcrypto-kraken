@@ -52,7 +52,7 @@ Write to the ledger, in this order, and refuse to hand off without every line:
 - **the consequence statement** — quote each remaining finding's `Consequence:` line and state that none threatens any `{BLAST_RADIUS}` item. That sentence is the stopping signal; a zero on a counter is not.
 - every self-correction, rule deviation and miscount the ledger records or a dispatch report states about itself, appended to the dispatching session's inbox (`.local/agent-lessons/<session>.jsonl` in the main checkout) before `{REPORT_DIR}` is removed — the orchestrator lifts a dispatched agent's own lapse, since `.local/` is outside every dispatch's write scope; the ledger and the reports are deleted at merge and the round that harvests lessons cannot read a transcript.
 
-Then remove `{EXEC_WT}` (the floor's command) and hand off to `superpowers:subagent-driven-development`. `{REPORT_DIR}` stays until the branch merges — the SDD ledger cites it.
+Then remove `{EXEC_WT}` (the floor's command) and hand off to `superpowers:subagent-driven-development` for the task loop — its implementer, task reviewer and fix rounds per task. **Its final whole-branch review is this repo's trio, not the plugin's**: at SDD's last `Task N: complete` the branch takes `pre-review` over `develop..HEAD`, then `review`, then fixes each in its own commit with `pre-review` and `re-review` over the fix range, at most twice; the plugin's code-reviewer seat, its fix wave and its scoped re-review are out of the path — the owner's ruling of 2026-09-18, after 00114 ran both. SDD's deferred Minors and parked rulings are handed to the pre-review as claims to re-run, never left in its workspace alone. `{REPORT_DIR}` stays until the branch merges — the SDD ledger cites it.
 
 ## Dispatch mechanics
 
