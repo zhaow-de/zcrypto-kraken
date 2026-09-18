@@ -324,3 +324,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #544 | 2026-09-16 | chore(fleet): capture pair on 7ccd97eb7e3c, the engine rolled back | — | 00083 | — |
 | #561 | 2026-09-17 | docs(topics): row #301 reads its spec; T0119 names the reserved serial | — | — | T0119 |
 | #562 | 2026-09-17 | docs(topics): T0190 catches up to the guard it describes | — | — | T0190 |
+| #563 | 2026-09-18 | test(venue): every skip gate matches a form; T0190 resolved | — | 00114 | T0190 |
