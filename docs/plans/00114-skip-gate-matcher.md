@@ -396,11 +396,17 @@ is filtered by the venue's answer. The two read sets on this workstation on 2026
 newest day of `covered`, which under a full-length window is 2026-09-17 — today's day-end is in the future, so today
 is never in `covered` — and `is_heal_complete` answers True there (measured), so it opens that one day and stops. The
 line above calls `is_heal_complete` on 2026-09-18 and then 2026-09-17 and opens the same one day, because the live
-edge returns False before any parquet is read (`cli/tick/materialize.py:108-110`, `if not after: return False`) — so
-today costs a dict lookup and not a read, and no day the shipped gate never opened is opened here. An eager
-`healed = [d for d in recent if ...]` would call it on all seven days of `recent` and open six of them (measured), so
-a null `trade_id` in any of those six — days the shipped gate never touches — would ERROR this test out on every
-opted-in run until that day aged past the bound.
+edge returns False before any parquet is read (`cli/tick/materialize.py:109-110`, `if not after: return False`) — so
+today costs a dict lookup and not a read, and under a FULL-LENGTH window no day the shipped gate never opened is opened
+here. An eager `healed = [d for d in recent if ...]` would call it on all seven days of `recent` and open six of them
+(measured), so a null `trade_id` in any of those six — days the shipped gate never touches — would ERROR this test out
+on every opted-in run until that day aged past the bound.
+
+Under a window SHORTER than the bound the two sets part — `covered` is what the answer reached, `recent` is what the
+calendar reaches — so a scan finding no heal-complete day among the days both hold carries on into days the shipped
+gate never opened, and a null `trade_id` in one of those ERRORs this test where the shipped gate skipped. The only
+tighter bound is `stamps` itself, which is the answer this gate sits above so it never waits for one; the
+short-circuit is what holds the price to the days between today and the newest heal-complete one (spec D8).
 
 `recent`, not `archived`: the short-circuit bounds the scan only when a heal-complete day is FOUND. When none is, the
 scan runs to the end of whatever it iterates, so unbounded it would read the whole archive — 73 BTC/EUR days on this
@@ -586,9 +592,10 @@ Expected: the guard file green, the reducer reading each registry call as a help
 and the same summary line and skip lines as Step 1 recorded EXCEPT for one, the
 `SKIPPED [5] tests/test_config_selectors_are_parsed.py:316: pre-existing; see _GRANDFATHERED` line Step 5 removes: five
 fewer collected, five fewer skipped, that one line gone, nothing else moved. What is compared is the `<file>: <reason>`
-pairs and the two counts, never the printed coordinates: an `-rs` line printed by a file Steps 3–5 add an import to
-moves down by the one line that import costs it, or by the two it costs the three files Step 3 names, and a
-coordinate that moved by its own file's import is not a gate rewritten wrong. The
+pairs and the two counts, never the printed coordinates: an `-rs` line printed by a file Steps 2–5 add an import to
+moves down by the one line that import costs it, or by the two it costs the three with no first-party block of their
+own, which Step 3's PRE-IMPORT note names — Step 2's file is among those three, which is why this sentence reaches back
+to Step 2 — and a coordinate that moved by its own file's import is not a gate rewritten wrong. The
 Step 4 split does not move a line here either: without `ZCRYPTO_LIVE_VENUE_TESTS=1`,
 `test_tape_bars_match_kraken_rest_ohlc` skips at its opt-in gate before either half is reached, so this run cannot see
 the one decision that did move — read the diff for that, not the summary. Any OTHER line that moves is a gate
@@ -606,7 +613,7 @@ git commit -m "test: the 35 skip gates that read a helper, a which() result, a l
 ### Task 3: The matcher over the fixture, and the tree assertion
 
 **Files:**
-- Modify: `tests/test_live_venue_opt_in.py` — `Gate` (line 100), `Module` (line 110), `_module_of` (line 288), `_gate` (line 791), `_gates` (line 802), the tree assertion at line 878, the five fixture tests from line 1119, four new fixture tests, twenty-four fixture gates appended to `_FIXTURE` in twenty-nine functions — the five extra are the two call sites of the skip helpers, `_live`, the environment-read helper the second of those helpers reads through, and the `def` and the `class` that shadow a registry name; each carries no gate of its own, which is the point of those cases.
+- Modify: `tests/test_live_venue_opt_in.py` — `Gate` (line 100), `Module` (line 110), `_module_of` (line 288), `_gate` (line 791), `_gates` (line 802), the tree assertion at line 878, the five fixture tests from line 1119, four new fixture tests, twenty-six fixture gates appended to `_FIXTURE` in thirty-one functions — the five extra are the two call sites of the skip helpers, `_live`, the environment-read helper the second of those helpers reads through, and the `def` and the `class` that shadow a registry name; each carries no gate of its own, which is the point of those cases.
 - EVERY line number in this task and in Task 4 is as of `develop` BEFORE Task 1, which is where they were read. Task 1 Step 1 inserts a constants block after `OPT_IN` at :88 and a helper and a test below the control test, and Task 3's own rewrite then moves what Task 4 names, so each coordinate is low by the time its step runs. Locate every span by the names beside it and never by the number — the warning Task 2 Step 3 carries for its own two tables, which holds within one task where this one holds across them.
 
 **Interfaces:**
@@ -759,8 +766,12 @@ from tests.skip_gates import develop_resolves, nothing_found
 import tests.skip_gates as shadowed
 import tests.skip_gates as rebound
 import json as rebound
+import tests.skip_gates as stored
+from tests import skip_gates as also_stored
 
 develop_resolves = _venue_answers
+stored.no_binary = _venue_answers
+also_stored.nothing_found = _venue_answers
 
 
 def nothing_found(rows):
@@ -791,6 +802,16 @@ def test_skips_on_a_registry_module_a_class_shadows():
 def test_skips_on_a_registry_module_a_second_import_rebinds():
     if rebound.no_binary("jq"):
         pytest.skip("a second `import ... as` names another module under the same name")
+
+
+def test_skips_on_a_registry_module_an_attribute_store_takes_over():
+    if stored.no_binary("jq"):
+        pytest.skip("an attribute assignment on the module rebinds no name and is what the call runs")
+
+
+def test_skips_on_a_registry_module_an_attribute_store_takes_over_the_other_spelling():
+    if also_stored.nothing_found(ROOT.iterdir()):
+        pytest.skip("the same takeover written at the other module spelling")
 ```
 
 Spec D2 names six shapes an opt-in key may arrive by and refuses all six; the fixture carried none of them. The
@@ -834,15 +855,18 @@ The other eight cases are the dispositions D3, D2 and D7 claim and nothing asser
   `..._read_by_membership_in_a_constant` routes through the same arm and reads `env=()` without it, which the
   named-spelling loop fails on.
 
-The last four are the registry arm's, one per binding form that can take a registry name over — the family a
-once-bound test over `Store` nodes alone cannot see, because an import creates no `Store` and neither does a `def`
-or a `class`. Under such a test a `def nothing_found` over `from tests.skip_gates import nothing_found`, a
-`class shadowed` over `import tests.skip_gates as shadowed` and an `import json as rebound` under
-`import tests.skip_gates as rebound` each read `forms=(Form('registry'),) opaque=()` — measured, all three — which is
-a gate deciding on whatever the shadow does, blessed as a declaration; only the assignment spelling was refused.
-`_bindings` asks the same question over every binding form the language has, so all four refuse, one case at each of
-the two call spellings. Each shadow here returns `_venue_answers()`, so what the `Store`-only test passed through is
-the reachability read this whole guard exists to refuse.
+The last six are the registry arm's, one per way a registry name can be taken over — a family two narrower tests each
+see only part of. A once-bound test over `Store` nodes alone cannot see four of them, because an import creates no
+`Store` and neither does a `def` or a `class`: under such a test a `def nothing_found` over
+`from tests.skip_gates import nothing_found`, a `class shadowed` over `import tests.skip_gates as shadowed` and an
+`import json as rebound` under `import tests.skip_gates as rebound` each read `forms=(Form('registry'),) opaque=()` —
+measured, all three — which is a gate deciding on whatever the shadow does, blessed as a declaration; only the
+assignment spelling was refused. `_bindings` asks the same question over every binding form the language has, so all
+four refuse, one case at each of the two call spellings. A test over BINDINGS alone cannot see the other two:
+`stored.no_binary = _venue_answers` rebinds nothing, so `stored` stays bound once by its import while
+`stored.no_binary(...)` runs the probe — `Form('registry')` before `_bindings`' attribute-assignment arm and refused
+after, measured at both module spellings. Each shadow here returns `_venue_answers()`, so what each narrower test
+passed through is the reachability read this whole guard exists to refuse.
 
 Add, after `_FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")`:
 
@@ -924,6 +948,8 @@ _REACHABILITY_REFUSED = (
     "test_skips_on_a_registry_name_an_assignment_rebinds",
     "test_skips_on_a_registry_module_a_class_shadows",
     "test_skips_on_a_registry_module_a_second_import_rebinds",
+    "test_skips_on_a_registry_module_an_attribute_store_takes_over",
+    "test_skips_on_a_registry_module_an_attribute_store_takes_over_the_other_spelling",
 )
 _REGISTRY_MATCHED = (
     "test_gated_on_the_registry_by_name",
@@ -985,12 +1011,14 @@ def test_every_reachability_spelling_is_refused():
     """A venue probe -- inline, in a helper, on a class, through a module of ours that is not the
     registry, worn as a form by putting the call in an `.exists()` receiver or on the left of an `in`,
     or HOISTED off the receiver to the line above, where the binding is read too, or wearing a
-    registry name a `def`, a `class`, an assignment or a second `import ... as` has taken over --
-    matches no form. The `..._hoisted...`, `..._of_a_fixture_parameter` and `..._of_an_imported_root`
+    registry name a `def`, a `class`, an assignment, a second `import ... as` or an attribute
+    assignment has taken over -- matches no form. The `..._hoisted...`, `..._of_a_fixture_parameter` and `..._of_an_imported_root`
     cases are the operand predicate's refusing answers (spec 00114 D2): each a value this file cannot
-    root in a literal and each a value a venue may have decided. The last four are the registry arm's,
-    one per binding form that shadows the import Python would otherwise have run: a name whose import
-    is not its ONE binding is not a declaration, whichever spelling the call uses. The
+    root in a literal and each a value a venue may have decided. The last six are the registry arm's:
+    four binding forms that shadow the import Python would otherwise have run, and an attribute
+    assignment on the module at each of its two spellings, which rebinds nothing and changes what the
+    call runs. A name whose import is not its ONE binding is not a declaration, and neither is one the
+    module assigns an attribute on, whichever spelling the call uses. The
     `..._module_of_ours_that_resolves` case is the price of following nothing: a call is a form only
     into the registry (spec 00114 D3), so a sibling module declares itself there or is rewritten at
     the gate, whatever that module happens to read."""
@@ -1042,8 +1070,8 @@ the FIRST name of `_SECOND_FLAG_REFUSED`, `test_gated_on_a_second_flag_one_call_
 those twelve are the spellings both engines read, the membership-in-a-constant case included — the reducer reads it as
 `env=('ZCRYPTO_SOMETHING_ELSE',)` and so does the matcher, by a different arm. The one that PASSES is
 `test_every_fixture_case_carries_a_disposition` — it reads the walker and the tuples and not the matcher, and it is run
-here so a case name mistyped in Step 1 is caught before the matcher lands. Under the reducer the fixture yields 54
-gates in 54 distinct cases, which is what that test compares against `_DISPOSED`.
+here so a case name mistyped in Step 1 is caught before the matcher lands. Under the reducer the fixture yields 56
+gates in 56 distinct cases, which is what that test compares against `_DISPOSED`.
 
 - [ ] **Step 3: Write the matcher**
 
@@ -1196,8 +1224,10 @@ def _bound_to_module(module: Module, dotted: str) -> frozenset[str]:
     nothing here tracks scopes, so a local of that name in an unrelated function is enough: the
     once-bound discipline `_plain_literal` applies to a key, applied to a module over the same
     whole-tree walk. `_bindings` is what asks it, so every binding form the language has counts -- a
-    `def`, a `class`, a second `import ... as` and a plain assignment alike -- and the import is the
-    ONE binding a blessed name may carry. A rebound name falls to `no form matches`, whose remedy
+    `def`, a `class`, a second `import ... as` and a plain assignment alike -- with an attribute
+    assignment on the name counted beside them, the one takeover that leaves a name single-bound: the
+    import is the ONE binding a blessed name may carry, and the store is what a blessed call would
+    otherwise have run. A rebound name falls to `no form matches`, whose remedy
     prints the spelling the author already wrote."""
     package, _, leaf = dotted.rpartition(".")
     bound: set[str] = set()
@@ -1223,7 +1253,12 @@ def _bindings(name: str, where: ast.AST) -> list[ast.AST | str]:
     the plain one, so a name reaching `_rooted` is either judged or refused and never missed: a
     parameter, a `for` or comprehension target, a `with ... as`, an `except ... as`, an import, a
     `def`, a `class`, an augmented assignment, a `global` or `nonlocal` declaration, an unpacking
-    target, and a `match` capture. `_assignments` counts the STORES of a name anywhere in the module,
+    target, and a `match` capture. One arm is no binding at all: an attribute assignment on the name,
+    `<name>.<attr> = ...`, which rebinds nothing and so is invisible to any once-bound test while
+    being exactly what a read off that name then answers with -- `skip_gates.no_binary = _venue_up`
+    at a registry receiver, `ROOT.child = _venue()` at a path one. It is the ONE takeover of a
+    single-bound name this walk reads; a takeover spelled some other way is not a shape this file
+    sees. `_assignments` counts the STORES of a name anywhere in the module,
     which is the once-bound test `_plain_literal` rides on; this answers the other question, what the
     ONE scope that binds a name binds it to, so a local bound once inside its own function is not
     refused for a namesake in another. Asked over `module.tree` it answers the once-bound question as
@@ -1237,6 +1272,8 @@ def _bindings(name: str, where: ast.AST) -> list[ast.AST | str]:
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     out += [node.value] if target.id == name else []
+                elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == name:
+                    out.append("an attribute assignment on it")
                 elif _stores(target, name):
                     out.append("an unpacking target")
         elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and isinstance(node.target, ast.Name):
@@ -1320,7 +1357,9 @@ def _registry_call(node: ast.Call, module: Module) -> bool:
     name's ONE binding, which `_bindings` answers over every binding form the language has: a
     module-level `no_binary = lambda n: venue_up()`, a `def no_binary`, a `class no_binary` and a
     second `import ... as` of the receiver are each a rebinding and not a declaration, and each is
-    the binding Python runs where the import is the one this file would have read. The dict lookup
+    the binding Python runs where the import is the one this file would have read;
+    `<receiver>.no_binary = venue_up` is refused beside them although it rebinds nothing, because an
+    attribute assignment on the receiver is what the call runs while the name stays single-bound. The dict lookup
     stays in front of `_bindings`, which walks the whole module: only a name the import bound pays
     for that walk."""
     func = node.func
@@ -1460,7 +1499,7 @@ Run: `uv run pytest tests/test_live_venue_opt_in.py -q -k "not skip_gate_in_test
 The three tree assertions carry `skip_gate_in_tests`, `the_tree` and `every_environment`; `not tree` does not deselect
 `test_no_skip_gate_in_tests_is_decided_by_something_this_file_cannot_read`, which walks all 65 tree gates — Task 2
 migrated them, so the count is 65 and not `develop`'s 66 — and would be diagnosed here against the fixture's list.
-Expected: every fixture test passes, `test_every_fixture_case_carries_a_disposition` over all 54 cases included. A fixture case whose disposition differs from its tuple is a matcher defect or a wrong tuple: the tuple is right when the case's key is a literal or a once-bound top-level string constant read straight off `os.environ`/`os.getenv`/`environ` with no default, and wrong otherwise — fix the matcher, never move the name.
+Expected: every fixture test passes, `test_every_fixture_case_carries_a_disposition` over all 56 cases included. A fixture case whose disposition differs from its tuple is a matcher defect or a wrong tuple: the tuple is right when the case's key is a literal or a once-bound top-level string constant read straight off `os.environ`/`os.getenv`/`environ` with no default, and wrong otherwise — fix the matcher, never move the name.
 
 - [ ] **Step 5: Rewrite the tree assertion**
 
@@ -1478,7 +1517,7 @@ def test_every_skip_gate_in_tests_matches_a_form():
 ```
 
 Run: `uv run pytest tests/test_live_venue_opt_in.py -q`
-Expected: all passed; `_tree_gates()` returns 65 — the tree is migrated by now, and the fixture's 54 gates are judged
+Expected: all passed; `_tree_gates()` returns 65 — the tree is migrated by now, and the fixture's 56 gates are judged
 separately, because they live in the `_FIXTURE` string literal, which no parse of this module sees as code. A tree site
 the assertion names here is a gate outside the 35 whose key is bound other than as a plain top-level literal, whose
 collection is not literal, or whose receiver Task 2 Step 5 left unrooted: rewrite that gate to the plain form in this
@@ -1642,7 +1681,7 @@ def test_unittests_decorator_and_method_are_gates_the_walker_finds():
 ```
 
 `_FIXTURE_FUNCTIONS` already walks the whole fixture tree and spans each function from its first decorator (Task 3), so
-these six gates resolve to their cases without a change to it, and the fixture goes from 54 gates to 60.
+these six gates resolve to their cases without a change to it, and the fixture goes from 56 gates to 62.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -1830,7 +1869,8 @@ per list item, no column wrap, no filler blank lines.
 2. **Gate discovery beyond the fixture's positions** — the residual T0190's second `## Suggested next steps` bullet
    now defers rather than states: read at `origin/develop`, that bullet is one sentence, "**What the two surviving
    assertions miss** is listed, planted shape by planted shape, in `tests/test_live_venue_opt_in.py`'s module
-   docstring" (PR #562 cut the four clauses it used to carry). Task 5 Step 2 deletes the two sections of that docstring
+   docstring, so the next attempt inherits them measured rather than rediscovering them." (PR #562 cut the four clauses
+   it used to carry). Task 5 Step 2 deletes the two sections of that docstring
    it points at, so the pointer and the text it points at both go in this branch and the residual would be recorded
    nowhere. The residual itself: gate DISCOVERY is asserted by nothing and cannot be asserted from inside the guard,
    because any set it computes to check the walker is computed by the walker. D6 and the spec's Out-of-scope entry
@@ -1845,9 +1885,12 @@ per list item, no column wrap, no filler blank lines.
 There is no fourth. A venue answer joined into a literal-rooted path is closed rather than deferred, because D2's
 predicate judges every operand; that refuses three of the tree's own parametrized dataset gates, which Task 2 Step 5
 migrates through the registry rather than parking. A venue probe wearing a registry name — a `def`, a `class`, an
-assignment or a second `import ... as` over the registry's own import — is closed rather than deferred too, because
-`_registry_call` and `_bound_to_module` ask `_bindings` whether that import is the name's ONE binding, and Task 3
-Step 1's fixture carries a case per spelling.
+assignment or a second `import ... as` over the registry's own import, and an attribute assignment on the imported
+module, which rebinds nothing and is what the call then runs — is closed rather than deferred too, because
+`_registry_call` and `_bound_to_module` ask `_bindings` whether that import is the name's ONE binding and whether the
+module assigns an attribute on it, and Task 3 Step 1's fixture carries a case per spelling. What that closes is the
+RECEIVER as this file reads it: a callee resolved syntactically (spec D3) cannot see a replacement made anywhere else,
+which is the limit the form has and the reason D4 holds the registry itself closed by a test of its own.
 
 Then run `uv run python infra/scripts/topics-index.py` once over all four changes, and
 `uv run pytest tests/test_open_topics_frontmatter.py -q`.
