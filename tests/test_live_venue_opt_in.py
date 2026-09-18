@@ -741,8 +741,9 @@ def test_every_environment_keyed_skip_gate_in_tests_reads_the_one_venue_opt_in()
 
 def test_every_skip_gate_in_tests_matches_a_form():
     """A guard is one of six forms or it is refused (spec 00114 D1). The forms are the only things a
-    skip may be decided by and none of them reaches a venue: that is how the rule's second half -- no
-    skip decided by whether the venue answers -- is held, by a closed set rather than by a reading."""
+    skip may be decided by and none of them reaches a venue -- a registry call's argument excepted, the
+    reading the module docstring names as unheld: that is how the rule's second half -- no skip decided
+    by whether the venue answers -- is held, by a closed set rather than by a reading."""
     unmatched = [(label, gate, why) for label, gate in _unreadable(_tree_gates()) for why in gate.opaque]
     assert not unmatched, "\n".join(
         f"{label}:{gate.line} [{gate.kind}] {why}: {gate.guards} -- {_REFUSAL_REMEDY}" for label, gate, why in unmatched
