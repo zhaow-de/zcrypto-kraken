@@ -13,8 +13,6 @@ SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "mutate-pro
 
 
 def run(args, cwd, env_extra=None, script=SCRIPT):
-    import os
-
     env = {**os.environ, **(env_extra or {})}
     return subprocess.run([str(script), *args], cwd=cwd, capture_output=True, text=True, env=env)
 

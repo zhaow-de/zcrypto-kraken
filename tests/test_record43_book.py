@@ -5,11 +5,11 @@ canonical data/ohlc-full machine and share one derivation through module-scoped 
 
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from cli.portfolio.record43_book import (
-    DATA_ROOT,
     REGISTRY_PATH,
     WEIGHT_WINDOW,
     bisect_sign_change,
@@ -23,6 +23,8 @@ from cli.portfolio.record43_book import (
     stressed_ungoverned,
 )
 from cli.registry import TrialRegistry
+
+DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "ohlc-full"
 
 # Bar counts of the frozen trial-43/44 oracle. Cheap stand-in for the full extent guard: if the
 # dataset drifts, every figure below is void, so fail before comparing any of them.
