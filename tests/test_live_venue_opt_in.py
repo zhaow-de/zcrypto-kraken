@@ -87,6 +87,21 @@ TESTS = REPO / "tests"
 # the files it checks would agree with whatever it found, including a fourth name.
 OPT_IN = "ZCRYPTO_LIVE_VENUE_TESTS"
 
+REGISTRY = TESTS / "skip_gates.py"
+# The dotted name `_registry_call` keys on, derived from the path so the two cannot drift apart.
+REGISTRY_MODULE = f"{TESTS.name}.{REGISTRY.stem}"
+REGISTRY_IMPORTS = frozenset({"shutil", "subprocess", "pathlib", "typing"})
+# The builtins the registry may call: NONE -- its three functions call only what their imports bind.
+# An allowlist and not a blocklist of the importing ones, because no blocklist holds:
+# `__import__("socket")` is an `ast.Call` and not an `ast.Import`, so the import allowlist below never
+# sees it, and `globals()["__builtins__"]["__import__"]` reaches it without naming it.
+REGISTRY_BUILTINS: frozenset[str] = frozenset()
+# Every word `develop_resolves()`'s argv may carry, each of them a literal. `git` is itself a network
+# client, so its name at argv[0] constrains nothing: `ls-remote`, `fetch` and a
+# `-c protocol.ext.allow=<transport>` all reach a remote under it, and a skip would then be decided by
+# whether that remote answers. The checkout the launch runs in is `cwd=REPO` and no word of the argv.
+REGISTRY_GIT_ARGV = frozenset({"git", "rev-parse", "--verify", "--quiet", "develop"})
+
 # Every mapping accessor that answers with a value for a key. `setdefault` and `pop` mutate as well as
 # read, which is why they fall out of a list assembled from what a gate USUALLY looks like -- and a
 # gate keyed on either reads the environment exactly as `.get` does.
@@ -899,6 +914,59 @@ def test_the_tree_holds_the_control_that_keeps_the_one_name_assertion_falsifiabl
     fifty-five red."""
     plain = [(label, gate) for label, gate in _tree_gates() if not gate.env]
     assert plain, "every skip gate in tests/ reads the environment -- the one-name assertion has no control"
+
+
+def _call_root(node: ast.AST) -> str:
+    """The name a call reaches through, as text for a refusal message: `shutil` in
+    `shutil.which(...)`, `Path` in `Path(x).resolve()`. A chained call is judged by what it started
+    from rather than by its first dotted segment, so the walk goes left through an attribute, a call,
+    a subscript and a `/` join to the leftmost operand."""
+    while isinstance(node, (ast.Attribute, ast.Subscript, ast.Call)) or (
+        isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+    ):
+        node = node.func if isinstance(node, ast.Call) else node.left if isinstance(node, ast.BinOp) else node.value
+    return node.id if isinstance(node, ast.Name) else ast.unparse(node)
+
+
+def test_the_registry_reads_nothing_a_form_could_not():
+    """A call into `tests/skip_gates.py` is a form (spec 00114 D3), so the module is held closed: its
+    imports are within the four named, every call reaches a name one of those imports binds or a
+    builtin it is allowlisted for, the one process it may launch is a `git` every word of whose argv
+    is a literal on the allowlist -- the checkout it runs in is handed to `cwd`, never written as a
+    word -- and every function it defines anywhere -- private ones too -- is one `return`. A registry
+    that could open a socket would be the reducer's leak, one file over -- and `subprocess` is on the
+    allowlist, so the launch and the walk are what close that direction."""
+    tree = ast.parse(REGISTRY.read_text(), str(REGISTRY))
+    bound = {
+        (alias.asname or alias.name).split(".")[0]: (node.module if isinstance(node, ast.ImportFrom) else alias.name).split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    imported = set(bound.values())
+    assert imported <= REGISTRY_IMPORTS, f"the registry imports {sorted(imported - REGISTRY_IMPORTS)}"
+    calls = [call for call in ast.walk(tree) if isinstance(call, ast.Call)]
+    roots = {_call_root(call.func) for call in calls}
+    allowed = set(bound) | REGISTRY_BUILTINS
+    assert roots <= allowed, f"the registry calls {sorted(roots - allowed)}"
+    for call in calls:
+        if bound.get(_call_root(call.func)) != "subprocess":
+            continue
+        argv = call.args[0] if call.args else None
+        launched = (
+            isinstance(argv, ast.List) and argv.elts and isinstance(argv.elts[0], ast.Constant) and argv.elts[0].value == "git"
+        )
+        assert launched, f"a process launch that is not git: {ast.unparse(call)}"
+        literals = all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in argv.elts)
+        assert literals, f"a git argv word that is not a string literal: {ast.unparse(argv)}"
+        words = {e.value for e in argv.elts}
+        assert words <= REGISTRY_GIT_ARGV, f"a git that may leave this repo: {sorted(words - REGISTRY_GIT_ARGV)}"
+    defined = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    public = {f.name for f in defined if not f.name.startswith("_")}
+    assert public == {"develop_resolves", "no_binary", "nothing_found"}, f"the registry's public functions are {sorted(public)}"
+    for f in defined:
+        body = [s for s in f.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+        assert len(body) == 1 and isinstance(body[0], ast.Return), f"{f.name} is more than one return"
 
 
 # Every shape the two assertions must catch and every shape they must not, as source rather than as
