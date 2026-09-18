@@ -114,10 +114,10 @@ class Module(NamedTuple):
 def _imported(tree: ast.Module) -> dict[str, str]:
     """Each name bound by an import, mapped to the module it came from.
 
-    The distinction that matters downstream is not whether the module resolves but whose it is. A name
-    from a library is not opaque -- reading `pathlib` is not this file's business -- while a name from
-    this repo's own code is one of ours, and one of those that cannot be read is precisely the case
-    that lets a gate's whole decision sit where nothing checks it.
+    Every arm that reads it asks for ONE module by name: `environ` and `getenv` from `os`, a name the
+    registry bound, and in `_rooted` a `pathlib` import, the one library whose names root an operand.
+    `_rooted` refuses every other imported name -- what such a name holds is its own module's
+    business, and no form here reads it.
     """
     out: dict[str, str] = {}
     for node in ast.walk(tree):
