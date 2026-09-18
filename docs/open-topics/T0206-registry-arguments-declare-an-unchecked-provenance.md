@@ -34,6 +34,6 @@ Nothing in the tree caught that, and nothing will catch the next one: 13 gates d
 ## Suggested next steps
 
 - Add `nothing_found_under(root: Path, pattern: str) -> bool` to `tests/skip_gates.py` and teach the registry form to judge that first argument with `_rooted`, the predicate the matcher already applies to a path receiver — a root the gate's own scope supplies is then refused at the gate with the remedy, rather than accepted as a claim.
-- Where the test body needs the rows, give the registry a `scan(root, pattern) -> list` beside it and gate on its result, so the scan happens once; migrate the eight literal-rooted sites one file at a time and confirm each gate's decision is unchanged by running the file with and without its dataset present.
+- Where the test body needs the rows, give the registry a `scan(root, pattern) -> list` beside it and gate on its result, so the scan happens once; migrate the five literal-rooted sites one file at a time and confirm each gate's decision is unchanged by running the file with and without its dataset present.
 - Decide the five config-rooted gates separately — a form that reads the config, a literal mount the config no longer owns, or a recorded acceptance that they stay declarations — and record the decision where the next reader of `nothing_found`'s docstring will meet it.
 - Keep `nothing_found(rows)` only as long as a site still needs it: while both exist, a gate can pick the unchecked one, so the docstring has to say which is which.

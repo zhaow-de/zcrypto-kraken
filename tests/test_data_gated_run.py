@@ -142,7 +142,6 @@ _OWN_GATE_REASONS = [
     "root bypasses directory permissions",
     "root ignores the directory's write bit",
     "main() refuses a checkout with no develop ref before any entry runs",
-    "pre-existing; see _GRANDFATHERED",
     "jq not available, so the push's own payload program cannot be run",
     "bash not available",
     "no schema-4 records yet — nothing in the registry cites observed bytes",

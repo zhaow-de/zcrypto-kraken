@@ -121,15 +121,6 @@ def _imported(tree: ast.Module) -> dict[str, str]:
     return out
 
 
-def _os_aliases(tree: ast.Module) -> frozenset[str]:
-    """Names bound to the `os` module. `import os as o` then `o.environ.get(K)` is an environment read,
-    and a receiver test spelled as the literal text `os.environ` does not see it -- measured as a
-    regression against an earlier shape of this file that tested the text's SUFFIX instead."""
-    return frozenset(
-        {(a.asname or a.name) for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.name == "os"} | {"os"}
-    )
-
-
 @functools.cache
 def _module(path: Path) -> Module:
     """A module of ours, parsed once. Cached because one helper module is imported by several."""
@@ -138,14 +129,14 @@ def _module(path: Path) -> Module:
 
 def _module_of(source: str, label: str) -> Module:
     tree = ast.parse(source, label)
-    return Module(tree=tree, imported=_imported(tree), os_names=_os_aliases(tree), label=label)
+    return Module(tree=tree, imported=_imported(tree), os_names=_bound_to_module(tree, "os"), label=label)
 
 
 _PRESENCE = ("exists", "is_file", "is_dir")
 _ENV_READS = ("get", "getenv")
 _REFUSAL_REMEDY = (
-    "write the guard as a presence check whose RECEIVER is LITERAL-ROOTED -- a `Path('<literal>')` "
-    "chain, a `/` join whose EVERY operand is one, or a name bound once, at this module's top level "
+    "write the guard as a presence check whose RECEIVER is LITERAL-ROOTED -- a `Path('<literal>')` or "
+    "`Path(__file__)` chain, a `/` join whose EVERY operand is one, or a name bound once, at this module's top level "
     "or in this function, to one of those -- `os.geteuid() == 0`, `shutil.which('<name>') is None`, "
     "a read of the one opt-in under a literal or plain module-constant key and with NO default, "
     "COMPARED to a string literal, spelled `<key> in os.environ`, or tested against a module-level "
@@ -215,7 +206,12 @@ def _is_environ(node: ast.AST, module: Module) -> bool:
     own name (`_imported` keeps the bound name only, so `from os import environ as e` is refused)."""
     if isinstance(node, ast.Attribute) and node.attr == "environ" and isinstance(node.value, ast.Name):
         return node.value.id in module.os_names
-    return isinstance(node, ast.Name) and node.id == "environ" and module.imported.get("environ") == "os"
+    return (
+        isinstance(node, ast.Name)
+        and node.id == "environ"
+        and module.imported.get("environ") == "os"
+        and len(_bindings("environ", module.tree)) == 1
+    )
 
 
 def _env_read_key(node: ast.AST, module: Module) -> ast.AST | None:
@@ -229,17 +225,23 @@ def _env_read_key(node: ast.AST, module: Module) -> ast.AST | None:
         if isinstance(func, ast.Attribute) and func.attr in _ENV_READS:
             if _is_environ(func.value, module) or (isinstance(func.value, ast.Name) and func.value.id in module.os_names):
                 return node.args[0]
-        if isinstance(func, ast.Name) and func.id == "getenv" and module.imported.get("getenv") == "os":
+        if (
+            isinstance(func, ast.Name)
+            and func.id == "getenv"
+            and module.imported.get("getenv") == "os"
+            and len(_bindings("getenv", module.tree)) == 1
+        ):
             return node.args[0]
     if isinstance(node, ast.Subscript) and _is_environ(node.value, module):
         return node.slice
     return None
 
 
-def _bound_to_module(module: Module, dotted: str) -> frozenset[str]:
+def _bound_to_module(tree: ast.Module, dotted: str) -> frozenset[str]:
     """Every name this module binds to the MODULE `dotted` by import and rebinds nowhere:
-    `import <dotted> as n`, and `from <package> import <leaf>` under its own name or an alias -- this
-    suite's idiom for a `tests/` helper. `_imported` keys on the bound name and maps the `from`
+    `import <dotted> as n`, a plain `import <dotted>` when `dotted` is one segment (`os`, `shutil`),
+    and `from <package> import <leaf>` under its own name or an alias -- this suite's idiom for a
+    `tests/` helper. `_imported` keys on the bound name and maps the `from`
     spelling to the PACKAGE, so a receiver that names a module is resolved here instead: a plain
     `import tests.skip_gates` binds `tests`, which is the package and not the registry, and yields
     nothing. An import any `Store` of that name rebinds yields nothing either, at any scope --
@@ -253,12 +255,12 @@ def _bound_to_module(module: Module, dotted: str) -> frozenset[str]:
     prints the spelling the author already wrote."""
     package, _, leaf = dotted.rpartition(".")
     bound: set[str] = set()
-    for node in ast.walk(module.tree):
+    for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == package:
             bound |= {a.asname or a.name for a in node.names if a.name == leaf}
         elif isinstance(node, ast.Import):
-            bound |= {a.asname for a in node.names if a.asname and a.name == dotted}
-    return frozenset(n for n in bound if len(_bindings(n, module.tree)) == 1)
+            bound |= {a.asname or a.name for a in node.names if a.name == dotted and (a.asname or "." not in a.name)}
+    return frozenset(n for n in bound if len(_bindings(n, tree)) == 1)
 
 
 def _stores(target: ast.AST, name: str) -> bool:
@@ -390,7 +392,7 @@ def _registry_call(node: ast.Call, module: Module) -> bool:
     return (
         isinstance(func, ast.Attribute)
         and isinstance(func.value, ast.Name)
-        and func.value.id in _bound_to_module(module, REGISTRY_MODULE)
+        and func.value.id in _bound_to_module(module.tree, REGISTRY_MODULE)
     )
 
 
@@ -449,7 +451,10 @@ def _match(guard: ast.AST, module: Module, function: ast.AST | None) -> list[For
                 return [Form("uid")]
         if isinstance(op, ast.Is) and isinstance(right, ast.Constant) and right.value is None and isinstance(left, ast.Call):
             if (
-                ast.unparse(left.func) == "shutil.which"
+                isinstance(left.func, ast.Attribute)
+                and left.func.attr == "which"
+                and isinstance(left.func.value, ast.Name)
+                and left.func.value.id in _bound_to_module(module.tree, "shutil")
                 and len(left.args) == 1
                 and isinstance(left.args[0], ast.Constant)
                 and not left.keywords
@@ -582,7 +587,7 @@ def _unittest_skip(func: ast.AST, module: Module) -> bool:
         return isinstance(func.value, ast.Name) and module.imported.get(func.value.id) == "unittest"
     if not (isinstance(func, ast.Name) and module.imported.get(func.id) == "unittest"):
         return False
-    return any(func.id in _bound_to_module(module, f"unittest.{n}") for n in _UNITTEST_SKIPS)
+    return any(func.id in _bound_to_module(module.tree, f"unittest.{n}") for n in _UNITTEST_SKIPS)
 
 
 def _skip_helpers(tree: ast.Module, attribute: str, bound: set[str], modules: set[str], parents: dict) -> set[str]:
@@ -1426,6 +1431,40 @@ def test_the_registry_is_the_one_call_a_guard_may_make():
     for name in _REGISTRY_MATCHED:
         gate = _fixture(name)
         assert gate.forms == (Form("registry"),) and gate.opaque == (), f"{name}: {gate}"
+
+
+_MODULE_FORMS = {
+    # each: the source under its own import, the form it matches, and the same source with its module
+    # rebound or taken over -- which no longer matches, because the import is the name's one binding
+    "binary": (
+        "import shutil\nimport pytest\n\ndef test_x():\n    if shutil.which('bash') is None:\n        pytest.skip('x')\n",
+        "shutil = _venue\n",
+    ),
+    "uid": (
+        "import os\nimport pytest\n\ndef test_x():\n    if os.geteuid() == 0:\n        pytest.skip('x')\n",
+        "os.geteuid = _venue\n",
+    ),
+    "opt-in": (
+        "import os\nimport pytest\n\ndef test_x():\n    if os.environ.get('ZCRYPTO_LIVE_VENUE_TESTS') != '1':\n        pytest.skip('x')\n",
+        "os = _venue\n",
+    ),
+    "opt-in by name": (
+        "import pytest\nfrom os import environ\n\ndef test_x():\n    if environ.get('ZCRYPTO_LIVE_VENUE_TESTS') != '1':\n        pytest.skip('x')\n",
+        "environ = _venue\n",
+    ),
+}
+
+
+def test_a_form_whose_module_is_rebound_or_taken_over_is_refused():
+    """The `binary`, `uid` and `opt-in` arms name `shutil` and `os`, and a name is the stdlib module only
+    while its import is the name's one binding -- the discipline `_registry_call` holds for the sixth
+    form. `shutil = _venue` above a `shutil.which('bash') is None`, or `os.geteuid = _venue` above a
+    `os.geteuid() == 0`, is a venue probe wearing a matched form's text, and is refused."""
+    for label, (source, takeover) in _MODULE_FORMS.items():
+        (clean,) = _gates(source)
+        assert clean.opaque == () and [f.name for f in clean.forms] == [label.split(" ")[0]], f"{label}: {clean}"
+        (taken,) = _gates(source.replace("import pytest\n", "import pytest\n" + takeover))
+        assert taken.forms == () and taken.opaque and "no form matches" in taken.opaque[0], f"{label} taken over: {taken}"
 
 
 def test_unittests_decorator_and_method_are_gates_the_walker_finds():

@@ -23,8 +23,9 @@ PAIR = "BTC/EUR"
 PAIR_KEY = PAIR_KEYS[PAIR]
 
 # Kraken's REST answer is 720 candles, and `now - <that window>` is at most (today - 7) 12:00 at 15m
-# whatever hour a run starts at -- so every one of the last REST_REACH_DAYS whole days is wholly inside
-# a full-length window. The bound is read off the CALENDAR and never off `stamps`, which is why the
+# whatever hour a run starts at -- so each of the REST_REACH_DAYS whole days before today is wholly
+# inside a full-length window; `recent` below spans those days and today, the live edge, which
+# `is_heal_complete` refuses before any read. The bound is read off the CALENDAR and never off `stamps`, which is why the
 # window check below is a statement about Kraken's answer rather than about the archive, and it is
 # computed from the interval this file already imports so a change to it cannot leave the 6 behind.
 REST_REACH_DAYS = 720 * BASE_INTERVAL_MINUTES // (60 * 24) - 1
