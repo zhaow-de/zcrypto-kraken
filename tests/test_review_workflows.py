@@ -145,6 +145,9 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef012"}], "records no review"),
             ([{"kind": "review", "tip": "abcdef012"}, {"kind": "pre-review", "tip": "0ancestor"}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef012"}], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef0"}], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review"}], "records no pre-review"),
         ],
     }
     for flow, table in cases.items():
