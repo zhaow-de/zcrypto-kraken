@@ -135,6 +135,9 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "review", "tip": "abcdef012"}], "records no pre-review"),
             ([{"kind": "pre-review", "tip": "abcdef012"}], None),
             ([{"kind": "pre-review", "tip": "abcdef0123456789"}], None),
+            ([{"kind": "pre-review", "tip": "abcdef0"}], None),
+            ([{"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
+            ([{"kind": "pre-review"}], "records no pre-review"),
         ],
         "re-review": [
             (None, "the ledger agent returned nothing"),
