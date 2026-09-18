@@ -22,6 +22,7 @@ from cli.derivatives.oi import (
     read_oi_series,
 )
 from cli.ohlc.dataset import write_parquet
+from tests.skip_gates import nothing_found
 
 _HEADER = (
     "create_time,symbol,sum_open_interest,sum_open_interest_value,"
@@ -441,6 +442,7 @@ def _substrate_root(name: str) -> Path:
 
 
 _OI_ROOT = _substrate_root("derivatives-oi")
+_OI_PRESENT = [_OI_ROOT] if _OI_ROOT.is_dir() else []
 
 # A closed past window. A forward refresh extends the substrate beyond it and cannot move a count
 # taken over it; the zero-population counts below are scoped to it.
@@ -455,7 +457,7 @@ def oi_panel() -> dict[str, pl.DataFrame]:
     return {perp: read_oi_series(_OI_ROOT, perp) for perp in sorted(PERP_SYMBOLS.values())}
 
 
-@pytest.mark.skipif(not _OI_ROOT.is_dir(), reason="derivatives-oi substrate absent")
+@pytest.mark.skipif(nothing_found(_OI_PRESENT), reason="derivatives-oi substrate absent")
 def test_the_balanced_oi_panel_starts_2021_12_01(oi_panel):
     """Spec 00110 D4's balanced start is the LATEST first stamp, not BTC's: BTCUSDT reaches
     2020-09-01 and the other nine begin 2021-12-01. A coverage extension moving either date moves
@@ -466,7 +468,7 @@ def test_the_balanced_oi_panel_starts_2021_12_01(oi_panel):
     assert max(firsts.values()) == datetime(2021, 12, 1, tzinfo=UTC)
 
 
-@pytest.mark.skipif(not _OI_ROOT.is_dir(), reason="derivatives-oi substrate absent")
+@pytest.mark.skipif(nothing_found(_OI_PRESENT), reason="derivatives-oi substrate absent")
 def test_both_oi_level_columns_carry_no_nulls(oi_panel):
     """Spec 00110 D5's density claim is about BOTH level columns. A single-column guard would let a
     re-fetch put holes in the other one silently — the same reason the zero counts below assert
@@ -479,7 +481,7 @@ def test_both_oi_level_columns_carry_no_nulls(oi_panel):
     assert nulls == {"sum_open_interest": 0, "sum_open_interest_value": 0}
 
 
-@pytest.mark.skipif(not _OI_ROOT.is_dir(), reason="derivatives-oi substrate absent")
+@pytest.mark.skipif(nothing_found(_OI_PRESENT), reason="derivatives-oi substrate absent")
 def test_the_oi_zero_populations_hold_over_a_closed_window(oi_panel):
     """Spec 00110 D5's venue-hole counts, pinned so a substrate re-fetch cannot move them silently.
 

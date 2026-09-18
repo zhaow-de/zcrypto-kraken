@@ -12,6 +12,7 @@ import pytest
 from typer.main import get_command
 
 from cli.__main__ import app
+from tests.skip_gates import no_binary
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/tape-bars.sh.j2"
@@ -43,7 +44,7 @@ def _rendered() -> str:
 
 def _bash() -> str:
     found = shutil.which("bash")
-    if found is None:  # pragma: no cover - bash is present on every dev and CI image we run
+    if no_binary("bash"):  # pragma: no cover - bash is present on every dev and CI image we run
         pytest.skip("bash not available")
     return found
 
@@ -99,7 +100,7 @@ def test_the_gauge_parse_matches_what_the_cli_actually_prints():
     them silently. Rather than re-implement the sed in Python, run the real one over the CLI's own
     format string."""
     sed = shutil.which("sed")
-    if sed is None:  # pragma: no cover - sed is present on every image we run
+    if no_binary("sed"):  # pragma: no cover - sed is present on every image we run
         pytest.skip("sed not available")
     emitter = (REPO / "cli/tick/command.py").read_text()
     for field in ("days_written", "days_unhealed", "days_gap", "errors"):

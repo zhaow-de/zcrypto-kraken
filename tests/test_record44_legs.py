@@ -4,11 +4,11 @@ silently moves any of them fails here.
 """
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from cli.portfolio.record44_legs import (
-    DATA_ROOT,
     REGISTRY_PATH,
     a1_family_var_trials_4h,
     calendar_year_slices,
@@ -16,6 +16,8 @@ from cli.portfolio.record44_legs import (
     rederive_record44_legs,
 )
 from cli.registry import TrialRegistry
+
+DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "ohlc-full"
 
 # Bar counts of the frozen trial-44 oracle. Cheap stand-in for the full extent guard: if the dataset
 # drifts, every figure below is void, so fail before comparing any of them.

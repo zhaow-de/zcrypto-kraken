@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.skip_gates import nothing_found
+
 _ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _ROOT / "docs"
 _CATALOG = _DOCS / "reference" / "data-catalog.md"
@@ -51,7 +53,7 @@ def test_the_universe_doc_cites_a_hash_that_reproduces_from_the_set_it_names():
     named = re.search(r"`data/(ohlc[\w.-]*)/", text)
     assert named, "the universe doc no longer names the OHLC set its volume signal read"
     manifest = _ROOT / "data" / named.group(1) / "manifest.json"
-    if not manifest.exists():
+    if nothing_found([manifest] if manifest.exists() else []):
         pytest.skip(f"{manifest} absent -- the set is gitignored and not present on this machine")
 
     # The set now DECLARES which digest identifies it (spec 00099): reach's identity is its continuous

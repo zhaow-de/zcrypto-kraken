@@ -20,6 +20,7 @@ from cli.derivatives.funding import (
     fetch_funding_month,
     read_funding_series,
 )
+from tests.skip_gates import nothing_found
 
 
 def _ms(dt: datetime) -> int:
@@ -246,6 +247,7 @@ def _substrate_root(name: str) -> Path:
 
 
 _FUNDING_ROOT = _substrate_root("derivatives-funding")
+_FUNDING_PRESENT = [_FUNDING_ROOT] if _FUNDING_ROOT.is_dir() else []
 
 # A closed past window: a forward refresh extends the substrate beyond it and cannot move a count
 # taken over it. The row count alone is taken over it — the cadence scan below reads the whole
@@ -253,7 +255,7 @@ _FUNDING_ROOT = _substrate_root("derivatives-funding")
 _CLOSED_WINDOW_END = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-@pytest.mark.skipif(not _FUNDING_ROOT.is_dir(), reason="derivatives-funding substrate absent")
+@pytest.mark.skipif(nothing_found(_FUNDING_PRESENT), reason="derivatives-funding substrate absent")
 def test_the_off_cadence_funding_prints_are_one_bounded_stretch_on_sol():
     """Spec 00110 D7 rules the funding features' input a constant-interval print series, resting that
     ruling on the off-cadence population being one bounded stretch on one leg; a re-fetch that

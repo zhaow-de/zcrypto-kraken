@@ -134,7 +134,7 @@ _DATA_ABSENT_REASONS = [
     "data/ohlc-full absent — the canonical-host marker; the disk pass runs only where the data root is",
     "trade archive absent at /mnt/zhao-crypto/capture-segments — data-bearing workstation only",
     "no BTC/EUR trade segments under /mnt/zhao-crypto/capture-segments",
-    "no heal-complete BTC/EUR day inside the REST window (REST reaches 2026-09-01..2026-09-14; archive holds 2026-08-01..2026-08-30)",
+    "no heal-complete BTC/EUR day in the last 6 days under /mnt/zhao-crypto/capture-segments",
     "no local datasets (CI)",
 ]
 _OWN_GATE_REASONS = [

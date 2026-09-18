@@ -11,6 +11,7 @@ import pytest
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.registry import TrialRegistry
 from cli.registry.observed import ObservedReader
+from tests.skip_gates import nothing_found
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DATA_ROOT = _REPO_ROOT / "data"
@@ -90,7 +91,7 @@ def test_every_schema_4_records_citations_still_rehash_against_this_hosts_data()
     if not _CANONICAL.is_dir():
         pytest.skip("data/ohlc-full absent — the canonical-host marker; the disk pass runs only where the data root is")
     records = [r for r in TrialRegistry(_REGISTRY).records if r.schema_version >= 4]
-    if not records:
+    if nothing_found(records):
         pytest.skip("no schema-4 records yet — nothing in the registry cites observed bytes")
 
     verdicts = conformance(records, _DATA_ROOT, _ABSENT_OK)

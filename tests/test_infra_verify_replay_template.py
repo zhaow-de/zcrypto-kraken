@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from cli.__main__ import app
 from cli.archive import command as command_mod
 from cli.archive.replay import Census, ReplayResult
+from tests.skip_gates import no_binary
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/verify-replay.sh.j2"
@@ -335,7 +336,7 @@ def _bash_harness(tmp_path):
     publish are all shell. The healthcheck URL is rendered empty so the ping never attempts a real
     network call."""
     bash = shutil.which("bash")
-    if bash is None:  # pragma: no cover - bash is present on every image we run
+    if no_binary("bash"):  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")
 
     bin_dir = tmp_path / "bin"
