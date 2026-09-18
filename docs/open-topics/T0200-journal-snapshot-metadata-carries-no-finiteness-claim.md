@@ -24,11 +24,11 @@ value door exists, it is just on the wrong side of the write.
 
 ## Findings so far
 
-What PR #514 (T0193) measured is the sections above. What follows was measured 2026-09-18, on the branch that corrected [[T0199]]'s trigger.
+What PR #514 (T0193) measured is the sections above.
 
-**This topic and [[T0199]] are one door carrying two numbers, measured 2026-09-18.** The snapshot write path this topic names owns no writer of its own: `cli/engine/cycle.py` imports `write_parquet` from `cli/ohlc/dataset.py`, where it is defined once, and calls it at the journal-snapshot write. That is the same helper [[T0199]]'s open fork weighs as the place a non-finite close should be refused. So a finiteness claim added at this write and a refusal added there would land on one function, and deciding them separately invites two incompatible answers on it. Whichever is decided first records what it decided for the other.
+**This topic and [[T0199]] are one door.** The snapshot write path this topic names owns no writer of its own: `cli/engine/cycle.py` imports `write_parquet` from `cli/ohlc/dataset.py` and calls it at the journal-snapshot write, and that is the same helper [[T0199]]'s open fork weighs as the place a non-finite close should be refused. A claim added here and a refusal added there land on one function, so whichever is decided first records what it decided for the other.
 
-**The helper is shared well beyond the engine**, with nine call sites across seven modules: four inside `cli/engine/` — three in `store.py`, which is [[T0199]]'s own site, and one at this file's journal-snapshot write — and the other five spread across the OHLC, backfill and derivatives packages — and two of those callers write frames carrying no close column at all, so a claim stated at the write cannot assume the frame has one. Carrying it on `SnapshotEntry` instead keeps the change inside the journal's own record and avoids that reach, which is the trade this topic's next steps weigh.
+**The helper is shared well beyond the engine**, and two of its callers write frames carrying no close column at all, so a claim stated at the write cannot assume the frame has one. Carrying it on `SnapshotEntry` instead keeps the change inside the journal's own record and avoids that reach.
 
 ## Suggested next steps
 
@@ -36,4 +36,4 @@ What PR #514 (T0193) measured is the sections above. What follows was measured 2
   is one pass over data already in hand.
 - Decide whether the claim is a new `SnapshotEntry` field (a schema bump, so a reader migration) or a refusal
   at write with no field at all — the latter needs no schema change and leaves the record format alone.
-- A refusal at write is NOT a capture-path change -- capture writes through polars' own method and never reaches this helper -- but it is shared with the OHLC, backfill and derivatives packages, so it takes the care any change with that reach does.
+- A refusal at write reaches the OHLC, backfill and derivatives packages as well as the engine, so it takes the care any change with that reach does; capture does not call this helper.
