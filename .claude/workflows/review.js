@@ -1,7 +1,7 @@
 export const meta = {
   name: 'review',
   description: 'The wide review of a whole branch: two lenses, one skeptic per Critical or Important',
-  whenToUse: 'The wide review a branch owes once it is complete, after its pre-read; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, lenses?, drive?, model?}',
+  whenToUse: 'The wide review a branch owes once it is complete, after its pre-review; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, lenses?, drive?, model?}',
   phases: [
     { title: 'Ledger', detail: 'the order of reviews, refused rather than remembered' },
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
@@ -24,7 +24,7 @@ for (const l of lenses) {
 }
 if (new Set(lenses.map((l) => l.name)).size !== lenses.length) throw new Error(`lens names must be distinct: ${lenses.map((l) => l.name).join(', ')}`)
 
-// --- shared with pre-read.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
+// --- shared with pre-review.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
 const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
@@ -65,7 +65,7 @@ const VERDICT = {
 // --- prompts -----------------------------------------------------------------------------------
 const readerPrompt = (lens) => `You are one of ${lenses.length} independent readers, a different agent from the author, of \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${RULES} ${CHECKOUT(`read-${lens.name}`)} ${SCOPE} Grading: ${GRADING}
 
-YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-read has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
+YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
 Read \`git diff ${range}\` first, then each commit message. Write a Markdown report to ${reportDir}/${lens.name}.md with \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
 
@@ -93,11 +93,11 @@ const ledger = await agent(
   `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. Return the entries as they are. Write nothing; no other command.`,
   { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
-if (!ledger) throw new Error(`review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-read; retry`)
+if (!ledger) throw new Error(`review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-review; retry`)
 const entries = ledger.entries || []
-// A pre-read covers one tip: the one it read. An earlier tip's pre-read is an ancestor of every later commit on the branch, so an ancestry test admitted the branch's first pre-read for every read after it; the tip is compared as written, short or long.
+// A pre-review covers one tip: the one it read. An earlier tip's pre-review is an ancestor of every later commit on the branch, so an ancestry test admitted the branch's first pre-review for every read after it; the tip is compared as written, short or long.
 const sameTip = (e) => e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip)))
-if (!entries.some((e) => e.kind === 'pre-read' && sameTip(e))) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-read of this tip — run pre-read on it first`)
+if (!entries.some((e) => e.kind === 'pre-review' && sameTip(e))) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on it first`)
 
 // --- Read: one reader per lens; the union needs all of them, so the barrier is right ------------
 phase('Read')

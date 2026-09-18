@@ -1,5 +1,5 @@
 export const meta = {
-  name: 'pre-read',
+  name: 'pre-review',
   description: 'The author’s prose and message claims graded by a different agent before any review',
   whenToUse: 'Before every review or re-review of a range — over the fix range after the first review, never the whole branch again: one agent grades the range’s prose, re-runs the commands and probes its messages quote, and checks each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?}',
   phases: [
@@ -18,7 +18,7 @@ const SCOPE = `Re-run a probe only through the case its message records (a \`-k\
 const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
 const CHECKOUT = worktree
   ? `Run every git command with \`-C ${repo}\`. A detached worktree at the tip, already synced, is at ${worktree}: run probes and drives there — you are its only user — and never create, remove or check out a worktree.`
-  : `Run every git command with \`-C ${repo}\` and read files at the tip with \`git -C ${repo} show ${tip}:<path>\`. Create a detached worktree only when a probe or a drive must execute the range's code — \`git -C ${repo} worktree add --detach ${repo}/.tmp/reads/pre-read-<tip7> ${tip}\`, removed before you return — and never for reading: a worktree costs a venv sync, and a docs range needs none.`
+  : `Run every git command with \`-C ${repo}\` and read files at the tip with \`git -C ${repo} show ${tip}:<path>\`. Create a detached worktree only when a probe or a drive must execute the range's code — \`git -C ${repo} worktree add --detach ${repo}/.tmp/reads/pre-review-<tip7> ${tip}\`, removed before you return — and never for reading: a worktree costs a venv sync, and a docs range needs none.`
 
 // --- schema ------------------------------------------------------------------------------------
 const PROSE = {
@@ -77,7 +77,7 @@ const REPORT = {
 }
 
 // --- the grader --------------------------------------------------------------------------------
-const prompt = `You are the pre-reader of \`git log ${range}\` at tip \`${tip}\` in ${repo}, a different agent from the author, run before any review. ${RULES} ${CHECKOUT} ${SCOPE} Grading: ${GRADING}
+const prompt = `You are the pre-reviewer of \`git log ${range}\` at tip \`${tip}\` in ${repo}, a different agent from the author, run before any review. ${RULES} ${CHECKOUT} ${SCOPE} Grading: ${GRADING}
 
 Four things, each against the tree at the tip, none on trust:
 
@@ -93,11 +93,11 @@ Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` wh
 
 4. CLASS WALK. For each defect a commit says it fixed, state in one sentence the invariant the fix restores, then walk its class BOTH ways and list every member the fix left. TEXT: the defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition. SPACE: the categories the fixed code's input or state ranges over, each judged against the invariant — only categories this repo produces, driven where you can drive them, named rather than guessed where you cannot. A class walked one way is half walked. Each fix also names, in its \`fix\` sentence, what it DELETED from the sites it touched — a fix over a site this range already rewrote that deletes nothing is the fourth-round shape, and is reported as one.
 
-Write a Markdown report to ${reportDir}/pre-read.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
+Write a Markdown report to ${reportDir}/pre-review.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
 phase('Pre-read')
-const report = await agent(prompt, { label: 'pre-read', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
-if (!report) throw new Error('the pre-reader returned nothing')
+const report = await agent(prompt, { label: 'pre-review', phase: 'Pre-read', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
+if (!report) throw new Error('the pre-reviewer returned nothing')
 const n = (list, pred) => list.filter(pred).length
 // A reason is judged by what is left of it: the words a placeholder is made of, and the words any sentence
 // carries, say nothing on their own, so a ship built only from those is a count wearing a sentence's clothes.
@@ -116,8 +116,8 @@ const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }
 // --- Record -------------------------------------------------------------------------------------
 phase('Record')
 const recorded = await agent(
-  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-read","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
   { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
 )
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this pre-read — the next read refuses ${tip} until it carries {"kind":"pre-read","tip":"${tip}"}; append it by hand`)
+if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this pre-review — the next read refuses ${tip} until it carries {"kind":"pre-review","tip":"${tip}"}; append it by hand`)
 return { ...report, recorded: Boolean(recorded && recorded.appended) }

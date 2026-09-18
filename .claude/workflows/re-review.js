@@ -1,7 +1,7 @@
 export const meta = {
   name: 're-review',
   description: 'The single-lens review of a fix range: every prior closed, left, or open',
-  whenToUse: 'After the fixes a review asked for, each fix its own commit and never an amend, so the range exists; after their pre-read; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}',
+  whenToUse: 'After the fixes a review asked for, each fix its own commit and never an amend, so the range exists; after their pre-review; at most two per branch — a Critical or Important still open after the second goes to the owner. Priors are open Critical/Important only. args: {repo, range, tip, prior: [{id, severity, path, line, claim}], reportDir, left?, reported?, drive?, model?}',
   phases: [
     { title: 'Ledger', detail: 'the order of reviews, refused rather than remembered' },
     { title: 'Re-read', detail: 'one reader over the fix range with the open priors' },
@@ -23,7 +23,7 @@ for (const p of prior) {
 if (left && !/#\d+/.test(left)) throw new Error('left names each consciously-left prior by id (#<id>) with its reason')
 if (drive && drive.length > 400) throw new Error(`drive is ${drive.length} characters, at most 400: one sentence naming what the standing brief does not cover — cut every clause that names a figure, a path or a command, the brief re-measures those itself`)
 
-// --- shared with pre-read.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
+// --- shared with pre-review.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
 const RULES = `READ-ONLY in the repo checkout: no edits, no commits, no checkout, no stash. Plain blocking commands only, no background jobs, no subagents, and no agent tools (\`ListAgents\`, \`SendMessage\`): you read a range, you do not coordinate. Never run \`docker inspect\`, \`ansible-inventory\` or ssh; the data root under data/ is unversioned and read-only for you.`
@@ -78,9 +78,9 @@ ${priorList}
 What the author names as consciously left, each by prior id with its reason (the reason is a claim this read rests on: check it against the tree): ${left || 'nothing'}
 Minors the prior read reported, fixed or left with their reasons — context, not priors: ${reported || 'none'}
 
-The pre-read has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
+The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
-Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of, both ways — the text (sibling spellings, other carriers of the same claim, other branches of the same condition) and the space (the categories the fixed code's input or state ranges over, judged against the invariant the fix restores) — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-read, not a row for the next read. Write a Markdown report to ${reportDir}/re-review.md with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
+Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of, both ways — the text (sibling spellings, other carriers of the same claim, other branches of the same condition) and the space (the categories the fixed code's input or state ranges over, judged against the invariant the fix restores) — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-review, not a row for the next read. Write a Markdown report to ${reportDir}/re-review.md with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
 const refutePrompt = (f) => `You are the skeptic. ${RULES} ${CHECKOUT(`refute-${f.id}`)} ${SCOPE}
 
@@ -106,12 +106,12 @@ const ledger = await agent(
   `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. Return the entries as they are. Write nothing; no other command.`,
   { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
-if (!ledger) throw new Error(`re-review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-read; retry`)
+if (!ledger) throw new Error(`re-review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-review; retry`)
 const entries = ledger.entries || []
-// A pre-read covers one tip: the one it read. An earlier tip's pre-read is an ancestor of every later commit on the branch, so an ancestry test admitted the branch's first pre-read for every read after it; the tip is compared as written, short or long.
+// A pre-review covers one tip: the one it read. An earlier tip's pre-review is an ancestor of every later commit on the branch, so an ancestry test admitted the branch's first pre-review for every read after it; the tip is compared as written, short or long.
 const sameTip = (e) => e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip)))
 if (!entries.some((e) => e.kind === 'review')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch — a fix range follows a whole-branch review, never replaces it`)
-if (!entries.some((e) => e.kind === 'pre-read' && sameTip(e))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-read of this tip — run pre-read on the fix range first`)
+if (!entries.some((e) => e.kind === 'pre-review' && sameTip(e))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on the fix range first`)
 
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')
