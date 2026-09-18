@@ -10,6 +10,8 @@ from pathlib import Path
 import jinja2
 import pytest
 
+from tests.skip_gates import no_binary
+
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE = REPO / "infra/ansible/roles/ops/templates/archive-pull.sh.j2"
 
@@ -57,7 +59,7 @@ def _reconcile_mode_line(rendered: str) -> str:
 
 def test_the_rendered_script_is_valid_bash():
     bash = shutil.which("bash")
-    if bash is None:  # pragma: no cover - bash is present on every dev and CI image we run
+    if no_binary("bash"):  # pragma: no cover - bash is present on every dev and CI image we run
         pytest.skip("bash not available")
     proc = subprocess.run([bash, "-n"], input=_rendered(), text=True, capture_output=True)
     assert proc.returncode == 0, proc.stderr
@@ -98,7 +100,7 @@ def test_the_repair_count_parse_matches_what_the_cli_actually_prints():
     re-implement the sed in Python, run the real one over a line built from the CLI's own format
     string -- a wording change on either side then fails here."""
     sed = shutil.which("sed")
-    if sed is None:  # pragma: no cover - sed is present on every image we run
+    if no_binary("sed"):  # pragma: no cover - sed is present on every image we run
         pytest.skip("sed not available")
     m = re.search(r"backfill_repaired=\$\(sed -n '([^']+)'", _rendered())
     assert m, "the repair-count parse is missing from the rendered script"
@@ -123,7 +125,7 @@ def test_a_failed_run_still_writes_every_series(tmp_path):
     on where each printf sits pins a formatting convention, not the property, and fails on a
     legitimate dedent."""
     bash = shutil.which("bash")
-    if bash is None:  # pragma: no cover - bash is present on every image we run
+    if no_binary("bash"):  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")
     r = _rendered()
     block = r[
@@ -194,7 +196,7 @@ def test_the_outer_cycle_carries_last_success_forward_on_failure(tmp_path):
     a CRITICAL rule (`time() - ops_archive_pull_last_success_timestamp > 10800`, noDataState:
     Alerting), so a literal 0 there pages critical forever from the first failed cycle."""
     bash = shutil.which("bash")
-    if bash is None:  # pragma: no cover - bash is present on every image we run
+    if no_binary("bash"):  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")
     r = _rendered()
     start = r.index("prev_success=$(awk")

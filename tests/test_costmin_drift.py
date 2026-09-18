@@ -7,6 +7,7 @@ import pytest
 
 from cli.engine.feeders import load_minimums
 from cli.engine.instruments import COSTMIN
+from tests.skip_gates import nothing_found
 
 # The two /BTC legs: load_minimums's quote == "EUR" filter drops them by design, so they are read
 # from the snapshot's `universe` block instead of through that reader.
@@ -18,7 +19,7 @@ def test_the_committed_costmin_matches_the_newest_refdata_snapshot():
     always None) and the engine host carries no snapshot. This is its drift guard: a venue change
     turns this red instead of silently mis-sizing an order."""
     snaps = sorted(glob.glob("data/snapshots/kraken-refdata-*.json"))  # the name carries the stamp; mtime does not survive a copy
-    if not snaps:
+    if nothing_found(snaps):
         pytest.skip("no refdata snapshot present (gitignored data root)")
     snapshot_path = Path(snaps[-1])
 

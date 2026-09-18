@@ -11,6 +11,8 @@ import subprocess
 
 import pytest
 
+from tests.skip_gates import develop_resolves
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -53,15 +55,10 @@ def test_this_checkout_carries_what_the_counts_measure_from():
         ["git", "-C", str(REPO), "rev-parse", "--is-shallow-repository"], capture_output=True, text=True, check=True
     ).stdout.strip()
     assert shallow == "false", "a shallow clone: `git fetch --unshallow`, or `fetch-depth: 0` in CI"
-    assert _develop_resolves(), (
+    assert develop_resolves(), (
         "no local `develop`: `git branch --force develop origin/develop`, which is what CI runs "
-        "after its checkout — `count-list.sh` refuses without it and the nine gates below skip"
+        "after its checkout — `count-list.sh` refuses without it and the ten gates below skip"
     )
-
-
-def _develop_resolves() -> bool:
-    done = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet", "develop"], capture_output=True)
-    return done.returncode == 0
 
 
 def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
@@ -195,7 +192,7 @@ def test_the_corpus_names_every_entry_but_the_four_the_script_carries_on_its_own
     assert set(names) - corpus == NOT_NAMED, f"entries the corpus does not name: {sorted(set(names) - corpus)}"
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floor(tmp_path):
     """A Fable line on the body's third line is a read; a Haiku line at the top is not; the journal PR is left out
     while it carries journal files ALONE; no line counts. Every row carries the `headRefOid` and `files` the gate
@@ -247,7 +244,7 @@ def test_the_read_count_finds_its_line_anywhere_in_the_body_and_only_at_the_floo
     assert done.returncode == 0 and done.stdout == "merged-prs-without-a-floor-read-30d\t3\n", done.stdout + done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
     """One rule, one implementation. Three jq attempts to restate `merge-gate.py`'s arm each diverged in a
     different direction — case, line anchoring, an invented floor divergence — so the counter calls
@@ -314,7 +311,7 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
     assert done.returncode == 0 and done.stdout.strip().endswith("\t3"), done.stdout + done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not_cover(tmp_path):
     """The gate admits two heads past the tip a read line names -- the single-parent commit whose only file is the
     change index, which `open-pr` pushes after the read, and a head whose tree is that tip's -- and the counter has
@@ -364,7 +361,7 @@ def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_path):
     """`gh pr list --json files` returns the first page only, so a PR whose Fable path falls outside it reads as
     touching none — the counter would book it compliant where the gate refuses it. `changedFiles` is the exact
@@ -411,7 +408,7 @@ def test_a_truncated_file_list_is_refetched_before_the_fable_arm_decides(tmp_pat
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_row_with_no_file_list_is_counted_rather_than_read_as_touching_nothing(tmp_path):
     """`read_line_fails` has two refusals that fire only when `files` is None — the ops-journal exemption cannot
     be scoped, and the Fable paths cannot be checked. Mapping an ABSENT list to `[]` reports "touched nothing"
@@ -441,7 +438,7 @@ def test_a_row_with_no_file_list_is_counted_rather_than_read_as_touching_nothing
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_an_empty_pr_fetch_is_an_error_rather_than_perfect_compliance(tmp_path):
     """An empty fetch used to print 0, which reads as every merged PR carrying its read line."""
     snapshot = tmp_path / "prs.json"
@@ -458,7 +455,7 @@ def test_an_empty_pr_fetch_is_an_error_rather_than_perfect_compliance(tmp_path):
     assert "no rows at all" in done.stderr, done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_saturated_pr_fetch_is_an_error_rather_than_an_under_count(tmp_path):
     """Every row inside the window means the fetch stopped there: rows below it were never seen, so the count
     would under-report by however many it missed. 204 PRs against a --limit 200 is how this read 184 and called
@@ -479,7 +476,7 @@ def test_a_saturated_pr_fetch_is_an_error_rather_than_an_under_count(tmp_path):
     assert "saturated" in done.stderr, done.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_named_entry_runs_alone_and_an_unknown_name_is_refused():
     one = subprocess.run(
         ["bash", str(SCRIPT), "markdown-directly-under-docs"], cwd=REPO, capture_output=True, text=True, timeout=120
@@ -491,7 +488,7 @@ def test_a_named_entry_runs_alone_and_an_unknown_name_is_refused():
     assert none.returncode == 2 and "no entry named no-such-entry" in none.stderr, none.stdout + none.stderr
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="five counts read the develop ref by name, and this checkout has none")
+@pytest.mark.skipif(not develop_resolves(), reason="five counts read the develop ref by name, and this checkout has none")
 def test_the_script_prints_one_shaped_line_per_entry(tmp_path):
     """Run against recorded inputs, so the whole list reaches no venue and no API from a test.
 
@@ -576,7 +573,7 @@ def test_the_topic_only_arm_counts_a_merge_only_when_every_file_it_brought_in_is
     assert _topic_only_merges(repo) == "1"
 
 
-@pytest.mark.skipif(not _develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_a_dependabot_bump_is_exempt_and_one_carrying_a_fix_commit_is_not(tmp_path):
     """The gate exempts a dependabot PR whose every commit is the bot's, so the counter has to fetch those commits
     or book every bump. The bulk list cannot carry them -- 400 rows times their authors exceeds GraphQL's node

@@ -1,7 +1,10 @@
 """Tape bars checked against Kraken's public REST OHLC (spec 00087 Verification), the only source
 that overlaps the tape now that `ohlc-full` has ended: REST reaches only ~720 candles back (~7.5
-days at 15m), so the day under test is COMPUTED — the newest heal-complete day wholly inside that
-window — and never a pinned date, which would rot out of the window within a week."""
+days at 15m), so the day under test is COMPUTED — the newest heal-complete day of the last
+`REST_REACH_DAYS` whole days — and never a pinned date, which would rot out of the window within a
+week. That bound is the CALENDAR's and not the answer's, so a heal-complete day inside the REST
+window but older than it is skipped rather than tested, and whether Kraken reached the chosen day
+is a `pytest.fail` below rather than a skip."""
 
 from __future__ import annotations
 
@@ -14,9 +17,18 @@ import pytest
 from cli.config import load_config
 from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.tick.materialize import BASE_INTERVAL_MINUTES, build_day, is_heal_complete, segment_index
+from tests.skip_gates import nothing_found
 
 PAIR = "BTC/EUR"
 PAIR_KEY = PAIR_KEYS[PAIR]
+
+# Kraken's REST answer is 720 candles, and `now - <that window>` is at most (today - 7) 12:00 at 15m
+# whatever hour a run starts at -- so each of the REST_REACH_DAYS whole days before today is wholly
+# inside a full-length window; `recent` spans those days and today, which `is_heal_complete` refuses
+# at the live edge before any read. The bound is read off the CALENDAR and never off `stamps`, which
+# is why the window check below is a statement about Kraken's answer rather than about the archive,
+# and it is computed from the interval this file already imports so a change to it cannot leave the 6 behind.
+REST_REACH_DAYS = 720 * BASE_INTERVAL_MINUTES // (60 * 24) - 1
 
 _MOUNT = load_config().nfs_mount_dir
 PRIMARY_ROOT = _MOUNT / "capture-segments"
@@ -44,13 +56,19 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
     # once the flag is set `fetch_ohlc`'s OHLCError is left to FAIL this test rather than skip it.
     if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
         pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
-    if not PRIMARY_ROOT.exists():
+    _primary_present = [PRIMARY_ROOT] if PRIMARY_ROOT.exists() else []
+    if nothing_found(_primary_present):
         pytest.skip(f"trade archive absent at {PRIMARY_ROOT} — data-bearing workstation only")
 
     index = segment_index(PRIMARY_ROOT, RECONCILED_ROOT)
     archived = sorted({hour.date() for hour in index.get(PAIR, {})})
-    if not archived:
+    if nothing_found(archived):
         pytest.skip(f"no {PAIR} trade segments under {PRIMARY_ROOT}")
+
+    recent = [d for d in archived if d >= datetime.now(UTC).date() - timedelta(days=REST_REACH_DAYS)]
+    day = next((d for d in reversed(recent) if is_heal_complete(index, PAIR, d)), None)
+    if nothing_found([day] if day is not None else []):
+        pytest.skip(f"no heal-complete {PAIR} day in the last {REST_REACH_DAYS} days under {PRIMARY_ROOT}")
 
     rows = fetch_ohlc(PAIR_KEY, BASE_INTERVAL_MINUTES)
     if not rows:
@@ -58,10 +76,10 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
 
     stamps = sorted(datetime.fromtimestamp(int(row[_TIME]), UTC) for row in rows)
     # A window shorter than the one day this test compares is a venue answer too short to mean
-    # anything, whatever the archive holds -- and downstream it is not separable from an old archive,
-    # because `covered` comes back empty under both and telling them apart needs Kraken's candle-count
-    # contract, which this tree does not hold. It belongs beside the `not rows` fail above: with the
-    # opt-in set, a venue answer short of the expected one fails rather than skipping.
+    # anything, whatever the archive holds. It belongs beside the `not rows` fail above: with the
+    # opt-in set, a venue answer short of the expected one fails rather than skipping. The day is
+    # already chosen off the calendar above, so an old archive has skipped there and the window check
+    # below is a venue statement too; this one stays for the sharper diagnostic it prints.
     if stamps[-1] - stamps[0] < timedelta(days=1):
         pytest.fail(
             f"Kraken REST returned {PAIR_KEY} {BASE_INTERVAL_MINUTES}m candles spanning only "
@@ -69,17 +87,11 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
         )
     # The newest row is the still-forming candle, so `day_end <= stamps[-1]` is exactly the condition
     # that every one of the day's candles is present AND closed.
-    covered = [
-        d
-        for d in archived
-        if datetime(d.year, d.month, d.day, tzinfo=UTC) >= stamps[0]
-        and datetime(d.year, d.month, d.day, tzinfo=UTC) + timedelta(days=1) <= stamps[-1]
-    ]
-    day = next((d for d in reversed(covered) if is_heal_complete(index, PAIR, d)), None)
-    if day is None:
-        pytest.skip(
-            f"no heal-complete {PAIR} day inside the REST window "
-            f"(REST reaches {stamps[0].date()}..{stamps[-1].date()}; archive holds {archived[0]}..{archived[-1]})"
+    day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    if not (day_start >= stamps[0] and day_start + timedelta(days=1) <= stamps[-1]):
+        pytest.fail(
+            f"Kraken REST reaches {stamps[0].date()}..{stamps[-1].date()} and does not cover the newest "
+            f"heal-complete {PAIR} day {day}"
         )
 
     bars = build_day(index, PAIR, day)

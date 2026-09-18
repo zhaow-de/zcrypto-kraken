@@ -18,6 +18,7 @@ from cli.engine.venuestate import (
     runtime_concordance,
     venue_state_from_cache,
 )
+from tests.skip_gates import nothing_found
 
 FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
 
@@ -75,7 +76,7 @@ def test_every_basket_legs_tick_size_is_ten_to_the_minus_its_pair_decimals():
     """`_decimals` inverts a venue step into a precision; that yields Kraken's own `pair_decimals`
     only while every basket leg's `tick_size` is exactly `10 ** -pair_decimals`."""
     snapshots = sorted(_SNAPSHOTS.glob("kraken-refdata-*.json"))
-    if not snapshots:
+    if nothing_found(snapshots):
         pytest.skip("no refdata snapshot present (gitignored data root)")
     assetpairs = json.loads(snapshots[-1].read_text())["raw"]["assetpairs"]
 

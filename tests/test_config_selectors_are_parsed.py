@@ -310,9 +310,7 @@ def test_the_exemption_window_is_the_comparisons_own(position: str, body: str, e
     assert bool(_violations(_WINDOW_HEAD + body)) is not exempted, position
 
 
-@pytest.mark.parametrize("path", sorted(TESTS.glob("test_*.py")), ids=lambda p: p.name)
+@pytest.mark.parametrize("path", sorted(p for p in TESTS.glob("test_*.py") if p.name not in _GRANDFATHERED), ids=lambda p: p.name)
 def test_no_substring_selector_over_a_hand_edited_config(path: Path) -> None:
-    if path.name in _GRANDFATHERED:
-        pytest.skip("pre-existing; see _GRANDFATHERED")
     bad = _violations(path.read_text(), path.name)
     assert not bad, "substring selector over a hand-edited config -- parse it, or match by prefix:\n  " + "\n  ".join(bad)
