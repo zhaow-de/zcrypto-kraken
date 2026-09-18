@@ -82,22 +82,22 @@ const LEDGER_ENTRY = {
   type: 'object',
   properties: {
     kind: { type: 'string' }, range: { type: 'string' }, tip: { type: 'string' }, ts: { type: 'string' },
-    coversTip: { type: 'boolean', description: 'true when this entry\'s tip is the current tip or an ancestor of it' },
   },
-  required: ['kind', 'range', 'tip', 'ts', 'coversTip'],
+  required: ['kind', 'range', 'tip', 'ts'],
 }
 const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
 const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
 const ledgerPath = `${reportDir}/ledger.jsonl`
 phase('Ledger')
 const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each entry set coversTip true when \`git -C ${repo} merge-base --is-ancestor <entry.tip> ${tip}\` exits 0. Return the entries. Write nothing; no other command.`,
+  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. Return the entries as they are. Write nothing; no other command.`,
   { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
 if (!ledger) throw new Error(`review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-read; retry`)
 const entries = ledger.entries || []
-const covered = (kind) => entries.some((e) => e.kind === kind && e.coversTip)
-if (!covered('pre-read')) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-read of this tip or an ancestor — run pre-read on it first`)
+// A pre-read covers one tip: the one it read. An earlier tip's pre-read is an ancestor of every later commit on the branch, so an ancestry test admitted the branch's first pre-read for every read after it; the tip is compared as written, short or long.
+const sameTip = (e) => e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip)))
+if (!entries.some((e) => e.kind === 'pre-read' && sameTip(e))) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-read of this tip — run pre-read on it first`)
 
 // --- Read: one reader per lens; the union needs all of them, so the barrier is right ------------
 phase('Read')
