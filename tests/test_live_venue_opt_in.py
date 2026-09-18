@@ -1,66 +1,47 @@
-"""One flag name opens every test that reaches a venue, and a gate this file cannot read is refused.
+"""One flag name opens every test that reaches a venue, and a guard that matches no form is refused.
 
 A test that reaches a live venue is gated on `ZCRYPTO_LIVE_VENUE_TESTS=1`, never on whether the venue
 answers. Gated on reachability such a test runs in CI, where it is a flake source, and goes
 green-by-skip the day the venue blocks the runner -- and a skip is indistinguishable from a pass in a
 summary line, so an outage reads as coverage of a contract nobody exercised.
 
-WHAT THIS FILE HOLDS, and it is less than that rule:
+WHAT THIS FILE HOLDS, the two halves of that rule:
 
-- every skip gate in `tests/` whose reading names environment keys names `ZCRYPTO_LIVE_VENUE_TESTS`
-  and no other, so a second opt-in cannot appear unnoticed;
-- no skip gate has anything this file could not read. A guard is REDUCED to a reading rather than
-  recognised, and an expression that will not reduce is refused. That floor is the only assertion here
-  that has never been evaded.
+- every skip gate in `tests/` that reads an environment key reads `ZCRYPTO_LIVE_VENUE_TESTS` and no
+  other, so a second opt-in cannot appear unnoticed;
+- every skip gate in `tests/` matches one of six forms, and a guard that matches none of them is
+  refused. No form reaches a venue, which is how the other half -- no skip decided by whether the
+  venue answers -- is held: by a closed set of shapes rather than by a reading of what a guard does.
 
-WHAT IT DOES NOT HOLD, deliberately and by the owner's ruling of 2026-09-11: **that no skip is decided
-by whether the venue answers.** Four review rounds tried to assert it and none closed it. The property
-is real and the repo has it nowhere; asserting it needs a static analyser, and this file is not one.
+THE SIX FORMS, each syntactic and each constraining what it may read: `path`, a presence method --
+`exists`, `is_file`, `is_dir` -- taking no argument, on a literal-rooted receiver; `uid`,
+`os.geteuid() == 0`; `binary`, `shutil.which('<literal>') is None`; `opt-in`, a read with no default
+under a key that is a literal or a plain module constant, compared to a string literal, spelled
+`<key> in os.environ`, or tested against a module-level constant collection of literals; `membership`,
+a call-free literal-rooted expression tested against such a collection; and `registry`, a call into
+`tests/skip_gates.py`.
 
-AND WHAT THE TWO SURVIVING CLAIMS THEMSELVES MISS, measured by planting each shape rather than reasoned
-about, because three rounds of this file's prose claimed more than its code delivered:
+The registry is where a gate whose reading has no form of its own declares it: `develop_resolves()`,
+`no_binary(...)` and `nothing_found(...)` say at the call site what the skip is decided by. A form
+that is a call into a sibling module is worth no more than that module, so
+`test_the_registry_reads_nothing_a_form_could_not` holds it closed -- its imports, the names its calls
+may reach, the one `git` it may launch, and the single `return` of every function it defines.
 
-- a second opt-in name reaches a gate uncaught through five bindings the scope merge does not see --
-  an annotated module constant (`K: str | None = os.environ.get(...)`), a binding inside a module-level
-  `if` or `try`, a class attribute read as `self.K`, and a name arriving by star-import. Only a plain
-  module-level `K = ...` is caught. None of the five is REFUSED either, so the floor does not cover
-  what the one-name assertion misses;
-- `unittest` is half in scope: `raise unittest.SkipTest` yields a gate, `@unittest.skipIf(...)` and
-  `self.skipTest(...)` yield none;
-- an env read moved INSIDE a skip helper is invisible: the helper's call sites are found, but the
-  name it reads is attributed to none of them, so the gate shows `env=()` and passes both assertions
-  while a second opt-in name decides the outcome (measured on `fix/ci-shallow-checkout`, where the
-  read was deleted rather than kept);
-- gate DISCOVERY is not asserted at all, and cannot be from inside this file -- see
-  `test_the_fixture_carries_every_position_a_skip_can_sit`;
-- and nothing in the tree holds the recognition this file most recently gained: six mutation probes,
-  each reverting one of those additions, all SURVIVED, because the fixture exercises the shapes but no
-  assertion fails when the code stops recognising them.
+WHAT THIS FILE DOES NOT HOLD:
 
-Those are the honest edges of a guard that is worth having anyway: it holds the one flag name over
-every gate it does find, and it refuses what it cannot read. A future attempt should start from the
-matcher-versus-reducer diagnosis below rather than from this code.
+- gate DISCOVERY. The matcher judges the gates the walker finds, and any set this file computed to
+  check that walk would be computed by the walker; the positions a skip can sit in are held against
+  the fixture by `test_the_fixture_carries_every_position_a_skip_can_sit`, and a position the fixture
+  does not carry is held by nothing;
+- the provenance of a registry call's ARGUMENTS. `nothing_found(rows)` is the call site's claim that
+  those rows were gathered locally, and no shape of the call can check it, so rows a venue answer
+  filtered would decide a skip under a declaration that says otherwise. That is the one reading a gate
+  may still carry unjudged.
 
-The diagnosis, for whoever writes that analyser, because it is the thing to read first. A MATCHER
-matches a guard against enumerated forms and fails when none match, so it has no branch that can leak.
-A REDUCER walks an expression asking what it reads, and at every node it cannot classify it must
-choose between refusing and permitting -- so "closed-world" is a property of every branch rather than
-of the design. This file is a reducer. Its first shape claimed the matcher's property in this
-docstring while seven of its branches permitted, and thirteen of twenty-seven planted defects walked
-through them.
-
-The measured cost of the matcher, which is what the decision turned on: **18 of the tree's 61 guard
-expressions have no form a matcher could accept**, because their meaning is not readable off their
-shape. `not X.exists()` is manifest whatever `X` is -- the method names the reading. `not rows` is
-not: the form does not say whether `rows` came off a disk or off Kraken. The 18 are three calls to one
-module-private helper and fifteen bare locals, SEVEN of those a `shutil.which` result read one
-line later. Each would need its predicate inlined or declared. Re-derive with the blanking transform over
-`_tree_gates()`; do not take the number from here.
-
-`_PREDICATES` is the set this file understands well enough to attribute a reading to, not an allowlist
-of callable names: a method on a value that reads nothing reads nothing whatever it is called. What is
-refused is a call it cannot resolve to a definition in our own code and cannot attribute to a library,
-and the refusal names both ways out.
+From 2026-09-11 until this change the file was a REDUCER: it followed a call into our own code and
+read what the helper it landed on reached, rather than matching the guard against a form. Its blind
+spots were hand-counted four times, each count was wrong, and that is why a closed set of forms
+replaced it.
 
 The class had three names until T0190: `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` implemented the
 same rule under their own spellings, so an agent that set the one name it had been given got the other
@@ -75,7 +56,6 @@ which no parse of this module sees as code.
 from __future__ import annotations
 
 import ast
-import builtins
 import functools
 from pathlib import Path
 from typing import NamedTuple
@@ -101,15 +81,6 @@ REGISTRY_BUILTINS: frozenset[str] = frozenset()
 # `-c protocol.ext.allow=<transport>` all reach a remote under it, and a skip would then be decided by
 # whether that remote answers. The checkout the launch runs in is `cwd=REPO` and no word of the argv.
 REGISTRY_GIT_ARGV = frozenset({"git", "rev-parse", "--verify", "--quiet", "develop"})
-
-# Every mapping accessor that answers with a value for a key. `setdefault` and `pop` mutate as well as
-# read, which is why they fall out of a list assembled from what a gate USUALLY looks like -- and a
-# gate keyed on either reads the environment exactly as `.get` does.
-_MAPPING_READS = ("get", "getenv", "setdefault", "pop")
-
-# Accessors that answer with the mapping itself or a view of it, so a gate reading through one is
-# reading the environment. Taken from `dir(os.environ)` rather than from what a gate usually does.
-_MAPPING_VIEWS = ("copy", "keys", "values", "items")
 
 
 class Form(NamedTuple):
@@ -140,45 +111,6 @@ class Module(NamedTuple):
     label: str
 
 
-def _assigned(node: ast.AST) -> set[str]:
-    """Every bare name assigned anywhere under this node, by `=`, `:=`, a `for`, a `with` or an import."""
-    out: set[str] = set()
-    for child in ast.walk(node):
-        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-            out.add(child.id)
-        elif isinstance(child, (ast.Import, ast.ImportFrom)):
-            out |= {(a.asname or a.name).split(".")[0] for a in child.names}
-    return out
-
-
-def _module_strings(tree: ast.Module) -> dict[str, str]:
-    """Module-level `NAME = "literal"`, annotated or not, so a gate keyed on a constant resolves to the
-    flag it means.
-
-    A name that any function also assigns is left OUT, so it reads UNRESOLVED rather than resolving to
-    the module's value. A gate inside such a function may be reading the local binding, and answering
-    with the module-level one would name a flag the gate does not read -- reporting the one opt-in for
-    a gate keyed on a second, which is a false negative wearing the right answer's clothes.
-    """
-    out: dict[str, str] = {}
-    for node in tree.body:
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
-        if isinstance(getattr(node, "value", None), ast.Constant) and isinstance(node.value.value, str):
-            out.update({t.id: node.value.value for t in targets if isinstance(t, ast.Name)})
-    shadowed = set().union(*(_assigned(n) for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))), set())
-    return {name: value for name, value in out.items() if name not in shadowed}
-
-
-def _module_functions(tree: ast.Module) -> dict[str, ast.AST]:
-    """Every definition a call can land on, by bare name: functions, methods, and CLASSES.
-
-    A class belongs here because calling one is calling its body, and leaving classes out made every
-    constructor call in a followed helper an unreadable name -- one real helper module refused for
-    nine of them, none of which had anything to do with a venue.
-    """
-    return {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
-
-
 def _imported(tree: ast.Module) -> dict[str, str]:
     """Each name bound by an import, mapped to the module it came from.
 
@@ -197,46 +129,6 @@ def _imported(tree: ast.Module) -> dict[str, str]:
     return out
 
 
-OURS = ("tests", "cli", "infra")
-
-
-def _is_local_module(dotted: str) -> bool:
-    """Whether an import names this repo's own code rather than a library."""
-    return dotted.split(".")[0] in OURS or (TESTS / f"{dotted.split('.')[-1]}.py").is_file()
-
-
-def _module_path(dotted: str) -> Path | None:
-    """The file an import of our own code names, when there is one. A dotted path is tried whole, and
-    a bare name is tried beside the importer, which is how this suite spells its helper imports."""
-    stem = dotted.replace(".", "/")
-    for candidate in (REPO / f"{stem}.py", REPO / stem / "__init__.py", TESTS / f"{dotted.split('.')[-1]}.py"):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-def _module_aliases(tree: ast.Module) -> dict[str, str]:
-    """Names bound to a MODULE of ours rather than to a value in one.
-
-    `from tests import basket_fixture` is this suite's own idiom -- `test_engine_feeders.py`,
-    `test_engine_soak.py` and `test_engine_tracking.py` all spell it that way -- and it binds a module,
-    so the helper is reached as `basket_fixture.probe()`. Treating that receiver as an ordinary object
-    is how a gate calling a sibling module's probe read clean.
-    """
-    out: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            for a in node.names:
-                dotted = f"{node.module}.{a.name}"
-                if _module_path(dotted) is not None:
-                    out[a.asname or a.name] = dotted
-        elif isinstance(node, ast.Import):
-            for a in node.names:
-                if _module_path(a.name) is not None:
-                    out[a.asname or a.name] = a.name
-    return out
-
-
 def _os_aliases(tree: ast.Module) -> frozenset[str]:
     """Names bound to the `os` module. `import os as o` then `o.environ.get(K)` is an environment read,
     and a receiver test spelled as the literal text `os.environ` does not see it -- measured as a
@@ -244,53 +136,6 @@ def _os_aliases(tree: ast.Module) -> frozenset[str]:
     return frozenset(
         {(a.asname or a.name) for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.name == "os"} | {"os"}
     )
-
-
-def _is_environ_expression(node: ast.AST, aliases: frozenset[str], os_names: frozenset[str] = frozenset({"os"})) -> bool:
-    """Whether this expression IS the environment mapping: `os.environ`, a name holding it, or a copy.
-
-    `os.environ.copy()` and `dict(os.environ)` carry the same keys, so a gate reading one is reading
-    the environment however the mapping got into its hands.
-    """
-    if isinstance(node, (ast.Name, ast.Attribute)):
-        if isinstance(node, ast.Attribute) and node.attr == "environ":
-            return ast.unparse(node.value) in os_names
-        return ast.unparse(node) == "environ" or (isinstance(node, ast.Name) and node.id in aliases)
-    if isinstance(node, ast.Call):
-        func = node.func
-        if (
-            isinstance(func, ast.Attribute)
-            and func.attr in _MAPPING_VIEWS
-            and _is_environ_expression(func.value, aliases, os_names)
-        ):
-            return True
-        if (
-            isinstance(func, ast.Name)
-            and func.id == "dict"
-            and node.args
-            and _is_environ_expression(node.args[0], aliases, os_names)
-        ):
-            return True
-    return False
-
-
-def _environ_aliases(tree: ast.Module, os_names: frozenset[str]) -> frozenset[str]:
-    """Every name holding the environment mapping, to a fixpoint so `b = a` after `a = os.environ`
-    counts. Without this the receiver test is a literal `os.environ`, and `env = os.environ` one line
-    above the gate makes every read through `env` invisible -- measured, with the guard still green."""
-    # MODULE-LEVEL only. Walking the whole tree promoted any function's local `env = os.environ.copy()`
-    # -- the ordinary subprocess idiom, in four functions of `test_engine_node.py` -- to a module-wide
-    # alias, so another function's local `env` holding an unrelated dict read as the environment and
-    # turned correct code red. A function-local binding reaches its gate through the scope instead.
-    aliases: frozenset[str] = frozenset()
-    while True:
-        found = set(aliases)
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and _is_environ_expression(node.value, aliases, os_names):
-                found |= {t.id for t in node.targets if isinstance(t, ast.Name)}
-        if found == set(aliases):
-            return aliases
-        aliases = frozenset(found)
 
 
 @functools.cache
@@ -303,100 +148,6 @@ def _module_of(source: str, label: str) -> Module:
     tree = ast.parse(source, label)
     return Module(tree=tree, imported=_imported(tree), os_names=_os_aliases(tree), label=label)
 
-
-def _read_module(dotted: str) -> Module | None:
-    """The parsed module a dotted name refers to, when it is ours and on disk."""
-    path = _module_path(dotted) if _is_local_module(dotted) else None
-    return _module(path) if path is not None else None
-
-
-def _resolve(owner: Module, call: ast.Call) -> tuple[ast.AST, Module] | str | None:
-    """What a call reaches: a function with the module it lives in, an OPAQUE name, or None to ignore.
-
-    Three receivers are followed -- a bare name, `self`/`cls`, and a name bound to a module of ours.
-    Everything else is a library reached through its own module and is not this file's business. A
-    name that should resolve to our code and does not comes back as a string, which the caller records
-    as unreadable rather than passing over.
-    """
-    func = call.func
-    if isinstance(func, ast.Name):
-        name, holder = func.id, owner
-    elif isinstance(func, ast.Attribute):
-        receiver = ast.unparse(func.value)
-        if receiver in ("self", "cls"):
-            name, holder = func.attr, owner
-        elif receiver in owner.modules:
-            found = _read_module(owner.modules[receiver])
-            if found is None:
-                return func.attr
-            name, holder = func.attr, found
-        elif isinstance(func.value, ast.Name) and _is_local_module(owner.imported.get(func.value.id, "")):
-            # A name imported from our own code. It is a VALUE if the module it came from binds it --
-            # `DATA_ROOT.exists()` is a Path, not a package -- and only an unreadable MODULE is opaque.
-            source = _read_module(owner.imported[func.value.id])
-            return None if source is not None and func.value.id in source.defined else func.attr
-        else:
-            return None
-    else:
-        return None
-    return _follow(name, holder, 0)
-
-
-def _follow(name: str, holder: Module, depth: int) -> tuple[ast.AST, Module] | str | None:
-    """Where a name is defined, following re-exports through our own packages.
-
-    `from cli.registry import TrialRegistry` lands on `cli/registry/__init__.py`, which imports the
-    class from `store.py` -- a package that re-exports is the ordinary shape here, and stopping at the
-    `__init__` reports our own code as unreadable. Bounded at five hops: a chain longer than that is
-    a chain this file should refuse rather than chase.
-    """
-    if depth > 5:
-        return name
-    body = holder.functions.get(name)
-    if body is not None:
-        return (body, holder)
-    dotted = holder.imported.get(name)
-    if dotted is None:
-        return None if name in dir(builtins) else name
-    if not _is_local_module(dotted):
-        return None  # a library: exempt rather than opaque
-    found = _read_module(dotted)
-    return _follow(name, found, depth + 1) if found is not None else name
-
-
-def _environment_key(node: ast.AST, strings: dict[str, str]) -> str:
-    """The variable name an environment read asks for. A key this cannot read is returned UNRESOLVED,
-    which fails the one-name assertion rather than passing it -- the safe direction for a gate whose
-    flag is assembled at run time."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.Name) and node.id in strings:
-        return strings[node.id]
-    return f"<unresolved: {ast.unparse(node)}>"
-
-
-_PREDICATES = {
-    "exists": "a path on disk",
-    "is_file": "a path on disk",
-    "is_dir": "a path on disk",
-    "geteuid": "the effective uid of this process",
-    "which": "whether a binary is on PATH",
-    "resolve": "a path, normalised",
-    "read_text": "the bytes of a file already on disk",
-    "glob": "the names under a directory on disk",
-    "rglob": "the names under a directory on disk",
-    "splitlines": "a string already in hand",
-    "strip": "a string already in hand",
-    "lower": "a string already in hand",
-    "startswith": "a string already in hand",
-    "endswith": "a string already in hand",
-    "split": "a string already in hand",
-    "keys": "the names in a mapping already in hand",
-    "values": "the values in a mapping already in hand",
-    "items": "the pairs in a mapping already in hand",
-}
-# Builtins a guard may call. Same source: what this tree's guards actually use.
-_BUILTINS = ("len", "any", "all", "sorted", "set", "list", "tuple", "dict", "str", "int", "bool", "isinstance", "getattr")
 
 _PRESENCE = ("exists", "is_file", "is_dir")
 _ENV_READS = ("get", "getenv")
@@ -1014,9 +765,11 @@ def test_every_skip_gate_in_tests_matches_a_form():
 
 def test_the_tree_holds_the_control_that_keeps_the_one_name_assertion_falsifiable():
     """The one-name assertion passes on an empty set, so it needs a live counter-shape: a skip gate
-    that reads no environment at all and must keep passing. Fifty-five of the tree's sixty-one are that
-    shape, and a guard that refused every gate would still pass its own fixture while turning all
-    fifty-five red."""
+    that reads no environment at all and must keep passing. Most of the tree's gates are that shape;
+    take the split from a run. What this holds is the EMPTY-set degeneracy alone -- a matcher that read
+    the opt-in at every gate would leave `plain` empty and fail here. The other direction, a matcher
+    that refused every gate, leaves `plain` untouched and is held by
+    `test_every_skip_gate_in_tests_matches_a_form` instead."""
     plain = [(label, gate) for label, gate in _tree_gates() if not gate.env]
     assert plain, "every skip gate in tests/ reads the environment -- the one-name assertion has no control"
 
