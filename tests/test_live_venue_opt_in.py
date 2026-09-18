@@ -233,9 +233,8 @@ def _bound_to_module(tree: ast.Module, dotted: str) -> frozenset[str]:
     `tests/` helper. `_imported` keys on the bound name and maps the `from` spelling to the PACKAGE,
     so a receiver that names a module is resolved here instead: a plain `import tests.skip_gates`
     binds `tests`, which is the package and not the registry, and yields nothing. Nothing here tracks
-    scopes, so a local of that name in an unrelated function is enough to drop it: the once-bound
-    discipline `_plain_literal` applies to a key, asked of a module through `_bindings`; two imports
-    of the one module are the one binding."""
+    scopes, so a local of that name in an unrelated function is enough to drop it; two imports of the
+    one module are the one binding."""
     package, _, leaf = dotted.rpartition(".")
     bound: set[str] = set()
     for node in ast.walk(tree):
@@ -320,18 +319,18 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
 
     ONE predicate, applied to every operand of an expression exactly as it is applied to the
     expression: a literal, `__file__` while nothing rebinds it, a name this module imported from
-    `pathlib` and binds nowhere else, or a name bound exactly once -- in the gate's own function, else at the module's top level, and by a plain
-    assignment -- to another expression it accepts. An attribute, a subscript, a `/` join and a call
-    are accepted only when every operand under them is, so a call's callee AND its arguments are
-    judged, which refuses every call but a `pathlib` chain over operands this accepts and refuses an
-    environment read anywhere inside as the import `os` or `environ` is. That is `_plain_literal`'s
-    discipline given to a receiver instead of a key: it is what stops `marker = _venue_reads()` one
-    line above the gate from reading as the local it is written as, and what stops
-    `ROOT / _venue_name()` written at the gate, or bound a line above it, from reading as a path.
-    There is no operand it passes over, which is the whole of it: a rule that rooted the chain alone
-    made hoisting the call into a binding the working repair for its own refusal. Every refusal names
-    what it saw, so the message says WHICH operand; `seen` refuses a name bound through itself rather
-    than following it round.
+    `pathlib` and binds nowhere else, or a name bound exactly once -- in the gate's own function,
+    else at the module's top level, and by a plain assignment -- to another expression it accepts.
+    An attribute, a subscript, a `/` join and a call are accepted only when every operand under them
+    is, so a call's callee AND its arguments are judged, which refuses every call but a `pathlib`
+    chain over operands this accepts and refuses an environment read anywhere inside as the import
+    `os` or `environ` is. That is `_plain_literal`'s discipline given to a receiver instead of a
+    key: it is what stops `marker = _venue_reads()` one line above the gate from reading as the
+    local it is written as, and what stops `ROOT / _venue_name()` written at the gate, or bound a
+    line above it, from reading as a path. There is no operand it passes over, which is the whole of
+    it: a rule that rooted the chain alone made hoisting the call into a binding the working repair
+    for its own refusal. Every refusal names what it saw, so the message says WHICH operand; `seen`
+    refuses a name bound through itself rather than following it round.
     """
     if isinstance(node, ast.Constant):
         return None
@@ -352,7 +351,7 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
         bound = set(_bindings(node.id, module.tree))
         if len(bound) == 1:
             return None
-        return f"{node.id}, imported from pathlib and bound {len(bound)} times in {module.label}"
+        return f"{node.id}, imported from pathlib and rebound or taken over in {module.label}"
     if node.id in module.imported:
         return f"{node.id}, imported from {module.imported[node.id]}"
     if node.id in seen:
@@ -1428,7 +1427,7 @@ def test_the_registry_is_the_one_call_a_guard_may_make():
 
 
 _MODULE_FORMS = {
-    # each: a form's source under its own import, and the line that rebinds or takes over its module
+    # each: a form's source under its own import, and the line that rebinds or takes over its root
     "binary": (
         "import shutil\nimport pytest\n\ndef test_x():\n    if shutil.which('bash') is None:\n        pytest.skip('x')\n",
         "shutil = _venue\n",
@@ -1472,8 +1471,8 @@ def test_a_form_whose_module_is_rebound_or_taken_over_is_refused():
         (clean,) = _gates(source)
         assert clean.opaque == () and [f.name for f in clean.forms] == [label.split(" ")[0]], f"{label}: {clean}"
         (taken,) = _gates(source.replace("import pytest\n", "import pytest\n" + takeover))
-        assert taken.forms == () and taken.opaque, f"{label} taken over: {taken}"
-    # two imports of the one module are one binding: `import os` beside `import os.path` is still `os`
+        refusal = "not literal-rooted" if label.startswith("path") else "no form matches"
+        assert taken.forms == () and taken.opaque and refusal in taken.opaque[0], f"{label} taken over: {taken}"
     (twice,) = _gates(
         "import os\nimport os.path\nimport pytest\n\ndef test_x():\n    if os.geteuid() == 0:\n        pytest.skip('x')\n"
     )
