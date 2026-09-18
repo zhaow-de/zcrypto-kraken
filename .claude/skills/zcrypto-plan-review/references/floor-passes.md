@@ -1,4 +1,4 @@
-# Floor passes — rendered once the union carries no Critical and no Important; §blind is also rendered in round 1 beside the lenses
+# Floor passes — each section is rendered where `SKILL.md`'s procedure names it
 
 Each section below is one prompt. `{SPEC_PINNED}` is the same clause `fixer.md` renders.
 

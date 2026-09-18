@@ -95,7 +95,7 @@ const ledger = await agent(
 )
 if (!ledger) throw new Error(`review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-review; retry`)
 const entries = ledger.entries || []
-// A pre-review covers one tip: the one it read. An earlier tip's pre-review is an ancestor of every later commit on the branch, so an ancestry test admitted the branch's first pre-review for every read after it; the tip is compared as written, short or long.
+// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it.
 const sameTip = (e) => typeof e.tip === 'string' && (e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip))))
 if (!entries.some((e) => e.kind === 'pre-review' && sameTip(e))) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on it first`)
 
