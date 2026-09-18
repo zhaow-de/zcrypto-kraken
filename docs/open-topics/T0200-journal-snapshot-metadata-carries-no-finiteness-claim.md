@@ -26,6 +26,10 @@ value door exists, it is just on the wrong side of the write.
 
 Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
 
+**This topic and [[T0199]] are one door carrying two numbers, measured 2026-09-18.** The snapshot write path this topic names owns no writer of its own: `cli/engine/cycle.py` imports `write_parquet` from `cli/ohlc/dataset.py`, where it is defined once, and calls it at the journal-snapshot write. That is the same helper [[T0199]]'s open fork weighs as the place a non-finite close should be refused. So a finiteness claim added at this write and a refusal added there would land on one function, and deciding them separately invites two incompatible answers on it. Whichever is decided first records what it decided for the other.
+
+**The helper is shared well beyond the engine**, with nine call sites across seven modules — three in `cli/engine/store.py`, one each in `cycle.py`, `ingest.py`, `reach.py`, `backfill.py`, `oi.py` and `funding.py` — and two of those callers write frames carrying no close column at all, so a claim stated at the write cannot assume the frame has one. Carrying it on `SnapshotEntry` instead keeps the change inside the journal's own record and avoids that reach, which is the trade this topic's next steps weigh.
+
 ## Suggested next steps
 
 - Enumerate what a write-time claim would cost: `snapshot_content_hash` already walks the closes, so the check
