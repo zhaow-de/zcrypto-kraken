@@ -5,13 +5,9 @@ answers. Gated on reachability such a test runs in CI, where it is a flake sourc
 green-by-skip the day the venue blocks the runner -- and a skip is indistinguishable from a pass in a
 summary line, so an outage reads as coverage of a contract nobody exercised.
 
-WHAT THIS FILE HOLDS, the two halves of that rule:
-
-- every skip gate in `tests/` that reads an environment key reads `ZCRYPTO_LIVE_VENUE_TESTS` and no
-  other, so a second opt-in cannot appear unnoticed;
-- every skip gate in `tests/` matches one of six forms, and a guard that matches none of them is
-  refused. No form reaches a venue, which is how the other half -- no skip decided by whether the
-  venue answers -- is held: by a closed set of shapes rather than by a reading of what a guard does.
+WHAT THIS FILE HOLDS, the two halves of that rule: one test each --
+`test_every_environment_keyed_skip_gate_in_tests_reads_the_one_venue_opt_in` and
+`test_every_skip_gate_in_tests_matches_a_form`, whose docstrings carry the argument.
 
 THE SIX FORMS are `path`, `uid`, `binary`, `opt-in`, `membership` and `registry`; what each one
 constrains is `_REFUSAL_REMEDY` below, the text a refusal prints at the gate that needs it.
@@ -30,18 +26,11 @@ WHAT THIS FILE DOES NOT HOLD:
   filtered would decide a skip under a declaration that says otherwise. That is the one reading a gate
   may still carry unjudged.
 
-Until this change the file was a REDUCER -- it followed a call into our own code and read what the
-helper it landed on reached, so its closed world was a property of every branch. A closed set of
-forms replaced it.
-
-The class had three names until T0190: `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` implemented the
-same rule under their own spellings, so an agent that set the one name it had been given got the other
-two tests silently skipped. The owner ruled one flag for the class on 2026-09-09, the order-placing
-probe included. Those two names are why `git grep` for them over `tests/ cli/ infra/ .claude/
-CLAUDE.md` is not empty: the hits are this docstring. A guard that names what it forbids sits inside
-its own corpus, and that is expected rather than a regression. What keeps it from reading ITSELF is
-that the walker runs over gates and this file has none -- its shapes are held as source in a string,
-which no parse of this module sees as code.
+`ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are the class's two dead names (T0190): a `git grep`
+for either over `tests/ cli/ infra/ .claude/ CLAUDE.md` hits this docstring alone, a guard naming
+what it forbids rather than a regression. What keeps it from reading ITSELF is that the walker runs
+over gates and this file has none -- its shapes are held as source in a string, which no parse of
+this module sees as code.
 """
 
 from __future__ import annotations
@@ -210,7 +199,7 @@ def _is_environ(node: ast.AST, module: Module) -> bool:
         isinstance(node, ast.Name)
         and node.id == "environ"
         and module.imported.get("environ") == "os"
-        and len(_bindings("environ", module.tree)) == 1
+        and len(set(_bindings("environ", module.tree))) == 1
     )
 
 
@@ -229,7 +218,7 @@ def _env_read_key(node: ast.AST, module: Module) -> ast.AST | None:
             isinstance(func, ast.Name)
             and func.id == "getenv"
             and module.imported.get("getenv") == "os"
-            and len(_bindings("getenv", module.tree)) == 1
+            and len(set(_bindings("getenv", module.tree))) == 1
         ):
             return node.args[0]
     if isinstance(node, ast.Subscript) and _is_environ(node.value, module):
@@ -241,18 +230,12 @@ def _bound_to_module(tree: ast.Module, dotted: str) -> frozenset[str]:
     """Every name this module binds to the MODULE `dotted` by import and rebinds nowhere:
     `import <dotted> as n`, a plain `import <dotted>` when `dotted` is one segment (`os`, `shutil`),
     and `from <package> import <leaf>` under its own name or an alias -- this suite's idiom for a
-    `tests/` helper. `_imported` keys on the bound name and maps the `from`
-    spelling to the PACKAGE, so a receiver that names a module is resolved here instead: a plain
-    `import tests.skip_gates` binds `tests`, which is the package and not the registry, and yields
-    nothing. An import any `Store` of that name rebinds yields nothing either, at any scope --
-    nothing here tracks scopes, so a local of that name in an unrelated function is enough: the
-    once-bound discipline `_plain_literal` applies to a key, applied to a module over the same
-    whole-tree walk. `_bindings` is what asks it, so every binding form the language has counts -- a
-    `def`, a `class`, a second `import ... as` and a plain assignment alike -- with an attribute
-    assignment on the name counted beside them, the one takeover that leaves a name single-bound: the
-    import is the ONE binding a blessed name may carry, and the store is what a blessed call would
-    otherwise have run. A rebound name falls to `no form matches`, whose remedy
-    prints the spelling the author already wrote."""
+    `tests/` helper. `_imported` keys on the bound name and maps the `from` spelling to the PACKAGE,
+    so a receiver that names a module is resolved here instead: a plain `import tests.skip_gates`
+    binds `tests`, which is the package and not the registry, and yields nothing. Nothing here tracks
+    scopes, so a local of that name in an unrelated function is enough to drop it: the once-bound
+    discipline `_plain_literal` applies to a key, asked of a module through `_bindings`; two imports
+    of the one module are the one binding."""
     package, _, leaf = dotted.rpartition(".")
     bound: set[str] = set()
     for node in ast.walk(tree):
@@ -260,7 +243,7 @@ def _bound_to_module(tree: ast.Module, dotted: str) -> frozenset[str]:
             bound |= {a.asname or a.name for a in node.names if a.name == leaf}
         elif isinstance(node, ast.Import):
             bound |= {a.asname or a.name for a in node.names if a.name == dotted and (a.asname or "." not in a.name)}
-    return frozenset(n for n in bound if len(_bindings(n, tree)) == 1)
+    return frozenset(n for n in bound if len(set(_bindings(n, tree))) == 1)
 
 
 def _stores(target: ast.AST, name: str) -> bool:
@@ -311,8 +294,14 @@ def _bindings(name: str, where: ast.AST) -> list[ast.AST | str]:
             out.append("a `with ... as` binding")
         elif isinstance(node, ast.ExceptHandler) and node.name == name:
             out.append("an `except ... as` binding")
-        elif isinstance(node, (ast.Import, ast.ImportFrom)) and any((a.asname or a.name.split(".")[0]) == name for a in node.names):
-            out.append("an import")
+        elif isinstance(node, ast.Import):
+            out += [
+                f"an import of {a.name if a.asname else a.name.split('.')[0]}"
+                for a in node.names
+                if (a.asname or a.name.split(".")[0]) == name
+            ]
+        elif isinstance(node, ast.ImportFrom):
+            out += [f"an import of {node.module}.{a.name}" for a in node.names if (a.asname or a.name) == name]
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == name:
             out.append("a `def` or a `class`")
         elif isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
@@ -330,8 +319,8 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
     """`None` when this expression is LITERAL-ROOTED, else the OPERAND that is not (spec 00114 D2).
 
     ONE predicate, applied to every operand of an expression exactly as it is applied to the
-    expression: a literal, `__file__`, a name this module imported from `pathlib`, or a name bound
-    exactly once -- in the gate's own function, else at the module's top level, and by a plain
+    expression: a literal, `__file__` while nothing rebinds it, a name this module imported from
+    `pathlib` and binds nowhere else, or a name bound exactly once -- in the gate's own function, else at the module's top level, and by a plain
     assignment -- to another expression it accepts. An attribute, a subscript, a `/` join and a call
     are accepted only when every operand under them is, so a call's callee AND its arguments are
     judged, which refuses every call but a `pathlib` chain over operands this accepts and refuses an
@@ -357,8 +346,13 @@ def _rooted(node: ast.AST, module: Module, function: ast.AST | None, seen: froze
         return next((why for why in (_rooted(p, module, function, seen) for p in parts) if why is not None), None)
     if not isinstance(node, ast.Name):
         return f"{ast.unparse(node)}, which is not an operand this predicate reads"
-    if node.id == "__file__" or module.imported.get(node.id, "").split(".")[0] == "pathlib":
-        return None
+    if node.id == "__file__":
+        return None if not _bindings("__file__", module.tree) else f"__file__, rebound in {module.label}"
+    if module.imported.get(node.id, "").split(".")[0] == "pathlib":
+        bound = set(_bindings(node.id, module.tree))
+        if len(bound) == 1:
+            return None
+        return f"{node.id}, imported from pathlib and bound {len(bound)} times in {module.label}"
     if node.id in module.imported:
         return f"{node.id}, imported from {module.imported[node.id]}"
     if node.id in seen:
@@ -388,7 +382,7 @@ def _registry_call(node: ast.Call, module: Module) -> bool:
     for that walk."""
     func = node.func
     if isinstance(func, ast.Name):
-        return module.imported.get(func.id) == REGISTRY_MODULE and len(_bindings(func.id, module.tree)) == 1
+        return module.imported.get(func.id) == REGISTRY_MODULE and len(set(_bindings(func.id, module.tree))) == 1
     return (
         isinstance(func, ast.Attribute)
         and isinstance(func.value, ast.Name)
@@ -1434,8 +1428,7 @@ def test_the_registry_is_the_one_call_a_guard_may_make():
 
 
 _MODULE_FORMS = {
-    # each: the source under its own import, the form it matches, and the same source with its module
-    # rebound or taken over -- which no longer matches, because the import is the name's one binding
+    # each: a form's source under its own import, and the line that rebinds or takes over its module
     "binary": (
         "import shutil\nimport pytest\n\ndef test_x():\n    if shutil.which('bash') is None:\n        pytest.skip('x')\n",
         "shutil = _venue\n",
@@ -1452,19 +1445,39 @@ _MODULE_FORMS = {
         "import pytest\nfrom os import environ\n\ndef test_x():\n    if environ.get('ZCRYPTO_LIVE_VENUE_TESTS') != '1':\n        pytest.skip('x')\n",
         "environ = _venue\n",
     ),
+    "opt-in by getenv": (
+        "import pytest\nfrom os import getenv\n\ndef test_x():\n    if getenv('ZCRYPTO_LIVE_VENUE_TESTS') != '1':\n        pytest.skip('x')\n",
+        "getenv = _venue\n",
+    ),
+    "path": (
+        "import pytest\nfrom pathlib import Path\n\ndef test_x():\n    if not Path('data').exists():\n        pytest.skip('x')\n",
+        "Path = _venue\n",
+    ),
+    "path taken over": (
+        "import pytest\nfrom pathlib import Path\n\ndef test_x():\n    if not Path('data').exists():\n        pytest.skip('x')\n",
+        "Path.exists = _venue\n",
+    ),
+    "path by __file__": (
+        "import pytest\nfrom pathlib import Path\n\ndef test_x():\n    if not Path(__file__).exists():\n        pytest.skip('x')\n",
+        "__file__ = _venue()\n",
+    ),
 }
 
 
 def test_a_form_whose_module_is_rebound_or_taken_over_is_refused():
-    """The `binary`, `uid` and `opt-in` arms name `shutil` and `os`, and a name is the stdlib module only
-    while its import is the name's one binding -- the discipline `_registry_call` holds for the sixth
-    form. `shutil = _venue` above a `shutil.which('bash') is None`, or `os.geteuid = _venue` above a
-    `os.geteuid() == 0`, is a venue probe wearing a matched form's text, and is refused."""
+    """A name is the stdlib module only while its import is the name's one binding -- the discipline
+    `_registry_call` holds for the sixth form, given here to the `binary`, `uid`, `opt-in` and `path`
+    arms; two imports of the one module are the one binding."""
     for label, (source, takeover) in _MODULE_FORMS.items():
         (clean,) = _gates(source)
         assert clean.opaque == () and [f.name for f in clean.forms] == [label.split(" ")[0]], f"{label}: {clean}"
         (taken,) = _gates(source.replace("import pytest\n", "import pytest\n" + takeover))
-        assert taken.forms == () and taken.opaque and "no form matches" in taken.opaque[0], f"{label} taken over: {taken}"
+        assert taken.forms == () and taken.opaque, f"{label} taken over: {taken}"
+    # two imports of the one module are one binding: `import os` beside `import os.path` is still `os`
+    (twice,) = _gates(
+        "import os\nimport os.path\nimport pytest\n\ndef test_x():\n    if os.geteuid() == 0:\n        pytest.skip('x')\n"
+    )
+    assert twice.opaque == () and [f.name for f in twice.forms] == ["uid"], twice
 
 
 def test_unittests_decorator_and_method_are_gates_the_walker_finds():
