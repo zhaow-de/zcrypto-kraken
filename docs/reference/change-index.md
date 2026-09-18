@@ -326,3 +326,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #562 | 2026-09-17 | docs(topics): T0190 catches up to the guard it describes | — | — | T0190 |
 | #563 | 2026-09-18 | test(venue): every skip gate matches a form; T0190 resolved | — | 00114 | T0190 |
 | #564 | 2026-09-18 | claude(refine): round 13 — the trio owns the branch read; T0208 resolved | — | — | T0208 |
+| #565 | 2026-09-18 | chore(deps): nautilus-trader dev20260918 — our TradeVolume fallback | — | — | T0160 |
