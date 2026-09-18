@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'the next change to the store write path -- `seed_store` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` where it is actually defined -- or to the `dropped_tail` render in `cli/engine/soak.py`; either is the commit that can distinguish a NaN-caused drop from a short store.'
+ripe_when: 'the next change to the store write path -- `seed_store` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store.'
 ---
 
 # A NaN reaching the store drops a report tail instead of refusing it
@@ -35,7 +35,7 @@ Nothing investigated since registration: what PR #514 (T0193) measured is the se
 
 **This topic and [[T0200]] are one door carrying two numbers, measured 2026-09-18.** `write_parquet` is defined once, at `cli/ohlc/dataset.py`, and `cli/engine/store.py` defines no function of that name — this topic's trigger said it did until the same change that added this paragraph, so the retrospective check the daily pass can run was watching a path the function does not live on. [[T0200]] reaches that identical helper from the journal-snapshot write in `cli/engine/cycle.py`, which imports it. So the refusal site this topic's fork weighs is the one [[T0200]] would have to hang its finiteness claim on, and settling them apart invites two incompatible answers on a single function. Whichever is decided first records what it decided for the other.
 
-**A door at that helper is not local to the engine, which is a cost the fork has to carry.** It has nine call sites across seven modules — three in `cli/engine/store.py`, one in `cli/engine/cycle.py`, and one each in `cli/ohlc/ingest.py`, `cli/ohlc/reach.py`, `cli/backfill/backfill.py`, `cli/derivatives/oi.py` and `cli/derivatives/funding.py` — so the refusal reaches the OHLC, backfill and derivatives paths too. Two of those callers write frames with **no close column at all** (`funding.py`'s schema is `ts`/`funding_rate`/`interval_hours`; `oi.py` names no close), so a close-value door there cannot be unconditional. `cli/capture/segment_writer.py` is outside the blast radius entirely: it calls polars' own `df.write_parquet` method rather than this helper.
+**A door at that helper is not local to the engine, which is a cost the fork has to carry.** Beyond `cli/engine/store.py` and `cli/engine/cycle.py` it has nine call sites across seven modules, reaching the OHLC, backfill and derivatives paths too (`grep -rln 'write_parquet(' cli/` finds them). Two of those callers write frames with **no close column at all** (`cli/derivatives/funding.py`'s schema is `ts`/`funding_rate`/`interval_hours`; `cli/derivatives/oi.py` names no close), so a close-value door there cannot be unconditional. `cli/capture/segment_writer.py` is outside the blast radius entirely: it calls polars' own `df.write_parquet` method rather than this helper.
 
 ## Suggested next steps
 
