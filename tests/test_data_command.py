@@ -139,8 +139,7 @@ _BUILDER_REFUSALS = [
 
 
 def test_every_builder_refusal_has_its_case_and_every_case_its_refusal():
-    """Written out above and not derived, so a member deleted from the tuple fails its case; held equal here, so a
-    member added to it cannot go undriven."""
+    """Written out above and not derived: a derived list would drop a deleted member's case instead of failing it."""
     from cli.data.rebuild import BUILDER_REFUSALS
 
     assert sorted(f"{refusal.__module__}.{refusal.__qualname__}" for refusal in BUILDER_REFUSALS) == sorted(_BUILDER_REFUSALS)
