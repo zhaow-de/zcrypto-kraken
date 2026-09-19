@@ -196,8 +196,9 @@ def _drive_pre_review(args: dict) -> dict:
             "          { site: 'c.py:3', survives: 'cut', correct: true, duplicateOf: '', ship: '' },",
             "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
             "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
+            "const twice = (r) => ({ ...r, prose: [...r.prose, { site: 'a.py:1', survives: 'cut', correct: true, duplicateOf: '', ship: '' }] })",
             "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt })",
-            "  return opts.label === 'record' ? { appended: true } : part(opts.label.replace('pre-review:', '')) }",
+            "  return opts.label === 'record' ? { appended: true } : opts.label === 'pre-review' ? twice(part('pre-review')) : part(opts.label.replace('pre-review:', '')) }",
             "const parallel = (thunks) => Promise.all(thunks.map((t) => t()))",
             "async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {",
             body,
@@ -256,7 +257,9 @@ def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
-    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 4, "the one grader's report is returned as it came"
+    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 5, "the one grader's report is returned as it came"
+    # The lone grader's stub grades `a.py:1` twice with two different asks, which between slices is a contest.
+    assert [row["survives"] for row in ran["out"]["prose"] if row["site"] == "a.py:1"] == ["trim", "cut"]
     assert not any("summed over slices" in line or line.startswith("CONTESTED") for line in ran["logs"]), ran["logs"]
 
 
