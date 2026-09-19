@@ -138,6 +138,14 @@ _BUILDER_REFUSALS = [
 ]
 
 
+def test_every_builder_refusal_has_its_case_and_every_case_its_refusal():
+    """Written out above and not derived, so a member deleted from the tuple fails its case; held equal here, so a
+    member added to it cannot go undriven."""
+    from cli.data.rebuild import BUILDER_REFUSALS
+
+    assert sorted(f"{refusal.__module__}.{refusal.__qualname__}" for refusal in BUILDER_REFUSALS) == sorted(_BUILDER_REFUSALS)
+
+
 @pytest.mark.parametrize("dotted", _BUILDER_REFUSALS)
 def test_rebuild_turns_a_builders_own_refusal_into_an_abort_not_a_traceback(tmp_path, monkeypatch, zcrypto_log, dotted):
     """The exit code cannot tell the two apart -- an uncaught exception also exits 1 -- so the exception is read."""
