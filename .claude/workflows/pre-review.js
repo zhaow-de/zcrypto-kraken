@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pre-review',
   description: 'The author’s prose and message claims graded by a different agent before any review',
-  whenToUse: 'Before every review or re-review of a range — over the fix range after the first review, never the whole branch again: one agent grades the range’s prose, re-runs the commands and probes its messages quote, and checks each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?}',
+  whenToUse: 'Before every review or re-review — over the fix range after the first review, never the whole branch again: graders grade its prose, re-run the commands and probes its messages quote, and check each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?, ranges?, rulings?}',
   phases: [
     { title: 'Pre-review', detail: 'one read-only grader over the range’s prose and message claims' },
     { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
@@ -13,8 +13,12 @@ const { repo, range, tip, reportDir, worktree, model, ranges, rulings } = args |
 // `ranges` fans the read out: one grader per entry, each inside its own budget, over one slice of `range`.
 const FAN = Array.isArray(ranges) && ranges.length ? ranges : null
 const LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/
-const badRanges = ranges !== undefined && (!FAN || FAN.some((r) => !r || !LABEL.test(r.label || '') || !r.range) || new Set(FAN.map((r) => r.label)).size !== FAN.length)
-if (!repo || !range || !tip || !reportDir || badRanges) throw new Error('args: {repo, range, tip, reportDir, worktree?, model?, ranges?: [{label, range}] — labels unique, lowercase, digits and dashes —, rulings?}')
+// The one recorded row says the whole branch range was read, so the slices are held to a cover of it by their own
+// spelling: the first opens where `range` opens, each next opens where the last closed, the last closes where `range` closes.
+const ends = (r) => String((r && r.range) || r || '').split('..')
+const chained = FAN && FAN.every((r, i) => ends(r).length === 2 && ends(r)[0] === (i ? ends(FAN[i - 1])[1] : ends(range)[0])) && ends(FAN[FAN.length - 1])[1] === ends(range)[1]
+const badRanges = ranges !== undefined && (!chained || FAN.some((r) => !LABEL.test(r.label || '')) || new Set(FAN.map((r) => r.label)).size !== FAN.length)
+if (!repo || !range || !tip || !reportDir || badRanges) throw new Error('args: {repo, range, tip, reportDir, worktree?, model?, ranges?: [{label, range}] — labels unique, 1 to 32 of lowercase, digits and dashes, none opening with a dash; ranges `a..b` chained end to start from the opening of `range` to its close —, rulings?}')
 
 // --- shared with review.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
@@ -98,7 +102,7 @@ Return a row for a site that needs a change — \`trim\`, \`cut\`, or \`fix\` wh
 
 4. CLASS WALK. For each defect a commit says it fixed, state in one sentence the invariant the fix restores, then walk its class BOTH ways and list every member the fix left. TEXT: the defect's other carriers — sibling spellings, other files carrying the same claim, other branches of the same condition. SPACE: the categories the fixed code's input or state ranges over, each judged against the invariant — only categories this repo produces, driven where you can drive them, named rather than guessed where you cannot. A class walked one way is half walked. Each fix also names, in its \`fix\` sentence, what it DELETED from the sites it touched — a fix over a site this range already rewrote that deletes nothing is the fourth-round shape, and is reported as one.
 
-EARLIER PRE-REVIEWS of this branch are the ${reportDir}/pre-review-*.md files (none on a first read). A site one of them SHIPPED — a row graded trim, cut or fix whose shipped text the range now carries — is graded keep and not re-graded: the grader does not re-grade its own dispositions, and a site graded keep by an earlier pre-review is re-graded only where the range changed it. The one exception is a shipped text that is WRONG, which is a fix like any other, with the earlier report named.
+EARLIER PRE-REVIEWS of this branch are the ${reportDir}/pre-review-*.md files${slice ? ` that do not carry \`${tip}\` in their name: those are sibling slices writing now` : ''} (none on a first read). A site one of them SHIPPED — a row graded trim, cut or fix whose shipped text the range now carries — is graded keep and not re-graded: the grader does not re-grade its own dispositions, and a site graded keep by an earlier pre-review is re-graded only where the range changed it. The one exception is a shipped text that is WRONG, which is a fix like any other, with the earlier report named.
 
 Write a Markdown report to ${reportDir}/pre-review-${tip}${slice ? `-${slice.label}` : ''}.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
@@ -106,16 +110,19 @@ phase('Pre-review')
 const grade = (slice) => agent(promptFor(slice), { label: slice ? `pre-review:${slice.label}` : 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
 const parts = FAN ? await parallel(FAN.map((slice) => () => grade(slice))) : [await grade(null)]
 if (parts.some((p) => !p)) throw new Error(FAN ? `the pre-reviewers of ${FAN.filter((_, i) => !parts[i]).map((r) => r.label).join(', ')} returned nothing` : 'the pre-reviewer returned nothing')
-// A site two slices touched comes back once per slice: one row per site, and a row asking for a change outranks a keep.
+// A site two slices touched comes back once per slice.
 const bySite = new Map()
-for (const row of parts.flatMap((p) => p.prose)) if (!bySite.has(row.site) || (bySite.get(row.site).survives === 'keep' && row.survives !== 'keep')) bySite.set(row.site, row)
+for (const row of parts.flatMap((p) => p.prose)) bySite.set(row.site, [...(bySite.get(row.site) || []), row])
+const prose = [...bySite.values()].flatMap((rows) => (rows.some((r) => r.survives !== 'keep') ? rows.filter((r) => r.survives !== 'keep') : rows.slice(0, 1)))
+const contested = [...bySite.entries()].filter(([, rows]) => new Set(rows.filter((r) => r.survives !== 'keep').map((r) => r.ship)).size > 1).map(([site]) => site)
+if (contested.length) log(`CONTESTED: ${contested.length} site(s) carry a different change from each of two slices, both rows returned — ${contested.join(', ')}`)
 const report = !FAN
   ? parts[0]
   : {
       ready: parts.every((p) => p.ready),
       verdict: parts.map((p, i) => `[${FAN[i].label}] ${p.verdict}`).join(' '),
       graded: parts.reduce((sum, p) => sum + p.graded, 0),
-      prose: [...bySite.values()],
+      prose,
       claims: parts.flatMap((p) => p.claims),
       probes: parts.flatMap((p) => p.probes),
       classWalk: parts.flatMap((p) => p.classWalk),
@@ -132,7 +139,7 @@ const saysNothing = (ship) => {
 }
 const mute = report.prose.filter((p) => p.survives === 'keep' && saysNothing(p.ship)).map((p) => p.site)
 if (mute.length) log(`OWED: ${mute.length} \`keep\` row(s) name no reason a reader would act on — ${mute.join(', ')}`)
-log(`prose: ${report.graded} graded, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => p.survives === 'keep')} keep rows; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
+log(`prose: ${report.graded} graded${FAN ? ' (summed over slices, so a site two slices graded counts twice)' : ''}, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => p.survives === 'keep')} keep rows; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
 const ledgerPath = `${reportDir}/ledger.jsonl`
 const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
 
