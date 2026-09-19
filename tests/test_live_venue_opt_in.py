@@ -17,10 +17,10 @@ has no form of its own makes; `test_the_registry_reads_nothing_a_form_could_not`
 
 WHAT THIS FILE DOES NOT HOLD:
 
-- gate DISCOVERY. The matcher judges the gates the walker finds, and any set this file computed to
-  check that walk would be computed by the walker; the positions a skip can sit in are held against
-  the fixture by `test_the_fixture_carries_every_position_a_skip_can_sit`, and a position the fixture
-  does not carry is held by nothing;
+- a skip BOTH walks miss. The matcher judges the gates the walker finds, and
+  `test_a_second_walk_of_the_tree_finds_exactly_the_gates_the_walker_finds` holds that set against a walk
+  that knows nothing of positions; that walk reads a skip only under its own name (`_FLAT_WALK_UNSEEN`),
+  so a skip bound to another name AND sitting in a position `_guards_of` does not walk is held by nothing;
 - the provenance of a registry call's ARGUMENTS. `nothing_found(rows)` is the call site's claim that
   those rows were gathered locally, and no shape of the call can check it, so rows a venue answer
   filtered would decide a skip under a declaration that says otherwise. That is the one reading a gate
@@ -761,6 +761,89 @@ def test_the_tree_holds_the_control_that_keeps_the_one_name_assertion_falsifiabl
     assert plain, "every skip gate in tests/ reads the environment -- the one-name assertion has no control"
 
 
+_MARK_NAMES = frozenset({"skipif", "skipIf", "skipUnless"})
+_SKIP_NAMES = frozenset({"skip", "skipTest"})
+# Everything `_gates` is built from. `_flat_sites` may name none of them: a second derivation that called the
+# first would agree with it by construction, which is how the assertion this replaces came to hold vacuously.
+_WALKER = frozenset(
+    {"_gates", "_gate", "_guards_of", "_is_pytest_call", "_pytest_bindings", "_pytest_modules", "_skip_helpers", "_unittest_skip"}
+    | {"_tree_gates", "_match", "_module", "_module_of", "_parents", "_enclosing_function", "_as_expression"}
+)
+
+
+def _flat_sites(tree: ast.Module) -> tuple[set[int], set[int]]:
+    """Where a skip is written, read off each node alone: the lines of the skip calls and raises, and the lines of
+    the `skipif` / `skipIf` / `skipUnless` calls.
+
+    It resolves no import, follows no helper and reads nothing enclosing a node, so it cannot miss a POSITION --
+    and it reads a name only under its own spelling, so a skip bound to another name is one it does not see. The
+    one enclosing fact it takes is whether a `mark.skip` is a decorator, which declares a skip and decides none.
+    """
+    declared = {
+        id(d)
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        for d in n.decorator_list
+    }
+    calls: set[int] = set()
+    marks: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and node.exc is not None:
+            raised = ast.unparse(node.exc.func if isinstance(node.exc, ast.Call) else node.exc)
+            if raised.endswith(("SkipTest", "skip.Exception")):
+                calls.add(node.lineno)
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+        if name in _MARK_NAMES:
+            marks.add(node.lineno)
+        elif name in _SKIP_NAMES and id(node) not in declared:
+            calls.add(node.lineno)
+    return calls, marks
+
+
+def _walks_differ(flat: tuple[set, set], gates: list) -> list[str]:
+    """One line per site the two walks disagree on, each saying which walk saw it and what that can mean."""
+    calls, marks = flat
+    found_calls = {key for key, kind in gates if kind == "skip-site"}
+    found_marks = {key for key, kind in gates if kind == "skipif"}
+    unseen = (
+        "the walker found no gate there -- it sits in a position `_guards_of` does not walk (add the arm and a "
+        "`_FIXTURE` case), or nothing decides it (give it a condition the matcher can read, or declare it with a "
+        "`pytest.mark.skip` decorator), or the name is not pytest's"
+    )
+    unwritten = (
+        "no skip is written there under its own name -- a skip bound to another name or reached through a helper, "
+        "which `_flat_sites` does not follow: write it under its own name, or teach that walk the spelling and say so "
+        "in its docstring"
+    )
+    return (
+        [f"{key}: a skip call, and {unseen}" for key in sorted(calls - found_calls)]
+        + [f"{key}: a skip mark, and {unseen}" for key in sorted(marks - found_marks)]
+        + [f"{key}: the walker found a gate, and {unwritten}" for key in sorted((found_calls - calls) | (found_marks - marks))]
+    )
+
+
+def test_a_second_walk_of_the_tree_finds_exactly_the_gates_the_walker_finds():
+    """Gate DISCOVERY, held over `tests/`: every assertion above ranges over the gates `_gates` finds, and a skip
+    in a position it does not walk is a gate nothing judged. `_flat_sites` derives the same set knowing nothing of
+    positions, so a difference either way is a finding. What it cannot show is a skip both walks miss -- one
+    bound to another name AND sitting in an unwalked position."""
+    modules = sorted(p for p in TESTS.rglob("*.py") if "__pycache__" not in p.parts)
+    calls: set[tuple[str, int]] = set()
+    marks: set[tuple[str, int]] = set()
+    for path in modules:
+        label = str(path.relative_to(REPO))
+        flat_calls, flat_marks = _flat_sites(ast.parse(path.read_text()))
+        calls |= {(label, line) for line in flat_calls}
+        marks |= {(label, line) for line in flat_marks}
+    assert calls and marks, (
+        f"the second walk found {len(calls)} skip calls and {len(marks)} marks -- it is broken, not the tree clean"
+    )
+    differ = _walks_differ((calls, marks), [((label, gate.line), gate.kind) for label, gate in _tree_gates()])
+    assert not differ, "\n".join(differ)
+
+
 def _call_root(node: ast.AST) -> str:
     """The name a call reaches through, as text for a refusal message: `shutil` in
     `shutil.which(...)`, `Path` in `Path(x).resolve()`. A chained call is judged by what it started
@@ -1492,13 +1575,10 @@ def test_the_fixture_carries_every_position_a_skip_can_sit():
     `except` handler, a `match` case, a nesting, and behind each receiver and spelling the walker
     recognises. That is a property of the FIXTURE and it is what this test checks.
 
-    It does NOT check that the walker finds them, and the attempt to is deleted rather than repaired.
-    `assert guarded <= found` compared a set derived from `_is_pytest_call` and `_guards_of` against a
-    set `_gates` derives from the same pair, so it held by construction: three mutations that broke
-    discovery and were KILLED by the test this replaced all SURVIVED it. **Discovery cannot be asserted
-    from inside this file** -- any set it computes to check the walker against is computed by the
-    walker. Asserting it needs a fixture whose expected gates are written down independently, which is
-    the enumeration this file's whole history argues against, or a second implementation.
+    It does NOT check that the walker finds them: `assert guarded <= found` compared a set derived from
+    `_is_pytest_call` and `_guards_of` against a set `_gates` derives from the same pair, so it held by
+    construction. Discovery is held by a second implementation instead, `_flat_sites`, over the tree and
+    over this fixture.
     """
     tree = ast.parse(_FIXTURE)
     parents = _parents(tree)
@@ -1506,6 +1586,38 @@ def test_the_fixture_carries_every_position_a_skip_can_sit():
     bound = _pytest_bindings(tree, "skip") | _skip_helpers(tree, "skip", _pytest_bindings(tree, "skip"), modules, parents)
     guarded = {n.lineno for n in ast.walk(tree) if _is_pytest_call(n, "skip", bound, modules) and _guards_of(n, parents)}
     assert len(guarded) >= 8, f"the fixture must carry every position a skip can sit, got {len(guarded)}"
+
+
+# The fixture cases the second walk does not see, both a skip bound to another name. Held as the whole difference
+# so the walk's blindness is a list and not a guess.
+_FLAT_WALK_UNSEEN = (
+    "test_gated_by_a_unittest_decorator_imported_under_an_alias",
+    "test_skips_through_a_name_bound_to_pytests_skip",
+)
+
+
+def test_the_second_walk_differs_from_the_walker_over_the_fixture_by_the_renamed_skips_alone():
+    """Every position and spelling the fixture carries, seen by both walks, but for `_FLAT_WALK_UNSEEN`."""
+    calls, marks = _flat_sites(ast.parse(_FIXTURE))
+    by_line = {gate.line: gate for _, gate in _FIXTURE_GATES}
+    assert (calls | marks) <= set(by_line), (
+        f"the second walk saw a skip the walker did not: {sorted((calls | marks) - set(by_line))}"
+    )
+    unseen = sorted(_fixture_case(gate) for line, gate in by_line.items() if line not in calls | marks)
+    assert unseen == sorted(_FLAT_WALK_UNSEEN), f"got {unseen}"
+
+
+def test_the_second_walk_names_nothing_the_walker_is_built_from():
+    function = next(n for n in ast.walk(_module(Path(__file__)).tree) if isinstance(n, ast.FunctionDef) and n.name == "_flat_sites")
+    named = {n.id for n in ast.walk(function) if isinstance(n, ast.Name)} | {
+        n.attr for n in ast.walk(function) if isinstance(n, ast.Attribute)
+    }
+    assert not named & _WALKER, (
+        f"`_flat_sites` names {sorted(named & _WALKER)}: a second derivation built on the first agrees with it by construction"
+    )
+    assert _WALKER <= {n.name for n in ast.walk(_module(Path(__file__)).tree) if isinstance(n, ast.FunctionDef)}, (
+        "a name in `_WALKER` is no function here"
+    )
 
 
 def test_a_gate_with_no_venue_dependency_passes_beside_them():
