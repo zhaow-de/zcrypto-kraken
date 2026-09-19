@@ -19,8 +19,8 @@ WHAT THIS FILE DOES NOT HOLD:
 
 - a skip BOTH walks miss. The matcher judges the gates the walker finds, and
   `test_every_decided_skip_a_second_walk_finds_is_a_gate_the_walker_found` holds that set against a walk
-  that knows nothing of positions; that walk reads a name only through the module's `import` lines
-  (`_FLAT_WALK_UNSEEN`), so a skip bound any other way is held by the walker alone: by nothing where it
+  that holds no list of the positions that decide; that walk reads a name through the module's `import`
+  lines (`_FLAT_WALK_UNSEEN`), so a skip bound any other way is held by the walker alone: by nothing where it
   sits in a position `_guards_of` does not walk, or is reached by a binding `_pytest_bindings` does not follow;
 - the provenance of a registry call's ARGUMENTS. `nothing_found(rows)` is the call site's claim that
   those rows were gathered locally, and no shape of the call can check it, so rows a venue answer
@@ -780,13 +780,12 @@ def _flat_sites(tree: ast.Module) -> tuple[set[int], set[int]]:
     of where a gate sits, sharing no code with `_gates`.
 
     It asks of a skip only whether ANYTHING between it and its function could keep it from running, and answers from
-    `_PASSES_THROUGH`, never from a list of the constructs that decide: that list is `_guards_of`'s, and a position
-    missing from it is what this walk exists to find. A skip nothing decides -- a helper's own body, a declared
-    `mark.skip`, a bare `pytest.skip(...)` -- is no gate and is left out, as `_gates` leaves it out.
+    `_PASSES_THROUGH`: the list of deciding constructs is `_guards_of`'s, and a position missing from it is what this
+    walk exists to find.
 
-    A name is read as pytest's or unittest's only through the module's own `import` lines, so a `skip` method on
-    some other object is no skip; a name bound any other way -- by assignment, `getattr`, `partial`, a helper -- is one
-    this walk does not see (`_FLAT_WALK_UNSEEN`).
+    A name is read as pytest's or unittest's through the module's own `import` lines, `self.skipTest`, or the
+    `skip.Exception` suffix of a raise; a name bound any other way -- by assignment, `getattr`, `partial`, a helper --
+    is one this walk does not see (`_FLAT_WALK_UNSEEN`).
     """
     parent = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
@@ -817,11 +816,7 @@ def _flat_sites(tree: ast.Module) -> tuple[set[int], set[int]]:
             in_a_try_body = isinstance(node, (ast.Try, ast.TryStar)) and below in node.body
             if not isinstance(node, _PASSES_THROUGH) and not in_a_try_body:
                 return True
-        scope = parent[node]
-        # A helper nested in a function runs when that function calls it, and `_skip_helpers` follows module functions.
-        return isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and not isinstance(
-            parent[scope], (ast.Module, ast.ClassDef)
-        )
+        return False
 
     calls: set[int] = set()
     marks: set[int] = set()
@@ -845,9 +840,8 @@ def _walker_missed(flat: tuple[set, set], gates: list) -> list[str]:
     found_calls = {key for key, kind in gates if kind == "skip-site"}
     found_marks = {key for key, kind in gates if kind == "skipif"}
     return [
-        f"{key}: something decides this skip and the walker found no gate there -- it sits in a position `_guards_of` "
-        "does not walk (add the arm and a `_FIXTURE` case), or in a helper nested in a function, which `_skip_helpers` "
-        "does not follow (move the helper to module level)"
+        f"{key}: something decides this skip and the walker keyed no gate to that line -- it sits in a position "
+        "`_guards_of` does not walk: add the arm and a `_FIXTURE` case"
         for key in sorted(calls - found_calls)
     ] + [
         f"{key}: a skip mark the walker found no gate for -- it carries no condition the walker can read: give it one "
@@ -858,9 +852,9 @@ def _walker_missed(flat: tuple[set, set], gates: list) -> list[str]:
 
 def test_every_decided_skip_a_second_walk_finds_is_a_gate_the_walker_found():
     """Gate DISCOVERY, held over `tests/`: every assertion above ranges over the gates `_gates` finds, and a skip
-    in a position it does not walk is a gate nothing judged. `_flat_sites` finds the decided skips knowing nothing of
-    positions, so one it finds and `_gates` did not is a missed position. The other direction is not asserted: a
-    gate this walk does not see is a spelling it does not read, which the fixture holds as a list."""
+    in a position it does not walk is a gate nothing judged. `_flat_sites` finds the decided skips holding no list
+    of the positions that decide, so one it finds and `_gates` keyed no gate to is a finding. The other direction is
+    not asserted: a gate this walk does not see is a spelling it does not read, which the fixture holds as a list."""
     modules = sorted(p for p in TESTS.rglob("*.py") if "__pycache__" not in p.parts)
     calls: set[tuple[str, int]] = set()
     marks: set[tuple[str, int]] = set()
@@ -887,10 +881,10 @@ _SECOND_WALK_CASES = {
     "a lambda": ("    (lambda: pytest.skip('x'))()", True),
     "an assert's message": ("    assert X, pytest.skip('x')", True),
     "an except handler": ("    try:\n        X()\n    except OSError:\n        pytest.skip('x')", True),
-    "a helper nested in the test": ("    def _bail():\n        pytest.skip('x')\n\n    if X:\n        _bail()", True),
     "the alias an import bound": ("    if X:\n        bail('x')", True),
     "a raise under an if": ("    if X:\n        raise pytest.skip.Exception('x')", True),
     "nothing": ("    pytest.skip('not written yet')", False),
+    "a nested helper's own body": ("    def _bail():\n        pytest.skip('x')\n\n    if X:\n        _bail()", False),
     "a try body": ("    try:\n        pytest.skip('x')\n    finally:\n        X()", False),
     "a returned skip": ("    return pytest.skip('x')", False),
     "another object's skip": ("    reader = io.BytesIO(b'ab')\n    if X:\n        reader.skip(1)", False),
