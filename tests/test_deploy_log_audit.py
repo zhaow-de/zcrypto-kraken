@@ -156,9 +156,7 @@ def test_engine_window_counts_the_rows_outside_the_gap(tmp_path, capsys):
 
 
 def test_engine_window_admits_the_row_the_playbook_admitted_on_a_completed_cycles_floor(tmp_path, capsys):
-    """744 s past a boundary: past the earliest the playbook's completion floor can open, short of the fixed one.
-    The playbook admits such a row only after reading the boundary cycle's journalled completion, which this log
-    cannot read, so it is counted apart and not as outside."""
+    """744 s past a boundary: past the earliest the playbook's completion floor can open, short of the fixed one."""
     rows = [_row("2026-09-19T08:12:24Z", tags="capture,engine")]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
     assert capsys.readouterr().out.strip() == "engine rows 1 outside window 0 failed 0 on the completion floor 1"

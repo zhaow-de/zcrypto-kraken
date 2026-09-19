@@ -83,9 +83,8 @@ def inside_gap(stamp: str) -> bool:
 
 
 def on_the_completion_floor(row: dict) -> bool:
-    """A row ahead of the fixed floor that the playbook admitted on a completed cycle's: it succeeded, which the
-    window assert precedes, and it carried no bypass. Counted apart from the rows outside the gap, because the
-    completion it was admitted on is the playbook's reading and not this log's."""
+    """A row short of the fixed floor that the playbook can have admitted on a completed cycle's floor instead:
+    it succeeded, and the window assert precedes that success."""
     since = _since_boundary(row["ts"])
     admitted = row["rc"] == 0 and "engine_window_override" not in (row.get("extra_vars") or {})
     return admitted and _AFTER_COMPLETION_SECONDS <= since < _AFTER_BOUNDARY_SECONDS
