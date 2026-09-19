@@ -1,9 +1,9 @@
 export const meta = {
   name: 'pre-review',
   description: 'The author’s prose and message claims graded by a different agent before any review',
-  whenToUse: 'Before every review or re-review — over the fix range after the first review, never the whole branch again: graders grade its prose, re-run the commands and probes its messages quote, and check each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?, ranges?, rulings?}',
+  whenToUse: 'Before every review or re-review — over the fix range after the first review: graders grade the range’s prose, re-run the commands and probes its messages quote, and check each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?, ranges?, rulings?}',
   phases: [
-    { title: 'Pre-review', detail: 'one read-only grader over the range’s prose and message claims' },
+    { title: 'Pre-review', detail: 'a read-only grader per slice over the range’s prose and message claims' },
     { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
   ],
 }
@@ -13,10 +13,9 @@ const { repo, range, tip, reportDir, worktree, model, ranges, rulings } = args |
 // `ranges` fans the read out: one grader per entry, each inside its own budget, over one slice of `range`.
 const FAN = Array.isArray(ranges) && ranges.length ? ranges : null
 const LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/
-// The one recorded row says the whole branch range was read, so the slices are held to a cover of it by their own
-// spelling: the first opens where `range` opens, each next opens where the last closed, the last closes where `range` closes.
+// The one recorded row says the whole branch range was read, so the slices are held to a cover of it by their own spelling.
 const ends = (r) => String((r && r.range) || r || '').split('..')
-const chained = FAN && FAN.every((r, i) => ends(r).length === 2 && ends(r)[0] === (i ? ends(FAN[i - 1])[1] : ends(range)[0])) && ends(FAN[FAN.length - 1])[1] === ends(range)[1]
+const chained = FAN && FAN.every((r, i) => ends(r).length === 2 && ends(r)[0] !== ends(r)[1] && ends(r)[0] === (i ? ends(FAN[i - 1])[1] : ends(range)[0])) && ends(FAN[FAN.length - 1])[1] === ends(range)[1]
 const badRanges = ranges !== undefined && (!chained || FAN.some((r) => !LABEL.test(r.label || '')) || new Set(FAN.map((r) => r.label)).size !== FAN.length)
 if (!repo || !range || !tip || !reportDir || badRanges) throw new Error('args: {repo, range, tip, reportDir, worktree?, model?, ranges?: [{label, range}] — labels unique, 1 to 32 of lowercase, digits and dashes, none opening with a dash; ranges `a..b` chained end to start from the opening of `range` to its close —, rulings?}')
 
@@ -113,9 +112,10 @@ if (parts.some((p) => !p)) throw new Error(FAN ? `the pre-reviewers of ${FAN.fil
 // A site two slices touched comes back once per slice.
 const bySite = new Map()
 for (const row of parts.flatMap((p) => p.prose)) bySite.set(row.site, [...(bySite.get(row.site) || []), row])
-const prose = [...bySite.values()].flatMap((rows) => (rows.some((r) => r.survives !== 'keep') ? rows.filter((r) => r.survives !== 'keep') : rows.slice(0, 1)))
-const contested = [...bySite.entries()].filter(([, rows]) => new Set(rows.filter((r) => r.survives !== 'keep').map((r) => r.ship)).size > 1).map(([site]) => site)
-if (contested.length) log(`CONTESTED: ${contested.length} site(s) carry a different change from each of two slices, both rows returned — ${contested.join(', ')}`)
+const asked = (rows) => rows.filter((r, i) => r.survives !== 'keep' && rows.findIndex((o) => o.survives === r.survives && o.ship === r.ship) === i)
+const prose = [...bySite.values()].flatMap((rows) => (asked(rows).length ? asked(rows) : rows.slice(0, 1)))
+const contested = FAN ? [...bySite.entries()].filter(([, rows]) => asked(rows).length > 1).map(([site]) => site) : []
+if (contested.length) log(`CONTESTED: ${contested.length} site(s) carry a different change from more than one slice, all rows returned — ${contested.join(', ')}`)
 const report = !FAN
   ? parts[0]
   : {
