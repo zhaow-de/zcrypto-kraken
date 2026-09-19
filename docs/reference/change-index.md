@@ -332,3 +332,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #568 | 2026-09-19 | fix(ohlc): T0202 reach refuses a canonical frame it cannot join | — | — | T0199, T0202 |
 | #569 | 2026-09-19 | test(venue): T0207 a second walk holds gate discovery | — | — | T0207 |
 | #571 | 2026-09-19 | docs(topics): T0199 widened to the store door's type and key gaps | — | — | T0199 |
+| #573 | 2026-09-19 | claude(workflows): T0209 the branch pre-review fans out per task range | — | — | T0209 |
