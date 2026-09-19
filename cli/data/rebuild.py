@@ -265,8 +265,7 @@ REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
     "universe": _refresh_universe,
 }
 
-# What a builder above raises on purpose, its message written for the operator: the command aborts on these and
-# lets everything else through as the traceback a bug should be.
+# What a builder above raises on purpose, its message written for the operator.
 BUILDER_REFUSALS: tuple[type[Exception], ...] = (
     BackfillError,
     CostModelError,

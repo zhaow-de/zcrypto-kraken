@@ -112,6 +112,20 @@ def test_rebuild_unknown_set_exits_nonzero(tmp_path, monkeypatch):
     assert result.exit_code == 1
 
 
+@pytest.fixture
+def zcrypto_log(caplog):
+    """The CLI's first invocation in a process stops the "zcrypto" logger propagating, and `caplog` attaches only to
+    a logger already non-propagating at fixture setup, so a test selected alone captures nothing unless the handler
+    sits on that logger (`_zcrypto_caplog_attached` in `tests/test_engine_metrics.py` is the same remedy)."""
+    logger = logging.getLogger("zcrypto")
+    logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.ERROR, logger="zcrypto"):
+            yield caplog
+    finally:
+        logger.removeHandler(caplog.handler)
+
+
 _BUILDER_REFUSALS = [
     "cli.backfill.errors.BackfillError",
     "cli.costs.errors.CostModelError",
@@ -125,7 +139,7 @@ _BUILDER_REFUSALS = [
 
 
 @pytest.mark.parametrize("dotted", _BUILDER_REFUSALS)
-def test_rebuild_turns_a_builders_own_refusal_into_an_abort_not_a_traceback(tmp_path, monkeypatch, caplog, dotted):
+def test_rebuild_turns_a_builders_own_refusal_into_an_abort_not_a_traceback(tmp_path, monkeypatch, zcrypto_log, dotted):
     """The exit code cannot tell the two apart -- an uncaught exception also exits 1 -- so the exception is read."""
     from cli.data import rebuild as rebuild_module
 
@@ -139,12 +153,11 @@ def test_rebuild_turns_a_builders_own_refusal_into_an_abort_not_a_traceback(tmp_
     _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest="nas-hot:", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
 
-    with caplog.at_level(logging.ERROR):
-        result = runner.invoke(app, ["data", "rebuild", "ohlc-full", "--no-push"])
+    result = runner.invoke(app, ["data", "rebuild", "ohlc-full", "--no-push"])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
-    assert "the builder said why" in caplog.text
+    assert "the builder said why" in zcrypto_log.text
 
 
 def test_rebuild_lets_an_error_no_builder_raises_on_purpose_through(tmp_path, monkeypatch):
@@ -162,7 +175,7 @@ def test_rebuild_lets_an_error_no_builder_raises_on_purpose_through(tmp_path, mo
     assert isinstance(result.exception, RuntimeError)
 
 
-def test_rebuild_ohlc_reach_aborts_naming_a_canonical_file_it_cannot_join(tmp_path, monkeypatch, caplog):
+def test_rebuild_ohlc_reach_aborts_naming_a_canonical_file_it_cannot_join(tmp_path, monkeypatch, zcrypto_log):
     import polars as pl
 
     from cli.data import rebuild as rebuild_module
@@ -179,9 +192,8 @@ def test_rebuild_ohlc_reach_aborts_naming_a_canonical_file_it_cannot_join(tmp_pa
     _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest="nas-hot:", authored_sets=["ohlc-full"])
     monkeypatch.chdir(tmp_path)
 
-    with caplog.at_level(logging.ERROR):
-        result = runner.invoke(app, ["data", "rebuild", "ohlc-reach", "--no-push"])
+    result = runner.invoke(app, ["data", "rebuild", "ohlc-reach", "--no-push"])
 
     assert isinstance(result.exception, SystemExit)
-    assert str(path) in caplog.text
+    assert str(path) in zcrypto_log.text
     assert [p.name for p in (tmp_path / "data").iterdir()] == ["ohlc-full"]

@@ -71,10 +71,6 @@ def _canonical_symbols(canonical_root: Path, interval: int) -> list[str]:
 def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     """Refuse a canonical file `_merge_or_detach` cannot take, before the REST call is spent on it.
 
-    `seam_overlap` joins on `ts` and compares `close`, and the merge concatenates onto a `to_frame` result, so a
-    dtype, a column or a column order other than `FRAME_SCHEMA`'s raises a bare polars error or a `TypeError` there.
-    The recovery is a rebuilt set, because a recast in place changes the file's `dataset_hash`.
-
     Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.
     """
     try:
@@ -90,6 +86,15 @@ def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     differs += [f"{column} is not a column of it" for column in frame.schema if column not in FRAME_SCHEMA]
     if not differs and frame.columns != list(FRAME_SCHEMA):
         differs = [f"the columns are in another order ({', '.join(frame.columns)})"]
+    if not differs:
+        # The keys only: what a non-finite close does at this family's doors is T0199's open decision.
+        stamps = frame["ts"]
+        if frame.is_empty():
+            differs = ["it has no rows"]
+        elif stamps.null_count():
+            differs = [f"ts is null in {stamps.null_count()} row(s)"]
+        elif stamps.n_unique() != frame.height:
+            differs = [f"{frame.height - stamps.n_unique()} row(s) repeat a stamp another row carries"]
     if differs:
         raise OHLCError(
             f"reach_round: {path} is not the frame this command joins for {symbol}@{interval} -- {'; '.join(differs)}; "

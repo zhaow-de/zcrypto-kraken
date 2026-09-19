@@ -259,6 +259,10 @@ _FOREIGN_CANONICALS = {
     "open-float32": lambda f: f.with_columns(pl.col("open").cast(pl.Float32)),
     "extra-column": lambda f: f.with_columns(pl.lit(1).alias("extra")),
     "columns-reordered": lambda f: f.select(["ts", "close", "open", "high", "low", "vwap", "volume", "count"]),
+    "no-rows": lambda f: f.clear(),
+    "ts-all-null": lambda f: f.with_columns(pl.lit(None, dtype=pl.Datetime("us", "UTC")).alias("ts")),
+    "ts-one-null": lambda f: f.with_columns(pl.when(pl.int_range(pl.len()) == 3).then(None).otherwise(pl.col("ts")).alias("ts")),
+    "ts-repeated": lambda f: pl.concat([f, f.tail(1)]),
 }
 
 
@@ -268,7 +272,6 @@ def _must_not_fetch(pair_key: str, interval: int) -> list[list]:
 
 @pytest.mark.parametrize("variant", sorted(_FOREIGN_CANONICALS))
 def test_a_canonical_frame_this_repo_did_not_write_is_refused_before_the_join(tmp_path, variant):
-    """Each variant reaches the operator as a bare polars or `TypeError` traceback without the refusal."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
     _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
     path = canonical / "BTC" / "EUR" / "60.parquet"
@@ -291,6 +294,10 @@ def test_a_canonical_frame_this_repo_did_not_write_is_refused_before_the_join(tm
         ("close-absent", "close is absent"),
         ("extra-column", "extra is not a column of it"),
         ("columns-reordered", "the columns are in another order"),
+        ("no-rows", "it has no rows"),
+        ("ts-all-null", "ts is null in 20 row(s)"),
+        ("ts-one-null", "ts is null in 1 row(s)"),
+        ("ts-repeated", "1 row(s) repeat a stamp another row carries"),
     ],
 )
 def test_the_refusal_names_what_differs(tmp_path, variant, named):
@@ -315,3 +322,17 @@ def test_a_canonical_file_that_is_not_parquet_is_refused_naming_the_file(tmp_pat
         reach_round(canonical, tmp_path / "out", fetch_fn=_must_not_fetch, clock=lambda: _BASE, sleep_fn=_no_sleep)
 
     assert str(path) in str(excinfo.value)
+
+
+def test_an_absent_canonical_close_inside_the_seam_aborts_rather_than_passing_as_agreement(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20, close=100.0)
+    path = canonical / "BTC" / "EUR" / "60.parquet"
+    absent = pl.when(pl.int_range(pl.len()) == 15).then(None).otherwise(pl.col("close")).alias("close")
+    write_parquet(read_parquet(path).with_columns(absent), path)
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+
+    with pytest.raises(OHLCError, match="seam mismatch"):
+        reach_round(
+            canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: _BASE + timedelta(hours=40), sleep_fn=_no_sleep
+        )
