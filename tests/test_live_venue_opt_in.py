@@ -20,7 +20,8 @@ WHAT THIS FILE DOES NOT HOLD:
 - a skip BOTH walks miss. The matcher judges the gates the walker finds, and
   `test_a_second_walk_of_the_tree_finds_exactly_the_gates_the_walker_finds` holds that set against a walk
   that knows nothing of positions; that walk reads a skip only under its own name (`_FLAT_WALK_UNSEEN`),
-  so a skip written any other way AND sitting in a position `_guards_of` does not walk is held by nothing;
+  so a skip written any other way is held by the walker alone: by nothing where it sits in a position
+  `_guards_of` does not walk, or is reached by a binding `_pytest_bindings` does not follow;
 - the provenance of a registry call's ARGUMENTS. `nothing_found(rows)` is the call site's claim that
   those rows were gathered locally, and no shape of the call can check it, so rows a venue answer
   filtered would decide a skip under a declaration that says otherwise. That is the one reading a gate
@@ -538,13 +539,15 @@ def _pytest_bindings(tree: ast.Module, attribute: str) -> set[str]:
         named = isinstance(value, ast.Attribute) and value.attr == attribute and ast.unparse(value.value) in modules
         # `_b = functools.partial(pytest.skip, ...)` binds it as surely as `_skip = pytest.skip` does,
         # and the call site then names neither pytest nor the attribute.
+        first = value.args[0] if isinstance(value, ast.Call) and value.args else None
         wrapped = (
-            isinstance(value, ast.Call)
+            first is not None
             and ast.unparse(value.func).endswith("partial")
-            and bool(value.args)
-            and isinstance(value.args[0], ast.Attribute)
-            and value.args[0].attr == attribute
-            and ast.unparse(value.args[0].value) in modules
+            and (
+                (isinstance(first, ast.Attribute) and first.attr == attribute and ast.unparse(first.value) in modules)
+                # A name already bound is the function too: the bare import, or an earlier partial of it.
+                or (isinstance(first, ast.Name) and first.id in bound)
+            )
         )
         if named or wrapped:
             bound |= {x.id for x in node.targets if isinstance(x, ast.Name)}
@@ -1355,11 +1358,23 @@ def test_skips_through_a_partial_of_pytests_skip():
 
 
 _bail = functools.partial(pytest.skip, "no data")
+_bail_bare = functools.partial(skip, "no data")
+_bail_twice = functools.partial(_bail)
 
 
 def test_skips_through_a_name_bound_to_a_partial_of_pytests_skip():
     if not ROOT.exists():
         _bail()
+
+
+def test_skips_through_a_name_bound_to_a_partial_of_the_bare_import():
+    if not ROOT.exists():
+        _bail_bare()
+
+
+def test_skips_through_a_name_bound_to_a_partial_of_a_partial():
+    if not ROOT.exists():
+        _bail_twice()
 """
 
 _FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")
@@ -1469,6 +1484,8 @@ _REACHED_THROUGH_A_CALL = (
     "test_skips_through_getattr_on_the_module",
     "test_skips_through_a_partial_of_pytests_skip",
     "test_skips_through_a_name_bound_to_a_partial_of_pytests_skip",
+    "test_skips_through_a_name_bound_to_a_partial_of_the_bare_import",
+    "test_skips_through_a_name_bound_to_a_partial_of_a_partial",
 )
 # The gates that must NOT be refused for the assertions above to mean anything: the one opt-in read
 # twice, a dataset gate, and a membership of a module constant -- the last two the accepting direction
