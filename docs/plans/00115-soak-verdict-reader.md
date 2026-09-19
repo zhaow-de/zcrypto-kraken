@@ -13,9 +13,9 @@
 ## Global Constraints
 
 - No source file under `cli/` changes (spec D2): no image is rolled and the NAS gate cache's fingerprint does not move. The one `cli`-side edit is a test, `tests/test_engine_soak_command.py`.
-- No file under `.claude/` changes: spec D7 rules that a guidance change rides its own branch on the owner's word, and the daily-ops guidance the new row needs — what an operator does with its first `FAIL` — is therefore registered as a topic in Task 4, not written here.
+- No file under `.claude/` changes: spec D7 rules that a guidance change rides its own branch on the owner's word, so the daily-ops guidance the new row needs — what an operator does with its first `FAIL` — is PR #574's, opened beside this one and merged behind it, not written here.
 - Three real options stay OUT of the classifier's shapes (spec D5): `soak-check --json` writes the path it names; `soak-check --registry` and `tracking-report --ledger-export` name a file whose reader echoes content when it refuses it.
-- The reduction order is fixed (spec D4): no payload or no canonical dataset is `unreadable:`; any other non-empty `void_reasons` is `FAIL` and is read BEFORE any verdict; then the panel decides on two of its counts — `n_outside >= 3` is `FAIL`, and so is a panel that left fewer than three metrics decided (`n_metrics - n_indeterminate`, the same constant read as a reachability floor); otherwise `PASS`. The row never keys off one metric's `inconsistent`.
+- The reduction order is fixed (spec D4): no payload or no canonical dataset is `unreadable:`; any other non-empty `void_reasons` is `FAIL` and is read BEFORE any verdict; then the panel decides on two of its counts — `n_outside >= 3` is `FAIL`, and so is a panel that left fewer than three metrics decided (`n_metrics - n_indeterminate`, the same constant read as a reachability floor, which the value names when it is the arm that bit); otherwise `PASS`. The row never keys off one metric's `inconsistent`.
 - `read_soak_verdict` takes its runner keyword-only with no default, as `read_unattended_upgrades` and `read_agentboard_cgroup` do.
 - No string literal in `infra/scripts/ops_daily.py` carries a topic id, a spec serial or a decision number: `tests/test_internal_terms_not_operator_visible.py` walks that file. Provenance goes in the commit message.
 - A comment or docstring this plan writes states a behaviour or a dependency, never a location in another file: a `<path>::<name>` or a `<path>:<line>` goes false on the next change there and nothing but a second reader checks it. The one kind that stays is the guard holding the code the comment sits beside, named so a reader knows what would catch them.
@@ -35,7 +35,7 @@ Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
 ## File structure
 
 - Modify `infra/scripts/ops_daily.py` — the per-sub flag table `_ZCRYPTO_READ_FLAGS` replaces `_ZCRYPTO_READ_SUBS` and its one generated shape (Task 1); `SOAK_*` constants and `read_soak_verdict` (Task 2); `derive_soak_store`, `soak_run`, two imports and one line of `main` (Task 3).
-- Modify `tests/test_ops_daily.py` — the classifier fixtures and the table-against-CLI test (Task 1); the reduction tests (Task 2); the derived-store, runner and wiring tests, and one added line in each of the three existing tests that drive `main(["report"])` to a verdict (Task 3).
+- Modify `tests/test_ops_daily.py` — the classifier fixtures and the table-against-CLI test (Task 1); the reduction tests (Task 2); the derived-store, runner and wiring tests, the autouse `live_soak_run` fixture and the two runner tests it rewires, and one added line in each of the three existing tests that drive `main(["report"])` to a verdict (Task 3).
 - Modify `tests/test_engine_soak_command.py` — one test pinning the payload keys the reduction reads (Task 2).
 - Modify `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md` (resolved, moved to `archive/`), `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`; and re-render `docs/open-topics/README.md` (Task 4).
 
@@ -246,9 +246,9 @@ Expected: `mutate-probe: KILLED (control proven, tree restored byte-identically)
 - Test: `tests/test_ops_daily.py` (append), `tests/test_engine_soak_command.py` (insert directly above `def test_soak_check_exits_non_zero_when_the_null_reconciliation_fails(`)
 
 **Interfaces:**
-- Consumes: `Check(name, expr, ok, value)` and `_UNREACHABLE` from `infra/scripts/ops_daily.py`; in the soak test file, the existing helpers `_patch_config`, `_patch_canonical_pipeline`, `_mk_journal_and_store`, `_soak_args`, the module constant `_CLOSES` and `soak._VERDICT_LABELS`, the closed vocabulary the dual's labels are pinned against.
-- Reads, from the payload, exactly these and nothing else — the enumeration, so the next reader inherits it instead of re-deriving it: `void_reasons`; `self_test.instrument_ok`, `.identity_ok`, `.reconcile_ok`; `panel.line`, `.indeterminate_line`, `.n_outside`, `.n_metrics`, `.n_indeterminate`; `provenance.L`, `.window_bound`; each `gating_verdicts` row's `verdict` and its `dual.verdict`, `.primary`, `.secondary`; `realized_no_book_bars`; `realized_total_bars`. The pin test holds that list, names and values both. Anything `soak-check` computes that this list omits is a reading the row DROPS, so a field added there is a decision to take here rather than a default.
-- Produces: `ops_daily.read_soak_verdict(*, runner) -> Check`, where `runner(journal_dir: Path) -> dict` returns a `soak-check --json` payload or raises; constants `SOAK_CHECK = "soak verdict"`, `SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")`, `SOAK_EXPR`, `SOAK_OUTSIDE_FAILS_AT = 3`. Test helpers `_soak_payload(*, n_outside=1, void=(), outside=("governor_engagement",), both=(), indeterminate=(), self_test=(True, True, True))` and `_soak_answering(payload)`, which Task 3's tests reuse.
+- Consumes: `Check(name, expr, ok, value)` and `_UNREACHABLE` from `infra/scripts/ops_daily.py`; in the soak test file, the existing helpers `_patch_config`, `_patch_canonical_pipeline`, `_mk_journal_and_store`, `_soak_args`, the module constant `_CLOSES` and `soak._VERDICT_LABELS`, the closed vocabulary the dual's labels are pinned against, which the reduction's own label test reads too.
+- Reads, from the payload, exactly these and nothing else — the enumeration, so the next reader inherits it instead of re-deriving it: `void_reasons`; `self_test.instrument_ok`, `.identity_ok`, `.reconcile_ok`; `panel.line`, `.indeterminate_line`, `.n_outside`, `.n_metrics`, `.n_indeterminate`; `provenance.L`, `.window_bound`; each `gating_verdicts` row's `verdict` and its `dual.verdict`, `.primary`, `.secondary`; `realized_no_book_bars`; `realized_total_bars`. The pin test holds that list, names and values both — except the one value the reduction COUNTS: `soak-check` derives its vocabulary from its own severity order, so a membership pin moves with a rename, and `SOAK_OUTSIDE_LABEL` is tied to that vocabulary by its own test instead. Anything `soak-check` computes that this list omits is a reading the row DROPS, so a field added there is a decision to take here rather than a default.
+- Produces: `ops_daily.read_soak_verdict(*, runner) -> Check`, where `runner(journal_dir: Path) -> dict` returns a `soak-check --json` payload or raises; constants `SOAK_CHECK = "soak verdict"`, `SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")`, `SOAK_EXPR`, `SOAK_OUTSIDE_FAILS_AT = 3`, `SOAK_OUTSIDE_LABEL = "inconsistent"`. Test helpers `_soak_payload(*, n_outside=1, void=(), outside=("governor_engagement",), both=(), indeterminate=(), undiscriminating=(), self_test=(True, True, True))` and `_soak_answering(payload)`, which Task 3's tests reuse.
 
 - [ ] **Step 1: Append the failing reduction tests to `tests/test_ops_daily.py`**
 
@@ -256,15 +256,30 @@ Expected: `mutate-probe: KILLED (control proven, tree restored byte-identically)
 # --- the soak verdict: the scheduled reader of `soak-check`'s gating verdicts ------------------------------------
 
 
+_SOAK_METRICS = ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach")
+
+
 def _soak_payload(
-    *, n_outside=1, void=(), outside=("governor_engagement",), both=(), indeterminate=(), self_test=(True, True, True)
+    *,
+    n_outside=1,
+    void=(),
+    outside=("governor_engagement",),
+    both=(),
+    indeterminate=(),
+    undiscriminating=(),
+    self_test=(True, True, True),
 ):
     """The fields `read_soak_verdict` reduces, shaped as `soak-check --json` writes them. `outside` calls a
-    metric on the secondary null alone, `both` on both, and `indeterminate` is the fourth reconciled label --
-    the two nulls discriminated and disagreed -- which counts toward `n_metrics` and never toward `n_outside`."""
+    metric on the secondary null alone, `both` on both, `indeterminate` is the fourth reconciled label -- the
+    two nulls discriminated and disagreed -- which counts toward `n_metrics` and never toward `n_outside`, and
+    `undiscriminating` is a metric no band could judge, which the panel drops from `n_metrics` altogether. The
+    panel's counts and both its lines are derived from those, so no case can state a count its own verdicts
+    contradict."""
     verdicts = {}
-    for metric in ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach"):
-        if metric in indeterminate:
+    for metric in _SOAK_METRICS:
+        if metric in undiscriminating:
+            label = primary = secondary = "n/a"
+        elif metric in indeterminate:
             label, primary, secondary = "indeterminate (instrument-fragile)", "consistent", "inconsistent"
         else:
             label = "inconsistent" if metric in outside or metric in both else "consistent"
@@ -272,6 +287,7 @@ def _soak_payload(
             secondary = label
         verdicts[metric] = {"verdict": label, "dual": {"primary": primary, "secondary": secondary, "verdict": label}}
     n_indeterminate = len(indeterminate)
+    n_metrics = len(_SOAK_METRICS) - len(undiscriminating)
     return {
         "void_reasons": list(void),
         "self_test": {
@@ -285,11 +301,11 @@ def _soak_payload(
         },
         "panel": {
             "n_outside": n_outside,
-            "n_metrics": 7,
+            "n_metrics": n_metrics,
             "n_indeterminate": n_indeterminate,
-            "line": f"{n_outside} of 7 outside band (~0.7 expected by chance at 90%)",
+            "line": f"{n_outside} of {n_metrics} outside band (~{n_metrics * 0.1:.1f} expected by chance at 90%)",
             "indeterminate_line": (
-                f"{n_indeterminate} of 7 indeterminate -- the verdict depends on how the null was constructed"
+                f"{n_indeterminate} of {n_metrics} indeterminate -- the verdict depends on how the null was constructed"
                 if n_indeterminate
                 else ""
             ),
@@ -342,19 +358,25 @@ def test_a_panel_the_instrument_could_not_decide_names_it_and_stops_reading_as_b
 
 def test_a_panel_that_judged_nothing_is_not_an_all_clear():
     """`0 of 0 outside band` is the panel of a run where no metric discriminated, and keyed on the outside
-    count alone it reads as the best verdict the row can give."""
-    payload = _soak_payload(n_outside=0, outside=())
-    payload["panel"] |= {"n_metrics": 0, "line": "0 of 0 outside band (~0.0 expected by chance at 90%)"}
-    for row in payload["gating_verdicts"].values():
-        row["verdict"] = row["dual"]["verdict"] = "n/a"
-    check = ops_daily.read_soak_verdict(runner=_soak_answering(payload))
+    count alone it reads as the best verdict the row can give. A metric no band could judge is dropped from
+    `n_metrics` rather than counted as indeterminate, so on this route the panel's own two lines say nothing
+    about why the row failed and the value has to name the floor itself."""
+    nothing = _soak_payload(n_outside=0, outside=(), undiscriminating=_SOAK_METRICS)
+    check = ops_daily.read_soak_verdict(runner=_soak_answering(nothing))
     assert not check.ok and not check.value.startswith("unreadable:"), check.value
+    assert "0 of 0 outside band" in check.value and "only 0 metrics decided" in check.value, check.value
+    # Five of seven undiscriminating is the ordinary shape of this arm, and the one the panel cannot show:
+    # `n_indeterminate` is 0, so the indeterminate line is empty and the floor is the value's only trace.
+    thin = _soak_payload(n_outside=0, outside=(), undiscriminating=_SOAK_METRICS[:5])
+    reading = ops_daily.read_soak_verdict(runner=_soak_answering(thin))
+    assert not reading.ok and "only 2 metrics decided" in reading.value, reading.value
+    assert "indeterminate" not in reading.value, reading.value
 
 
-def test_a_self_test_that_never_ran_is_named_and_never_reads_like_one_that_passed():
+def test_a_self_test_that_never_ran_is_spelled_skipped_and_never_spelled_ok():
     """A self-test flag voids the run only when it RAN and FAILED; `None` is a check that was SKIPPED -- no
     cycle could be replayed, no pair was compared -- and puts nothing in `void_reasons`, so the void arm above
-    never sees it and the row is the only place it can reach a reader."""
+    never sees it, the verdict word cannot carry it, and this value is the only place it reaches a reader."""
     check = ops_daily.read_soak_verdict(runner=_soak_answering(_soak_payload(self_test=(True, None, True))))
     assert check.ok, check.value
     assert "self-test ok/skipped/ok" in check.value
@@ -412,6 +434,15 @@ def test_the_soak_reader_takes_its_runner_and_never_defaults_one():
     assert runner.kind is inspect.Parameter.KEYWORD_ONLY and runner.default is inspect.Parameter.empty
     with pytest.raises(TypeError):
         ops_daily.read_soak_verdict()
+
+
+def test_the_label_the_row_counts_is_the_one_soak_check_spells():
+    """The reduction counts a bare token, and `soak-check`'s vocabulary is DERIVED from its own severity
+    order -- rename the label there and the closed set moves with it, so a membership pin over the payload
+    still holds while this row's count silently goes to zero. This assertion is what goes red instead."""
+    from cli.engine import soak
+
+    assert ops_daily.SOAK_OUTSIDE_LABEL in soak._VERDICT_LABELS
 ```
 
 - [ ] **Step 2: Insert the payload pin into `tests/test_engine_soak_command.py`**
@@ -454,12 +485,29 @@ def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, mon
         # beside their names: a nested object here keeps every name and silently zeroes the count.
         assert row["dual"]["primary"] in soak._VERDICT_LABELS, (metric, row["dual"]["primary"])
         assert row["dual"]["secondary"] in soak._VERDICT_LABELS, (metric, row["dual"]["secondary"])
+
+    # This run judged nothing -- `0 of 0`, every verdict `n/a` -- so the two panel assertions above cannot
+    # tell the counts apart and the indeterminate tie holds in one direction only. One synthetic panel,
+    # through the function the payload's own came from, makes both discriminate.
+    null = list(range(101))
+    judged = {m: soak.metric_verdict(50, null) for m in ("gross", "net", "turnover", "hhi")}
+    duals = {
+        "gross": soak.reconcile_verdicts("inconsistent", "inconsistent"),
+        "net": soak.reconcile_verdicts("consistent", "inconsistent"),  # opposite extremes: indeterminate
+        "turnover": soak.reconcile_verdicts("consistent", "consistent"),
+        "hhi": soak.reconcile_verdicts("n/a", "n/a"),  # undiscriminating, so out of `n_metrics`
+    }
+    mixed = soak.summarize_panel(judged, dual_verdicts=duals)
+    assert (mixed.n_outside, mixed.n_metrics, mixed.n_indeterminate) == (1, 3, 1)
+    assert mixed.line.startswith(f"{mixed.n_outside} of {mixed.n_metrics} outside band")
+    assert mixed.indeterminate_line.startswith(f"{mixed.n_indeterminate} of {mixed.n_metrics} indeterminate")
+    assert (mixed.indeterminate_line == "") == (mixed.n_indeterminate == 0), mixed
 ```
 
 - [ ] **Step 3: Run both and read the failures**
 
-Run: `uv run pytest tests/test_ops_daily.py tests/test_engine_soak_command.py -q -k "soak_reader or metric_outside or provisional_count or a_panel or self_test_that_never_ran or void_run or canonical_dataset or no_payload or missing_a_field or daily_pass_reduces"`
-Expected: the `tests/test_ops_daily.py` cases FAIL with `AttributeError: module 'ops_daily' has no attribute 'read_soak_verdict'` (or `SOAK_OUTSIDE_FAILS_AT`); `test_soak_check_json_carries_the_fields_the_daily_pass_reduces` PASSES already — it pins what `cli/engine/soak.py` writes today, and Step 6's probe is what shows it can fail.
+Run: `uv run pytest tests/test_ops_daily.py tests/test_engine_soak_command.py -q -k "soak_reader or metric_outside or provisional_count or a_panel or self_test_that_never_ran or void_run or canonical_dataset or no_payload or missing_a_field or label_the_row_counts or daily_pass_reduces"`
+Expected: the `tests/test_ops_daily.py` cases FAIL with `AttributeError: module 'ops_daily' has no attribute 'read_soak_verdict'` (or `SOAK_OUTSIDE_FAILS_AT`, or `SOAK_OUTSIDE_LABEL`); `test_soak_check_json_carries_the_fields_the_daily_pass_reduces` PASSES already — it pins what `cli/engine/soak.py` writes today, and Step 6's probe is what shows it can fail.
 
 - [ ] **Step 4: Insert the constants and the reader into `infra/scripts/ops_daily.py`**
 
@@ -474,6 +522,10 @@ SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
 # and the number is re-derived once there is a history of rows to derive it from.
 SOAK_OUTSIDE_FAILS_AT = 3
 _SOAK_CANONICAL_ABSENT = "canonical absent"
+# The label `soak-check` gives a metric whose live value fell outside its null band, named once rather than
+# spelled at each site the reduction counts it. `tests/test_ops_daily.py` holds it to the producer's own
+# vocabulary, which is DERIVED from that module's severity order and would move with a rename.
+SOAK_OUTSIDE_LABEL = "inconsistent"
 
 
 def read_soak_verdict(*, runner) -> Check:
@@ -501,8 +553,8 @@ def read_soak_verdict(*, runner) -> Check:
             # A metric judged under one null alone carries no `dual`, and its own verdict is then the only
             # label there is; the construction count below reads that as the one construction it was.
             dual = row.get("dual") or {}
-            if dual.get("verdict", row["verdict"]) == "inconsistent":
-                calls = [dual.get("primary"), dual.get("secondary")].count("inconsistent")
+            if dual.get("verdict", row["verdict"]) == SOAK_OUTSIDE_LABEL:
+                calls = [dual.get("primary"), dual.get("secondary")].count(SOAK_OUTSIDE_LABEL)
                 outside.append(f"{metric} ({'both constructions' if calls == 2 else 'one construction'})")
         self_test = payload["self_test"]
         # Three states, not two: a flag that was SKIPPED puts nothing in `void_reasons`, so the arms above
@@ -514,13 +566,18 @@ def read_soak_verdict(*, runner) -> Check:
         # The panel counts a metric whose two null constructions DISAGREED toward its metric count and never
         # toward its outside count, so the outside count alone falls as the instrument's self-agreement does.
         decided = int(panel["n_metrics"]) - int(panel["n_indeterminate"])
+        # One boolean for the floor arm and for the clause that reports it. A metric the band could not judge
+        # at all is dropped from `n_metrics` and counted nowhere, so on that route the panel's own two lines
+        # say nothing about why the row failed and the value has to name the floor itself.
+        reachable = decided >= SOAK_OUTSIDE_FAILS_AT
+        floor = "" if reachable else f"; only {decided} metrics decided, under the threshold's {SOAK_OUTSIDE_FAILS_AT}"
         panel_line = f"{panel['line']}; {panel['indeterminate_line']}" if panel["indeterminate_line"] else panel["line"]
         value = (
-            f"{panel_line}; L={provenance['L']}, window_bound={provenance['window_bound']}; self-test {flags}; "
+            f"{panel_line}{floor}; L={provenance['L']}, window_bound={provenance['window_bound']}; self-test {flags}; "
             f"outside: {', '.join(outside) or 'none'}; "
             f"no-book bars {payload['realized_no_book_bars']} of {payload['realized_total_bars']}; hhi {verdicts['hhi']['verdict']}"
         )
-        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and decided >= SOAK_OUTSIDE_FAILS_AT
+        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable
         return Check(SOAK_CHECK, SOAK_EXPR, ok=ok, value=value)
     except (*_UNREACHABLE, subprocess.SubprocessError, TypeError, AttributeError, RuntimeError) as exc:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
@@ -553,6 +610,13 @@ line, the indeterminate line when there is one, the scored-bar count, the
 window bound, the three self-test flags with a skipped check spelled
 `skipped` rather than passing for `ok`, each outside metric with how many
 null constructions called it, the no-book bar count and the hhi verdict.
+It also names the floor when the floor is the arm that bit: a metric no
+band could judge is dropped from the panel's counts rather than counted
+as indeterminate, so on that route neither panel line says why the row
+failed. The label the reduction counts is named once and held to
+`soak-check`'s own vocabulary by a test, because that vocabulary is
+derived from the module's severity order and a rename moves it out from
+under a membership pin while this reader's count goes silently to zero.
 Not wired into the report yet: the runner that produces the payload is
 the next commit. A test in `tests/test_engine_soak_command.py` pins the
 payload keys the reduction reads by name, and at `dual` their values.
@@ -571,7 +635,11 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "void_run or provisional_count"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   --control 's/^SOAK_OUTSIDE_FAILS_AT = 3/SOAK_OUTSIDE_FAILS_AT = 1/' \
-  --mutation 's/ and decided >= SOAK_OUTSIDE_FAILS_AT$//' \
+  --mutation 's/ and reachable$//' \
+  -- uv run pytest tests/test_ops_daily.py -q -x -k "a_panel"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/^SOAK_OUTSIDE_FAILS_AT = 3/SOAK_OUTSIDE_FAILS_AT = 1/' \
+  --mutation 's/f"{panel_line}{floor};/f"{panel_line};/' \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "a_panel"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   --control 's/^SOAK_OUTSIDE_FAILS_AT = 3/SOAK_OUTSIDE_FAILS_AT = 1/' \
@@ -582,6 +650,10 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   --mutation 's#; self-test {flags}##' \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "self_test_that_never_ran or metric_outside"
 infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
+  --control 's/^_SEVERITY = {"consistent": 0, "weakly-consistent": 1, "inconsistent": 2}$/_SEVERITY = {"consistent": 0}/' \
+  --mutation 's/"inconsistent": 2}/"outside-band": 2}/' \
+  -- uv run pytest tests/test_ops_daily.py -q -x -k "label_the_row_counts"
+infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
   --control 's/        "void_reasons": list(void_reasons),/        "void_reason": list(void_reasons),/' \
   --mutation 's/    payload\["realized_no_book_bars"\] = realized_flat/    payload["realized_flat_bars"] = realized_flat/' \
   -- uv run pytest tests/test_engine_soak_command.py -q -x -k "daily_pass_reduces"
@@ -589,9 +661,13 @@ infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
   --control 's/        "void_reasons": list(void_reasons),/        "void_reason": list(void_reasons),/' \
   --mutation 's/    d\["dual"\] = asdict(dual) if dual is not None else None/    d["dual"] = {k: (v.title() if isinstance(v, str) else v) for k, v in asdict(dual).items()} if dual is not None else None/' \
   -- uv run pytest tests/test_engine_soak_command.py -q -x -k "daily_pass_reduces"
+infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
+  --control 's/        "void_reasons": list(void_reasons),/        "void_reason": list(void_reasons),/' \
+  --mutation 's/^        if n_indeterminate$/        if False/' \
+  -- uv run pytest tests/test_engine_soak_command.py -q -x -k "daily_pass_reduces"
 ```
 
-Expected: `KILLED (control proven, tree restored byte-identically)` six times, one per invocation. The mutations, in order: a void run falls through to its verdicts; the reachability floor is dropped, so a panel that decided two of seven metrics passes; the panel's indeterminate line is dropped from the value; the self-test flags are dropped from the value; a payload key the reduction reads is renamed under `cli/`; and the dual's labels are re-cased, which keeps every key name the pin asserts and takes the values off the closed vocabulary the reduction counts — the shape change no name-only pin can see. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the reduction — control the threshold moved to nine, mutation the void arm disabled; control the threshold moved to one, mutations the decided-count floor dropped and the indeterminate line dropped; control `skipped` spelled `ok`, mutation the self-test flags dropped: KILLED each, control proven. Over `cli/engine/soak.py`, control `void_reasons` renamed, mutations `realized_no_book_bars` renamed and the dual's labels re-cased: KILLED each, control proven.`` Then push.
+Expected: `KILLED (control proven, tree restored byte-identically)` nine times, one per invocation. The mutations, in order: a void run falls through to its verdicts; the reachability floor is dropped from the verdict, so a panel that decided two of seven metrics passes; the floor's own clause is dropped from the value, so the row fails and names no cause; the panel's indeterminate line is dropped from the value; the self-test flags are dropped from the value; the label the reduction counts is renamed under `cli/`, which carries that module's DERIVED vocabulary with it and leaves a membership pin holding; a payload key the reduction reads is renamed; the dual's labels are re-cased, which keeps every key name the pin asserts and takes the values off the closed vocabulary the reduction counts; and the panel's indeterminate line is emptied at its source, which the pin's own `0 of 0` run cannot see and its synthetic panel does. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the reduction — control the threshold moved to nine, mutation the void arm disabled; control the threshold moved to one, mutations the decided-count floor dropped from the verdict, its clause dropped from the value, and the indeterminate line dropped from it; control `skipped` spelled `ok`, mutation the self-test flags dropped: KILLED each, control proven. Over `cli/engine/soak.py`, control the severity order stripped, mutation the counted label renamed; control `void_reasons` renamed, mutations `realized_no_book_bars` renamed, the dual's labels re-cased and the indeterminate line emptied: KILLED each, control proven.`` Then push.
 
 ---
 
@@ -942,7 +1018,7 @@ for f in docs/open-topics/T0210-*.md docs/open-topics/T0184-*.md docs/open-topic
 
 - [ ] **Step 2: Resolve T0210**
 
-In `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md`: set `status: resolved`; delete the whole `ripe_when:` line; replace the `## Suggested next steps` heading and every bullet under it with:
+In `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md`: set `status: resolved`; delete the whole `ripe_when:` line; in the first `## Findings so far` bullet replace `` `infra/scripts/ops_daily.py`'s `_ZCRYPTO_READ_SUBS` lists `soak-check` `` with `` `infra/scripts/ops_daily.py`'s engine read shapes (then `_ZCRYPTO_READ_SUBS`, now the per-sub `_ZCRYPTO_READ_FLAGS` table) list `soak-check` ``, since Task 1 removes that symbol and the archived record is what a later reader greps; replace the `## Suggested next steps` heading and every bullet under it with:
 
 ```markdown
 ## Resolution
@@ -1013,4 +1089,4 @@ git push
 
 - [ ] **Step 6: Re-true the PR body through `open-pr`**
 
-`## Spec / Plan` names the plan beside the spec; `## Changes` is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's two live readings; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
+`## Spec / Plan` names the plan beside the spec; `## Changes` is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
