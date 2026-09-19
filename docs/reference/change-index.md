@@ -331,3 +331,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #567 | 2026-09-19 | feat(fleet): E8 lands on dev20260918, ops re-pinned, blindness measured | — | — | T0085, T0160 |
 | #568 | 2026-09-19 | fix(ohlc): T0202 reach refuses a canonical frame it cannot join | — | — | T0199, T0202 |
 | #569 | 2026-09-19 | test(venue): T0207 a second walk holds gate discovery | — | — | T0207 |
+| #571 | 2026-09-19 | docs(topics): T0199 widened to the store door's type and key gaps | — | — | T0199 |
