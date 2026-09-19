@@ -192,6 +192,7 @@ def _drive_pre_review(args: dict) -> dict:
             "const CALLS = [], LOGS = []",
             "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'task-1' ? 3 : 4,",
             "  prose: [{ site: 'a.py:1', survives: label === 'task-1' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
+            "          { site: 'b.py:2', survives: label === 'task-1' ? 'trim' : 'cut', correct: true, duplicateOf: '', ship: label === 'task-1' ? 'ship-b' : '' },",
             "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
             "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
             "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt })",
@@ -233,10 +234,17 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
     out = ran["out"]
     assert out["recorded"] is True and out["graded"] == 7 and out["ready"] is False
     assert out["verdict"] == "[task-1] v-task-1 [tail] v-tail"
-    rows = {row["site"]: row["ship"] for row in out["prose"]}
-    assert rows == {"a.py:1": "ship-tail", "task-1.py:9": rows["task-1.py:9"], "tail.py:9": rows["tail.py:9"]}, (
-        "a site two slices graded is one row, and the row asking for a change outranks the keep"
+    rows = sorted((row["site"], row["survives"], row["ship"]) for row in out["prose"])
+    assert [r for r in rows if r[0] == "a.py:1"] == [("a.py:1", "trim", "ship-tail")], "a change outranks a sibling slice's keep"
+    assert [r for r in rows if r[0] == "b.py:2"] == [("b.py:2", "cut", ""), ("b.py:2", "trim", "ship-b")], (
+        "two slices asking one site for different changes are both returned: dropping either loses a ship silently"
     )
+    assert sorted({r[0] for r in rows}) == ["a.py:1", "b.py:2", "tail.py:9", "task-1.py:9"]
+    contested = [line for line in ran["logs"] if line.startswith("CONTESTED: ")]
+    assert len(contested) == 1 and contested[0].startswith("CONTESTED: 1 site(s)") and contested[0].endswith("— b.py:2"), ran[
+        "logs"
+    ]
+    assert any("graded (summed over slices" in line for line in ran["logs"]), "the census is a sum, and the log has to say so"
     assert [c["commit"] for c in out["claims"]] == ["task-1", "tail"]
 
 
@@ -246,7 +254,12 @@ def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
-    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 2, "the one grader's report is returned as it came"
+    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 3, "the one grader's report is returned as it came"
+    assert not any("summed over slices" in line or line.startswith("CONTESTED") for line in ran["logs"]), ran["logs"]
+
+
+def _whole(label):
+    return [{"label": label, "range": "develop..tip9abcde"}]
 
 
 @pytest.mark.parametrize(
@@ -255,10 +268,21 @@ def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
         [],
         "develop..tip9abcde",
         [{"label": "task-1"}],
-        [{"label": "Task 1", "range": "a..b"}],
-        [{"label": "task-1", "range": "a..b"}, {"label": "task-1", "range": "b..c"}],
+        _whole("Task 1"),
+        _whole("-task"),
+        _whole("t" * 33),
+        [{"label": "t", "range": "develop..aaa1111"}, {"label": "t", "range": "aaa1111..tip9abcde"}],
+        # Each of the next three leaves commits of the branch range to no grader while the one row says it was read.
+        [{"label": "task-1", "range": "develop..aaa1111"}, {"label": "tail", "range": "bbb2222..tip9abcde"}],
+        [{"label": "task-1", "range": "develop..aaa1111"}],
+        [{"label": "task-1", "range": "aaa1111..tip9abcde"}],
     ],
 )
 def test_a_malformed_fan_out_is_refused_before_any_grader_runs(ranges):
     ran = _drive_pre_review({**_BRANCH, "ranges": ranges})
     assert ran.get("error", "").startswith("args: "), ran
+
+
+def test_the_longest_label_and_a_one_slice_cover_are_admitted():
+    ran = _drive_pre_review({**_BRANCH, "ranges": _whole("t" * 32)})
+    assert [c["label"] for c in ran.get("calls", [])] == ["pre-review:" + "t" * 32, "record"], ran
