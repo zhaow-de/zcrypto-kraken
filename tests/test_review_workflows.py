@@ -180,3 +180,85 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 assert f"{flow} refuses abcdef012" in got and ("LEDGER records" in got or not expect.startswith("records")), (
                     f"{flow}: a refusal names the tip it refuses and the ledger it read: {got}"
                 )
+
+
+def _drive_pre_review(args: dict) -> dict:
+    """The whole script run as the harness runs it, its agents stubbed: each grader answers from its label, so
+    what the union did with two answers is read off the return value rather than off the script's text."""
+    assert shutil.which("node") is not None, "no node on PATH, so the fan-out cannot be driven"
+    body = (_FLOWS / "pre-review.js").read_text().replace("export const meta", "const meta", 1)
+    program = "\n".join(
+        (
+            "const CALLS = [], LOGS = []",
+            "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'task-1' ? 3 : 4,",
+            "  prose: [{ site: 'a.py:1', survives: label === 'task-1' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
+            "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
+            "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
+            "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt })",
+            "  return opts.label === 'record' ? { appended: true } : part(opts.label.replace('pre-review:', '')) }",
+            "const parallel = (thunks) => Promise.all(thunks.map((t) => t()))",
+            "async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {",
+            body,
+            "}",
+            f"wrap({json.dumps(args)}, agent, () => {{}}, parallel, null, (l) => LOGS.push(l), null, null)",
+            "  .then((out) => console.log(JSON.stringify({ out, calls: CALLS, logs: LOGS })))",
+            "  .catch((e) => console.log(JSON.stringify({ error: e.message })))",
+        )
+    )
+    done = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
+    return json.loads(done.stdout)
+
+
+_BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "reportDir": "/r/.tmp/reads/x"}
+_SLICES = [{"label": "task-1", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
+
+
+def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_tip_once():
+    """The tip rule reads ONE pre-review row at the branch tip, so a fan-out that recorded a row per slice, or
+    a row at a slice's own end, would either pass a review over a tip nobody read whole or refuse one that was."""
+    ran = _drive_pre_review({**_BRANCH, "ranges": _SLICES, "rulings": "/r/.tmp/sdd/progress.md", "worktree": "/r/.tmp/wt"})
+    assert "error" not in ran, ran
+    assert [c["label"] for c in ran["calls"]] == ["pre-review:task-1", "pre-review:tail", "record"]
+    first, last, record = (c["prompt"] for c in ran["calls"])
+    for prompt, slice_ in ((first, _SLICES[0]), (last, _SLICES[1])):
+        assert (
+            f"`git log {slice_['range']}`" in prompt
+            and f"the slice `{slice_['label']}` of the branch range `develop..tip9abcde`" in prompt
+        )
+        assert f"/r/.tmp/reads/x/pre-review-tip9abcde-{slice_['label']}.md" in prompt
+        assert f"/r/.tmp/reads/x/wt-pre-{slice_['label']} tip9abcde" in prompt
+        assert "you are its only user" not in prompt, "a fanned grader was told the shared worktree is its own"
+    assert "/r/.tmp/sdd/progress.md" in last and "/r/.tmp/sdd/progress.md" not in first, "the rulings go to the last slice alone"
+    assert record.count('"kind":"pre-review"') == 1 and '"range":"develop..tip9abcde","tip":"tip9abcde"' in record
+    out = ran["out"]
+    assert out["recorded"] is True and out["graded"] == 7 and out["ready"] is False
+    assert out["verdict"] == "[task-1] v-task-1 [tail] v-tail"
+    rows = {row["site"]: row["ship"] for row in out["prose"]}
+    assert rows == {"a.py:1": "ship-tail", "task-1.py:9": rows["task-1.py:9"], "tail.py:9": rows["tail.py:9"]}, (
+        "a site two slices graded is one row, and the row asking for a change outranks the keep"
+    )
+    assert [c["commit"] for c in out["claims"]] == ["task-1", "tail"]
+
+
+def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
+    ran = _drive_pre_review({**_BRANCH, "worktree": "/r/.tmp/wt", "rulings": "/r/.tmp/sdd/progress.md"})
+    assert [c["label"] for c in ran["calls"]] == ["pre-review", "record"]
+    prompt = ran["calls"][0]["prompt"]
+    assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
+    assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
+    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 2, "the one grader's report is returned as it came"
+
+
+@pytest.mark.parametrize(
+    "ranges",
+    [
+        [],
+        "develop..tip9abcde",
+        [{"label": "task-1"}],
+        [{"label": "Task 1", "range": "a..b"}],
+        [{"label": "task-1", "range": "a..b"}, {"label": "task-1", "range": "b..c"}],
+    ],
+)
+def test_a_malformed_fan_out_is_refused_before_any_grader_runs(ranges):
+    ran = _drive_pre_review({**_BRANCH, "ranges": ranges})
+    assert ran.get("error", "").startswith("args: "), ran
