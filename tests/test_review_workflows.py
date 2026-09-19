@@ -190,9 +190,9 @@ def _drive_pre_review(args: dict) -> dict:
     program = "\n".join(
         (
             "const CALLS = [], LOGS = []",
-            "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'task-1' ? 3 : 4,",
-            "  prose: [{ site: 'a.py:1', survives: label === 'task-1' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
-            "          { site: 'b.py:2', survives: label === 'task-1' ? 'trim' : 'cut', correct: true, duplicateOf: '', ship: label === 'task-1' ? 'ship-b' : '' },",
+            "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'head' ? 3 : 4,",
+            "  prose: [{ site: 'a.py:1', survives: label === 'head' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
+            "          { site: 'b.py:2', survives: label === 'head' ? 'trim' : 'cut', correct: true, duplicateOf: '', ship: label === 'head' ? 'ship-b' : '' },",
             "          { site: 'c.py:3', survives: 'cut', correct: true, duplicateOf: '', ship: '' },",
             "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
             "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
@@ -213,7 +213,7 @@ def _drive_pre_review(args: dict) -> dict:
 
 
 _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "reportDir": "/r/.tmp/reads/x"}
-_SLICES = [{"label": "task-1", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
+_SLICES = [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
 
 
 def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_tip_once():
@@ -221,7 +221,7 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
     a row at a slice's own end, would either pass a review over a tip nobody read whole or refuse one that was."""
     ran = _drive_pre_review({**_BRANCH, "ranges": _SLICES, "rulings": "/r/.tmp/sdd/progress.md", "worktree": "/r/.tmp/wt"})
     assert "error" not in ran, ran
-    assert [c["label"] for c in ran["calls"]] == ["pre-review:task-1", "pre-review:tail", "record"]
+    assert [c["label"] for c in ran["calls"]] == ["pre-review:head", "pre-review:tail", "record"]
     first, last, record = (c["prompt"] for c in ran["calls"])
     for prompt, slice_ in ((first, _SLICES[0]), (last, _SLICES[1])):
         assert (
@@ -235,20 +235,20 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
     assert record.count('"kind":"pre-review"') == 1 and '"range":"develop..tip9abcde","tip":"tip9abcde"' in record
     out = ran["out"]
     assert out["recorded"] is True and out["graded"] == 7 and out["ready"] is False
-    assert out["verdict"] == "[task-1] v-task-1 [tail] v-tail"
+    assert out["verdict"] == "[head] v-head [tail] v-tail"
     rows = sorted((row["site"], row["survives"], row["ship"]) for row in out["prose"])
     assert [r for r in rows if r[0] == "a.py:1"] == [("a.py:1", "trim", "ship-tail")], "a change outranks a sibling slice's keep"
     assert [r for r in rows if r[0] == "b.py:2"] == [("b.py:2", "cut", ""), ("b.py:2", "trim", "ship-b")], (
         "two slices asking one site for different changes are both returned: dropping either loses a ship silently"
     )
     assert [r for r in rows if r[0] == "c.py:3"] == [("c.py:3", "cut", "")], "two slices asking one change of a site ask it once"
-    assert sorted({r[0] for r in rows}) == ["a.py:1", "b.py:2", "c.py:3", "tail.py:9", "task-1.py:9"]
+    assert sorted({r[0] for r in rows}) == ["a.py:1", "b.py:2", "c.py:3", "head.py:9", "tail.py:9"]
     contested = [line for line in ran["logs"] if line.startswith("CONTESTED: ")]
     assert len(contested) == 1 and contested[0].startswith("CONTESTED: 1 site(s)") and contested[0].endswith("— b.py:2"), ran[
         "logs"
     ]
     assert any("graded (summed over slices" in line for line in ran["logs"]), "the census is a sum, and the log has to say so"
-    assert [c["commit"] for c in out["claims"]] == ["task-1", "tail"]
+    assert [c["commit"] for c in out["claims"]] == ["head", "tail"]
 
 
 def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
@@ -272,15 +272,15 @@ def _whole(label):
     [
         [],
         "develop..tip9abcde",
-        [{"label": "task-1"}],
-        _whole("Task 1"),
+        [{"label": "head"}],
+        _whole("Head Slice"),
         _whole("-task"),
         _whole("t" * 33),
         [{"label": "t", "range": "develop..aaa1111"}, {"label": "t", "range": "aaa1111..tip9abcde"}],
         # Each of the next three leaves commits of the branch range to no grader while the one row says it was read.
-        [{"label": "task-1", "range": "develop..aaa1111"}, {"label": "tail", "range": "bbb2222..tip9abcde"}],
-        [{"label": "task-1", "range": "develop..aaa1111"}],
-        [{"label": "task-1", "range": "aaa1111..tip9abcde"}],
+        [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "bbb2222..tip9abcde"}],
+        [{"label": "head", "range": "develop..aaa1111"}],
+        [{"label": "head", "range": "aaa1111..tip9abcde"}],
         [{"label": "empty", "range": "develop..develop"}, {"label": "tail", "range": "develop..tip9abcde"}],
     ],
 )
