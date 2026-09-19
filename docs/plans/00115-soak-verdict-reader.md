@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - No source file under `cli/` changes (spec D2): no image is rolled and the NAS gate cache's fingerprint does not move. The one `cli`-side edit is a test, `tests/test_engine_soak_command.py`.
-- One file under `.claude/` changes, in one commit of its own: `.claude/skills/zcrypto-daily-ops/SKILL.md` gains the paragraph that reads the new row (Task 4 Step 6), a fold-in the owner directed on 2026-09-19. The `staged-kind` hook refuses a commit that mixes it with any other file, and nothing else under `.claude/` is touched — section 5b stays as it is (spec D7).
+- One file under `.claude/` changes, in one commit of its own: `.claude/skills/zcrypto-daily-ops/SKILL.md` gains the paragraph that reads the new row, a fold-in the owner directed on 2026-09-19, and one decidable shape in its section 5b, the author's extension of that fold-in and the owner's to strike (spec D7; Task 4 Step 6). The `staged-kind` hook refuses a commit that mixes it with any other file, and nothing else under `.claude/` is touched.
 - Three real options stay OUT of the classifier's shapes (spec D5): `soak-check --json` writes the path it names; `soak-check --registry` and `tracking-report --ledger-export` name a file whose reader echoes content when it refuses it.
 - The reduction order is fixed (spec D4): no payload or no canonical dataset is `unreadable:`; any other non-empty `void_reasons` is `FAIL` and is read BEFORE any verdict; then the panel decides on two of its counts — `n_outside >= 3` is `FAIL`, and so is a panel that left fewer than three metrics decided (`n_metrics - n_indeterminate`, the same constant read as a reachability floor, which the value names when it is the arm that bit); otherwise `PASS`. The row never keys off one metric's `inconsistent`.
 - `read_soak_verdict` takes its runner keyword-only with no default, as `read_unattended_upgrades` and `read_agentboard_cgroup` do.
@@ -906,12 +906,22 @@ def test_the_soak_row_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
     monkeypatch.setattr(ops_daily, "soak_run", unmounted)
     assert ops_daily.main(["report"]) == 2
     assert f"- {ops_daily.SOAK_CHECK} could not be read: no cycle record under {ops_daily.SOAK_JOURNAL}" in capsys.readouterr().out
+
+
+def test_the_journal_paragraph_carries_the_soak_rows_value_on_a_passing_day():
+    """The paragraph is what gets pasted into the ops journal, and those entries are the only history the soak
+    row has: a PASS whose counts were not journaled leaves nothing to argue the threshold from."""
+    row = ops_daily.read_soak_verdict(runner=_soak_answering(_soak_payload()))
+    assert row.ok
+    para = dataclasses.replace(_report(), verdict=[row]).journal_paragraph()
+    assert f"· checks all pass · soak {row.value} · logs" in para, para
+    assert "soak" not in _report().journal_paragraph(), "no soak row, no soak clause"
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run pytest tests/test_ops_daily.py -q -k "derived or journal_with_no or soak_run or wrote_no_payload or soak_row"`
-Expected: FAIL with `AttributeError: module 'ops_daily' has no attribute 'derive_soak_store'` (and `'soak_run'`).
+Expected: FAIL with `AttributeError: module 'ops_daily' has no attribute 'derive_soak_store'` (and `'soak_run'`); `test_the_journal_paragraph_carries_the_soak_rows_value_on_a_passing_day` fails on its first paragraph assertion, the `soak` clause being absent.
 
 - [ ] **Step 3: Add the runner to `infra/scripts/ops_daily.py`**
 
@@ -971,6 +981,20 @@ In `main`, directly below `    verdict.append(read_agentboard_cgroup(runner=ssh_
 
 ```python
     verdict.append(read_soak_verdict(runner=soak_run))
+```
+
+In `Report.journal_paragraph`, directly below the line `        failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"`, add:
+
+```python
+        # Journaled whole and every day, a PASS included: the entries are the only record of the panel's counts
+        # over time, which is what a change to `SOAK_OUTSIDE_FAILS_AT` is argued from.
+        soak = next((c.value for c in self.verdict if c.name == SOAK_CHECK), None)
+```
+
+and in the same function's returned f-string replace ` · checks {failed} · "` with:
+
+```python
+ · checks {failed}{f' · soak {soak}' if soak else ''} · "
 ```
 
 - [ ] **Step 4: Refuse the live runner for every test in the file, and hand the three report tests a payload**
@@ -1052,9 +1076,12 @@ it with the engine's own `_union_align` and `_journal_snapshots`, and
 holds the derived store to every close the real one carries, the union's
 `None` at a stamp one leg lacks excepted. `main` appends the row; an
 autouse fixture gives every test in the file a refusing `soak_run`, so a
-later test that drives the report cannot reach the mount by omission; one
-test reads that refusal, so removing it goes red, and the three that
-drive `main` to a verdict stub a payload.
+later test that drives the report cannot reach the mount by omission; two
+tests read that refusal, one of them through `main`, so removing it goes
+red, and the three that drive `main` to a verdict stub a payload. The
+journal paragraph carries the row's value whole every day, a PASS
+included: nothing else keeps the report, so those entries are the only
+history the PROVISIONAL threshold can be argued from.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
@@ -1072,9 +1099,13 @@ infra/scripts/mutate-probe.sh --file tests/test_ops_daily.py \
   --control 's/^def live_soak_run(monkeypatch):$/def live_soak_run(monkeypatch, no_such_fixture):/' \
   --mutation 's/^    monkeypatch.setattr(ops_daily, "soak_run", refuse)$//' \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "refusing_soak_run_is_the_one or forgets_its_soak_stub"
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control "s/{f' · soak {soak}' if soak else ''}//" \
+  --mutation 's/if c.name == SOAK_CHECK), None)$/if c.name == SOAK_CHECK and not c.ok), None)/' \
+  -- uv run pytest tests/test_ops_daily.py -q -x -k "soak_rows_value_on_a_passing_day"
 ```
 
-Expected: `KILLED (control proven, tree restored byte-identically)` twice. The first control derives the wrong grid and its mutation lets a `failed-cycle-*.json` be taken for the newest record. The second is over the refusal itself: its mutation deletes the line that installs it, the real runner answers instead and refuses an empty directory for want of a record, and the test asserting the refusal goes red on the different exception. It points there rather than at the three payload stubs, whose kill would confound the refusal with the stub. Neither run reaches the journal mount: the direct test hands the runner an empty directory, and the one through `main` points `SOAK_JOURNAL` at an empty directory first, so an unstubbed runner raises for want of a record before it builds a command. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the derived store, control the 1440 grid copied instead, mutation the record glob widened to take a failed cycle: KILLED, control proven. Over the suite's runner refusal, control the fixture given a parameter no fixture answers, mutation the line that installs the refusal deleted: KILLED, control proven.`` Then push.
+Expected: `KILLED (control proven, tree restored byte-identically)` once per invocation. The third journals the soak row only on a day it failed, which is the journal the row would have had with no clause at all: the control drops the clause, the mutation keeps it for failing rows alone. The first control derives the wrong grid and its mutation lets a `failed-cycle-*.json` be taken for the newest record. The second is over the refusal itself: its mutation deletes the line that installs it, the real runner answers instead and refuses an empty directory for want of a record, and the test asserting the refusal goes red on the different exception. It points there rather than at the three payload stubs, whose kill would confound the refusal with the stub. Neither run reaches the journal mount: the direct test hands the runner an empty directory, and the one through `main` points `SOAK_JOURNAL` at an empty directory first, so an unstubbed runner raises for want of a record before it builds a command. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the derived store, control the 1440 grid copied instead, mutation the record glob widened to take a failed cycle: KILLED, control proven. Over the suite's runner refusal, control the fixture given a parameter no fixture answers, mutation the line that installs the refusal deleted: KILLED, control proven. Over the journal paragraph, control the soak clause dropped, mutation the clause kept for failing rows alone: KILLED, control proven.`` Then push.
 
 - [ ] **Step 7: Live acceptance — the controller runs this, never a dispatched subagent**
 
@@ -1136,7 +1167,7 @@ Expected from the grep: no line. The search is SCOPED to the roots that could ca
 In `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, append one bullet at the end of the `## Findings so far` list (directly above the blank line before `## Done so far`):
 
 ```markdown
-- The daily pass prints this trigger's two operands on every pass: the `soak verdict` row of `ops-daily.py report` carries the realized no-book bar count and the `hhi` verdict, from a `soak-check` run over a store derived from the journal (spec `00115`). `zcrypto-daily-ops` still names an evaluation statement unevaluated; letting it decide one from a report row is a guidance change that spec leaves to its own branch.
+- The daily pass prints this trigger's two operands on every pass: the `soak verdict` row of `ops-daily.py report` carries the realized no-book bar count and the `hhi` verdict, from a `soak-check` run over a store derived from the journal (spec `00115`). `zcrypto-daily-ops` section 5b decides this trigger from that row since the same PR: a non-zero count, or an `hhi` verdict other than `consistent`, in a row that is neither `void:` nor `unreadable:`.
 ```
 
 In `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`, replace the line `Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.` with:
@@ -1192,8 +1223,16 @@ git push
 The owner directed this fold-in on 2026-09-19. In `.claude/skills/zcrypto-daily-ops/SKILL.md`, directly below the line `The verdict tiles' own PromQL is among what the report's fleet checks already ran. Read those; no pixels.` and a blank line, add this one paragraph, then a blank line before `## 5. Evaluate the due reminders`:
 
 ```markdown
-**The `soak verdict` row is the soak instrument's daily reading, and none of its three states is a host action.** The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE only when its value names one — the journal mount `/mnt/zhao-crypto/engine-journal`, a record or store read under it, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — and then the check is that mount and that directory, never a fleet host. Any other value names this reader or the instrument, and is handed to `zcrypto-marco` the way a `void:` row is. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. `FAIL` with the panel line is a finding about the BOOK — three or more metrics outside the band, or fewer than three left decided: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way.
+**The `soak verdict` row is the soak instrument's daily reading, and none of its three states is a host action.** The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE only when its value names one — the journal mount `/mnt/zhao-crypto/engine-journal`, a record or store read under it, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — and then the check is that mount and that directory, never a fleet host. Any other value names this reader or the instrument, and is handed to `zcrypto-marco` the way a `void:` row is. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. `FAIL` with the panel line is a finding about the BOOK — three or more metrics outside the band, or fewer than three left decided: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way. Its `no-book bars` count and `hhi` verdict are a topic trigger's operands, which section 5b reads.
 ```
+
+In the same file's section 5b, add this item at the end of the list of shapes the pass decides, directly below the `a file being touched` item and its continuation lines:
+
+```markdown
+- **an evaluation statement the report itself prints** — `T0184`'s trigger reads a `soak-check` run's realized no-book bar count and its `hhi` verdict, and the `soak verdict` row carries both (`no-book bars N of M; hhi <verdict>`): a non-zero `N`, or an `hhi` verdict other than `consistent`, is that trigger fired. A row reading `void:` or `could not be read` evaluates nothing.
+```
+
+and in the paragraph below that list replace `A milestone, an evaluation statement, or an activity no repo path records` with `A milestone, an evaluation statement no report row prints, or an activity no repo path records`.
 
 ```bash
 infra/scripts/count-list.sh ambient-bytes
@@ -1210,7 +1249,12 @@ row's three states name a source, the instrument and the book, and an
 `unreadable:` value names a source only when it names the mount, a read
 under it or the canonical dataset, and this reader or the instrument
 otherwise. None of them is a host action. Folded into this branch on the
-owner's word, 2026-09-19.
+owner's word, 2026-09-19. Section 5b gains one decidable shape, an
+evaluation statement the report itself prints, so the no-book bar count
+and the hhi verdict the row carries evaluate T0184's trigger instead of
+being printed daily to a reader told to name it unevaluated; that
+sentence is the author's extension of the fold-in and the owner's to
+strike.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
@@ -1222,4 +1266,4 @@ Expected: `ambient-bytes` prints the number `develop` prints, because a skill's 
 
 - [ ] **Step 7: Re-true the PR body through `open-pr`**
 
-`## Spec / Plan` names the plan beside the spec; `## Guidance changes` carries `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` verbatim, which is Step 6's one commit, and because that commit puts a `.claude/` path in the diff the whole-branch read is a Fable read (`uv run python infra/scripts/merge-gate.py --fable-paths`); `## Changes` names the skill paragraph as the owner's fold-in of 2026-09-19 and is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
+`## Spec / Plan` names the plan beside the spec; `## Guidance changes` carries `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` verbatim, which is Step 6's one commit, and because that commit puts a `.claude/` path in the diff the whole-branch read is a Fable read (`uv run python infra/scripts/merge-gate.py --fable-paths`); `## Changes` names the skill paragraph as the owner's fold-in of 2026-09-19, names the section 5b sentence beside it as the author's extension that the owner may strike, and is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
