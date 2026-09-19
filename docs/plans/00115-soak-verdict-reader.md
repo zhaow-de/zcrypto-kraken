@@ -37,7 +37,7 @@ Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
 - Modify `infra/scripts/ops_daily.py` — the per-sub flag table `_ZCRYPTO_READ_FLAGS` replaces `_ZCRYPTO_READ_SUBS` and its one generated shape (Task 1); `SOAK_*` constants and `read_soak_verdict` (Task 2); `derive_soak_store`, `soak_run`, two imports and one line of `main` (Task 3).
 - Modify `tests/test_ops_daily.py` — the classifier fixtures and the table-against-CLI test (Task 1); the reduction tests (Task 2); the derived-store, runner and wiring tests, and one added line in each of the three existing tests that drive `main(["report"])` to a verdict (Task 3).
 - Modify `tests/test_engine_soak_command.py` — one test pinning the payload keys the reduction reads (Task 2).
-- Modify `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md` (resolved, moved to `archive/`), `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`; add `docs/open-topics/T0212-the-daily-pass-has-no-reading-for-its-soak-verdict-row.md`; and re-render `docs/open-topics/README.md` (Task 4).
+- Modify `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md` (resolved, moved to `archive/`), `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`; and re-render `docs/open-topics/README.md` (Task 4).
 
 ---
 
@@ -928,7 +928,6 @@ Expected: `True | N of 7 outside band (~0.7 expected by chance at 90%); L=<sever
 **Files:**
 - Modify: `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md`, then `git mv` it to `docs/open-topics/archive/`
 - Modify: `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`
-- Create: `docs/open-topics/T0212-the-daily-pass-has-no-reading-for-its-soak-verdict-row.md` — `0211` was registered and dropped, so `0212` is the next free serial (`git log --all --full-history --diff-filter=A --name-only -- 'docs/open-topics/T*.md'`), and a used serial is never reused
 - Modify: `docs/open-topics/README.md` (rendered, never hand-edited)
 
 **Interfaces:**
@@ -950,7 +949,7 @@ In `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.m
 
 Resolved by PR #572 under spec `00115` and its plan. `ops-daily.py report` now prints a `soak verdict` row: `read_soak_verdict` in `infra/scripts/ops_daily.py` runs `soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to `PASS`, `FAIL` or `unreadable`, reading `void_reasons` before any verdict and failing on the panel's outside count at a PROVISIONAL three, never on one metric's `inconsistent`. The daily pass is therefore the scheduled reader, sited on the workstation, with no timer, no host change and no store replica. The three shapes this topic listed are costed in the spec's Alternatives tables; the metric with an alert rule is what paging between passes would cost, and the spec leaves it out of scope.
 
-The last next step — re-read `governor_engagement` once the null has power — is dropped as a separate action: the row names every outside metric, and how many null constructions called it, on every pass, so the re-read happens daily and needs no trigger of its own. [[T0184]]'s two operands are printed by the same row; [[T0201]]'s trigger cannot be evaluated from a journal-derived store; both topics record that. What the row still owes its reader is registered as [[T0212]]: `zcrypto-daily-ops` walks the daily report section by section and has no section for this one, and the spec keeps that guidance change off the branch that added the row.
+The last next step — re-read `governor_engagement` once the null has power — is dropped as a separate action: the row names every outside metric, and how many null constructions called it, on every pass, so the re-read happens daily and needs no trigger of its own. [[T0184]]'s two operands are printed by the same row; [[T0201]]'s trigger cannot be evaluated from a journal-derived store; both topics record that. The reading `zcrypto-daily-ops` owes the row is guidance and rides its own PR, #574, merged behind this one.
 ```
 
 Then:
@@ -978,40 +977,7 @@ What PR #514 (T0193) measured is the sections above.
 **The daily pass's `soak verdict` row cannot evaluate this trigger.** Spec `00115` runs `soak-check` over a store derived from the newest journaled 240 snapshots, whose last bar is that cycle's own `last_ts` and so sits on a 4h boundary by construction. An off-boundary `store last bar` can only come from a run over the engine host's own store, which has no replica (`docs/reference/fleet.md`).
 ```
 
-- [ ] **Step 4: Register the guidance topic the `.claude/` freeze defers**
-
-Spec D7 keeps a guidance change off this branch, and the row is a report section `zcrypto-daily-ops` does not walk, so the reading it needs is parked rather than dropped. Write `docs/open-topics/T0212-the-daily-pass-has-no-reading-for-its-soak-verdict-row.md`:
-
-```markdown
----
-status: open
-ripe_when: '`.claude/skills/zcrypto-daily-ops/SKILL.md` is next touched on `develop` — `git -C <main checkout> log --name-only --since=<the last journal entry> --format= develop` names it, and a session editing that file already holds the question; OR the daily report prints a `soak verdict` row that is not `PASS`, which is the morning the reading is first owed'
----
-
-# The daily pass has no reading for its soak verdict row
-
-## Context — what
-
-`ops-daily.py report` prints a `soak verdict` row under `## Fleet checks` in three states: `PASS`; `FAIL`, whose value is either `void: <reasons>` or the panel's counts with the metrics named; and `soak verdict could not be read: <why>`, which takes the whole pass to exit 2. `.claude/skills/zcrypto-daily-ops/SKILL.md` walks the report section by section and nothing covers this row. The nearest precedent is the nightly data-gated run's row — also a fleet check rather than an alert, and it landed with a paragraph of its own naming each way it can fail and what to do about each.
-
-## Why this matters
-
-The row exists to make a verdict actionable, and on its first `FAIL` no action is prescribed. The skill's alert section does not apply: nothing fired, so there is no runbook anchor to open, and its classify-before-acting section has no *What to do* step to classify. The operator then either improvises a diagnosis of the engine's soak instrument or copies the row into the journal entry and moves on — and a voided self-test over a live book reaches nobody a second time.
-
-## Findings so far
-
-- The three states have three different subjects and none of them is a host action: `void:` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power; the panel arm is a finding about the BOOK; `could not be read` is a finding about a SOURCE. The row's own value names which, so the reading owed is a short one.
-- The gap is deliberate rather than an oversight: spec `00115` D7 rules that a guidance change rides its own branch on the owner's word, so the row shipped on PR #572 and its reading did not.
-- A `void_reasons` entry reaches the row as the instrument's JSON copy, which is not passed through the neutralisation `soak-check` applies to the same reasons in its own rendered report — so a reason quoted in the daily report can carry a confidence word the instrument refuses to render about that run. Closing that inside the row would mean a second copy of that word list in a second file, or the daily pass importing `cli`, which it does not today.
-
-## Suggested next steps
-
-- On the owner's word, add one section to `.claude/skills/zcrypto-daily-ops/SKILL.md` saying what each of the three states means and what the operator does with each; the data-gated paragraph in section 5 is the shape and the length to aim at.
-- Decide in the same change whether section 5b may DECIDE [[T0184]]'s evaluation statement from the row's operands, which spec `00115` D7 also parks: the row prints the realized no-book bar count and the `hhi` verdict on every pass, which is the reading that trigger asks for.
-- Decide whether the row owes the instrument's own neutralisation on a quoted `void_reasons` entry, or whether the daily report is a different surface from the soak report and says so where the row is built.
-```
-
-- [ ] **Step 5: Re-render the index, compare the heading sets, run the guards**
+- [ ] **Step 4: Re-render the index, compare the heading sets, run the guards**
 
 ```bash
 uv run python infra/scripts/topics-index.py
@@ -1019,9 +985,9 @@ for f in docs/open-topics/archive/T0210-*.md docs/open-topics/T0184-*.md docs/op
 uv run pytest tests/test_open_topics_frontmatter.py tests/test_topics_index.py tests/test_guidance_refs_resolve.py tests/test_change_index.py -q
 ```
 
-Expected: T0184's and T0201's heading sets are unchanged from Step 1; T0210's differs in exactly one heading, `## Suggested next steps` now `## Resolution`; the index lists T0210 under `## Resolved` with its link pointing into `archive/`, and T0212 under `## Open` with its trigger; every test passes.
+Expected: T0184's and T0201's heading sets are unchanged from Step 1; T0210's differs in exactly one heading, `## Suggested next steps` now `## Resolution`; the index lists T0210 under `## Resolved` with its link pointing into `archive/`; every test passes.
 
-- [ ] **Step 6: Commit and push**
+- [ ] **Step 5: Commit and push**
 
 ```bash
 git add docs/open-topics/
@@ -1036,10 +1002,8 @@ Resolution: the row names every outside metric and its construction count
 on every pass. T0184 records that the row prints its trigger's two
 operands daily; T0201 records that a journal-derived store puts the store
 last bar on a boundary by construction, so the row cannot evaluate its
-trigger. One topic is registered, T0212: `zcrypto-daily-ops` walks the
-daily report section by section and has no section for this row, so an
-operator meeting its first FAIL has no prescribed reading, and the spec
-keeps a guidance change off the branch that added the row.
+trigger. No topic is registered: the reading `zcrypto-daily-ops` owes the
+new row is guidance, and it is PR #574's, merged behind this one.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
@@ -1047,6 +1011,6 @@ EOF
 git push
 ```
 
-- [ ] **Step 7: Re-true the PR body through `open-pr`**
+- [ ] **Step 6: Re-true the PR body through `open-pr`**
 
 `## Spec / Plan` names the plan beside the spec; `## Changes` is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's two live readings; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
