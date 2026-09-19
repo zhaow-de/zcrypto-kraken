@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: "per sub-item — arm64 re-enable: before the final go-live, never on go-live day; OS/apt upgrade + reboot round: before that; nautilus engine converge: the pin is frozen, its attended pass has PASSED, its exact string is in `cli/engine/order-semantics-verified.json` and the engine runs it (`docs/reference/fleet-pins.md`'s engine row) — what remains against it is the open items in its adapter-verification record's owed checks; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
+ripe_when: "per sub-item — arm64 re-enable: before the final go-live, never on go-live day; OS/apt upgrade + reboot round: before that; nautilus engine converge: the pin is frozen, its attended pass has PASSED, its exact string is in `cli/engine/order-semantics-verified.json` and the engine runs it (the engine row of `docs/reference/fleet-pins.md` names a revision whose `git show <revision>:pyproject.toml | grep nautilus-trader` is the tree's `grep nautilus-trader pyproject.toml`) — what remains against it is the open items in its adapter-verification record's owed checks; final reference-data sweep: immediately before the go/no-go; credential rotation: after every other pre-live change has landed"
 ---
 
 # Final pre-go-live steps — arm64 re-enable, the OS upgrade + reboot round, the `nautilus_trader` bump, and the credential rotation round
