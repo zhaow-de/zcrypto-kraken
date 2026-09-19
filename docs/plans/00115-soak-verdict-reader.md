@@ -275,9 +275,9 @@ def _soak_payload(
     metric on the secondary null alone, `both` on both, `indeterminate` is the fourth reconciled label -- the
     two nulls discriminated and disagreed -- which counts toward `n_metrics` and never toward `n_outside`,
     `undiscriminating` is a metric no band could judge, which the panel drops from `n_metrics` altogether, and
-    `no_dual` writes a `None` dual, which is what a metric judged under one null alone carries. All three of
-    the panel's counts and both its lines are derived from the metric lists, so no case can state a count its
-    own verdicts contradict."""
+    `no_dual` writes a `None` dual, which is what a metric judged under one null alone carries. The panel's
+    outside count is derived from the verdicts, and its metric and indeterminate counts from the lists, so a
+    case that names one metric in two lists states a count its own verdicts contradict."""
     verdicts = {}
     for metric in _SOAK_METRICS:
         if metric in undiscriminating:
@@ -742,7 +742,7 @@ Expected: `KILLED (control proven, tree restored byte-identically)` once per inv
 
 **Files:**
 - Modify: `infra/scripts/ops_daily.py` (two imports; two constants below `SOAK_OUTSIDE_FAILS_AT = 3`; two functions directly above `def read_soak_verdict(`; one line in `main`)
-- Test: `tests/test_ops_daily.py` (append, including the autouse `live_soak_run` fixture and the one test that reads it; and one line added in each of `test_the_upgrade_check_reaches_the_verdict_the_pass_prints`, `test_the_cgroup_check_reaches_the_verdict_the_pass_prints` and `test_an_uncapped_bridge_moves_the_pass_to_attention`)
+- Test: `tests/test_ops_daily.py` (append, including the autouse `live_soak_run` fixture and the two tests that read it, one of them through `main`; and one line added in each of `test_the_upgrade_check_reaches_the_verdict_the_pass_prints`, `test_the_cgroup_check_reaches_the_verdict_the_pass_prints` and `test_an_uncapped_bridge_moves_the_pass_to_attention`)
 
 **Interfaces:**
 - Consumes: from Task 2, `read_soak_verdict(*, runner)`, `SOAK_CHECK`, `SOAK_JOURNAL`, and the test helpers `_soak_payload(...)` and `_soak_answering(payload)`; from the module, `REPO_ROOT` and `ssh_read`; from the test file, `_host_answering(**fields)`.
@@ -999,6 +999,23 @@ def test_the_suites_refusing_soak_run_is_the_one_every_test_gets(tmp_path):
     runner refuses it for want of a record, before it builds a command or reads a mount."""
     with pytest.raises(AssertionError, match="must stub it"):
         ops_daily.soak_run(tmp_path)
+
+
+def test_a_report_that_forgets_its_soak_stub_meets_the_refusal(tmp_path, monkeypatch):
+    """`main` resolves `soak_run` off the module when it runs, which is the attribute the fixture replaces:
+    every other reader stubbed and the runner left alone, the refusal surfaces through `main` itself. The
+    journal is pointed at an empty directory, so a refusal that went missing meets no mount either."""
+    monkeypatch.setattr(ops_daily, "SOAK_JOURNAL", tmp_path)
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    monkeypatch.setattr(ops_daily, "ssh_read", _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp()))))
+    with pytest.raises(AssertionError, match="must stub it"):
+        ops_daily.main(["report"])
 ```
 
 Then rewire the two tests that drive the runner itself: give `test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wrote` and `test_a_soak_check_that_wrote_no_payload_raises_its_last_line` a `live_soak_run` parameter, and call `live_soak_run(journal)` where each calls `ops_daily.soak_run(journal)`.
@@ -1054,10 +1071,10 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
 infra/scripts/mutate-probe.sh --file tests/test_ops_daily.py \
   --control 's/^def live_soak_run(monkeypatch):$/def live_soak_run(monkeypatch, no_such_fixture):/' \
   --mutation 's/^    monkeypatch.setattr(ops_daily, "soak_run", refuse)$//' \
-  -- uv run pytest tests/test_ops_daily.py -q -x -k "refusing_soak_run_is_the_one"
+  -- uv run pytest tests/test_ops_daily.py -q -x -k "refusing_soak_run_is_the_one or forgets_its_soak_stub"
 ```
 
-Expected: `KILLED (control proven, tree restored byte-identically)` twice. The first control derives the wrong grid and its mutation lets a `failed-cycle-*.json` be taken for the newest record. The second is over the refusal itself: its mutation deletes the line that installs it, the real runner answers instead and refuses an empty directory for want of a record, and the test asserting the refusal goes red on the different exception. It points there rather than at the three payload stubs, which go red with or without the fixture and so measure nothing about it. Neither run reaches the journal mount: an unstubbed runner raises before it builds a command. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the derived store, control the 1440 grid copied instead, mutation the record glob widened to take a failed cycle: KILLED, control proven. Over the suite's runner refusal, control the fixture given a parameter no fixture answers, mutation the line that installs the refusal deleted: KILLED, control proven.`` Then push.
+Expected: `KILLED (control proven, tree restored byte-identically)` twice. The first control derives the wrong grid and its mutation lets a `failed-cycle-*.json` be taken for the newest record. The second is over the refusal itself: its mutation deletes the line that installs it, the real runner answers instead and refuses an empty directory for want of a record, and the test asserting the refusal goes red on the different exception. It points there rather than at the three payload stubs, whose kill would confound the refusal with the stub. Neither run reaches the journal mount: the direct test hands the runner an empty directory, and the one through `main` points `SOAK_JOURNAL` at an empty directory first, so an unstubbed runner raises for want of a record before it builds a command. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the derived store, control the 1440 grid copied instead, mutation the record glob widened to take a failed cycle: KILLED, control proven. Over the suite's runner refusal, control the fixture given a parameter no fixture answers, mutation the line that installs the refusal deleted: KILLED, control proven.`` Then push.
 
 - [ ] **Step 7: Live acceptance — the controller runs this, never a dispatched subagent**
 
@@ -1071,7 +1088,7 @@ c = m.read_soak_verdict(runner=m.soak_run); print(c.ok, '|', c.value)"
 ls -la data/
 ```
 
-Expected: `True | N of 7 outside band (~0.7 expected by chance at 90%); L=<several hundred> to <the newest journaled cycle's stamp>, window_bound=journal; self-test ok/ok/ok; outside: …; no-book bars 0 of <L>; hhi consistent`, in well under a minute — with an indeterminate clause between the panel line and `L=` only if the two null constructions disagreed on some metric that day, and a `; only N metric(s) decided, under the threshold's 3` clause in that same position, behind `False |`, only if the panel decided fewer than three, which is a real reading of a fragile day rather than a failure of this step. `data/` still lists `.gitignore` alone: the run read the main checkout's dataset and wrote nothing into this worktree. The values go in the PR body's test plan, not in any file.
+Expected: `True | N of 7 outside band (~0.7 expected by chance at 90%); L=<several hundred> to <the last SCORED cycle's stamp, one 4h cycle behind the newest journaled one>, window_bound=journal; self-test ok/ok/ok; outside: …; no-book bars 0 of <L>; hhi consistent`, in well under a minute — with an indeterminate clause between the panel line and `L=` only if the two null constructions disagreed on some metric that day, and a `; only N metric(s) decided, under the threshold's 3` clause in that same position, behind `False |`, only if the panel decided fewer than three, which is a real reading of a fragile day rather than a failure of this step. `data/` still lists `.gitignore` alone: the run read the main checkout's dataset and wrote nothing into this worktree. The values go in the PR body's test plan, not in any file.
 
 ---
 
@@ -1175,7 +1192,7 @@ git push
 The owner directed this fold-in on 2026-09-19. In `.claude/skills/zcrypto-daily-ops/SKILL.md`, directly below the line `The verdict tiles' own PromQL is among what the report's fleet checks already ran. Read those; no pixels.` and a blank line, add this one paragraph, then a blank line before `## 5. Evaluate the due reminders`:
 
 ```markdown
-**The `soak verdict` row is the soak instrument's daily reading, and none of its three states is a host action.** The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE the pass reads on the workstation — the journal mount `/mnt/zhao-crypto/engine-journal`, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — so check the mount and that directory, never a fleet host. A value naming a `soak-check` exit, a timeout or a payload field is the exception: it names this reader or the instrument rather than a source, both sources check out, and it is handed to `zcrypto-marco` the way a `void:` row is. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. `FAIL` with the panel line is a finding about the BOOK — three or more metrics outside the band, or fewer than three left decided: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way.
+**The `soak verdict` row is the soak instrument's daily reading, and none of its three states is a host action.** The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE only when its value names one — the journal mount `/mnt/zhao-crypto/engine-journal`, a record or store read under it, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — and then the check is that mount and that directory, never a fleet host. Any other value names this reader or the instrument, and is handed to `zcrypto-marco` the way a `void:` row is. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. `FAIL` with the panel line is a finding about the BOOK — three or more metrics outside the band, or fewer than three left decided: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way.
 ```
 
 ```bash
@@ -1190,9 +1207,10 @@ for it: nothing fired, so the alert section's runbook does not apply, and
 there is no command to classify. One paragraph under the section that
 reads the dashboards numerically, the data-gated paragraph its model: the
 row's three states name a source, the instrument and the book, and an
-`unreadable:` value naming an exit, a timeout or a payload field names
-this reader or the instrument rather than a source. None of them is a
-host action. Folded into this branch on the owner's word, 2026-09-19.
+`unreadable:` value names a source only when it names the mount, a read
+under it or the canonical dataset, and this reader or the instrument
+otherwise. None of them is a host action. Folded into this branch on the
+owner's word, 2026-09-19.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
