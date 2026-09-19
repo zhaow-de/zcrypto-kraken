@@ -193,6 +193,7 @@ def _drive_pre_review(args: dict) -> dict:
             "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'task-1' ? 3 : 4,",
             "  prose: [{ site: 'a.py:1', survives: label === 'task-1' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
             "          { site: 'b.py:2', survives: label === 'task-1' ? 'trim' : 'cut', correct: true, duplicateOf: '', ship: label === 'task-1' ? 'ship-b' : '' },",
+            "          { site: 'c.py:3', survives: 'cut', correct: true, duplicateOf: '', ship: '' },",
             "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
             "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
             "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt })",
@@ -239,7 +240,8 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
     assert [r for r in rows if r[0] == "b.py:2"] == [("b.py:2", "cut", ""), ("b.py:2", "trim", "ship-b")], (
         "two slices asking one site for different changes are both returned: dropping either loses a ship silently"
     )
-    assert sorted({r[0] for r in rows}) == ["a.py:1", "b.py:2", "tail.py:9", "task-1.py:9"]
+    assert [r for r in rows if r[0] == "c.py:3"] == [("c.py:3", "cut", "")], "two slices asking one change of a site ask it once"
+    assert sorted({r[0] for r in rows}) == ["a.py:1", "b.py:2", "c.py:3", "tail.py:9", "task-1.py:9"]
     contested = [line for line in ran["logs"] if line.startswith("CONTESTED: ")]
     assert len(contested) == 1 and contested[0].startswith("CONTESTED: 1 site(s)") and contested[0].endswith("— b.py:2"), ran[
         "logs"
@@ -254,7 +256,7 @@ def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
-    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 3, "the one grader's report is returned as it came"
+    assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 4, "the one grader's report is returned as it came"
     assert not any("summed over slices" in line or line.startswith("CONTESTED") for line in ran["logs"]), ran["logs"]
 
 
@@ -276,6 +278,7 @@ def _whole(label):
         [{"label": "task-1", "range": "develop..aaa1111"}, {"label": "tail", "range": "bbb2222..tip9abcde"}],
         [{"label": "task-1", "range": "develop..aaa1111"}],
         [{"label": "task-1", "range": "aaa1111..tip9abcde"}],
+        [{"label": "empty", "range": "develop..develop"}, {"label": "tail", "range": "develop..tip9abcde"}],
     ],
 )
 def test_a_malformed_fan_out_is_refused_before_any_grader_runs(ranges):
