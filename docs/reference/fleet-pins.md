@@ -14,9 +14,9 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `7ccd97eb7e3c` — revision `8d00ead9` | 2026-09-16 13:04:40 | `06998998e876` |
-| capture | zcrypto-red | `7ccd97eb7e3c` — revision `8d00ead9` | 2026-09-16 09:34:57 | `06998998e876` |
-| engine | zcrypto | `ac6172b9ffb2` — revision `4925e060` | 2026-09-16 13:39:05 | `6ece9ceb1c18` |
+| capture | zcrypto | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:11:46 | `7ccd97eb7e3c` |
+| capture | zcrypto-red | `7d4c6066d71e` — revision `a1a39280` | 2026-09-18 21:32:30 | `7ccd97eb7e3c` |
+| engine | zcrypto | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:12:24 | `ac6172b9ffb2` |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` — v1.18.0 | 2026-07-27 | `4f6ddc56ffdc` — v1.17.1 |
 | ops (timers + liquidations) | zcrypto-ops | `6ece9ceb1c18` — revision `8f4ac521` | 2026-09-01 14:26:42 | `08f6abb379a7` |
 | archive-pull | nas | `ee5ba1d92b46` — revision `8f4ac521`, the `-compat` build | 2026-09-01 14:48:03 | `38fd9d703749` |
@@ -32,15 +32,15 @@ Reading rules:
 A constraint lives where it is enforced or executed: the NAS `-compat` rule and the canary gate in `.claude/rules/fleet-deploys.md`; `--pull never` on the ops runners, the liquidations roll after an ops re-pin and the NAS gate-export replay on a container recreate in `.claude/skills/zcrypto-rollout-image/SKILL.md`. Three hold here because no other page states them:
 
 - A NAS converge that recreates the archive-pull container replays the whole gate export, and its window is sized from the live figures, not a remembered rate: cycles = `zcrypto_gate_cache_hits + zcrypto_gate_cache_replayed`; seconds per cycle = the last cold export's `zcrypto_gate_export_duration_seconds` over its `zcrypto_gate_cache_replayed` (a cold export is one whose replayed count equals the cycle count); `infra/scripts/grafana-query.py` reads the series. The rate drifts as the journal grows.
-- The engine must not be re-pinned to the digest the capture pair now runs: from `2.0.0rc6.dev20260915` the Kraken adapter resolves fees through an authenticated `POST /0/private/TradeVolume` at each credentialed load, the venue denies it INTERMITTENTLY (`EGeneral:Permission denied`, one in ten identical requests, measured), and one denial aborts the whole listing — so a re-pin may look fine and fail at a later restart. **It lifts per DIGEST, not per tree**: the fallback `nautechsystems/nautilus_trader#5005` rides `2.0.0rc6.dev20260918`, which no digest above carries. Capture makes no such call.
+- The engine's TradeVolume re-pin bar is LIFTED, and the digest above is what lifts it. From `2.0.0rc6.dev20260915` a credentialed load resolved fees through an authenticated `POST /0/private/TradeVolume`; the venue denies it INTERMITTENTLY (`EGeneral:Permission denied`, one in ten, measured) and one denial aborted the whole listing, which reversed the previous engine converge. `nautechsystems/nautilus_trader#5005` falls back to public fees on that denial and rides `2.0.0rc6.dev20260918`, which the engine row above carries — read on the fleet, not inferred: the engine booted on it with zero instrument-load failures. **The bar returns for a digest built before that wheel.**
 - Never restart both capture hosts close together. A single-host re-pin costs ~zero data while the other host is healthy — its gap is healed by splicing the other host, and a healed hour books what the splice leaves unfilled — while a pair restarted together books `both_streams_silent` outright; the splice is why an exit bar reads the full hours after a restart, never the restart hour (set: the capture restarts `deploy-log.jsonl` records — a successful row limited to a capture host or to the `capture_host` group, tagged capture or un-tagged — paired across the two hosts within an hour; count: `infra/scripts/count-list.sh capture-hosts-converged-within-an-hour`).
 
 ## Full digests
 
 The current pins and their operands; older digests are in this file's git log.
 
+- `7d4c6066d71e` = `sha256:7d4c6066d71edad9fa9029c4d725f9bfc354ba22b7e7044be95cd01b1c27a107` — revision `a1a39280`, AVX; capture on both hosts and the engine.
 - `7ccd97eb7e3c` = `sha256:7ccd97eb7e3c134bd51b09caf9182dc64642fbf7c76b795fe1c9d6c79c51679e` — revision `8d00ead9`; capture on both hosts
-- `06998998e876` = `sha256:06998998e8760edecb3b98dccafcd5f28b0f257b7c1f2a881cecebd7d32a2b1d` — revision `c7067af3`; the capture pair's rollback operand
 - `ac6172b9ffb2` = `sha256:ac6172b9ffb2c1693fa4b55a2498b1ec93ecbb6d13eb4109c5d81a6e7a0e69dd` — revision `4925e060`; the engine
 - `6ece9ceb1c18` = `sha256:6ece9ceb1c181888daf403329d567041ac3481ce7926d03eb32d137d30a7e912` — revision `8f4ac521`, AVX; ops, and the engine's operand
 - `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, `-compat`; the NAS archive-pull
