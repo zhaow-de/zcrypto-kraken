@@ -114,9 +114,9 @@ def test_rebuild_unknown_set_exits_nonzero(tmp_path, monkeypatch):
 
 @pytest.fixture
 def zcrypto_log(caplog):
-    """The CLI's first invocation in a process stops the "zcrypto" logger propagating, and `caplog` attaches only to
-    a logger already non-propagating at fixture setup, so a test selected alone captures nothing unless the handler
-    sits on that logger (`_zcrypto_caplog_attached` in `tests/test_engine_metrics.py` is the same remedy)."""
+    """The CLI's first invocation in a process stops the "zcrypto" logger propagating, so a test selected alone
+    captures nothing unless the handler sits on that logger -- `_zcrypto_caplog_attached` in
+    `tests/test_engine_metrics.py:1163` is the same remedy and states the mechanism."""
     logger = logging.getLogger("zcrypto")
     logger.addHandler(caplog.handler)
     try:

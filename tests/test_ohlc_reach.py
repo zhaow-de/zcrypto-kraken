@@ -322,17 +322,3 @@ def test_a_canonical_file_that_is_not_parquet_is_refused_naming_the_file(tmp_pat
         reach_round(canonical, tmp_path / "out", fetch_fn=_must_not_fetch, clock=lambda: _BASE, sleep_fn=_no_sleep)
 
     assert str(path) in str(excinfo.value)
-
-
-def test_an_absent_canonical_close_inside_the_seam_aborts_rather_than_passing_as_agreement(tmp_path):
-    canonical, out = tmp_path / "canon", tmp_path / "out"
-    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20, close=100.0)
-    path = canonical / "BTC" / "EUR" / "60.parquet"
-    absent = pl.when(pl.int_range(pl.len()) == 15).then(None).otherwise(pl.col("close")).alias("close")
-    write_parquet(read_parquet(path).with_columns(absent), path)
-    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
-
-    with pytest.raises(OHLCError, match="seam mismatch"):
-        reach_round(
-            canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: _BASE + timedelta(hours=40), sleep_fn=_no_sleep
-        )

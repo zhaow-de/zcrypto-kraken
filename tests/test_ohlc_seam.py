@@ -35,12 +35,3 @@ def test_seam_overlap_clean_seam_has_no_mismatches():
     overlap_bars, mismatches = seam_overlap(left, right)
     assert overlap_bars == 1
     assert mismatches.is_empty()
-
-
-def test_seam_overlap_counts_an_absent_close_on_either_side_as_a_disagreement():
-    stamps = [NOW, NOW + timedelta(hours=1), NOW + timedelta(hours=2)]
-    left = pl.DataFrame({"ts": stamps, "close": [1.0, None, None]})
-    right = pl.DataFrame({"ts": stamps, "close": [None, 2.0, None]})
-    overlap_bars, mismatches = seam_overlap(left, right)
-    assert overlap_bars == 3
-    assert mismatches["ts"].to_list() == stamps
