@@ -328,4 +328,6 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #564 | 2026-09-18 | claude(refine): round 13 — the trio owns the branch read; T0208 resolved | — | — | T0208 |
 | #565 | 2026-09-18 | chore(deps): nautilus-trader dev20260918 — our TradeVolume fallback | — | — | T0160 |
 | #566 | 2026-09-18 | docs(topics): T0210 soak verdict readership, T0199 and T0200 one door | — | — | T0199, T0200 |
+| #567 | 2026-09-19 | feat(fleet): E8 lands on dev20260918, ops re-pinned, blindness measured | — | — | T0085, T0160 |
+| #568 | 2026-09-19 | fix(ohlc): T0202 reach refuses a canonical frame it cannot join | — | — | T0199, T0202 |
 | #569 | 2026-09-19 | test(venue): T0207 a second walk holds gate discovery | — | — | T0207 |

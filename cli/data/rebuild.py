@@ -12,19 +12,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cli.backfill.backfill import backfill_basket
+from cli.backfill.errors import BackfillError
 from cli.backfill.substrate15m import build_15m_substrate
+from cli.costs.errors import CostModelError
 from cli.costs.spread import SPREAD_CALIBRATION, effective_spread_bps
 from cli.data.errors import DataSyncError
 from cli.data.manifest import ManifestError, read_manifest
+from cli.derivatives.errors import DerivativesError
 from cli.derivatives.funding import build_funding_substrate
 from cli.derivatives.oi import build_oi_substrate
 from cli.logging import get_logger
 from cli.ohlc.dataset import read_parquet
+from cli.ohlc.errors import OHLCError
 from cli.ohlc.reach import reach_round
 from cli.snapshot import CANDIDATE_SYMBOLS, derive_universe
+from cli.snapshot.errors import SnapshotError
 from cli.snapshot.fetch import fetch_public
 from cli.snapshot.register import build_snapshot
 from cli.universe.build import build_universe_file
+from cli.universe.errors import UniverseError
 from cli.universe.rules import (
     DEFAULT_MAX_SPREAD_BPS,
     DEFAULT_MIN_LEVERAGE,
@@ -258,6 +264,18 @@ REBUILDABLE: dict[str, Callable[[RebuildContext, Path], None]] = {
     "snapshots": _refresh_snapshots,
     "universe": _refresh_universe,
 }
+
+# What a builder above raises on purpose, its message written for the operator.
+BUILDER_REFUSALS: tuple[type[Exception], ...] = (
+    BackfillError,
+    CostModelError,
+    DataSyncError,
+    DerivativesError,
+    ManifestError,
+    OHLCError,
+    SnapshotError,
+    UniverseError,
+)
 
 
 def rebuild_sets(sets: Sequence[str], ctx: RebuildContext) -> list[Path]:
