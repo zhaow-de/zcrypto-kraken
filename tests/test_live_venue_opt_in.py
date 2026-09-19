@@ -1352,6 +1352,14 @@ def test_skips_through_getattr_on_the_module():
 def test_skips_through_a_partial_of_pytests_skip():
     if not ROOT.exists():
         functools.partial(pytest.skip, "no data")()
+
+
+_bail = functools.partial(pytest.skip, "no data")
+
+
+def test_skips_through_a_name_bound_to_a_partial_of_pytests_skip():
+    if not ROOT.exists():
+        _bail()
 """
 
 _FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")
@@ -1457,7 +1465,11 @@ _RAISED_OR_MARKED = (
     "test_skips_by_raising_unittests_exception",
     "test_marks_itself_skipped_under_a_condition",
 )
-_REACHED_THROUGH_A_CALL = ("test_skips_through_getattr_on_the_module", "test_skips_through_a_partial_of_pytests_skip")
+_REACHED_THROUGH_A_CALL = (
+    "test_skips_through_getattr_on_the_module",
+    "test_skips_through_a_partial_of_pytests_skip",
+    "test_skips_through_a_name_bound_to_a_partial_of_pytests_skip",
+)
 # The gates that must NOT be refused for the assertions above to mean anything: the one opt-in read
 # twice, a dataset gate, and a membership of a module constant -- the last two the accepting direction
 # of the two forms whose operand rather than whose callee carries the reading: without `_LOCAL_DATASET`
@@ -1661,8 +1673,8 @@ def _reaches(start: str, functions: dict[str, ast.FunctionDef]) -> set[str]:
 
 
 def test_the_second_walk_names_nothing_the_walker_reaches_or_is_reached_from():
-    """The set is read off this module's own call graph, because a list of the walker's functions written by hand
-    went stale as it was written: it held 15 of the 28 `_gates` reaches."""
+    """The set is read off this module's own call graph rather than written by hand: a hand list narrows this
+    assertion silently as the walker grows."""
     functions = {n.name: n for n in _module(Path(__file__)).tree.body if isinstance(n, ast.FunctionDef)}
     walker = _reaches("_gates", functions) | {name for name in functions if "_gates" in _reaches(name, functions)}
     assert {"_guards_of", "_is_pytest_call", "_match", "_rooted", "_tree_gates"} <= walker, (
