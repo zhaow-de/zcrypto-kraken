@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'the next change to the store write path (`write_parquet`/`seed_store` in `cli/engine/store.py`) or to the `dropped_tail` render in `cli/engine/soak.py` -- either is the commit that can distinguish a NaN-caused drop from a short store.'
+ripe_when: 'the next change to the store write path -- `seed_store` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store.'
 ---
 
 # A NaN reaching the store drops a report tail instead of refusing it
@@ -31,11 +31,15 @@ REST parse, not the writer's — measured on T0193's branch, the writer refuses 
 
 ## Findings so far
 
-Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
+What PR #514 (T0193) measured is the sections above.
+
+**This topic and [[T0200]] are one door.** [[T0200]]'s journal-snapshot write reaches the same `write_parquet` this topic's fork weighs as the place a non-finite close should be refused: `cli/engine/cycle.py` imports it from `cli/ohlc/dataset.py`. Settling them apart invites two incompatible answers on a single function, so whichever is decided first records what it decided for the other.
+
+**A door at that helper is not local to the engine, which is a cost the fork has to carry.** Its callers reach past `cli/engine/` into the OHLC, backfill and derivatives packages, and two of them write frames with **no close column at all** (`cli/derivatives/funding.py`'s schema is `ts`/`funding_rate`/`interval_hours`; `cli/derivatives/oi.py` names no close), so a close-value door there cannot be unconditional. `cli/capture/segment_writer.py` is outside the blast radius entirely: it calls polars' own `df.write_parquet` method rather than this helper.
 
 ## Suggested next steps
 
-- Decide where the refusal belongs: at `write_parquet` (a capture-adjacent change, its own blast radius, and it
+- Decide where the refusal belongs: at `write_parquet` (an engine, OHLC, backfill and derivatives blast radius, and it
   would refuse a frame a research path may legitimately hold), or as a distinguishing REASON on the report's
   `dropped_tail` line, which changes no writer.
 - If the report line is chosen, the reason has to name the bar and the value, the way `_validate_grid`'s does.
