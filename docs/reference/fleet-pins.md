@@ -18,7 +18,7 @@ Reading rules:
 | capture | zcrypto-red | `7d4c6066d71e` — revision `a1a39280` | 2026-09-18 21:32:30 | `7ccd97eb7e3c` |
 | engine | zcrypto | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:12:24 | `ac6172b9ffb2` |
 | alloy | zcrypto, zcrypto-red, zcrypto-ops, nas | `491b0578c049` — v1.18.0 | 2026-07-27 | `4f6ddc56ffdc` — v1.17.1 |
-| ops (timers + liquidations) | zcrypto-ops | `6ece9ceb1c18` — revision `8f4ac521` | 2026-09-01 14:26:42 | `08f6abb379a7` |
+| ops (timers + liquidations) | zcrypto-ops | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:40:33 | `6ece9ceb1c18` |
 | archive-pull | nas | `ee5ba1d92b46` — revision `8f4ac521`, the `-compat` build | 2026-09-01 14:48:03 | `38fd9d703749` |
 
 **Non-image pins.** `zaccess`'s `caddy` and `alloy` are apt packages the access role installs unversioned, clearing a `dpkg` hold, so they have no row and no rollback operand here; read the installed versions off the host: `dpkg-query -W alloy caddy`.
@@ -44,7 +44,6 @@ The current pins and their operands; older digests are in this file's git log.
 - `ac6172b9ffb2` = `sha256:ac6172b9ffb2c1693fa4b55a2498b1ec93ecbb6d13eb4109c5d81a6e7a0e69dd` — revision `4925e060`; the engine
 - `6ece9ceb1c18` = `sha256:6ece9ceb1c181888daf403329d567041ac3481ce7926d03eb32d137d30a7e912` — revision `8f4ac521`, AVX; ops, and the engine's operand
 - `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, `-compat`; the NAS archive-pull
-- `08f6abb379a7` = `sha256:08f6abb379a7f16215456a97009d5ca0a5f8e2cc88725407e2f0135b422f9eec` — revision `eb6a503a`, AVX; ops' operand
 - `38fd9d703749` = `sha256:38fd9d70374939d2f82b6eaeac3ab03ee12b80bb299a643e9c01cf93378c1b0b` — revision `28d32463`, `-compat`; the NAS operand
 - `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0; the four hosts
 - `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1; the Alloy operand
