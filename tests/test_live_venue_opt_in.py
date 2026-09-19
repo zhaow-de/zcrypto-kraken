@@ -1328,6 +1328,26 @@ class TestOld(unittest.TestCase):
     def test_gated_by_a_unittest_method(self):
         if not ROOT.exists():
             self.skipTest("no data")
+
+
+def test_skips_by_raising_pytests_own_exception():
+    if not ROOT.exists():
+        raise pytest.skip.Exception("no data")
+
+
+def test_skips_by_raising_unittests_exception():
+    if not ROOT.exists():
+        raise unittest.SkipTest("no data")
+
+
+def test_marks_itself_skipped_under_a_condition(request):
+    if not ROOT.exists():
+        request.node.add_marker(pytest.mark.skip(reason="no data"))
+
+
+@pytest.mark.skip(reason="declared, and decided by nothing")
+def test_declared_skipped_by_a_decorator():
+    pass
 """
 
 _FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")
@@ -1426,6 +1446,14 @@ _UNITTEST_DECORATED = (
     "test_gated_by_a_unittest_decorator_through_a_module_alias",
 )
 _UNITTEST_METHOD = ("test_gated_by_a_unittest_method",)
+# The two raised spellings and a `mark.skip` applied under a condition: each a gate, and each a spelling
+# `_flat_sites` reads by its own arm. `test_declared_skipped_by_a_decorator` is named nowhere because it is no
+# gate -- a decorator declares a skip and decides none -- and both walks must leave it out.
+_RAISED_OR_MARKED = (
+    "test_skips_by_raising_pytests_own_exception",
+    "test_skips_by_raising_unittests_exception",
+    "test_marks_itself_skipped_under_a_condition",
+)
 # The gates that must NOT be refused for the assertions above to mean anything: the one opt-in read
 # twice, a dataset gate, and a membership of a module constant -- the last two the accepting direction
 # of the two forms whose operand rather than whose callee carries the reading: without `_LOCAL_DATASET`
@@ -1445,6 +1473,7 @@ _DISPOSED = (
     + _MEMBERSHIP_MATCHED
     + _UNITTEST_DECORATED
     + _UNITTEST_METHOD
+    + _RAISED_OR_MARKED
 )
 
 
@@ -1605,6 +1634,13 @@ def test_the_second_walk_differs_from_the_walker_over_the_fixture_by_the_renamed
     )
     unseen = sorted(_fixture_case(gate) for line, gate in by_line.items() if line not in calls | marks)
     assert unseen == sorted(_FLAT_WALK_UNSEEN), f"got {unseen}"
+
+
+def test_a_raised_skip_and_a_conditional_mark_are_gates_and_a_declared_skip_is_none():
+    for name in _RAISED_OR_MARKED:
+        gate = _fixture(name)
+        assert gate.kind == "skip-site" and gate.forms == (Form("path"),) and gate.opaque == (), f"{name}: {gate}"
+    assert "test_declared_skipped_by_a_decorator" not in {_fixture_case(gate) for _, gate in _FIXTURE_GATES}
 
 
 def test_the_second_walk_names_nothing_the_walker_is_built_from():
