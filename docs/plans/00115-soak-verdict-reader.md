@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - No source file under `cli/` changes (spec D2): no image is rolled and the NAS gate cache's fingerprint does not move. The one `cli`-side edit is a test, `tests/test_engine_soak_command.py`.
-- No file under `.claude/` changes: spec D7 rules that a guidance change rides its own branch on the owner's word, so the daily-ops guidance the new row needs — what an operator does with its first `FAIL` — is PR #574's, opened beside this one and merged behind it, not written here.
+- One file under `.claude/` changes, in one commit of its own: `.claude/skills/zcrypto-daily-ops/SKILL.md` gains the paragraph that reads the new row (Task 4 Step 4), a fold-in the owner directed on 2026-09-19. The `staged-kind` hook refuses a commit that mixes it with any other file, and nothing else under `.claude/` is touched — section 5b stays as it is (spec D7).
 - Three real options stay OUT of the classifier's shapes (spec D5): `soak-check --json` writes the path it names; `soak-check --registry` and `tracking-report --ledger-export` name a file whose reader echoes content when it refuses it.
 - The reduction order is fixed (spec D4): no payload or no canonical dataset is `unreadable:`; any other non-empty `void_reasons` is `FAIL` and is read BEFORE any verdict; then the panel decides on two of its counts — `n_outside >= 3` is `FAIL`, and so is a panel that left fewer than three metrics decided (`n_metrics - n_indeterminate`, the same constant read as a reachability floor, which the value names when it is the arm that bit); otherwise `PASS`. The row never keys off one metric's `inconsistent`.
 - `read_soak_verdict` takes its runner keyword-only with no default, as `read_unattended_upgrades` and `read_agentboard_cgroup` do.
@@ -38,6 +38,7 @@ Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
 - Modify `tests/test_ops_daily.py` — the classifier fixtures and the table-against-CLI test (Task 1); the reduction tests (Task 2); the derived-store, runner and wiring tests, the autouse `live_soak_run` fixture and the two runner tests it rewires, and one added line in each of the three existing tests that drive `main(["report"])` to a verdict (Task 3).
 - Modify `tests/test_engine_soak_command.py` — one test pinning the payload keys the reduction reads (Task 2).
 - Modify `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md` (resolved, moved to `archive/`), `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`; and re-render `docs/open-topics/README.md` (Task 4).
+- Modify `.claude/skills/zcrypto-daily-ops/SKILL.md` — one paragraph reading the new row, in a `claude(skills)` commit of its own (Task 4 Step 6).
 
 ---
 
@@ -1005,6 +1006,7 @@ Expected: `True | N of 7 outside band (~0.7 expected by chance at 90%); L=<sever
 - Modify: `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.md`, then `git mv` it to `docs/open-topics/archive/`
 - Modify: `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`
 - Modify: `docs/open-topics/README.md` (rendered, never hand-edited)
+- Modify: `.claude/skills/zcrypto-daily-ops/SKILL.md` (one paragraph, in a commit of its own)
 
 **Interfaces:**
 - Consumes: the merged behaviour of Tasks 1–3 and PR #572's number.
@@ -1025,7 +1027,7 @@ In `docs/open-topics/T0210-soak-check-gating-verdicts-have-no-scheduled-reader.m
 
 Resolved by PR #572 under spec `00115` and its plan. `ops-daily.py report` now prints a `soak verdict` row: `read_soak_verdict` in `infra/scripts/ops_daily.py` runs `soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to `PASS`, `FAIL` or `unreadable`, reading `void_reasons` before any verdict and failing on the panel's outside count at a PROVISIONAL three, never on one metric's `inconsistent`. The daily pass is therefore the scheduled reader, sited on the workstation, with no timer, no host change and no store replica. The three shapes this topic listed are costed in the spec's Alternatives tables; the metric with an alert rule is what paging between passes would cost, and the spec leaves it out of scope.
 
-The last next step — re-read `governor_engagement` once the null has power — is dropped as a separate action: the row names every outside metric, and how many null constructions called it, on every pass, so the re-read happens daily and needs no trigger of its own. [[T0184]]'s two operands are printed by the same row; [[T0201]]'s trigger cannot be evaluated from a journal-derived store; both topics record that. The reading `zcrypto-daily-ops` owes the row is guidance and rides its own PR, #574, merged behind this one.
+The last next step — re-read `governor_engagement` once the null has power — is dropped as a separate action: the row names every outside metric, and how many null constructions called it, on every pass, so the re-read happens daily and needs no trigger of its own. [[T0184]]'s two operands are printed by the same row; [[T0201]]'s trigger cannot be evaluated from a journal-derived store; both topics record that. The reading `zcrypto-daily-ops` owes the row landed with it, as the paragraph on the `soak verdict` row under that skill's fleet-checks section.
 ```
 
 Then:
@@ -1079,7 +1081,7 @@ on every pass. T0184 records that the row prints its trigger's two
 operands daily; T0201 records that a journal-derived store puts the store
 last bar on a boundary by construction, so the row cannot evaluate its
 trigger. No topic is registered: the reading `zcrypto-daily-ops` owes the
-new row is guidance, and it is PR #574's, merged behind this one.
+new row is the next commit on this branch.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
@@ -1087,6 +1089,36 @@ EOF
 git push
 ```
 
-- [ ] **Step 6: Re-true the PR body through `open-pr`**
+- [ ] **Step 6: The skill reads the row — one `claude(skills)` commit, nothing else staged with it**
 
-`## Spec / Plan` names the plan beside the spec; `## Changes` is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
+The owner directed this fold-in on 2026-09-19. In `.claude/skills/zcrypto-daily-ops/SKILL.md`, directly below the line `The verdict tiles' own PromQL is among what the report's fleet checks already ran. Read those; no pixels.` and a blank line, add this one paragraph, then a blank line before `## 5. Evaluate the due reminders`:
+
+```markdown
+**The `soak verdict` row is the soak instrument's daily reading, and none of its three states is a host action.** The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE the pass reads on the workstation — the journal mount `/mnt/zhao-crypto/engine-journal`, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — so check the mount and that directory, never a fleet host. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. `FAIL` with the panel line is a finding about the BOOK — three or more metrics outside the band, or fewer than three left decided: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way.
+```
+
+```bash
+infra/scripts/count-list.sh ambient-bytes
+git add .claude/skills/zcrypto-daily-ops/SKILL.md
+git commit -F - <<'EOF'
+claude(skills): the daily pass reads its soak verdict row
+
+This branch adds a `soak verdict` row to `ops-daily.py report`, and
+`zcrypto-daily-ops` walks that report section by section with no reading
+for it: nothing fired, so the alert section's runbook does not apply, and
+there is no command to classify. One paragraph under the fleet-checks
+section, the data-gated paragraph its model: the row's three states have
+three subjects, a source, the instrument and the book, and none is a host
+action. Folded into this branch on the owner's word, 2026-09-19.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
+EOF
+git push
+```
+
+Expected: `ambient-bytes` prints the number `develop` prints, because a skill's body is outside the always-loaded set; the `staged-kind` hook passes because the commit stages that one file alone.
+
+- [ ] **Step 7: Re-true the PR body through `open-pr`**
+
+`## Spec / Plan` names the plan beside the spec; `## Guidance changes` carries `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` verbatim, which is Step 6's one commit, and because that commit puts a `.claude/` path in the diff the whole-branch read is a Fable read (`uv run python infra/scripts/merge-gate.py --fable-paths`); `## Changes` names the skill paragraph as the owner's fold-in of 2026-09-19 and is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
