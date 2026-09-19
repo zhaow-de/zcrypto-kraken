@@ -4,7 +4,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from cli.ohlc.dataset import dataset_hash, read_parquet, to_frame, write_parquet
+from cli.ohlc.dataset import FRAME_SCHEMA, dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -18,6 +18,10 @@ def test_to_frame_schema_and_dtypes():
     for col in ("open", "high", "low", "close", "vwap", "volume"):
         assert frame.schema[col] == pl.Float64
     assert frame.schema["count"] == pl.Int64
+
+
+def test_frame_schema_is_the_schema_to_frame_writes_in_its_column_order():
+    assert list(to_frame(ROWS).schema.items()) == list(FRAME_SCHEMA.items())
 
 
 def test_to_frame_parses_string_decimals_and_epoch_ts():

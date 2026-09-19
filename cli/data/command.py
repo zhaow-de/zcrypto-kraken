@@ -9,7 +9,7 @@ import typer
 
 from cli.config import ConfigError, load_config, resolve_data_dir, resolve_hot_source, resolve_ohlcvt_source_dir, resolve_push_dest
 from cli.data.errors import DataSyncError
-from cli.data.rebuild import RebuildContext, rebuild_sets
+from cli.data.rebuild import BUILDER_REFUSALS, RebuildContext, rebuild_sets
 from cli.data.sync import fetch_hot, push_hot
 from cli.logging import get_logger
 
@@ -89,7 +89,7 @@ def rebuild(
 
     try:
         minted = rebuild_sets(sets, ctx)
-    except DataSyncError as exc:
+    except BUILDER_REFUSALS as exc:
         raise _abort(str(exc)) from exc
 
     logger.info("data rebuild: minted %s", ", ".join(str(p) for p in minted))
