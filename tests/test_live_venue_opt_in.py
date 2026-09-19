@@ -582,7 +582,7 @@ def _unittest_skip(func: ast.AST, module: Module) -> bool:
 
 
 def _skip_helpers(tree: ast.Module, attribute: str, bound: set[str], modules: set[str], parents: dict) -> set[str]:
-    """Module functions that skip unconditionally, so calling one IS calling `pytest.skip`.
+    """Functions that skip unconditionally, so calling one IS calling `pytest.skip`.
 
     `def bail(m): pytest.skip(m)` moves the skip one call away, and a walker that looks only for
     pytest's own name at the call site finds no skip site at all. It is the same indirection that hid
@@ -673,7 +673,7 @@ def _gates(source: str, label: str = "<fixture>", path: Path | None = None) -> l
     and a call, whose guards are read off the statements enclosing it rather than off any one
     condition. The call is recognised through the pytest module under any alias, through a bare name
     imported from pytest under any alias, through `raise pytest.skip.Exception`, through
-    `self.skipTest(...)`, and through a module function that skips unconditionally.
+    `self.skipTest(...)`, and through a function that skips unconditionally.
 
     Two of pytest's three skipping names are deliberately not here. `importorskip` takes a MODULE name,
     so it cannot be keyed on a venue flag or on reachability and cannot carry this defect. `xfail`

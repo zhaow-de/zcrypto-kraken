@@ -35,4 +35,4 @@ Delivered by PR #569, in `tests/test_live_venue_opt_in.py`. `_flat_sites` is the
 
 The assertion runs one way on purpose: a gate the second walk does not see is a binding it does not read, and `_FLAT_WALK_UNSEEN` holds those fixture cases as a list. So what remains unheld is narrower than it was and is written in the module docstring: a skip bound any other way, where it sits in a position `_guards_of` does not walk or is reached by a binding `_pytest_bindings` does not follow.
 
-Four positions remain unwalked — a boolean short-circuit, a conditional expression, a `for`'s `else`, a comprehension. The walker gains no arm for them: none is in the tree, and one that arrives fails the suite with its file and line and the remedy `_walker_missed` prints, which is the reader this topic said did not exist.
+The walker gains no arm for the positions that remain unwalked: none is in the tree, and one that arrives fails the suite with its file and line and the remedy `_walker_missed` prints, which is the reader this topic said did not exist.
