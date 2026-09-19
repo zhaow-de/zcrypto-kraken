@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'the next change to the store write path -- `seed_store` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store.'
+ripe_when: 'the next change to the store write path -- `seed_store` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- to `seam_overlap` in `cli/ohlc/seam.py`, or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store, or an absent close from an agreeing one.'
 ---
 
 # A NaN reaching the store drops a report tail instead of refusing it
@@ -36,6 +36,8 @@ What PR #514 (T0193) measured is the sections above.
 **This topic and [[T0200]] are one door.** [[T0200]]'s journal-snapshot write reaches the same `write_parquet` this topic's fork weighs as the place a non-finite close should be refused: `cli/engine/cycle.py` imports it from `cli/ohlc/dataset.py`. Settling them apart invites two incompatible answers on a single function, so whichever is decided first records what it decided for the other.
 
 **A door at that helper is not local to the engine, which is a cost the fork has to carry.** Its callers reach past `cli/engine/` into the OHLC, backfill and derivatives packages, and two of them write frames with **no close column at all** (`cli/derivatives/funding.py`'s schema is `ts`/`funding_rate`/`interval_hours`; `cli/derivatives/oi.py` names no close), so a close-value door there cannot be unconditional. `cli/capture/segment_writer.py` is outside the blast radius entirely: it calls polars' own `df.write_parquet` method rather than this helper.
+
+**An ABSENT close is this fork's case as well, and it gets further than a NaN does.** Measured on PR #568's branch. `to_frame` refuses NaN and admits null: a Kraken row whose close is JSON `null` comes through with `close` null, because the guard's `is_nan()` answers null for a null and `any()` ignores it — so an absent close can arrive from REST, where the NaN fixture above was refused. `seam_overlap` in `cli/ohlc/seam.py` then compares with `!=`, which answers null for that row, and the filter drops it, so the row counts as a shared stamp that agrees, in `reach_round` and in the store's `_reconcile` alike: a seam of absent closes reads as one that holds. The fix is one expression and is NOT local: made on that branch, it turned such a row inside `refresh_store`, under `run_cycle`, from a silent merge into an `EngineError`, on a path none of that branch's tests drive, so it was reverted there (`6bb5395d9`) and belongs with this decision. `seam_overlap` joins the trigger for that reason.
 
 ## Suggested next steps
 

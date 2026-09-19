@@ -87,7 +87,7 @@ def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     if not differs and frame.columns != list(FRAME_SCHEMA):
         differs = [f"the columns are in another order ({', '.join(frame.columns)})"]
     if not differs:
-        # The keys only: what a non-finite close does at this family's doors is T0199's open decision.
+        # The keys only: what an absent or non-finite close does at this family's doors is T0199's open decision.
         stamps = frame["ts"]
         if frame.is_empty():
             differs = ["it has no rows"]
