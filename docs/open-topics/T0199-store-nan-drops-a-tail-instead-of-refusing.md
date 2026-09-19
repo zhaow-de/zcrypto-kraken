@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'the next change to the store write path -- `seed_store` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- to `seam_overlap` in `cli/ohlc/seam.py`, or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store, or an absent close from an agreeing one.'
+ripe_when: 'the next change to the store write path -- `seed_store` or its door `_require_joinable_ts` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- to `seam_overlap` in `cli/ohlc/seam.py`, or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store, or an absent close from an agreeing one.'
 ---
 
 # A NaN reaching the store drops a report tail instead of refusing it
@@ -22,6 +22,8 @@ run — and `00058` D2's tail drop is the structural one (score only boundaries 
 `T+4h <= now`, which drops the newest 1-2 cycles on every healthy run). Neither says what should happen to a
 bar whose close is `nan`. What happens today is that it leaves the scored set silently.
 
+**The same door is narrow in TYPE and in KEYS as well as in value, and this topic holds all three** (widened on the owner's word, 2026-09-19, rather than registered apart: it is one door and one decision). `_require_joinable_ts` holds `ts` to `Datetime("us", "UTC")` and `close` to a numeric dtype. `_reconcile`, which `seed_store` and `refresh_store` both run behind it, concatenates the store frame onto a `to_frame` result, and that needs every dtype, every column and the column order to match; and the door reads no row at all, so it cannot see an empty frame, a null stamp or a repeated one.
+
 ## Why this matters
 
 The drop is silent in the one place an operator reads. `dropped_tail` is rendered, but nothing distinguishes a
@@ -39,6 +41,10 @@ What PR #514 (T0193) measured is the sections above.
 
 **An ABSENT close is this fork's case as well, and it gets further than a NaN does.** `to_frame` refuses NaN and admits null: a row whose close is JSON `null` comes through with `close` null, because the guard's `is_nan()` answers null for a null and `any()` ignores it — so it passes the REST parse, where the NaN fixture above was refused. `seam_overlap` in `cli/ohlc/seam.py` then compares with `!=`, which answers null for that row, and the filter drops it, so the row counts as a shared stamp that agrees, in `reach_round` and in the store's `_reconcile` alike: an absent close agrees with whatever the other side carries, a disagreeing price included. The one-expression fix is NOT local: it turns such a row inside `refresh_store`, under `run_cycle`, from a silent merge into an `EngineError`, on a path no test drives.
 
+**What the door's width costs, driven through `seed_store` and `refresh_store` over `tests/test_engine_store.py`'s universe with one file deviated.** A `close` or `open` of Float32, a `close` of Int64 and a `count` of Int32 each raise a bare polars `SchemaError` out of `_reconcile`'s concat; an extra column and the columns in another order each raise `ShapeError`. None is an `EngineError`, so each passes `run_cycle`'s and both commands' handlers as a traceback. **When the deviated file is the CANONICAL one, `seed_store` has already copied it into the store before the concat raises** — measured, the copy exists after the failure — which is the refused-copy-left-behind that the comment above that copy says the door prevents; every later run then fails the same way on the store's own file, naming no path. A canonical with no rows is copied too and ends in the `window shortfall` `EngineError`. A single null stamp, and a repeated stamp, raise nothing on either reader and are carried into the store. Nothing on disk carries any of these today: the 94 OHLC parquets under the data root and the store's 24 files all match `FRAME_SCHEMA`, and the arrival path is a republished canonical set.
+
+**The canonical root's reach door is the worked sibling.** `_read_canonical` in `cli/ohlc/reach.py` holds a canonical file to the whole of `FRAME_SCHEMA` and to non-empty, non-null, unrepeated stamps, and raises the caller's own error naming the file. The store's door was not given the same treatment with it, because its recovery text is the hard part and not its check.
+
 ## Suggested next steps
 
 - Decide where the refusal belongs: at `write_parquet` (an engine, OHLC, backfill and derivatives blast radius, and it
@@ -47,3 +53,6 @@ What PR #514 (T0193) measured is the sections above.
 - If the report line is chosen, the reason has to name the bar and the value, the way `_validate_grid`'s does.
 - A trigger on `dropped_tail > 0` alone will not do: spec `00058` D2 scores a cycle only if the next one exists,
   so a healthy run drops the last segment cycle and plan `00058`'s acceptance asserts `dropped_tail >= 1`.
+- The door's width is the same decision, and the check is the small half of it. Holding a store frame to `FRAME_SCHEMA` and to sound stamps is a few lines; the claim a change must carry is that every frame it newly refuses already fails at `_reconcile`'s concat, so it refuses nothing that works today — true of the type and shape deviations, and NOT of a null or repeated stamp, which work today in the sense that nothing stops them.
+- The recovery text is the large half. The door's two recoveries are written for `ts` and pinned by `tests/test_engine_store.py`, the non-frozen one because an earlier wording carried a data-loss instruction. A Float32 price has no in-place recast — the precision is gone — so a deviated STORE file's recovery is a re-seed, which drops every bar the canonical lacks unless the re-seed's seam holds. What an operator is told per deviation is a choice on the live trade path, so it takes a spec, and it reaches the engine only at a converge.
+- Check the canonical before it is copied for everything the door will refuse, not for `ts` alone: the copy-then-fail order is what turns one bad canonical file into a poisoned store.
