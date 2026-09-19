@@ -520,7 +520,7 @@ SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")
 SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
 # PROVISIONAL. At a 90% band one metric outside is the count chance expects, so one never fails the row. Seven
 # independent looks at 10% reach three under 3% of the time; the seven are correlated, which loosens that bound,
-# and the number is re-derived once there is a history of rows to derive it from.
+# and no re-derivation is scheduled: the row's own history is the evidence, and whoever reads its first FAIL has it.
 SOAK_OUTSIDE_FAILS_AT = 3
 _SOAK_CANONICAL_ABSENT = "canonical absent"
 # The label `soak-check` gives a metric whose live value fell outside its null band, named once rather than
@@ -1053,6 +1053,12 @@ In `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`, repla
 What PR #514 (T0193) measured is the sections above.
 
 **The daily pass's `soak verdict` row cannot evaluate this trigger.** Spec `00115` runs `soak-check` over a store derived from the newest journaled 240 snapshots, whose last bar is that cycle's own `last_ts` and so sits on a 4h boundary by construction. An off-boundary `store last bar` can only come from a run over the engine host's own store, which has no replica (`docs/reference/fleet.md`).
+```
+
+and append this bullet at the end of its `## Suggested next steps` list:
+
+```markdown
+- When the engine host's store is next read in an attended session, compare its live `240` legs against the newest journal record's snapshots — `n_bars`, `last_ts` and the closes: the daily `soak verdict` row scores the journaled closes (spec `00115` D2), and their equality with the live store has never been read.
 ```
 
 - [ ] **Step 4: Re-render the index, compare the heading sets, run the guards**
