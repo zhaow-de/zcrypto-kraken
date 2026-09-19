@@ -19,7 +19,7 @@ import polars as pl
 
 from cli.data.manifest import build_manifest, series_entry
 from cli.logging import get_logger
-from cli.ohlc.dataset import dataset_hash, read_parquet, to_frame, write_parquet
+from cli.ohlc.dataset import FRAME_SCHEMA, dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
@@ -66,6 +66,37 @@ def _canonical_symbols(canonical_root: Path, interval: int) -> list[str]:
     not a hardcoded basket, so a symbol the canonical set does not carry is out of scope here rather than an error.
     """
     return sorted(f"{p.parent.parent.name}/{p.parent.name}" for p in canonical_root.glob(f"*/*/{interval}.parquet"))
+
+
+def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
+    """Refuse a canonical file `_merge_or_detach` cannot take, before the REST call is spent on it.
+
+    `seam_overlap` joins on `ts` and compares `close`, and the merge concatenates onto a `to_frame` result, so a
+    dtype, a column or a column order other than `FRAME_SCHEMA`'s raises a bare polars error or a `TypeError` there.
+    The recovery is a rebuilt set, because a recast in place changes the file's `dataset_hash`.
+
+    Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.
+    """
+    try:
+        frame = read_parquet(path)
+    except (OSError, pl.exceptions.PolarsError) as exc:
+        raise OHLCError(f"reach_round: cannot read {path} for {symbol}@{interval} -- {exc}") from exc
+
+    differs = [
+        f"{column} is {frame.schema[column]}, not {dtype}" if column in frame.schema else f"{column} is absent"
+        for column, dtype in FRAME_SCHEMA.items()
+        if frame.schema.get(column) != dtype
+    ]
+    differs += [f"{column} is not a column of it" for column in frame.schema if column not in FRAME_SCHEMA]
+    if not differs and frame.columns != list(FRAME_SCHEMA):
+        differs = [f"the columns are in another order ({', '.join(frame.columns)})"]
+    if differs:
+        raise OHLCError(
+            f"reach_round: {path} is not the frame this command joins for {symbol}@{interval} -- {'; '.join(differs)}; "
+            "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
+            "canonical name) rather than recast this file, which would change its dataset hash"
+        )
+    return frame
 
 
 def _merge_or_detach(
@@ -133,7 +164,7 @@ def reach_round(
 
             base, quote = symbol.split("/")
 
-            canonical = read_parquet(canonical_root / base / quote / f"{interval}.parquet")
+            canonical = _read_canonical(canonical_root / base / quote / f"{interval}.parquet", symbol, interval)
             # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
             if fetched:
                 sleep_fn(MIN_REST_INTERVAL_SECONDS)
