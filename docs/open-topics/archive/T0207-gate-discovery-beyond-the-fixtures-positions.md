@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'the next branch that adds a skip in a position `_FIXTURE` does not already carry, or the next change to `_gates` in `tests/test_live_venue_opt_in.py` — either is a session already reading the walker'
+status: resolved
 ---
 
 # Gate discovery beyond the fixture's positions
@@ -30,9 +29,10 @@ The two `unittest` positions show how a position is actually found today. They w
 - Three of those were proven on T0190's branch by planted worktrees rather than by `infra/scripts/mutate-probe.sh`, because a `sed` expression cannot restructure a statement into a branch; that cost is unchanged and any new position pays it.
 - An independent derivation is what the property needs, and `test_the_fixture_carries_every_position_a_skip_can_sit`'s docstring names the two routes to one: a fixture whose expected gates are written down independently, or a second implementation. The second is cheap for the call-shaped positions: a FLAT walk over every module under `tests/`, collecting every `pytest.skip` call and every `raise unittest.SkipTest` by line and knowing nothing about enclosing constructs, then asserting each line appears among `_gates()`'s results. It is independent of exactly the arms `_gates` can be missing, and it does not cover the mark and decorator positions, which are found by a different route again.
 
-## Suggested next steps
+## Resolution
 
-- Write that flat walk as a second test in `tests/test_live_venue_opt_in.py`, deriving its set without calling `_gates` or `_guards_of`, and assert set equality by `(file, line)` — a difference in either direction is the finding: a line the flat walk sees and `_gates` does not is a missed position, and the reverse is a gate attributed to a line nothing skips at.
-- For the mark and decorator positions, derive the second set off the decorator and mark nodes directly rather than through `_is_pytest_call`, so the two routes share no resolution code.
-- Prove each new check by planting one skip per position in a scratch worktree and confirming the check names it; a `sed` mutation is enough only for the positions that do not restructure a statement, and `infra/scripts/mutate-probe.sh` refuses the rest for that reason.
-- If the equality cannot be made to hold — the likely outcome for the decorator half, whose four spellings resolve through imports — record what the second route does and does not see in the guard's module docstring, and leave the gap stated rather than implied.
+Delivered by PR #569, in `tests/test_live_venue_opt_in.py`. `_flat_sites` is the second implementation: it reads each node alone — a call or a raise that is a skip under its own name, a `skipif` / `skipIf` / `skipUnless` call — resolves no import and knows nothing of what encloses a node, so it has no position to miss. `test_a_second_walk_of_the_tree_finds_exactly_the_gates_the_walker_finds` holds the two walks equal over `tests/` by file and line, and a third test holds that `_flat_sites` names none of the functions `_gates` is built from.
+
+Both halves hold as equality, the mark half included, which this topic expected to fail: measured before the assertion was written, the flat walk found 25 skip calls and 40 marks over `tests/`, and the walker's gates were exactly those. Over the guard's own fixture the walks differ in two cases, both a skip bound to another name, and `_FLAT_WALK_UNSEEN` holds that difference as a list. So what remains unheld is narrower than it was and is written in the module docstring: a skip under another name AND in a position `_guards_of` does not walk.
+
+Planting named five such positions — a boolean short-circuit, a conditional expression, a `for`'s `else`, a comprehension, a nested function. The walker gains no arm for them: none is in the tree, and one that arrives fails the suite with its file and line and the instruction to add the arm and a fixture case, which is the reader this topic said did not exist. The same proving found the fixture carried no raised skip and no `mark.skip`, so the walker's arms for those were held by no case; four cases close that.
