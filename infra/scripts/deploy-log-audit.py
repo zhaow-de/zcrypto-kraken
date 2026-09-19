@@ -27,6 +27,10 @@ DEPLOY_LOG = _REPO / "docs" / "reference" / "deploy-log.jsonl"
 _CYCLE_SECONDS = 4 * 60 * 60
 _AFTER_BOUNDARY_SECONDS = 1800
 _BEFORE_BOUNDARY_SECONDS = 600
+# `site.yml` opens the gap this long after the boundary cycle's journalled completion, and keeps the fixed floor
+# above only when it cannot read one (spec 00083 D6). This log cannot read the journal; a cycle cannot complete
+# before its boundary, so this is the earliest the playbook can have admitted a row.
+_AFTER_COMPLETION_SECONDS = 300
 
 EXIT_OK = 0
 EXIT_FEED_UNREACHABLE = 2
@@ -67,11 +71,24 @@ def inside_window(stamp: str, window: dict) -> bool:
     return at(window["scheduled_for"]) <= at(stamp) <= at(window["scheduled_until"])
 
 
+def _since_boundary(stamp: str) -> int:
+    moment = at(stamp)
+    return (moment.hour * 3600 + moment.minute * 60 + moment.second) % _CYCLE_SECONDS
+
+
 def inside_gap(stamp: str) -> bool:
     """A row is inside the engine's gap when it clears the boundary behind it and the one ahead."""
-    moment = at(stamp)
-    since = (moment.hour * 3600 + moment.minute * 60 + moment.second) % _CYCLE_SECONDS
+    since = _since_boundary(stamp)
     return since >= _AFTER_BOUNDARY_SECONDS and _CYCLE_SECONDS - since >= _BEFORE_BOUNDARY_SECONDS
+
+
+def on_the_completion_floor(row: dict) -> bool:
+    """A row short of the fixed floor that the playbook can have admitted on a completed cycle's floor instead.
+    Success is sufficient evidence of that, since the window assert precedes it, and not necessary: a run admitted
+    and failed later counts as outside. A row that carried the bypass was admitted on its reason and not on a floor."""
+    since = _since_boundary(row["ts"])
+    admitted = row["rc"] == 0 and "engine_window_override" not in (row.get("extra_vars") or {})
+    return admitted and _AFTER_COMPLETION_SECONDS <= since < _AFTER_BOUNDARY_SECONDS
 
 
 def fetch_maintenances(url: str = FEED_URL, timeout: int = FEED_TIMEOUT_SECONDS) -> list[dict]:
@@ -112,9 +129,10 @@ def run_maintenance(rows: list[dict], windows: list[dict], *, venue_facing_only:
 
 def run_engine_window(rows: list[dict]) -> int:
     engine = [row for row in rows if "engine" in row["tags"].split(",")]
-    outside = [row for row in engine if not inside_gap(row["ts"])]
+    floor = [row for row in engine if on_the_completion_floor(row)]
+    outside = [row for row in engine if not inside_gap(row["ts"]) and row not in floor]
     failed = [row for row in engine if row["rc"] != 0]
-    print(f"engine rows {len(engine)} outside window {len(outside)} failed {len(failed)}")
+    print(f"engine rows {len(engine)} outside window {len(outside)} failed {len(failed)} on the completion floor {len(floor)}")
     return EXIT_OK
 
 

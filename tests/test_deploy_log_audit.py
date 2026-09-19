@@ -27,8 +27,8 @@ def _load(path: pathlib.Path, name: str):
 audit = _load(_SCRIPT, "deploy_log_audit")
 
 
-def _row(ts: str, *, limit: str = "zcrypto", tags: str = "", rc: int = 0) -> dict:
-    return {"ts": ts, "limit": limit, "tags": tags, "rc": rc, "playbook": "site.yml"}
+def _row(ts: str, *, limit: str = "zcrypto", tags: str = "", rc: int = 0, extra_vars: dict | None = None) -> dict:
+    return {"ts": ts, "limit": limit, "tags": tags, "rc": rc, "playbook": "site.yml", "extra_vars": extra_vars or {}}
 
 
 def _log(tmp_path: pathlib.Path, rows: list[dict]) -> str:
@@ -145,21 +145,44 @@ def test_maintenance_counts_none_when_every_row_sits_outside(tmp_path, capsys):
 
 
 def test_engine_window_counts_the_rows_outside_the_gap(tmp_path, capsys):
-    """First row is 600 s past a boundary, second is 300 s short of the next; the third clears both."""
+    """First row is 200 s past a boundary, second is 300 s short of the next; the third clears both."""
     rows = [
-        _row("2026-09-01T00:10:00Z", tags="engine"),
+        _row("2026-09-01T00:03:20Z", tags="engine"),
         _row("2026-09-01T03:55:00Z", tags="engine,ops", rc=1),
         _row("2026-09-01T01:00:00Z", tags="engine"),
     ]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
-    assert capsys.readouterr().out.strip() == "engine rows 3 outside window 2 failed 1"
+    assert capsys.readouterr().out.strip() == "engine rows 3 outside window 2 failed 1 on the completion floor 0"
+
+
+def test_engine_window_admits_the_row_the_playbook_admitted_on_a_completed_cycles_floor(tmp_path, capsys):
+    """744 s past a boundary: past the earliest the playbook's completion floor can open, short of the fixed one."""
+    rows = [_row("2026-09-19T08:12:24Z", tags="capture,engine")]
+    assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
+    assert capsys.readouterr().out.strip() == "engine rows 1 outside window 0 failed 0 on the completion floor 1"
+
+
+@pytest.mark.parametrize(
+    ("why", "row"),
+    [
+        (
+            "it carried the bypass",
+            _row("2026-09-19T08:12:24Z", tags="engine", extra_vars={"engine_window_override": "a reason given"}),
+        ),
+        ("the run did not succeed", _row("2026-09-19T08:12:24Z", tags="engine", rc=2)),
+        ("no completed cycle opens the gap this early", _row("2026-09-19T08:04:59Z", tags="engine")),
+    ],
+)
+def test_engine_window_still_counts_a_row_ahead_of_the_fixed_floor_that_the_playbook_did_not_admit(tmp_path, capsys, why, row):
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    assert capsys.readouterr().out.strip().startswith("engine rows 1 outside window 1 "), why
 
 
 def test_engine_window_counts_none_when_every_engine_row_sits_in_the_gap(tmp_path, capsys):
     """The capture row is outside the gap and belongs to no engine cycle, so the tag filter must drop it."""
     rows = [_row("2026-09-01T01:00:00Z", tags="engine"), _row("2026-09-01T00:10:00Z", tags="capture")]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
-    assert capsys.readouterr().out.strip() == "engine rows 1 outside window 0 failed 0"
+    assert capsys.readouterr().out.strip() == "engine rows 1 outside window 0 failed 0 on the completion floor 0"
 
 
 def test_an_unreachable_feed_exits_2_rather_than_counting_zero(tmp_path, capsys, monkeypatch):
