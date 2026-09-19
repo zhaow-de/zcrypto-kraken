@@ -545,7 +545,7 @@ def _pytest_bindings(tree: ast.Module, attribute: str) -> set[str]:
             and ast.unparse(value.func).endswith("partial")
             and (
                 (isinstance(first, ast.Attribute) and first.attr == attribute and ast.unparse(first.value) in modules)
-                # A name already bound is the function too: the bare import, or an earlier partial of it.
+                # A name already bound is the function too; one `ast.walk` reaches later is not.
                 or (isinstance(first, ast.Name) and first.id in bound)
             )
         )
@@ -1375,6 +1375,21 @@ def test_skips_through_a_name_bound_to_a_partial_of_the_bare_import():
 def test_skips_through_a_name_bound_to_a_partial_of_a_partial():
     if not ROOT.exists():
         _bail_twice()
+
+
+def test_skips_through_a_partial_of_the_bare_import():
+    if not ROOT.exists():
+        functools.partial(skip, "no data")()
+
+
+from functools import partial
+
+_bail_short = partial(pytest.skip, "no data")
+
+
+def test_skips_through_a_name_bound_to_a_partial_imported_by_name():
+    if not ROOT.exists():
+        _bail_short()
 """
 
 _FIXTURE_GATES = _labelled(_gates(_FIXTURE), "fixture")
@@ -1486,6 +1501,8 @@ _REACHED_THROUGH_A_CALL = (
     "test_skips_through_a_name_bound_to_a_partial_of_pytests_skip",
     "test_skips_through_a_name_bound_to_a_partial_of_the_bare_import",
     "test_skips_through_a_name_bound_to_a_partial_of_a_partial",
+    "test_skips_through_a_partial_of_the_bare_import",
+    "test_skips_through_a_name_bound_to_a_partial_imported_by_name",
 )
 # The gates that must NOT be refused for the assertions above to mean anything: the one opt-in read
 # twice, a dataset gate, and a membership of a module constant -- the last two the accepting direction
