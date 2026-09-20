@@ -798,8 +798,9 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
             content_hash = snapshot_content_hash(ts, closes)
         # `PolarsError` is no subclass of anything `read_soak_verdict` catches, and neither is the `struct.error` a
         # close of the wrong dtype raises inside the hash, so an unguarded read takes the whole pass down on a
-        # traceback instead of one row.
-        except (PolarsError, struct.error) as exc:
+        # traceback instead of one row; a ts of the wrong dtype raises `AttributeError` or `TypeError` there, which the
+        # reader does catch, but only this arm names the leg the row should point at.
+        except (PolarsError, struct.error, AttributeError, TypeError) as exc:
             raise ValueError(
                 f"pair={entry['pair']!r} grid='240' at {source}: leg cannot be read -- {str(exc).splitlines()[0]}"
             ) from exc

@@ -401,6 +401,24 @@ def test_a_leg_whose_close_is_not_a_number_reads_unreadable_and_does_not_end_the
     assert "pair='BTC/EUR'" in check.value and "leg cannot be read -- " in check.value, check.value
 
 
+def test_a_leg_whose_ts_is_not_a_datetime_reads_unreadable_naming_the_leg(tmp_path):
+    """An integer ts opens and hashes up to the stamp, where the hash asks it for a timezone; the row names
+    the leg, since an unnamed `unreadable:` is routed to the reader's owner and not to the mount."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record_path = next(journal.glob("*/cycle-*.json"))
+    legs = {e["pair"]: e for e in json.loads(record_path.read_text())["snapshots"] if e["grid"] == "240"}
+    leg = journal / legs["BTC/EUR"]["path"]
+    pl.DataFrame({"ts": [1758283200], "close": [1.0]}).write_parquet(leg)
+
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=lambda _: ops_daily.derive_soak_store(journal, tmp_path / "scratch"))
+
+    assert not check.ok and check.value.startswith("unreadable:"), check.value
+    assert "pair='BTC/EUR'" in check.value and str(leg) in check.value and "leg cannot be read -- " in check.value, check.value
+
+
 def test_a_journal_with_no_record_and_a_record_with_no_240_snapshot_both_refuse(tmp_path):
     with pytest.raises(FileNotFoundError, match="no cycle record"):
         ops_daily.derive_soak_store(tmp_path, tmp_path / "scratch")
