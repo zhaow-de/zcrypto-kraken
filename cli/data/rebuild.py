@@ -128,9 +128,8 @@ _STAMPED_FULL = re.compile(r"ohlc-full-\d{8}")
 
 
 def resolve_canonical_root(data_root: Path) -> Path:
-    """The newest stamped `ohlc-full-<%Y%m%d>` sibling, else canonical `ohlc-full`: a dump ingest re-freezes the
-    canonical as a sibling (spec 00056 D1c), so the reach round joins the sibling that reaches furthest -- the
-    same newest-wins rule `resolve_ohlc_source` applies to reach siblings, exact stamps only."""
+    """A dump ingest re-freezes the canonical as an `ohlc-full-<stamp>` sibling and never in place (spec 00056
+    D1c), so the frozen set reaching furthest is the newest stamp, not `ohlc-full`."""
     stamped = sorted(
         (p for p in data_root.glob("ohlc-full-*") if p.is_dir() and _STAMPED_FULL.fullmatch(p.name)),
         key=lambda p: p.name,

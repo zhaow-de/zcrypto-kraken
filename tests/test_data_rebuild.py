@@ -562,8 +562,8 @@ def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path,
 
 
 def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
-    """The reach builder must read the LIVE ohlc-full and write into the minted sibling only --
-    reading the sibling instead would reach forward from an empty set."""
+    """No stamped sibling here, so the builder joins `ohlc-full` -- and writes into the minted sibling
+    only, reading which would reach forward from an empty set."""
     (tmp_path / "ohlc-full").mkdir()
     seen = {}
 
