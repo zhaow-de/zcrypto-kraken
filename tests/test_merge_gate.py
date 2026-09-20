@@ -176,7 +176,7 @@ def _rebased_repo(
     _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "checkout", "-q", "feat")
     if merge_instead and drop_a_commit:
-        _git(root, "reset", "-q", "--hard", "HEAD~1")  # lost before the merge, which then collides on nothing
+        _git(root, "reset", "-q", "--hard", "HEAD~1")  # after the merge, HEAD~1 would be the read's tip
     done = subprocess.run(
         ["git", "merge" if merge_instead else "rebase", "develop"],
         cwd=root,
