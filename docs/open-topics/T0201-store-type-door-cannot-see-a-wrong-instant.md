@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'a soak-check run renders `window_bound : store` with a `store last bar` that is not on a 4h boundary (00/04/08/12/16/20 UTC) -- the shape a wrong-instant store frame produces, and one a legitimately short store cannot.'
+ripe_when: '`cli/engine/store.py` is next changed -- a session already at the two doors this topic is about, and the arm the daily pass decides; OR a soak-check run renders `window_bound : store` with a `store last bar` that is not on a 4h boundary (00/04/08/12/16/20 UTC) -- the shape a wrong-instant store frame produces, and one a legitimately short store cannot.'
 ---
 
 # The store's type door cannot see a wrong instant, and the store leg then degrades at rc 0
@@ -22,7 +22,9 @@ grid's origin, which is not the frame's to state.
 
 ## Findings so far
 
-Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.
+What PR #514 (T0193) measured is the sections above.
+
+**The daily pass's `soak verdict` row cannot evaluate this trigger.** Spec `00115` runs `soak-check` over a store derived from the newest journaled 240 snapshots, whose last bar is that cycle's own `last_ts` and so sits on a 4h boundary by construction. An off-boundary `store last bar` can only come from a run over the engine host's own store, which has no replica (`docs/reference/fleet.md`).
 
 ## Suggested next steps
 
@@ -31,3 +33,4 @@ Nothing investigated since registration: what PR #514 (T0193) measured is the se
   attached and no blast radius on the live path.
 - If a refusal is wanted instead, it belongs where the interval is known and the frame is being consumed as a
   calendar — `realized_series`, not `read_store_series`.
+- When the engine host's store is next read in an attended session, compare its live `240` legs against the newest journal record's snapshots: the daily `soak verdict` row scores the journaled closes (spec `00115` D2), and their equality with the live store has never been read. Pull with `ssh zcrypto 'sudo tar -C /var/lib/zcrypto-engine -cf - store' | tar -C <scratch> -xf -`, then for each `240` leg read `n_bars`, `last_ts` and the closes of `<scratch>/store` against the file the record's `snapshots[].path` names under `/mnt/zhao-crypto/engine-journal`; equal on every leg settles D2, a difference is a finding for this topic. If this topic resolves with the read still untaken, the step leaves with its own topic.

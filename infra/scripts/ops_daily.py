@@ -11,8 +11,10 @@ import http.client
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
 import urllib.error
 import urllib.parse
@@ -739,6 +741,122 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     )
 
 
+SOAK_CHECK = "soak verdict"
+SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")
+SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
+# PROVISIONAL. At a 90% band one metric outside is the count chance expects, so one never fails the row. Seven
+# independent looks at 10% reach three under 3% of the time; the seven are correlated, which loosens that bound,
+# and no re-derivation is scheduled: the row's own history is the evidence, and whoever reads its first FAIL has it.
+SOAK_OUTSIDE_FAILS_AT = 3
+# The journal is a mount and the registry is tracked, so both read the same from any checkout; the canonical
+# dataset is gitignored and therefore per-checkout, while the pass runs from whichever checkout sits at
+# `develop`'s tip. Left to resolve against the running checkout it reads `unreadable:` and takes the whole
+# pass to exit 2 for a property of the operator's shell.
+SOAK_CANONICAL = Path("/home/zhaow/Projects/zcrypto-kraken/data/ohlc-full")
+# Wide on purpose: the row is read once a day, and a slow reading is still a reading where a killed one is a
+# gap. `_TIMEOUT` above bounds one HTTP or ssh read and is not this.
+_SOAK_TIMEOUT_SECONDS = 900
+# PROVISIONAL. The newest journaled cycle T scores the window to T-4h and a cycle lands every four hours, so a
+# current window ends under eight hours before the pass plus the journal's lag to the mount -- one archive-pull
+# cycle and its hourly sleep. Twelve hours leaves about four for that lag; past it the instrument judged an
+# older book than the one the pass is about.
+SOAK_WINDOW_STALE_AFTER = timedelta(hours=12)
+_SOAK_CANONICAL_ABSENT = "canonical absent"
+# The label `soak-check` gives a metric whose live value fell outside its null band.
+SOAK_OUTSIDE_LABEL = "inconsistent"
+
+
+def derive_soak_store(journal_dir: Path, root: Path) -> Path:
+    """A store-shaped directory holding the newest success record's 240 snapshots, which is every close
+    `soak-check` reads from the engine's store: each cycle journals the store series it read."""
+    records = sorted(journal_dir.glob("*/cycle-*.json"))
+    if not records:
+        raise FileNotFoundError(f"no cycle record under {journal_dir}")
+    legs = [entry for entry in json.loads(records[-1].read_text())["snapshots"] if entry["grid"] == "240"]
+    if not legs:
+        raise ValueError(f"{records[-1]} journals no 240 snapshot")
+    store = root / "store"
+    for entry in legs:
+        base, quote = entry["pair"].split("/")
+        leg = store / base / quote / "240.parquet"
+        leg.parent.mkdir(parents=True)
+        shutil.copyfile(journal_dir / entry["path"], leg)
+    return store
+
+
+def soak_run(journal_dir: Path) -> dict:
+    """The payload of one `soak-check` run over `derive_soak_store`. `cwd` pins the CODE to the checkout this
+    script sits in; the DATA is not in it, so the canonical dataset is named outright at `SOAK_CANONICAL`."""
+    with tempfile.TemporaryDirectory(prefix="zcrypto-soak-") as scratch:
+        root = Path(scratch)
+        out = root / "soak.json"
+        command = ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
+        command += ("--canonical-dir", str(SOAK_CANONICAL))
+        command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
+        done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
+        if not out.exists():
+            # The CLI logs its one-line aborts to stdout; stderr is where `uv run` reports a venv sync.
+            last = (done.stdout.strip() or done.stderr.strip() or "no output").splitlines()[-1]
+            raise RuntimeError(f"soak-check exited {done.returncode} and wrote no payload: {last}")
+        return json.loads(out.read_text())
+
+
+def read_soak_verdict(*, now: datetime, runner) -> Check:
+    """The scheduled reader of `soak-check`'s gating verdicts: one row, decided in this order.
+
+    A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
+    pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
+    the payload carries populated verdicts beside a non-empty one. Then the panel's two counts decide, and
+    last the scored window's currency.
+
+    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
+    """
+    try:
+        payload = runner(SOAK_JOURNAL)
+        void = list(payload["void_reasons"])
+        if any(_SOAK_CANONICAL_ABSENT in reason for reason in void):
+            return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {'; '.join(void)}")
+        if void:
+            return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"void: {'; '.join(void)}")
+        panel, provenance, verdicts = payload["panel"], payload["provenance"], payload["gating_verdicts"]
+        outside = []
+        for metric, row in verdicts.items():
+            # A metric judged under one null alone carries no `dual`: `soak-check` writes `None` there.
+            dual = row.get("dual") or {}
+            if dual.get("verdict", row["verdict"]) == SOAK_OUTSIDE_LABEL:
+                calls = [dual.get("primary"), dual.get("secondary")].count(SOAK_OUTSIDE_LABEL)
+                outside.append(f"{metric} ({'both constructions' if calls == 2 else 'one construction'})")
+        self_test = payload["self_test"]
+        flags = "/".join(
+            "skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED")
+            for name in ("instrument_ok", "identity_ok", "reconcile_ok")
+        )
+        # `n_indeterminate` counts toward `n_metrics` and never toward `n_outside`, so it is no decision.
+        decided = int(panel["n_metrics"]) - int(panel["n_indeterminate"])
+        reachable = decided >= SOAK_OUTSIDE_FAILS_AT
+        metrics = "metric" if decided == 1 else "metrics"
+        floor = "" if reachable else f"; only {decided} {metrics} decided, under the threshold's {SOAK_OUTSIDE_FAILS_AT}"
+        panel_line = f"{panel['line']}; {panel['indeterminate_line']}" if panel["indeterminate_line"] else panel["line"]
+        behind = now - datetime.fromisoformat(provenance["last_cycle_ts"])
+        current = provenance["window_bound"] == "journal" and behind <= SOAK_WINDOW_STALE_AFTER
+        # The clause names the arm that bit: a window the store or the clock cut short can end an hour ago.
+        if provenance["window_bound"] != "journal":
+            stale = f"; NOT CURRENT -- the {provenance['window_bound']}, not the journal, ends the scored window"
+        else:
+            hours = behind.total_seconds() / 3600
+            stale = "" if current else f"; NOT CURRENT -- the last scored cycle is {hours:.1f} h before this pass"
+        value = (
+            f"{panel_line}{floor}; L={provenance['L']} to {provenance['last_cycle_ts']}, "
+            f"window_bound={provenance['window_bound']}{stale}; self-test {flags}; "
+            f"outside: {', '.join(outside) or 'none'}; "
+            f"no-book bars {payload['realized_no_book_bars']} of {payload['realized_total_bars']}; hhi {verdicts['hhi']['verdict']}"
+        )
+        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current
+        return Check(SOAK_CHECK, SOAK_EXPR, ok=ok, value=value)
+    except (*_UNREACHABLE, subprocess.SubprocessError, TypeError, AttributeError, RuntimeError) as exc:
+        return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
+
+
 def read_deploys(window: timedelta, *, now: datetime, path: Path | None = None) -> list[dict]:
     log = path or DEPLOY_LOG
     if not log.exists():
@@ -860,6 +978,8 @@ class Report:
         # different findings and take different runbook dispositions.
         cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
         failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
+        # Carried whole and on a PASS too: these entries are where `SOAK_OUTSIDE_FAILS_AT`'s history lives.
+        soak = next((c.value for c in self.verdict if c.name == SOAK_CHECK), None)
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
         # WARNING is carried too, and only when there is some: a healthy fleet produces no
         # ERROR/CRITICAL for weeks, so a paragraph counting only those records "0" every day and the
@@ -877,7 +997,7 @@ class Report:
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired}"
             f"{f' · {sick} rule{"s" if sick != 1 else ""} not evaluating' if sick else ''}"
-            f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed} · "
+            f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed}{f' · soak {soak}' if soak else ''} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
             f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{"s" if findings != 1 else ""}' if findings else ''} · deploys {deploys} · "
@@ -936,6 +1056,7 @@ def main(argv: list[str]) -> int:
     verdict = read_verdict(token)
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     verdict.append(read_agentboard_cgroup(runner=ssh_read))
+    verdict.append(read_soak_verdict(now=now, runner=soak_run))
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
@@ -1175,26 +1296,31 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
 )
 
-# `zcrypto engine <sub>`: `exec-status` reads, `cycle --replace` deletes a boundary's record, and
-# `gate-export` writes a textfile. The read subcommands are named one by one for the same reason.
-_ZCRYPTO_READ_SUBS = ("exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check")
-_FIRST_STAGE_SHAPES += tuple(
-    _Shape(
-        ("zcrypto", "engine", sub),
-        {
-            "--journal-dir": _PATH,
-            "--since": _SINCE,
-            "--until": _SINCE,
-            "--nav": _INT,
-            "--minimums": _FILEREF,
-            "--path": _NAME,
-            "--date": _SINCE,
-            "--pair": _NAME,
-            "--json": None,
-        },
-    )
-    for sub in _ZCRYPTO_READ_SUBS
-)
+# `zcrypto engine <sub>`, one flag table per read subcommand; `cycle --replace` deletes a boundary's record
+# and `gate-export` writes a textfile, so neither is here. The real options left out of a sub's table are named
+# with their reasons in `tests/test_ops_daily.py::_ENGINE_OPTIONS_LEFT_OUT`, whose test holds both to the CLI.
+_FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
+_ISOWEEK = r"\d{4}-W\d{2}"
+_ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _SINCE, "--until": _SINCE}
+_ENGINE_SIZING = {"--minimums": _FILEREF, "--nav": _FLOAT}
+_ZCRYPTO_READ_FLAGS: dict[str, dict[str, str | None]] = {
+    "exec-status": {"--state-dir": _PATH},
+    "report": {"--journal-dir": _PATH},
+    "decompose": {**_ENGINE_WINDOW, "--json": None},
+    "accum-replay": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--json": None},
+    "tracking-report": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--gate-from": _ISOWEEK, "--simulated-fills": None, "--json": None},
+    "soak-check": {
+        "--journal-dir": _PATH,
+        "--store-dir": _PATH,
+        "--canonical-dir": _PATH,
+        "--fee-per-side": _FLOAT,
+        "--band": _FLOAT,
+        "--floor": _INT,
+        "--null": _NAME,
+        "--path": _NAME,
+    },
+}
+_FIRST_STAGE_SHAPES += tuple(_Shape(("zcrypto", "engine", sub), flags) for sub, flags in _ZCRYPTO_READ_FLAGS.items())
 
 # Pipeline filters. Every one takes ZERO file operands -- the rule that refuses `sort -o out`,
 # `uniq in out` and `tee`, none of which announces its write in a verb. `grep` takes exactly its

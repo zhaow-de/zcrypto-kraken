@@ -751,6 +751,65 @@ _CLOSES = {
 }
 
 
+def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, monkeypatch):
+    """The daily pass's soak row reduces this payload and reads these keys -- and at `dual`, these VALUES -- by
+    name, so a rename or a reshape here is a reader that goes `unreadable`, or silently miscounts, every morning."""
+    _patch_config(monkeypatch, tmp_path)
+    _patch_canonical_pipeline(monkeypatch)
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, _CLOSES)
+    json_out = tmp_path / "report.json"
+
+    result = runner.invoke(app, _soak_args(journal_dir, store_dir, tmp_path / "fake-canonical", json_out))
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(json_out.read_text())
+    assert payload["void_reasons"] == []
+    panel = payload["panel"]
+    assert isinstance(panel["n_outside"], int) and isinstance(panel["n_metrics"], int)
+    assert isinstance(panel["n_indeterminate"], int)
+    assert panel["line"].startswith(f"{panel['n_outside']} of {panel['n_metrics']} outside band")
+    # The row prints this line verbatim when it is non-empty and drops the clause when it is empty, so the
+    # tie between the count and the line is what the reduction leans on, not either alone.
+    assert (panel["indeterminate_line"] == "") == (panel["n_indeterminate"] == 0), panel
+    self_test = payload["self_test"]
+    assert {"instrument_ok", "identity_ok", "reconcile_ok", "void"} <= set(self_test), self_test
+    # Three states, not two: the row spells `None` `skipped`, and only a ran-and-failed flag voids.
+    assert all(self_test[flag] in (True, False, None) for flag in ("instrument_ok", "identity_ok", "reconcile_ok")), self_test
+    assert self_test["void"] == any(self_test[flag] is False for flag in ("instrument_ok", "identity_ok", "reconcile_ok"))
+    assert {"L", "last_cycle_ts", "window_bound"} <= set(payload["provenance"])
+    # The window arm compares this VALUE, so the name alone is no pin.
+    assert payload["provenance"]["window_bound"] == "journal"
+    # The window arm subtracts this stamp from an aware clock; a naive one reads `unreadable` every morning.
+    assert datetime.fromisoformat(payload["provenance"]["last_cycle_ts"]).tzinfo is not None
+    assert isinstance(payload["realized_no_book_bars"], int) and isinstance(payload["realized_total_bars"], int)
+    assert "hhi" in payload["gating_verdicts"]
+    for metric, row in payload["gating_verdicts"].items():
+        assert isinstance(row["verdict"], str), metric
+        assert {"primary", "secondary", "verdict"} <= set(row["dual"]), (metric, row["dual"])
+        # The reduction counts the bare token `inconsistent` at these two keys, so their VALUES are pinned
+        # beside their names: a nested object here keeps every name and silently zeroes the count.
+        assert row["dual"]["primary"] in soak._VERDICT_LABELS, (metric, row["dual"]["primary"])
+        assert row["dual"]["secondary"] in soak._VERDICT_LABELS, (metric, row["dual"]["secondary"])
+
+    # This run judges nothing -- `0 of 0`, every verdict `n/a` -- because its fixture's null is constant, so no
+    # assertion over THIS payload can tell the panel's counts apart. The payload's panel block is held field
+    # for field in `tests/test_engine_soak.py::test_the_payloads_panel_block_is_the_panel_field_for_field`;
+    # the block below holds the count-to-line tie and the indeterminate tie on a panel where both discriminate.
+    null = list(range(101))
+    judged = {m: soak.metric_verdict(50, null) for m in ("gross", "net", "turnover", "hhi")}
+    duals = {
+        "gross": soak.reconcile_verdicts("inconsistent", "inconsistent"),
+        "net": soak.reconcile_verdicts("consistent", "inconsistent"),  # opposite extremes: indeterminate
+        "turnover": soak.reconcile_verdicts("consistent", "consistent"),
+        "hhi": soak.reconcile_verdicts("n/a", "n/a"),  # undiscriminating, so out of `n_metrics`
+    }
+    mixed = soak.summarize_panel(judged, dual_verdicts=duals)
+    assert (mixed.n_outside, mixed.n_metrics, mixed.n_indeterminate) == (1, 3, 1)
+    assert mixed.line.startswith(f"{mixed.n_outside} of {mixed.n_metrics} outside band")
+    assert mixed.indeterminate_line.startswith(f"{mixed.n_indeterminate} of {mixed.n_metrics} indeterminate")
+    assert (mixed.indeterminate_line == "") == (mixed.n_indeterminate == 0), mixed
+
+
 def test_soak_check_exits_non_zero_when_the_null_reconciliation_fails(tmp_path, monkeypatch):
     """A `reconcile_ok=False` null is a BROKEN CODE CONTRACT, not a data finding: the run prints its
     window, its self-tests and its record-47 comparison, then exits 1."""
