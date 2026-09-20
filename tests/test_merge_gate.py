@@ -28,8 +28,8 @@ def _load(path: pathlib.Path, name: str):
 gate = _load(_SCRIPT, "merge_gate")
 
 
-def _eval(pr, head_commit=None, files=None, branch_growth=(), read_commit=None, rebased=None):
-    return gate.evaluate(pr, head_commit, files, list(branch_growth), read_commit, rebased)
+def _eval(pr, head_commit=None, files=None, branch_growth=(), kept=None):
+    return gate.evaluate(pr, head_commit, files, list(branch_growth), kept)
 
 
 TIP = "6f02667280cfbd7b76cb39d3139a5f865d995c61"
@@ -73,46 +73,14 @@ def test_the_one_row_commit_past_the_read_passes():
     assert _eval(pr, _head([PREV], [gate.INDEX])) == []
 
 
-def _tree(commit: dict, tree: str, message: str | None = "fix: x") -> dict:
-    return {**commit, "commit": {"tree": {"sha": tree}, "message": message}}
-
-
-def test_an_amend_that_kept_the_tree_the_read_graded_passes():
+def test_the_clone_s_answer_admits_or_refuses_a_head_past_the_read():
     pr = _pr(body=_stale_body())
-    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
-    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40)) == []
-
-
-def test_an_amend_that_kept_the_tree_but_reworded_the_message_fails():
-    pr = _pr(body=_stale_body())
-    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, "fix: x\n\nProbe: KILLED")
-    fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40))
-    assert len(fails) == 1 and "a message it did not" in fails[0] and "`pre-review` over the amended commit" in fails[0]
-    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40, "fix: x\n\nProbe: KILLED")) == []
-    fails = _eval(pr, _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, None), read_commit=_tree({"sha": PREV}, "t" * 40))
-    assert len(fails) == 1 and "a message it did not" in fails[0], "a head commit with no message is not the read's message"
-    fails = _eval(
-        pr, _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, None), read_commit=_tree({"sha": PREV}, "t" * 40, None)
-    )
-    assert len(fails) == 1 and "a message it did not" in fails[0], "two absent messages are not one message"
-
-
-def test_a_head_whose_tree_differs_from_the_read_tips_fails():
-    pr = _pr(body=_stale_body())
-    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
-    fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40))
-    assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
-    assert len(_eval(pr, head)) == 1  # the read tip's commit not fetched: no tree to compare, so no pass
-
-
-def test_a_rebase_that_kept_every_patch_passes_and_one_that_did_not_fails():
-    pr = _pr(body=_stale_body())
-    head = _tree(_head([OTHER], ["cli/engine/executor.py"]), "t" * 40)
-    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40), rebased=True) == []
-    for answer in (False, None, "`git fetch` exited 128: fatal: no such remote"):
-        fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40), rebased=answer)
+    head = _head([OTHER], ["cli/engine/executor.py"])
+    assert _eval(pr, head, kept=True) == []
+    for answer in (None, "the head's tree is not the read's"):
+        fails = _eval(pr, head, kept=answer)
         assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
-        assert ("could not compare: `git fetch` exited 128" in fails[0]) is isinstance(answer, str), answer
+        assert ("the head's tree is not the read's" in fails[0]) is isinstance(answer, str), answer
 
 
 def _env(root: pathlib.Path) -> dict[str, str]:
@@ -214,10 +182,10 @@ def _rebased_repo(
 
 _SHAPES = {"rebased": {}, "merged": {"merge_instead": True}}
 _MORE = {
-    "changed": {"change_a_patch": True},
-    "smuggled": {"smuggle_a_row": True},
-    "dropped": {"drop_a_row": True},
-    "stacked": {"stack_a_commit": True},
+    "changed": ({"change_a_patch": True}, "is not the read's patches on the moved base: code.py differs"),
+    "smuggled": ({"smuggle_a_row": True}, "carries a line the read's own patch did not, or lost one"),
+    "dropped": ({"drop_a_row": True}, "carries a line the read's own patch did not, or lost one"),
+    "stacked": ({"stack_a_commit": True}, "the messages from the base to the head are not the read's"),
 }
 
 
@@ -225,31 +193,35 @@ _MORE = {
 def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_path, shape):
     """Driven on a real repo rather than stubbed: the arm is built on `git merge-tree` and a stub would
     measure the stub. The colliding case collides on both rendered files, so each member of RENDERED admits it."""
-    arm = gate.rebase_kept_every_patch
+    arm = gate.head_is_the_read
     read, head = _rebased_repo(tmp_path / shape, **_SHAPES[shape])
     assert arm(read, head, "develop", cwd=tmp_path / shape) is True
     assert arm(read[:8], head, "develop", cwd=tmp_path / shape) is True, "the body names the read by a prefix"
-    assert arm(head, head, "develop", cwd=tmp_path / shape) is False, "a base that did not move is no rebase"
+    assert arm(head, head, "develop", cwd=tmp_path / shape) is True, "the head is its own read"
     read, head = _rebased_repo(tmp_path / "clean", collide=False, **_SHAPES[shape])
     assert arm(read, head, "develop", cwd=tmp_path / "clean") is True, "a base that moved in a file of its own"
 
 
 @pytest.mark.parametrize(("shape", "more"), [(s, m) for s in _SHAPES for m in _MORE], ids=lambda v: v)
 def test_the_arm_refuses_a_head_that_is_more_than_the_rebase_or_the_merge(tmp_path, shape, more):
-    read, head = _rebased_repo(tmp_path / more, **_SHAPES[shape], **_MORE[more])
-    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / more) is False
+    flags, why = _MORE[more]
+    read, head = _rebased_repo(tmp_path / more, **_SHAPES[shape], **flags)
+    answer = gate.head_is_the_read(read, head, "develop", cwd=tmp_path / more)
+    assert isinstance(answer, str) and why in answer, answer
 
 
 @pytest.mark.parametrize("shape", list(_SHAPES))
 def test_the_arm_refuses_a_branch_that_lost_a_commit(tmp_path, shape):
     read, head = _rebased_repo(tmp_path / "lost", drop_a_commit=True, **_SHAPES[shape])
-    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "lost") is False
+    answer = gate.head_is_the_read(read, head, "develop", cwd=tmp_path / "lost")
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
 
 
 def test_the_arm_refuses_a_reworded_commit_and_names_what_it_could_not_compare(tmp_path):
-    arm = gate.rebase_kept_every_patch
+    arm = gate.head_is_the_read
     read, head = _rebased_repo(tmp_path / "reworded", reword=True)
-    assert arm(read, head, "develop", cwd=tmp_path / "reworded") is False
+    answer = arm(read, head, "develop", cwd=tmp_path / "reworded")
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
     why = arm("0" * 40, head, "develop", cwd=tmp_path / "reworded")
     assert isinstance(why, str) and why.startswith("`git fetch`"), "an unknown read with no origin to fetch from"
     _git(tmp_path / "reworded", "update-ref", "-d", "refs/remotes/origin/develop")
@@ -257,7 +229,57 @@ def test_the_arm_refuses_a_reworded_commit_and_names_what_it_could_not_compare(t
     assert isinstance(why, str) and why.startswith("`git merge-base`"), "no origin/develop to take a merge base against"
 
 
-def test_main_fetches_the_base_before_the_rebase_arm_reads_it(monkeypatch, capsys):
+def _amended_repo(root: pathlib.Path, kind: str) -> tuple[str, str]:
+    """A branch of two patches on a base that did not move, its tip re-created; returns (the read's tip, the head).
+    `redated` changes the committer date alone; `reworded` amends the tip's message; `parent_reworded` rewords the first
+    patch and cherry-picks the tip back, so the tip's tree and message are the read's; `tree_changed` amends a file into
+    the tip and keeps its message."""
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "develop")
+    (root / "code.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "-b", "feat")
+    (root / "code.py").write_text("x = 2\n")
+    _git(root, "commit", "-q", "-am", "feat: code")
+    (root / "note.txt").write_text("n\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "feat: note\n\nProbe: SURVIVED")
+    read = _git(root, "rev-parse", "HEAD")
+    if kind == "redated":
+        env = {**_env(root), "GIT_COMMITTER_DATE": "2030-01-01T00:00:00Z"}
+        subprocess.run(["git", "commit", "-q", "--amend", "--no-edit"], cwd=root, env=env, check=True, capture_output=True)
+    elif kind == "reworded":
+        _git(root, "commit", "-q", "--amend", "-m", "feat: note\n\nProbe: KILLED, control proven")
+    elif kind == "parent_reworded":
+        _git(root, "reset", "-q", "--hard", "HEAD~1")
+        _git(root, "commit", "-q", "--amend", "-m", "feat: code, probe KILLED")
+        _git(root, "cherry-pick", read)
+    elif kind == "tree_changed":
+        (root / "note.txt").write_text("nn\n")
+        _git(root, "commit", "-q", "-a", "--amend", "--no-edit")
+    else:
+        raise AssertionError(kind)
+    return read, _git(root, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("kind", ["redated", "reworded", "parent_reworded", "tree_changed"])
+def test_on_an_unmoved_base_the_arm_admits_a_re_created_tip_and_refuses_a_changed_one(tmp_path, kind):
+    """The head commit's own message is not enough: a reword below the tip with the tip cherry-picked back keeps the tip's
+    tree and message and changes what the pre-review graded, so the messages are compared from the base, as the reads do."""
+    read, head = _amended_repo(tmp_path / kind, kind)
+    assert head != read
+    answer = gate.head_is_the_read(read, head, "develop", cwd=tmp_path / kind)
+    if kind == "redated":
+        assert answer is True
+    elif kind == "tree_changed":
+        assert answer == "the head's tree is not the read's"
+    else:
+        assert isinstance(answer, str) and answer.startswith("the messages from the base"), (kind, answer)
+
+
+def test_main_fetches_the_base_before_the_arm_reads_it(monkeypatch, capsys):
     """Read before branch_growth's fetch, a stale clone answers False and the gate refuses the head the arm exists to admit."""
     order: list[str] = []
     pr = _pr(body=_stale_body())
@@ -268,16 +290,16 @@ def test_main_fetches_the_base_before_the_rebase_arm_reads_it(monkeypatch, capsy
         if args[:2] == ("api", "--paginate"):
             return "cli/engine/executor.py\n"
         if args[0] == "api" and args[1].endswith(f"/commits/{TIP}"):
-            return json.dumps(_tree(_head([OTHER], ["cli/engine/executor.py"]), "t" * 40))
+            return json.dumps(_head([OTHER], ["cli/engine/executor.py"]))
         if args[0] == "api" and args[1].endswith(f"/commits/{PREV[:8]}"):
-            return json.dumps(_tree({"sha": PREV}, "u" * 40))
+            return json.dumps({"sha": PREV})
         raise AssertionError(args)
 
     monkeypatch.setattr(gate, "_gh", fake_gh)
     monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: order.append("fetch") or [])
-    monkeypatch.setattr(gate, "rebase_kept_every_patch", lambda read, head, base: order.append("rebase") or True)
+    monkeypatch.setattr(gate, "head_is_the_read", lambda read, head, base: order.append("arm") or True)
     assert gate.main(["merge-gate.py", "1"]) == 0, capsys.readouterr().out
-    assert order == ["fetch", "rebase"], order
+    assert order == ["fetch", "arm"], order
 
 
 def test_a_row_commit_that_also_touches_another_file_fails():
