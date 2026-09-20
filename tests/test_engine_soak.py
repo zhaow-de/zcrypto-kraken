@@ -199,6 +199,35 @@ def test_realized_series_skips_cycle_with_none_store_close(tmp_path):
     assert rs.dropped_tail > 1  # more cycles dropped than just the always-unscored tail cycle
 
 
+def test_the_clean_segment_is_the_newest_run_that_meets_the_floor_and_the_longest_otherwise():
+    """One failed boundary splits the journal into an older, longer run and a newer one; with the floor the
+    newest run that can score it is chosen, so the window turns current at the floor's worth of cycles instead
+    of the older run's length; without a floor, or when no run is long enough, the longest wins as before."""
+
+    def _bare(cycle_ts):
+        return CycleRecord(
+            schema_version=1,
+            cycle_ts=cycle_ts,
+            snapshots=(),
+            final_targets={},
+            started_at=cycle_ts,
+            completed_at=cycle_ts + timedelta(minutes=1),
+            code_version="test",
+            builder_path="fast",
+        )
+
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    older = [_bare(base + timedelta(hours=4 * k)) for k in range(40)]
+    gap = timedelta(hours=4) * (len(older) + 1)  # one boundary slot missing between the runs
+    newer = [_bare(base + gap + timedelta(hours=4 * k)) for k in range(32)]
+    records = newer + older  # unsorted on purpose: the selection orders them
+    assert [r.cycle_ts for r in select_clean_segment(records, floor=30)] == [r.cycle_ts for r in newer]
+    assert [r.cycle_ts for r in select_clean_segment(records)] == [r.cycle_ts for r in older]
+    assert [r.cycle_ts for r in select_clean_segment(records, floor=35)] == [r.cycle_ts for r in older], (
+        "only the older run can score thirty-five, so it is the newest that meets the floor"
+    )
+
+
 def test_realized_series_empty_clean_segment_raises_soak_error(tmp_path):
     """No records -> select_clean_segment returns [] -> a typed SoakError, not an IndexError from
     indexing clean[0]."""
