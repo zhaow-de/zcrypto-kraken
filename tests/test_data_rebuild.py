@@ -561,7 +561,7 @@ def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path,
     assert seen["canonical"] == tmp_path / "ohlc-full-20260920"
 
 
-def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
+def test_rebuild_ohlc_reach_joins_ohlc_full_without_a_sibling_and_writes_only_the_minted_one(tmp_path, monkeypatch):
     """No stamped sibling here, so the builder joins `ohlc-full` -- and writes into the minted sibling
     only, reading which would reach forward from an empty set."""
     (tmp_path / "ohlc-full").mkdir()
