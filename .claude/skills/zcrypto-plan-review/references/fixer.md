@@ -49,7 +49,7 @@ Sections, each present even when empty:
 
 - `## Fixed` — one line per finding: its key, the commit, the family enumeration if any.
 - `## Refuted` — key, what you checked, why the finding is wrong.
-- `## Skipped` — key, the one-clause reason. A skip is re-adjudicated by the next round; it is not closed.
+- `## Skipped` — key, the one-clause reason; a deferral that needs an unregistered topic carries the topic's Context and Why this matters, for the ledger step. A skip is re-adjudicated by the next round; it is not closed.
 - `## Spec amendments` — every change to {SPEC}'s decision text, quoted before/after. An amendment made silently is indistinguishable from redefining the standard you are measured against.
 - `## New mechanisms` — every mechanism the fixes introduced, one line each; each gets its own scoped re-review.
 - `## Claims written` — every new factual claim you wrote into the pair, with the `path:line` or command output that backs it.
