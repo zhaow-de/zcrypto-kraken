@@ -14,7 +14,7 @@ Read the union report `{UNION}` in full. Then read {SPEC} — the binding author
 
 **Extend, do not restate.** Two things that must agree are made unable to disagree — a shared constant, one source of truth, a derived value — never the same fact written twice. Restating is where the next round's regression is born.
 
-**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Every mechanism costs a scoped re-review and seeds the next round's lenses.
+**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Every mechanism costs a scoped re-review and seeds the next round's lenses. A fix never mints a `T<NNNN>`: registration takes the owner's word (`topic-ops`), so a deferral takes one of the lenses' three homes — a registered topic, a trigger arm on an existing topic, an explicit drop with its reason — and one that needs a topic not yet registered goes under `## Skipped` with the topic's Context and Why this matters, for the ledger step to put to the owner.
 
 ## The failure mode this loop is measured on
 
@@ -49,7 +49,7 @@ Sections, each present even when empty:
 
 - `## Fixed` — one line per finding: its key, the commit, the family enumeration if any.
 - `## Refuted` — key, what you checked, why the finding is wrong.
-- `## Skipped` — key, the one-clause reason. A skip is re-adjudicated by the next round; it is not closed.
+- `## Skipped` — key, the one-clause reason; a deferral that needs an unregistered topic carries the topic's Context and Why this matters, for the ledger step. A skip is re-adjudicated by the next round; it is not closed.
 - `## Spec amendments` — every change to {SPEC}'s decision text, quoted before/after. An amendment made silently is indistinguishable from redefining the standard you are measured against.
 - `## New mechanisms` — every mechanism the fixes introduced, one line each; each gets its own scoped re-review.
 - `## Claims written` — every new factual claim you wrote into the pair, with the `path:line` or command output that backs it.

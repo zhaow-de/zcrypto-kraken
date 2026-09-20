@@ -13,6 +13,8 @@ import unicodedata
 REPO = "zhaow-de/zcrypto-kraken"
 GUARD = pathlib.Path(__file__).with_name("guidance-guard.py")
 INDEX = "docs/reference/change-index.md"
+# The rendered files a rebase onto a moved base resolves by hand: the change index and the topics index.
+RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
 DEPENDABOT = "dependabot[bot]"
 # `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
@@ -341,8 +343,9 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
     return sorted(p for p in files if any(p == g or (g.endswith("/") and p.startswith(g)) for g in FABLE_PATHS))
 
 
-def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None) -> list[str]:
-    """The read is at the floor and names the head, unless one of the arms below exempts the PR."""
+def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None, kept: bool | str | None = None) -> list[str]:
+    """The read is at the floor and names the head, unless one of the arms below exempts the PR; `kept` is
+    `head_is_the_read`'s answer for the read's tip against the head, None when it was not asked."""
     if (pr.get("headRefName") or "").startswith("dependabot/"):
         commits = pr.get("commits")
         if commits is None:
@@ -401,12 +404,11 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
         files = [f.get("filename") for f in head_commit.get("files") or []]
         if len(parents) == 1 and parents[0].startswith(sha) and files == [INDEX]:
             return []
-        head_tree = ((head_commit.get("commit") or {}).get("tree") or {}).get("sha")
-        read_tree = ((read_commit or {}).get("commit") or {}).get("tree", {}).get("sha") if read_commit else None
-        if head_tree and read_tree and head_tree == read_tree:
-            return []
+    if kept is True:
+        return []  # the read's own commits and nothing more: no delta to read
+    why = f": {kept}" if isinstance(kept, str) else ""
     return [
-        f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
+        f"the read named in the body covers {sha[:8]}, not the head {head[:8]}{why}; read the delta or re-read, then update the line"
     ]
 
 
@@ -435,7 +437,7 @@ def evaluate(
     head_commit: dict | None = None,
     files: list[str] | None = None,
     branch_growth: list[str] | None = None,
-    read_commit: dict | None = None,
+    kept: bool | str | None = None,
 ) -> list[str]:
     """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run."""
     fails: list[str] = []
@@ -470,7 +472,7 @@ def evaluate(
         fails.append(
             "PR description has unchecked checklist item(s): a `- [ ]`, `* [ ]` or `1. [ ]` box, inside `<details>` or a quote too"
         )
-    fails.extend(read_line_fails(pr, head_commit, files, read_commit))
+    fails.extend(read_line_fails(pr, head_commit, files, kept))
     fails.extend(index_row_fails(pr))
     if branch_growth is None:
         fails.append(
@@ -478,6 +480,87 @@ def evaluate(
         )
     fails.extend(branch_growth or [])
     return fails
+
+
+def _git(cwd: pathlib.Path | None, *args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=120, cwd=cwd).stdout.strip()
+
+
+_DIFF_HEADER = re.compile(r"^(\+\+\+ (b/|/dev/null)|--- (a/|/dev/null))")
+
+
+def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> list[str]:
+    """What a range adds to and removes from one file, order set aside: the lines a hand resolution of that
+    file carries into the head, wherever the moved base put them."""
+    diff = _git(cwd, "diff", "--src-prefix=a/", "--dst-prefix=b/", base, tip, "--", path)
+    return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
+
+
+def _row_commit_alone(cwd: pathlib.Path | None, sha: str) -> bool:
+    touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
+    return touched == [INDEX] and len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) == 2
+
+
+def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None = None) -> bool | str:
+    """True when `head` carries the read's own commits and nothing more, by the checks below — one change-index row commit
+    among them set aside, the Step 4 row `open-pr` pushes after the read — on the base they were
+    read on, or on one that moved under them; otherwise a string naming the check that failed, or what the arm could
+    not compare."""
+    try:
+        try:
+            read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
+        except subprocess.CalledProcessError:
+            _git(cwd, "fetch", "-q", "origin", read)
+            read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
+        old_base = _git(cwd, "merge-base", base, read)
+        new_base = _git(cwd, "merge-base", base, head)
+        # A merge of the base carries no patch of its own; the tree check reads it.
+        read_msgs = [
+            m.strip() for m in _git(cwd, "log", "--no-merges", "--format=%B%x00", f"{old_base}..{read}").split("\x00") if m.strip()
+        ]
+        cells = _git(cwd, "log", "--no-merges", "--format=%H%x00%B%x00", f"{new_base}..{head}").split("\x00")
+        head_msgs = [(cells[i].strip(), cells[i + 1].strip()) for i in range(0, len(cells) - 1, 2)]
+        extra = [sha for sha, msg in head_msgs if msg not in read_msgs]
+        row = extra[0] if len(extra) == 1 and _row_commit_alone(cwd, extra[0]) else None
+        if [msg for sha, msg in head_msgs if sha != row] != read_msgs:
+            return (
+                "the messages from the base to the head are not the read's, a commit reworded, added or dropped: a reword "
+                "takes `pre-review` over the amended commits and `re-review` over `<read>..<head>`"
+            )
+        if old_base == new_base:
+            same = subprocess.run(
+                ["git", "diff", "--quiet", read, f"{row}~1" if row else head], capture_output=True, text=True, timeout=120, cwd=cwd
+            )
+            if same.returncode == 0:
+                return True  # re-dated, re-signed or re-created on the same base: the tree and the messages the read graded
+            if same.returncode == 1:
+                return "the head's tree is not the read's"
+            return f"`git diff` exited {same.returncode}: {same.stderr.strip() or 'no stderr'}"
+        merged = subprocess.run(
+            ["git", "merge-tree", "--write-tree", f"--merge-base={old_base}", read, new_base],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=cwd,
+        )
+        if merged.returncode not in (0, 1) or not merged.stdout.strip():
+            return "`git merge-tree` could not merge the read onto the moved base"
+        tree = merged.stdout.splitlines()[0].strip()  # exit 1 is a conflict: the tree still prints first, its markers inside
+        for path in _git(cwd, "diff", "--name-only", tree, head).splitlines():
+            if path not in RENDERED:
+                return f"the head is not the read's patches on the moved base: {path} differs"
+            lines = _patch_lines(cwd, new_base, head, path)
+            if row and path == INDEX:
+                for line in _patch_lines(cwd, f"{row}~1", row, path):
+                    if line in lines:
+                        lines.remove(line)
+            if _patch_lines(cwd, old_base, read, path) != lines:
+                return f"{path} carries a line the read's own patch did not, or lost one"
+    except subprocess.TimeoutExpired as exc:
+        return f"`git {exc.cmd[1]}` timed out"
+    except subprocess.CalledProcessError as exc:
+        return f"`git {exc.cmd[1]}` exited {exc.returncode}: {(exc.stderr or '').strip() or 'no stderr'}"
+    return True
 
 
 def _gh(*args: str) -> str:
@@ -520,14 +603,18 @@ def main(argv: list[str]) -> int:
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
-    read_commit = None
+    growth = branch_growth(
+        pr["baseRefName"], pr["headRefName"], head
+    )  # fetches origin's base and head first: head_is_the_read reads them
+    kept = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
         try:
-            read_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}"))
+            read = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}")).get("sha") or m.group(2)
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:
-            read_commit = None  # a tip GitHub never saw, or a fetch that failed or timed out: no tree to compare, so read_line_fails names the head the read does not cover
-    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit)
+            read = m.group(2)  # a tip GitHub never saw, or a fetch that failed or timed out: the clone is asked by the prefix
+        kept = head_is_the_read(read, head, f"origin/{pr['baseRefName']}")
+    fails = evaluate(pr, head_commit, files, growth, kept)
     if fails:
         print("GATE FAILED:")
         for fail in fails:

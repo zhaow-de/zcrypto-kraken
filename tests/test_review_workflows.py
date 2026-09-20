@@ -123,9 +123,8 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
 
 
 def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
-    """Driven, not read: a condition inverted under the right string passes every text assert above. A
-    pre-review covers the one tip it read, written short or long; the branch's first pre-review is an ancestor
-    of every later tip and covers none of them."""
+    """Driven, not read: a condition inverted under the right string passes every text assert above; what each row
+    must do is the admission comment above `sameTip` in the flow it drives."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
@@ -138,6 +137,9 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "pre-review"}], "records no pre-review"),
+            ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}], None),
+            ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
         ],
         "re-review": [
             (None, "the ledger agent returned nothing"),
@@ -148,10 +150,23 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review"}], "records no pre-review"),
+            (
+                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}],
+                None,
+            ),
+            (
+                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}],
+                "records no pre-review",
+            ),
+            ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
         ],
     }
     for flow, table in cases.items():
         text = (_FLOWS / f"{flow}.js").read_text()
+        assert "merge-base <its tip> ${tip}" in text and text.count("log --format=%B <that merge base>..") == 2, (
+            f"{flow}: the ledger agent compares the messages from the two tips' merge base, not the trees alone"
+        )
+        assert text.count("| sha256sum") == 2, f"{flow}: two logs are compared by their sums, never by an agent's reading"
         refuses = rf"^if \([^\n]*\) throw new Error\(`{flow} refuses \$\{{tip\}}: "
         block = re.search(
             refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-review[^\n]*$",
@@ -197,7 +212,7 @@ def _drive_pre_review(args: dict) -> dict:
             "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
             "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
             "const twice = (r) => ({ ...r, prose: [...r.prose, { site: 'a.py:1', survives: 'cut', correct: true, duplicateOf: '', ship: '' }] })",
-            "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt })",
+            "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt, model: opts.model })",
             "  return opts.label === 'record' ? { appended: true } : opts.label === 'pre-review' ? twice(part('pre-review')) : part(opts.label.replace('pre-review:', '')) }",
             "const parallel = (thunks) => Promise.all(thunks.map((t) => t()))",
             "async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {",
@@ -213,6 +228,19 @@ def _drive_pre_review(args: dict) -> dict:
 
 
 _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "reportDir": "/r/.tmp/reads/x"}
+
+
+def test_the_graders_run_on_opus_unless_a_caller_names_another_which_is_refused():
+    """The graders re-run commands and diff texts — the work the owner put on Opus on 2026-09-20; Fable keeps
+    the reads, whose class walks build compositions by hand."""
+    for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
+        ran = _drive_pre_review(args)
+        assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
+    for below_or_above in ("sonnet", "fable"):
+        ran = _drive_pre_review({**_BRANCH, "model": below_or_above})
+        assert "floor and cap" in ran.get("error", ""), (below_or_above, ran)
+
+
 _SLICES = [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
 
 
@@ -258,6 +286,9 @@ def test_a_pre_review_given_no_slices_is_the_one_grader_it_was(absent):
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
+    assert "graded once in the range whose commits landed that task's code" in prompt, (
+        "a completed task's plan fences are graded in their own range"
+    )
     assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 5, "the one grader's report is returned as it came"
     # The lone grader's stub grades `a.py:1` twice with two different asks, which between slices is a contest.
     assert [row["survives"] for row in ran["out"]["prose"] if row["site"] == "a.py:1"] == ["trim", "cut"]

@@ -81,11 +81,12 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
 # journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
 # the change-index-row exception all come from there, and a change to the gate moves this count by construction.
-# The window starts where that arm landed, which `git log -S 'Claude (Opus|Fable)' -- infra/scripts/merge-gate.py`
-# names; a PR merged before it breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead
-# of the network, for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs
-# cannot run, so a row failing ONLY on a sha mismatch is counted rather than excused.
-READ_LINE_RULE_SINCE="2026-09-10T15:22:19Z"
+# The window starts where the read arm last changed what it admits, which `git log -S head_is_the_read
+# --format=%cI -- infra/scripts/merge-gate.py` names: a PR merged before that was judged by the arms of its
+# day and breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network,
+# for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs cannot run,
+# so a row failing ONLY on a sha mismatch is counted rather than excused.
+READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
 # A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
 # the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
 # empty set in the morning. `tests/test_count_list.py` refuses any RULE_SINCE that is not an instant.
@@ -94,7 +95,8 @@ c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
   else prs="$(timeout 120 gh pr list --state merged --base develop --limit 400 \
-    --json number,body,mergedAt,headRefName,headRefOid,files,changedFiles)" || return 2; fi
+    --json number,body,mergedAt,headRefName,headRefOid,files,changedFiles,mergeCommit)" || return 2
+    timeout 60 git fetch -q origin develop || return 2; fi  # the merge commits the clone arm takes its base from
   floor="$(printf '%s' "$prs" | jq -r --arg since "$READ_LINE_RULE_SINCE" '[(now - 2592000 | todate), $since] | max')" || return 2
   # A saturated fetch cannot answer. If the OLDEST row fetched is still inside the window, rows below it were
   # never fetched and the count would silently under-report -- 204 PRs sat in the window against a --limit 200,
@@ -128,8 +130,8 @@ heads = json.loads(pathlib.Path(os.environ["COUNT_LIST_HEADS_SNAPSHOT"]).read_te
 
 
 def commit_of(sha):
-    """The two exceptions `read_line_fails` needs a commit object for -- a head that is the change-index row commit
-    over the tip the body names, or a head whose tree is that tip's -- asked for only by a row that fails on
+    """The commit object the change-index-row exception reads -- a head that is the row commit over the tip the
+    body names -- and the full sha of the read the clone arm fetches by, asked for only by a row that fails on
     nothing else. COUNT_LIST_HEADS_SNAPSHOT names a recorded `{oid: commit}` map, keyed by full oid and matched by
     prefix since a body names a short sha, so this arm can be driven without the network."""
     if not sha:
@@ -220,6 +222,26 @@ def with_commits(pr):
     return {**pr, "commits": (json.loads(done.stdout) or {}).get("commits") or []}
 
 
+kept_snapshot = json.loads(pathlib.Path(os.environ["COUNT_LIST_KEPT_SNAPSHOT"]).read_text()) if os.environ.get(
+    "COUNT_LIST_KEPT_SNAPSHOT") else None
+root = pathlib.Path(sys.argv[1]).resolve().parents[2]
+
+
+def kept(pr):
+    """`head_is_the_read`'s answer for the tip the body names against the merged head, from the PR's base at the
+    merge -- the merge commit's first parent, since develop has moved on. COUNT_LIST_KEPT_SNAPSHOT names a
+    recorded `{headRefOid: answer}` map so the wiring can be driven without the PR's commits in the clone;
+    offline with no map, or a PR with no merge commit, answers None and the row is counted rather than excused."""
+    head = pr.get("headRefOid") or ""
+    if kept_snapshot is not None:
+        return kept_snapshot.get(head)
+    merge = (pr.get("mergeCommit") or {}).get("oid")
+    if offline or not merge:
+        return None
+    read = (commit_of(read_sha(pr)) or {}).get("sha") or read_sha(pr)
+    return gate.head_is_the_read(read, head, f"{merge}^", cwd=root)
+
+
 count = 0
 for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     if (pr.get("mergedAt") or "") < floor:
@@ -227,8 +249,12 @@ for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     pr = with_commits(pr)
     files = file_paths(pr)
     fails = gate.read_line_fails(pr, None, files)
+    head_commit = None
     if fails and all("not the head" in f for f in fails):
-        fails = gate.read_line_fails(pr, commit_of(pr.get("headRefOid")), files, commit_of(read_sha(pr)))
+        head_commit = commit_of(pr.get("headRefOid"))
+        fails = gate.read_line_fails(pr, head_commit, files)
+    if fails and all("not the head" in f for f in fails):
+        fails = gate.read_line_fails(pr, head_commit, files, kept(pr))  # the clone is asked only where the row arm did not admit
     if fails:
         count += 1
 print(count)

@@ -48,7 +48,7 @@ You are adjudicating a spec+plan pair at {WORKTREE} HEAD (branch {BRANCH}). You 
 
 Read {SPEC} — the binding authority — then {PLAN}, then every file either cites.{TOPIC_LINE} Your cwd resets between commands: prefix each with `cd {WORKTREE} &&`.
 
-The implementer of each task will see ONLY that task's text plus the plan's Global Constraints. Review from that seat, across the whole pair: coverage, consistency, whether every guard's fixture can move, whether every premise about the tree holds (verify by running, never by reading), whether every deferral names a registered `T<NNNN>` topic, whether the operator-visible text is clean. Where a claim is about runtime behaviour, run it in a scratch interpreter; where it is about the tree, search the tree.
+The implementer of each task will see ONLY that task's text plus the plan's Global Constraints. Review from that seat, across the whole pair: coverage, consistency, whether every guard's fixture can move, whether every premise about the tree holds (verify by running, never by reading), whether every deferral names a registered `T<NNNN>` topic, a trigger arm on an existing topic, or an explicit drop with its reason, whether the operator-visible text is clean. Where a claim is about runtime behaviour, run it in a scratch interpreter; where it is about the tree, search the tree.
 
 {COMMON}
 

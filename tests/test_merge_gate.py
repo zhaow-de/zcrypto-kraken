@@ -1,11 +1,11 @@
-"""merge-gate.py: the read line must be at the floor and name the head, with exactly four exceptions -- the change-index
-row commit past the tip it names, a head whose tree is that tip's tree, the ops-journal month PR, and a
-dependabot branch whose every commit is the bot's -- and a keyed
-branch owes its change-index row before the merge."""
+"""merge-gate.py: the read line must be at the floor and name the head, with the exceptions the cases
+below drive, and a keyed branch owes its change-index row before the merge."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import pathlib
 import random
 import subprocess
@@ -28,13 +28,14 @@ def _load(path: pathlib.Path, name: str):
 gate = _load(_SCRIPT, "merge_gate")
 
 
-def _eval(pr, head_commit=None, files=None, branch_growth=(), read_commit=None):
-    return gate.evaluate(pr, head_commit, files, list(branch_growth), read_commit)
+def _eval(pr, head_commit=None, files=None, branch_growth=(), kept=None):
+    return gate.evaluate(pr, head_commit, files, list(branch_growth), kept)
 
 
 TIP = "6f02667280cfbd7b76cb39d3139a5f865d995c61"
 PREV = "20a3bddb1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f"
 OTHER = "38f78872aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+README = "docs/open-topics/README.md"
 
 
 def _pr(**over) -> dict:
@@ -72,22 +73,243 @@ def test_the_one_row_commit_past_the_read_passes():
     assert _eval(pr, _head([PREV], [gate.INDEX])) == []
 
 
-def _tree(commit: dict, tree: str) -> dict:
-    return {**commit, "commit": {"tree": {"sha": tree}}}
-
-
-def test_an_amend_that_kept_the_tree_the_read_graded_passes():
+def test_the_clone_s_answer_admits_or_refuses_a_head_past_the_read():
     pr = _pr(body=_stale_body())
-    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
-    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40)) == []
+    head = _head([OTHER], ["cli/engine/executor.py"])
+    assert _eval(pr, head, kept=True) == []
+    for answer in (None, "the head's tree is not the read's"):
+        fails = _eval(pr, head, kept=answer)
+        assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
+        assert ("the head's tree is not the read's" in fails[0]) is isinstance(answer, str), answer
 
 
-def test_a_head_whose_tree_differs_from_the_read_tips_fails():
+def _env(root: pathlib.Path) -> dict[str, str]:
+    return {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+        "GIT_EDITOR": "true",
+        "PATH": os.environ["PATH"],
+        "HOME": str(root),
+    }
+
+
+def _git(cwd: pathlib.Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, env=_env(cwd), check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _rebased_repo(
+    root: pathlib.Path,
+    *,
+    merge_instead: bool = False,
+    collide: bool = True,
+    change_a_patch: bool = False,
+    reword: bool = False,
+    smuggle_a_row: bool = False,
+    drop_a_row: bool = False,
+    drop_a_commit: bool = False,
+    stack_a_commit: bool = False,
+    row_above: bool = False,
+) -> tuple[str, str]:
+    """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
+    that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
+    flag makes the head differ from that."""
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "develop")
+    for path in gate.RENDERED:
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+
+    def rows(*numbers: int) -> None:
+        (root / gate.INDEX).write_text("".join(f"| #{n} | r |\n" for n in numbers))
+        (root / README).write_text("".join(f"- T{n}\n" for n in numbers))
+
+    rows(1)
+    (root / "code.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "-b", "feat")
+    (root / "code.py").write_text("x = 2\n")
+    _git(root, "commit", "-q", "-am", "feat: code")
+    rows(1, 3)
+    _git(root, "commit", "-q", "-am", "docs(change-index): row #3")
+    read = _git(root, "rev-parse", "HEAD")
+    if row_above:
+        (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
+        _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
+    _git(root, "checkout", "-q", "develop")
+    if collide:
+        rows(1, 2)
+    else:
+        (root / "other.py").write_text("y = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "docs(change-index): row #2")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "feat")
+    if merge_instead and drop_a_commit:
+        _git(root, "reset", "-q", "--hard", "HEAD~1")  # after the merge, HEAD~1 would be the read's tip
+    done = subprocess.run(
+        ["git", "merge" if merge_instead else "rebase", "develop"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env=_env(root),
+    )
+    if collide and not (merge_instead and drop_a_commit):
+        assert done.returncode != 0 and gate.INDEX in done.stdout + done.stderr, (done.stdout, done.stderr)
+        rows(1, 2, 3, *([7] if smuggle_a_row else []))
+        if row_above and merge_instead:
+            (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
+    else:
+        assert done.returncode == 0, (done.stdout, done.stderr)
+    if drop_a_row:
+        (root / gate.INDEX).write_text(
+            "| #1 | r |\n| #2 | r |\n"
+        )  # the index lost the read's row; the README kept it, so the commit survives
+    if change_a_patch:
+        (root / "code.py").write_text("x = 3\n")
+    _git(root, "add", "-A")
+    if collide and merge_instead and not drop_a_commit:
+        _git(root, "commit", "-q", "--no-edit")
+    elif collide and not merge_instead:
+        _git(root, "-c", "core.editor=true", "rebase", "--continue")
+    elif drop_a_row or change_a_patch:
+        _git(root, "commit", "-q", "--amend", "--no-edit")
+    if drop_a_commit and not merge_instead:
+        _git(root, "reset", "-q", "--hard", "HEAD~1")
+    if reword:
+        _git(root, "commit", "-q", "--amend", "-m", "docs(change-index): row #3, probe KILLED")
+    if stack_a_commit:
+        (root / README).write_text((root / README).read_text() + "- T9\n")
+        _git(root, "commit", "-q", "-am", "docs(topics): T9")
+    return read, _git(root, "rev-parse", "HEAD")
+
+
+_SHAPES = {"rebased": {}, "merged": {"merge_instead": True}}
+_MORE = {
+    "changed": ({"change_a_patch": True}, "is not the read's patches on the moved base: code.py differs"),
+    "smuggled": ({"smuggle_a_row": True}, "carries a line the read's own patch did not, or lost one"),
+    "dropped": ({"drop_a_row": True}, "carries a line the read's own patch did not, or lost one"),
+    "stacked": ({"stack_a_commit": True}, "the messages from the base to the head are not the read's"),
+}
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_path, shape):
+    """Driven on a real repo rather than stubbed: the arm is built on `git merge-tree` and a stub would
+    measure the stub. The colliding case collides on both rendered files, so each member of RENDERED admits it."""
+    arm = gate.head_is_the_read
+    read, head = _rebased_repo(tmp_path / shape, **_SHAPES[shape])
+    assert arm(read, head, "origin/develop", cwd=tmp_path / shape) is True
+    assert arm(read[:8], head, "origin/develop", cwd=tmp_path / shape) is True, "the body names the read by a prefix"
+    assert arm(head, head, "origin/develop", cwd=tmp_path / shape) is True, "the head is its own read"
+    read, head = _rebased_repo(tmp_path / "clean", collide=False, **_SHAPES[shape])
+    assert arm(read, head, "origin/develop", cwd=tmp_path / "clean") is True, "a base that moved in a file of its own"
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_judges_a_row_commit_above_the_read_by_the_tip_under_it(tmp_path, shape):
+    """The Step 4 row commit above the read, with the base moved under both: open-pr's first admitted head on a moved base."""
+    read, head = _rebased_repo(tmp_path / shape, row_above=True, **_SHAPES[shape])
+    assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
+
+
+@pytest.mark.parametrize(("shape", "more"), [(s, m) for s in _SHAPES for m in _MORE], ids=lambda v: v)
+def test_the_arm_refuses_a_head_that_is_more_than_the_rebase_or_the_merge(tmp_path, shape, more):
+    flags, why = _MORE[more]
+    read, head = _rebased_repo(tmp_path / more, **_SHAPES[shape], **flags)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / more)
+    assert isinstance(answer, str) and why in answer, answer
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_refuses_a_branch_that_lost_a_commit(tmp_path, shape):
+    read, head = _rebased_repo(tmp_path / "lost", drop_a_commit=True, **_SHAPES[shape])
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "lost")
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
+
+
+def test_the_arm_refuses_a_reworded_commit_and_names_what_it_could_not_compare(tmp_path):
+    arm = gate.head_is_the_read
+    read, head = _rebased_repo(tmp_path / "reworded", reword=True)
+    answer = arm(read, head, "origin/develop", cwd=tmp_path / "reworded")
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
+    why = arm("0" * 40, head, "origin/develop", cwd=tmp_path / "reworded")
+    assert isinstance(why, str) and why.startswith("`git fetch`"), "an unknown read with no origin to fetch from"
+    _git(tmp_path / "reworded", "update-ref", "-d", "refs/remotes/origin/develop")
+    why = arm(read, head, "origin/develop", cwd=tmp_path / "reworded")
+    assert isinstance(why, str) and why.startswith("`git merge-base`"), "no origin/develop to take a merge base against"
+
+
+def _amended_repo(root: pathlib.Path, kind: str) -> tuple[str, str]:
+    """A branch of two patches on a base that did not move, its tip re-created as `kind` says; returns (the read's tip, the head)."""
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "develop")
+    (root / "code.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "-b", "feat")
+    (root / "code.py").write_text("x = 2\n")
+    _git(root, "commit", "-q", "-am", "feat: code")
+    (root / "note.txt").write_text("n\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "feat: note\n\nProbe: SURVIVED")
+    read = _git(root, "rev-parse", "HEAD")
+    if kind == "redated":
+        env = {**_env(root), "GIT_COMMITTER_DATE": "2030-01-01T00:00:00Z"}
+        subprocess.run(["git", "commit", "-q", "--amend", "--no-edit"], cwd=root, env=env, check=True, capture_output=True)
+    elif kind == "reworded":
+        _git(root, "commit", "-q", "--amend", "-m", "feat: note\n\nProbe: KILLED, control proven")
+    elif kind == "parent_reworded":
+        _git(root, "reset", "-q", "--hard", "HEAD~1")
+        _git(root, "commit", "-q", "--amend", "-m", "feat: code, probe KILLED")
+        _git(root, "cherry-pick", read)
+    elif kind == "tree_changed":
+        (root / "note.txt").write_text("nn\n")
+        _git(root, "commit", "-q", "-a", "--amend", "--no-edit")
+    else:
+        raise AssertionError(kind)
+    return read, _git(root, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("kind", ["redated", "reworded", "parent_reworded", "tree_changed"])
+def test_on_an_unmoved_base_the_arm_admits_a_re_created_tip_and_refuses_a_changed_one(tmp_path, kind):
+    """The head commit's own message is not enough: a reword below the tip with the tip cherry-picked back keeps the tip's
+    tree and message and changes what the pre-review graded, so the messages are compared from the base, as the reads do."""
+    read, head = _amended_repo(tmp_path / kind, kind)
+    assert head != read
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / kind)
+    if kind == "redated":
+        assert answer is True
+    elif kind == "tree_changed":
+        assert answer == "the head's tree is not the read's"
+    else:
+        assert isinstance(answer, str) and answer.startswith("the messages from the base"), (kind, answer)
+
+
+def test_main_fetches_the_base_before_the_arm_reads_it(monkeypatch, capsys):
+    """Read before branch_growth's fetch, a stale clone's answer refuses the head the arm exists to admit."""
+    order: list[str] = []
     pr = _pr(body=_stale_body())
-    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
-    fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40))
-    assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
-    assert len(_eval(pr, head)) == 1  # the read tip's commit not fetched: no tree to compare, so no pass
+
+    def fake_gh(*args: str) -> str:
+        if args[:2] == ("pr", "view"):
+            return json.dumps(pr)
+        if args[:2] == ("api", "--paginate"):
+            return "cli/engine/executor.py\n"
+        if args[0] == "api" and args[1].endswith(f"/commits/{TIP}"):
+            return json.dumps(_head([OTHER], ["cli/engine/executor.py"]))
+        if args[0] == "api" and args[1].endswith(f"/commits/{PREV[:8]}"):
+            return json.dumps({"sha": PREV})
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gate, "_gh", fake_gh)
+    monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: order.append("fetch") or [])
+    monkeypatch.setattr(gate, "head_is_the_read", lambda read, head, base: order.append("arm") or True)
+    assert gate.main(["merge-gate.py", "1"]) == 0, capsys.readouterr().out
+    assert order == ["fetch", "arm"], order
 
 
 def test_a_row_commit_that_also_touches_another_file_fails():

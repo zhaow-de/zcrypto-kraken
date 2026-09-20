@@ -12,6 +12,7 @@ The file mechanics for `docs/open-topics/` — the HOW, loaded at the moment of 
 
 - Can it be resolved in the branch at hand? Then resolve it there — a change that lands while the branch is open is a commit on it, not a follow-up (`open-pr`); the cost of the fix, a converge included, is a cost to weigh, never a reason to defer.
 - A topic is for a non-trivial item that cannot be resolved within the current iteration — never for a one-clause question a message would settle, and never for work that waits on no precondition (the trigger bar under *Required file shape*).
+- A new topic is registered on the owner's word: the session asks with the topic's Context and Why this matters, and until the yes comes the follow-up is carried where its work is — the PR body's `## Follow-ups` as an ask that resolves, registered or dropped, before the merge (`open-pr`'s rule for that section), a trigger arm on an existing topic, or an explicit drop with its reason. A follow-up parked in the memo alone is not registered: the memo is a queue, not a topic's home.
 
 ## File path & naming
 
