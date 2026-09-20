@@ -806,8 +806,8 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
 
     A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
     pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
-    the payload carries populated verdicts beside a non-empty one. Then the panel's two counts decide, and
-    last the scored window's currency.
+    the payload carries populated verdicts beside a non-empty one. Then the panel's two counts decide, the
+    scored window's currency, and last whether all three self-test proofs actually ran.
 
     Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
     """
@@ -827,10 +827,11 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
                 calls = [dual.get("primary"), dual.get("secondary")].count(SOAK_OUTSIDE_LABEL)
                 outside.append(f"{metric} ({'both constructions' if calls == 2 else 'one construction'})")
         self_test = payload["self_test"]
-        flags = "/".join(
-            "skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED")
-            for name in ("instrument_ok", "identity_ok", "reconcile_ok")
-        )
+        proofs = ("instrument_ok", "identity_ok", "reconcile_ok")
+        flags = "/".join("skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED") for name in proofs)
+        # A `None` proof RAN NOTHING, and puts nothing in `void_reasons` -- so the panel beneath it is a verdict
+        # no self-test vouched for, and this arm is the only one that can stop it reading as a pass.
+        proven = all(self_test[name] is not None for name in proofs)
         # `n_indeterminate` counts toward `n_metrics` and never toward `n_outside`, so it is no decision.
         decided = int(panel["n_metrics"]) - int(panel["n_indeterminate"])
         reachable = decided >= SOAK_OUTSIDE_FAILS_AT
@@ -851,7 +852,7 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
             f"outside: {', '.join(outside) or 'none'}; "
             f"no-book bars {payload['realized_no_book_bars']} of {payload['realized_total_bars']}; hhi {verdicts['hhi']['verdict']}"
         )
-        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current
+        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current and proven
         return Check(SOAK_CHECK, SOAK_EXPR, ok=ok, value=value)
     except (*_UNREACHABLE, subprocess.SubprocessError, TypeError, AttributeError, RuntimeError) as exc:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")

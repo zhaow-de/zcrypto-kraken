@@ -2994,13 +2994,16 @@ def test_a_panel_that_judged_nothing_is_not_an_all_clear():
     assert "only 1 metric decided" in ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(lone)).value
 
 
-def test_a_self_test_that_never_ran_is_spelled_skipped_and_never_spelled_ok():
+def test_a_self_test_that_never_ran_is_spelled_skipped_and_fails_the_row():
     """A self-test flag voids the run only when it RAN and FAILED; `None` is a check that was SKIPPED -- no
     cycle could be replayed, no pair was compared -- and puts nothing in `void_reasons`, so the void arm above
-    never sees it, the verdict word cannot carry it, and this value is the only place it reaches a reader."""
+    never sees it. The panel beneath an unrun proof is a verdict nothing vouched for, so the row fails on it
+    and the value still names which of the three was skipped."""
     check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(self_test=(True, None, True))))
-    assert check.ok, check.value
+    assert not check.ok and not check.value.startswith("unreadable:"), check.value
     assert "self-test ok/skipped/ok" in check.value
+    all_three = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload()))
+    assert all_three.ok and "self-test ok/ok/ok" in all_three.value, all_three.value
 
 
 def test_a_void_run_fails_on_its_reasons_and_never_reads_the_verdicts_beside_them():
