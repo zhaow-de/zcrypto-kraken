@@ -125,7 +125,8 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
 def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     """Driven, not read: a condition inverted under the right string passes every text assert above. A
     pre-review covers the one tip it read, written short or long; the branch's first pre-review is an ancestor
-    of every later tip and covers none of them."""
+    of every later tip and covers none of them — unless the ledger agent found the later tip's tree to be the
+    read one's, a message-only amend having moved the name alone."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
@@ -138,6 +139,9 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "pre-review"}], "records no pre-review"),
+            ([{"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": True}], None),
+            ([{"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": False}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor", "treeEqualsTip": True}], "records no pre-review"),
         ],
         "re-review": [
             (None, "the ledger agent returned nothing"),
@@ -148,6 +152,11 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review"}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": True}], None),
+            (
+                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": False}],
+                "records no pre-review",
+            ),
         ],
     }
     for flow, table in cases.items():
@@ -258,6 +267,9 @@ def test_a_pre_review_given_no_slices_is_the_one_grader_it_was(absent):
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
+    assert "graded once in the range whose commits landed that task's code" in prompt, (
+        "a completed task's plan fences are graded in their own range"
+    )
     assert ran["out"]["graded"] == 4 and len(ran["out"]["prose"]) == 5, "the one grader's report is returned as it came"
     # The lone grader's stub grades `a.py:1` twice with two different asks, which between slices is a contest.
     assert [row["survives"] for row in ran["out"]["prose"] if row["site"] == "a.py:1"] == ["trim", "cut"]
