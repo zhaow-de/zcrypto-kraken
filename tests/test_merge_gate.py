@@ -8,7 +8,6 @@ import json
 import os
 import pathlib
 import random
-import shutil
 import subprocess
 import sys
 
@@ -36,6 +35,7 @@ def _eval(pr, head_commit=None, files=None, branch_growth=(), read_commit=None, 
 TIP = "6f02667280cfbd7b76cb39d3139a5f865d995c61"
 PREV = "20a3bddb1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f"
 OTHER = "38f78872aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+README = "docs/open-topics/README.md"
 
 
 def _pr(**over) -> dict:
@@ -73,14 +73,22 @@ def test_the_one_row_commit_past_the_read_passes():
     assert _eval(pr, _head([PREV], [gate.INDEX])) == []
 
 
-def _tree(commit: dict, tree: str) -> dict:
-    return {**commit, "commit": {"tree": {"sha": tree}}}
+def _tree(commit: dict, tree: str, message: str = "fix: x") -> dict:
+    return {**commit, "commit": {"tree": {"sha": tree}, "message": message}}
 
 
 def test_an_amend_that_kept_the_tree_the_read_graded_passes():
     pr = _pr(body=_stale_body())
     head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40)
     assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40)) == []
+
+
+def test_an_amend_that_kept_the_tree_but_reworded_the_message_fails():
+    pr = _pr(body=_stale_body())
+    head = _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, "fix: x\n\nProbe: KILLED")
+    fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40))
+    assert len(fails) == 1 and "a message it did not" in fails[0] and "`pre-review` over the amended commit" in fails[0]
+    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40, "fix: x\n\nProbe: KILLED")) == []
 
 
 def test_a_head_whose_tree_differs_from_the_read_tips_fails():
@@ -95,9 +103,10 @@ def test_a_rebase_that_kept_every_patch_passes_and_one_that_did_not_fails():
     pr = _pr(body=_stale_body())
     head = _tree(_head([OTHER], ["cli/engine/executor.py"]), "t" * 40)
     assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40), rebased=True) == []
-    for answer in (False, None):
+    for answer in (False, None, "`git fetch` exited 128: fatal: no such remote"):
         fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40), rebased=answer)
         assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
+        assert ("could not compare: `git fetch` exited 128" in fails[0]) is isinstance(answer, str), answer
 
 
 def _env(root: pathlib.Path) -> dict[str, str]:
@@ -116,13 +125,27 @@ def _git(cwd: pathlib.Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, env=_env(cwd), check=True, capture_output=True, text=True).stdout.strip()
 
 
-def _rebased_repo(root: pathlib.Path, *, change_a_patch: bool) -> tuple[str, str]:
-    """A branch of two patches, the second a change-index row, rebased onto a base that gained a colliding row;
-    returns (the read's tip, the rebased head). With change_a_patch the rebase also edits the first patch."""
+def _rebased_repo(
+    root: pathlib.Path,
+    *,
+    change_a_patch: bool = False,
+    reword: bool = False,
+    smuggle_a_row: bool = False,
+    stack_a_commit: bool = False,
+) -> tuple[str, str]:
+    """A branch of two patches, the second a row in each rendered file, rebased onto a base that gained a colliding
+    row in both; returns (the read's tip, the rebased head). Each flag makes the head more than the rebase: an
+    edited first patch, a reworded row commit, a row the resolution smuggled in, a commit stacked after it."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
-    (root / gate.INDEX).parent.mkdir(parents=True)
-    (root / gate.INDEX).write_text("| #1 | a |\n")
+    for path in gate.RENDERED:
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+
+    def rows(*numbers: int) -> None:
+        (root / gate.INDEX).write_text("".join(f"| #{n} | r |\n" for n in numbers))
+        (root / README).write_text("".join(f"- T{n}\n" for n in numbers))
+
+    rows(1)
     (root / "code.py").write_text("x = 1\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "base")
@@ -130,11 +153,11 @@ def _rebased_repo(root: pathlib.Path, *, change_a_patch: bool) -> tuple[str, str
     _git(root, "checkout", "-q", "-b", "feat")
     (root / "code.py").write_text("x = 2\n")
     _git(root, "commit", "-q", "-am", "feat: code")
-    (root / gate.INDEX).write_text("| #1 | a |\n| #3 | c |\n")
+    rows(1, 3)
     _git(root, "commit", "-q", "-am", "docs(change-index): row #3")
     read = _git(root, "rev-parse", "HEAD")
     _git(root, "checkout", "-q", "develop")
-    (root / gate.INDEX).write_text("| #1 | a |\n| #2 | b |\n")
+    rows(1, 2)
     _git(root, "commit", "-q", "-am", "docs(change-index): row #2")
     _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "checkout", "-q", "feat")
@@ -146,36 +169,48 @@ def _rebased_repo(root: pathlib.Path, *, change_a_patch: bool) -> tuple[str, str
         env=_env(root),
     )
     assert done.returncode != 0 and "row #3" in done.stdout + done.stderr, (done.stdout, done.stderr)
-    (root / gate.INDEX).write_text("| #1 | a |\n| #2 | b |\n| #3 | c |\n")
+    rows(1, 2, 3, *([7] if smuggle_a_row else []))
     if change_a_patch:
         (root / "code.py").write_text("x = 3\n")
     _git(root, "add", "-A")
     _git(root, "-c", "core.editor=true", "rebase", "--continue")
+    if reword:
+        _git(root, "commit", "-q", "--amend", "-m", "docs(change-index): row #3, probe KILLED")
+    if stack_a_commit:
+        (root / README).write_text((root / README).read_text() + "- T9\n")
+        _git(root, "commit", "-q", "-am", "docs(topics): T9")
     return read, _git(root, "rev-parse", "HEAD")
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="no git on PATH")
 def test_a_rebase_is_judged_by_the_merge_tree_of_the_read_onto_the_moved_base(tmp_path):
     """Driven on a real repo rather than stubbed: the arm is built on `git merge-tree` and a stub would
-    measure the stub."""
-    read, head = _rebased_repo(tmp_path / "kept", change_a_patch=False)
+    measure the stub. The kept case collides on both rendered files, so each member of RENDERED admits it."""
+    read, head = _rebased_repo(tmp_path / "kept")
     assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "kept") is True
     assert gate.rebase_kept_every_patch(read[:8], head, "develop", cwd=tmp_path / "kept") is True, (
         "the body names the read by a prefix"
     )
-    read, head = _rebased_repo(tmp_path / "changed", change_a_patch=True)
-    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "changed") is False
-    assert gate.rebase_kept_every_patch(head, head, "develop", cwd=tmp_path / "changed") is False, (
+    assert gate.rebase_kept_every_patch(head, head, "develop", cwd=tmp_path / "kept") is False, (
         "a base that did not move is no rebase"
     )
-    assert gate.rebase_kept_every_patch("0" * 40, head, "develop", cwd=tmp_path / "changed") is None, (
-        "an unknown read with no origin to fetch from"
-    )
+    more = {
+        "changed": {"change_a_patch": True},
+        "reworded": {"reword": True},
+        "smuggled": {"smuggle_a_row": True},
+        "stacked": {"stack_a_commit": True},
+    }
+    for name, flags in more.items():
+        read, head = _rebased_repo(tmp_path / name, **flags)
+        assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / name) is False, name
+    why = gate.rebase_kept_every_patch("0" * 40, head, "develop", cwd=tmp_path / "stacked")
+    assert isinstance(why, str) and why.startswith("`git fetch`"), "an unknown read with no origin to fetch from"
+    _git(tmp_path / "stacked", "update-ref", "-d", "refs/remotes/origin/develop")
+    why = gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "stacked")
+    assert isinstance(why, str) and why.startswith("`git merge-base`"), "no origin/develop to take a merge base against"
 
 
 def test_main_fetches_the_base_before_the_rebase_arm_reads_it(monkeypatch, capsys):
-    """The arm compares merge bases against origin's base ref, which only branch_growth fetches; read before the
-    fetch, a stale clone answers False and the gate refuses the head the arm exists to admit."""
+    """Read before branch_growth's fetch, a stale clone answers False and the gate refuses the head the arm exists to admit."""
     order: list[str] = []
     pr = _pr(body=_stale_body())
 

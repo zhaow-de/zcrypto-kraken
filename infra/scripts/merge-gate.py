@@ -344,7 +344,7 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
 
 
 def read_line_fails(
-    pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None, rebased: bool | None = None
+    pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None, rebased: bool | str | None = None
 ) -> list[str]:
     """The read is at the floor and names the head, unless one of the arms below exempts the PR; `rebased` is
     `rebase_kept_every_patch`'s answer for the read's tip against the head, None when it was not asked."""
@@ -409,11 +409,18 @@ def read_line_fails(
         head_tree = ((head_commit.get("commit") or {}).get("tree") or {}).get("sha")
         read_tree = ((read_commit or {}).get("commit") or {}).get("tree", {}).get("sha") if read_commit else None
         if head_tree and read_tree and head_tree == read_tree:
-            return []
-    if rebased:
+            head_msg = (head_commit.get("commit") or {}).get("message")
+            if head_msg is not None and head_msg == (read_commit.get("commit") or {}).get("message"):
+                return []
+            return [
+                f"the head {head[:8]} has the tree the read at {sha[:8]} graded and a message it did not: the pre-review grades "
+                "messages, so run `pre-review` over the amended commit and `re-review` over `<read>..<head>`, then update the line"
+            ]
+    if rebased is True:
         return []  # the read's tip on a base that moved under it, with no net change: no delta to read
+    could_not = f"; the rebase arm could not compare: {rebased}" if isinstance(rebased, str) else ""
     return [
-        f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
+        f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line{could_not}"
     ]
 
 
@@ -443,7 +450,7 @@ def evaluate(
     files: list[str] | None = None,
     branch_growth: list[str] | None = None,
     read_commit: dict | None = None,
-    rebased: bool | None = None,
+    rebased: bool | str | None = None,
 ) -> list[str]:
     """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run."""
     fails: list[str] = []
@@ -488,25 +495,39 @@ def evaluate(
     return fails
 
 
-def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | None:
-    """True when `head` is the read's tip rebased onto a moved base with no net change: the three-way merge
-    of the read onto the head's base gives the head's tree, or differs from it only in the two rendered files
-    a rebase resolves by hand. False when the base did not move, or the trees differ elsewhere. None when the
-    read's commit is not in the clone and cannot be fetched, so nothing can be compared."""
+def _git(cwd: pathlib.Path | None, *args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=120, cwd=cwd).stdout.strip()
 
-    def git(*args: str) -> str:
-        return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=120, cwd=cwd).stdout.strip()
 
+_DIFF_HEADER = re.compile(r"^(\+\+\+ (b/|/dev/null)|--- (a/|/dev/null))")
+
+
+def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> list[str]:
+    """What a range adds to and removes from one file, order set aside: the lines a hand resolution of that
+    file carries into the head, wherever the moved base put them."""
+    diff = _git(cwd, "diff", "--src-prefix=a/", "--dst-prefix=b/", base, tip, "--", path)
+    return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
+
+
+def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | str:
+    """True when `head` is the read's tip rebased onto a moved base and nothing more: the same commit messages in
+    the same order, the three-way merge of the read onto the head's base giving the head's tree except in the two
+    rendered files a rebase resolves by hand, and each of those carrying in the head the lines the read's own
+    patch added and removed, no other. False when the base did not move or any of those differ. A string, naming
+    the cause, when the arm could not compare: the read's commit not in the clone and not fetchable, no
+    `origin/<base>` to take a merge base against, a `git merge-tree` that could not merge, or a call that timed out."""
     try:
         try:
-            read = git("rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
+            read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
         except subprocess.CalledProcessError:
-            git("fetch", "-q", "origin", read)
-            read = git("rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
-        old_base = git("merge-base", f"origin/{base_ref}", read)
-        new_base = git("merge-base", f"origin/{base_ref}", head)
+            _git(cwd, "fetch", "-q", "origin", read)
+            read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
+        old_base = _git(cwd, "merge-base", f"origin/{base_ref}", read)
+        new_base = _git(cwd, "merge-base", f"origin/{base_ref}", head)
         if old_base == new_base:
             return False  # not a rebase: the tree arm above decides an amend, and a new commit takes a read
+        if _git(cwd, "log", "--format=%B%x00", f"{old_base}..{read}") != _git(cwd, "log", "--format=%B%x00", f"{new_base}..{head}"):
+            return False  # a commit reworded, added or dropped: not the messages the pre-review graded
         merged = subprocess.run(
             ["git", "merge-tree", "--write-tree", f"--merge-base={old_base}", read, new_base],
             capture_output=True,
@@ -515,12 +536,19 @@ def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Pa
             cwd=cwd,
         )
         if merged.returncode not in (0, 1) or not merged.stdout.strip():
-            return None  # a merge-tree that could not merge at all says nothing about the patches
+            return "`git merge-tree` could not merge the read onto the moved base"
         tree = merged.stdout.splitlines()[0].strip()  # exit 1 is a conflict: the tree still prints first, its markers inside
-        changed = git("diff", "--name-only", tree, head).splitlines()
-    except subprocess.CalledProcessError, subprocess.TimeoutExpired:
-        return None
-    return all(path in RENDERED for path in changed)
+        changed = _git(cwd, "diff", "--name-only", tree, head).splitlines()
+        if not all(path in RENDERED for path in changed):
+            return False
+        for path in changed:
+            if _patch_lines(cwd, old_base, read, path) != _patch_lines(cwd, new_base, head, path):
+                return False  # the resolution carried a line the read's own patch did not, or lost one
+    except subprocess.TimeoutExpired as exc:
+        return f"`git {exc.cmd[1]}` timed out"
+    except subprocess.CalledProcessError as exc:
+        return f"`git {exc.cmd[1]}` exited {exc.returncode}: {(exc.stderr or '').strip() or 'no stderr'}"
+    return True
 
 
 def _gh(*args: str) -> str:
