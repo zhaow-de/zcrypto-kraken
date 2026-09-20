@@ -236,6 +236,8 @@ def test_the_graders_run_on_opus_unless_a_model_is_named():
     assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
     ran = _drive_pre_review({**_BRANCH, "model": "fable"})
     assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "fable"), ("record", "sonnet")]
+    ran = _drive_pre_review({**_BRANCH, "model": "sonnet"})
+    assert "the graders' floor" in ran.get("error", ""), ran
 
 
 _SLICES = [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
