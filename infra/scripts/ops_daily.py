@@ -754,8 +754,6 @@ SOAK_OUTSIDE_FAILS_AT = 3
 # `develop`'s tip. Left to resolve against the running checkout it reads `unreadable:` and takes the whole
 # pass to exit 2 for a property of the operator's shell.
 SOAK_CANONICAL = Path("/home/zhaow/Projects/zcrypto-kraken/data/ohlc-full")
-# The override for a host that keeps the dataset elsewhere, read per run rather than at import: the pass is a
-# long-lived module in the test suite, and a constant frozen at import cannot be pointed anywhere.
 SOAK_CANONICAL_ENV = "ZCRYPTO_SOAK_CANONICAL"
 # Wide on purpose: the row is read once a day, and a slow reading is still a reading where a killed one is a
 # gap. `_TIMEOUT` above bounds one HTTP or ssh read and is not this.
@@ -774,13 +772,10 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
     """A store-shaped directory holding the newest success record's 240 snapshots, which is every close
     `soak-check` reads from the engine's store: each cycle journals the store series it read.
 
-    Each leg is held to its own journaled metadata before it is copied -- content hash first, then bar count
-    and both end stamps -- which is what every reader in `cli/engine` does with a snapshot it is about to
-    replay (`feeders.replay_stages`, `soak._assemble_latest_grids`). The journal reaches this host over an
-    rsync pull, and a truncated or half-written leg differs from the record silently: copied in unchecked it
-    is a book the instrument judges and no one can reproduce. `snapshot_content_hash` is imported rather than
-    reimplemented -- its byte layout is part of the record schema -- and locally, so the daily pass's other
-    readers do not pay for the engine's imports.
+    The journal reaches this host over an rsync pull, where a truncated or half-written leg differs from its
+    record silently, so each leg is held to its journaled metadata before it is copied. `snapshot_content_hash`
+    is imported rather than reimplemented -- its byte layout is part of the record schema -- and locally, so the
+    daily pass's other readers do not pay for the engine's imports.
     """
     from polars.exceptions import PolarsError
 
@@ -854,8 +849,8 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
 
     A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
     pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
-    the payload carries populated verdicts beside a non-empty one. Then the panel's two counts decide, the
-    scored window's currency, and last whether all three self-test proofs actually ran.
+    the payload carries populated verdicts beside a non-empty one. What is left -- the panel's two counts, the
+    scored window's currency, and that all three self-test proofs ran -- is one conjunction, in no order.
 
     Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
     """
