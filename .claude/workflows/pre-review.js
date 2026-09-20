@@ -1,7 +1,7 @@
 export const meta = {
   name: 'pre-review',
   description: 'The author’s prose and message claims graded by a different agent before any review',
-  whenToUse: 'Before every review or re-review — over the fix range after the first review: graders grade the range’s prose, re-run the commands and probes its messages quote, and check each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, model?, ranges?, rulings?}',
+  whenToUse: 'Before every review or re-review — over the fix range after the first review: graders grade the range’s prose, re-run the commands and probes its messages quote, and check each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, ranges?, rulings?}',
   phases: [
     { title: 'Pre-review', detail: 'a read-only grader per slice over the range’s prose and message claims' },
     { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
@@ -17,7 +17,7 @@ const LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/
 const ends = (r) => String((r && r.range) || r || '').split('..')
 const chained = FAN && FAN.every((r, i) => ends(r).length === 2 && ends(r)[0] !== ends(r)[1] && ends(r)[0] === (i ? ends(FAN[i - 1])[1] : ends(range)[0])) && ends(FAN[FAN.length - 1])[1] === ends(range)[1]
 const badRanges = ranges != null && (!chained || FAN.some((r) => !LABEL.test(r.label || '')) || new Set(FAN.map((r) => r.label)).size !== FAN.length)
-const badModel = model != null && model !== 'opus' // the graders run on Opus, a floor and a cap: Fable is for the reads, the owner's word of 2026-09-20
+const badModel = model != null && model !== 'opus' // Fable is for the reads, never the graders: the owner's word of 2026-09-20
 if (!repo || !range || !tip || !reportDir || badRanges || badModel) throw new Error('args: {repo, range, tip, reportDir, worktree?, model?: opus, the graders\' floor and cap, ranges?: [{label, range}] — labels unique, 1 to 32 of lowercase, digits and dashes, none opening with a dash; ranges `a..b` chained from the opening of `range` to its close, none empty —, rulings?}')
 
 // --- shared with review.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
