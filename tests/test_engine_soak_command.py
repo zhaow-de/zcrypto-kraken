@@ -42,10 +42,10 @@ def _row(ts, close):  # Kraken 8-field OHLC shape (see tests/test_engine_store.p
     return [int(ts.timestamp()), str(close), str(close), str(close), str(close), str(close), "1.0", 1]
 
 
-def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, Path]:
-    """3 contiguous cycles at 00:00, 04:00, 08:00 on 2026-07-16 (single asset BTC, final_targets
-    BTC=1.0), journaled as real cycle-*.json files under `<journal_dir>/<day>/`, plus a matching
-    BTC 240 store parquet built from closes_by_label. Mirrors tests/test_engine_soak.py's
+def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict, cycle_stamps: list[datetime] | None = None) -> tuple[Path, Path]:
+    """3 contiguous cycles at 00:00, 04:00, 08:00 on 2026-07-16 -- or the `cycle_stamps` given -- (single asset
+    BTC, final_targets BTC=1.0), journaled as real cycle-*.json files under `<journal_dir>/<day>/`, plus a
+    matching BTC 240 store parquet built from closes_by_label. Mirrors tests/test_engine_soak.py's
     `_mk_records_and_store`, but writes to disk instead of returning in-memory CycleRecords, since
     the command reads the journal via `_journal_artifacts` + `from_json`."""
     asset = "BTC"
@@ -57,8 +57,9 @@ def _mk_journal_and_store(tmp_path: Path, closes_by_label: dict) -> tuple[Path, 
 
     journal_dir = tmp_path / "journal"
     base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
-    for k in range(3):
-        cycle_ts = base + timedelta(hours=4 * k)
+    if cycle_stamps is None:
+        cycle_stamps = [base + timedelta(hours=4 * k) for k in range(3)]
+    for cycle_ts in cycle_stamps:
         last_ts = cycle_ts - timedelta(hours=4)
         upto = [t for t in labels if t <= last_ts]
         # The first cycle's window is one bar, which `validate_record` refuses at the soak's read (`first_ts`
@@ -986,6 +987,33 @@ def test_soak_report_propagates_soak_error_from_realized_internals(tmp_path, mon
             registry_path=tmp_path / "fake-registry.jsonl",
             floor=1,
         )
+
+
+def test_soak_report_scores_the_newest_run_that_meets_its_floor(tmp_path):
+    """One failed boundary between a longer older run and a newer one long enough for the floor: the report's
+    window is the newer run, so the command hands its own floor to the selection."""
+    older = [datetime(2026, 7, 16, 0, 0, tzinfo=UTC) + timedelta(hours=4 * k) for k in range(4)]
+    newer = [older[-1] + timedelta(hours=8) + timedelta(hours=4 * k) for k in range(3)]
+    first_close = older[0] - timedelta(hours=4)
+    closes = {first_close + timedelta(hours=4 * k): 100.0 + k for k in range(len(older) + len(newer) + 2)}
+    journal_dir, store_dir = _mk_journal_and_store(tmp_path, closes, cycle_stamps=older + newer)
+
+    _, payload = soak.soak_report(
+        journal_dir=journal_dir,
+        store_dir=store_dir,
+        canonical_dir=tmp_path / "absent-canonical",
+        registry_path=tmp_path / "absent-registry.jsonl",
+        floor=2,
+        now=newer[-1] + timedelta(hours=16),
+    )
+
+    provenance = payload["provenance"]
+    assert provenance["journal_last_cycle_ts"] == newer[-1].isoformat()
+    assert provenance["first_cycle_ts"] == newer[0].isoformat()
+    assert provenance["L"] == len(newer) - 1 == 2
+    assert not [reason for reason in payload["void_reasons"] if reason.startswith("L=")], (
+        "a window of exactly the floor's bars meets the floor"
+    )
 
 
 def test_unrecognized_verdict_label_aborts_cleanly_through_the_cli(tmp_path, monkeypatch):

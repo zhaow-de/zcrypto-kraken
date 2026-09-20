@@ -1058,7 +1058,12 @@ def soak_check(
     band: float = typer.Option(
         0.90, "--band", help="Two-sided outer band width used to judge each structural metric against its null distribution."
     ),
-    floor: int = typer.Option(30, "--floor", help="Minimum scored realized bars required before any metric verdict is attempted."),
+    floor: int = typer.Option(
+        30,
+        "--floor",
+        help="Minimum scored realized bars required before any metric verdict is attempted; the scored window is the "
+        "newest boundary-contiguous run of journaled cycles long enough to score it, the longest run when none is.",
+    ),
     null_mode: str = typer.Option(
         "both",
         "--null",

@@ -199,6 +199,37 @@ def test_realized_series_skips_cycle_with_none_store_close(tmp_path):
     assert rs.dropped_tail > 1  # more cycles dropped than just the always-unscored tail cycle
 
 
+def test_the_clean_segment_is_the_newest_run_that_meets_the_floor_and_the_longest_otherwise():
+    """The window turns current at the floor's worth of cycles after a failed boundary, not at the older
+    run's length."""
+
+    def _bare(cycle_ts):
+        return CycleRecord(
+            schema_version=1,
+            cycle_ts=cycle_ts,
+            snapshots=(),
+            final_targets={},
+            started_at=cycle_ts,
+            completed_at=cycle_ts + timedelta(minutes=1),
+            code_version="test",
+            builder_path="fast",
+        )
+
+    base = datetime(2026, 7, 16, 0, 0, tzinfo=UTC)
+    older = [_bare(base + timedelta(hours=4 * k)) for k in range(40)]
+    gap = timedelta(hours=4) * (len(older) + 1)  # one boundary slot missing between the runs
+    newer = [_bare(base + gap + timedelta(hours=4 * k)) for k in range(32)]
+    records = newer + older  # unsorted on purpose: the selection orders them
+    assert [r.cycle_ts for r in select_clean_segment(records, floor=30)] == [r.cycle_ts for r in newer]
+    assert [r.cycle_ts for r in select_clean_segment(records)] == [r.cycle_ts for r in older]
+    assert [r.cycle_ts for r in select_clean_segment(records, floor=35)] == [r.cycle_ts for r in older], (
+        "only the older run can score thirty-five, so it is the newest that meets the floor"
+    )
+    assert [r.cycle_ts for r in select_clean_segment(records, floor=len(newer))] == [r.cycle_ts for r in older], (
+        "a run of exactly the floor's records scores one cycle short of it"
+    )
+
+
 def test_realized_series_empty_clean_segment_raises_soak_error(tmp_path):
     """No records -> select_clean_segment returns [] -> a typed SoakError, not an IndexError from
     indexing clean[0]."""
@@ -706,6 +737,7 @@ def test_metric_verdict_inconsistent_both_sides():
 def test_metric_verdict_na_on_zero_width_or_tiny_n():
     assert metric_verdict(1.0, [3.0] * 50, band=0.90).verdict == "n/a"  # zero-width band
     assert metric_verdict(50, list(range(101)), band=0.90, effective_n=2).verdict == "n/a"  # tiny effective_n
+    assert metric_verdict(50, list(range(101)), band=0.90, effective_n=soak._MIN_EFFECTIVE_N).verdict == "consistent"
 
 
 def test_metric_verdict_na_on_full_range_domain():

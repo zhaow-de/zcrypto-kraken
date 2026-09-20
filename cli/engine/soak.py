@@ -119,9 +119,12 @@ class RealizedSeries:
     store_bound_cycles: int
 
 
-def select_clean_segment(records: list[CycleRecord]) -> list[CycleRecord]:
-    """The longest 4h-contiguous run of grid-boundary records, ties keeping the FIRST. Success/failure
-    filtering is the caller's job -- this only handles boundary contiguity."""
+def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None) -> list[CycleRecord]:
+    """The 4h-contiguous run of grid-boundary records the instrument scores: with a `floor`, the NEWEST run long
+    enough to score `floor` cycles -- a run of N records scores at most N-1 -- so one failed boundary costs the
+    floor's worth of cycles and not the older run's length; with none, or when no run is that long, the longest
+    run, ties keeping the FIRST. Success/failure filtering is the caller's job -- this only handles boundary
+    contiguity."""
     if not records:
         return []
     ordered = sorted(records, key=lambda r: r.cycle_ts)
@@ -129,7 +132,7 @@ def select_clean_segment(records: list[CycleRecord]) -> list[CycleRecord]:
     def _on_boundary(ts: datetime) -> bool:
         return ts.hour in {0, 4, 8, 12, 16, 20} and ts.minute == 0 and ts.second == 0
 
-    best_start = best_len = 0
+    runs: list[tuple[int, int]] = []  # (start, length) of every boundary-contiguous run, oldest first
     run_start = run_len = 0
     for i, rec in enumerate(ordered):
         ts = rec.cycle_ts
@@ -139,12 +142,21 @@ def select_clean_segment(records: list[CycleRecord]) -> list[CycleRecord]:
                 run_start = i
             run_len += 1
         else:
+            if run_len:
+                runs.append((run_start, run_len))
             run_start = i
             run_len = 1 if _on_boundary(ts) else 0
-        if run_len > best_len:
-            best_start, best_len = run_start, run_len
-
-    return ordered[best_start : best_start + best_len]
+    if run_len:
+        runs.append((run_start, run_len))
+    if not runs:
+        return []
+    if floor is not None:
+        newest_enough = [run for run in runs if run[1] > floor]
+        if newest_enough:
+            start, length = newest_enough[-1]
+            return ordered[start : start + length]
+    start, length = max(runs, key=lambda run: run[1])  # max keeps the first of equals
+    return ordered[start : start + length]
 
 
 def _snapshot_240(record: CycleRecord) -> SnapshotEntry:
@@ -185,12 +197,13 @@ def realized_series(
     *,
     fee: float = 0.006,
     now: datetime,
+    floor: int | None = None,
 ) -> RealizedSeries:
     """The realized forward-4h-return series over a run of journal cycles: cycle T's `final_targets` are held
     over [T, T+4h) and scored on the store's closes[T-4h] (entry) and closes[T] (exit), joined BY TIMESTAMP.
     The last clean-segment cycle never scores; a cycle whose successor postdates `now`, or whose closes are
     not all present and finite at both stamps, is skipped too and counted in `dropped_tail`."""
-    clean = select_clean_segment(records)
+    clean = select_clean_segment(records, floor=floor)
     if not clean:
         raise SoakError("no contiguous clean cycle segment in the journal")
     # Targets are read in the CURRENT symbol key space, as the cycle's own previous-targets read is: the
@@ -1745,7 +1758,7 @@ def soak_report(
         return text, payload
 
     try:
-        realized = realized_series(records, store_dir, fee=fee, now=now)
+        realized = realized_series(records, store_dir, fee=fee, now=now, floor=floor)
     except SoakError as exc:
         void_reasons = [f"realized series: {exc}"]
         text = render_report(None, None, None, None, void_reasons=void_reasons, band=band, null_mode=null_mode, path=path)
