@@ -225,6 +225,9 @@ def test_the_clean_segment_is_the_newest_run_that_meets_the_floor_and_the_longes
     assert [r.cycle_ts for r in select_clean_segment(records, floor=35)] == [r.cycle_ts for r in older], (
         "only the older run can score thirty-five, so it is the newest that meets the floor"
     )
+    assert [r.cycle_ts for r in select_clean_segment(records, floor=len(newer))] == [r.cycle_ts for r in older], (
+        "a run of exactly the floor's records scores one cycle short of it"
+    )
 
 
 def test_realized_series_empty_clean_segment_raises_soak_error(tmp_path):
