@@ -12,6 +12,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import polars as pl
 import pytest
 from test_ops_daily import (
     _SOAK_METRICS,
@@ -345,9 +346,8 @@ def test_a_leg_disagreeing_with_its_journaled_metadata_is_refused_and_reads_unre
 
 
 def test_a_leg_the_reader_cannot_open_reads_unreadable_and_does_not_end_the_pass(tmp_path):
-    """The truncated leg the docstring names: `read_parquet` raises `polars.exceptions.ComputeError`, which is
-    outside every class `read_soak_verdict` catches, so the read has to refuse in a class the row can read.
-    What this drives is that the whole pass survives one unopenable leg -- a Check, not a traceback."""
+    """Unlike the two refusals beside it, this one runs the real `derive_soak_store` inside the runner:
+    what has to hold is that `read_parquet`'s own exception class never reaches the pass uncaught."""
     last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
     store, journal = tmp_path / "store", tmp_path / "journal"
     _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
@@ -365,6 +365,24 @@ def test_a_leg_the_reader_cannot_open_reads_unreadable_and_does_not_end_the_pass
     _, marker, detail = check.value.partition("leg cannot be read -- ")
     assert marker and detail.strip(), check.value
     assert "\n" not in check.value, "the row is one line: only the reader's first line reaches it"
+
+
+def test_a_leg_without_the_stores_columns_reads_unreadable_and_does_not_end_the_pass(tmp_path):
+    """A leg that opens but carries no `close` column raises polars' own class at the column, not at the read;
+    the guard has to cover both or the pass ends on the second."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record_path = next(journal.glob("*/cycle-*.json"))
+    legs = {e["pair"]: e for e in json.loads(record_path.read_text())["snapshots"] if e["grid"] == "240"}
+    leg = journal / legs["BTC/EUR"]["path"]
+    pl.DataFrame({"ts": [last], "value": [1.0]}).write_parquet(leg)
+
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=lambda _: ops_daily.derive_soak_store(journal, tmp_path / "scratch"))
+
+    assert not check.ok and check.value.startswith("unreadable:"), check.value
+    assert "pair='BTC/EUR'" in check.value and "leg cannot be read -- " in check.value, check.value
 
 
 def test_a_journal_with_no_record_and_a_record_with_no_240_snapshot_both_refuse(tmp_path):

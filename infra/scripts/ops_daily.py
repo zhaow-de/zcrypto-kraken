@@ -793,15 +793,13 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
         source = journal_dir / entry["path"]
         try:
             frame = read_parquet(source)
-        # A half-written leg is the rsync pull's own failure, and `PolarsError` is no subclass of anything
-        # `read_soak_verdict` catches: unguarded, the read takes the whole pass down on a traceback instead
-        # of one row. Re-raised as the class the leg's other two refusals use, it reaches the row as a source
-        # the pass could not read.
+            ts, closes = frame["ts"].to_list(), frame["close"].to_list()
+        # `PolarsError` is no subclass of anything `read_soak_verdict` catches, so an unguarded read takes
+        # the whole pass down on a traceback instead of one row.
         except PolarsError as exc:
             raise ValueError(
                 f"pair={entry['pair']!r} grid='240' at {source}: leg cannot be read -- {str(exc).splitlines()[0]}"
             ) from exc
-        ts, closes = frame["ts"].to_list(), frame["close"].to_list()
         if snapshot_content_hash(ts, closes) != entry["content_hash"]:
             raise ValueError(f"content hash mismatch for pair={entry['pair']!r} grid='240' at {source} -- corrupt evidence")
         first, last = datetime.fromisoformat(entry["first_ts"]), datetime.fromisoformat(entry["last_ts"])
