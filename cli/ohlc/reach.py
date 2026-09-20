@@ -163,42 +163,36 @@ def reach_round(
     entries: list[ReachEntry] = []
     fetched = 0
 
-    for interval in intervals:
-        for symbol in _canonical_symbols(canonical_root, interval):
-            pair_key = PAIR_KEYS.get(symbol)
-            if pair_key is None:
-                logger.warning("reach_round: no REST pair key for %s -- skipping", symbol)
-                continue
+    for (interval, symbol), canonical in canonicals.items():
+        pair_key = PAIR_KEYS[symbol]
+        base, quote = symbol.split("/")
 
-            base, quote = symbol.split("/")
+        # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
+        if fetched:
+            sleep_fn(MIN_REST_INTERVAL_SECONDS)
+        fetched += 1
+        rest = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+        if rest.is_empty():
+            logger.warning("reach_round: REST returned no completed bars for %s@%d", symbol, interval)
+            continue
 
-            canonical = canonicals[(interval, symbol)]
-            # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
-            if fetched:
-                sleep_fn(MIN_REST_INTERVAL_SECONDS)
-            fetched += 1
-            rest = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
-            if rest.is_empty():
-                logger.warning("reach_round: REST returned no completed bars for %s@%d", symbol, interval)
-                continue
+        status, frame, overlap_bars, gap_bars = _merge_or_detach(canonical, rest, symbol=symbol, interval=interval)
+        name = f"{interval}.parquet" if status == "continuous" else f"{interval}.detached.parquet"
+        write_parquet(frame, out_root / base / quote / name)
 
-            status, frame, overlap_bars, gap_bars = _merge_or_detach(canonical, rest, symbol=symbol, interval=interval)
-            name = f"{interval}.parquet" if status == "continuous" else f"{interval}.detached.parquet"
-            write_parquet(frame, out_root / base / quote / name)
-
-            appended = frame.height - canonical.height if status == "continuous" else frame.height
-            entries.append(
-                ReachEntry(
-                    symbol=symbol,
-                    interval=interval,
-                    status=status,
-                    rest_first=rest["ts"].min(),
-                    rest_last=rest["ts"].max(),
-                    overlap_bars=overlap_bars,
-                    appended=appended,
-                    gap_bars=gap_bars,
-                )
+        appended = frame.height - canonical.height if status == "continuous" else frame.height
+        entries.append(
+            ReachEntry(
+                symbol=symbol,
+                interval=interval,
+                status=status,
+                rest_first=rest["ts"].min(),
+                rest_last=rest["ts"].max(),
+                overlap_bars=overlap_bars,
+                appended=appended,
+                gap_bars=gap_bars,
             )
+        )
 
     report = ReachReport(entries=tuple(entries))
     _write_manifest(out_root, report, now, joined)
@@ -206,10 +200,12 @@ def reach_round(
 
 
 def _read_canonicals(canonical_root: Path, intervals: tuple[int, ...]) -> dict[tuple[int, str], pl.DataFrame]:
-    """Every canonical frame the round will join, read through `_read_canonical` before the first fetch."""
     frames: dict[tuple[int, str], pl.DataFrame] = {}
     for interval in intervals:
         for symbol in _canonical_symbols(canonical_root, interval):
+            if symbol not in PAIR_KEYS:
+                logger.warning("reach_round: no REST pair key for %s -- skipping", symbol)
+                continue
             base, quote = symbol.split("/")
             frames[(interval, symbol)] = _read_canonical(canonical_root / base / quote / f"{interval}.parquet", symbol, interval)
     return frames

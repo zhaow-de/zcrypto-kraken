@@ -312,7 +312,6 @@ def _must_not_fetch(pair_key: str, interval: int) -> list[list]:
 
 
 def test_a_foreign_frame_on_a_later_leg_is_refused_before_any_leg_is_fetched(tmp_path):
-    """Every canonical frame is read before the first fetch, so the second leg's refusal costs the first leg nothing."""
     canonical, out = tmp_path / "canon", tmp_path / "out"
     _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
     _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20)
