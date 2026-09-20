@@ -3217,6 +3217,29 @@ def test_the_derived_store_is_the_newest_success_records_and_a_failed_cycle_is_n
     assert read_store_series(derived, "BTC/EUR", 240)[0][-1] == last
 
 
+def test_a_record_journaling_two_240_snapshots_for_one_pair_still_derives(tmp_path):
+    """Nothing in the record format says a pair gets one 240 entry, and the derivation made each pair's
+    directory as if it did: a second entry raised `FileExistsError`, which the row reports as `unreadable:`
+    -- the pass declaring it could not read a record it could. The later entry is the pair's leg."""
+    from cli.engine.store import read_store_series
+
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record_path = next(journal.glob("*/cycle-*.json"))
+    record = json.loads(record_path.read_text())
+    legs = {e["pair"]: e for e in record["snapshots"] if e["grid"] == "240"}
+    # ETH's whole entry under BTC's name: the duplicate names a file whose own journaled metadata it carries,
+    # so what this case drives is the second `mkdir` and nothing else.
+    record["snapshots"].append({**legs["ETH/EUR"], "pair": "BTC/EUR"})
+    record_path.write_text(json.dumps(record))
+
+    derived = ops_daily.derive_soak_store(journal, tmp_path / "scratch")
+
+    assert read_store_series(derived, "BTC/EUR", 240) == read_store_series(store, "ETH/EUR", 240)
+
+
 def test_a_journal_with_no_record_and_a_record_with_no_240_snapshot_both_refuse(tmp_path):
     with pytest.raises(FileNotFoundError, match="no cycle record"):
         ops_daily.derive_soak_store(tmp_path, tmp_path / "scratch")

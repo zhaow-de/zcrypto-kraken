@@ -783,7 +783,7 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
     for entry in legs:
         base, quote = entry["pair"].split("/")
         leg = store / base / quote / "240.parquet"
-        leg.parent.mkdir(parents=True)
+        leg.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(journal_dir / entry["path"], leg)
     return store
 
