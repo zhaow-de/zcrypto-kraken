@@ -2802,6 +2802,9 @@ _ENGINE_OPTIONS_LEFT_OUT = {
         # table decides, so the exclusion cannot be walked around by moving the command one hop inward.
         "sudo docker exec zcrypto-engine zcrypto engine soak-check --registry /etc/zcrypto-ops/alloy/alloy-secrets.env",
         "zcrypto engine tracking-report --ledger-export /opt/zcrypto-capture/logship-secrets.env",
+        # `--since` is a real `decompose` option, but the sub parses it with `strptime(raw, "%Y-%m-%d")`:
+        # journalctl's relative spelling aborts there, and a shape vouches only for a form that can run.
+        "zcrypto engine decompose --since 24h",
         # Options of a sibling sub.
         "zcrypto engine report --since 24h",
         "zcrypto engine report --date 2026-09-19 --pair XBTEUR",

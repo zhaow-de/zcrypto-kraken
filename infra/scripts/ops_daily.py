@@ -1103,6 +1103,10 @@ _UNIT_EXACT = r"[A-Za-z0-9][A-Za-z0-9._@-]{0,63}"
 _PATH = r"/[A-Za-z0-9._/*+-]{0,160}"
 _FILEREF = r"[A-Za-z0-9._/*+-]{1,160}"
 _SINCE = r"-?\d{1,4}[smhd]?|-?\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+# journalctl and docker take `_SINCE`'s whole vocabulary; `zcrypto engine`'s window flags reach
+# `strptime(raw, "%Y-%m-%d")` and abort on everything else, so they get the narrower class -- a shape
+# vouches for a form that can RUN, and `--since 24h` there is a step that aborts before it reads.
+_DAY = r"\d{4}-\d{2}-\d{2}"
 _ISOWEEK = r"\d{4}-W\d{2}"
 _INT = r"\d{1,6}"
 _SINT = r"[-+]?\d{1,6}"
@@ -1307,7 +1311,7 @@ _FIRST_STAGE_SHAPES = (
 # `zcrypto engine <sub>`, one flag table per read subcommand; `cycle --replace` deletes a boundary's record
 # and `gate-export` writes a textfile, so neither is here. The real options left out of a sub's table are named
 # with their reasons in `tests/test_ops_daily.py::_ENGINE_OPTIONS_LEFT_OUT`, whose test holds both to the CLI.
-_ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _SINCE, "--until": _SINCE}
+_ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _DAY, "--until": _DAY}
 _ENGINE_SIZING = {"--minimums": _FILEREF, "--nav": _FLOAT}
 _ZCRYPTO_READ_FLAGS: dict[str, dict[str, str | None]] = {
     "exec-status": {"--state-dir": _PATH},
