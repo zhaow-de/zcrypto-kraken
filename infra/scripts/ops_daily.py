@@ -795,7 +795,8 @@ def soak_run(journal_dir: Path) -> dict:
         command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
         done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
         if not out.exists():
-            last = (done.stderr.strip() or done.stdout.strip() or "no output").splitlines()[-1]
+            # The CLI logs its one-line aborts to stdout; stderr is where `uv run` reports a venv sync.
+            last = (done.stdout.strip() or done.stderr.strip() or "no output").splitlines()[-1]
             raise RuntimeError(f"soak-check exited {done.returncode} and wrote no payload: {last}")
         return json.loads(out.read_text())
 
