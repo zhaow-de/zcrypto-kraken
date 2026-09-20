@@ -435,9 +435,8 @@ def test_the_canonical_dataset_is_the_environments_where_it_names_one_and_the_co
 
 
 def test_a_relative_canonical_override_is_refused_before_the_run(tmp_path, monkeypatch, live_soak_run):
-    """The constant is held absolute by its own case; the override is handed to `--canonical-dir` as it came, and a
-    relative one would resolve against the checkout the pass runs from, the failure the absolute path exists to
-    prevent, so it is refused before `soak-check` runs and the row reads it as a source the pass could not read."""
+    """A relative override would resolve against the checkout the subprocess runs from, not the one the operator
+    meant, so it is refused before `soak-check` is asked rather than handed to `--canonical-dir`."""
     last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
     store, journal = tmp_path / "store", tmp_path / "journal"
     _a_twelve_leg_store(store, last, short_leg="SOL/EUR")

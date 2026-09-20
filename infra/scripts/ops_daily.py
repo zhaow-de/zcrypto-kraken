@@ -831,8 +831,8 @@ def soak_run(journal_dir: Path) -> dict:
         canonical = Path(os.environ.get(SOAK_CANONICAL_ENV) or SOAK_CANONICAL)
         if not canonical.is_absolute():
             raise RuntimeError(
-                f"{SOAK_CANONICAL_ENV} names a relative path, {canonical}: the pass runs from the checkout at develop's tip and "
-                "a relative canonical resolves against it, the failure the absolute path is there to prevent"
+                f"{SOAK_CANONICAL_ENV} names a relative path, {canonical}: the pass runs from the checkout at develop's tip "
+                "and a relative canonical resolves against it, so name an absolute path"
             )
         command += ("--canonical-dir", str(canonical))
         command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
@@ -845,7 +845,7 @@ def soak_run(journal_dir: Path) -> dict:
 
 
 def read_soak_verdict(*, now: datetime, runner) -> Check:
-    """The scheduled reader of `soak-check`'s gating verdicts: one row, decided in this order.
+    """The scheduled reader of `soak-check`'s gating verdicts: one row.
 
     A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
     pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
