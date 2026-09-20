@@ -72,7 +72,10 @@ def test_the_important_by_origin_split_counts_each_cluster_once_at_its_most_rece
 """
     proc, _ = _run(tmp_path, _A, _B, fix_twice)
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip().endswith(" · Important by origin: last-fix 1 · earlier-fix 1 · in-original 0")
+    assert proc.stdout.strip() == (
+        "counts (from headings): Critical 1 · Important 2 · Minor 1 · keys 4 · raw findings 6 · unparsed 0"
+        " · Important by origin: last-fix 1 · earlier-fix 1 · in-original 0"
+    )
 
 
 def test_nested_indented_and_list_prefixed_findings_are_parsed_and_a_bare_title_is_surfaced(tmp_path):
