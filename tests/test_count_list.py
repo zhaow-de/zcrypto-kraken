@@ -314,17 +314,19 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not_cover(tmp_path):
     """The gate admits two heads past the tip a read line names -- the single-parent commit whose only file is the
-    change index, which `open-pr` pushes after the read, and a head whose tree is that tip's -- and the counter has
-    to admit both or it books every PR that used either. `COUNT_LIST_HEADS_SNAPSHOT` stands in for the commit
-    objects both arms need."""
+    change index, which `open-pr` pushes after the read, and a head the clone judges the read's own commits -- and
+    refuses one the clone judges otherwise; the counter has to agree or it books every PR that used the first two
+    and excuses a reworded one. `COUNT_LIST_HEADS_SNAPSHOT` stands in for the commit objects the row arm reads,
+    `COUNT_LIST_KEPT_SNAPSHOT` for the clone's answers."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     read, head, other = "abcdef1234567", "99887766554433221100ffeeddccbbaa99887766", "0011223344556677889900aabbccddeeff001122"
     body = f"Read before push by: Claude Opus at {read}\n"
-    amended = "aa00bb11cc22dd33ee44ff5566778899aabbccdd"
+    amended, reworded = "aa00bb11cc22dd33ee44ff5566778899aabbccdd", "bb11cc22dd33ee44ff5566778899aabbccddeeff"
     prs = [
         {"headRefName": "feat/index-row", "mergedAt": stamp, "headRefOid": head, "files": [], "body": body},
         {"headRefName": "feat/other-commit", "mergedAt": stamp, "headRefOid": other, "files": [], "body": body},
         {"headRefName": "feat/amended", "mergedAt": stamp, "headRefOid": amended, "files": [], "body": body},
+        {"headRefName": "feat/reworded", "mergedAt": stamp, "headRefOid": reworded, "files": [], "body": body},
         {"headRefName": "feat/old", "mergedAt": "2026-01-01T00:00:00Z", "headRefOid": head, "files": [], "body": "## Summary\n"},
     ]
     heads = {
@@ -335,17 +337,16 @@ def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not
             "parents": [{"sha": read + "0" * (40 - len(read))}],
             "files": [{"filename": "docs/reference/change-index.md"}, {"filename": "cli/x.py"}],
         },
-        # A message amend: another file in the diff against its parent, but the tree the read graded.
-        amended: {
-            "parents": [{"sha": read + "0" * (40 - len(read))}],
-            "files": [{"filename": "cli/x.py"}],
-            "commit": {"tree": {"sha": "t" * 40}},
-        },
-        read + "0" * (40 - len(read)): {"commit": {"tree": {"sha": "t" * 40}}},
+        # Re-dated and reworded tips alike: another file in the diff against the parent, so the row arm passes
+        # neither, and the clone's answer decides.
+        amended: {"parents": [{"sha": read + "0" * (40 - len(read))}], "files": [{"filename": "cli/x.py"}]},
+        reworded: {"parents": [{"sha": read + "0" * (40 - len(read))}], "files": [{"filename": "cli/x.py"}]},
     }
-    snapshot, head_snapshot = tmp_path / "prs.json", tmp_path / "heads.json"
+    answers = {amended: True, reworded: "the messages from the base to the head are not the read's, a commit reworded"}
+    snapshot, head_snapshot, kept_snapshot = tmp_path / "prs.json", tmp_path / "heads.json", tmp_path / "kept.json"
     snapshot.write_text(json.dumps(prs))
     head_snapshot.write_text(json.dumps(heads))
+    kept_snapshot.write_text(json.dumps(answers))
     done = subprocess.run(
         ["bash", str(SCRIPT), "merged-prs-without-a-floor-read-30d"],
         cwd=REPO,
@@ -355,10 +356,11 @@ def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not
             **os.environ,
             "COUNT_LIST_PRS_SNAPSHOT": str(snapshot),
             "COUNT_LIST_HEADS_SNAPSHOT": str(head_snapshot),
+            "COUNT_LIST_KEPT_SNAPSHOT": str(kept_snapshot),
         },
         timeout=120,
     )
-    assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+    assert done.returncode == 0 and done.stdout.strip().endswith("\t2"), done.stdout + done.stderr
 
 
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
