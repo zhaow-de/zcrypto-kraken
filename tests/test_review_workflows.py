@@ -230,14 +230,14 @@ _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "rep
 
 
 def test_the_graders_run_on_opus_unless_a_model_is_named():
-    """The pre-review re-runs and diffs; its graders take Opus by default and the model a caller names, and the
-    record step keeps its own."""
-    ran = _drive_pre_review(_BRANCH)
-    assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
-    ran = _drive_pre_review({**_BRANCH, "model": "fable"})
-    assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "fable"), ("record", "sonnet")]
-    ran = _drive_pre_review({**_BRANCH, "model": "sonnet"})
-    assert "the graders' floor" in ran.get("error", ""), ran
+    """The pre-review re-runs and diffs; its graders run on Opus, a floor and a cap — a caller may name Opus and
+    nothing else, Fable included — and the record step keeps its own."""
+    for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
+        ran = _drive_pre_review(args)
+        assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
+    for below_or_above in ("sonnet", "fable"):
+        ran = _drive_pre_review({**_BRANCH, "model": below_or_above})
+        assert "floor and cap" in ran.get("error", ""), (below_or_above, ran)
 
 
 _SLICES = [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
