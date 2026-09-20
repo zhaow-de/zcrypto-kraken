@@ -818,12 +818,15 @@ def soak_run(journal_dir: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="zcrypto-soak-") as scratch:
         root = Path(scratch)
         out = root / "soak.json"
-        command = ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
+        # `--no-sync`: the pass reads the fleet and writes to none of it, and the checkout it runs from is the
+        # one sitting at `develop`'s tip, shared with whoever is working in it. A bare `uv run` would install
+        # into that venv the moment the lock moved ahead of it, mid-pass and unasked.
+        command = ("uv", "run", "--no-sync", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
         command += ("--canonical-dir", str(os.environ.get(SOAK_CANONICAL_ENV) or SOAK_CANONICAL))
         command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
         done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
         if not out.exists():
-            # The CLI logs its one-line aborts to stdout; stderr is where `uv run` reports a venv sync.
+            # The CLI logs its one-line aborts to stdout; stderr is where `uv run` puts its own notices.
             last = (done.stdout.strip() or done.stderr.strip() or "no output").splitlines()[-1]
             raise RuntimeError(f"soak-check exited {done.returncode} and wrote no payload: {last}")
         return json.loads(out.read_text())

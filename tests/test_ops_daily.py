@@ -3305,10 +3305,13 @@ def test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wro
     monkeypatch.delenv(ops_daily.SOAK_CANONICAL_ENV, raising=False)
     monkeypatch.setattr(ops_daily.subprocess, "run", fake_run)
     assert live_soak_run(journal) == {"void_reasons": []}
-    assert seen["command"][:7] == ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal))
-    assert seen["command"][7:9] == ("--canonical-dir", str(ops_daily.SOAK_CANONICAL)), seen["command"]
+    assert seen["command"][:8] == ("uv", "run", "--no-sync", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal))
+    assert seen["command"][8:10] == ("--canonical-dir", str(ops_daily.SOAK_CANONICAL)), seen["command"]
     assert ops_daily.SOAK_CANONICAL.is_absolute(), ops_daily.SOAK_CANONICAL
+    # `capture_output`/`text` beside the other two: without them the abort line the no-payload arm raises goes
+    # to the pass's own stderr as bytes, and the row's `unreadable:` value carries `no output` instead.
     assert seen["kwargs"]["cwd"] == ops_daily.REPO_ROOT and seen["kwargs"]["timeout"] == 900
+    assert seen["kwargs"]["capture_output"] is True and seen["kwargs"]["text"] is True, seen["kwargs"]
     assert len(seen["legs"]) == 12 and "BTC/EUR/240.parquet" in seen["legs"]
     assert not Path(seen["command"][seen["command"].index("--store-dir") + 1]).exists(), "the scratch store outlived the run"
 
@@ -3349,9 +3352,10 @@ def test_a_soak_check_that_wrote_no_payload_raises_its_last_line(tmp_path, monke
     aborted = lambda command, **kwargs: subprocess.CompletedProcess(
         command,
         1,
-        # Both streams are a live abort's: the CLI's console handler logs to stdout, and `uv run` syncs the venv on stderr.
+        # Both streams are a live abort's: the CLI's console handler logs to stdout, and `uv run` puts its own
+        # notices on stderr -- under `--no-sync` the environment it declines to repair, rather than the sync.
         stdout="warming up\n2026-09-19 12:00:04 ERROR zcrypto.engine.command [command.py:86] - read_store_series: cannot read x\n",
-        stderr="   Built zcrypto @ file:///home/x/zcrypto-kraken\nInstalled 56 packages in 205ms\n",
+        stderr="warning: `VIRTUAL_ENV=.venv` does not match the project environment path `.venv`\n",
     )
     monkeypatch.setattr(ops_daily.subprocess, "run", aborted)
     with pytest.raises(RuntimeError, match=r"exited 1 and wrote no payload: .* ERROR .* - read_store_series: cannot read x"):
