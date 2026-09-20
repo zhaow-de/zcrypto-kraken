@@ -3214,9 +3214,7 @@ def test_a_soak_check_that_wrote_no_payload_raises_its_last_line(tmp_path, monke
     aborted = lambda command, **kwargs: subprocess.CompletedProcess(
         command,
         1,
-        # The abort is a LOG line on STDOUT, not a typer error on stderr: the CLI logs its one-line aborts and its
-        # console handler writes to stdout. stderr carries what `uv run` says while it syncs the checkout's venv,
-        # which is what the reason must not be.
+        # Both streams are a live abort's: the CLI's console handler logs to stdout, and `uv run` syncs the venv on stderr.
         stdout="warming up\n2026-09-19 12:00:04 ERROR zcrypto.engine.command [command.py:86] - read_store_series: cannot read x\n",
         stderr="   Built zcrypto @ file:///home/x/zcrypto-kraken\nInstalled 56 packages in 205ms\n",
     )
