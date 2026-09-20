@@ -486,7 +486,7 @@ def test_a_stray_non_stamp_directory_never_outranks_a_dated_source(tmp_path):
 
 def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
     """The WIRING, not just the resolver in isolation: `_refresh_universe` must call
-    `resolve_ohlc_source(ctx.data_root)`, not `_require_ohlc_full(ctx)` directly. Here `ohlc-full` is stale
+    `resolve_ohlc_source(ctx.data_root)`, not a hard-coded `ohlc-full`. Here `ohlc-full` is stale
     (refuses if read) and a fresh, complete stamped sibling is what must actually get read, so a
     revert flips this test from a passing rebuild to an unhandled staleness DataSyncError."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
@@ -516,6 +516,49 @@ def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(
     payload = json.loads((out_root / "point-in-time-universe.json").read_text())
     assert payload["provenance"]["ohlc_dataset_dir"] == "ohlc-reach-20260717"
     assert payload["provenance"]["ohlc_dataset_hash"] == "fresh"
+
+
+def test_the_newest_stamped_ohlc_full_sibling_is_the_canonical_the_reach_joins(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    for stamp in ("20260701", "20260920"):
+        (tmp_path / f"ohlc-full-{stamp}").mkdir()
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
+def test_ohlc_full_is_the_canonical_when_no_stamped_sibling_exists(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full"
+
+
+def test_a_stray_ohlc_full_directory_never_outranks_a_dated_sibling(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    for name in ("ohlc-full-20260920", "ohlc-full-backup", "ohlc-full-20260920.bak"):
+        (tmp_path / name).mkdir()
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
+def test_no_frozen_ohlc_full_at_all_is_refused(tmp_path):
+    with pytest.raises(DataSyncError):
+        rebuild.resolve_canonical_root(tmp_path)
+
+
+def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path, monkeypatch):
+    """The WIRING: a dump ingest re-freezes the canonical as `ohlc-full-<stamp>`, and a reach round that still
+    joined the unstamped set would seam against the tail the ingest just moved past."""
+    (tmp_path / "ohlc-full").mkdir()
+    (tmp_path / "ohlc-full-20260920").mkdir()
+    seen = {}
+
+    def _fake_reach(canonical_root, out_root, **kwargs):
+        seen["canonical"] = canonical_root
+        return ReachReport(entries=())
+
+    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260921")
+
+    rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+    assert seen["canonical"] == tmp_path / "ohlc-full-20260920"
 
 
 def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
