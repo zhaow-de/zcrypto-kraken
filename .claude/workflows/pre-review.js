@@ -17,8 +17,8 @@ const LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/
 const ends = (r) => String((r && r.range) || r || '').split('..')
 const chained = FAN && FAN.every((r, i) => ends(r).length === 2 && ends(r)[0] !== ends(r)[1] && ends(r)[0] === (i ? ends(FAN[i - 1])[1] : ends(range)[0])) && ends(FAN[FAN.length - 1])[1] === ends(range)[1]
 const badRanges = ranges != null && (!chained || FAN.some((r) => !LABEL.test(r.label || '')) || new Set(FAN.map((r) => r.label)).size !== FAN.length)
-const badModel = model != null && !['opus', 'fable'].includes(model) // the graders' floor: Opus at least, as the read line's
-if (!repo || !range || !tip || !reportDir || badRanges || badModel) throw new Error('args: {repo, range, tip, reportDir, worktree?, model?: opus or fable, the graders\' floor, ranges?: [{label, range}] — labels unique, 1 to 32 of lowercase, digits and dashes, none opening with a dash; ranges `a..b` chained from the opening of `range` to its close, none empty —, rulings?}')
+const badModel = model != null && model !== 'opus' // the graders run on Opus, a floor and a cap: Fable is for the reads, the owner's word of 2026-09-20
+if (!repo || !range || !tip || !reportDir || badRanges || badModel) throw new Error('args: {repo, range, tip, reportDir, worktree?, model?: opus, the graders\' floor and cap, ranges?: [{label, range}] — labels unique, 1 to 32 of lowercase, digits and dashes, none opening with a dash; ranges `a..b` chained from the opening of `range` to its close, none empty —, rulings?}')
 
 // --- shared with review.js and re-review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
@@ -107,7 +107,7 @@ EARLIER PRE-REVIEWS of this branch are the ${reportDir}/pre-review-*.md files${s
 Write a Markdown report to ${reportDir}/pre-review-${tip}${slice ? `-${slice.label}` : ''}.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
 phase('Pre-review')
-const grade = (slice) => agent(promptFor(slice), { label: slice ? `pre-review:${slice.label}` : 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, model: model || 'opus' }) // the graders re-run and diff; Opus unless the caller names a model, the owner's word of 2026-09-20
+const grade = (slice) => agent(promptFor(slice), { label: slice ? `pre-review:${slice.label}` : 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, model: 'opus' })
 const parts = FAN ? await parallel(FAN.map((slice) => () => grade(slice))) : [await grade(null)]
 if (parts.some((p) => !p)) throw new Error(FAN ? `the pre-reviewers of ${FAN.filter((_, i) => !parts[i]).map((r) => r.label).join(', ')} returned nothing` : 'the pre-reviewer returned nothing')
 // A site two slices touched comes back once per slice.
