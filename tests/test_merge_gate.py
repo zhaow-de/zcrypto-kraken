@@ -140,6 +140,7 @@ def _rebased_repo(
     reword: bool = False,
     smuggle_a_row: bool = False,
     drop_a_row: bool = False,
+    drop_a_commit: bool = False,
     stack_a_commit: bool = False,
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
@@ -199,6 +200,8 @@ def _rebased_repo(
         _git(root, "-c", "core.editor=true", "rebase", "--continue")
     elif drop_a_row or change_a_patch:
         _git(root, "commit", "-q", "--amend", "--no-edit")
+    if drop_a_commit:
+        _git(root, "reset", "-q", "--hard", "HEAD~1")
     if reword:
         _git(root, "commit", "-q", "--amend", "-m", "docs(change-index): row #3, probe KILLED")
     if stack_a_commit:
@@ -233,6 +236,11 @@ def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_
 def test_the_arm_refuses_a_head_that_is_more_than_the_rebase_or_the_merge(tmp_path, shape, more):
     read, head = _rebased_repo(tmp_path / more, **_SHAPES[shape], **_MORE[more])
     assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / more) is False
+
+
+def test_the_arm_refuses_a_branch_that_lost_a_commit(tmp_path):
+    read, head = _rebased_repo(tmp_path / "lost", drop_a_commit=True)
+    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "lost") is False
 
 
 def test_the_arm_refuses_a_reworded_commit_and_names_what_it_could_not_compare(tmp_path):
