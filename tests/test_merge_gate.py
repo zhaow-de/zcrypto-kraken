@@ -73,7 +73,7 @@ def test_the_one_row_commit_past_the_read_passes():
     assert _eval(pr, _head([PREV], [gate.INDEX])) == []
 
 
-def _tree(commit: dict, tree: str, message: str = "fix: x") -> dict:
+def _tree(commit: dict, tree: str, message: str | None = "fix: x") -> dict:
     return {**commit, "commit": {"tree": {"sha": tree}, "message": message}}
 
 
@@ -89,6 +89,8 @@ def test_an_amend_that_kept_the_tree_but_reworded_the_message_fails():
     fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40))
     assert len(fails) == 1 and "a message it did not" in fails[0] and "`pre-review` over the amended commit" in fails[0]
     assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40, "fix: x\n\nProbe: KILLED")) == []
+    fails = _eval(pr, _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, None), read_commit=_tree({"sha": PREV}, "t" * 40))
+    assert len(fails) == 1 and "a message it did not" in fails[0], "a head commit with no message is not the read's message"
 
 
 def test_a_head_whose_tree_differs_from_the_read_tips_fails():
@@ -131,11 +133,12 @@ def _rebased_repo(
     change_a_patch: bool = False,
     reword: bool = False,
     smuggle_a_row: bool = False,
+    drop_a_row: bool = False,
     stack_a_commit: bool = False,
+    merge_instead: bool = False,
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto a base that gained a colliding
-    row in both; returns (the read's tip, the rebased head). Each flag makes the head more than the rebase: an
-    edited first patch, a reworded row commit, a row the resolution smuggled in, a commit stacked after it."""
+    row in both; returns (the read's tip, the rebased head). Each flag makes the head more than the rebase."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
     for path in gate.RENDERED:
@@ -161,6 +164,13 @@ def _rebased_repo(
     _git(root, "commit", "-q", "-am", "docs(change-index): row #2")
     _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "checkout", "-q", "feat")
+    if merge_instead:
+        done = subprocess.run(["git", "merge", "develop"], cwd=root, capture_output=True, text=True, env=_env(root))
+        assert done.returncode != 0 and gate.INDEX in done.stdout + done.stderr, (done.stdout, done.stderr)
+        rows(1, 2, 3)
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "--no-edit")
+        return read, _git(root, "rev-parse", "HEAD")
     done = subprocess.run(
         ["git", "rebase", "develop"],
         cwd=root,
@@ -169,7 +179,7 @@ def _rebased_repo(
         env=_env(root),
     )
     assert done.returncode != 0 and "row #3" in done.stdout + done.stderr, (done.stdout, done.stderr)
-    rows(1, 2, 3, *([7] if smuggle_a_row else []))
+    rows(*([1, 2] if drop_a_row else [1, 2, 3]), *([7] if smuggle_a_row else []))
     if change_a_patch:
         (root / "code.py").write_text("x = 3\n")
     _git(root, "add", "-A")
@@ -193,10 +203,15 @@ def test_a_rebase_is_judged_by_the_merge_tree_of_the_read_onto_the_moved_base(tm
     assert gate.rebase_kept_every_patch(head, head, "develop", cwd=tmp_path / "kept") is False, (
         "a base that did not move is no rebase"
     )
+    read, head = _rebased_repo(tmp_path / "merged", merge_instead=True)
+    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "merged") is True, (
+        "a merge of the moved base into the branch, its rows resolved by hand, carries no patch of its own"
+    )
     more = {
         "changed": {"change_a_patch": True},
         "reworded": {"reword": True},
         "smuggled": {"smuggle_a_row": True},
+        "dropped": {"drop_a_row": True},
         "stacked": {"stack_a_commit": True},
     }
     for name, flags in more.items():

@@ -510,12 +510,8 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
 
 
 def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | str:
-    """True when `head` is the read's tip rebased onto a moved base and nothing more: the same commit messages in
-    the same order, the three-way merge of the read onto the head's base giving the head's tree except in the two
-    rendered files a rebase resolves by hand, and each of those carrying in the head the lines the read's own
-    patch added and removed, no other. False when the base did not move or any of those differ. A string, naming
-    the cause, when the arm could not compare: the read's commit not in the clone and not fetchable, no
-    `origin/<base>` to take a merge base against, a `git merge-tree` that could not merge, or a call that timed out."""
+    """True when `head` is the read's tip rebased onto a moved base and nothing more, by the checks below; False when the
+    base did not move or one of them fails; a string naming the cause when the arm could not compare."""
     try:
         try:
             read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
@@ -526,7 +522,12 @@ def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Pa
         new_base = _git(cwd, "merge-base", f"origin/{base_ref}", head)
         if old_base == new_base:
             return False  # not a rebase: the tree arm above decides an amend, and a new commit takes a read
-        if _git(cwd, "log", "--format=%B%x00", f"{old_base}..{read}") != _git(cwd, "log", "--format=%B%x00", f"{new_base}..{head}"):
+        messages = (
+            "log",
+            "--no-merges",
+            "--format=%B%x00",
+        )  # a merge of the base carries no patch of its own; the tree check reads it
+        if _git(cwd, *messages, f"{old_base}..{read}") != _git(cwd, *messages, f"{new_base}..{head}"):
             return False  # a commit reworded, added or dropped: not the messages the pre-review graded
         merged = subprocess.run(
             ["git", "merge-tree", "--write-tree", f"--merge-base={old_base}", read, new_base],
@@ -543,7 +544,7 @@ def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Pa
             return False
         for path in changed:
             if _patch_lines(cwd, old_base, read, path) != _patch_lines(cwd, new_base, head, path):
-                return False  # the resolution carried a line the read's own patch did not, or lost one
+                return False
     except subprocess.TimeoutExpired as exc:
         return f"`git {exc.cmd[1]}` timed out"
     except subprocess.CalledProcessError as exc:
