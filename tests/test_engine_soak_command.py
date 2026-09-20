@@ -779,6 +779,8 @@ def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, mon
     assert {"L", "last_cycle_ts", "window_bound"} <= set(payload["provenance"])
     # The window arm compares this VALUE, so the name alone is no pin.
     assert payload["provenance"]["window_bound"] == "journal"
+    # The window arm subtracts this stamp from an aware clock; a naive one reads `unreadable` every morning.
+    assert datetime.fromisoformat(payload["provenance"]["last_cycle_ts"]).tzinfo is not None
     assert isinstance(payload["realized_no_book_bars"], int) and isinstance(payload["realized_total_bars"], int)
     assert "hhi" in payload["gating_verdicts"]
     for metric, row in payload["gating_verdicts"].items():
