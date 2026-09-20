@@ -497,7 +497,6 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
 
 
 def _row_commit_alone(cwd: pathlib.Path | None, sha: str) -> bool:
-    """A single-parent commit whose only file is the change index: the shape of the row `open-pr` pushes after the read."""
     touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
     return touched == [INDEX] and len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) == 2
 
@@ -515,8 +514,7 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
             read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
         old_base = _git(cwd, "merge-base", base, read)
         new_base = _git(cwd, "merge-base", base, head)
-        # A merge of the base carries no patch of its own; the tree check reads it. One commit past the read that touches
-        # the change index alone is the Step 4 row `open-pr` pushes after the read, wherever the move left it, and is set aside.
+        # A merge of the base carries no patch of its own; the tree check reads it.
         read_msgs = [
             m.strip() for m in _git(cwd, "log", "--no-merges", "--format=%B%x00", f"{old_base}..{read}").split("\x00") if m.strip()
         ]

@@ -210,8 +210,7 @@ def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_
 
 @pytest.mark.parametrize("shape", list(_SHAPES))
 def test_the_arm_judges_a_row_commit_above_the_read_by_the_tip_under_it(tmp_path, shape):
-    """The Step 4 row commit rides above the read; when the base then moves under both, the row is what collides,
-    and the arm judges the tip under it, the head open-pr's first admitted head becomes on a moved base."""
+    """The Step 4 row commit above the read, with the base moved under both: open-pr's first admitted head on a moved base."""
     read, head = _rebased_repo(tmp_path / shape, row_above=True, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
 
