@@ -522,8 +522,8 @@ def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, mon
     assert isinstance(panel["n_outside"], int) and isinstance(panel["n_metrics"], int)
     assert isinstance(panel["n_indeterminate"], int)
     assert panel["line"].startswith(f"{panel['n_outside']} of {panel['n_metrics']} outside band")
-    # The row prints this line verbatim when it is non-empty and reads emptiness as "none", so the tie
-    # between the count and the line is what the reduction leans on, not either alone.
+    # The row prints this line verbatim when it is non-empty and drops the clause when it is empty, so the
+    # tie between the count and the line is what the reduction leans on, not either alone.
     assert (panel["indeterminate_line"] == "") == (panel["n_indeterminate"] == 0), panel
     self_test = payload["self_test"]
     assert {"instrument_ok", "identity_ok", "reconcile_ok", "void"} <= set(self_test), self_test
@@ -1092,9 +1092,9 @@ def live_soak_run(monkeypatch):
 
 
 def test_the_suites_refusing_soak_run_is_the_one_every_test_gets(tmp_path):
-    """Every OTHER test in this file stubs `soak_run` itself, so without this reader and the one below it the
-    refusal could be narrowed away with nothing going red. An empty directory stands in for the journal -- the
-    real runner refuses it for want of a record, before it builds a command or reads a mount."""
+    """Every other test that reaches `soak_run` stubs it itself, so without this reader and the one below it
+    the refusal could be narrowed away with nothing going red. An empty directory stands in for the journal --
+    the real runner refuses it for want of a record, before it starts a subprocess or reads a mount."""
     with pytest.raises(AssertionError, match="must stub it"):
         ops_daily.soak_run(tmp_path)
 
@@ -1179,7 +1179,7 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "soak_rows_value_on_a_passing_day"
 ```
 
-Expected: `KILLED (control proven, tree restored byte-identically)` once per invocation. The third journals the soak row only on a day it failed, which is the journal the row would have had with no clause at all: the control drops the clause, the mutation keeps it for failing rows alone. The first control derives the wrong grid and its mutation lets a `failed-cycle-*.json` be taken for the newest record. The second is over the refusal itself: its mutation deletes the line that installs it, the real runner answers instead and refuses an empty directory for want of a record, and the test asserting the refusal goes red on the different exception. It points there rather than at the three payload stubs, whose kill would confound the refusal with the stub. Neither run reaches the journal mount: the direct test hands the runner an empty directory, and the one through `main` points `SOAK_JOURNAL` at an empty directory first, so an unstubbed runner raises for want of a record before it builds a command. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the derived store, control the 1440 grid copied instead, mutation the record glob widened to take a failed cycle: KILLED, control proven. Over the suite's runner refusal, control the fixture given a parameter no fixture answers, mutation the line that installs the refusal deleted: KILLED, control proven. Over the journal paragraph, control the soak clause dropped, mutation the clause kept for failing rows alone: KILLED, control proven.`` Then push.
+Expected: `KILLED (control proven, tree restored byte-identically)` once per invocation. The third journals the soak row only on a day it failed, which is the journal the row would have had with no clause at all: the control drops the clause, the mutation keeps it for failing rows alone. The first control derives the wrong grid and its mutation lets a `failed-cycle-*.json` be taken for the newest record. The second is over the refusal itself: its mutation deletes the line that installs it, the real runner answers instead and refuses an empty directory for want of a record, and the test asserting the refusal goes red on the different exception. It points there rather than at the three payload stubs, whose kill would confound the refusal with the stub. Neither run reaches the journal mount: the direct test hands the runner an empty directory, and the one through `main` points `SOAK_JOURNAL` at an empty directory first, so an unstubbed runner raises for want of a record before it starts a subprocess. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the derived store, control the 1440 grid copied instead, mutation the record glob widened to take a failed cycle: KILLED, control proven. Over the suite's runner refusal, control the fixture given a parameter no fixture answers, mutation the line that installs the refusal deleted: KILLED, control proven. Over the journal paragraph, control the soak clause dropped, mutation the clause kept for failing rows alone: KILLED, control proven.`` Then push.
 
 - [ ] **Step 7: Live acceptance — the controller runs this, never a dispatched subagent**
 
