@@ -1175,26 +1175,33 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
 )
 
-# `zcrypto engine <sub>`: `exec-status` reads, `cycle --replace` deletes a boundary's record, and
-# `gate-export` writes a textfile. The read subcommands are named one by one for the same reason.
-_ZCRYPTO_READ_SUBS = ("exec-status", "report", "tracking-report", "decompose", "accum-replay", "soak-check")
-_FIRST_STAGE_SHAPES += tuple(
-    _Shape(
-        ("zcrypto", "engine", sub),
-        {
-            "--journal-dir": _PATH,
-            "--since": _SINCE,
-            "--until": _SINCE,
-            "--nav": _INT,
-            "--minimums": _FILEREF,
-            "--path": _NAME,
-            "--date": _SINCE,
-            "--pair": _NAME,
-            "--json": None,
-        },
-    )
-    for sub in _ZCRYPTO_READ_SUBS
-)
+# `zcrypto engine <sub>`, one flag table per read subcommand; `cycle --replace` deletes a boundary's record
+# and `gate-export` writes a textfile, so neither is here. Three real options stay out on purpose:
+# `soak-check --json` WRITES the path it names, and `soak-check --registry` and `tracking-report
+# --ledger-export` name a file whose reader echoes content when it refuses it.
+# `tests/test_ops_daily.py::test_the_engine_read_shapes_are_the_clis_own_options` holds this table to the CLI.
+_FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
+_ISOWEEK = r"\d{4}-W\d{2}"
+_ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _SINCE, "--until": _SINCE}
+_ENGINE_SIZING = {"--minimums": _FILEREF, "--nav": _FLOAT}
+_ZCRYPTO_READ_FLAGS: dict[str, dict[str, str | None]] = {
+    "exec-status": {"--state-dir": _PATH},
+    "report": {"--journal-dir": _PATH},
+    "decompose": {**_ENGINE_WINDOW, "--json": None},
+    "accum-replay": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--json": None},
+    "tracking-report": {**_ENGINE_WINDOW, **_ENGINE_SIZING, "--gate-from": _ISOWEEK, "--simulated-fills": None, "--json": None},
+    "soak-check": {
+        "--journal-dir": _PATH,
+        "--store-dir": _PATH,
+        "--canonical-dir": _PATH,
+        "--fee-per-side": _FLOAT,
+        "--band": _FLOAT,
+        "--floor": _INT,
+        "--null": _NAME,
+        "--path": _NAME,
+    },
+}
+_FIRST_STAGE_SHAPES += tuple(_Shape(("zcrypto", "engine", sub), flags) for sub, flags in _ZCRYPTO_READ_FLAGS.items())
 
 # Pipeline filters. Every one takes ZERO file operands -- the rule that refuses `sort -o out`,
 # `uniq in out` and `tee`, none of which announces its write in a verb. `grep` takes exactly its

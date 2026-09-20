@@ -2752,3 +2752,82 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
     alloy = (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()
     assert any(line.strip().startswith('host = "ops"') for line in alloy.splitlines())
+
+
+# --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------
+
+_ENGINE_READS = [
+    "zcrypto engine exec-status --state-dir /var/lib/zcrypto-engine",
+    "zcrypto engine report --journal-dir /mnt/zhao-crypto/engine-journal",
+    "zcrypto engine decompose --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-09-01 --until 2026-09-19 --json",
+    "zcrypto engine accum-replay --minimums data/refdata/pairs.json --nav 10000.5 --json",
+    "zcrypto engine tracking-report --gate-from 2026-W37 --simulated-fills --json",
+    "zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir /tmp/soak/store"
+    " --canonical-dir /srv/ohlc-full --fee-per-side 0.006 --band 0.9 --floor 30 --null both --path fast",
+    "sudo docker exec zcrypto-engine zcrypto engine soak-check",
+]
+
+
+@pytest.mark.parametrize("cmd", _ENGINE_READS)
+def test_each_engine_read_sub_is_autonomous_with_its_own_options(cmd):
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+# Every real option the table leaves out, with the reason it is out. A new CLI option lands in neither place and
+# fails `test_the_engine_read_shapes_are_the_clis_own_options`, so someone decides which side it belongs on.
+_ENGINE_OPTIONS_LEFT_OUT = {
+    "soak-check": {
+        "--json": "writes the path it names",
+        "--registry": "`_load_registry_record` prints a line that is JSON but not an object",
+    },
+    "tracking-report": {"--ledger-export": "`read_ledger_export` prints the header line of the file it refuses"},
+}
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "zcrypto engine soak-check --json /tmp/out.json",
+        "zcrypto engine soak-check --json=/tmp/out.json",
+        "zcrypto engine soak-check --json /var/lib/zcrypto-engine/exec/armed",
+        # The CLI refuses a valueless `--json` here; a shape that admitted it would vouch for a form that cannot run.
+        "zcrypto engine soak-check --json",
+        "zcrypto engine soak-check --registry /etc/zcrypto-ops/alloy/alloy-secrets.env",
+        "zcrypto engine tracking-report --ledger-export /opt/zcrypto-capture/logship-secrets.env",
+        # Options of a sibling sub, which one shared shape used to admit everywhere.
+        "zcrypto engine report --since 24h",
+        "zcrypto engine report --date 2026-09-19 --pair XBTEUR",
+        "zcrypto engine exec-status --journal-dir /mnt/zhao-crypto/engine-journal",
+        "zcrypto engine decompose --nav 10000",
+        # Not reads at all, so no table names them.
+        "zcrypto engine cycle --at 2026-09-19T12:00:00+00:00 --replace",
+        "zcrypto engine gate-export --textfile /tmp/gate.prom",
+    ],
+)
+def test_an_engine_write_a_content_echoing_file_and_a_foreign_option_stay_prepared(cmd):
+    assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+def _engine_cli_options() -> dict[str, dict[str, bool]]:
+    """`{sub: {option: is_flag}}` for every `zcrypto engine` command, read off the Typer app itself."""
+    import typer
+
+    from cli.engine.command import engine_app
+
+    group = typer.main.get_command(engine_app)
+    return {
+        name: {opt: param.is_flag for param in sub.params if param.param_type_name == "option" for opt in param.opts}
+        for name, sub in group.commands.items()
+    }
+
+
+def test_the_engine_read_shapes_are_the_clis_own_options():
+    """The table and the CLI are two hand-written lists of the same options: every flag the table admits exists on
+    that sub and takes a value exactly when the CLI's does, and every option it leaves out is left out by name."""
+    real = _engine_cli_options()
+    assert set(ops_daily._ZCRYPTO_READ_FLAGS) <= set(real), set(ops_daily._ZCRYPTO_READ_FLAGS) - set(real)
+    for sub, flags in ops_daily._ZCRYPTO_READ_FLAGS.items():
+        assert set(flags) <= set(real[sub]), (sub, set(flags) - set(real[sub]))
+        for flag, spec in flags.items():
+            assert (spec is None) == real[sub][flag], (sub, flag, spec, real[sub][flag])
+        assert set(real[sub]) - set(flags) == set(_ENGINE_OPTIONS_LEFT_OUT.get(sub, {})), (sub, set(real[sub]) - set(flags))
