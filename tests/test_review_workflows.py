@@ -123,10 +123,8 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
 
 
 def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
-    """Driven, not read: a condition inverted under the right string passes every text assert above. A
-    pre-review covers the one tip it read, written short or long; the branch's first pre-review is an ancestor
-    of every later tip and covers none of them — unless the ledger agent found the later tip's tree and messages
-    to be the read one's, a re-dated commit having moved the name alone."""
+    """Driven, not read: a condition inverted under the right string passes every text assert above; what each row
+    must do is the admission comment above `sameTip` in the flow it drives."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
@@ -160,6 +158,7 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}],
                 "records no pre-review",
             ),
+            ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
         ],
     }
     for flow, table in cases.items():
