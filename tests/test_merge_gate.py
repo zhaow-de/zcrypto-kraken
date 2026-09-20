@@ -1,7 +1,5 @@
-"""merge-gate.py: the read line must be at the floor and name the head, with exactly four exceptions -- the change-index
-row commit past the tip it names, a head whose tree is that tip's tree, the ops-journal month PR, and a
-dependabot branch whose every commit is the bot's -- and a keyed
-branch owes its change-index row before the merge."""
+"""merge-gate.py: the read line must be at the floor and name the head, with the exceptions the cases
+below drive, and a keyed branch owes its change-index row before the merge."""
 
 from __future__ import annotations
 
@@ -157,8 +155,8 @@ def _rebased_repo(root: pathlib.Path, *, change_a_patch: bool) -> tuple[str, str
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="no git on PATH")
 def test_a_rebase_is_judged_by_the_merge_tree_of_the_read_onto_the_moved_base(tmp_path):
-    """Driven on a real repo: the read's two patches rebased over a colliding index row are the same patches, and
-    the arm says so; a rebase that also edits a patch is not, and a read the clone cannot resolve is no answer."""
+    """Driven on a real repo rather than stubbed: the arm is built on `git merge-tree` and a stub would
+    measure the stub."""
     read, head = _rebased_repo(tmp_path / "kept", change_a_patch=False)
     assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "kept") is True
     assert gate.rebase_kept_every_patch(read[:8], head, "develop", cwd=tmp_path / "kept") is True, (

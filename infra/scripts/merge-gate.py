@@ -13,8 +13,7 @@ import unicodedata
 REPO = "zhaow-de/zcrypto-kraken"
 GUARD = pathlib.Path(__file__).with_name("guidance-guard.py")
 INDEX = "docs/reference/change-index.md"
-# The two rendered files every keyed or topic branch touches: a rebase onto a moved base resolves them by hand, and
-# that resolution is the one difference a patch-preserving rebase may leave between the merged tree and the head.
+# The rendered files a rebase onto a moved base resolves by hand: the change index and the topics index.
 RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
 DEPENDABOT = "dependabot[bot]"
@@ -412,7 +411,7 @@ def read_line_fails(
         if head_tree and read_tree and head_tree == read_tree:
             return []
     if rebased:
-        return []  # the read's patches, every one unchanged, on a base that moved under them: no delta to read
+        return []  # the read's tip on a base that moved under it, the merge-tree agreeing with the head: no delta to read
     return [
         f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
     ]
@@ -490,10 +489,10 @@ def evaluate(
 
 
 def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | None:
-    """True when `head` is the read's tip rebased onto a moved base with every patch unchanged: the three-way merge
-    of the read onto the head's base gives the head's tree, or differs from it only in the two rendered files a
-    rebase resolves by hand. False when the base did not move, or a patch changed. None when the read's commit is
-    not in the clone and cannot be fetched, so nothing can be compared."""
+    """True when `head` is the read's tip rebased onto a moved base with no net change: the three-way merge
+    of the read onto the head's base gives the head's tree, or differs from it only in the two rendered files
+    a rebase resolves by hand. False when the base did not move, or the trees differ elsewhere. None when the
+    read's commit is not in the clone and cannot be fetched, so nothing can be compared."""
 
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=120, cwd=cwd).stdout.strip()
@@ -564,6 +563,9 @@ def main(argv: list[str]) -> int:
     head = pr.get("headRefOid") or ""
     if m or pr.get("headRefName") == "ops-journal":
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
+    growth = branch_growth(
+        pr["baseRefName"], pr["headRefName"], head
+    )  # fetches origin's base and head first: the rebase arm reads them
     read_commit = None
     rebased = None
     if m and head and not head.startswith(m.group(2)):
@@ -573,7 +575,7 @@ def main(argv: list[str]) -> int:
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:
             read_commit = None  # a tip GitHub never saw, or a fetch that failed or timed out: no tree to compare, so read_line_fails names the head the read does not cover
         rebased = rebase_kept_every_patch((read_commit or {}).get("sha") or m.group(2), head, pr["baseRefName"])
-    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit, rebased)
+    fails = evaluate(pr, head_commit, files, growth, read_commit, rebased)
     if fails:
         print("GATE FAILED:")
         for fail in fails:
