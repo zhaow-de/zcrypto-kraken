@@ -859,6 +859,13 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         )
         ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current and proven
         return Check(SOAK_CHECK, SOAK_EXPR, ok=ok, value=value)
+    # Each class beside `_UNREACHABLE` names something this reduction can raise: `SubprocessError` the run
+    # `soak_run` could not finish (`TimeoutExpired` at 900 s), `RuntimeError` its own abort when `soak-check`
+    # wrote no payload, `TypeError` a `None` where the payload promises a block (`panel["line"]`,
+    # `fromisoformat(None)`), `AttributeError` a `.get` on a verdict row that came back a scalar.
+    # `_UNREACHABLE` already carries the journal mount's `OSError` and the `KeyError`/`ValueError`/`IndexError`
+    # a reshaped or truncated payload raises, `json.JSONDecodeError` among them. All are `unreadable`, never a
+    # FAIL: the pass could not read the instrument, which says nothing about the book.
     except (*_UNREACHABLE, subprocess.SubprocessError, TypeError, AttributeError, RuntimeError) as exc:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
 
