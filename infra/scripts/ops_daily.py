@@ -10,8 +10,10 @@ import calendar
 import http.client
 import importlib.util
 import json
+import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -753,6 +755,7 @@ SOAK_OUTSIDE_FAILS_AT = 3
 # `develop`'s tip. Left to resolve against the running checkout it reads `unreadable:` and takes the whole
 # pass to exit 2 for a property of the operator's shell.
 SOAK_CANONICAL = Path("/home/zhaow/Projects/zcrypto-kraken/data/ohlc-full")
+SOAK_CANONICAL_ENV = "ZCRYPTO_SOAK_CANONICAL"
 # Wide on purpose: the row is read once a day, and a slow reading is still a reading where a killed one is a
 # gap. `_TIMEOUT` above bounds one HTTP or ssh read and is not this.
 _SOAK_TIMEOUT_SECONDS = 900
@@ -768,7 +771,18 @@ SOAK_OUTSIDE_LABEL = "inconsistent"
 
 def derive_soak_store(journal_dir: Path, root: Path) -> Path:
     """A store-shaped directory holding the newest success record's 240 snapshots, which is every close
-    `soak-check` reads from the engine's store: each cycle journals the store series it read."""
+    `soak-check` reads from the engine's store: each cycle journals the store series it read.
+
+    The journal reaches this host over an rsync pull, where a truncated or half-written leg differs from its
+    record silently, so each leg is held to its journaled metadata before it is copied. `snapshot_content_hash`
+    is imported rather than reimplemented -- its byte layout is part of the record schema -- and locally, so the
+    daily pass's other readers do not pay for the engine's imports.
+    """
+    from polars.exceptions import PolarsError
+
+    from cli.engine.journal import snapshot_content_hash
+    from cli.ohlc.dataset import read_parquet
+
     records = sorted(journal_dir.glob("*/cycle-*.json"))
     if not records:
         raise FileNotFoundError(f"no cycle record under {journal_dir}")
@@ -777,37 +791,68 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
         raise ValueError(f"{records[-1]} journals no 240 snapshot")
     store = root / "store"
     for entry in legs:
+        source = journal_dir / entry["path"]
+        try:
+            frame = read_parquet(source)
+            ts, closes = frame["ts"].to_list(), frame["close"].to_list()
+            content_hash = snapshot_content_hash(ts, closes)
+        # `PolarsError` is no subclass of anything `read_soak_verdict` catches, and neither is the `struct.error` a
+        # close of the wrong dtype raises inside the hash, so an unguarded read takes the whole pass down on a
+        # traceback instead of one row; a ts of the wrong dtype raises `AttributeError` there, which the reader
+        # does catch, but only this arm names the leg the row should point at.
+        except (PolarsError, struct.error, AttributeError) as exc:
+            raise ValueError(
+                f"pair={entry['pair']!r} grid='240' at {source}: leg cannot be read -- {str(exc).splitlines()[0]}"
+            ) from exc
+        if content_hash != entry["content_hash"]:
+            raise ValueError(f"content hash mismatch for pair={entry['pair']!r} grid='240' at {source} -- corrupt evidence")
+        first, last = datetime.fromisoformat(entry["first_ts"]), datetime.fromisoformat(entry["last_ts"])
+        if len(ts) != entry["n_bars"] or ts[0] != first or ts[-1] != last:
+            raise ValueError(
+                f"pair={entry['pair']!r} grid='240': read data disagrees with its own journaled metadata -- "
+                f"n_bars={len(ts)} vs {entry['n_bars']!r}, first_ts={ts[0]!r} vs {first!r}, last_ts={ts[-1]!r} vs {last!r}"
+            )
         base, quote = entry["pair"].split("/")
         leg = store / base / quote / "240.parquet"
-        leg.parent.mkdir(parents=True)
-        shutil.copyfile(journal_dir / entry["path"], leg)
+        leg.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, leg)
     return store
 
 
 def soak_run(journal_dir: Path) -> dict:
     """The payload of one `soak-check` run over `derive_soak_store`. `cwd` pins the CODE to the checkout this
-    script sits in; the DATA is not in it, so the canonical dataset is named outright at `SOAK_CANONICAL`."""
+    script sits in; the DATA is not in it, so the canonical dataset is named outright at `SOAK_CANONICAL`, or by
+    `SOAK_CANONICAL_ENV` where a host keeps it elsewhere."""
     with tempfile.TemporaryDirectory(prefix="zcrypto-soak-") as scratch:
         root = Path(scratch)
         out = root / "soak.json"
-        command = ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
-        command += ("--canonical-dir", str(SOAK_CANONICAL))
+        # `--no-sync`: the pass reads the fleet and writes to none of it, and the checkout it runs from is the
+        # one sitting at `develop`'s tip, shared with whoever is working in it. A bare `uv run` would install
+        # into that venv the moment the lock moved ahead of it, mid-pass and unasked.
+        command = ("uv", "run", "--no-sync", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
+        canonical = Path(os.environ.get(SOAK_CANONICAL_ENV) or SOAK_CANONICAL)
+        if not canonical.is_absolute():
+            raise RuntimeError(
+                f"{SOAK_CANONICAL_ENV} names a relative path, {canonical}: the pass runs from the checkout at develop's tip "
+                "and a relative canonical resolves against it, so name an absolute path"
+            )
+        command += ("--canonical-dir", str(canonical))
         command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
         done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
         if not out.exists():
-            # The CLI logs its one-line aborts to stdout; stderr is where `uv run` reports a venv sync.
+            # The CLI logs its one-line aborts to stdout; stderr is where `uv run` puts its own notices.
             last = (done.stdout.strip() or done.stderr.strip() or "no output").splitlines()[-1]
             raise RuntimeError(f"soak-check exited {done.returncode} and wrote no payload: {last}")
         return json.loads(out.read_text())
 
 
 def read_soak_verdict(*, now: datetime, runner) -> Check:
-    """The scheduled reader of `soak-check`'s gating verdicts: one row, decided in this order.
+    """The scheduled reader of `soak-check`'s gating verdicts: one row.
 
     A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
     pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
-    the payload carries populated verdicts beside a non-empty one. Then the panel's two counts decide, and
-    last the scored window's currency.
+    the payload carries populated verdicts beside a non-empty one. What is left -- the panel's two counts, the
+    scored window's currency, and that all three self-test proofs ran -- is one conjunction, in no order.
 
     Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
     """
@@ -827,10 +872,11 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
                 calls = [dual.get("primary"), dual.get("secondary")].count(SOAK_OUTSIDE_LABEL)
                 outside.append(f"{metric} ({'both constructions' if calls == 2 else 'one construction'})")
         self_test = payload["self_test"]
-        flags = "/".join(
-            "skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED")
-            for name in ("instrument_ok", "identity_ok", "reconcile_ok")
-        )
+        proofs = ("instrument_ok", "identity_ok", "reconcile_ok")
+        flags = "/".join("skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED") for name in proofs)
+        # A `None` proof RAN NOTHING, and puts nothing in `void_reasons` -- so the panel beneath it is a verdict
+        # no self-test vouched for, and this arm is the only one that can stop it reading as a pass.
+        proven = all(self_test[name] is not None for name in proofs)
         # `n_indeterminate` counts toward `n_metrics` and never toward `n_outside`, so it is no decision.
         decided = int(panel["n_metrics"]) - int(panel["n_indeterminate"])
         reachable = decided >= SOAK_OUTSIDE_FAILS_AT
@@ -838,9 +884,10 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         floor = "" if reachable else f"; only {decided} {metrics} decided, under the threshold's {SOAK_OUTSIDE_FAILS_AT}"
         panel_line = f"{panel['line']}; {panel['indeterminate_line']}" if panel["indeterminate_line"] else panel["line"]
         behind = now - datetime.fromisoformat(provenance["last_cycle_ts"])
-        current = provenance["window_bound"] == "journal" and behind <= SOAK_WINDOW_STALE_AFTER
+        journal_bound = provenance["window_bound"] == "journal"
+        current = journal_bound and behind <= SOAK_WINDOW_STALE_AFTER
         # The clause names the arm that bit: a window the store or the clock cut short can end an hour ago.
-        if provenance["window_bound"] != "journal":
+        if not journal_bound:
             stale = f"; NOT CURRENT -- the {provenance['window_bound']}, not the journal, ends the scored window"
         else:
             hours = behind.total_seconds() / 3600
@@ -851,8 +898,15 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
             f"outside: {', '.join(outside) or 'none'}; "
             f"no-book bars {payload['realized_no_book_bars']} of {payload['realized_total_bars']}; hhi {verdicts['hhi']['verdict']}"
         )
-        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current
+        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current and proven
         return Check(SOAK_CHECK, SOAK_EXPR, ok=ok, value=value)
+    # Each class beside `_UNREACHABLE` names something this reduction can raise: `SubprocessError` the run
+    # `soak_run` could not finish (`TimeoutExpired` at 900 s), `RuntimeError` its own abort when `soak-check`
+    # wrote no payload, `TypeError` a `None` where the payload promises a block (`panel["line"]`,
+    # `fromisoformat(None)`), `AttributeError` a `.get` on a verdict row that came back a scalar.
+    # `_UNREACHABLE` already carries the journal mount's `OSError` and the `KeyError`/`ValueError`/`IndexError`
+    # a reshaped or truncated payload raises, `json.JSONDecodeError` among them. All are `unreadable`, never a
+    # FAIL: the pass could not read the instrument, which says nothing about the book.
     except (*_UNREACHABLE, subprocess.SubprocessError, TypeError, AttributeError, RuntimeError) as exc:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
 
@@ -1097,8 +1151,14 @@ _UNIT_EXACT = r"[A-Za-z0-9][A-Za-z0-9._@-]{0,63}"
 _PATH = r"/[A-Za-z0-9._/*+-]{0,160}"
 _FILEREF = r"[A-Za-z0-9._/*+-]{1,160}"
 _SINCE = r"-?\d{1,4}[smhd]?|-?\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+# journalctl and docker take `_SINCE`'s whole vocabulary; `zcrypto engine`'s window flags reach
+# `strptime(raw, "%Y-%m-%d")` and abort on everything else, so they get the narrower class -- a shape
+# vouches for a form that can RUN, and `--since 24h` there is a step that aborts before it reads.
+_DAY = r"\d{4}-\d{2}-\d{2}"
+_ISOWEEK = r"\d{4}-W\d{2}"
 _INT = r"\d{1,6}"
 _SINT = r"[-+]?\d{1,6}"
+_FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
 _URL = r"https?://[A-Za-z0-9._~:/?#@!%+,=-]{1,200}"
 # A flag VALUE that is a literal string: the scanner has already refused every metacharacter that
 # was active where it stood, so what survives cannot leave the shape that vouched for it. Operand
@@ -1299,9 +1359,7 @@ _FIRST_STAGE_SHAPES = (
 # `zcrypto engine <sub>`, one flag table per read subcommand; `cycle --replace` deletes a boundary's record
 # and `gate-export` writes a textfile, so neither is here. The real options left out of a sub's table are named
 # with their reasons in `tests/test_ops_daily.py::_ENGINE_OPTIONS_LEFT_OUT`, whose test holds both to the CLI.
-_FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
-_ISOWEEK = r"\d{4}-W\d{2}"
-_ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _SINCE, "--until": _SINCE}
+_ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _DAY, "--until": _DAY}
 _ENGINE_SIZING = {"--minimums": _FILEREF, "--nav": _FLOAT}
 _ZCRYPTO_READ_FLAGS: dict[str, dict[str, str | None]] = {
     "exec-status": {"--state-dir": _PATH},

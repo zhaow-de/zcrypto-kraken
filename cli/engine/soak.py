@@ -633,6 +633,9 @@ _SEVERITY = {"consistent": 0, "weakly-consistent": 1, "inconsistent": 2}
 # `metric_verdict`'s closed vocabulary. `_SEVERITY` orders only the three comparable labels -- "n/a" is valid
 # but sits outside that order, so membership and severity are separate questions.
 _VERDICT_LABELS = frozenset(_SEVERITY) | {"n/a"}
+# `ops_daily.read_soak_verdict` routes on a substring of this text, so a run with no canonical dataset -- no null
+# to judge against -- reads as unreadable rather than as a verdict about the book; a rename goes through it.
+CANONICAL_ABSENT_VOID = "canonical absent — null unavailable"
 
 
 @dataclass(frozen=True)
@@ -1819,7 +1822,7 @@ def soak_report(
         analysis = None
         self_test = None
         internals = None
-        void_reasons.append("canonical absent — null unavailable")
+        void_reasons.append(CANONICAL_ABSENT_VOID)
 
     text = render_report(analysis, realized, null, self_test, void_reasons=void_reasons, band=band, null_mode=null_mode, path=path)
     payload = _json_payload(

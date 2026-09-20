@@ -782,7 +782,10 @@ def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, mon
     # The window arm subtracts this stamp from an aware clock; a naive one reads `unreadable` every morning.
     assert datetime.fromisoformat(payload["provenance"]["last_cycle_ts"]).tzinfo is not None
     assert isinstance(payload["realized_no_book_bars"], int) and isinstance(payload["realized_total_bars"], int)
-    assert "hhi" in payload["gating_verdicts"]
+    # The whole SET, read off the instrument rather than guessed here: an eighth metric added to
+    # `gating_verdicts` reaches the row only as a number in the panel counts, never by name unless it goes
+    # outside the band. This is what goes red instead.
+    assert set(payload["gating_verdicts"]) == set(soak._METRIC_ROWS), sorted(payload["gating_verdicts"])
     for metric, row in payload["gating_verdicts"].items():
         assert isinstance(row["verdict"], str), metric
         assert {"primary", "secondary", "verdict"} <= set(row["dual"]), (metric, row["dual"])

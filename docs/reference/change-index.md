@@ -334,3 +334,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #571 | 2026-09-19 | docs(topics): T0199 widened to the store door's type and key gaps | — | — | T0199 |
 | #572 | 2026-09-19 | feat(ops): the daily pass reads soak-check verdicts; read shapes per sub | — | 00115 | T0210 |
 | #573 | 2026-09-19 | claude(workflows): T0209 the branch pre-review fans out per task range | — | — | T0209 |
+| #576 | 2026-09-20 | fix(ops-daily): the soak-verdict residues of PR #572 | — | 00115 | — |
