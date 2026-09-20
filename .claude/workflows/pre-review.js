@@ -106,7 +106,7 @@ EARLIER PRE-REVIEWS of this branch are the ${reportDir}/pre-review-*.md files${s
 Write a Markdown report to ${reportDir}/pre-review-${tip}${slice ? `-${slice.label}` : ''}.md with \`## Verdict\`, \`## Prose\` (a table of the sites needing a change and of the paragraphs a long site keeps, under a line saying how many were graded), \`## Claims\`, \`## Probes\`, \`## Class walk\`, then return the structured output; the report and the structure must agree. Write nothing else to the repo.`
 
 phase('Pre-review')
-const grade = (slice) => agent(promptFor(slice), { label: slice ? `pre-review:${slice.label}` : 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, ...(model ? { model } : {}) })
+const grade = (slice) => agent(promptFor(slice), { label: slice ? `pre-review:${slice.label}` : 'pre-review', phase: 'Pre-review', agentType: 'general-purpose', effort: 'high', schema: REPORT, model: model || 'opus' }) // the graders re-run and diff; Opus unless the caller names a model, the owner's word of 2026-09-20
 const parts = FAN ? await parallel(FAN.map((slice) => () => grade(slice))) : [await grade(null)]
 if (parts.some((p) => !p)) throw new Error(FAN ? `the pre-reviewers of ${FAN.filter((_, i) => !parts[i]).map((r) => r.label).join(', ')} returned nothing` : 'the pre-reviewer returned nothing')
 // A site two slices touched comes back once per slice.
