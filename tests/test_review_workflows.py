@@ -251,8 +251,9 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
     assert [c["commit"] for c in out["claims"]] == ["head", "tail"]
 
 
-def test_a_pre_review_given_no_slices_is_the_one_grader_it_was():
-    ran = _drive_pre_review({**_BRANCH, "worktree": "/r/.tmp/wt", "rulings": "/r/.tmp/sdd/progress.md"})
+@pytest.mark.parametrize("absent", [{}, {"ranges": None}], ids=["left out", "null"])
+def test_a_pre_review_given_no_slices_is_the_one_grader_it_was(absent):
+    ran = _drive_pre_review({**_BRANCH, "worktree": "/r/.tmp/wt", "rulings": "/r/.tmp/sdd/progress.md", **absent})
     assert [c["label"] for c in ran["calls"]] == ["pre-review", "record"]
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
@@ -284,7 +285,7 @@ def _whole(label):
         [{"label": "empty", "range": "develop..develop"}, {"label": "tail", "range": "develop..tip9abcde"}],
     ],
 )
-def test_a_malformed_fan_out_is_refused_before_any_grader_runs(ranges):
+def test_a_malformed_fan_out_is_refused_with_the_args_rule(ranges):
     ran = _drive_pre_review({**_BRANCH, "ranges": ranges})
     assert ran.get("error", "").startswith("args: "), ran
 
