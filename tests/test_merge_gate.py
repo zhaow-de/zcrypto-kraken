@@ -145,7 +145,7 @@ def _rebased_repo(
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
     that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
-    flag makes the head more than that."""
+    flag makes the head differ from that."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
     for path in gate.RENDERED:
@@ -175,6 +175,8 @@ def _rebased_repo(
     _git(root, "commit", "-q", "-m", "docs(change-index): row #2")
     _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "checkout", "-q", "feat")
+    if merge_instead and drop_a_commit:
+        _git(root, "reset", "-q", "--hard", "HEAD~1")  # lost before the merge, which then collides on nothing
     done = subprocess.run(
         ["git", "merge" if merge_instead else "rebase", "develop"],
         cwd=root,
@@ -182,7 +184,7 @@ def _rebased_repo(
         text=True,
         env=_env(root),
     )
-    if collide:
+    if collide and not (merge_instead and drop_a_commit):
         assert done.returncode != 0 and gate.INDEX in done.stdout + done.stderr, (done.stdout, done.stderr)
         rows(1, 2, 3, *([7] if smuggle_a_row else []))
     else:
@@ -194,13 +196,13 @@ def _rebased_repo(
     if change_a_patch:
         (root / "code.py").write_text("x = 3\n")
     _git(root, "add", "-A")
-    if collide and merge_instead:
+    if collide and merge_instead and not drop_a_commit:
         _git(root, "commit", "-q", "--no-edit")
-    elif collide:
+    elif collide and not merge_instead:
         _git(root, "-c", "core.editor=true", "rebase", "--continue")
     elif drop_a_row or change_a_patch:
         _git(root, "commit", "-q", "--amend", "--no-edit")
-    if drop_a_commit:
+    if drop_a_commit and not merge_instead:
         _git(root, "reset", "-q", "--hard", "HEAD~1")
     if reword:
         _git(root, "commit", "-q", "--amend", "-m", "docs(change-index): row #3, probe KILLED")
@@ -238,8 +240,9 @@ def test_the_arm_refuses_a_head_that_is_more_than_the_rebase_or_the_merge(tmp_pa
     assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / more) is False
 
 
-def test_the_arm_refuses_a_branch_that_lost_a_commit(tmp_path):
-    read, head = _rebased_repo(tmp_path / "lost", drop_a_commit=True)
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_refuses_a_branch_that_lost_a_commit(tmp_path, shape):
+    read, head = _rebased_repo(tmp_path / "lost", drop_a_commit=True, **_SHAPES[shape])
     assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "lost") is False
 
 
