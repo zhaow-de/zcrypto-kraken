@@ -217,7 +217,7 @@ def test_an_unreadable_canonical_manifest_refuses_the_round(tmp_path):
     canonical, out = tmp_path / "canon", tmp_path / "out"
     _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
     (canonical / "manifest.json").write_text("{not json")
-    with pytest.raises(OHLCError, match=r"the canonical's manifest .*manifest\.json cannot be read"):
+    with pytest.raises(OHLCError, match=r"the canonical's manifest cannot be read -- .*manifest\.json"):
         _round_over(canonical, out)
 
 

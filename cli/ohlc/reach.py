@@ -204,15 +204,15 @@ def reach_round(
 
 def _joined_canonical(canonical_root: Path) -> dict:
     """The set this round seamed onto, by name and by its manifest's identity digest -- `None` where that manifest is
-    absent -- since the root varies between rounds once dump ingests mint siblings. A manifest that is present and
-    unreadable refuses the round: a set minted off a canonical it cannot name would be pushed with that gap for good."""
+    absent -- since the root varies between rounds once dump ingests mint siblings. Unreadable refuses the round, a legacy
+    shape included, where `cli/data/sync.py` and `_refresh_universe` degrade: the additive hub keeps whatever was pushed."""
     manifest_path = canonical_root / "manifest.json"
     digest = None
     if manifest_path.is_file():
         try:
             digest = read_manifest(manifest_path).identity_digest
         except ManifestError as exc:
-            raise OHLCError(f"reach_round: the canonical's manifest {manifest_path} cannot be read -- {exc}") from exc
+            raise OHLCError(f"reach_round: the canonical's manifest cannot be read -- {exc}") from exc
     return {"dir": canonical_root.name, "identity_digest": digest}
 
 

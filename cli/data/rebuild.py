@@ -158,7 +158,7 @@ def resolve_canonical_root(data_root: Path) -> Path:
     if missing:
         raise DataSyncError(
             f"data rebuild: the frozen ohlc-full set {chosen} is not a whole set -- missing "
-            f"{', '.join(missing)}; re-mint it, or remove it if a mint was killed mid-build"
+            f"{', '.join(missing)}; re-mint it -- a whole stamped sibling outranks whatever is broken here"
         )
     return chosen
 
