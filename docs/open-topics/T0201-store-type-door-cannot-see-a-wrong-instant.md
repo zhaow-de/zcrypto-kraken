@@ -26,8 +26,6 @@ What PR #514 (T0193) measured is the sections above.
 
 **The daily pass's `soak verdict` row cannot evaluate this trigger.** Spec `00115` runs `soak-check` over a store derived from the newest journaled 240 snapshots, whose last bar is that cycle's own `last_ts` and so sits on a 4h boundary by construction. An off-boundary `store last bar` can only come from a run over the engine host's own store, which has no replica (`docs/reference/fleet.md`).
 
-The trigger gained its file-touched arm with spec `00115`: the other is an evaluation statement over a `soak-check` run, which `zcrypto-daily-ops` names unevaluated, so until then nothing scheduled ever read it.
-
 ## Suggested next steps
 
 - The cheapest honest fix is on the REPORT, not the door: `store last bar` already prints the stamp, so the

@@ -27,7 +27,6 @@ Fixing it moves a gating verdict: excluding unmeasurable bars from the aggregate
 - The meaning-preserving fix is to exclude out-of-range bars from the aggregate rather than average them, which leaves the specified sentinel untouched and changes only what the consumer does with it.
 - This is `T0183`'s general form applied to a consumer: a sentinel still produces that family's failure the moment something aggregates it without knowing it is one. The question at this site is not what the empty branch returns but whether every consumer knows the value is out of range.
 - The daily pass prints this trigger's two operands on every pass that reaches a verdict: the `soak verdict` row of `ops-daily.py report` carries the realized no-book bar count and the `hhi` verdict, from a `soak-check` run over a store derived from the journal (spec `00115`). `zcrypto-daily-ops` names an evaluation statement unevaluated, so the printing alone is no reader: the trigger gains a second arm, the next change to `cli/engine/soak.py`, written first because it is the one the pass decides.
-- The trigger gained its file-touched arm with spec `00115`: the other is an evaluation statement over a `soak-check` run, which `zcrypto-daily-ops` names unevaluated, so until then nothing scheduled ever read it.
 
 ## Done so far
 
