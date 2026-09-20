@@ -125,8 +125,8 @@ def test_every_workflow_parses_as_the_harness_runs_it(flow, tmp_path):
 def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     """Driven, not read: a condition inverted under the right string passes every text assert above. A
     pre-review covers the one tip it read, written short or long; the branch's first pre-review is an ancestor
-    of every later tip and covers none of them — unless the ledger agent found the later tip's tree to be the
-    read one's, a message-only amend having moved the name alone."""
+    of every later tip and covers none of them — unless the ledger agent found the later tip's tree and messages
+    to be the read one's, a re-dated commit having moved the name alone."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
     cases = {
         "review": [
@@ -139,9 +139,9 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "pre-review"}], "records no pre-review"),
-            ([{"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": True}], None),
-            ([{"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": False}], "records no pre-review"),
-            ([{"kind": "review", "tip": "0ancestor", "treeEqualsTip": True}], "records no pre-review"),
+            ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}], None),
+            ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}], "records no pre-review"),
+            ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
         ],
         "re-review": [
             (None, "the ledger agent returned nothing"),
@@ -152,15 +152,21 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review"}], "records no pre-review"),
-            ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": True}], None),
             (
-                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "treeEqualsTip": False}],
+                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}],
+                None,
+            ),
+            (
+                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}],
                 "records no pre-review",
             ),
         ],
     }
     for flow, table in cases.items():
         text = (_FLOWS / f"{flow}.js").read_text()
+        assert "merge-base <its tip> ${tip}" in text and text.count("log --format=%B <that merge base>..") == 2, (
+            f"{flow}: the ledger agent compares the messages from the two tips' merge base, not the trees alone"
+        )
         refuses = rf"^if \([^\n]*\) throw new Error\(`{flow} refuses \$\{{tip\}}: "
         block = re.search(
             refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-review[^\n]*$",
