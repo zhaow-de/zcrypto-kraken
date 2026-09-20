@@ -20,7 +20,10 @@ _B = (
     "### [Minor] · [earlier-fix] · docs/plans/x.md:1\nbody of b-minor\n\n"
     "### [Critical] · [last-fix] · docs/plans/x.md:9\nbody of b-critical\n"
 )
-_SUMMARY = "counts (from headings): Critical 1 · Important 1 · Minor 1 · keys 3 · raw findings 4 · unparsed 0"
+_SUMMARY = (
+    "counts (from headings): Critical 1 · Important 1 · Minor 1 · keys 3 · raw findings 4 · unparsed 0"
+    " · Important by origin: last-fix 0 · earlier-fix 0 · in-original 1"
+)
 
 
 def _run(*argv: Path) -> subprocess.CompletedProcess[str]:
