@@ -1010,7 +1010,10 @@ def test_soak_report_scores_the_newest_run_that_meets_its_floor(tmp_path):
     provenance = payload["provenance"]
     assert provenance["journal_last_cycle_ts"] == newer[-1].isoformat()
     assert provenance["first_cycle_ts"] == newer[0].isoformat()
-    assert provenance["L"] == len(newer) - 1
+    assert provenance["L"] == len(newer) - 1 == 2
+    assert not [reason for reason in payload["void_reasons"] if reason.startswith("L=")], (
+        "a window of exactly the floor's bars meets the floor"
+    )
 
 
 def test_unrecognized_verdict_label_aborts_cleanly_through_the_cli(tmp_path, monkeypatch):
