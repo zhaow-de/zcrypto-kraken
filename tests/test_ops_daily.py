@@ -2964,6 +2964,16 @@ def test_a_panel_the_instrument_could_not_decide_names_it_and_stops_reading_as_b
     assert still_passes.ok and "1 of 7 indeterminate" in still_passes.value, still_passes.value
 
 
+def test_a_panel_with_exactly_three_decided_metrics_reaches_the_threshold_and_passes():
+    """The floor is `decided >= SOAK_OUTSIDE_FAILS_AT`, read on both sides like its sibling arms: three
+    decided is the minimum panel that CAN reach the threshold, so a `>` in place of `>=` would fail it
+    for a reason the value never names -- `>=` is what lets it pass."""
+    at_the_floor = _soak_payload(outside=(), undiscriminating=_SOAK_METRICS[:4])
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(at_the_floor))
+    assert check.ok, check.value
+    assert "only" not in check.value, check.value
+
+
 def test_a_panel_that_judged_nothing_is_not_an_all_clear():
     """`0 of 0 outside band` is the panel of a run where no metric discriminated, and keyed on the outside
     count alone it reads as the best verdict the row can give. A metric no band could judge is dropped from
