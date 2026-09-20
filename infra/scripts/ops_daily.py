@@ -844,9 +844,10 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         floor = "" if reachable else f"; only {decided} {metrics} decided, under the threshold's {SOAK_OUTSIDE_FAILS_AT}"
         panel_line = f"{panel['line']}; {panel['indeterminate_line']}" if panel["indeterminate_line"] else panel["line"]
         behind = now - datetime.fromisoformat(provenance["last_cycle_ts"])
-        current = provenance["window_bound"] == "journal" and behind <= SOAK_WINDOW_STALE_AFTER
+        journal_bound = provenance["window_bound"] == "journal"
+        current = journal_bound and behind <= SOAK_WINDOW_STALE_AFTER
         # The clause names the arm that bit: a window the store or the clock cut short can end an hour ago.
-        if provenance["window_bound"] != "journal":
+        if not journal_bound:
             stale = f"; NOT CURRENT -- the {provenance['window_bound']}, not the journal, ends the scored window"
         else:
             hours = behind.total_seconds() / 3600
