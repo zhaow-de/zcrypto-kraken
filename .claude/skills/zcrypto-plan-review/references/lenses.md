@@ -33,7 +33,7 @@ A second reviewer works the other lens in parallel. Leave its subject to it and 
 - Every `-k` filter and every stated collect count against `pin-facts.md`; every path against the tree.
 - Every count, step number, filter, name or cross-reference that appears twice: the two agree. Every "as in Task N": the referent says what this task assumes.
 - Every sentence in the plan's code or prose asserting a fact about a file other than the one it sits in — it goes false on the next change to that file, test docstrings included.
-- Every deferral names a registered `T<NNNN>` topic or an explicit drop with its reason — "later", "follow-up", "out of scope" and "known" are not registration. Check the topic file exists.
+- Every deferral names a registered `T<NNNN>` topic, a trigger arm on an existing topic, or an explicit drop with its reason — "later", "follow-up", "out of scope" and "known" are not registration, and a fix mints no topic. Check the topic file exists.
 - Every guard the plan builds has a production caller — never a guard for a door nothing opens.
 - Every `Expected:` line after a `Run:` — is it what that command prints on this tree at that point?
 
