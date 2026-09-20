@@ -510,7 +510,8 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
 
 
 def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | str:
-    """True when `head` is the read's tip rebased onto a moved base and nothing more, by the checks below; False when the
+    """True when `head` is the read's tip rebased onto a moved base, or that base merged into it, and nothing more, by the
+    checks below; False when the
     base did not move or one of them fails; a string naming the cause when the arm could not compare."""
     try:
         try:

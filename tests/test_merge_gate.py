@@ -91,6 +91,10 @@ def test_an_amend_that_kept_the_tree_but_reworded_the_message_fails():
     assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "t" * 40, "fix: x\n\nProbe: KILLED")) == []
     fails = _eval(pr, _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, None), read_commit=_tree({"sha": PREV}, "t" * 40))
     assert len(fails) == 1 and "a message it did not" in fails[0], "a head commit with no message is not the read's message"
+    fails = _eval(
+        pr, _tree(_head([PREV], ["cli/engine/executor.py"]), "t" * 40, None), read_commit=_tree({"sha": PREV}, "t" * 40, None)
+    )
+    assert len(fails) == 1 and "a message it did not" in fails[0], "two absent messages are not one message"
 
 
 def test_a_head_whose_tree_differs_from_the_read_tips_fails():
@@ -130,15 +134,17 @@ def _git(cwd: pathlib.Path, *args: str) -> str:
 def _rebased_repo(
     root: pathlib.Path,
     *,
+    merge_instead: bool = False,
+    collide: bool = True,
     change_a_patch: bool = False,
     reword: bool = False,
     smuggle_a_row: bool = False,
     drop_a_row: bool = False,
     stack_a_commit: bool = False,
-    merge_instead: bool = False,
 ) -> tuple[str, str]:
-    """A branch of two patches, the second a row in each rendered file, rebased onto a base that gained a colliding
-    row in both; returns (the read's tip, the rebased head). Each flag makes the head more than the rebase."""
+    """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
+    that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
+    flag makes the head more than that."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
     for path in gate.RENDERED:
@@ -160,30 +166,39 @@ def _rebased_repo(
     _git(root, "commit", "-q", "-am", "docs(change-index): row #3")
     read = _git(root, "rev-parse", "HEAD")
     _git(root, "checkout", "-q", "develop")
-    rows(1, 2)
-    _git(root, "commit", "-q", "-am", "docs(change-index): row #2")
+    if collide:
+        rows(1, 2)
+    else:
+        (root / "other.py").write_text("y = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "docs(change-index): row #2")
     _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
     _git(root, "checkout", "-q", "feat")
-    if merge_instead:
-        done = subprocess.run(["git", "merge", "develop"], cwd=root, capture_output=True, text=True, env=_env(root))
-        assert done.returncode != 0 and gate.INDEX in done.stdout + done.stderr, (done.stdout, done.stderr)
-        rows(1, 2, 3)
-        _git(root, "add", "-A")
-        _git(root, "commit", "-q", "--no-edit")
-        return read, _git(root, "rev-parse", "HEAD")
     done = subprocess.run(
-        ["git", "rebase", "develop"],
+        ["git", "merge" if merge_instead else "rebase", "develop"],
         cwd=root,
         capture_output=True,
         text=True,
         env=_env(root),
     )
-    assert done.returncode != 0 and "row #3" in done.stdout + done.stderr, (done.stdout, done.stderr)
-    rows(*([1, 2] if drop_a_row else [1, 2, 3]), *([7] if smuggle_a_row else []))
+    if collide:
+        assert done.returncode != 0 and gate.INDEX in done.stdout + done.stderr, (done.stdout, done.stderr)
+        rows(1, 2, 3, *([7] if smuggle_a_row else []))
+    else:
+        assert done.returncode == 0, (done.stdout, done.stderr)
+    if drop_a_row:
+        (root / gate.INDEX).write_text(
+            "| #1 | r |\n| #2 | r |\n"
+        )  # the index lost the read's row; the README kept it, so the commit survives
     if change_a_patch:
         (root / "code.py").write_text("x = 3\n")
     _git(root, "add", "-A")
-    _git(root, "-c", "core.editor=true", "rebase", "--continue")
+    if collide and merge_instead:
+        _git(root, "commit", "-q", "--no-edit")
+    elif collide:
+        _git(root, "-c", "core.editor=true", "rebase", "--continue")
+    elif drop_a_row or change_a_patch:
+        _git(root, "commit", "-q", "--amend", "--no-edit")
     if reword:
         _git(root, "commit", "-q", "--amend", "-m", "docs(change-index): row #3, probe KILLED")
     if stack_a_commit:
@@ -192,35 +207,42 @@ def _rebased_repo(
     return read, _git(root, "rev-parse", "HEAD")
 
 
-def test_a_rebase_is_judged_by_the_merge_tree_of_the_read_onto_the_moved_base(tmp_path):
+_SHAPES = {"rebased": {}, "merged": {"merge_instead": True}}
+_MORE = {
+    "changed": {"change_a_patch": True},
+    "smuggled": {"smuggle_a_row": True},
+    "dropped": {"drop_a_row": True},
+    "stacked": {"stack_a_commit": True},
+}
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_path, shape):
     """Driven on a real repo rather than stubbed: the arm is built on `git merge-tree` and a stub would
-    measure the stub. The kept case collides on both rendered files, so each member of RENDERED admits it."""
-    read, head = _rebased_repo(tmp_path / "kept")
-    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "kept") is True
-    assert gate.rebase_kept_every_patch(read[:8], head, "develop", cwd=tmp_path / "kept") is True, (
-        "the body names the read by a prefix"
-    )
-    assert gate.rebase_kept_every_patch(head, head, "develop", cwd=tmp_path / "kept") is False, (
-        "a base that did not move is no rebase"
-    )
-    read, head = _rebased_repo(tmp_path / "merged", merge_instead=True)
-    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "merged") is True, (
-        "a merge of the moved base into the branch, its rows resolved by hand, carries no patch of its own"
-    )
-    more = {
-        "changed": {"change_a_patch": True},
-        "reworded": {"reword": True},
-        "smuggled": {"smuggle_a_row": True},
-        "dropped": {"drop_a_row": True},
-        "stacked": {"stack_a_commit": True},
-    }
-    for name, flags in more.items():
-        read, head = _rebased_repo(tmp_path / name, **flags)
-        assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / name) is False, name
-    why = gate.rebase_kept_every_patch("0" * 40, head, "develop", cwd=tmp_path / "stacked")
+    measure the stub. The colliding case collides on both rendered files, so each member of RENDERED admits it."""
+    arm = gate.rebase_kept_every_patch
+    read, head = _rebased_repo(tmp_path / shape, **_SHAPES[shape])
+    assert arm(read, head, "develop", cwd=tmp_path / shape) is True
+    assert arm(read[:8], head, "develop", cwd=tmp_path / shape) is True, "the body names the read by a prefix"
+    assert arm(head, head, "develop", cwd=tmp_path / shape) is False, "a base that did not move is no rebase"
+    read, head = _rebased_repo(tmp_path / "clean", collide=False, **_SHAPES[shape])
+    assert arm(read, head, "develop", cwd=tmp_path / "clean") is True, "a base that moved in a file of its own"
+
+
+@pytest.mark.parametrize(("shape", "more"), [(s, m) for s in _SHAPES for m in _MORE], ids=lambda v: v)
+def test_the_arm_refuses_a_head_that_is_more_than_the_rebase_or_the_merge(tmp_path, shape, more):
+    read, head = _rebased_repo(tmp_path / more, **_SHAPES[shape], **_MORE[more])
+    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / more) is False
+
+
+def test_the_arm_refuses_a_reworded_commit_and_names_what_it_could_not_compare(tmp_path):
+    arm = gate.rebase_kept_every_patch
+    read, head = _rebased_repo(tmp_path / "reworded", reword=True)
+    assert arm(read, head, "develop", cwd=tmp_path / "reworded") is False
+    why = arm("0" * 40, head, "develop", cwd=tmp_path / "reworded")
     assert isinstance(why, str) and why.startswith("`git fetch`"), "an unknown read with no origin to fetch from"
-    _git(tmp_path / "stacked", "update-ref", "-d", "refs/remotes/origin/develop")
-    why = gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "stacked")
+    _git(tmp_path / "reworded", "update-ref", "-d", "refs/remotes/origin/develop")
+    why = arm(read, head, "develop", cwd=tmp_path / "reworded")
     assert isinstance(why, str) and why.startswith("`git merge-base`"), "no origin/develop to take a merge base against"
 
 
