@@ -311,6 +311,24 @@ def _must_not_fetch(pair_key: str, interval: int) -> list[list]:
     raise AssertionError(f"the canonical frame was refused too late: REST was asked for {pair_key}@{interval}")
 
 
+def test_a_canonical_symbol_with_no_rest_pair_key_is_skipped_with_a_warning(tmp_path, caplog):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    _write_canonical(canonical, "FOO/EUR", 60, _BASE, 20)
+    # A foreign frame on the unmapped symbol: read before the filter it would refuse the round, so the skip must come first.
+    foo = canonical / "FOO" / "EUR" / "60.parquet"
+    write_parquet(_FOREIGN_CANONICALS["no-rows"](read_parquet(foo)), foo)
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+    now = _BASE + timedelta(hours=40)
+
+    with caplog.at_level("WARNING", logger="zcrypto.ohlc.reach"):
+        report = reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    assert [(e.symbol, e.interval) for e in report.entries] == [("BTC/EUR", 60)]
+    assert "no REST pair key for FOO/EUR" in caplog.text
+    assert not (out / "FOO").exists()
+
+
 def test_a_foreign_frame_on_a_later_leg_is_refused_before_any_leg_is_fetched(tmp_path):
     canonical, out = tmp_path / "canon", tmp_path / "out"
     _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
