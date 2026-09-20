@@ -34,7 +34,7 @@ Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
 
 ## File structure
 
-- Modify `infra/scripts/ops_daily.py` — the per-sub flag table `_ZCRYPTO_READ_FLAGS` replaces `_ZCRYPTO_READ_SUBS` and its one generated shape (Task 1); `SOAK_*` constants and `read_soak_verdict` (Task 2); `derive_soak_store`, `soak_run`, two imports and one line of `main` (Task 3).
+- Modify `infra/scripts/ops_daily.py` — the per-sub flag table `_ZCRYPTO_READ_FLAGS` replaces `_ZCRYPTO_READ_SUBS` and its one generated shape (Task 1); `SOAK_*` constants and `read_soak_verdict` (Task 2); `derive_soak_store`, `soak_run`, two imports, one line of `main` and the `soak` clause of `Report.journal_paragraph` (Task 3).
 - Modify `tests/test_ops_daily.py` — the classifier fixtures and the table-against-CLI test (Task 1); the reduction tests (Task 2); the derived-store, runner and wiring tests, the autouse `live_soak_run` fixture and the two runner tests it rewires, and one added line in each of the three existing tests that drive `main(["report"])` to a verdict (Task 3).
 - Modify `tests/test_engine_soak_command.py` — one test pinning the payload keys the reduction reads (Task 2).
 - Modify `tests/test_engine_soak.py` — one test holding the payload's panel block field for field, which the CLI fixture's `0 of 0` panel cannot (Task 2).
@@ -249,8 +249,8 @@ Expected: `mutate-probe: KILLED (control proven, tree restored byte-identically)
 
 **Interfaces:**
 - Consumes: `Check(name, expr, ok, value)` and `_UNREACHABLE` from `infra/scripts/ops_daily.py`; in the soak test file, the existing helpers `_patch_config`, `_patch_canonical_pipeline`, `_mk_journal_and_store`, `_soak_args`, the module constant `_CLOSES` and `soak._VERDICT_LABELS`, the closed vocabulary the dual's labels are pinned against, which the reduction's own label test reads too.
-- Reads, from the payload, exactly these and nothing else — the enumeration, so the next reader inherits it instead of re-deriving it: `void_reasons`; `self_test.instrument_ok`, `.identity_ok`, `.reconcile_ok`; `panel.line`, `.indeterminate_line`, `.n_outside`, `.n_metrics`, `.n_indeterminate`; `provenance.L`, `.last_cycle_ts`, `.window_bound`; each `gating_verdicts` row's `verdict` and its `dual.verdict`, `.primary`, `.secondary`; `realized_no_book_bars`; `realized_total_bars`. The pin test holds that list, names and values both — except the one value the reduction COUNTS: `soak-check` derives its vocabulary from its own severity order, so a membership pin moves with a rename, and `SOAK_OUTSIDE_LABEL` is tied to that vocabulary by its own test instead. It asserts one field this list does not name, `self_test.void`: no arm reads it, and it is pinned because the row's `skipped` wording is correct only while a flag that never RAN does not void. Anything `soak-check` computes that this list omits is a reading the row DROPS, so a field added there is a decision to take here rather than a default.
-- Produces: `ops_daily.read_soak_verdict(*, now: datetime, runner) -> Check`, where `runner(journal_dir: Path) -> dict` returns a `soak-check --json` payload or raises; constants `SOAK_CHECK = "soak verdict"`, `SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")`, `SOAK_EXPR`, `SOAK_OUTSIDE_FAILS_AT = 3`, `SOAK_WINDOW_STALE_AFTER = timedelta(hours=12)`, `SOAK_OUTSIDE_LABEL = "inconsistent"`; test constant `_SOAK_NOW` and helper `_a_current_soak_payload(**kw)`, which the report-driven cases of Task 3 use because `main` reads the real clock. Test helpers `_soak_payload(*, void=(), outside=("governor_engagement",), both=(), indeterminate=(), undiscriminating=(), no_dual=(), self_test=(True, True, True))` and `_soak_answering(payload)`, which Task 3's tests reuse.
+- Reads, from the payload, exactly these and nothing else — the enumeration, so the next reader inherits it instead of re-deriving it: `void_reasons`; `self_test.instrument_ok`, `.identity_ok`, `.reconcile_ok`; `panel.line`, `.indeterminate_line`, `.n_outside`, `.n_metrics`, `.n_indeterminate`; `provenance.L`, `.last_cycle_ts`, `.window_bound`; each `gating_verdicts` row's `verdict` and its `dual.verdict`, `.primary`, `.secondary`; `realized_no_book_bars`; `realized_total_bars`. The pin test holds that list, names and values both — except the one value the reduction COUNTS: `soak-check` derives its vocabulary from its own severity order, so a membership pin moves with a rename, and `SOAK_OUTSIDE_LABEL` is tied to that vocabulary by its own test instead. One value it does hold is `provenance.window_bound == "journal"`, which the window arm compares. `_SOAK_CANONICAL_ABSENT` is a substring of a `soak-check` reason no test ties to its producer: a rename there moves that day from `unreadable:` to `void:`, not-ok either way. It asserts one field this list does not name, `self_test.void`: no arm reads it, and it is pinned because the row's `skipped` wording is correct only while a flag that never RAN does not void. Anything `soak-check` computes that this list omits is a reading the row DROPS, so a field added there is a decision to take here rather than a default.
+- Produces: `ops_daily.read_soak_verdict(*, now: datetime, runner) -> Check`, where `runner(journal_dir: Path) -> dict` returns a `soak-check --json` payload or raises; constants `SOAK_CHECK = "soak verdict"`, `SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")`, `SOAK_EXPR`, `SOAK_OUTSIDE_FAILS_AT = 3`, `SOAK_WINDOW_STALE_AFTER = timedelta(hours=12)`, `SOAK_OUTSIDE_LABEL = "inconsistent"`; test constant `_SOAK_NOW` and helper `_a_current_soak_payload(**kw)`, which the report-driven cases of Task 3 use because `main` reads the real clock. Test helpers `_soak_payload(*, void=(), outside=("governor_engagement",), both=(), indeterminate=(), undiscriminating=(), no_dual=(), self_test=(True, True, True), ended=None, window_bound="journal")` and `_soak_answering(payload)`, which Task 3's tests reuse.
 
 - [ ] **Step 1: Append the failing reduction tests to `tests/test_ops_daily.py`**
 
@@ -472,20 +472,23 @@ def test_the_soak_reader_takes_its_runner_and_never_defaults_one():
 def test_a_window_that_stopped_days_ago_is_not_a_pass():
     """`soak-check` scores the longest contiguous run of cycles, so one failed boundary leaves it scoring the run
     BEFORE the gap with empty `void_reasons`: every panel count is healthy and the book of the last days was
-    never judged. The bound is read on both sides, and the value says how far behind the window ends."""
+    never judged. The bound is read on both sides, and the value says how far behind the last scored cycle is."""
     at_the_bound = _soak_payload(ended=_SOAK_NOW - ops_daily.SOAK_WINDOW_STALE_AFTER)
     assert ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(at_the_bound)).ok
     past_it = _soak_payload(ended=_SOAK_NOW - ops_daily.SOAK_WINDOW_STALE_AFTER - timedelta(hours=4))
     stopped = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(past_it))
     assert not stopped.ok and not stopped.value.startswith("unreadable:")
-    assert "window_bound=journal; NOT CURRENT -- the scored window ends 16 h before this pass; self-test" in stopped.value
+    assert "window_bound=journal; NOT CURRENT -- the last scored cycle is 16.0 h before this pass; self-test" in stopped.value
 
 
 def test_a_window_the_store_cut_short_is_not_a_pass():
     """The instrument's own payload comment says a machine consumer gates on `window_bound == "store"`: the
     newest cycles went unscored for want of a close, however fresh the stamp the window ends at."""
     cut = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(window_bound="store")))
-    assert not cut.ok and "window_bound=store; NOT CURRENT" in cut.value, cut.value
+    assert not cut.ok
+    assert "window_bound=store; NOT CURRENT -- the store, not the journal, ends the scored window; self-test" in cut.value
+    clocked = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(window_bound="clock")))
+    assert not clocked.ok and "NOT CURRENT -- the clock, not the journal, ends the scored window" in clocked.value
 
 
 def test_the_label_the_row_counts_is_the_one_soak_check_spells():
@@ -528,6 +531,8 @@ def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, mon
     assert all(self_test[flag] in (True, False, None) for flag in ("instrument_ok", "identity_ok", "reconcile_ok")), self_test
     assert self_test["void"] == any(self_test[flag] is False for flag in ("instrument_ok", "identity_ok", "reconcile_ok"))
     assert {"L", "last_cycle_ts", "window_bound"} <= set(payload["provenance"])
+    # The window arm compares this VALUE, so the name alone is no pin.
+    assert payload["provenance"]["window_bound"] == "journal"
     assert isinstance(payload["realized_no_book_bars"], int) and isinstance(payload["realized_total_bars"], int)
     assert "hhi" in payload["gating_verdicts"]
     for metric, row in payload["gating_verdicts"].items():
@@ -593,7 +598,7 @@ def test_the_payloads_panel_block_is_the_panel_field_for_field():
 - [ ] **Step 3: Run all three and read the failures**
 
 Run: `uv run pytest tests/test_ops_daily.py tests/test_engine_soak_command.py tests/test_engine_soak.py -q -k "soak_reader or metric_outside or provisional_count or a_panel or self_test_that_never_ran or void_run or canonical_dataset or no_payload or missing_a_field or label_the_row_counts or daily_pass_reduces or panel_block_is_the_panel or carries_no_dual or stopped_days_ago or store_cut_short"`
-Expected: the `tests/test_ops_daily.py` cases FAIL with `AttributeError: module 'ops_daily' has no attribute 'read_soak_verdict'` (or `SOAK_OUTSIDE_FAILS_AT`, or `SOAK_OUTSIDE_LABEL`); `test_soak_check_json_carries_the_fields_the_daily_pass_reduces` and `test_the_payloads_panel_block_is_the_panel_field_for_field` PASS already — they pin what `cli/engine/soak.py` writes today, and Step 6's probes are what show they can fail.
+Expected: the `tests/test_ops_daily.py` cases FAIL with `AttributeError: module 'ops_daily' has no attribute 'read_soak_verdict'` (or `SOAK_OUTSIDE_FAILS_AT`, or `SOAK_OUTSIDE_LABEL`, or `SOAK_WINDOW_STALE_AFTER`); `test_soak_check_json_carries_the_fields_the_daily_pass_reduces` and `test_the_payloads_panel_block_is_the_panel_field_for_field` PASS already — they pin what `cli/engine/soak.py` writes today, and Step 6's probes are what show they can fail.
 
 - [ ] **Step 4: Insert the constants and the reader into `infra/scripts/ops_daily.py`**
 
@@ -607,9 +612,10 @@ SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
 # independent looks at 10% reach three under 3% of the time; the seven are correlated, which loosens that bound,
 # and no re-derivation is scheduled: the row's own history is the evidence, and whoever reads its first FAIL has it.
 SOAK_OUTSIDE_FAILS_AT = 3
-# PROVISIONAL. The newest journaled cycle T scores the window to T-4h, the journal reaches the mount about an
-# hour behind the engine, and a cycle lands every four hours, so a current window ends under ten hours before
-# the pass that reads it. Past this the instrument judged an older book than the one the pass is about.
+# PROVISIONAL. The newest journaled cycle T scores the window to T-4h and a cycle lands every four hours, so a
+# current window ends under eight hours before the pass plus the journal's lag to the mount -- one archive-pull
+# cycle and its hourly sleep. Twelve hours leaves about four for that lag; past it the instrument judged an
+# older book than the one the pass is about.
 SOAK_WINDOW_STALE_AFTER = timedelta(hours=12)
 _SOAK_CANONICAL_ABSENT = "canonical absent"
 # The label `soak-check` gives a metric whose live value fell outside its null band, named once rather than
@@ -668,7 +674,12 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         panel_line = f"{panel['line']}; {panel['indeterminate_line']}" if panel["indeterminate_line"] else panel["line"]
         behind = now - datetime.fromisoformat(provenance["last_cycle_ts"])
         current = provenance["window_bound"] == "journal" and behind <= SOAK_WINDOW_STALE_AFTER
-        stale = "" if current else f"; NOT CURRENT -- the scored window ends {behind.total_seconds() / 3600:.0f} h before this pass"
+        # The clause names the arm that bit: a window the store or the clock cut short can end an hour ago.
+        if provenance["window_bound"] != "journal":
+            stale = f"; NOT CURRENT -- the {provenance['window_bound']}, not the journal, ends the scored window"
+        else:
+            hours = behind.total_seconds() / 3600
+            stale = "" if current else f"; NOT CURRENT -- the last scored cycle is {hours:.1f} h before this pass"
         value = (
             f"{panel_line}{floor}; L={provenance['L']} to {provenance['last_cycle_ts']}, "
             f"window_bound={provenance['window_bound']}{stale}; self-test {flags}; "
@@ -713,14 +724,15 @@ carries no dual, which the row reads as the one construction it was
 rather than as a payload it cannot read. Last, the window: `soak-check`
 scores the longest contiguous run of cycles, so one failed boundary leaves
 it scoring the run before the gap with no void reason and healthy counts;
-a scored window that ended more than a PROVISIONAL twelve hours before the
-pass, or one the store cut short, fails the row and the value says NOT
-CURRENT, so the reader takes a clock the way `read_unattended_upgrades`
-does.
-It also names the floor when the floor is the arm that bit: a metric no
-band could judge is dropped from the panel's counts rather than counted
-as indeterminate, so on that route neither panel line says why the row
-failed. The label the reduction counts is named once and held to
+a window whose last scored cycle is stamped more than a PROVISIONAL twelve
+hours before the pass, or one the journal did not end, fails the row and
+the value says NOT CURRENT with the arm that bit, so the reader takes a
+clock the way `read_unattended_upgrades` does.
+
+The value also names the floor when the floor is the arm that bit: a
+metric no band could judge is dropped from the panel's counts rather than
+counted as indeterminate, so on that route neither panel line says why the
+row failed. The label the reduction counts is named once and held to
 `soak-check`'s own vocabulary by a test, because that vocabulary is
 derived from the module's severity order and a rename moves it out from
 under a membership pin while this reader's count goes silently to zero.
@@ -745,7 +757,7 @@ infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "void_run or provisional_count"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   --control 's/^SOAK_OUTSIDE_FAILS_AT = 3/SOAK_OUTSIDE_FAILS_AT = 1/' \
-  --mutation 's/ and reachable$//' \
+  --mutation 's/ and reachable and current$/ and current/' \
   -- uv run pytest tests/test_ops_daily.py -q -x -k "a_panel"
 infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
   --control 's/^SOAK_OUTSIDE_FAILS_AT = 3/SOAK_OUTSIDE_FAILS_AT = 1/' \
@@ -789,19 +801,19 @@ infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
   -- uv run pytest tests/test_engine_soak.py -q -x -k "panel_block_is_the_panel"
 ```
 
-Expected: `KILLED (control proven, tree restored byte-identically)` once per invocation above. The mutations, in order: a void run falls through to its verdicts; the reachability floor is dropped from the verdict, so a panel that decided two of seven metrics passes; the floor's own clause is dropped from the value, so the row fails and names no cause; the panel's indeterminate line is dropped from the value; the self-test flags are dropped from the value; the `None` dual a single-null run writes is subscripted, so that payload reads `unreadable:`; the label the reduction counts is renamed under `cli/`, which carries that module's DERIVED vocabulary with it and leaves a membership pin holding; a payload key the reduction reads is renamed; the dual's labels are re-cased, which keeps every key name the pin asserts and takes the values off the closed vocabulary the reduction counts; the panel's indeterminate line is emptied at its source, which the pin's own `0 of 0` run cannot see and its synthetic panel does; the payload writes the panel's metric count under `n_outside`, which no CLI run in the tree can see and the direct pin does; and — the seventh invocation, over the reduction — the window arm is dropped from the verdict, so a window that stopped sixteen hours ago, or one the store cut short, passes. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the reduction — control the threshold moved to nine, mutation the void arm disabled; control the threshold moved to one, mutations the decided-count floor dropped from the verdict, its clause dropped from the value, the indeterminate line dropped from it, and the `None` dual subscripted; control `skipped` spelled `ok`, mutation the self-test flags dropped; control the staleness bound moved to ninety-nine hours, mutation the window arm dropped from the verdict: KILLED each, control proven. Over `cli/engine/soak.py`, control the severity order stripped, mutation the counted label renamed; control `void_reasons` renamed, mutations `realized_no_book_bars` renamed, the dual's labels re-cased and the indeterminate line emptied; control the payload's panel block set to `None`, mutation the metric count written under `n_outside`: KILLED each, control proven.`` Then push.
+Expected: `KILLED (control proven, tree restored byte-identically)` once per invocation above. The mutations, in order: a void run falls through to its verdicts; the reachability floor is dropped from the verdict while the window arm stays, so a panel that decided two of seven metrics passes; the floor's own clause is dropped from the value, so the row fails and names no cause; the panel's indeterminate line is dropped from the value; the self-test flags are dropped from the value; the `None` dual a single-null run writes is subscripted, so that payload reads `unreadable:`; the window arm is dropped from the verdict, so a window that stopped sixteen hours ago, or one the store cut short, passes; the label the reduction counts is renamed under `cli/`, which carries that module's DERIVED vocabulary with it and leaves a membership pin holding; a payload key the reduction reads is renamed; the dual's labels are re-cased, which keeps every key name the pin asserts and takes the values off the closed vocabulary the reduction counts; the panel's indeterminate line is emptied at its source, which the pin's own `0 of 0` run cannot see and its synthetic panel does; the payload writes the panel's metric count under `n_outside`, which no CLI run in the tree can see and the direct pin does. Amend the message only, adding before the trailers: ``Probes: `infra/scripts/mutate-probe.sh` over the reduction — control the threshold moved to nine, mutation the void arm disabled; control the threshold moved to one, mutations the decided-count floor dropped from the verdict, its clause dropped from the value, the indeterminate line dropped from it, and the `None` dual subscripted; control `skipped` spelled `ok`, mutation the self-test flags dropped; control the staleness bound moved to ninety-nine hours, mutation the window arm dropped from the verdict: KILLED each, control proven. Over `cli/engine/soak.py`, control the severity order stripped, mutation the counted label renamed; control `void_reasons` renamed, mutations `realized_no_book_bars` renamed, the dual's labels re-cased and the indeterminate line emptied; control the payload's panel block set to `None`, mutation the metric count written under `n_outside`: KILLED each, control proven.`` Then push.
 
 ---
 
 ### Task 3: The runner, and the row in the report
 
 **Files:**
-- Modify: `infra/scripts/ops_daily.py` (two imports; two constants below `SOAK_OUTSIDE_FAILS_AT = 3`; two functions directly above `def read_soak_verdict(`; one line in `main`)
+- Modify: `infra/scripts/ops_daily.py` (two imports; two constants below `SOAK_OUTSIDE_FAILS_AT = 3`; two functions directly above `def read_soak_verdict(`; one line in `main`; one line and one f-string clause in `Report.journal_paragraph`)
 - Test: `tests/test_ops_daily.py` (append, including the autouse `live_soak_run` fixture and the two tests that read it, one of them through `main`; and one line added in each of `test_the_upgrade_check_reaches_the_verdict_the_pass_prints`, `test_the_cgroup_check_reaches_the_verdict_the_pass_prints` and `test_an_uncapped_bridge_moves_the_pass_to_attention`)
 
 **Interfaces:**
-- Consumes: from Task 2, `read_soak_verdict(*, runner)`, `SOAK_CHECK`, `SOAK_JOURNAL`, and the test helpers `_soak_payload(...)` and `_soak_answering(payload)`; from the module, `REPO_ROOT` and `ssh_read`; from the test file, `_host_answering(**fields)`.
-- Produces: `ops_daily.derive_soak_store(journal_dir: Path, root: Path) -> Path` (returns `root / "store"`; raises `FileNotFoundError` when the journal holds no `*/cycle-*.json`, `ValueError` when the newest record journals no `240` snapshot); `ops_daily.soak_run(journal_dir: Path) -> dict` (raises `RuntimeError` when `soak-check` wrote no payload); `main` appends `read_soak_verdict(runner=soak_run)` to the verdict list.
+- Consumes: from Task 2, `read_soak_verdict(*, now, runner)`, `SOAK_CHECK`, `SOAK_JOURNAL`, and the test helpers `_soak_payload(...)` and `_soak_answering(payload)`; from the module, `REPO_ROOT` and `ssh_read`; from the test file, `_host_answering(**fields)`.
+- Produces: `ops_daily.derive_soak_store(journal_dir: Path, root: Path) -> Path` (returns `root / "store"`; raises `FileNotFoundError` when the journal holds no `*/cycle-*.json`, `ValueError` when the newest record journals no `240` snapshot); `ops_daily.soak_run(journal_dir: Path) -> dict` (raises `RuntimeError` when `soak-check` wrote no payload); `main` appends `read_soak_verdict(now=now, runner=soak_run)` to the verdict list; `Report.journal_paragraph` carries the row's value as a `soak` clause.
 
 - [ ] **Step 1: Append the failing tests to `tests/test_ops_daily.py`**
 
@@ -1057,6 +1069,8 @@ and in the same function's returned f-string replace ` · checks {failed} · "` 
  · checks {failed}{f' · soak {soak}' if soak else ''} · "
 ```
 
+Do not run `tests/test_ops_daily.py` between this step and the next: `main` now reaches the live runner, the three tests that drive `main(["report"])` would each start a real `soak-check` over the journal mount, and Step 4 is what refuses it.
+
 - [ ] **Step 4: Refuse the live runner for every test in the file, and hand the three report tests a payload**
 
 `main` now runs `soak_run`, which would start a real `soak-check` from inside the suite. Three named tests drive `main(["report"])` to a verdict today, and nothing would stop a fourth. Append this fixture and its two readers to `tests/test_ops_daily.py`, so the refusal is structural, a stub is what each test opts into, and narrowing the refusal away goes red:
@@ -1175,11 +1189,12 @@ Expected: `KILLED (control proven, tree restored byte-identically)` once per inv
 uv run python -c "
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location('ops_daily', 'infra/scripts/ops_daily.py'); m = importlib.util.module_from_spec(spec); sys.modules['ops_daily'] = m; spec.loader.exec_module(m)
-c = m.read_soak_verdict(runner=m.soak_run); print(c.ok, '|', c.value)"
+from datetime import datetime, timezone
+c = m.read_soak_verdict(now=datetime.now(timezone.utc), runner=m.soak_run); print(c.ok, '|', c.value)"
 ls -la data/
 ```
 
-Expected: `True | N of 7 outside band (~0.7 expected by chance at 90%); L=<several hundred> to <the last SCORED cycle's stamp, one 4h cycle behind the newest journaled one>, window_bound=journal; self-test ok/ok/ok; outside: …; no-book bars 0 of <L>; hhi consistent`, in well under a minute — with an indeterminate clause between the panel line and `L=` only if the two null constructions disagreed on some metric that day, and a `; only N metric(s) decided, under the threshold's 3` clause in that same position, behind `False |`, only if the panel decided fewer than three, which is a real reading of a fragile day rather than a failure of this step. `data/` still lists `.gitignore` alone: the run read the main checkout's dataset and wrote nothing into this worktree. The values go in the PR body's test plan, not in any file.
+Expected, on a day the journal's newest run is also its longest: `True | N of 7 outside band (~0.7 expected by chance at 90%); L=<several hundred> to <the last SCORED cycle's stamp, one 4h cycle behind the newest journaled one>, window_bound=journal; self-test ok/ok/ok; outside: …; no-book bars 0 of <L>; hhi consistent`, in well under a minute — with an indeterminate clause between the panel line and `L=` only if the two null constructions disagreed on some metric that day, and a `; only N metric(s) decided, under the threshold's 3` clause in that same position, behind `False |`, only if the panel decided fewer than three, which is a real reading of a fragile day rather than a failure of this step. On a day after a failed boundary the row instead reads `False | … window_bound=journal; NOT CURRENT -- the last scored cycle is N h before this pass; …`, the window arm doing its work and equally an acceptance of this step. `now` is an AWARE clock: a naive one raises inside the reader and prints a false `unreadable:`. `data/` still lists `.gitignore` alone: the run read the main checkout's dataset and wrote nothing into this worktree. The values go in the PR body's test plan, not in any file.
 
 ---
 
@@ -1230,7 +1245,7 @@ Expected from the grep: no line. The search is SCOPED to the roots that could ca
 In `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, append one bullet at the end of the `## Findings so far` list (directly above the blank line before `## Done so far`):
 
 ```markdown
-- The daily pass prints this trigger's two operands on every pass that reaches a verdict: the `soak verdict` row of `ops-daily.py report` carries the realized no-book bar count and the `hhi` verdict, from a `soak-check` run over a store derived from the journal (spec `00115`). `zcrypto-daily-ops` names an evaluation statement unevaluated, so the printing alone is no reader: the trigger gains the arm below, which the pass does decide.
+- The daily pass prints this trigger's two operands on every pass that reaches a verdict: the `soak verdict` row of `ops-daily.py report` carries the realized no-book bar count and the `hhi` verdict, from a `soak-check` run over a store derived from the journal (spec `00115`). `zcrypto-daily-ops` names an evaluation statement unevaluated, so the printing alone is no reader: the trigger gains a second arm, the next change to `cli/engine/soak.py`, written first because it is the one the pass decides.
 ```
 
 In `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`, replace the line `Nothing investigated since registration: what PR #514 (T0193) measured is the sections above.` with:
@@ -1244,25 +1259,31 @@ What PR #514 (T0193) measured is the sections above.
 Both topics also gain a second trigger arm, of the one shape `zcrypto-daily-ops` section 5b decides from the repo alone — a file being touched — because the arm each carries today is an evaluation statement the pass names unevaluated. No file of this PR is `cli/engine/soak.py` or `cli/engine/store.py`, so neither arm is satisfied as it is written. Rewrite each `ripe_when:` line in place, whole:
 
 ```yaml
-ripe_when: 'uv run zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir <a store pulled from the engine host, which has no replica> reports a non-zero realized no-book bar count in its null-reference block, or an hhi verdict other than consistent; on a page carrying NO VERDICT or STORE-BOUND WINDOW a non-zero no-book count still fires the first arm, while a zero count and the verdict cell evaluate nothing; OR `cli/engine/soak.py` is next changed -- a session already in the module that averages the sentinel, and the arm the daily pass decides'
+ripe_when: '`cli/engine/soak.py` is next changed -- a session already in the module that averages the sentinel, and the arm the daily pass decides; OR uv run zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir <a store pulled from the engine host, which has no replica> reports a non-zero realized no-book bar count in its null-reference block, or an hhi verdict other than consistent; on a page carrying NO VERDICT or STORE-BOUND WINDOW a non-zero no-book count still fires that arm, while a zero count and the verdict cell evaluate nothing'
 ```
 
 for `docs/open-topics/T0184-soak-hhi-aggregate-averages-a-sentinel.md`, and for `docs/open-topics/T0201-store-type-door-cannot-see-a-wrong-instant.md`:
 
 ```yaml
-ripe_when: 'a soak-check run renders `window_bound : store` with a `store last bar` that is not on a 4h boundary (00/04/08/12/16/20 UTC) -- the shape a wrong-instant store frame produces, and one a legitimately short store cannot; OR `cli/engine/store.py` is next changed -- a session already at the two doors this topic is about, and the arm the daily pass decides.'
+ripe_when: '`cli/engine/store.py` is next changed -- a session already at the two doors this topic is about, and the arm the daily pass decides; OR a soak-check run renders `window_bound : store` with a `store last bar` that is not on a 4h boundary (00/04/08/12/16/20 UTC) -- the shape a wrong-instant store frame produces, and one a legitimately short store cannot.'
 ```
 
-and give each topic's `## Findings so far` the why, as one more bullet in T0184 and one more paragraph in T0201:
+and give each topic's `## Findings so far` the why. In T0184, as the bullet after the operands bullet above:
 
 ```markdown
-The trigger gained its second arm with spec `00115`: the first is an evaluation statement over a `soak-check` run, which `zcrypto-daily-ops` names unevaluated, so until then nothing scheduled ever read it.
+- The trigger gained its file-touched arm with spec `00115`: the other is an evaluation statement over a `soak-check` run, which `zcrypto-daily-ops` names unevaluated, so until then nothing scheduled ever read it.
+```
+
+In T0201, as a paragraph after the one above:
+
+```markdown
+The trigger gained its file-touched arm with spec `00115`: the other is an evaluation statement over a `soak-check` run, which `zcrypto-daily-ops` names unevaluated, so until then nothing scheduled ever read it.
 ```
 
 Then, in T0201 alone, append this bullet at the end of its `## Suggested next steps` list:
 
 ```markdown
-- When the engine host's store is next read in an attended session, compare its live `240` legs against the newest journal record's snapshots — `n_bars`, `last_ts` and the closes: the daily `soak verdict` row scores the journaled closes (spec `00115` D2), and their equality with the live store has never been read.
+- When the engine host's store is next read in an attended session, compare its live `240` legs against the newest journal record's snapshots: the daily `soak verdict` row scores the journaled closes (spec `00115` D2), and their equality with the live store has never been read. Pull with `ssh zcrypto 'sudo tar -C /var/lib/zcrypto-engine -cf - store' | tar -C <scratch> -xf -`, then for each `240` leg read `n_bars`, `last_ts` and the closes of `<scratch>/store` against the file the record's `snapshots[].path` names under `/mnt/zhao-crypto/engine-journal`; equal on every leg settles D2, a difference is a finding for this topic. If this topic resolves with the read still untaken, the step leaves with its own topic.
 ```
 
 - [ ] **Step 4: Re-render the index, compare the heading sets, run the guards**
@@ -1290,8 +1311,11 @@ Resolution: the row names every outside metric and its construction count
 on every pass. T0184 records that the row prints its trigger's two
 operands daily; T0201 records that a journal-derived store puts the store
 last bar on a boundary by construction, so the row cannot evaluate its
-trigger. No topic is registered: the reading `zcrypto-daily-ops` owes the
-new row is the next commit on this branch.
+trigger. Each gains a trigger arm the daily pass decides, the next change
+to the code it is about, written first. No topic is registered here: the
+reading `zcrypto-daily-ops` owes the new row is the next commit on this
+branch, and the instrument's window selection after a failed boundary,
+which has no home, is put to the owner in the PR body.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VpmFzSn7FrFTiq8hphvCaY
@@ -1304,7 +1328,7 @@ git push
 The owner directed this fold-in on 2026-09-19. In `.claude/skills/zcrypto-daily-ops/SKILL.md`, directly below the line `The verdict tiles' own PromQL is among what the report's fleet checks already ran. Read those; no pixels.` and a blank line, add this one paragraph, then a blank line before `## 5. Evaluate the due reminders`:
 
 ```markdown
-**The `soak verdict` row is the soak instrument's daily reading, and none of its states is a host action.** The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE only when its value names one — the journal mount `/mnt/zhao-crypto/engine-journal`, a record or store read under it, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — and then the check is that mount and that directory, never a fleet host. Any other value names this reader or the instrument, and is handed to `zcrypto-marco` the way a `void:` row is. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. `FAIL` with the panel line is a finding about the BOOK — three or more metrics outside the band, or fewer than three left decided: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `FAIL` whose value says `NOT CURRENT` is a finding about the instrument's WINDOW — it ended more than twelve hours before the pass, or the store cut it short, so the panel beside it judged an older book; one failed boundary cycle is the usual cause, since `soak-check` scores the longest contiguous run and keeps scoring the one before the gap: the entry says so and hands it to `zcrypto-marco`. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way.
+**The `soak verdict` row is the soak instrument's daily reading, and none of its states is a host action.** It is `soak-check`'s panel over the journal, not the gate's soak verdict the NAS gate metrics carry. The report runs `zcrypto engine soak-check` over a store derived from the newest journaled 240 snapshots and reduces the payload to this one row; nothing is classified, because there is no command to run. `soak verdict could not be read` (exit 2) is a finding about a SOURCE only when its value names one — the journal mount `/mnt/zhao-crypto/engine-journal`, a record or store read under it, or the workstation's canonical dataset, `data/ohlc-full` in the main checkout — and then the check is that mount and that directory, never a fleet host. Any other value names this reader or the instrument, and is handed to `zcrypto-marco` the way a `void:` row is. `FAIL … void: <reasons>` is a finding about the INSTRUMENT — a self-test that ran and failed, a degenerate window, a null with no power — and so is a value saying `only N metric(s) decided`, a panel too undecided to reach the threshold: the book was not judged that day, the verdicts a void payload also carries are never read, and the entry says so and hands it to `zcrypto-marco`. A value is read in that order — `void:`, then `NOT CURRENT`, then the decided count, and only then the outside count. `FAIL` with three or more metrics outside the band, and none of those before it, is a finding about the BOOK: quote the row whole in the entry, since its value names the metrics, how many null constructions called each and the self-test flags, and hand it to `zcrypto-marco`, the same day to the owner once the engine is armed. A `FAIL` whose value says `NOT CURRENT` is a finding about the instrument's WINDOW — its last scored cycle is stamped more than twelve hours before the pass, or something other than the journal ended it, the store running out first or the run's clock — so the panel beside it judged an older book. One failed boundary cycle is the usual cause: `soak-check` scores the longest contiguous run, so it keeps scoring the run before the gap until the newer one is longer, and the row says `NOT CURRENT` on every pass until then — or, once the older run is further back than the 240 bars the derived store reaches, `void:` with a scored-bar count under the floor, the same cause under the other reading. Hand it to `zcrypto-marco` on the first such pass and name it as standing on the later ones. A `PASS` row's `outside:` list is narration, not a finding: one metric outside a 90% band is the count chance expects, and a `skipped` self-test flag is narrated the same way.
 ```
 
 ```bash
@@ -1335,4 +1359,4 @@ Expected: `ambient-bytes` prints the number `develop` prints, because a skill's 
 
 - [ ] **Step 7: Re-true the PR body through `open-pr`**
 
-`## Spec / Plan` names the plan beside the spec; `## Guidance changes` carries `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` verbatim, which is Step 6's one commit, and because that commit puts a `.claude/` path in the diff the whole-branch read is a Fable read (`uv run python infra/scripts/merge-gate.py --fable-paths`); `## Changes` names the skill paragraph as the owner's fold-in of 2026-09-19 and is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
+`## Spec / Plan` names the plan beside the spec; `## Guidance changes` carries `git log develop..HEAD --format='%h %s' | grep '^[0-9a-f]* claude('` verbatim, which is Step 6's one commit, and because that commit puts a `.claude/` path in the diff the whole-branch read is a Fable read (`uv run python infra/scripts/merge-gate.py --fable-paths`); `## Changes` names the skill paragraph as the owner's fold-in of 2026-09-19 and is derived per file from `git diff develop...HEAD -- <path>`; `## Test plan` carries Task 3 Step 7's live reading and its `data/` listing, and records that D2's settling comparison — the live `240` legs on `zcrypto` against the newest record's snapshots — was not run on this branch and stays the owner's attended reading; a closing `## For the owner` section asks for the one thing spec D6 leaves without a home — after one failed boundary the row reads `NOT CURRENT`, then `void:`, until the newer run outgrows the older, about seventy days on today's journal, and the choices are to accept that, to change `select_clean_segment` to score the newest run that meets the floor, or to hand `soak-check` a recent view of the journal, the second and third each a topic only the owner can approve; the README `## Usage` box is `N/A — no CLI option moved`, which `git diff develop...HEAD --name-only | grep '^cli/'` printing nothing confirms. The change-index row for #572 already carries `00115` and `T0210`.
