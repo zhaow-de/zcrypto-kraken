@@ -2831,3 +2831,248 @@ def test_the_engine_read_shapes_are_the_clis_own_options():
         for flag, spec in flags.items():
             assert (spec is None) == real[sub][flag], (sub, flag, spec, real[sub][flag])
         assert set(real[sub]) - set(flags) == set(_ENGINE_OPTIONS_LEFT_OUT.get(sub, {})), (sub, set(real[sub]) - set(flags))
+
+
+# --- the soak verdict: the scheduled reader of `soak-check`'s gating verdicts ------------------------------------
+
+
+_SOAK_METRICS = ("gross", "net", "active_frac", "turnover", "hhi", "governor_engagement", "cap_breach")
+
+
+_SOAK_NOW = datetime(2026, 9, 19, 14, 0, tzinfo=timezone.utc)
+
+
+def _soak_payload(
+    *,
+    void=(),
+    outside=("governor_engagement",),
+    both=(),
+    indeterminate=(),
+    undiscriminating=(),
+    no_dual=(),
+    self_test=(True, True, True),
+    ended=None,
+    window_bound="journal",
+):
+    """The fields `read_soak_verdict` reduces, shaped as `soak-check --json` writes them. `outside` calls a
+    metric on the secondary null alone, `both` on both, `indeterminate` is the fourth reconciled label -- the
+    two nulls discriminated and disagreed -- which counts toward `n_metrics` and never toward `n_outside`,
+    `undiscriminating` is a metric no band could judge, which the panel drops from `n_metrics` altogether, and
+    `no_dual` writes a `None` dual, which is what a metric judged under one null alone carries. The panel's
+    outside count is derived from the verdicts, and its metric and indeterminate counts from the lists, so a
+    case that names one metric in two lists states a count its own verdicts contradict."""
+    verdicts = {}
+    for metric in _SOAK_METRICS:
+        if metric in undiscriminating:
+            label = primary = secondary = "n/a"
+        elif metric in indeterminate:
+            label, primary, secondary = "indeterminate (instrument-fragile)", "consistent", "inconsistent"
+        else:
+            label = "inconsistent" if metric in outside or metric in both else "consistent"
+            primary = "inconsistent" if metric in both else ("n/a" if metric in outside else "consistent")
+            secondary = label
+        dual = None if metric in no_dual else {"primary": primary, "secondary": secondary, "verdict": label}
+        verdicts[metric] = {"verdict": label, "dual": dual}
+    n_indeterminate = len(indeterminate)
+    n_metrics = len(_SOAK_METRICS) - len(undiscriminating)
+    n_outside = sum(1 for row in verdicts.values() if row["verdict"] == "inconsistent")
+    return {
+        "void_reasons": list(void),
+        "self_test": {
+            "instrument_ok": self_test[0],
+            "identity_ok": self_test[1],
+            "reconcile_ok": self_test[2],
+            # Derived, never a fourth argument: `void` is true of a flag that RAN and failed, and `None`
+            # (skipped) never voids -- a payload where the two disagreed would test nothing real.
+            "void": any(flag is False for flag in self_test),
+            "messages": [],
+        },
+        "panel": {
+            "n_outside": n_outside,
+            "n_metrics": n_metrics,
+            "n_indeterminate": n_indeterminate,
+            "line": f"{n_outside} of {n_metrics} outside band (~{n_metrics * 0.1:.1f} expected by chance at 90%)",
+            "indeterminate_line": (
+                f"{n_indeterminate} of {n_metrics} indeterminate -- the verdict depends on how the null was constructed"
+                if n_indeterminate
+                else ""
+            ),
+        },
+        "provenance": {
+            "L": 424,
+            "last_cycle_ts": (ended or _SOAK_NOW - timedelta(hours=6)).isoformat(),
+            "window_bound": window_bound,
+        },
+        "gating_verdicts": verdicts,
+        "realized_no_book_bars": 0,
+        "realized_total_bars": 424,
+    }
+
+
+def _a_current_soak_payload(**kw):
+    """A payload whose window ends six hours before the REAL clock: `main` reads that clock, so a case that
+    drives the report cannot use the fixed one."""
+    return _soak_payload(ended=datetime.now(timezone.utc) - timedelta(hours=6), **kw)
+
+
+def _soak_answering(payload):
+    return lambda journal_dir: payload
+
+
+def test_one_metric_outside_is_the_count_chance_expects_and_passes():
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload()))
+    assert check.ok, check.value
+    assert check.value == (
+        "1 of 7 outside band (~0.7 expected by chance at 90%); L=424 to 2026-09-19T08:00:00+00:00, "
+        "window_bound=journal; self-test ok/ok/ok; outside: governor_engagement (one construction); "
+        "no-book bars 0 of 424; hhi consistent"
+    )
+
+
+def test_a_metric_judged_under_one_null_alone_carries_no_dual_and_is_still_read():
+    """`soak-check` writes a `None` dual for every metric under a single-null run, and for the two internals
+    metrics whenever the rebuild is unavailable. The row reads that metric's own verdict as the one
+    construction it was; a reduction that subscripted the dual would read the whole payload as unreadable."""
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(no_dual=("governor_engagement",))))
+    assert check.ok, check.value
+    assert "outside: governor_engagement (one construction)" in check.value
+
+
+def test_the_row_fails_at_the_provisional_count_and_not_one_below_it():
+    assert ops_daily.SOAK_OUTSIDE_FAILS_AT == 3
+    two = _soak_payload(outside=("governor_engagement",), both=("hhi",))
+    three = _soak_payload(outside=("governor_engagement",), both=("hhi", "gross"))
+    passed = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(two))
+    assert passed.ok and "hhi (both constructions)" in passed.value, passed.value
+    failed = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(three))
+    assert not failed.ok and not failed.value.startswith("unreadable:")
+    assert "gross (both constructions)" in failed.value and "hhi inconsistent" in failed.value
+
+
+def test_a_panel_the_instrument_could_not_decide_names_it_and_stops_reading_as_better_than_chance():
+    """A metric whose two null constructions gave OPPOSITE verdicts reconciles to a fourth label that counts
+    toward the panel's metric count and never toward its outside count -- so a row keyed on the outside count
+    alone reads better the more the instrument disagrees with itself, and past four of seven it can no longer
+    reach the threshold at all. The row names the disagreement, and a panel too fragile to reach the threshold
+    is not a pass."""
+    five = _soak_payload(outside=(), indeterminate=("gross", "net", "active_frac", "turnover", "governor_engagement"))
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(five))
+    assert not check.ok and not check.value.startswith("unreadable:"), check.value
+    assert "5 of 7 indeterminate" in check.value
+    one = _soak_payload(outside=(), indeterminate=("gross",))
+    still_passes = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(one))
+    assert still_passes.ok and "1 of 7 indeterminate" in still_passes.value, still_passes.value
+
+
+def test_a_panel_that_judged_nothing_is_not_an_all_clear():
+    """`0 of 0 outside band` is the panel of a run where no metric discriminated, and keyed on the outside
+    count alone it reads as the best verdict the row can give. A metric no band could judge is dropped from
+    `n_metrics` rather than counted as indeterminate, so on this route the panel's own two lines say nothing
+    about why the row failed and the value has to name the floor itself."""
+    nothing = _soak_payload(outside=(), undiscriminating=_SOAK_METRICS)
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(nothing))
+    assert not check.ok and not check.value.startswith("unreadable:"), check.value
+    assert "0 of 0 outside band" in check.value and "only 0 metrics decided" in check.value, check.value
+    # Five of seven undiscriminating is the ordinary shape of this arm, and the one the panel cannot show:
+    # `n_indeterminate` is 0, so the indeterminate line is empty and the floor is the value's only trace.
+    thin = _soak_payload(outside=(), undiscriminating=_SOAK_METRICS[:5])
+    reading = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(thin))
+    assert not reading.ok and "only 2 metrics decided" in reading.value, reading.value
+    assert "indeterminate" not in reading.value, reading.value
+    lone = _soak_payload(outside=(), undiscriminating=_SOAK_METRICS[:6])
+    assert "only 1 metric decided" in ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(lone)).value
+
+
+def test_a_self_test_that_never_ran_is_spelled_skipped_and_never_spelled_ok():
+    """A self-test flag voids the run only when it RAN and FAILED; `None` is a check that was SKIPPED -- no
+    cycle could be replayed, no pair was compared -- and puts nothing in `void_reasons`, so the void arm above
+    never sees it, the verdict word cannot carry it, and this value is the only place it reaches a reader."""
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(self_test=(True, None, True))))
+    assert check.ok, check.value
+    assert "self-test ok/skipped/ok" in check.value
+
+
+def test_a_void_run_fails_on_its_reasons_and_never_reads_the_verdicts_beside_them():
+    """A reader that looked at the panel first would pass a run whose instrument failed its own self-test; the
+    reduction's order is what this pins."""
+    payload = _soak_payload(outside=(), void=("self-test VOID: identity_ok=False",))
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(payload))
+    assert not check.ok
+    assert check.value == "void: self-test VOID: identity_ok=False"
+
+
+def test_a_void_run_whose_analysis_never_ran_still_names_its_reason():
+    payload = {"void_reasons": ["no journaled cycles found"], "panel": None, "provenance": None, "gating_verdicts": None}
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(payload))
+    assert not check.ok and check.value == "void: no journaled cycles found"
+
+
+def test_no_canonical_dataset_is_a_source_the_pass_could_not_read():
+    payload = _soak_payload(void=("canonical absent — null unavailable",))
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(payload))
+    assert not check.ok and check.value == "unreadable: canonical absent — null unavailable"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        FileNotFoundError("no cycle record under /mnt/zhao-crypto/engine-journal"),
+        # The journal is a mount: an outage answers with an error, not with a record.
+        OSError(5, "Input/output error", "/mnt/zhao-crypto/engine-journal"),
+        subprocess.TimeoutExpired(cmd="uv", timeout=900),
+        RuntimeError("soak-check exited 1 and wrote no payload: read_store_series: cannot read x"),
+        json.JSONDecodeError("Expecting value", "", 0),
+    ],
+)
+def test_a_run_that_produced_no_payload_is_unreadable_and_never_a_verdict_on_the_book(fault):
+    def refuse(journal_dir):
+        raise fault
+
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=refuse)
+    assert not check.ok and check.value.startswith("unreadable:"), check.value
+
+
+def test_a_payload_missing_a_field_the_reduction_reads_is_unreadable():
+    payload = _soak_payload()
+    del payload["panel"]
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(payload))
+    assert not check.ok and check.value.startswith("unreadable:"), check.value
+
+
+def test_the_soak_reader_takes_its_runner_and_never_defaults_one():
+    for name in ("runner", "now"):
+        taken = inspect.signature(ops_daily.read_soak_verdict).parameters[name]
+        assert taken.kind is inspect.Parameter.KEYWORD_ONLY and taken.default is inspect.Parameter.empty, name
+    with pytest.raises(TypeError):
+        ops_daily.read_soak_verdict(now=_SOAK_NOW)
+
+
+def test_a_window_that_stopped_days_ago_is_not_a_pass():
+    """`soak-check` scores the longest contiguous run of cycles, so one failed boundary leaves it scoring the run
+    BEFORE the gap with empty `void_reasons`: every panel count is healthy and the book of the last days was
+    never judged. The bound is read on both sides, and the value says how far behind the last scored cycle is."""
+    at_the_bound = _soak_payload(ended=_SOAK_NOW - ops_daily.SOAK_WINDOW_STALE_AFTER)
+    assert ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(at_the_bound)).ok
+    past_it = _soak_payload(ended=_SOAK_NOW - ops_daily.SOAK_WINDOW_STALE_AFTER - timedelta(hours=4))
+    stopped = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(past_it))
+    assert not stopped.ok and not stopped.value.startswith("unreadable:")
+    assert "window_bound=journal; NOT CURRENT -- the last scored cycle is 16.0 h before this pass; self-test" in stopped.value
+
+
+def test_a_window_the_store_cut_short_is_not_a_pass():
+    """The instrument's own payload comment says a machine consumer gates on `window_bound == "store"`: the
+    newest cycles went unscored for want of a close, however fresh the stamp the window ends at."""
+    cut = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(window_bound="store")))
+    assert not cut.ok
+    assert "window_bound=store; NOT CURRENT -- the store, not the journal, ends the scored window; self-test" in cut.value
+    clocked = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(window_bound="clock")))
+    assert not clocked.ok and "NOT CURRENT -- the clock, not the journal, ends the scored window" in clocked.value
+
+
+def test_the_label_the_row_counts_is_the_one_soak_check_spells():
+    """The reduction counts a bare token, and `soak-check`'s vocabulary is DERIVED from its own severity
+    order -- rename the label there and the closed set moves with it, so a membership pin over the payload
+    still holds while this row's count silently goes to zero. This assertion is what goes red instead."""
+    from cli.engine import soak
+
+    assert ops_daily.SOAK_OUTSIDE_LABEL in soak._VERDICT_LABELS

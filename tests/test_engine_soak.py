@@ -2380,6 +2380,34 @@ def test_render_report_lines_have_no_trailing_whitespace():
         assert line == line.rstrip(), f"line has trailing whitespace: {line!r}"
 
 
+def test_the_payloads_panel_block_is_the_panel_field_for_field():
+    """`infra/scripts/ops_daily.py` reads `n_outside`, `n_metrics`, `n_indeterminate` and both lines out of this
+    block by name. Six values no two of which are equal, so a field written under its neighbour's key fails."""
+    rw = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    nw = [{"BTC": 0.15 + 0.001 * ((k % 5) - 2), "ETH": 0.15} for k in range(200)]
+    realized = _mk_realized(rw, [0.001] * 6)
+    null = _mk_null(nw, [0.001] * 200)
+    analysis = analyze_soak(realized, null, band=0.90, internals=_mk_internals(realized.cycle_ts))
+    panel = soak.PanelSummary(
+        n_metrics=5, n_outside=2, n_indeterminate=1, expected_by_chance=0.5, line="the line", indeterminate_line="the other line"
+    )
+    self_test = SelfTestReport(instrument_ok=True, identity_ok=None, reconcile_ok=True, messages=())
+
+    payload = soak._json_payload(
+        replace(analysis, panel=panel), realized, null, self_test, void_reasons=[], band=0.90, now=datetime.now(UTC)
+    )
+
+    assert payload["panel"] == {
+        "n_metrics": 5,
+        "n_outside": 2,
+        "n_indeterminate": 1,
+        "expected_by_chance": 0.5,
+        "line": "the line",
+        "indeterminate_line": "the other line",
+    }
+    assert payload["self_test"]["identity_ok"] is None and payload["self_test"]["void"] is False
+
+
 def test_json_context_carries_reference_note_against_global_scalars():
     # D9 caveat: context.null_gov_rate/null_cap_rate are the null's GLOBAL
     # rates -- exactly what spec D9 warns must never be used as the comparison reference (the

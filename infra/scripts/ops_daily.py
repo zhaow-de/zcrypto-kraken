@@ -739,6 +739,93 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     )
 
 
+SOAK_CHECK = "soak verdict"
+SOAK_JOURNAL = Path("/mnt/zhao-crypto/engine-journal")
+SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
+# PROVISIONAL. At a 90% band one metric outside is the count chance expects, so one never fails the row. Seven
+# independent looks at 10% reach three under 3% of the time; the seven are correlated, which loosens that bound,
+# and no re-derivation is scheduled: the row's own history is the evidence, and whoever reads its first FAIL has it.
+SOAK_OUTSIDE_FAILS_AT = 3
+# PROVISIONAL. The newest journaled cycle T scores the window to T-4h and a cycle lands every four hours, so a
+# current window ends under eight hours before the pass plus the journal's lag to the mount -- one archive-pull
+# cycle and its hourly sleep. Twelve hours leaves about four for that lag; past it the instrument judged an
+# older book than the one the pass is about.
+SOAK_WINDOW_STALE_AFTER = timedelta(hours=12)
+_SOAK_CANONICAL_ABSENT = "canonical absent"
+# The label `soak-check` gives a metric whose live value fell outside its null band, named once rather than
+# spelled at each site the reduction counts it. `tests/test_ops_daily.py` holds it to the producer's own
+# vocabulary, which is DERIVED from that module's severity order and would move with a rename.
+SOAK_OUTSIDE_LABEL = "inconsistent"
+
+
+def read_soak_verdict(*, now: datetime, runner) -> Check:
+    """The scheduled reader of `soak-check`'s gating verdicts: one row, decided in this order.
+
+    A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
+    pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
+    the payload carries populated verdicts beside a non-empty one. Then the panel decides, on TWO of its
+    counts: the outside count against the threshold, and the count of metrics the instrument actually decided
+    against that same number read as a floor -- a panel whose decided count is under the threshold can never
+    reach it, so passing it would be vacuous. Never one metric's `inconsistent`. And the panel is only a
+    verdict on TODAY's book when the scored window is current: `soak-check` scores the LONGEST contiguous run
+    of cycles, so one failed boundary leaves it scoring the run before the gap, with no void reason, until
+    the newer run outgrows it -- a window that ended long before `now`, or one the store cut short, fails.
+
+    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
+    """
+    try:
+        payload = runner(SOAK_JOURNAL)
+        void = list(payload["void_reasons"])
+        if any(_SOAK_CANONICAL_ABSENT in reason for reason in void):
+            return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {'; '.join(void)}")
+        if void:
+            return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"void: {'; '.join(void)}")
+        panel, provenance, verdicts = payload["panel"], payload["provenance"], payload["gating_verdicts"]
+        outside = []
+        for metric, row in verdicts.items():
+            # A metric judged under one null alone carries no `dual`, and its own verdict is then the only
+            # label there is; the construction count below reads that as the one construction it was.
+            dual = row.get("dual") or {}
+            if dual.get("verdict", row["verdict"]) == SOAK_OUTSIDE_LABEL:
+                calls = [dual.get("primary"), dual.get("secondary")].count(SOAK_OUTSIDE_LABEL)
+                outside.append(f"{metric} ({'both constructions' if calls == 2 else 'one construction'})")
+        self_test = payload["self_test"]
+        # Three states, not two: a flag that was SKIPPED puts nothing in `void_reasons`, so the arms above
+        # never see it and this row is the only place it reaches a reader.
+        flags = "/".join(
+            "skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED")
+            for name in ("instrument_ok", "identity_ok", "reconcile_ok")
+        )
+        # The panel counts a metric whose two null constructions DISAGREED toward its metric count and never
+        # toward its outside count, so the outside count alone falls as the instrument's self-agreement does.
+        decided = int(panel["n_metrics"]) - int(panel["n_indeterminate"])
+        # One boolean for the floor arm and for the clause that reports it. A metric the band could not judge
+        # at all is dropped from `n_metrics` and counted nowhere, so on that route the panel's own two lines
+        # say nothing about why the row failed and the value has to name the floor itself.
+        reachable = decided >= SOAK_OUTSIDE_FAILS_AT
+        metrics = "metric" if decided == 1 else "metrics"
+        floor = "" if reachable else f"; only {decided} {metrics} decided, under the threshold's {SOAK_OUTSIDE_FAILS_AT}"
+        panel_line = f"{panel['line']}; {panel['indeterminate_line']}" if panel["indeterminate_line"] else panel["line"]
+        behind = now - datetime.fromisoformat(provenance["last_cycle_ts"])
+        current = provenance["window_bound"] == "journal" and behind <= SOAK_WINDOW_STALE_AFTER
+        # The clause names the arm that bit: a window the store or the clock cut short can end an hour ago.
+        if provenance["window_bound"] != "journal":
+            stale = f"; NOT CURRENT -- the {provenance['window_bound']}, not the journal, ends the scored window"
+        else:
+            hours = behind.total_seconds() / 3600
+            stale = "" if current else f"; NOT CURRENT -- the last scored cycle is {hours:.1f} h before this pass"
+        value = (
+            f"{panel_line}{floor}; L={provenance['L']} to {provenance['last_cycle_ts']}, "
+            f"window_bound={provenance['window_bound']}{stale}; self-test {flags}; "
+            f"outside: {', '.join(outside) or 'none'}; "
+            f"no-book bars {payload['realized_no_book_bars']} of {payload['realized_total_bars']}; hhi {verdicts['hhi']['verdict']}"
+        )
+        ok = int(panel["n_outside"]) < SOAK_OUTSIDE_FAILS_AT and reachable and current
+        return Check(SOAK_CHECK, SOAK_EXPR, ok=ok, value=value)
+    except (*_UNREACHABLE, subprocess.SubprocessError, TypeError, AttributeError, RuntimeError) as exc:
+        return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
+
+
 def read_deploys(window: timedelta, *, now: datetime, path: Path | None = None) -> list[dict]:
     log = path or DEPLOY_LOG
     if not log.exists():
