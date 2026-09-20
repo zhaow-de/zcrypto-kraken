@@ -98,8 +98,8 @@ def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     if differs:
         raise OHLCError(
             f"reach_round: {path} is not the frame this command joins for {symbol}@{interval} -- {'; '.join(differs)}; "
-            "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
-            "canonical name) rather than recast this file, which would change its dataset hash"
+            "rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the reach "
+            "joins) rather than recast this file, which would change its dataset hash"
         )
     return frame
 
@@ -198,12 +198,27 @@ def reach_round(
             )
 
     report = ReachReport(entries=tuple(entries))
-    _write_manifest(out_root, report, now)
+    _write_manifest(out_root, report, now, canonical_root)
     return report
 
 
-def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
-    """Record per-series provenance plus separate continuous/detached basket hashes.
+def _joined_canonical(canonical_root: Path) -> dict:
+    """The set this round seamed onto, by name and by its manifest's identity digest -- `None` for a canonical whose
+    manifest is absent or predates the contract -- since the root varies between rounds once dump ingests mint siblings."""
+    from cli.data.manifest import ManifestError, read_manifest
+
+    manifest_path = canonical_root / "manifest.json"
+    digest = None
+    if manifest_path.is_file():
+        try:
+            digest = read_manifest(manifest_path).identity_digest
+        except ManifestError:
+            digest = None
+    return {"dir": canonical_root.name, "identity_digest": digest}
+
+
+def _write_manifest(out_root: Path, report: ReachReport, now: datetime, canonical_root: Path) -> None:
+    """Record per-series provenance, the canonical the round joined, and separate continuous/detached basket hashes.
 
     A reach set is mixed by construction, so the per-series rows -- never one set-wide claim -- say which are continuous.
     """
@@ -232,6 +247,11 @@ def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
         written_at=now.isoformat(),
         identity=identity,
         subsets=subsets,
-        provenance={"built_at": now.isoformat(), "min_seam_overlap": MIN_SEAM_OVERLAP, "series": seam},
+        provenance={
+            "built_at": now.isoformat(),
+            "min_seam_overlap": MIN_SEAM_OVERLAP,
+            "series": seam,
+            "canonical": _joined_canonical(canonical_root),
+        },
     )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))

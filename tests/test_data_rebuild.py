@@ -518,10 +518,20 @@ def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(
     assert payload["provenance"]["ohlc_dataset_hash"] == "fresh"
 
 
+def _whole_frozen_set(root: Path, *, without: str | None = None) -> Path:
+    """A stamped sibling as `backfill_basket` leaves it: every basket leg, then the manifest -- minus `without`."""
+    for leg in rebuild._basket_legs() + ["manifest.json"]:
+        if leg == without:
+            continue
+        (root / leg).parent.mkdir(parents=True, exist_ok=True)
+        (root / leg).write_bytes(b"")
+    return root
+
+
 def test_the_newest_stamped_ohlc_full_sibling_is_the_canonical_the_reach_joins(tmp_path):
     (tmp_path / "ohlc-full").mkdir()
     for stamp in ("20260701", "20260920"):
-        (tmp_path / f"ohlc-full-{stamp}").mkdir()
+        _whole_frozen_set(tmp_path / f"ohlc-full-{stamp}")
     assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
 
 
@@ -531,15 +541,33 @@ def test_ohlc_full_is_the_canonical_when_no_stamped_sibling_exists(tmp_path):
 
 
 def test_a_stamped_sibling_alone_is_the_canonical(tmp_path):
-    (tmp_path / "ohlc-full-20260920").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
     assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
 
 
 def test_a_stray_ohlc_full_directory_never_outranks_a_dated_sibling(tmp_path):
     (tmp_path / "ohlc-full").mkdir()
-    for name in ("ohlc-full-20260920", "ohlc-full-backup", "ohlc-full-20260920.bak"):
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
+    for name in ("ohlc-full-backup", "ohlc-full-20260920.bak"):
         (tmp_path / name).mkdir()
     assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
+def test_the_newest_sibling_without_its_manifest_is_refused_naming_it(tmp_path):
+    """A mint killed mid-build leaves every leg it wrote and no manifest, which the builder writes last: the
+    reach must not seam onto it, nor fall back to an older set behind the operator's back."""
+    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260701")
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="manifest.json")
+    with pytest.raises(DataSyncError, match=r"ohlc-full-20260920 is not a whole set -- missing manifest\.json"):
+        rebuild.resolve_canonical_root(tmp_path)
+
+
+def test_the_newest_sibling_missing_a_basket_leg_is_refused_naming_the_leg(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="ETH/EUR/240.parquet")
+    with pytest.raises(DataSyncError, match=r"missing ETH/EUR/240\.parquet"):
+        rebuild.resolve_canonical_root(tmp_path)
 
 
 def test_no_frozen_ohlc_full_at_all_is_refused(tmp_path):
@@ -551,7 +579,7 @@ def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path,
     """The WIRING: a dump ingest re-freezes the canonical as `ohlc-full-<stamp>`, and a reach round that still
     joined the unstamped set would seam against the tail the ingest just moved past."""
     (tmp_path / "ohlc-full").mkdir()
-    (tmp_path / "ohlc-full-20260920").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
     seen = {}
 
     def _fake_reach(canonical_root, out_root, **kwargs):

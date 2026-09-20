@@ -185,6 +185,20 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     assert {e.status for e in report.entries} == {"continuous", "detached"}
 
 
+def test_the_manifest_names_the_canonical_the_round_joined(tmp_path):
+    """The joined root varies between rounds once dump ingests mint siblings, so the set says which one it was
+    seamed onto -- by name always, by digest when the canonical's manifest carries one."""
+    canonical, out = tmp_path / "ohlc-full-20260920", tmp_path / "ohlc-reach-20260921"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+    now = _BASE + timedelta(hours=40)
+
+    reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["provenance"]["canonical"] == {"dir": "ohlc-full-20260920", "identity_digest": None}
+
+
 def test_reach_discovers_both_quotes_of_a_base(tmp_path):
     from cli.ohlc.reach import _canonical_symbols
 

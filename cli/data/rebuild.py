@@ -127,16 +127,32 @@ _STAMPED_REACH = re.compile(r"ohlc-reach-\d{8}")
 _STAMPED_FULL = re.compile(r"ohlc-full-\d{8}")
 
 
+def _basket_legs() -> list[str]:
+    return [f"{symbol}/{interval}.parquet" for symbol in CANDIDATE_SYMBOLS for interval in _OHLC_INTERVALS]
+
+
 def resolve_canonical_root(data_root: Path) -> Path:
     """A dump ingest re-freezes the canonical as an `ohlc-full-<stamp>` sibling and never in place (spec 00056
-    D1c), so the frozen set reaching furthest is the newest stamp, not `ohlc-full`."""
+    D1c), so the frozen set reaching furthest is the newest stamp, not `ohlc-full`. The newest stamp is refused
+    unless it is whole -- every basket leg and the manifest the builder writes last -- because a mint killed
+    mid-build leaves a name-shaped directory the exists-guard tells the operator to remove, and a round joined
+    to it would seam a short basket and report success."""
     stamped = sorted(
         (p for p in data_root.glob("ohlc-full-*") if p.is_dir() and _STAMPED_FULL.fullmatch(p.name)),
         key=lambda p: p.name,
         reverse=True,
     )
     if stamped:
-        return stamped[0]
+        newest = stamped[0]
+        missing = [leg for leg in _basket_legs() if not (newest / leg).is_file()]
+        if not (newest / "manifest.json").is_file():
+            missing.append("manifest.json")
+        if missing:
+            raise DataSyncError(
+                f"data rebuild: the newest frozen ohlc-full sibling {newest} is not a whole set -- missing "
+                f"{', '.join(missing)}; the leavings of a mint killed mid-build: remove the directory or re-mint it"
+            )
+        return newest
     fallback = data_root / "ohlc-full"
     if not fallback.exists():
         raise DataSyncError(f"data rebuild: ohlc-reach needs a frozen ohlc-full set to join, none found under {data_root}")
