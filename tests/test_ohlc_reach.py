@@ -213,12 +213,17 @@ def test_a_canonical_without_a_manifest_is_named_with_no_digest(tmp_path):
     assert _round_over(canonical, out)["provenance"]["canonical"] == {"dir": "canon", "identity_digest": None}
 
 
-def test_an_unreadable_canonical_manifest_refuses_the_round(tmp_path):
+def test_an_unreadable_canonical_manifest_refuses_the_round_before_any_fetch(tmp_path):
     canonical, out = tmp_path / "canon", tmp_path / "out"
     _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
     (canonical / "manifest.json").write_text("{not json")
+
+    def _must_not_fetch(pair_key, interval):
+        raise AssertionError("the canonical was refused too late -- after a REST call")
+
     with pytest.raises(OHLCError, match=r"the canonical's manifest cannot be read -- .*manifest\.json"):
-        _round_over(canonical, out)
+        reach_round(canonical, out, fetch_fn=_must_not_fetch, clock=lambda: _BASE, sleep_fn=_no_sleep)
+    assert not out.exists()
 
 
 def test_reach_discovers_both_quotes_of_a_base(tmp_path):

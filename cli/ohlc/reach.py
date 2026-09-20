@@ -157,6 +157,8 @@ def reach_round(
     Writes into `out_root` only: the canonical set is immutable, and a revision mints a sibling root, never an edit.
     """
     now = clock()
+    # Before the first fetch: a canonical the round cannot name refuses it whole, not after every REST call and leg.
+    joined = _joined_canonical(canonical_root)
     entries: list[ReachEntry] = []
     fetched = 0
 
@@ -198,7 +200,7 @@ def reach_round(
             )
 
     report = ReachReport(entries=tuple(entries))
-    _write_manifest(out_root, report, now, canonical_root)
+    _write_manifest(out_root, report, now, joined)
     return report
 
 
@@ -216,7 +218,7 @@ def _joined_canonical(canonical_root: Path) -> dict:
     return {"dir": canonical_root.name, "identity_digest": digest}
 
 
-def _write_manifest(out_root: Path, report: ReachReport, now: datetime, canonical_root: Path) -> None:
+def _write_manifest(out_root: Path, report: ReachReport, now: datetime, joined: dict) -> None:
     """Record per-series provenance and separate continuous/detached basket hashes.
 
     A reach set is mixed by construction, so the per-series rows -- never one set-wide claim -- say which are continuous.
@@ -250,7 +252,7 @@ def _write_manifest(out_root: Path, report: ReachReport, now: datetime, canonica
             "built_at": now.isoformat(),
             "min_seam_overlap": MIN_SEAM_OVERLAP,
             "series": seam,
-            "canonical": _joined_canonical(canonical_root),
+            "canonical": joined,
         },
     )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
