@@ -411,7 +411,7 @@ def read_line_fails(
         if head_tree and read_tree and head_tree == read_tree:
             return []
     if rebased:
-        return []  # the read's tip on a base that moved under it, the merge-tree agreeing with the head: no delta to read
+        return []  # the read's tip on a base that moved under it, with no net change: no delta to read
     return [
         f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
     ]

@@ -4,6 +4,7 @@ below drive, and a keyed branch owes its change-index row before the merge."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import pathlib
 import random
@@ -170,6 +171,30 @@ def test_a_rebase_is_judged_by_the_merge_tree_of_the_read_onto_the_moved_base(tm
     assert gate.rebase_kept_every_patch("0" * 40, head, "develop", cwd=tmp_path / "changed") is None, (
         "an unknown read with no origin to fetch from"
     )
+
+
+def test_main_fetches_the_base_before_the_rebase_arm_reads_it(monkeypatch, capsys):
+    """The arm compares merge bases against origin's base ref, which only branch_growth fetches; read before the
+    fetch, a stale clone answers False and the gate refuses the head the arm exists to admit."""
+    order: list[str] = []
+    pr = _pr(body=_stale_body())
+
+    def fake_gh(*args: str) -> str:
+        if args[:2] == ("pr", "view"):
+            return json.dumps(pr)
+        if args[:2] == ("api", "--paginate"):
+            return "cli/engine/executor.py\n"
+        if args[0] == "api" and args[1].endswith(f"/commits/{TIP}"):
+            return json.dumps(_tree(_head([OTHER], ["cli/engine/executor.py"]), "t" * 40))
+        if args[0] == "api" and args[1].endswith(f"/commits/{PREV[:8]}"):
+            return json.dumps(_tree({"sha": PREV}, "u" * 40))
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gate, "_gh", fake_gh)
+    monkeypatch.setattr(gate, "branch_growth", lambda base, head_ref, head: order.append("fetch") or [])
+    monkeypatch.setattr(gate, "rebase_kept_every_patch", lambda read, head, base: order.append("rebase") or True)
+    assert gate.main(["merge-gate.py", "1"]) == 0, capsys.readouterr().out
+    assert order == ["fetch", "rebase"], order
 
 
 def test_a_row_commit_that_also_touches_another_file_fails():
