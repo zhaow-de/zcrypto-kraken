@@ -519,7 +519,7 @@ def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(
 
 
 def _whole_frozen_set(root: Path, *, without: str | None = None) -> Path:
-    """A stamped sibling as `backfill_basket` leaves it: every basket leg, then the manifest -- minus `without`."""
+    """A stamped sibling as `backfill_basket` leaves it: every basket leg, then the manifest."""
     for leg in rebuild._basket_legs() + ["manifest.json"]:
         if leg == without:
             continue
@@ -536,8 +536,14 @@ def test_the_newest_stamped_ohlc_full_sibling_is_the_canonical_the_reach_joins(t
 
 
 def test_ohlc_full_is_the_canonical_when_no_stamped_sibling_exists(tmp_path):
-    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full")
     assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full"
+
+
+def test_a_partial_unstamped_ohlc_full_is_refused_naming_the_leg(tmp_path):
+    _whole_frozen_set(tmp_path / "ohlc-full", without="XRP/EUR/60.parquet")
+    with pytest.raises(DataSyncError, match=r"ohlc-full is not a whole set -- missing XRP/EUR/60\.parquet"):
+        rebuild.resolve_canonical_root(tmp_path)
 
 
 def test_a_stamped_sibling_alone_is_the_canonical(tmp_path):
@@ -554,8 +560,8 @@ def test_a_stray_ohlc_full_directory_never_outranks_a_dated_sibling(tmp_path):
 
 
 def test_the_newest_sibling_without_its_manifest_is_refused_naming_it(tmp_path):
-    """A mint killed mid-build leaves every leg it wrote and no manifest, which the builder writes last: the
-    reach must not seam onto it, nor fall back to an older set behind the operator's back."""
+    """The older whole sibling is in the tree on purpose: a refusal must not fall back to it behind the
+    operator's back."""
     (tmp_path / "ohlc-full").mkdir()
     _whole_frozen_set(tmp_path / "ohlc-full-20260701")
     _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="manifest.json")
@@ -597,7 +603,7 @@ def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path,
 def test_rebuild_ohlc_reach_joins_ohlc_full_without_a_sibling_and_writes_only_the_minted_one(tmp_path, monkeypatch):
     """No stamped sibling here, so the builder joins `ohlc-full` -- and writes into the minted sibling
     only, reading which would reach forward from an empty set."""
-    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full")
     seen = {}
 
     def _fake_reach(canonical_root, out_root, **kwargs):
@@ -618,7 +624,7 @@ def test_rebuild_ohlc_reach_joins_ohlc_full_without_a_sibling_and_writes_only_th
 
 def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeypatch, caplog):
     """A detached series is the case an operator must not miss, so it is logged by name."""
-    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full")
     entries = (
         ReachEntry(
             symbol="BTC",

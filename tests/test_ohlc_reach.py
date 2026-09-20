@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
+from cli.data.manifest import build_manifest, read_manifest, series_entry
 from cli.ohlc.dataset import read_parquet, write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.reach import MIN_SEAM_OVERLAP, reach_round
@@ -185,18 +186,39 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     assert {e.status for e in report.entries} == {"continuous", "detached"}
 
 
-def test_the_manifest_names_the_canonical_the_round_joined(tmp_path):
-    """The joined root varies between rounds once dump ingests mint siblings, so the set says which one it was
-    seamed onto -- by name always, by digest when the canonical's manifest carries one."""
-    canonical, out = tmp_path / "ohlc-full-20260920", tmp_path / "ohlc-reach-20260921"
-    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+def _round_over(canonical, out):
     rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
     now = _BASE + timedelta(hours=40)
-
     reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+    return json.loads((out / "manifest.json").read_text())
 
-    manifest = json.loads((out / "manifest.json").read_text())
-    assert manifest["provenance"]["canonical"] == {"dir": "ohlc-full-20260920", "identity_digest": None}
+
+def test_the_manifest_names_the_canonical_the_round_joined(tmp_path):
+    canonical, out = tmp_path / "ohlc-full-20260920", tmp_path / "ohlc-reach-20260921"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    frame = read_parquet(canonical / "BTC" / "EUR" / "60.parquet")
+    manifest = build_manifest(
+        {"BTC/EUR/60.parquet": series_entry(frame, "BTC/EUR/60.parquet")}, written_at="2026-09-20T00:00:00+00:00"
+    )
+    (canonical / "manifest.json").write_text(json.dumps(manifest))
+
+    recorded = _round_over(canonical, out)["provenance"]["canonical"]
+
+    assert recorded == {"dir": "ohlc-full-20260920", "identity_digest": read_manifest(canonical / "manifest.json").identity_digest}
+
+
+def test_a_canonical_without_a_manifest_is_named_with_no_digest(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    assert _round_over(canonical, out)["provenance"]["canonical"] == {"dir": "canon", "identity_digest": None}
+
+
+def test_an_unreadable_canonical_manifest_refuses_the_round(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    (canonical / "manifest.json").write_text("{not json")
+    with pytest.raises(OHLCError, match=r"the canonical's manifest .*manifest\.json cannot be read"):
+        _round_over(canonical, out)
 
 
 def test_reach_discovers_both_quotes_of_a_base(tmp_path):

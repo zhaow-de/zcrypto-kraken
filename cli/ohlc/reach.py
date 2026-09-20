@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
-from cli.data.manifest import build_manifest, series_entry
+from cli.data.manifest import ManifestError, build_manifest, read_manifest, series_entry
 from cli.logging import get_logger
 from cli.ohlc.dataset import FRAME_SCHEMA, dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
@@ -203,22 +203,21 @@ def reach_round(
 
 
 def _joined_canonical(canonical_root: Path) -> dict:
-    """The set this round seamed onto, by name and by its manifest's identity digest -- `None` for a canonical whose
-    manifest is absent or predates the contract -- since the root varies between rounds once dump ingests mint siblings."""
-    from cli.data.manifest import ManifestError, read_manifest
-
+    """The set this round seamed onto, by name and by its manifest's identity digest -- `None` where that manifest is
+    absent -- since the root varies between rounds once dump ingests mint siblings. A manifest that is present and
+    unreadable refuses the round: a set minted off a canonical it cannot name would be pushed with that gap for good."""
     manifest_path = canonical_root / "manifest.json"
     digest = None
     if manifest_path.is_file():
         try:
             digest = read_manifest(manifest_path).identity_digest
-        except ManifestError:
-            digest = None
+        except ManifestError as exc:
+            raise OHLCError(f"reach_round: the canonical's manifest {manifest_path} cannot be read -- {exc}") from exc
     return {"dir": canonical_root.name, "identity_digest": digest}
 
 
 def _write_manifest(out_root: Path, report: ReachReport, now: datetime, canonical_root: Path) -> None:
-    """Record per-series provenance, the canonical the round joined, and separate continuous/detached basket hashes.
+    """Record per-series provenance and separate continuous/detached basket hashes.
 
     A reach set is mixed by construction, so the per-series rows -- never one set-wide claim -- say which are continuous.
     """
