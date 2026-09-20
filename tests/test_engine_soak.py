@@ -200,9 +200,8 @@ def test_realized_series_skips_cycle_with_none_store_close(tmp_path):
 
 
 def test_the_clean_segment_is_the_newest_run_that_meets_the_floor_and_the_longest_otherwise():
-    """One failed boundary splits the journal into an older, longer run and a newer one; with the floor the
-    newest run that can score it is chosen, so the window turns current at the floor's worth of cycles instead
-    of the older run's length; without a floor, or when no run is long enough, the longest wins as before."""
+    """The window turns current at the floor's worth of cycles after a failed boundary, not at the older
+    run's length."""
 
     def _bare(cycle_ts):
         return CycleRecord(

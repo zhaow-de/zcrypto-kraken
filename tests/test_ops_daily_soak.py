@@ -174,9 +174,10 @@ def test_the_soak_reader_takes_its_runner_and_never_defaults_one():
 
 
 def test_a_window_that_stopped_days_ago_is_not_a_pass():
-    """`soak-check` scores the longest contiguous run of cycles, so one failed boundary leaves it scoring the run
-    BEFORE the gap with empty `void_reasons`: every panel count is healthy and the book of the last days was
-    never judged. The bound is read on both sides, and the value says how far behind the last scored cycle is."""
+    """`soak-check` scores the newest contiguous run long enough to score its floor, so one failed boundary leaves
+    it scoring the run BEFORE the gap, with empty `void_reasons`, until the run after it reaches the floor: every
+    panel count is healthy and the book of the last days was never judged. The bound is read on both sides, and
+    the value says how far behind the last scored cycle is."""
     at_the_bound = _soak_payload(ended=_SOAK_NOW - ops_daily.SOAK_WINDOW_STALE_AFTER)
     assert ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(at_the_bound)).ok
     past_it = _soak_payload(ended=_SOAK_NOW - ops_daily.SOAK_WINDOW_STALE_AFTER - timedelta(hours=4))

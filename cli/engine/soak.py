@@ -122,9 +122,9 @@ class RealizedSeries:
 def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None) -> list[CycleRecord]:
     """The 4h-contiguous run of grid-boundary records the instrument scores: with a `floor`, the NEWEST run long
     enough to score `floor` cycles -- a run of N records scores at most N-1 -- so one failed boundary costs the
-    floor's worth of cycles and not the older run's length, the owner's ruling of 2026-09-20; with none, or when
-    no run is that long, the longest run, ties keeping the FIRST. Success/failure filtering is the caller's job
-    -- this only handles boundary contiguity."""
+    floor's worth of cycles and not the older run's length; with none, or when no run is that long, the longest
+    run, ties keeping the FIRST. Success/failure filtering is the caller's job -- this only handles boundary
+    contiguity."""
     if not records:
         return []
     ordered = sorted(records, key=lambda r: r.cycle_ts)
