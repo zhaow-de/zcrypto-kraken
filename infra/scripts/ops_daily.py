@@ -772,7 +772,19 @@ SOAK_OUTSIDE_LABEL = "inconsistent"
 
 def derive_soak_store(journal_dir: Path, root: Path) -> Path:
     """A store-shaped directory holding the newest success record's 240 snapshots, which is every close
-    `soak-check` reads from the engine's store: each cycle journals the store series it read."""
+    `soak-check` reads from the engine's store: each cycle journals the store series it read.
+
+    Each leg is held to its own journaled metadata before it is copied -- content hash first, then bar count
+    and both end stamps -- which is what every reader in `cli/engine` does with a snapshot it is about to
+    replay (`feeders.replay_stages`, `soak._assemble_latest_grids`). The journal reaches this host over an
+    rsync pull, and a truncated or half-written leg differs from the record silently: copied in unchecked it
+    is a book the instrument judges and no one can reproduce. `snapshot_content_hash` is imported rather than
+    reimplemented -- its byte layout is part of the record schema -- and locally, so the daily pass's other
+    readers do not pay for the engine's imports.
+    """
+    from cli.engine.journal import snapshot_content_hash
+    from cli.ohlc.dataset import read_parquet
+
     records = sorted(journal_dir.glob("*/cycle-*.json"))
     if not records:
         raise FileNotFoundError(f"no cycle record under {journal_dir}")
@@ -781,10 +793,21 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
         raise ValueError(f"{records[-1]} journals no 240 snapshot")
     store = root / "store"
     for entry in legs:
+        source = journal_dir / entry["path"]
+        frame = read_parquet(source)
+        ts, closes = frame["ts"].to_list(), frame["close"].to_list()
+        if snapshot_content_hash(ts, closes) != entry["content_hash"]:
+            raise ValueError(f"content hash mismatch for pair={entry['pair']!r} grid='240' at {source} -- corrupt evidence")
+        first, last = datetime.fromisoformat(entry["first_ts"]), datetime.fromisoformat(entry["last_ts"])
+        if len(ts) != entry["n_bars"] or ts[0] != first or ts[-1] != last:
+            raise ValueError(
+                f"pair={entry['pair']!r} grid='240': read data disagrees with its own journaled metadata -- "
+                f"n_bars={len(ts)} vs {entry['n_bars']!r}, first_ts={ts[0]!r} vs {first!r}, last_ts={ts[-1]!r} vs {last!r}"
+            )
         base, quote = entry["pair"].split("/")
         leg = store / base / quote / "240.parquet"
         leg.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(journal_dir / entry["path"], leg)
+        shutil.copyfile(source, leg)
     return store
 
 

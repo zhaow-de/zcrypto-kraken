@@ -3240,6 +3240,44 @@ def test_a_record_journaling_two_240_snapshots_for_one_pair_still_derives(tmp_pa
     assert read_store_series(derived, "BTC/EUR", 240) == read_store_series(store, "ETH/EUR", 240)
 
 
+def test_a_leg_disagreeing_with_its_journaled_metadata_is_refused_and_reads_unreadable(tmp_path):
+    """The journal reaches this host over an rsync pull, so a leg can differ from the record that describes it
+    with nothing on the page to say so -- and copied in unchecked it becomes a book `soak-check` judges and
+    nobody can reproduce. Both of the engine's own checks are driven: the content hash, and the metadata the
+    engine compares beside it. Each refusal reaches the row as `unreadable:`, a source the pass could not
+    read, never a verdict."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record_path = next(journal.glob("*/cycle-*.json"))
+    record = json.loads(record_path.read_text())
+    legs = {e["pair"]: e for e in record["snapshots"] if e["grid"] == "240"}
+
+    # A leg replaced by another pair's, which shares its calendar: only the hash can tell them apart.
+    (journal / legs["BTC/EUR"]["path"]).write_bytes((journal / legs["ETH/EUR"]["path"]).read_bytes())
+    with pytest.raises(ValueError, match="content hash mismatch for pair='BTC/EUR'") as corrupt:
+        ops_daily.derive_soak_store(journal, tmp_path / "scratch-a")
+
+    # Every leg rewritten, so only the record moves this time: a bar count that no longer describes its file.
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record = json.loads(record_path.read_text())
+    for entry in record["snapshots"]:
+        if entry["pair"] == "BTC/EUR" and entry["grid"] == "240":
+            entry["n_bars"] += 1
+    record_path.write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="read data disagrees with its own journaled metadata") as short:
+        ops_daily.derive_soak_store(journal, tmp_path / "scratch-b")
+
+    for raised in (corrupt, short):
+
+        def refuse(journal_dir, exc=raised.value):
+            raise exc
+
+        check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=refuse)
+        assert not check.ok and check.value.startswith("unreadable:"), check.value
+
+
 def test_a_journal_with_no_record_and_a_record_with_no_240_snapshot_both_refuse(tmp_path):
     with pytest.raises(FileNotFoundError, match="no cycle record"):
         ops_daily.derive_soak_store(tmp_path, tmp_path / "scratch")
