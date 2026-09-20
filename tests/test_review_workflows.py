@@ -230,8 +230,8 @@ _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "rep
 
 
 def test_the_graders_run_on_opus_unless_a_model_is_named():
-    """The pre-review re-runs and diffs; its graders run on Opus, a floor and a cap — a caller may name Opus and
-    nothing else, Fable included — and the record step keeps its own."""
+    """The graders re-run commands and diff texts — the work the owner put on Opus on 2026-09-20; Fable keeps
+    the reads, whose class walks build compositions by hand."""
     for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
         ran = _drive_pre_review(args)
         assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
