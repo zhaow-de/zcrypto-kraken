@@ -95,7 +95,7 @@ const LEDGER_ENTRY = {
   type: 'object',
   properties: {
     kind: { type: 'string' }, range: { type: 'string' }, tip: { type: 'string' }, ts: { type: 'string' },
-    sameTreeAndMessages: { type: 'boolean', description: 'for a pre-review row whose tip is not this run’s: whether `git diff --quiet <row tip> <this tip>` exits 0 and `git log --format=%B` from their merge base prints the same text for both' },
+    sameTreeAndMessages: { type: 'boolean', description: 'for a pre-review row whose tip is not this run’s: whether `git diff --quiet <row tip> <this tip>` exits 0 and `git log --format=%B` from their merge base has the same sha256sum for both' },
   },
   required: ['kind', 'range', 'tip', 'ts'],
 }
@@ -104,7 +104,7 @@ const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }
 const ledgerPath = `${reportDir}/ledger.jsonl`
 phase('Ledger')
 const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each pre-review entry whose tip is not \`${tip}\`: run \`git -C ${repo} diff --quiet <its tip> ${tip}\`, then \`git -C ${repo} merge-base <its tip> ${tip}\`, then \`git -C ${repo} log --format=%B <that merge base>..<its tip>\` and \`git -C ${repo} log --format=%B <that merge base>..${tip}\`; set sameTreeAndMessages true when the diff exits 0 and the two logs print the same text, false otherwise, an unknown sha included. Return the entries as they are with that one field added. Write nothing; no other command.`,
+  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each pre-review entry whose tip is not \`${tip}\`: run \`git -C ${repo} diff --quiet <its tip> ${tip}\`, then \`git -C ${repo} merge-base <its tip> ${tip}\`, then \`git -C ${repo} log --format=%B <that merge base>..<its tip> | sha256sum\` and \`git -C ${repo} log --format=%B <that merge base>..${tip} | sha256sum\`; set sameTreeAndMessages true when the diff exits 0 and the two sums are equal, false otherwise, an unknown sha included. Return the entries as they are with that one field added. Write nothing; no other command.`,
   { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
 if (!ledger) throw new Error(`re-review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-review; retry`)
