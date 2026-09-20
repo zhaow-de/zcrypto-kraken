@@ -110,6 +110,7 @@ def _rebased_repo(
     drop_a_row: bool = False,
     drop_a_commit: bool = False,
     stack_a_commit: bool = False,
+    row_above: bool = False,
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
     that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
@@ -134,6 +135,9 @@ def _rebased_repo(
     rows(1, 3)
     _git(root, "commit", "-q", "-am", "docs(change-index): row #3")
     read = _git(root, "rev-parse", "HEAD")
+    if row_above:
+        (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
+        _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
     _git(root, "checkout", "-q", "develop")
     if collide:
         rows(1, 2)
@@ -155,6 +159,8 @@ def _rebased_repo(
     if collide and not (merge_instead and drop_a_commit):
         assert done.returncode != 0 and gate.INDEX in done.stdout + done.stderr, (done.stdout, done.stderr)
         rows(1, 2, 3, *([7] if smuggle_a_row else []))
+        if row_above and merge_instead:
+            (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
     else:
         assert done.returncode == 0, (done.stdout, done.stderr)
     if drop_a_row:
@@ -200,6 +206,14 @@ def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_
     assert arm(head, head, "origin/develop", cwd=tmp_path / shape) is True, "the head is its own read"
     read, head = _rebased_repo(tmp_path / "clean", collide=False, **_SHAPES[shape])
     assert arm(read, head, "origin/develop", cwd=tmp_path / "clean") is True, "a base that moved in a file of its own"
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_judges_a_row_commit_above_the_read_by_the_tip_under_it(tmp_path, shape):
+    """The Step 4 row commit rides above the read; when the base then moves under both, the row is what collides,
+    and the arm judges the tip under it, the head open-pr's first admitted head becomes on a moved base."""
+    read, head = _rebased_repo(tmp_path / shape, row_above=True, **_SHAPES[shape])
+    assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
 
 
 @pytest.mark.parametrize(("shape", "more"), [(s, m) for s in _SHAPES for m in _MORE], ids=lambda v: v)

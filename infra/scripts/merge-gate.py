@@ -496,8 +496,15 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
     return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
 
 
+def _row_commit_alone(cwd: pathlib.Path | None, sha: str) -> bool:
+    """A single-parent commit whose only file is the change index: the shape of the row `open-pr` pushes after the read."""
+    touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
+    return touched == [INDEX] and len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) == 2
+
+
 def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None = None) -> bool | str:
-    """True when `head` carries the read's own commits and nothing more, by the checks below — on the base they were
+    """True when `head` carries the read's own commits and nothing more, by the checks below — one change-index row commit
+    among them set aside, the Step 4 row `open-pr` pushes after the read — on the base they were
     read on, or on one that moved under them; otherwise a string naming the check that failed, or what the arm could
     not compare."""
     try:
@@ -508,18 +515,24 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
             read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
         old_base = _git(cwd, "merge-base", base, read)
         new_base = _git(cwd, "merge-base", base, head)
-        messages = (
-            "log",
-            "--no-merges",
-            "--format=%B%x00",
-        )  # a merge of the base carries no patch of its own; the tree check reads it
-        if _git(cwd, *messages, f"{old_base}..{read}") != _git(cwd, *messages, f"{new_base}..{head}"):
+        # A merge of the base carries no patch of its own; the tree check reads it. One commit past the read that touches
+        # the change index alone is the Step 4 row `open-pr` pushes after the read, wherever the move left it, and is set aside.
+        read_msgs = [
+            m.strip() for m in _git(cwd, "log", "--no-merges", "--format=%B%x00", f"{old_base}..{read}").split("\x00") if m.strip()
+        ]
+        cells = _git(cwd, "log", "--no-merges", "--format=%H%x00%B%x00", f"{new_base}..{head}").split("\x00")
+        head_msgs = [(cells[i].strip(), cells[i + 1].strip()) for i in range(0, len(cells) - 1, 2)]
+        extra = [sha for sha, msg in head_msgs if msg not in read_msgs]
+        row = extra[0] if len(extra) == 1 and _row_commit_alone(cwd, extra[0]) else None
+        if [msg for sha, msg in head_msgs if sha != row] != read_msgs:
             return (
                 "the messages from the base to the head are not the read's, a commit reworded, added or dropped: a reword "
                 "takes `pre-review` over the amended commits and `re-review` over `<read>..<head>`"
             )
         if old_base == new_base:
-            same = subprocess.run(["git", "diff", "--quiet", read, head], capture_output=True, text=True, timeout=120, cwd=cwd)
+            same = subprocess.run(
+                ["git", "diff", "--quiet", read, f"{row}~1" if row else head], capture_output=True, text=True, timeout=120, cwd=cwd
+            )
             if same.returncode == 0:
                 return True  # re-dated, re-signed or re-created on the same base: the tree and the messages the read graded
             if same.returncode == 1:
@@ -538,7 +551,12 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
         for path in _git(cwd, "diff", "--name-only", tree, head).splitlines():
             if path not in RENDERED:
                 return f"the head is not the read's patches on the moved base: {path} differs"
-            if _patch_lines(cwd, old_base, read, path) != _patch_lines(cwd, new_base, head, path):
+            lines = _patch_lines(cwd, new_base, head, path)
+            if row and path == INDEX:
+                for line in _patch_lines(cwd, f"{row}~1", row, path):
+                    if line in lines:
+                        lines.remove(line)
+            if _patch_lines(cwd, old_base, read, path) != lines:
                 return f"{path} carries a line the read's own patch did not, or lost one"
     except subprocess.TimeoutExpired as exc:
         return f"`git {exc.cmd[1]}` timed out"
