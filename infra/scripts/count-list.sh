@@ -82,10 +82,10 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
 # the change-index-row exception all come from there, and a change to the gate moves this count by construction.
 # The window starts where the read arm last changed what it admits, which `git log -S head_is_the_read
-# --format=%cI -- infra/scripts/merge-gate.py` names, the committer instant: a PR merged before that was judged by the arms of its day and breaks no
-# rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test -- and
-# with it set, the per-PR head-commit fetch the change-index exception needs cannot run, so a row failing ONLY
-# on a sha mismatch is counted rather than excused.
+# --format=%cI -- infra/scripts/merge-gate.py` names: a PR merged before that was judged by the arms of its
+# day and breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network,
+# for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs cannot run,
+# so a row failing ONLY on a sha mismatch is counted rather than excused.
 READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
 # A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
 # the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
