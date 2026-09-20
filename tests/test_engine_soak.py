@@ -737,6 +737,7 @@ def test_metric_verdict_inconsistent_both_sides():
 def test_metric_verdict_na_on_zero_width_or_tiny_n():
     assert metric_verdict(1.0, [3.0] * 50, band=0.90).verdict == "n/a"  # zero-width band
     assert metric_verdict(50, list(range(101)), band=0.90, effective_n=2).verdict == "n/a"  # tiny effective_n
+    assert metric_verdict(50, list(range(101)), band=0.90, effective_n=soak._MIN_EFFECTIVE_N).verdict == "consistent"
 
 
 def test_metric_verdict_na_on_full_range_domain():
