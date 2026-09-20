@@ -10,6 +10,7 @@ import calendar
 import http.client
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -753,6 +754,9 @@ SOAK_OUTSIDE_FAILS_AT = 3
 # `develop`'s tip. Left to resolve against the running checkout it reads `unreadable:` and takes the whole
 # pass to exit 2 for a property of the operator's shell.
 SOAK_CANONICAL = Path("/home/zhaow/Projects/zcrypto-kraken/data/ohlc-full")
+# The override for a host that keeps the dataset elsewhere, read per run rather than at import: the pass is a
+# long-lived module in the test suite, and a constant frozen at import cannot be pointed anywhere.
+SOAK_CANONICAL_ENV = "ZCRYPTO_SOAK_CANONICAL"
 # Wide on purpose: the row is read once a day, and a slow reading is still a reading where a killed one is a
 # gap. `_TIMEOUT` above bounds one HTTP or ssh read and is not this.
 _SOAK_TIMEOUT_SECONDS = 900
@@ -786,12 +790,13 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
 
 def soak_run(journal_dir: Path) -> dict:
     """The payload of one `soak-check` run over `derive_soak_store`. `cwd` pins the CODE to the checkout this
-    script sits in; the DATA is not in it, so the canonical dataset is named outright at `SOAK_CANONICAL`."""
+    script sits in; the DATA is not in it, so the canonical dataset is named outright at `SOAK_CANONICAL`, or by
+    `SOAK_CANONICAL_ENV` where a host keeps it elsewhere."""
     with tempfile.TemporaryDirectory(prefix="zcrypto-soak-") as scratch:
         root = Path(scratch)
         out = root / "soak.json"
         command = ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
-        command += ("--canonical-dir", str(SOAK_CANONICAL))
+        command += ("--canonical-dir", str(os.environ.get(SOAK_CANONICAL_ENV) or SOAK_CANONICAL))
         command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
         done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
         if not out.exists():

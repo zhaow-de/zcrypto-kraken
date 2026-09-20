@@ -3199,6 +3199,7 @@ def test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wro
         Path(command[command.index("--json") + 1]).write_text('{"void_reasons": []}')
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
+    monkeypatch.delenv(ops_daily.SOAK_CANONICAL_ENV, raising=False)
     monkeypatch.setattr(ops_daily.subprocess, "run", fake_run)
     assert live_soak_run(journal) == {"void_reasons": []}
     assert seen["command"][:7] == ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal))
@@ -3207,6 +3208,34 @@ def test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wro
     assert seen["kwargs"]["cwd"] == ops_daily.REPO_ROOT and seen["kwargs"]["timeout"] == 900
     assert len(seen["legs"]) == 12 and "BTC/EUR/240.parquet" in seen["legs"]
     assert not Path(seen["command"][seen["command"].index("--store-dir") + 1]).exists(), "the scratch store outlived the run"
+
+
+def test_the_canonical_dataset_is_the_environments_where_it_names_one_and_the_constant_otherwise(
+    tmp_path, monkeypatch, live_soak_run
+):
+    """The constant is one operator's checkout path; a second host keeps the dataset elsewhere. The variable is
+    read where the command is BUILT, not at import, so this case can set it on a module the suite imported once,
+    and an empty value is no value -- an exported-but-blank variable must not point the run at the filesystem
+    root."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    seen = []
+
+    def fake_run(command, **kwargs):
+        seen.append(command[command.index("--canonical-dir") + 1])
+        Path(command[command.index("--json") + 1]).write_text('{"void_reasons": []}')
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ops_daily.subprocess, "run", fake_run)
+    monkeypatch.setenv(ops_daily.SOAK_CANONICAL_ENV, str(tmp_path / "elsewhere"))
+    live_soak_run(journal)
+    monkeypatch.setenv(ops_daily.SOAK_CANONICAL_ENV, "")
+    live_soak_run(journal)
+    monkeypatch.delenv(ops_daily.SOAK_CANONICAL_ENV)
+    live_soak_run(journal)
+    assert seen == [str(tmp_path / "elsewhere"), str(ops_daily.SOAK_CANONICAL), str(ops_daily.SOAK_CANONICAL)], seen
 
 
 def test_a_soak_check_that_wrote_no_payload_raises_its_last_line(tmp_path, monkeypatch, live_soak_run):
