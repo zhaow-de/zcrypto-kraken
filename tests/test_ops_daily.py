@@ -3022,9 +3022,16 @@ def test_a_void_run_whose_analysis_never_ran_still_names_its_reason():
 
 
 def test_no_canonical_dataset_is_a_source_the_pass_could_not_read():
-    payload = _soak_payload(void=("canonical absent — null unavailable",))
+    """The arm that splits `unreadable:` from `void:` matches a SUBSTRING of a reason `soak-check` produces, and
+    nothing else joins the two spellings: rename the producer's and every canonical-absent morning silently
+    becomes a verdict about the book. The reason here is the producer's own constant, and the substring is held
+    against it."""
+    from cli.engine import soak
+
+    assert ops_daily._SOAK_CANONICAL_ABSENT in soak.CANONICAL_ABSENT_VOID, soak.CANONICAL_ABSENT_VOID
+    payload = _soak_payload(void=(soak.CANONICAL_ABSENT_VOID,))
     check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(payload))
-    assert not check.ok and check.value == "unreadable: canonical absent — null unavailable"
+    assert not check.ok and check.value == f"unreadable: {soak.CANONICAL_ABSENT_VOID}"
 
 
 @pytest.mark.parametrize(
