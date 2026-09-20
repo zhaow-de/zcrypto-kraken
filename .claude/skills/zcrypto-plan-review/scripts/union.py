@@ -147,7 +147,6 @@ def main(out: str, reports: list[str]) -> int:
         clusters.setdefault(f["key"], []).append(f)
 
     counts = {"Critical": 0, "Important": 0, "Minor": 0}
-    # The protocol's own metric: how many of the round's Importants the loop wrote versus the pair as received.
     important_by_origin = {origin: 0 for origin in ORIGIN_RANK}
     lines = ["# Union", ""]
     ordered = sorted(clusters.items(), key=lambda kv: (min(SEVERITY_RANK[f["sev"]] for f in kv[1]), kv[0]))
