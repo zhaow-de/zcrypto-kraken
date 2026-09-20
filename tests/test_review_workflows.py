@@ -229,7 +229,7 @@ def _drive_pre_review(args: dict) -> dict:
 _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "reportDir": "/r/.tmp/reads/x"}
 
 
-def test_the_graders_run_on_opus_unless_a_model_is_named():
+def test_the_graders_run_on_opus_unless_a_caller_names_another_which_is_refused():
     """The graders re-run commands and diff texts — the work the owner put on Opus on 2026-09-20; Fable keeps
     the reads, whose class walks build compositions by hand."""
     for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
