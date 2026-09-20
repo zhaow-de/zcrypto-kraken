@@ -750,9 +750,8 @@ SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
 SOAK_OUTSIDE_FAILS_AT = 3
 # The journal is a mount and the registry is tracked, so both read the same from any checkout; the canonical
 # dataset is gitignored and therefore per-checkout, while the pass runs from whichever checkout sits at
-# `develop`'s tip. Named absolutely, the row judges against one dataset wherever it is run from; left to
-# resolve against the running checkout it reads `unreadable:` and takes the whole pass to exit 2 for a
-# property of the operator's shell.
+# `develop`'s tip. Left to resolve against the running checkout it reads `unreadable:` and takes the whole
+# pass to exit 2 for a property of the operator's shell.
 SOAK_CANONICAL = Path("/home/zhaow/Projects/zcrypto-kraken/data/ohlc-full")
 # Wide on purpose: the row is read once a day, and a slow reading is still a reading where a killed one is a
 # gap. `_TIMEOUT` above bounds one HTTP or ssh read and is not this.
@@ -763,9 +762,7 @@ _SOAK_TIMEOUT_SECONDS = 900
 # older book than the one the pass is about.
 SOAK_WINDOW_STALE_AFTER = timedelta(hours=12)
 _SOAK_CANONICAL_ABSENT = "canonical absent"
-# The label `soak-check` gives a metric whose live value fell outside its null band, named once rather than
-# spelled at each site the reduction counts it. `tests/test_ops_daily.py` holds it to the producer's own
-# vocabulary, which is DERIVED from that module's severity order and would move with a rename.
+# The label `soak-check` gives a metric whose live value fell outside its null band.
 SOAK_OUTSIDE_LABEL = "inconsistent"
 
 
@@ -788,9 +785,8 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
 
 
 def soak_run(journal_dir: Path) -> dict:
-    """The payload of one `soak-check` run over `derive_soak_store`. The CODE is the checkout this script sits
-    in, which is what `cwd` selects; the DATA is not, so the canonical dataset is named outright. The trial
-    registry is tracked and reads the same from any checkout, so it keeps its repo-relative default."""
+    """The payload of one `soak-check` run over `derive_soak_store`. `cwd` pins the CODE to the checkout this
+    script sits in; the DATA is not in it, so the canonical dataset is named outright at `SOAK_CANONICAL`."""
     with tempfile.TemporaryDirectory(prefix="zcrypto-soak-") as scratch:
         root = Path(scratch)
         out = root / "soak.json"
@@ -809,13 +805,8 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
 
     A run that produced no payload, or one with no canonical dataset to judge against, is `unreadable` -- the
     pass could not look, which says nothing about the book. `void_reasons` is read BEFORE any verdict because
-    the payload carries populated verdicts beside a non-empty one. Then the panel decides, on TWO of its
-    counts: the outside count against the threshold, and the count of metrics the instrument actually decided
-    against that same number read as a floor -- a panel whose decided count is under the threshold can never
-    reach it, so passing it would be vacuous. Never one metric's `inconsistent`. And the panel is only a
-    verdict on TODAY's book when the scored window is current: `soak-check` scores the LONGEST contiguous run
-    of cycles, so one failed boundary leaves it scoring the run before the gap, with no void reason, until
-    the newer run outgrows it -- a window that ended long before `now`, or one the store cut short, fails.
+    the payload carries populated verdicts beside a non-empty one. Then the panel's two counts decide, and
+    last the scored window's currency.
 
     Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
     """
@@ -829,25 +820,18 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         panel, provenance, verdicts = payload["panel"], payload["provenance"], payload["gating_verdicts"]
         outside = []
         for metric, row in verdicts.items():
-            # A metric judged under one null alone carries no `dual`, and its own verdict is then the only
-            # label there is; the construction count below reads that as the one construction it was.
+            # A metric judged under one null alone carries no `dual`: `soak-check` writes `None` there.
             dual = row.get("dual") or {}
             if dual.get("verdict", row["verdict"]) == SOAK_OUTSIDE_LABEL:
                 calls = [dual.get("primary"), dual.get("secondary")].count(SOAK_OUTSIDE_LABEL)
                 outside.append(f"{metric} ({'both constructions' if calls == 2 else 'one construction'})")
         self_test = payload["self_test"]
-        # Three states, not two: a flag that was SKIPPED puts nothing in `void_reasons`, so the arms above
-        # never see it and this row is the only place it reaches a reader.
         flags = "/".join(
             "skipped" if self_test[name] is None else ("ok" if self_test[name] else "FAILED")
             for name in ("instrument_ok", "identity_ok", "reconcile_ok")
         )
-        # The panel counts a metric whose two null constructions DISAGREED toward its metric count and never
-        # toward its outside count, so the outside count alone falls as the instrument's self-agreement does.
+        # `n_indeterminate` counts toward `n_metrics` and never toward `n_outside`, so it is no decision.
         decided = int(panel["n_metrics"]) - int(panel["n_indeterminate"])
-        # One boolean for the floor arm and for the clause that reports it. A metric the band could not judge
-        # at all is dropped from `n_metrics` and counted nowhere, so on that route the panel's own two lines
-        # say nothing about why the row failed and the value has to name the floor itself.
         reachable = decided >= SOAK_OUTSIDE_FAILS_AT
         metrics = "metric" if decided == 1 else "metrics"
         floor = "" if reachable else f"; only {decided} {metrics} decided, under the threshold's {SOAK_OUTSIDE_FAILS_AT}"
@@ -993,8 +977,7 @@ class Report:
         # different findings and take different runbook dispositions.
         cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
         failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
-        # Journaled whole and every day, a PASS included: the entries are the only record of the panel's counts
-        # over time, which is what a change to `SOAK_OUTSIDE_FAILS_AT` is argued from.
+        # Carried whole and on a PASS too: these entries are where `SOAK_OUTSIDE_FAILS_AT`'s history lives.
         soak = next((c.value for c in self.verdict if c.name == SOAK_CHECK), None)
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
         # WARNING is carried too, and only when there is some: a healthy fleet produces no
@@ -1313,10 +1296,8 @@ _FIRST_STAGE_SHAPES = (
 )
 
 # `zcrypto engine <sub>`, one flag table per read subcommand; `cycle --replace` deletes a boundary's record
-# and `gate-export` writes a textfile, so neither is here. Three real options stay out on purpose:
-# `soak-check --json` WRITES the path it names, and `soak-check --registry` and `tracking-report
-# --ledger-export` name a file whose reader echoes content when it refuses it.
-# `tests/test_ops_daily.py::test_the_engine_read_shapes_are_the_clis_own_options` holds this table to the CLI.
+# and `gate-export` writes a textfile, so neither is here. The real options left out of a sub's table are named
+# with their reasons in `tests/test_ops_daily.py::_ENGINE_OPTIONS_LEFT_OUT`, whose test holds both to the CLI.
 _FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
 _ISOWEEK = r"\d{4}-W\d{2}"
 _ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _SINCE, "--until": _SINCE}

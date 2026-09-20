@@ -768,8 +768,8 @@ def test_soak_check_json_carries_the_fields_the_daily_pass_reduces(tmp_path, mon
     assert isinstance(panel["n_outside"], int) and isinstance(panel["n_metrics"], int)
     assert isinstance(panel["n_indeterminate"], int)
     assert panel["line"].startswith(f"{panel['n_outside']} of {panel['n_metrics']} outside band")
-    # The row prints this line verbatim when it is non-empty and reads emptiness as "none", so the tie
-    # between the count and the line is what the reduction leans on, not either alone.
+    # The row prints this line verbatim when it is non-empty and drops the clause when it is empty, so the
+    # tie between the count and the line is what the reduction leans on, not either alone.
     assert (panel["indeterminate_line"] == "") == (panel["n_indeterminate"] == 0), panel
     self_test = payload["self_test"]
     assert {"instrument_ok", "identity_ok", "reconcile_ok", "void"} <= set(self_test), self_test

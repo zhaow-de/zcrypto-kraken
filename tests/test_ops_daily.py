@@ -2776,8 +2776,7 @@ def test_each_engine_read_sub_is_autonomous_with_its_own_options(cmd):
     assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
-# Every real option the table leaves out, with the reason it is out. A new CLI option lands in neither place and
-# fails `test_the_engine_read_shapes_are_the_clis_own_options`, so someone decides which side it belongs on.
+# Every real option the table leaves out, with the reason it is out.
 _ENGINE_OPTIONS_LEFT_OUT = {
     "soak-check": {
         "--json": "writes the path it names",
@@ -2797,7 +2796,7 @@ _ENGINE_OPTIONS_LEFT_OUT = {
         "zcrypto engine soak-check --json",
         "zcrypto engine soak-check --registry /etc/zcrypto-ops/alloy/alloy-secrets.env",
         "zcrypto engine tracking-report --ledger-export /opt/zcrypto-capture/logship-secrets.env",
-        # Options of a sibling sub, which one shared shape used to admit everywhere.
+        # Options of a sibling sub.
         "zcrypto engine report --since 24h",
         "zcrypto engine report --date 2026-09-19 --pair XBTEUR",
         "zcrypto engine exec-status --journal-dir /mnt/zhao-crypto/engine-journal",
@@ -2825,8 +2824,7 @@ def _engine_cli_options() -> dict[str, dict[str, bool]]:
 
 
 def test_the_engine_read_shapes_are_the_clis_own_options():
-    """The table and the CLI are two hand-written lists of the same options: every flag the table admits exists on
-    that sub and takes a value exactly when the CLI's does, and every option it leaves out is left out by name."""
+    """The table and the CLI are two hand-written lists of the same options, so the CLI decides the table."""
     real = _engine_cli_options()
     assert set(ops_daily._ZCRYPTO_READ_FLAGS) <= set(real), set(ops_daily._ZCRYPTO_READ_FLAGS) - set(real)
     for sub, flags in ops_daily._ZCRYPTO_READ_FLAGS.items():
@@ -2968,9 +2966,9 @@ def test_a_panel_the_instrument_could_not_decide_names_it_and_stops_reading_as_b
 
 
 def test_a_panel_with_exactly_three_decided_metrics_reaches_the_threshold_and_passes():
-    """The floor is `decided >= SOAK_OUTSIDE_FAILS_AT`, read on both sides like its sibling arms: three
-    decided is the minimum panel that CAN reach the threshold, so a `>` in place of `>=` would fail it
-    for a reason the value never names -- `>=` is what lets it pass."""
+    """The floor is `decided >= SOAK_OUTSIDE_FAILS_AT`, read on both sides like its sibling arms: three decided
+    is the minimum panel that CAN reach the threshold, so a `>` in place of `>=` would fail the minimum panel
+    that can still be judged -- `>=` is what lets it pass."""
     at_the_floor = _soak_payload(outside=(), undiscriminating=_SOAK_METRICS[:4])
     check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(at_the_floor))
     assert check.ok, check.value
@@ -3201,8 +3199,6 @@ def test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wro
     monkeypatch.setattr(ops_daily.subprocess, "run", fake_run)
     assert live_soak_run(journal) == {"void_reasons": []}
     assert seen["command"][:7] == ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal))
-    # The one input that is neither a mount nor tracked: left to the CLI's repo-relative default it would
-    # resolve against whichever checkout the pass was started from, and read `unreadable:` from any worktree.
     assert seen["command"][7:9] == ("--canonical-dir", str(ops_daily.SOAK_CANONICAL)), seen["command"]
     assert ops_daily.SOAK_CANONICAL.is_absolute(), ops_daily.SOAK_CANONICAL
     assert seen["kwargs"]["cwd"] == ops_daily.REPO_ROOT and seen["kwargs"]["timeout"] == 900
@@ -3254,8 +3250,6 @@ def test_the_soak_row_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
 
 
 def test_the_journal_paragraph_carries_the_soak_rows_value_on_a_passing_day():
-    """The paragraph is what gets pasted into the ops journal, and those entries are the only history the soak
-    row has: a PASS whose counts were not journaled leaves nothing to argue the threshold from."""
     row = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload()))
     assert row.ok
     para = dataclasses.replace(_report(), verdict=[row]).journal_paragraph()
@@ -3279,9 +3273,9 @@ def live_soak_run(monkeypatch):
 
 
 def test_the_suites_refusing_soak_run_is_the_one_every_test_gets(tmp_path):
-    """Every OTHER test in this file stubs `soak_run` itself, so without this reader and the one below it the
-    refusal could be narrowed away with nothing going red. An empty directory stands in for the journal -- the
-    real runner refuses it for want of a record, before it builds a command or reads a mount."""
+    """Every other test that reaches `soak_run` stubs it itself, so without this reader and the one below it
+    the refusal could be narrowed away with nothing going red. An empty directory stands in for the journal --
+    the real runner refuses it for want of a record, before it starts a subprocess or reads a mount."""
     with pytest.raises(AssertionError, match="must stub it"):
         ops_daily.soak_run(tmp_path)
 
