@@ -211,7 +211,7 @@ def _drive_pre_review(args: dict) -> dict:
             "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
             "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
             "const twice = (r) => ({ ...r, prose: [...r.prose, { site: 'a.py:1', survives: 'cut', correct: true, duplicateOf: '', ship: '' }] })",
-            "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt })",
+            "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt, model: opts.model })",
             "  return opts.label === 'record' ? { appended: true } : opts.label === 'pre-review' ? twice(part('pre-review')) : part(opts.label.replace('pre-review:', '')) }",
             "const parallel = (thunks) => Promise.all(thunks.map((t) => t()))",
             "async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {",
@@ -227,6 +227,17 @@ def _drive_pre_review(args: dict) -> dict:
 
 
 _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "reportDir": "/r/.tmp/reads/x"}
+
+
+def test_the_graders_run_on_opus_unless_a_model_is_named():
+    """The pre-review re-runs and diffs; its graders take Opus by default and the model a caller names, and the
+    record step keeps its own."""
+    ran = _drive_pre_review(_BRANCH)
+    assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
+    ran = _drive_pre_review({**_BRANCH, "model": "fable"})
+    assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "fable"), ("record", "sonnet")]
+
+
 _SLICES = [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
 
 
