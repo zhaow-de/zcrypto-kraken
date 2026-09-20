@@ -311,6 +311,19 @@ def _must_not_fetch(pair_key: str, interval: int) -> list[list]:
     raise AssertionError(f"the canonical frame was refused too late: REST was asked for {pair_key}@{interval}")
 
 
+def test_a_foreign_frame_on_a_later_leg_is_refused_before_any_leg_is_fetched(tmp_path):
+    """Every canonical frame is read before the first fetch, so the second leg's refusal costs the first leg nothing."""
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20)
+    path = canonical / "ETH" / "EUR" / "60.parquet"
+    write_parquet(_FOREIGN_CANONICALS["no-rows"](read_parquet(path)), path)
+
+    with pytest.raises(OHLCError, match="ETH/EUR@60"):
+        reach_round(canonical, out, fetch_fn=_must_not_fetch, clock=lambda: _BASE + timedelta(hours=40), sleep_fn=_no_sleep)
+    assert not out.exists()
+
+
 @pytest.mark.parametrize("variant", sorted(_FOREIGN_CANONICALS))
 def test_a_canonical_frame_this_repo_did_not_write_is_refused_before_the_join(tmp_path, variant):
     canonical, out = tmp_path / "canon", tmp_path / "out"

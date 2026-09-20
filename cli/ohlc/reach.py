@@ -157,8 +157,9 @@ def reach_round(
     Writes into `out_root` only: the canonical set is immutable, and a revision mints a sibling root, never an edit.
     """
     now = clock()
-    # Before the first fetch: a canonical the round cannot name refuses it whole, not after every REST call and leg.
+    # Named and read here, not per leg: a canonical the round cannot name or join costs no REST call and no leg.
     joined = _joined_canonical(canonical_root)
+    canonicals = _read_canonicals(canonical_root, intervals)
     entries: list[ReachEntry] = []
     fetched = 0
 
@@ -171,7 +172,7 @@ def reach_round(
 
             base, quote = symbol.split("/")
 
-            canonical = _read_canonical(canonical_root / base / quote / f"{interval}.parquet", symbol, interval)
+            canonical = canonicals[(interval, symbol)]
             # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
             if fetched:
                 sleep_fn(MIN_REST_INTERVAL_SECONDS)
@@ -202,6 +203,16 @@ def reach_round(
     report = ReachReport(entries=tuple(entries))
     _write_manifest(out_root, report, now, joined)
     return report
+
+
+def _read_canonicals(canonical_root: Path, intervals: tuple[int, ...]) -> dict[tuple[int, str], pl.DataFrame]:
+    """Every canonical frame the round will join, read through `_read_canonical` before the first fetch."""
+    frames: dict[tuple[int, str], pl.DataFrame] = {}
+    for interval in intervals:
+        for symbol in _canonical_symbols(canonical_root, interval):
+            base, quote = symbol.split("/")
+            frames[(interval, symbol)] = _read_canonical(canonical_root / base / quote / f"{interval}.parquet", symbol, interval)
+    return frames
 
 
 def _joined_canonical(canonical_root: Path) -> dict:

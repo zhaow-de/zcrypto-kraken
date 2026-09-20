@@ -140,8 +140,7 @@ def _missing_from_whole_set(root: Path) -> list[str]:
 
 def resolve_canonical_root(data_root: Path) -> Path:
     """A dump ingest re-freezes the canonical as an `ohlc-full-<stamp>` sibling and never in place (spec 00056
-    D1c), so the newest stamp is taken as the frozen set reaching furthest -- its wholeness is checked, its tail is
-    not. Either is refused unless it is
+    D1c), so the frozen set reaching furthest is the newest stamp, not `ohlc-full`. Either is refused unless it is
     whole -- the manifest is the last thing `backfill_basket` writes -- because a round joined to a half-written
     set would seam a short basket and report success."""
     stamped = sorted(
