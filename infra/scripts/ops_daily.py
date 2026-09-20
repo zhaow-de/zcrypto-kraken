@@ -1103,8 +1103,10 @@ _UNIT_EXACT = r"[A-Za-z0-9][A-Za-z0-9._@-]{0,63}"
 _PATH = r"/[A-Za-z0-9._/*+-]{0,160}"
 _FILEREF = r"[A-Za-z0-9._/*+-]{1,160}"
 _SINCE = r"-?\d{1,4}[smhd]?|-?\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+_ISOWEEK = r"\d{4}-W\d{2}"
 _INT = r"\d{1,6}"
 _SINT = r"[-+]?\d{1,6}"
+_FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
 _URL = r"https?://[A-Za-z0-9._~:/?#@!%+,=-]{1,200}"
 # A flag VALUE that is a literal string: the scanner has already refused every metacharacter that
 # was active where it stood, so what survives cannot leave the shape that vouched for it. Operand
@@ -1305,8 +1307,6 @@ _FIRST_STAGE_SHAPES = (
 # `zcrypto engine <sub>`, one flag table per read subcommand; `cycle --replace` deletes a boundary's record
 # and `gate-export` writes a textfile, so neither is here. The real options left out of a sub's table are named
 # with their reasons in `tests/test_ops_daily.py::_ENGINE_OPTIONS_LEFT_OUT`, whose test holds both to the CLI.
-_FLOAT = r"\d{1,9}(?:\.\d{1,9})?"
-_ISOWEEK = r"\d{4}-W\d{2}"
 _ENGINE_WINDOW = {"--journal-dir": _PATH, "--since": _SINCE, "--until": _SINCE}
 _ENGINE_SIZING = {"--minimums": _FILEREF, "--nav": _FLOAT}
 _ZCRYPTO_READ_FLAGS: dict[str, dict[str, str | None]] = {
