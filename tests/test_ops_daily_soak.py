@@ -1,10 +1,7 @@
 """TDD for the soak verdict: `infra/scripts/ops_daily.py`'s scheduled reader of `zcrypto engine soak-check`,
 the journal-derived store it hands that command, and the runner that produces the payload. Split out of
-`tests/test_ops_daily.py`, which still names both scripts for `tests/test_scripts_have_tests.py` and still holds
-the payload builders, because three of its own report cases stub `soak_run` with them.
-
-The autouse refusal comes with them: imported, not copied, so the refusal every test in both files gets has one
-definition to narrow."""
+`tests/test_ops_daily.py`, which still names both scripts for `tests/test_scripts_have_tests.py` and still
+holds the payload builders and the autouse refusal, because report cases there stub `soak_run` with them."""
 
 from __future__ import annotations
 
@@ -104,10 +101,8 @@ def test_a_panel_that_judged_nothing_is_not_an_all_clear():
 
 
 def test_a_self_test_that_never_ran_is_spelled_skipped_and_fails_the_row():
-    """A self-test flag voids the run only when it RAN and FAILED; `None` is a check that was SKIPPED -- no
-    cycle could be replayed, no pair was compared -- and puts nothing in `void_reasons`, so the void arm above
-    never sees it. The panel beneath an unrun proof is a verdict nothing vouched for, so the row fails on it
-    and the value still names which of the three was skipped."""
+    """`None` is a check that was SKIPPED -- no cycle could be replayed, no pair was compared -- and it puts
+    nothing in `void_reasons`, so the void arm above never sees it. The value still names which of the three."""
     check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload(self_test=(True, None, True))))
     assert not check.ok and not check.value.startswith("unreadable:"), check.value
     assert "self-test ok/skipped/ok" in check.value
@@ -292,9 +287,9 @@ def test_the_derived_store_is_the_newest_success_records_and_a_failed_cycle_is_n
 
 
 def test_a_record_journaling_two_240_snapshots_for_one_pair_still_derives(tmp_path):
-    """Nothing in the record format says a pair gets one 240 entry, and the derivation made each pair's
-    directory as if it did: a second entry raised `FileExistsError`, which the row reports as `unreadable:`
-    -- the pass declaring it could not read a record it could. The later entry is the pair's leg."""
+    """Nothing in the record format says a pair gets one 240 entry, and a derivation that refused a second
+    would have the row read `unreadable:` -- the pass declaring it could not read a record it could. The later
+    entry is the pair's leg."""
     from cli.engine.store import read_store_series
 
     last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
@@ -315,11 +310,8 @@ def test_a_record_journaling_two_240_snapshots_for_one_pair_still_derives(tmp_pa
 
 
 def test_a_leg_disagreeing_with_its_journaled_metadata_is_refused_and_reads_unreadable(tmp_path):
-    """The journal reaches this host over an rsync pull, so a leg can differ from the record that describes it
-    with nothing on the page to say so -- and copied in unchecked it becomes a book `soak-check` judges and
-    nobody can reproduce. Both of the engine's own checks are driven: the content hash, and the metadata the
-    engine compares beside it. Each refusal reaches the row as `unreadable:`, a source the pass could not
-    read, never a verdict."""
+    """Both of the engine's own checks are driven: the content hash, and the metadata compared beside it.
+    Each refusal reaches the row as `unreadable:`, a source the pass could not read, never a verdict."""
     last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
     store, journal = tmp_path / "store", tmp_path / "journal"
     _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
@@ -405,8 +397,9 @@ def test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wro
     assert seen["command"][:8] == ("uv", "run", "--no-sync", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal))
     assert seen["command"][8:10] == ("--canonical-dir", str(ops_daily.SOAK_CANONICAL)), seen["command"]
     assert ops_daily.SOAK_CANONICAL.is_absolute(), ops_daily.SOAK_CANONICAL
-    # `capture_output`/`text` beside the other two: without them the abort line the no-payload arm raises goes
-    # to the pass's own stderr as bytes, and the row's `unreadable:` value carries `no output` instead.
+    # `capture_output`/`text` beside the other two: without `capture_output` the streams are the pass's own
+    # and `done.stdout` is `None`, so the no-payload arm raises `AttributeError` instead of the abort line;
+    # without `text` the line reaches the row as a `bytes` repr.
     assert seen["kwargs"]["cwd"] == ops_daily.REPO_ROOT and seen["kwargs"]["timeout"] == 900
     assert seen["kwargs"]["capture_output"] is True and seen["kwargs"]["text"] is True, seen["kwargs"]
     assert len(seen["legs"]) == 12 and "BTC/EUR/240.parquet" in seen["legs"]
