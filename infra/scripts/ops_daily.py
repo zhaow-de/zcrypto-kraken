@@ -822,7 +822,13 @@ def soak_run(journal_dir: Path) -> dict:
         # one sitting at `develop`'s tip, shared with whoever is working in it. A bare `uv run` would install
         # into that venv the moment the lock moved ahead of it, mid-pass and unasked.
         command = ("uv", "run", "--no-sync", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
-        command += ("--canonical-dir", str(os.environ.get(SOAK_CANONICAL_ENV) or SOAK_CANONICAL))
+        canonical = Path(os.environ.get(SOAK_CANONICAL_ENV) or SOAK_CANONICAL)
+        if not canonical.is_absolute():
+            raise RuntimeError(
+                f"{SOAK_CANONICAL_ENV} names a relative path, {canonical}: the pass runs from the checkout at develop's tip and "
+                "a relative canonical resolves against it, the failure the absolute path is there to prevent"
+            )
+        command += ("--canonical-dir", str(canonical))
         command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
         done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
         if not out.exists():

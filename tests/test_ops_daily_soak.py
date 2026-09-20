@@ -418,6 +418,22 @@ def test_the_canonical_dataset_is_the_environments_where_it_names_one_and_the_co
     assert seen == [str(tmp_path / "elsewhere"), str(ops_daily.SOAK_CANONICAL), str(ops_daily.SOAK_CANONICAL)], seen
 
 
+def test_a_relative_canonical_override_is_refused_before_the_run(tmp_path, monkeypatch, live_soak_run):
+    """The constant is held absolute by its own case; the override is handed to `--canonical-dir` as it came, and a
+    relative one would resolve against the checkout the pass runs from, the failure the absolute path exists to
+    prevent, so it is refused before `soak-check` runs and the row reads it as a source the pass could not read."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    ran = []
+    monkeypatch.setattr(ops_daily.subprocess, "run", lambda command, **kwargs: ran.append(command))
+    monkeypatch.setenv(ops_daily.SOAK_CANONICAL_ENV, "data/ohlc-full")
+    with pytest.raises(RuntimeError, match=r"ZCRYPTO_SOAK_CANONICAL names a relative path, data/ohlc-full"):
+        live_soak_run(journal)
+    assert ran == [], "the run is refused before soak-check is asked"
+
+
 def test_a_soak_check_that_wrote_no_payload_raises_its_last_line(tmp_path, monkeypatch, live_soak_run):
     last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
     store, journal = tmp_path / "store", tmp_path / "journal"
