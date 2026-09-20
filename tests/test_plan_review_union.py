@@ -56,7 +56,23 @@ def test_counts_come_from_headings_not_from_a_report_summary_line(tmp_path):
     # `_A`'s own summary line claims "Important 0", so a count read off summaries cannot produce this.
     assert proc.stdout.strip() == (
         "counts (from headings): Critical 1 · Important 1 · Minor 1 · keys 3 · raw findings 4 · unparsed 0"
+        " · Important by origin: last-fix 0 · earlier-fix 0 · in-original 1"
     )
+
+
+def test_the_important_by_origin_split_counts_each_cluster_once_at_its_most_recent_origin(tmp_path):
+    """The protocol measures what share of a round's Importants the loop wrote; the split is taken per cluster, at
+    the cluster's most recent origin, so a fix-written Important two readers found counts once, as a fix's."""
+    fix_twice = """# lens C
+### [Important] · [last-fix] · docs/plans/00000-x.md:77
+**Quote:** `bar`
+
+### [Important] · [earlier-fix] · docs/plans/00000-x.md:90
+**Quote:** `baz`
+"""
+    proc, _ = _run(tmp_path, _A, _B, fix_twice)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().endswith(" · Important by origin: last-fix 1 · earlier-fix 1 · in-original 0")
 
 
 def test_nested_indented_and_list_prefixed_findings_are_parsed_and_a_bare_title_is_surfaced(tmp_path):
