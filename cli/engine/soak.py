@@ -635,7 +635,7 @@ _SEVERITY = {"consistent": 0, "weakly-consistent": 1, "inconsistent": 2}
 _VERDICT_LABELS = frozenset(_SEVERITY) | {"n/a"}
 # The one void reason that is a source the caller could not READ rather than a verdict about the book: with no
 # canonical dataset there is no null to judge against. `ops_daily.read_soak_verdict` routes on a substring of it
-# and `tests/test_ops_daily.py` pins the two spellings together, so this is the name a rename has to go through.
+# and `tests/test_ops_daily_soak.py` pins the two spellings together, so this is the name a rename has to go through.
 CANONICAL_ABSENT_VOID = "canonical absent — null unavailable"
 
 
