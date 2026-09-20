@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -794,13 +795,15 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
         try:
             frame = read_parquet(source)
             ts, closes = frame["ts"].to_list(), frame["close"].to_list()
-        # `PolarsError` is no subclass of anything `read_soak_verdict` catches, so an unguarded read takes
-        # the whole pass down on a traceback instead of one row.
-        except PolarsError as exc:
+            content_hash = snapshot_content_hash(ts, closes)
+        # `PolarsError` is no subclass of anything `read_soak_verdict` catches, and neither is the `struct.error` a
+        # close of the wrong dtype raises inside the hash, so an unguarded read takes the whole pass down on a
+        # traceback instead of one row.
+        except (PolarsError, struct.error) as exc:
             raise ValueError(
                 f"pair={entry['pair']!r} grid='240' at {source}: leg cannot be read -- {str(exc).splitlines()[0]}"
             ) from exc
-        if snapshot_content_hash(ts, closes) != entry["content_hash"]:
+        if content_hash != entry["content_hash"]:
             raise ValueError(f"content hash mismatch for pair={entry['pair']!r} grid='240' at {source} -- corrupt evidence")
         first, last = datetime.fromisoformat(entry["first_ts"]), datetime.fromisoformat(entry["last_ts"])
         if len(ts) != entry["n_bars"] or ts[0] != first or ts[-1] != last:

@@ -368,8 +368,7 @@ def test_a_leg_the_reader_cannot_open_reads_unreadable_and_does_not_end_the_pass
 
 
 def test_a_leg_without_the_stores_columns_reads_unreadable_and_does_not_end_the_pass(tmp_path):
-    """A leg that opens but carries no `close` column raises polars' own class at the column, not at the read;
-    the guard has to cover both or the pass ends on the second."""
+    """A leg that opens but carries no `close` column raises polars' own class at the column, not at the read."""
     last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
     store, journal = tmp_path / "store", tmp_path / "journal"
     _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
@@ -378,6 +377,23 @@ def test_a_leg_without_the_stores_columns_reads_unreadable_and_does_not_end_the_
     legs = {e["pair"]: e for e in json.loads(record_path.read_text())["snapshots"] if e["grid"] == "240"}
     leg = journal / legs["BTC/EUR"]["path"]
     pl.DataFrame({"ts": [last], "value": [1.0]}).write_parquet(leg)
+
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=lambda _: ops_daily.derive_soak_store(journal, tmp_path / "scratch"))
+
+    assert not check.ok and check.value.startswith("unreadable:"), check.value
+    assert "pair='BTC/EUR'" in check.value and "leg cannot be read -- " in check.value, check.value
+
+
+def test_a_leg_whose_close_is_not_a_number_reads_unreadable_and_does_not_end_the_pass(tmp_path):
+    """A close of string dtype opens and has its column; it fails inside the content hash, one line further."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record_path = next(journal.glob("*/cycle-*.json"))
+    legs = {e["pair"]: e for e in json.loads(record_path.read_text())["snapshots"] if e["grid"] == "240"}
+    leg = journal / legs["BTC/EUR"]["path"]
+    pl.DataFrame({"ts": [last], "close": ["not a number"]}).write_parquet(leg)
 
     check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=lambda _: ops_daily.derive_soak_store(journal, tmp_path / "scratch"))
 
