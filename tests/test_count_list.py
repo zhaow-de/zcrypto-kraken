@@ -313,10 +313,10 @@ def test_the_count_reads_the_line_the_way_the_gate_does(tmp_path):
 
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_the_row_commit_and_a_message_amend_are_the_heads_the_read_line_need_not_cover(tmp_path):
-    """The gate admits two heads past the tip a read line names -- the single-parent commit whose only file is the
-    change index, which `open-pr` pushes after the read, and a head the clone judges the read's own commits -- and
-    refuses one the clone judges otherwise; the counter has to agree or it books every PR that used the first two
-    and excuses a reworded one. `COUNT_LIST_HEADS_SNAPSHOT` stands in for the commit objects the row arm reads,
+    """The gate admits past the tip a read line names the single-parent commit whose only file is the change
+    index, which `open-pr` pushes after the read, and a head the clone judges the read's own commits, and refuses
+    one the clone judges otherwise; the counter has to agree or it books every PR that used either arm and
+    excuses a reworded one. `COUNT_LIST_HEADS_SNAPSHOT` stands in for the commit objects the row arm reads,
     `COUNT_LIST_KEPT_SNAPSHOT` for the clone's answers."""
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     read, head, other = "abcdef1234567", "99887766554433221100ffeeddccbbaa99887766", "0011223344556677889900aabbccddeeff001122"

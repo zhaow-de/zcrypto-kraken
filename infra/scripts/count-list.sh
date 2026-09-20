@@ -81,12 +81,11 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
 # journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
 # the change-index-row exception all come from there, and a change to the gate moves this count by construction.
-# The window starts where the read arm last changed shape -- the floor at 2026-09-10, which `git log -S 'Claude
-# (Opus|Fable)' -- infra/scripts/merge-gate.py` names, then the messages comparison, `git log -S head_is_the_read`
-# -- since a PR merged before that was judged by the arms of its day and breaks no rule; a head amended after
-# its read was admitted by the tree arm those arms held. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead
-# of the network, for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs
-# cannot run, so a row failing ONLY on a sha mismatch is counted rather than excused.
+# The window starts where the read arm last changed what it admits, which `git log -S head_is_the_read --
+# infra/scripts/merge-gate.py` names: a PR merged before that was judged by the arms of its day and breaks no
+# rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network, for the test -- and
+# with it set, the per-PR head-commit fetch the change-index exception needs cannot run, so a row failing ONLY
+# on a sha mismatch is counted rather than excused.
 READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
 # A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
 # the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
@@ -230,9 +229,8 @@ root = pathlib.Path(sys.argv[1]).resolve().parents[2]
 
 def kept(pr):
     """`head_is_the_read`'s answer for the tip the body names against the merged head, from the PR's base at the
-    merge -- the merge commit's first parent, since develop has moved on -- so a head the read's commits became
-    by a rebase, a merge of the base or a re-dating is not booked, and a reworded one is. COUNT_LIST_KEPT_SNAPSHOT
-    names a recorded `{headRefOid: answer}` map so the wiring can be driven without the PR's commits in the clone;
+    merge -- the merge commit's first parent, since develop has moved on. COUNT_LIST_KEPT_SNAPSHOT names a
+    recorded `{headRefOid: answer}` map so the wiring can be driven without the PR's commits in the clone;
     offline with no map, or a PR with no merge commit, answers None and the row is counted rather than excused."""
     head = pr.get("headRefOid") or ""
     if kept_snapshot is not None:
@@ -251,8 +249,12 @@ for pr in json.loads(pathlib.Path(sys.argv[2]).read_text()):
     pr = with_commits(pr)
     files = file_paths(pr)
     fails = gate.read_line_fails(pr, None, files)
+    head_commit = None
     if fails and all("not the head" in f for f in fails):
-        fails = gate.read_line_fails(pr, commit_of(pr.get("headRefOid")), files, kept(pr))
+        head_commit = commit_of(pr.get("headRefOid"))
+        fails = gate.read_line_fails(pr, head_commit, files)
+    if fails and all("not the head" in f for f in fails):
+        fails = gate.read_line_fails(pr, head_commit, files, kept(pr))  # the clone is asked only where the row arm did not admit
     if fails:
         count += 1
 print(count)
