@@ -2308,6 +2308,7 @@ def test_the_upgrade_check_reaches_the_verdict_the_pass_prints(monkeypatch, caps
     # date this assertion would flip from PASS to FAIL two days after that date and stay there.
     fresh = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())))
     monkeypatch.setattr(ops_daily, "ssh_read", fresh)
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
     assert ops_daily.main(["report"]) == 0
     assert f"- PASS {ops_daily.UPGRADE_CHECK}: Result=success" in capsys.readouterr().out
 
@@ -2545,6 +2546,7 @@ def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsy
     monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
     fresh = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())))
     monkeypatch.setattr(ops_daily, "ssh_read", fresh)
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
     assert ops_daily.main(["report"]) == 0
     assert f"- PASS {ops_daily.AGENTBOARD_CHECK}: MemoryMax=24.0 GiB" in capsys.readouterr().out
 
@@ -2561,6 +2563,7 @@ def test_an_uncapped_bridge_moves_the_pass_to_attention(monkeypatch, capsys):
     monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
     uncapped = _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp())), MemoryMax="infinity")
     monkeypatch.setattr(ops_daily, "ssh_read", uncapped)
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
     assert ops_daily.main(["report"]) == 1
     assert "UNCAPPED" in capsys.readouterr().out
 
@@ -3086,3 +3089,215 @@ def test_the_label_the_row_counts_is_the_one_soak_check_spells():
     from cli.engine import soak
 
     assert ops_daily.SOAK_OUTSIDE_LABEL in soak._VERDICT_LABELS
+
+
+def _journal_a_cycle_from(store_dir: Path, journal_dir: Path, cycle_ts: datetime) -> None:
+    """One success record written the way `run_cycle` writes it: the store is read, union-aligned and journaled
+    by the engine's own functions, so the snapshots are what a real cycle leaves, not a test's idea of them."""
+    from cli.engine.cycle import _journal_snapshots, _union_align
+    from cli.engine.journal import CycleRecord, to_json
+    from cli.engine.store import GRID_INTERVALS, PAIR_KEYS, read_store_series
+
+    raw = {
+        (symbol, interval): read_store_series(store_dir, symbol, interval) for symbol in PAIR_KEYS for interval in GRID_INTERVALS
+    }
+    entries = _journal_snapshots(journal_dir, cycle_ts, {interval: _union_align(raw, interval) for interval in GRID_INTERVALS})
+    record = CycleRecord(
+        schema_version=2,
+        cycle_ts=cycle_ts,
+        snapshots=entries,
+        final_targets=dict.fromkeys(PAIR_KEYS, 0.0),
+        started_at=cycle_ts,
+        completed_at=cycle_ts + timedelta(minutes=1),
+        code_version="test",
+        builder_path="fast",
+    )
+    day_dir = journal_dir / f"{cycle_ts:%Y-%m-%d}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+    (day_dir / f"cycle-{cycle_ts:%H}.json").write_text(to_json(record) + "\n")
+
+
+def _a_twelve_leg_store(store_dir: Path, last: datetime, *, short_leg: str) -> None:
+    """Both grids for every basket pair, closes distinct per leg and per bar; `short_leg`'s 240 series lacks the
+    stamp before `last`, so the union-aligned snapshot carries a `None` there."""
+    from cli.engine.store import GRID_INTERVALS, PAIR_KEYS
+    from cli.ohlc.dataset import to_frame, write_parquet
+
+    for k, symbol in enumerate(PAIR_KEYS):
+        base, quote = symbol.split("/")
+        for interval in GRID_INTERVALS:
+            step = timedelta(minutes=interval)
+            stamps = [last - step * n for n in range(5, -1, -1)]
+            if symbol == short_leg and interval == 240:
+                stamps.remove(last - step)
+            rows = [[int(t.timestamp()), *[str(100.0 + k + n / 7)] * 5, "1.0", 1] for n, t in enumerate(stamps)]
+            (store_dir / base / quote).mkdir(parents=True, exist_ok=True)
+            write_parquet(to_frame(rows), store_dir / base / quote / f"{interval}.parquet")
+
+
+def test_the_journal_derived_store_carries_every_close_the_real_store_does(tmp_path):
+    """The claim the soak row rests on. A snapshot differs from its store leg only by a `None` close at a stamp
+    the leg lacks and another leg has, and `realized_series` skips a `None` close exactly as it skips an absent
+    stamp -- so the comparison drops them and demands equality on the rest, leg by leg."""
+    from cli.engine.store import PAIR_KEYS, read_store_series
+
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+
+    derived = ops_daily.derive_soak_store(journal, tmp_path / "scratch")
+
+    assert derived == tmp_path / "scratch" / "store"
+    for symbol in PAIR_KEYS:
+        real = dict(zip(*read_store_series(store, symbol, 240)))
+        copy = dict(zip(*read_store_series(derived, symbol, 240)))
+        assert {t: c for t, c in copy.items() if c is not None} == real, symbol
+    padded = dict(zip(*read_store_series(derived, "SOL/EUR", 240)))
+    assert padded[last - timedelta(hours=4)] is None, "the fixture no longer exercises the union's None"
+    assert not list(derived.rglob("1440.parquet")), "only the 240 grid is read by soak-check"
+
+
+def test_the_derived_store_is_the_newest_success_records_and_a_failed_cycle_is_not_a_record(tmp_path):
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last - timedelta(hours=4), short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last)
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    # Sorts after every `cycle-*.json` of its day, and carries no snapshots: the glob must not take it.
+    (journal / "2026-09-19" / "failed-cycle-20.json").write_text('{"reason": "stale_pair"}\n')
+
+    from cli.engine.store import read_store_series
+
+    derived = ops_daily.derive_soak_store(journal, tmp_path / "scratch")
+    assert read_store_series(derived, "BTC/EUR", 240)[0][-1] == last
+
+
+def test_a_journal_with_no_record_and_a_record_with_no_240_snapshot_both_refuse(tmp_path):
+    with pytest.raises(FileNotFoundError, match="no cycle record"):
+        ops_daily.derive_soak_store(tmp_path, tmp_path / "scratch")
+    day = tmp_path / "2026-09-19"
+    day.mkdir()
+    (day / "cycle-16.json").write_text(json.dumps({"snapshots": [{"grid": "1440", "pair": "BTC/EUR", "path": "x"}]}))
+    with pytest.raises(ValueError, match="no 240 snapshot"):
+        ops_daily.derive_soak_store(tmp_path, tmp_path / "scratch")
+
+
+def test_the_soak_run_hands_soak_check_the_derived_store_and_returns_what_it_wrote(tmp_path, monkeypatch, live_soak_run):
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"], seen["kwargs"] = command, kwargs
+        handed = Path(command[command.index("--store-dir") + 1])
+        seen["legs"] = sorted(p.relative_to(handed).as_posix() for p in handed.rglob("*.parquet"))
+        Path(command[command.index("--json") + 1]).write_text('{"void_reasons": []}')
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ops_daily.subprocess, "run", fake_run)
+    assert live_soak_run(journal) == {"void_reasons": []}
+    assert seen["command"][:7] == ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal))
+    # The one input that is neither a mount nor tracked: left to the CLI's repo-relative default it would
+    # resolve against whichever checkout the pass was started from, and read `unreadable:` from any worktree.
+    assert seen["command"][7:9] == ("--canonical-dir", str(ops_daily.SOAK_CANONICAL)), seen["command"]
+    assert ops_daily.SOAK_CANONICAL.is_absolute(), ops_daily.SOAK_CANONICAL
+    assert seen["kwargs"]["cwd"] == ops_daily.REPO_ROOT and seen["kwargs"]["timeout"] == 900
+    assert len(seen["legs"]) == 12 and "BTC/EUR/240.parquet" in seen["legs"]
+    assert not Path(seen["command"][seen["command"].index("--store-dir") + 1]).exists(), "the scratch store outlived the run"
+
+
+def test_a_soak_check_that_wrote_no_payload_raises_its_last_line(tmp_path, monkeypatch, live_soak_run):
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    aborted = lambda command, **kwargs: subprocess.CompletedProcess(
+        command,
+        1,
+        # The abort is a LOG line on STDOUT, not a typer error on stderr: the CLI logs its one-line aborts and its
+        # console handler writes to stdout, so a reply carrying it on stderr exercises an arm no live run takes.
+        stdout="warming up\n2026-09-19 12:00:04 ERROR zcrypto.engine.command [command.py:86] - read_store_series: cannot read x\n",
+        stderr="",
+    )
+    monkeypatch.setattr(ops_daily.subprocess, "run", aborted)
+    with pytest.raises(RuntimeError, match=r"exited 1 and wrote no payload: .* ERROR .* - read_store_series: cannot read x"):
+        live_soak_run(journal)
+
+
+def test_the_soak_row_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    monkeypatch.setattr(ops_daily, "ssh_read", _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp()))))
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
+    assert ops_daily.main(["report"]) == 0
+    assert f"- PASS {ops_daily.SOAK_CHECK}: 1 of 7 outside band" in capsys.readouterr().out
+
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_soak_payload(void=("cap-breach inconsistent",))))
+    assert ops_daily.main(["report"]) == 1
+    assert f"- FAIL {ops_daily.SOAK_CHECK}: void: cap-breach inconsistent" in capsys.readouterr().out
+
+    def unmounted(journal_dir):
+        raise FileNotFoundError(f"no cycle record under {journal_dir}")
+
+    monkeypatch.setattr(ops_daily, "soak_run", unmounted)
+    assert ops_daily.main(["report"]) == 2
+    assert f"- {ops_daily.SOAK_CHECK} could not be read: no cycle record under {ops_daily.SOAK_JOURNAL}" in capsys.readouterr().out
+
+
+def test_the_journal_paragraph_carries_the_soak_rows_value_on_a_passing_day():
+    """The paragraph is what gets pasted into the ops journal, and those entries are the only history the soak
+    row has: a PASS whose counts were not journaled leaves nothing to argue the threshold from."""
+    row = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=_soak_answering(_soak_payload()))
+    assert row.ok
+    para = dataclasses.replace(_report(), verdict=[row]).journal_paragraph()
+    assert f"· checks all pass · soak {row.value} · logs" in para, para
+    assert "soak" not in _report().journal_paragraph(), "no soak row, no soak clause"
+
+
+@pytest.fixture(autouse=True)
+def live_soak_run(monkeypatch):
+    """Every test in this file gets a refusing `soak_run`: a test that drives `main(["report"])` and forgets
+    to stub it then fails loudly here instead of starting a real `soak-check` against the production journal
+    mount from inside the suite. The two tests that drive the runner itself take this fixture's value, which
+    is the real one -- `monkeypatch` has already replaced the module attribute by the time they run."""
+    real = ops_daily.soak_run
+
+    def refuse(journal_dir):
+        raise AssertionError(f"soak_run reached the live runner with {journal_dir} -- this test must stub it")
+
+    monkeypatch.setattr(ops_daily, "soak_run", refuse)
+    return real
+
+
+def test_the_suites_refusing_soak_run_is_the_one_every_test_gets(tmp_path):
+    """Every OTHER test in this file stubs `soak_run` itself, so without this reader and the one below it the
+    refusal could be narrowed away with nothing going red. An empty directory stands in for the journal -- the
+    real runner refuses it for want of a record, before it builds a command or reads a mount."""
+    with pytest.raises(AssertionError, match="must stub it"):
+        ops_daily.soak_run(tmp_path)
+
+
+def test_a_report_that_forgets_its_soak_stub_meets_the_refusal(tmp_path, monkeypatch):
+    """`main` resolves `soak_run` off the module when it runs, which is the attribute the fixture replaces:
+    every other reader stubbed and the runner left alone, the refusal surfaces through `main` itself. The
+    journal is pointed at an empty directory, so a refusal that went missing meets no mount either."""
+    monkeypatch.setattr(ops_daily, "SOAK_JOURNAL", tmp_path)
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
+    monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
+    monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
+    monkeypatch.setattr(ops_daily, "read_verdict", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "read_reminders", lambda *a, **k: ops_daily.RemindersRead())
+    monkeypatch.setattr(ops_daily, "ssh_read", _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp()))))
+    with pytest.raises(AssertionError, match="must stub it"):
+        ops_daily.main(["report"])

@@ -11,8 +11,10 @@ import http.client
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
 import urllib.error
 import urllib.parse
@@ -746,6 +748,15 @@ SOAK_EXPR = "zcrypto engine soak-check over the newest journaled 240 snapshots"
 # independent looks at 10% reach three under 3% of the time; the seven are correlated, which loosens that bound,
 # and no re-derivation is scheduled: the row's own history is the evidence, and whoever reads its first FAIL has it.
 SOAK_OUTSIDE_FAILS_AT = 3
+# The journal is a mount and the registry is tracked, so both read the same from any checkout; the canonical
+# dataset is gitignored and therefore per-checkout, while the pass runs from whichever checkout sits at
+# `develop`'s tip. Named absolutely, the row judges against one dataset wherever it is run from; left to
+# resolve against the running checkout it reads `unreadable:` and takes the whole pass to exit 2 for a
+# property of the operator's shell.
+SOAK_CANONICAL = Path("/home/zhaow/Projects/zcrypto-kraken/data/ohlc-full")
+# Wide on purpose: the row is read once a day, and a slow reading is still a reading where a killed one is a
+# gap. `_TIMEOUT` above bounds one HTTP or ssh read and is not this.
+_SOAK_TIMEOUT_SECONDS = 900
 # PROVISIONAL. The newest journaled cycle T scores the window to T-4h and a cycle lands every four hours, so a
 # current window ends under eight hours before the pass plus the journal's lag to the mount -- one archive-pull
 # cycle and its hourly sleep. Twelve hours leaves about four for that lag; past it the instrument judged an
@@ -756,6 +767,41 @@ _SOAK_CANONICAL_ABSENT = "canonical absent"
 # spelled at each site the reduction counts it. `tests/test_ops_daily.py` holds it to the producer's own
 # vocabulary, which is DERIVED from that module's severity order and would move with a rename.
 SOAK_OUTSIDE_LABEL = "inconsistent"
+
+
+def derive_soak_store(journal_dir: Path, root: Path) -> Path:
+    """A store-shaped directory holding the newest success record's 240 snapshots, which is every close
+    `soak-check` reads from the engine's store: each cycle journals the store series it read."""
+    records = sorted(journal_dir.glob("*/cycle-*.json"))
+    if not records:
+        raise FileNotFoundError(f"no cycle record under {journal_dir}")
+    legs = [entry for entry in json.loads(records[-1].read_text())["snapshots"] if entry["grid"] == "240"]
+    if not legs:
+        raise ValueError(f"{records[-1]} journals no 240 snapshot")
+    store = root / "store"
+    for entry in legs:
+        base, quote = entry["pair"].split("/")
+        leg = store / base / quote / "240.parquet"
+        leg.parent.mkdir(parents=True)
+        shutil.copyfile(journal_dir / entry["path"], leg)
+    return store
+
+
+def soak_run(journal_dir: Path) -> dict:
+    """The payload of one `soak-check` run over `derive_soak_store`. The CODE is the checkout this script sits
+    in, which is what `cwd` selects; the DATA is not, so the canonical dataset is named outright. The trial
+    registry is tracked and reads the same from any checkout, so it keeps its repo-relative default."""
+    with tempfile.TemporaryDirectory(prefix="zcrypto-soak-") as scratch:
+        root = Path(scratch)
+        out = root / "soak.json"
+        command = ("uv", "run", "zcrypto", "engine", "soak-check", "--journal-dir", str(journal_dir))
+        command += ("--canonical-dir", str(SOAK_CANONICAL))
+        command += ("--store-dir", str(derive_soak_store(journal_dir, root)), "--json", str(out))
+        done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=_SOAK_TIMEOUT_SECONDS)
+        if not out.exists():
+            last = (done.stderr.strip() or done.stdout.strip() or "no output").splitlines()[-1]
+            raise RuntimeError(f"soak-check exited {done.returncode} and wrote no payload: {last}")
+        return json.loads(out.read_text())
 
 
 def read_soak_verdict(*, now: datetime, runner) -> Check:
@@ -947,6 +993,9 @@ class Report:
         # different findings and take different runbook dispositions.
         cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
         failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
+        # Journaled whole and every day, a PASS included: the entries are the only record of the panel's counts
+        # over time, which is what a change to `SOAK_OUTSIDE_FAILS_AT` is argued from.
+        soak = next((c.value for c in self.verdict if c.name == SOAK_CHECK), None)
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
         # WARNING is carried too, and only when there is some: a healthy fleet produces no
         # ERROR/CRITICAL for weeks, so a paragraph counting only those records "0" every day and the
@@ -964,7 +1013,7 @@ class Report:
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired}"
             f"{f' · {sick} rule{"s" if sick != 1 else ""} not evaluating' if sick else ''}"
-            f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed} · "
+            f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed}{f' · soak {soak}' if soak else ''} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
             f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{"s" if findings != 1 else ""}' if findings else ''} · deploys {deploys} · "
@@ -1023,6 +1072,7 @@ def main(argv: list[str]) -> int:
     verdict = read_verdict(token)
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     verdict.append(read_agentboard_cgroup(runner=ssh_read))
+    verdict.append(read_soak_verdict(now=now, runner=soak_run))
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
