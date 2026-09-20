@@ -147,12 +147,16 @@ def main(out: str, reports: list[str]) -> int:
         clusters.setdefault(f["key"], []).append(f)
 
     counts = {"Critical": 0, "Important": 0, "Minor": 0}
+    # The protocol's own metric: how many of the round's Importants the loop wrote versus the pair as received.
+    important_by_origin = {origin: 0 for origin in ORIGIN_RANK}
     lines = ["# Union", ""]
     ordered = sorted(clusters.items(), key=lambda kv: (min(SEVERITY_RANK[f["sev"]] for f in kv[1]), kv[0]))
     for key, members in ordered:
         top = min(members, key=lambda f: SEVERITY_RANK[f["sev"]])
         origin = min(members, key=lambda f: ORIGIN_RANK[f["origin"]])["origin"]
         counts[top["sev"]] += 1
+        if top["sev"] == "Important":
+            important_by_origin[origin] += 1
         lines.append(f"### [{top['sev']}] · [{origin}] · {key}")
         for f in members:
             lines.append(f"<!-- {f['src']} graded {f['sev']} -->")
@@ -164,6 +168,8 @@ def main(out: str, reports: list[str]) -> int:
     summary = (
         f"counts (from headings): Critical {counts['Critical']} · Important {counts['Important']} · "
         f"Minor {counts['Minor']} · keys {len(clusters)} · raw findings {len(findings)} · unparsed {len(unparsed)}"
+        + " · Important by origin: "
+        + " · ".join(f"{origin} {n}" for origin, n in important_by_origin.items())
     )
     Path(out).write_text("\n".join([*lines, summary, ""]), encoding="utf-8")
     print(summary)
