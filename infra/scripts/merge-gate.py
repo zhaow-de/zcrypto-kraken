@@ -405,7 +405,7 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
         if len(parents) == 1 and parents[0].startswith(sha) and files == [INDEX]:
             return []
     if kept is True:
-        return []  # the head carries the read's own commits, on the base it read them on or on one that moved under them
+        return []  # the read's own commits and nothing more: no delta to read
     why = f": {kept}" if isinstance(kept, str) else ""
     return [
         f"the read named in the body covers {sha[:8]}, not the head {head[:8]}{why}; read the delta or re-read, then update the line"
@@ -496,21 +496,18 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
     return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
 
 
-def head_is_the_read(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | str:
-    """True when `head` carries the read's own commits and nothing more: the same non-merge messages from the base to
-    each, and the read's tree — as it stands when the base did not move, or as the three-way merge of the read onto the
-    moved base gives it outside the two rendered files a rebase or a merge resolves by hand, each of those carrying the
-    read's own added and removed lines. Otherwise a string: the check that failed and what it takes, or what the arm
-    could not compare — the read's commit not in the clone and not fetchable, no `origin/<base>`, a merge-tree that
-    could not merge, a call that timed out."""
+def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None = None) -> bool | str:
+    """True when `head` carries the read's own commits and nothing more, by the checks below — on the base they were
+    read on, or on one that moved under them; otherwise a string naming the check that failed, or what the arm could
+    not compare."""
     try:
         try:
             read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
         except subprocess.CalledProcessError:
             _git(cwd, "fetch", "-q", "origin", read)
             read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
-        old_base = _git(cwd, "merge-base", f"origin/{base_ref}", read)
-        new_base = _git(cwd, "merge-base", f"origin/{base_ref}", head)
+        old_base = _git(cwd, "merge-base", base, read)
+        new_base = _git(cwd, "merge-base", base, head)
         messages = (
             "log",
             "--no-merges",
@@ -600,7 +597,7 @@ def main(argv: list[str]) -> int:
             read = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}")).get("sha") or m.group(2)
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:
             read = m.group(2)  # a tip GitHub never saw, or a fetch that failed or timed out: the clone is asked by the prefix
-        kept = head_is_the_read(read, head, pr["baseRefName"])
+        kept = head_is_the_read(read, head, f"origin/{pr['baseRefName']}")
     fails = evaluate(pr, head_commit, files, growth, kept)
     if fails:
         print("GATE FAILED:")

@@ -195,45 +195,42 @@ def test_the_arm_admits_the_read_rebased_onto_or_merged_with_the_moved_base(tmp_
     measure the stub. The colliding case collides on both rendered files, so each member of RENDERED admits it."""
     arm = gate.head_is_the_read
     read, head = _rebased_repo(tmp_path / shape, **_SHAPES[shape])
-    assert arm(read, head, "develop", cwd=tmp_path / shape) is True
-    assert arm(read[:8], head, "develop", cwd=tmp_path / shape) is True, "the body names the read by a prefix"
-    assert arm(head, head, "develop", cwd=tmp_path / shape) is True, "the head is its own read"
+    assert arm(read, head, "origin/develop", cwd=tmp_path / shape) is True
+    assert arm(read[:8], head, "origin/develop", cwd=tmp_path / shape) is True, "the body names the read by a prefix"
+    assert arm(head, head, "origin/develop", cwd=tmp_path / shape) is True, "the head is its own read"
     read, head = _rebased_repo(tmp_path / "clean", collide=False, **_SHAPES[shape])
-    assert arm(read, head, "develop", cwd=tmp_path / "clean") is True, "a base that moved in a file of its own"
+    assert arm(read, head, "origin/develop", cwd=tmp_path / "clean") is True, "a base that moved in a file of its own"
 
 
 @pytest.mark.parametrize(("shape", "more"), [(s, m) for s in _SHAPES for m in _MORE], ids=lambda v: v)
 def test_the_arm_refuses_a_head_that_is_more_than_the_rebase_or_the_merge(tmp_path, shape, more):
     flags, why = _MORE[more]
     read, head = _rebased_repo(tmp_path / more, **_SHAPES[shape], **flags)
-    answer = gate.head_is_the_read(read, head, "develop", cwd=tmp_path / more)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / more)
     assert isinstance(answer, str) and why in answer, answer
 
 
 @pytest.mark.parametrize("shape", list(_SHAPES))
 def test_the_arm_refuses_a_branch_that_lost_a_commit(tmp_path, shape):
     read, head = _rebased_repo(tmp_path / "lost", drop_a_commit=True, **_SHAPES[shape])
-    answer = gate.head_is_the_read(read, head, "develop", cwd=tmp_path / "lost")
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "lost")
     assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
 
 
 def test_the_arm_refuses_a_reworded_commit_and_names_what_it_could_not_compare(tmp_path):
     arm = gate.head_is_the_read
     read, head = _rebased_repo(tmp_path / "reworded", reword=True)
-    answer = arm(read, head, "develop", cwd=tmp_path / "reworded")
+    answer = arm(read, head, "origin/develop", cwd=tmp_path / "reworded")
     assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
-    why = arm("0" * 40, head, "develop", cwd=tmp_path / "reworded")
+    why = arm("0" * 40, head, "origin/develop", cwd=tmp_path / "reworded")
     assert isinstance(why, str) and why.startswith("`git fetch`"), "an unknown read with no origin to fetch from"
     _git(tmp_path / "reworded", "update-ref", "-d", "refs/remotes/origin/develop")
-    why = arm(read, head, "develop", cwd=tmp_path / "reworded")
+    why = arm(read, head, "origin/develop", cwd=tmp_path / "reworded")
     assert isinstance(why, str) and why.startswith("`git merge-base`"), "no origin/develop to take a merge base against"
 
 
 def _amended_repo(root: pathlib.Path, kind: str) -> tuple[str, str]:
-    """A branch of two patches on a base that did not move, its tip re-created; returns (the read's tip, the head).
-    `redated` changes the committer date alone; `reworded` amends the tip's message; `parent_reworded` rewords the first
-    patch and cherry-picks the tip back, so the tip's tree and message are the read's; `tree_changed` amends a file into
-    the tip and keeps its message."""
+    """A branch of two patches on a base that did not move, its tip re-created as `kind` says; returns (the read's tip, the head)."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
     (root / "code.py").write_text("x = 1\n")
@@ -270,7 +267,7 @@ def test_on_an_unmoved_base_the_arm_admits_a_re_created_tip_and_refuses_a_change
     tree and message and changes what the pre-review graded, so the messages are compared from the base, as the reads do."""
     read, head = _amended_repo(tmp_path / kind, kind)
     assert head != read
-    answer = gate.head_is_the_read(read, head, "develop", cwd=tmp_path / kind)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / kind)
     if kind == "redated":
         assert answer is True
     elif kind == "tree_changed":
@@ -280,7 +277,7 @@ def test_on_an_unmoved_base_the_arm_admits_a_re_created_tip_and_refuses_a_change
 
 
 def test_main_fetches_the_base_before_the_arm_reads_it(monkeypatch, capsys):
-    """Read before branch_growth's fetch, a stale clone answers False and the gate refuses the head the arm exists to admit."""
+    """Read before branch_growth's fetch, a stale clone's answer refuses the head the arm exists to admit."""
     order: list[str] = []
     pr = _pr(body=_stale_body())
 
