@@ -2801,9 +2801,13 @@ _ENGINE_OPTIONS_LEFT_OUT = {
         "zcrypto engine report --date 2026-09-19 --pair XBTEUR",
         "zcrypto engine exec-status --journal-dir /mnt/zhao-crypto/engine-journal",
         "zcrypto engine decompose --nav 10000",
-        # Not reads at all, so no table names them.
+        # Not reads at all, so no table names them. Every write sub with options of its own is here, each in
+        # its own real shape: the read table is held to being a SUBSET of the CLI's subs, so adding one of
+        # these to it would leave that guard green while the sub's own writes classified AUTONOMOUS.
         "zcrypto engine cycle --at 2026-09-19T12:00:00+00:00 --replace",
         "zcrypto engine gate-export --textfile /tmp/gate.prom",
+        "zcrypto engine flatten --state-dir /var/lib/zcrypto-engine --execute",
+        "zcrypto engine replay --date 2026-09-19 --journal-dir /mnt/zhao-crypto/engine-journal",
     ],
 )
 def test_an_engine_write_a_content_echoing_file_and_a_foreign_option_stay_prepared(cmd):
