@@ -633,9 +633,8 @@ _SEVERITY = {"consistent": 0, "weakly-consistent": 1, "inconsistent": 2}
 # `metric_verdict`'s closed vocabulary. `_SEVERITY` orders only the three comparable labels -- "n/a" is valid
 # but sits outside that order, so membership and severity are separate questions.
 _VERDICT_LABELS = frozenset(_SEVERITY) | {"n/a"}
-# The one void reason that is a source the caller could not READ rather than a verdict about the book: with no
-# canonical dataset there is no null to judge against. `ops_daily.read_soak_verdict` routes on a substring of it
-# and `tests/test_ops_daily_soak.py` pins the two spellings together, so this is the name a rename has to go through.
+# `ops_daily.read_soak_verdict` routes on a substring of this text, so a run with no canonical dataset -- no null
+# to judge against -- reads as unreadable rather than as a verdict about the book; a rename goes through it.
 CANONICAL_ABSENT_VOID = "canonical absent — null unavailable"
 
 
