@@ -2810,17 +2810,39 @@ def test_an_engine_write_a_content_echoing_file_and_a_foreign_option_stay_prepar
     assert ops_daily.classify_action(cmd, host="zcrypto", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
-def _engine_cli_options() -> dict[str, dict[str, bool]]:
-    """`{sub: {option: is_flag}}` for every `zcrypto engine` command, read off the Typer app itself."""
+def _engine_cli_options(group=None) -> dict[str, dict[str, bool]]:
+    """`{sub: {option: is_flag}}` for every `zcrypto engine` command, read off the Typer app itself.
+
+    BOTH spellings of a negatable flag: click keeps `--no-x` in `secondary_opts`, so a reader of `opts` alone
+    calls `--no-x` an option the CLI does not have -- and the caller below, which demands that every real
+    option the shape table omits be named in `_ENGINE_OPTIONS_LEFT_OUT`, would stop asking for it."""
     import typer
 
     from cli.engine.command import engine_app
 
-    group = typer.main.get_command(engine_app)
+    group = group if group is not None else typer.main.get_command(engine_app)
     return {
-        name: {opt: param.is_flag for param in sub.params if param.param_type_name == "option" for opt in param.opts}
+        name: {
+            opt: param.is_flag
+            for param in sub.params
+            if param.param_type_name == "option"
+            for opt in (*param.opts, *param.secondary_opts)
+        }
         for name, sub in group.commands.items()
     }
+
+
+def test_both_spellings_of_a_negatable_flag_are_read_as_real_options():
+    """No `zcrypto engine` sub is negatable today, so only a hand-built command reaches this arm -- and without
+    it the first one added would be a real option the shape table omits with nothing making anyone name it."""
+    import click
+
+    @click.command("sub")
+    @click.option("--armed/--no-armed", default=False)
+    def sub():
+        pass
+
+    assert _engine_cli_options(click.Group("engine", commands={"sub": sub})) == {"sub": {"--armed": True, "--no-armed": True}}
 
 
 def test_the_engine_read_shapes_are_the_clis_own_options():
