@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'the next spec and plan pair with four or more tasks reaches its hand-off to subagent-driven development at the Exit of `zcrypto-plan-review` — an activity the session at that Exit reads; the trigger is the branch it is about to execute, not a repo path'
+status: resolved
 ---
 
 # The branch pre-review fans out per task range
@@ -17,11 +16,9 @@ The prose axis is the one no SDD seat grades, and it is the axis that thins when
 
 - `pre-review.js` at refine round 13 takes `{repo, range, tip, reportDir, worktree?, model?}`; its `worktree` arm tells the grader it is the checkout's only user, which a fan-out makes false — each grader needs its own worktree path, as `review.js`'s `CHECKOUT(label)` already gives its lenses.
 - The trio's three ledger gates test `e.kind === 'pre-review' | 'review'` and ignore other kinds, so a `task` row breaks nothing.
-- The fanned union does not dedupe: a site three tasks touched would carry three rows; `review.js` clusters on `path:line` and `pre-review.js` does not.
-- Cost, modelled and not metered: about seven grader seats per branch instead of one, no added wall-clock, nothing added per task.
 
-## Suggested next steps
+## Resolution
 
-- Give `pre-review.js` a `ranges` argument of `{label, range}` entries, a per-label worktree in its `worktree` arm, a union of the graders' `prose`/`claims`/`probes`/`classWalk` with `graded` summed and `ready` ANDed, and one Record row at `tip`; drive it in `tests/test_review_workflows.py` with a two-entry `ranges` asserting exactly one append whose tip is the branch tip.
-- Add one closing sentence to the SDD task-reviewer and re-reviewer dispatches in the execution script so each appends its task row to `.tmp/reads/<slug>/ledger.jsonl`, and a `rulings` argument to `pre-review.js` naming the SDD `progress.md`, whose `Ruling:` lines the grader re-runs as claims.
-- On the branch that ripens this, run the fan-out and a single grader over the same range once and compare what each graded; the topic closes on that measurement, whichever way it falls.
+Delivered by PR #573: `pre-review.js` takes `ranges` — one `{label, range}` per slice, chained from the range's opening to its close, a worktree per label, a union of the graders' rows with `graded` summed and `ready` ANDed, one Record row at the tip — and `rulings`, the SDD ledger whose `Ruling:` lines the last slice's grader re-runs as claims; `tests/test_review_workflows.py` drives both. The task rows are appended by the controller at each task's completion — this repo's SDD is the `superpowers` plugin's skill, with no dispatch script of its own to carry a closing sentence — and `zcrypto-plan-review`'s Exit tells the controller to pass both arguments.
+
+Measured once, on PR #572's branch (`develop..639f3b490` — a plan range and four task ranges; both reads on Opus, 2026-09-20). The single grader graded 74 sites (3 corrected, 3 trimmed, 2 cut) in 208k tokens, 42 tool calls and 11.6 minutes. The fan-out's five slices graded 228 (6 corrected, 12 trimmed, 6 cut) and found two message claims that do not reproduce, in 674k tokens, 181 tool calls and 12.0 minutes. Both found the skill paragraph's false clause, two duplicated topic lines and two comment trims. Only the single grader found the same false sentence in spec D4 and in the plan's copy of the paragraph — a falsehood whose refutation sat in a file another slice held. Only the fan-out found the plan's false Expected, two false test docstrings, a false test comment, an archived bullet's tense against its Resolution and ten more trims and cuts. Neither read alone was the right read: the branch shipped their union, and the Exit sentence prescribes both reads until a second measurement says otherwise.
