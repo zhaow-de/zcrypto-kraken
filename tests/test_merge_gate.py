@@ -6,8 +6,10 @@ branch owes its change-index row before the merge."""
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import random
+import shutil
 import subprocess
 import sys
 
@@ -28,8 +30,8 @@ def _load(path: pathlib.Path, name: str):
 gate = _load(_SCRIPT, "merge_gate")
 
 
-def _eval(pr, head_commit=None, files=None, branch_growth=(), read_commit=None):
-    return gate.evaluate(pr, head_commit, files, list(branch_growth), read_commit)
+def _eval(pr, head_commit=None, files=None, branch_growth=(), read_commit=None, rebased=None):
+    return gate.evaluate(pr, head_commit, files, list(branch_growth), read_commit, rebased)
 
 
 TIP = "6f02667280cfbd7b76cb39d3139a5f865d995c61"
@@ -88,6 +90,88 @@ def test_a_head_whose_tree_differs_from_the_read_tips_fails():
     fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40))
     assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
     assert len(_eval(pr, head)) == 1  # the read tip's commit not fetched: no tree to compare, so no pass
+
+
+def test_a_rebase_that_kept_every_patch_passes_and_one_that_did_not_fails():
+    pr = _pr(body=_stale_body())
+    head = _tree(_head([OTHER], ["cli/engine/executor.py"]), "t" * 40)
+    assert _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40), rebased=True) == []
+    for answer in (False, None):
+        fails = _eval(pr, head, read_commit=_tree({"sha": PREV}, "u" * 40), rebased=answer)
+        assert len(fails) == 1 and fails[0].startswith(f"the read named in the body covers {PREV[:8]}, not the head {TIP[:8]}")
+
+
+def _env(root: pathlib.Path) -> dict[str, str]:
+    return {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@x",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@x",
+        "GIT_EDITOR": "true",
+        "PATH": os.environ["PATH"],
+        "HOME": str(root),
+    }
+
+
+def _git(cwd: pathlib.Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, env=_env(cwd), check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _rebased_repo(root: pathlib.Path, *, change_a_patch: bool) -> tuple[str, str]:
+    """A branch of two patches, the second a change-index row, rebased onto a base that gained a colliding row;
+    returns (the read's tip, the rebased head). With change_a_patch the rebase also edits the first patch."""
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "develop")
+    (root / gate.INDEX).parent.mkdir(parents=True)
+    (root / gate.INDEX).write_text("| #1 | a |\n")
+    (root / "code.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "-b", "feat")
+    (root / "code.py").write_text("x = 2\n")
+    _git(root, "commit", "-q", "-am", "feat: code")
+    (root / gate.INDEX).write_text("| #1 | a |\n| #3 | c |\n")
+    _git(root, "commit", "-q", "-am", "docs(change-index): row #3")
+    read = _git(root, "rev-parse", "HEAD")
+    _git(root, "checkout", "-q", "develop")
+    (root / gate.INDEX).write_text("| #1 | a |\n| #2 | b |\n")
+    _git(root, "commit", "-q", "-am", "docs(change-index): row #2")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "feat")
+    done = subprocess.run(
+        ["git", "rebase", "develop"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        env=_env(root),
+    )
+    assert done.returncode != 0 and "row #3" in done.stdout + done.stderr, (done.stdout, done.stderr)
+    (root / gate.INDEX).write_text("| #1 | a |\n| #2 | b |\n| #3 | c |\n")
+    if change_a_patch:
+        (root / "code.py").write_text("x = 3\n")
+    _git(root, "add", "-A")
+    _git(root, "-c", "core.editor=true", "rebase", "--continue")
+    return read, _git(root, "rev-parse", "HEAD")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="no git on PATH")
+def test_a_rebase_is_judged_by_the_merge_tree_of_the_read_onto_the_moved_base(tmp_path):
+    """Driven on a real repo: the read's two patches rebased over a colliding index row are the same patches, and
+    the arm says so; a rebase that also edits a patch is not, and a read the clone cannot resolve is no answer."""
+    read, head = _rebased_repo(tmp_path / "kept", change_a_patch=False)
+    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "kept") is True
+    assert gate.rebase_kept_every_patch(read[:8], head, "develop", cwd=tmp_path / "kept") is True, (
+        "the body names the read by a prefix"
+    )
+    read, head = _rebased_repo(tmp_path / "changed", change_a_patch=True)
+    assert gate.rebase_kept_every_patch(read, head, "develop", cwd=tmp_path / "changed") is False
+    assert gate.rebase_kept_every_patch(head, head, "develop", cwd=tmp_path / "changed") is False, (
+        "a base that did not move is no rebase"
+    )
+    assert gate.rebase_kept_every_patch("0" * 40, head, "develop", cwd=tmp_path / "changed") is None, (
+        "an unknown read with no origin to fetch from"
+    )
 
 
 def test_a_row_commit_that_also_touches_another_file_fails():

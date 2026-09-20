@@ -13,6 +13,9 @@ import unicodedata
 REPO = "zhaow-de/zcrypto-kraken"
 GUARD = pathlib.Path(__file__).with_name("guidance-guard.py")
 INDEX = "docs/reference/change-index.md"
+# The two rendered files every keyed or topic branch touches: a rebase onto a moved base resolves them by hand, and
+# that resolution is the one difference a patch-preserving rebase may leave between the merged tree and the head.
+RENDERED = (INDEX, "docs/open-topics/README.md")
 JOURNAL = "docs/reference/ops-journal/"
 DEPENDABOT = "dependabot[bot]"
 # `commits` is here because `read_line_fails`'s dependabot arm reads it: a field an arm reads and this
@@ -341,8 +344,11 @@ def _fable_paths_touched(files: list[str]) -> list[str]:
     return sorted(p for p in files if any(p == g or (g.endswith("/") and p.startswith(g)) for g in FABLE_PATHS))
 
 
-def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None) -> list[str]:
-    """The read is at the floor and names the head, unless one of the arms below exempts the PR."""
+def read_line_fails(
+    pr: dict, head_commit: dict | None, files: list[str] | None, read_commit: dict | None = None, rebased: bool | None = None
+) -> list[str]:
+    """The read is at the floor and names the head, unless one of the arms below exempts the PR; `rebased` is
+    `rebase_kept_every_patch`'s answer for the read's tip against the head, None when it was not asked."""
     if (pr.get("headRefName") or "").startswith("dependabot/"):
         commits = pr.get("commits")
         if commits is None:
@@ -405,6 +411,8 @@ def read_line_fails(pr: dict, head_commit: dict | None, files: list[str] | None,
         read_tree = ((read_commit or {}).get("commit") or {}).get("tree", {}).get("sha") if read_commit else None
         if head_tree and read_tree and head_tree == read_tree:
             return []
+    if rebased:
+        return []  # the read's patches, every one unchanged, on a base that moved under them: no delta to read
     return [
         f"the read named in the body covers {sha[:8]}, not the head {head[:8]}: read the delta or re-read, then update the line"
     ]
@@ -436,6 +444,7 @@ def evaluate(
     files: list[str] | None = None,
     branch_growth: list[str] | None = None,
     read_commit: dict | None = None,
+    rebased: bool | None = None,
 ) -> list[str]:
     """branch_growth is guidance-guard.py --range's refusals over the branch, [] when it refused nothing; None means it was not run."""
     fails: list[str] = []
@@ -470,7 +479,7 @@ def evaluate(
         fails.append(
             "PR description has unchecked checklist item(s): a `- [ ]`, `* [ ]` or `1. [ ]` box, inside `<details>` or a quote too"
         )
-    fails.extend(read_line_fails(pr, head_commit, files, read_commit))
+    fails.extend(read_line_fails(pr, head_commit, files, read_commit, rebased))
     fails.extend(index_row_fails(pr))
     if branch_growth is None:
         fails.append(
@@ -478,6 +487,41 @@ def evaluate(
         )
     fails.extend(branch_growth or [])
     return fails
+
+
+def rebase_kept_every_patch(read: str, head: str, base_ref: str, cwd: pathlib.Path | None = None) -> bool | None:
+    """True when `head` is the read's tip rebased onto a moved base with every patch unchanged: the three-way merge
+    of the read onto the head's base gives the head's tree, or differs from it only in the two rendered files a
+    rebase resolves by hand. False when the base did not move, or a patch changed. None when the read's commit is
+    not in the clone and cannot be fetched, so nothing can be compared."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True, timeout=120, cwd=cwd).stdout.strip()
+
+    try:
+        try:
+            read = git("rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
+        except subprocess.CalledProcessError:
+            git("fetch", "-q", "origin", read)
+            read = git("rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
+        old_base = git("merge-base", f"origin/{base_ref}", read)
+        new_base = git("merge-base", f"origin/{base_ref}", head)
+        if old_base == new_base:
+            return False  # not a rebase: the tree arm above decides an amend, and a new commit takes a read
+        merged = subprocess.run(
+            ["git", "merge-tree", "--write-tree", f"--merge-base={old_base}", read, new_base],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=cwd,
+        )
+        if merged.returncode not in (0, 1) or not merged.stdout.strip():
+            return None  # a merge-tree that could not merge at all says nothing about the patches
+        tree = merged.stdout.splitlines()[0].strip()  # exit 1 is a conflict: the tree still prints first, its markers inside
+        changed = git("diff", "--name-only", tree, head).splitlines()
+    except subprocess.CalledProcessError, subprocess.TimeoutExpired:
+        return None
+    return all(path in RENDERED for path in changed)
 
 
 def _gh(*args: str) -> str:
@@ -521,13 +565,15 @@ def main(argv: list[str]) -> int:
     if m or pr.get("headRefName") == "ops-journal":
         files = _gh("api", "--paginate", f"repos/{REPO}/pulls/{pr['number']}/files", "--jq", ".[].filename").split()
     read_commit = None
+    rebased = None
     if m and head and not head.startswith(m.group(2)):
         head_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{head}"))
         try:
             read_commit = json.loads(_gh("api", f"repos/{REPO}/commits/{m.group(2)}"))
         except subprocess.CalledProcessError, subprocess.TimeoutExpired:
             read_commit = None  # a tip GitHub never saw, or a fetch that failed or timed out: no tree to compare, so read_line_fails names the head the read does not cover
-    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit)
+        rebased = rebase_kept_every_patch((read_commit or {}).get("sha") or m.group(2), head, pr["baseRefName"])
+    fails = evaluate(pr, head_commit, files, branch_growth(pr["baseRefName"], pr["headRefName"], head), read_commit, rebased)
     if fails:
         print("GATE FAILED:")
         for fail in fails:
