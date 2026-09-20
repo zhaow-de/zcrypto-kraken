@@ -782,6 +782,8 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
     reimplemented -- its byte layout is part of the record schema -- and locally, so the daily pass's other
     readers do not pay for the engine's imports.
     """
+    from polars.exceptions import PolarsError
+
     from cli.engine.journal import snapshot_content_hash
     from cli.ohlc.dataset import read_parquet
 
@@ -794,7 +796,16 @@ def derive_soak_store(journal_dir: Path, root: Path) -> Path:
     store = root / "store"
     for entry in legs:
         source = journal_dir / entry["path"]
-        frame = read_parquet(source)
+        try:
+            frame = read_parquet(source)
+        # A half-written leg is the rsync pull's own failure, and `PolarsError` is no subclass of anything
+        # `read_soak_verdict` catches: unguarded, the read takes the whole pass down on a traceback instead
+        # of one row. Re-raised as the class the leg's other two refusals use, it reaches the row as a source
+        # the pass could not read.
+        except PolarsError as exc:
+            raise ValueError(
+                f"pair={entry['pair']!r} grid='240' at {source}: leg cannot be read -- {str(exc).splitlines()[0]}"
+            ) from exc
         ts, closes = frame["ts"].to_list(), frame["close"].to_list()
         if snapshot_content_hash(ts, closes) != entry["content_hash"]:
             raise ValueError(f"content hash mismatch for pair={entry['pair']!r} grid='240' at {source} -- corrupt evidence")

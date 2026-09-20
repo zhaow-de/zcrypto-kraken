@@ -352,6 +352,29 @@ def test_a_leg_disagreeing_with_its_journaled_metadata_is_refused_and_reads_unre
         assert not check.ok and check.value.startswith("unreadable:"), check.value
 
 
+def test_a_leg_the_reader_cannot_open_reads_unreadable_and_does_not_end_the_pass(tmp_path):
+    """The truncated leg the docstring names: `read_parquet` raises `polars.exceptions.ComputeError`, which is
+    outside every class `read_soak_verdict` catches, so the read has to refuse in a class the row can read.
+    What this drives is that the whole pass survives one unopenable leg -- a Check, not a traceback."""
+    last = datetime(2026, 9, 19, 12, tzinfo=timezone.utc)
+    store, journal = tmp_path / "store", tmp_path / "journal"
+    _a_twelve_leg_store(store, last, short_leg="SOL/EUR")
+    _journal_a_cycle_from(store, journal, last + timedelta(hours=4))
+    record_path = next(journal.glob("*/cycle-*.json"))
+    legs = {e["pair"]: e for e in json.loads(record_path.read_text())["snapshots"] if e["grid"] == "240"}
+    leg = journal / legs["BTC/EUR"]["path"]
+    whole = leg.read_bytes()
+    leg.write_bytes(whole[: len(whole) // 2])
+
+    check = ops_daily.read_soak_verdict(now=_SOAK_NOW, runner=lambda _: ops_daily.derive_soak_store(journal, tmp_path / "scratch"))
+
+    assert not check.ok and check.value.startswith("unreadable:"), check.value
+    assert "pair='BTC/EUR'" in check.value and str(leg) in check.value, check.value
+    _, marker, detail = check.value.partition("leg cannot be read -- ")
+    assert marker and detail.strip(), check.value
+    assert "\n" not in check.value, "the row is one line: only the reader's first line reaches it"
+
+
 def test_a_journal_with_no_record_and_a_record_with_no_240_snapshot_both_refuse(tmp_path):
     with pytest.raises(FileNotFoundError, match="no cycle record"):
         ops_daily.derive_soak_store(tmp_path, tmp_path / "scratch")
