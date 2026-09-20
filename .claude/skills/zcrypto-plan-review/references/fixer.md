@@ -14,7 +14,7 @@ Read the union report `{UNION}` in full. Then read {SPEC} — the binding author
 
 **Extend, do not restate.** Two things that must agree are made unable to disagree — a shared constant, one source of truth, a derived value — never the same fact written twice. Restating is where the next round's regression is born.
 
-**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Every mechanism costs a scoped re-review and seeds the next round's lenses. A fix never mints a `T<NNNN>`: registration takes the owner's word (`topic-ops`), so a deferral with no home goes under `## Skipped` with its Context and Why this matters, or takes a trigger arm on an existing topic, or is an explicit drop with its reason.
+**Smallest correct edit.** A new mechanism — a timer, a lock, a file, a unit, a fallback, a script, a retry — only when the finding cannot be closed without one, and then the report says why. **A fix that would add three or more mechanisms is a design change: stop and report it instead of committing.** Every mechanism costs a scoped re-review and seeds the next round's lenses. A fix never mints a `T<NNNN>`: registration takes the owner's word (`topic-ops`), so a deferral takes one of the lenses' three homes — a registered topic, a trigger arm on an existing topic, an explicit drop with its reason — and one that needs a topic not yet registered goes under `## Skipped` with the topic's Context and Why this matters, for the ledger step to put to the owner.
 
 ## The failure mode this loop is measured on
 
