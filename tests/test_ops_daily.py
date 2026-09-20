@@ -2764,6 +2764,9 @@ _ENGINE_READS = [
     "zcrypto engine report --journal-dir /mnt/zhao-crypto/engine-journal",
     "zcrypto engine decompose --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-09-01 --until 2026-09-19 --json",
     "zcrypto engine accum-replay --minimums data/refdata/pairs.json --nav 10000.5 --json",
+    # A flag repeated: click keeps the last, and every occurrence is held to the same value class, so no
+    # repeat can carry a value the first one's class refused.
+    "zcrypto engine accum-replay --nav 10000.5 --nav 20000 --json",
     "zcrypto engine tracking-report --gate-from 2026-W37 --simulated-fills --json",
     "zcrypto engine soak-check --journal-dir /mnt/zhao-crypto/engine-journal --store-dir /tmp/soak/store"
     " --canonical-dir /srv/ohlc-full --fee-per-side 0.006 --band 0.9 --floor 30 --null both --path fast",
@@ -2795,6 +2798,9 @@ _ENGINE_OPTIONS_LEFT_OUT = {
         # The CLI refuses a valueless `--json` here; a shape that admitted it would vouch for a form that cannot run.
         "zcrypto engine soak-check --json",
         "zcrypto engine soak-check --registry /etc/zcrypto-ops/alloy/alloy-secrets.env",
+        # The same excluded option inside the container: the docker-exec prefix is stripped and the sub's own
+        # table decides, so the exclusion cannot be walked around by moving the command one hop inward.
+        "sudo docker exec zcrypto-engine zcrypto engine soak-check --registry /etc/zcrypto-ops/alloy/alloy-secrets.env",
         "zcrypto engine tracking-report --ledger-export /opt/zcrypto-capture/logship-secrets.env",
         # Options of a sibling sub.
         "zcrypto engine report --since 24h",
