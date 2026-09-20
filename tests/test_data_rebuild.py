@@ -530,6 +530,11 @@ def test_ohlc_full_is_the_canonical_when_no_stamped_sibling_exists(tmp_path):
     assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full"
 
 
+def test_a_stamped_sibling_alone_is_the_canonical(tmp_path):
+    (tmp_path / "ohlc-full-20260920").mkdir()
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
 def test_a_stray_ohlc_full_directory_never_outranks_a_dated_sibling(tmp_path):
     (tmp_path / "ohlc-full").mkdir()
     for name in ("ohlc-full-20260920", "ohlc-full-backup", "ohlc-full-20260920.bak"):
@@ -624,8 +629,8 @@ def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeyp
     assert "BTC@240" not in caplog.text
 
 
-def test_rebuild_ohlc_reach_fails_closed_without_a_live_canonical(tmp_path, monkeypatch):
-    """No ohlc-full means nothing to reach forward FROM -- refuse rather than mint an empty set."""
+def test_rebuild_ohlc_reach_fails_closed_without_any_frozen_ohlc_full(tmp_path):
+    """Nothing to reach forward FROM -- refuse rather than mint an empty set."""
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
     with pytest.raises(DataSyncError):
         rebuild.rebuild_sets(["ohlc-reach"], ctx)
