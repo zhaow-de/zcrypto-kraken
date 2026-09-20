@@ -166,6 +166,7 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
         assert "merge-base <its tip> ${tip}" in text and text.count("log --format=%B <that merge base>..") == 2, (
             f"{flow}: the ledger agent compares the messages from the two tips' merge base, not the trees alone"
         )
+        assert text.count("| sha256sum") == 2, f"{flow}: two logs are compared by their sums, never by an agent's reading"
         refuses = rf"^if \([^\n]*\) throw new Error\(`{flow} refuses \$\{{tip\}}: "
         block = re.search(
             refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-review[^\n]*$",
