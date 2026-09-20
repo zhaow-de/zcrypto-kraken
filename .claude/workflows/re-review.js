@@ -95,7 +95,7 @@ const LEDGER_ENTRY = {
   type: 'object',
   properties: {
     kind: { type: 'string' }, range: { type: 'string' }, tip: { type: 'string' }, ts: { type: 'string' },
-    treeEqualsTip: { type: 'boolean', description: 'for a pre-review row whose tip is not this run’s: whether `git diff --quiet <row tip> <this tip>` exits 0' },
+    sameTreeAndMessages: { type: 'boolean', description: 'for a pre-review row whose tip is not this run’s: whether `git diff --quiet <row tip> <this tip>` exits 0 and `git log --format=%B` from their merge base prints the same text for both' },
   },
   required: ['kind', 'range', 'tip', 'ts'],
 }
@@ -104,15 +104,15 @@ const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }
 const ledgerPath = `${reportDir}/ledger.jsonl`
 phase('Ledger')
 const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each pre-review entry whose tip is not \`${tip}\`, run \`git -C ${repo} diff --quiet <its tip> ${tip}\` and set treeEqualsTip true when it exits 0, false otherwise, an unknown sha included. Return the entries as they are with that one field added. Write nothing; no other command.`,
+  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each pre-review entry whose tip is not \`${tip}\`: run \`git -C ${repo} diff --quiet <its tip> ${tip}\`, then \`git -C ${repo} merge-base <its tip> ${tip}\`, then \`git -C ${repo} log --format=%B <that merge base>..<its tip>\` and \`git -C ${repo} log --format=%B <that merge base>..${tip}\`; set sameTreeAndMessages true when the diff exits 0 and the two logs print the same text, false otherwise, an unknown sha included. Return the entries as they are with that one field added. Write nothing; no other command.`,
   { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
 )
 if (!ledger) throw new Error(`re-review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-review; retry`)
 const entries = ledger.entries || []
-// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree is that tip's, a message-only amend having moved the name and not the text.
+// A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree and commit messages are that tip's, a re-dated or re-signed commit having moved the name and nothing the pre-review grades.
 const sameTip = (e) => typeof e.tip === 'string' && (e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip))))
 if (!entries.some((e) => e.kind === 'review')) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no review of this branch — a fix range follows a whole-branch review, never replaces it`)
-if (!entries.some((e) => e.kind === 'pre-review' && (sameTip(e) || e.treeEqualsTip === true))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on the fix range first`)
+if (!entries.some((e) => e.kind === 'pre-review' && (sameTip(e) || e.sameTreeAndMessages === true))) throw new Error(`re-review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on the fix range first, over the amended commit alone after a message-only amend`)
 
 // --- Re-read -----------------------------------------------------------------------------------
 phase('Re-read')
