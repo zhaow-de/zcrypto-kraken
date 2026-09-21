@@ -338,3 +338,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #577 | 2026-09-20 | fix(engine): soak-check scores the newest run that meets the floor | — | 00115 | — |
 | #578 | 2026-09-20 | feat(data): T0065 the Q2 2026 OHLCVT ingest, reach over the new sibling | — | — | T0065 |
 | #579 | 2026-09-21 | fix(engine): T0184 the concentration aggregate leaves no-book bars out | — | — | T0184 |
+| #580 | 2026-09-21 | fix(engine): T0200 — the snapshot write refuses an unusable close | — | 00116 | T0200 |
