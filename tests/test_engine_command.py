@@ -248,6 +248,7 @@ def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):
     out = _output(result)
     assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
     assert "no data_dir configured" in out
+    assert "--data-dir" not in out
     assert calls == []
 
 

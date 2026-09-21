@@ -20,7 +20,7 @@ from typing import Optional
 import typer
 from prometheus_client import Counter, Gauge
 
-from cli.config import AppConfig, ConfigError, EngineConfig, load_config, resolve_data_dir
+from cli.config import CONFIG_FILENAME, CONFIG_TABLE, AppConfig, ConfigError, EngineConfig, load_config, resolve_data_dir
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
 from cli.engine.errors import EngineError, EngineJournalError
@@ -371,12 +371,18 @@ def seed() -> None:
     ]
     canonical_dir = CANONICAL_DIR
     if absent:
+        named = ", ".join(absent[:3]) + (", ..." if len(absent) > 3 else "")
+        prefix = f"engine seed: no canonical dataset to seed {len(absent)} absent series ({named}) from --"
         try:
-            canonical_dir = resolve_canonical_root(resolve_data_dir(None, app_config))
-        except (ConfigError, DataSyncError) as exc:
+            data_root = resolve_data_dir(None, app_config)
+        except ConfigError as exc:
+            # The config's own remedy names `--data-dir`, an option this command does not take: the toml is the one place.
+            raise _abort(f"{prefix} no data_dir configured, set [{CONFIG_TABLE}].data_dir in {CONFIG_FILENAME}") from exc
+        try:
+            canonical_dir = resolve_canonical_root(data_root)
+        except DataSyncError as exc:
             # The resolver's remedies are written for `data rebuild`; the seed says whose refusal this is first.
-            named = ", ".join(absent[:3]) + (", ..." if len(absent) > 3 else "")
-            raise _abort(f"engine seed: no canonical dataset to seed {len(absent)} absent series ({named}) from -- {exc}") from exc
+            raise _abort(f"{prefix} {exc}") from exc
     try:
         report = seed_store(store_dir, canonical_dir)
     except EngineError as exc:
