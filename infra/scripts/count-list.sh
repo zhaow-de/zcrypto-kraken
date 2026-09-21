@@ -334,6 +334,9 @@ c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="" and (
 
 c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'; }
 
+# A watch number, not a gate: the log cannot read the journal, so the band is what `on_the_completion_floor` infers.
+c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows .*on the completion floor \([0-9][0-9]*\)$/\1/p'; }
+
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
 c_image_removals_outside_the_pruner() { git grep -nE 'docker (image (prune|rm)|rmi|system prune)' -- infra cli .claude ':!*.md' ':!infra/scripts/prune-host-images.py' ':!infra/scripts/count-list.sh' | grep -vcE '^[^:]+:[0-9]+:[[:space:]]*#'; }
@@ -512,6 +515,7 @@ main() {
   emit "drills-on-the-primary" c_drills_on_the_primary
   emit "un-tagged-primary-runs" c_un_tagged_primary_runs
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
+  emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner
   emit "inspect-reads-of-dot-image" c_inspect_reads_of_dot_image
