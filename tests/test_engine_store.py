@@ -171,6 +171,28 @@ def test_seed_store_window_shortfall_names_ohlcvt_dump(tmp_path):
     assert "shortfall" in str(exc.value)
 
 
+def test_seed_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path):
+    """The seed's shortfall arm is reached by an empty REST answer as well as by a canonical tail outside the REST
+    window, and only the second is answered by a dump: the case above, whose fetch carries rows, keeps that hint.
+    The canonical copy has already landed when the seam refuses -- `seed_store` copies an absent leg before the
+    reconcile -- so the leg is present for the next run and the refusal prescribes nothing over it."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=lambda pair_key, interval: [], clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "seed_store: window shortfall for ADA/EUR@1440 — only 0 shared stamp(s)" in msg
+    assert "the REST fetch carries no completed bar, so there is no store repair" in msg
+    assert "the next run fetches again" in msg
+    assert "OHLCVT" not in msg and "quarterly" not in msg
+    assert "zcrypto engine seed" not in msg and "move this leg aside" not in msg
+    landed = _store_path(store_dir, "ADA/EUR", 1440)
+    assert read_parquet(landed).equals(to_frame(_canonical_rows(1440)))
+
+
 def test_seed_store_overlap_mismatch_aborts_on_first_seed(tmp_path):
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
@@ -372,6 +394,27 @@ def test_refresh_store_zero_overlap_is_distinct_error(tmp_path):
     assert "mismatch" not in msg  # distinct from the overlap-mismatch guard
 
 
+def test_refresh_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path):
+    """`_require_rest_frame` returns early on an empty fetch and leaves it to this arm, which a store past the REST
+    window's reach reaches too: the hint follows the cause, so an empty answer names the fetch and prescribes no
+    store repair, where the case above, whose fetch carries rows, keeps the stale-store recovery."""
+    store_dir = tmp_path / "store"
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
+
+    with pytest.raises(EngineError) as exc:
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: [], clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "refresh_store: window shortfall for BTC/EUR@1440 — only 0 shared stamp(s)" in msg
+    assert "the REST fetch carries no completed bar, so there is no store repair" in msg
+    assert "the next run fetches again" in msg
+    assert "catastrophically stale" not in msg
+    assert "zcrypto engine seed" not in msg and "move this leg aside" not in msg
+    assert read_parquet(_store_path(store_dir, "BTC/EUR", 1440)).equals(
+        to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON))
+    )
+
+
 @pytest.mark.parametrize("reader", ["refresh_store", "seed_store"])
 @pytest.mark.parametrize("wreck", ["corrupt bytes", "close of strings"])
 def test_the_store_readers_refuse_a_frame_they_cannot_read_or_price(tmp_path, reader, wreck):
@@ -426,6 +469,9 @@ def _deviated(frame: pl.DataFrame, how: str) -> pl.DataFrame:
         "an off-grid stamp": lambda: frame.with_columns(
             pl.when(at_stamp).then(pl.col("ts") + pl.duration(minutes=7)).otherwise(pl.col("ts")).alias("ts")
         ),
+        "a sub-second off-grid stamp": lambda: frame.with_columns(
+            pl.when(at_stamp).then(pl.col("ts") + pl.duration(milliseconds=500)).otherwise(pl.col("ts")).alias("ts")
+        ),
         "nan": lambda: frame.with_columns(pl.when(at_stamp).then(float("nan")).otherwise(pl.col("close")).alias("close")),
         "inf": lambda: frame.with_columns(pl.when(at_stamp).then(float("inf")).otherwise(pl.col("close")).alias("close")),
         "0.0": lambda: frame.with_columns(pl.when(at_stamp).then(0.0).otherwise(pl.col("close")).alias("close")),
@@ -447,6 +493,9 @@ def _first_difference(how: str, interval: int) -> str:
         "a null stamp": "ts is null in 1 row(s)",
         "a repeated stamp": "1 row(s) repeat a stamp another row carries",
         "an off-grid stamp": f"1 stamp(s) are off the {interval}-minute grid, the first {(stamp + timedelta(minutes=7)).isoformat()}",
+        "a sub-second off-grid stamp": (
+            f"1 stamp(s) are off the {interval}-minute grid, the first {(stamp + timedelta(milliseconds=500)).isoformat()}"
+        ),
         "nan": f"close[3] at {stamp.isoformat()} is nan, not a finite positive number (1 such close(s))",
         "inf": f"close[3] at {stamp.isoformat()} is inf, not a finite positive number (1 such close(s))",
         "0.0": f"close[3] at {stamp.isoformat()} is 0.0, not a finite positive number (1 such close(s))",
@@ -493,12 +542,13 @@ def test_the_store_readers_refuse_a_frame_off_the_schema(tmp_path, reader, how):
     _assert_store_refusal(exc.value, reader, path, 240, how)
 
 
-@pytest.mark.parametrize("how", ["no rows", "a null stamp", "a repeated stamp", "an off-grid stamp"])
+@pytest.mark.parametrize("how", ["no rows", "a null stamp", "a repeated stamp", "an off-grid stamp", "a sub-second off-grid stamp"])
 @pytest.mark.parametrize("interval", GRID_INTERVALS)
 @pytest.mark.parametrize("reader", ["refresh_store", "seed_store"])
 def test_the_store_readers_refuse_unsound_stamps(tmp_path, reader, interval, how):
     """No rows was the seam's shortfall; a null or repeated stamp and an interior off-grid stamp were carried into the
-    store by both readers and refused later or never, so these are the frames the door newly refuses."""
+    store by both readers and refused later or never, so these are the frames the door newly refuses. The sub-second
+    deviation is the one a grid arm read in whole seconds admits."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)

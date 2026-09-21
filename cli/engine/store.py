@@ -170,6 +170,10 @@ _ABSENT_REST_HINT = (
     "the REST fetch carries the absent close, so there is no store repair: the next run fetches again, and a fetch "
     "that returns it again is the venue's row to read, not the store's"
 )
+_EMPTY_REST_HINT = (
+    "the REST fetch carries no completed bar, so there is no store repair: the next run fetches again, and a fetch "
+    "that returns none again is the venue's to answer, not the store's"
+)
 _FRESH_COPY = "this is a fresh canonical copy, so a disagreement with REST is a data-integrity error"
 _RESEED_REFUSED = "the re-seed replaced nothing, because the seam refused before the replace"
 
@@ -194,7 +198,9 @@ def _frame_differences(frame: pl.DataFrame, interval: int) -> list[str]:
         return [f"ts is null in {stamps.null_count()} row(s)"]
     if stamps.n_unique() != frame.height:
         return [f"{frame.height - stamps.n_unique()} row(s) repeat a stamp another row carries"]
-    off_grid = frame.filter(pl.col("ts").dt.epoch("s") % (interval * 60) != 0)
+    # Microseconds, not seconds: `ts` is `Datetime("us", "UTC")` and `epoch("s")` floors a sub-second offset to a
+    # zero remainder, admitting at this door a stamp `cli/engine/soak.py::_on_grid` refuses at the same instant.
+    off_grid = frame.filter(pl.col("ts").dt.epoch("us") % (interval * 60 * 1_000_000) != 0)
     if off_grid.height:
         return [f"{off_grid.height} stamp(s) are off the {interval}-minute grid, the first {off_grid['ts'][0].isoformat()}"]
     unusable = frame.with_row_index().filter(
@@ -275,7 +281,7 @@ def seed_store(
                 interval=interval,
                 min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
-                shortfall_hint="use the quarterly OHLCVT dump",
+                shortfall_hint=(_EMPTY_REST_HINT if rest_frame.is_empty() else "use the quarterly OHLCVT dump"),
                 mismatch_hint=_FRESH_COPY,
                 absent_store_hint=(
                     f"{_FRESH_COPY} in the canonical, whose copy already landed: move this leg aside (outside the store) "
@@ -310,7 +316,7 @@ def refresh_store(
     clock=_utc_now,
 ) -> RefreshReport:
     """Append newly completed bars to an already-seeded `store_dir`, per pair x grid, refusing rather
-    than repairing a seam that does not hold -- the recovery is a re-seed."""
+    than repairing a seam that does not hold."""
     now = clock()
     entries = []
     for pair, pair_key in pairs.items():
@@ -331,7 +337,11 @@ def refresh_store(
                 interval=interval,
                 min_overlap=_REFRESH_MIN_OVERLAP,
                 allow_replace=False,
-                shortfall_hint=f"the store is catastrophically stale, past the REST window's reach -- {_STORE_RECOVERY}",
+                shortfall_hint=(
+                    _EMPTY_REST_HINT
+                    if rest_frame.is_empty()
+                    else f"the store is catastrophically stale, past the REST window's reach -- {_STORE_RECOVERY}"
+                ),
                 mismatch_hint=(
                     "the store tail may be poisoned -- on the workstation run `zcrypto engine seed`, whose re-seed over "
                     f"an existing file replaces the disagreeing tail inside the REST window; {_HOST_REDELIVERY}"
