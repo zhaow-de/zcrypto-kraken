@@ -44,9 +44,9 @@ Abort if a window the converge bullet of `.claude/rules/fleet-deploys.md` names 
 
 #### 1.2 The engine's 4-hour boundary
 
-The boundary schedule is `.claude/rules/fleet-deploys.md`'s engine bullet; a healthy completion lands inside `[B, B+30 min]`, as [`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) derives and §7.2 below reads.
+The boundary schedule and the gap's edges are [`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) step 4.
 
-- Run the probes inside the inter-cycle gap: no earlier than B+35 min, finishing well before the next boundary. A full `--probes all --apply` run takes roughly 3–5 minutes.
+- Run the probes inside the inter-cycle gap: no earlier than 5 min past the `completed_at` in the boundary's `cycle-<HH>.json`, and finishing well before the next boundary. A full `--probes all --apply` run takes roughly 3–5 minutes.
 - Confirm the last boundary journaled (from the workstation):
   ```
   ssh zcrypto 'ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
@@ -164,7 +164,7 @@ Nonce: the adapter mints finer-than-millisecond nonces (`docs/reference/adapter-
 
 ### 5. The run
 
-Re-check the maintenance feed (§1.1) and the boundary clock (§1.2) now, then proceed.
+Re-check the maintenance feed (§1.1) and the inter-cycle gap (§1.2) now, then proceed.
 
 #### 5.1 Dry run
 
@@ -288,7 +288,7 @@ ssh zcrypto 'ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/'
 
 A `cycle-<HH>.json` with `completed_at` inside `[B, B+30 min]` for the first boundary after the run is the outcome that says the probes cost the engine nothing.
 
-That boundary is normally hours away when you finish, because §1.2 puts the run at B+35 or later, so this check is almost always deferred. Carry it in the record, never in prose: give the version's record an `## Owed checks not discharged by this pass` section naming the exact boundary (`HH:00 UTC` on the run's date) and what would satisfy it, then come back at that boundary, take the reading, and rewrite that bullet as its outcome. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) refuses to arm while any item there is open. Any other reading this section asks for that the run could not take belongs in the same section; an `unmatched` delta with no before-reading is an absolute number, not the rise this section wants.
+That boundary is normally hours away when you finish, so this check is almost always deferred. Carry it in the record, never in prose: give the version's record an `## Owed checks not discharged by this pass` section naming the exact boundary (`HH:00 UTC` on the run's date) and what would satisfy it, then come back at that boundary, take the reading, and rewrite that bullet as its outcome. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) refuses to arm while any item there is open. Any other reading this section asks for that the run could not take belongs in the same section; an `unmatched` delta with no before-reading is an absolute number, not the rise this section wants.
 
 #### 7.3 Close the IP exception
 
