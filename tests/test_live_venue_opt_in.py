@@ -22,10 +22,12 @@ WHAT THIS FILE DOES NOT HOLD:
   that holds no list of the positions that decide; that walk reads a name through the module's `import`
   lines (`_FLAT_WALK_UNSEEN`), so a skip bound any other way is held by the walker alone: by nothing where it
   sits in a position `_guards_of` does not walk, or is reached by a binding `_pytest_bindings` does not follow;
-- the provenance of an argument no form reads. `nothing_found(rows)` keeps it at the three gates its
-  docstring names, whose rows come from no path scan, and `no_binary(name)` keeps it wherever the name
-  is computed; a scan's root and a config-rooted form's name are judged here (spec 00114 D10), so a
-  declaration the matcher can check is checked at the gate.
+- the provenance of an argument no form judges. `nothing_found(rows)` keeps it at the three gates its
+  docstring names, whose rows come from no path scan; `no_binary(name)` keeps it wherever the name is
+  computed; and a scan form's pattern keeps it beside the root judged under it, a glob a gate builds
+  from a parametrize value or a committed document and no literal may replace. A scan's root and a
+  config-rooted form's name are judged here (spec 00114 D10), so a declaration the matcher can check
+  is checked at the gate.
 
 `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are the class's two dead names (T0190): a `git grep`
 for either over `tests/ cli/ infra/ .claude/ CLAUDE.md` hits this docstring alone, a guard naming
@@ -62,8 +64,8 @@ REGISTRY_CONFIG_NAMES = frozenset({"load_config", "resolve_hot_source"})
 # allowlist below never sees it, and `globals()["__builtins__"]["__import__"]` reaches it without
 # naming it.
 REGISTRY_BUILTINS: frozenset[str] = frozenset({"any", "next", "sorted"})
-# The registry's public names, and which of them the matcher judges the argument of: `_registry_argument`
-# below (spec 00114 D10). The names in neither set are declarations the call site owns.
+# The registry's public names, partitioned into the ones the matcher judges the argument of --
+# `_registry_argument` below (spec 00114 D10) -- and the declarations the call site owns.
 REGISTRY_PUBLIC = frozenset(
     {
         "develop_resolves",
@@ -78,6 +80,7 @@ REGISTRY_PUBLIC = frozenset(
 )
 REGISTRY_ROOTED = frozenset({"nothing_found_under", "scan"})
 REGISTRY_LITERAL = frozenset({"substrate_root", "substrate_absent", "mount_absent"})
+REGISTRY_DECLARED = frozenset({"develop_resolves", "no_binary", "nothing_found"})
 # Every word `develop_resolves()`'s argv may carry, each of them a literal. `git` is itself a network
 # client, so its name at argv[0] constrains nothing: `ls-remote`, `fetch` and a
 # `-c protocol.ext.allow=<transport>` all reach a remote under it, and a skip would then be decided by
@@ -406,15 +409,32 @@ def _registry_call(node: ast.Call, module: Module) -> bool:
     )
 
 
+def _registry_name(func: ast.AST, module: Module) -> str:
+    """The registry's own name for the function a registry call reaches. The judged sets are keyed on
+    the registry's names and a call site may spell one through an `as` alias, so a `Name` is resolved
+    off the `from tests.skip_gates import ...` that bound it, the way `_flat_sites` resolves a helper;
+    an attribute on the module carries the registry's name already."""
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    for node in ast.walk(module.tree):
+        if isinstance(node, ast.ImportFrom) and node.module == REGISTRY_MODULE:
+            for a in node.names:
+                if (a.asname or a.name) == func.id:
+                    return a.name
+    return func.id
+
+
 def _registry_argument(node: ast.Call, module: Module, function: ast.AST | None) -> str | None:
     """`None` when this registry call's argument is what its form reads, else why not (spec 00114 D10).
 
     A scan form takes a root and a pattern, positionally, and the root is judged by the operand
     predicate exactly as a path receiver is, so a root a venue could have decided is refused at the
-    gate rather than accepted as a claim; a config-rooted form takes one literal string, the name the
-    config's own root is joined with. The other three names are not judged: `develop_resolves()` takes
-    no argument, and `no_binary(name)` and `nothing_found(rows)` are the claim their call site makes."""
-    name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+    gate rather than accepted as a claim; the pattern is the call site's own, a glob a gate builds
+    from a parametrize value or a committed document. A config-rooted form takes one literal string,
+    the name the config's own root is joined with. The declared names are not judged:
+    `develop_resolves()` takes no argument, and `no_binary(name)` and `nothing_found(rows)` are the
+    claim their call site makes."""
+    name = _registry_name(node.func, module)
     if name in REGISTRY_ROOTED:
         if len(node.args) != 2 or node.keywords:
             return f"`{name}` takes a root and a pattern, positionally"
@@ -444,8 +464,8 @@ def _match(guard: ast.AST, module: Module, function: ast.AST | None) -> list[For
     No arm below matches a CALL whose shape it has not pinned -- the positional count exact,
     `keywords` empty, a splat resolving to nothing a form can read -- because a form declares what it
     reads and an argument nothing judges is where a venue read sits: `shutil.which('bash',
-    path=_nas_bin())` reads a mount and not PATH. The registry arm is the one exception, by design:
-    its argument is the claim the call site makes, which no shape of it can check (spec 00114 D3).
+    path=_nas_bin())` reads a mount and not PATH. The registry arm is the exception, and a partial
+    one: `_registry_argument` judges what a form reads of its argument and leaves the rest.
     The two arms whose OPERAND rather than whose callee carries the reading take `function` as well,
     the function the gate sits in, because a name in an operand is judged at its binding and a local
     binds in there (`_rooted`)."""
@@ -992,9 +1012,10 @@ def test_the_registry_reads_nothing_a_form_could_not():
         assert n.module == REGISTRY_CONFIG_MODULE, f"the registry imports from {n.module}, not {REGISTRY_CONFIG_MODULE}"
         names = {a.name for a in n.names}
         assert names <= REGISTRY_CONFIG_NAMES, f"the registry takes {sorted(names - REGISTRY_CONFIG_NAMES)} from the config"
+    defined = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
     calls = [call for call in ast.walk(tree) if isinstance(call, ast.Call)]
     roots = {_call_root(call.func) for call in calls}
-    allowed = set(bound) | REGISTRY_BUILTINS
+    allowed = set(bound) | REGISTRY_BUILTINS | {f.name for f in defined}
     assert roots <= allowed, f"the registry calls {sorted(roots - allowed)}"
     for call in calls:
         if bound.get(_call_root(call.func)) != "subprocess":
@@ -1008,10 +1029,13 @@ def test_the_registry_reads_nothing_a_form_could_not():
         assert literals, f"a git argv word that is not a string literal: {ast.unparse(argv)}"
         words = {e.value for e in argv.elts}
         assert words <= REGISTRY_GIT_ARGV, f"a git that may leave this repo: {sorted(words - REGISTRY_GIT_ARGV)}"
-    defined = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
     public = {f.name for f in defined if not f.name.startswith("_")}
     assert public == REGISTRY_PUBLIC, f"the registry's public functions are {sorted(public)}"
-    assert REGISTRY_ROOTED | REGISTRY_LITERAL < REGISTRY_PUBLIC, "a judged name is not a registry function"
+    judged = REGISTRY_ROOTED | REGISTRY_LITERAL
+    assert len(judged) == len(REGISTRY_ROOTED) + len(REGISTRY_LITERAL), "a name is judged two ways"
+    assert judged | REGISTRY_DECLARED == REGISTRY_PUBLIC and not judged & REGISTRY_DECLARED, (
+        f"the registry's names are not partitioned into judged and declared: {sorted(REGISTRY_PUBLIC ^ (judged | REGISTRY_DECLARED))}"
+    )
     for f in defined:
         body = [s for s in f.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
         assert len(body) == 1 and isinstance(body[0], ast.Return), f"{f.name} is more than one return"
@@ -1419,6 +1443,8 @@ def test_skips_on_a_registry_module_an_attribute_store_takes_over_the_other_spel
 
 
 from tests.skip_gates import nothing_found_under, substrate_absent
+from tests.skip_gates import scan, substrate_root, mount_absent
+from tests.skip_gates import nothing_found_under as found_none, substrate_absent as no_substrate
 
 
 def test_gated_on_a_scan_under_a_literal_root():
@@ -1459,6 +1485,36 @@ def test_skips_on_a_scan_with_its_pattern_missing():
 def test_skips_on_a_substrate_named_by_an_f_string():
     if substrate_absent(f"{FLAG}"):
         pytest.skip("an f-string is not a literal the config's root is joined with")
+
+
+def test_gated_on_a_scan_through_an_aliased_name():
+    if found_none(ROOT, "*.json"):
+        pytest.skip("the judged argument is read at an alias, resolved off its import")
+
+
+def test_skips_on_a_scan_through_an_aliased_name():
+    if found_none(_venue_answers(), "*.json"):
+        pytest.skip("an alias does not carry the root past the judgement")
+
+
+def test_skips_on_a_substrate_through_an_aliased_name():
+    if no_substrate(_venue_answers()):
+        pytest.skip("an alias does not carry the name past the judgement")
+
+
+def test_gated_on_the_rows_a_scan_returns():
+    if not scan(ROOT, "*.json"):
+        pytest.skip("the scan that hands the body its rows is judged at its root")
+
+
+def test_gated_on_a_substrate_root_named_by_a_literal():
+    if not substrate_root("derivatives-oi"):
+        pytest.skip("the root form is judged as the presence form is")
+
+
+def test_gated_on_a_mount_path_named_by_a_literal():
+    if mount_absent("capture-segments"):
+        pytest.skip("the config names the mount; the literal names what is under it")
 
 
 import unittest.mock
@@ -1654,6 +1710,8 @@ _REACHABILITY_REFUSED = (
     "test_skips_on_a_substrate_named_by_a_call",
     "test_skips_on_a_scan_with_its_pattern_missing",
     "test_skips_on_a_substrate_named_by_an_f_string",
+    "test_skips_on_a_scan_through_an_aliased_name",
+    "test_skips_on_a_substrate_through_an_aliased_name",
 )
 _REGISTRY_MATCHED = (
     "test_gated_on_the_registry_by_name",
@@ -1662,6 +1720,10 @@ _REGISTRY_MATCHED = (
     "test_gated_on_a_scan_under_a_literal_root",
     "test_gated_on_a_substrate_named_by_a_literal",
     "test_gated_on_a_scan_through_the_module_alias",
+    "test_gated_on_a_scan_through_an_aliased_name",
+    "test_gated_on_the_rows_a_scan_returns",
+    "test_gated_on_a_substrate_root_named_by_a_literal",
+    "test_gated_on_a_mount_path_named_by_a_literal",
 )
 _UNITTEST_DECORATED = (
     "test_gated_by_a_unittest_decorator",
@@ -1760,8 +1822,9 @@ def test_every_reachability_spelling_is_refused():
 
 def test_the_registry_is_the_one_call_a_guard_may_make():
     """Every spelling D3 accepts -- including the `from tests import skip_gates` idiom this suite uses
-    for every other `tests/` helper -- and every argument D10 judges, each case named for its shape.
-    What it refuses is in `_REACHABILITY_REFUSED` and in the tree assertion's remedy, not here."""
+    for every other `tests/` helper and an `as` alias of a judged name -- and every name D10 judges,
+    under a literal root or a literal name, each case named for its shape. What it refuses is in
+    `_REACHABILITY_REFUSED` and in the tree assertion's remedy, not here."""
     for name in _REGISTRY_MATCHED:
         gate = _fixture(name)
         assert gate.forms == (Form("registry"),) and gate.opaque == (), f"{name}: {gate}"

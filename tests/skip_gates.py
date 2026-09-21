@@ -5,8 +5,9 @@ module is one of them: the call is the declaration, made where a reviewer greps 
 here reads the filesystem, the repo, the local config, or the value it is handed, and nothing else --
 `test_the_registry_reads_nothing_a_form_could_not` holds the module to that. The matcher checks what
 it can of each call's argument: a scan's root is held literal-rooted the way a path receiver is, and
-a config-rooted form's name is held a literal, so those declarations are judged at the gate;
-`nothing_found` and `no_binary` are the call site's own, the former's docstring naming its gates.
+a config-rooted form's name is held a literal, so those declarations are judged at the gate; a
+scan's pattern, `nothing_found`'s rows and `no_binary`'s name are the call site's own, `nothing_found`'s
+docstring naming its gates.
 """
 
 import shutil
@@ -38,7 +39,7 @@ def nothing_found(rows: object) -> bool:
 
 def nothing_found_under(root: Path, pattern: str) -> bool:
     """A glob for `pattern` under `root` found nothing; the matcher holds `root` literal-rooted, as
-    it holds a path receiver."""
+    it holds a path receiver, and `pattern` is the call site's own."""
     return not any(Path(root).glob(pattern))
 
 
@@ -57,7 +58,7 @@ def substrate_root(name: str) -> Path | None:
 def substrate_absent(name: str) -> bool:
     """No root of the named substrate is on this machine, by `substrate_root`'s reading; the matcher
     holds `name` a literal."""
-    return next((p for p in (Path(resolve_hot_source(load_config()), name), Path("data", name)) if Path(p).is_dir()), None) is None
+    return substrate_root(name) is None
 
 
 def mount_absent(relative: str) -> bool:
