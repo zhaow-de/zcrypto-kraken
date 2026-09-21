@@ -36,7 +36,7 @@ The thirteen D2's operand predicate adds are four kinds again. Four read `DATA_R
 
 ## The measured basis
 
-Every figure below was produced on `develop` at `7590e60db` on 2026-09-17, by the commands named.
+Every undated figure below was produced on `develop` at `7590e60db` on 2026-09-17, by the commands named.
 
 **The census, from the guard's own walk.** `_tree_gates()` loaded from `tests/test_live_venue_opt_in.py` returns 66 gates; 6 carry an environment key and all 6 carry `ZCRYPTO_LIVE_VENUE_TESTS`. Blanking every `Name` to `_` and every string to `<lit>` in each guard's `ast` and grouping by the unparsed result gives fourteen shapes:
 
