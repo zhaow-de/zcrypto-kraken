@@ -32,9 +32,7 @@ def nothing_found(rows: object) -> bool:
     """The declaration the call site owns: a collection no path scan produces is empty. Kept for the
     three gates whose rows come from somewhere other than a glob -- a registry filter
     (`tests/test_registry_conformance.py`), an index of archived days and the heal-complete day chosen
-    from it (`tests/test_tape_bars_rest_control.py`) -- each read at its site as a local value by the
-    reviewer who wrote it; a gate over a glob takes `nothing_found_under`, whose root the matcher
-    checks."""
+    from it (`tests/test_tape_bars_rest_control.py`)."""
     return not rows
 
 
@@ -45,7 +43,7 @@ def nothing_found_under(root: Path, pattern: str) -> bool:
 
 
 def scan(root: Path, pattern: str) -> list[Path]:
-    """The glob a gate and its test body share, sorted by name so a stamped filename orders it."""
+    """The glob a test body needs, sorted by name so a stamped filename orders it."""
     return sorted(Path(root).glob(pattern))
 
 
@@ -63,6 +61,5 @@ def substrate_absent(name: str) -> bool:
 
 
 def mount_absent(relative: str) -> bool:
-    """`relative` under the NFS mount the local config names does not exist; the matcher holds
-    `relative` a literal."""
+    """`relative` under the NFS mount the local config names does not exist."""
     return not Path(load_config().nfs_mount_dir, relative).exists()

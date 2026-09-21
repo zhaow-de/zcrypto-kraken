@@ -22,10 +22,10 @@ WHAT THIS FILE DOES NOT HOLD:
   that holds no list of the positions that decide; that walk reads a name through the module's `import`
   lines (`_FLAT_WALK_UNSEEN`), so a skip bound any other way is held by the walker alone: by nothing where it
   sits in a position `_guards_of` does not walk, or is reached by a binding `_pytest_bindings` does not follow;
-- the provenance of `nothing_found(rows)`'s ARGUMENT. Three gates keep that declaration, named in its
-  docstring, because their rows come from no path scan; every other registry call's argument is judged
-  here (spec 00114 D10) -- a scan's root by the operand predicate, a config-rooted form's name as a
-  literal -- so a declaration the matcher can check is checked at the gate.
+- the provenance of an argument no form reads. `nothing_found(rows)` keeps it at the three gates its
+  docstring names, whose rows come from no path scan, and `no_binary(name)` keeps it wherever the name
+  is computed; a scan's root and a config-rooted form's name are judged here (spec 00114 D10), so a
+  declaration the matcher can check is checked at the gate.
 
 `ZCRYPTO_VENUE_CONTRACT` and `ZCRYPTO_E1B_LIVE` are the class's two dead names (T0190): a `git grep`
 for either over `tests/ cli/ infra/ .claude/ CLAUDE.md` hits this docstring alone, a guard naming
@@ -56,16 +56,14 @@ REGISTRY_IMPORTS = frozenset({"shutil", "subprocess", "pathlib", "typing", "cli"
 # config, a tracked toml, is a checkable place (spec 00114 D10), and nothing else of `cli` is.
 REGISTRY_CONFIG_MODULE = "cli.config"
 REGISTRY_CONFIG_NAMES = frozenset({"load_config", "resolve_hot_source"})
-# The builtins the registry may call: the three its scan and config forms fold with, none of which
-# reaches anything its imports do not. An allowlist and not a blocklist of the importing ones, because
+# The builtins the registry may call: what its scan and config forms fold with, none of which reaches
+# anything its imports do not. An allowlist and not a blocklist of the importing ones, because
 # no blocklist holds: `__import__("socket")` is an `ast.Call` and not an `ast.Import`, so the import
 # allowlist below never sees it, and `globals()["__builtins__"]["__import__"]` reaches it without
 # naming it.
 REGISTRY_BUILTINS: frozenset[str] = frozenset({"any", "next", "sorted"})
-# The registry's public names, and which of them the matcher judges the argument of (spec 00114 D10):
-# a scan's root is held literal-rooted as a path receiver is, and a config-rooted form's name is held
-# a literal, so what each declares is checked at the gate. The three not in either set are
-# declarations the call site owns, `nothing_found(rows)` above all.
+# The registry's public names, and which of them the matcher judges the argument of: `_registry_argument`
+# below (spec 00114 D10). The names in neither set are declarations the call site owns.
 REGISTRY_PUBLIC = frozenset(
     {
         "develop_resolves",
@@ -414,9 +412,8 @@ def _registry_argument(node: ast.Call, module: Module, function: ast.AST | None)
     A scan form takes a root and a pattern, positionally, and the root is judged by the operand
     predicate exactly as a path receiver is, so a root a venue could have decided is refused at the
     gate rather than accepted as a claim; a config-rooted form takes one literal string, the name the
-    config's own root is joined with. A declaration the call site owns -- `nothing_found(rows)` and
-    the two argument-free names -- is not judged: its argument is the claim, and its docstring says
-    which gates may still make it."""
+    config's own root is joined with. The other three names are not judged: `develop_resolves()` takes
+    no argument, and `no_binary(name)` and `nothing_found(rows)` are the claim their call site makes."""
     name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
     if name in REGISTRY_ROOTED:
         if len(node.args) != 2 or node.keywords:
@@ -988,8 +985,6 @@ def test_the_registry_reads_nothing_a_form_could_not():
     }
     imported = set(bound.values())
     assert imported <= REGISTRY_IMPORTS, f"the registry imports {sorted(imported - REGISTRY_IMPORTS)}"
-    # `cli` is on the allowlist for one module and two names alone: the config read is a checkable
-    # place, and nothing else under `cli` is a place a form could read.
     cli_imports = [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and (n.module or "").split(".")[0] == "cli"]
     plain_cli = [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.name.split(".")[0] == "cli"]
     assert not plain_cli, f"the registry imports {plain_cli} by module; only names from {REGISTRY_CONFIG_MODULE} are read"
@@ -1451,6 +1446,21 @@ def test_skips_on_a_substrate_named_by_a_call():
         pytest.skip("a name a call returned is not a literal")
 
 
+def test_gated_on_a_scan_through_the_module_alias():
+    if declared.nothing_found_under(ROOT, "*.json"):
+        pytest.skip("the judged argument is read at the module spelling too")
+
+
+def test_skips_on_a_scan_with_its_pattern_missing():
+    if nothing_found_under(ROOT):
+        pytest.skip("a scan form takes a root and a pattern, positionally")
+
+
+def test_skips_on_a_substrate_named_by_an_f_string():
+    if substrate_absent(f"{FLAG}"):
+        pytest.skip("an f-string is not a literal the config's root is joined with")
+
+
 import unittest.mock
 import unittest as ut
 from unittest import skipUnless
@@ -1642,6 +1652,8 @@ _REACHABILITY_REFUSED = (
     "test_skips_on_a_scan_under_an_imported_root",
     "test_skips_on_a_scan_under_what_a_call_returned",
     "test_skips_on_a_substrate_named_by_a_call",
+    "test_skips_on_a_scan_with_its_pattern_missing",
+    "test_skips_on_a_substrate_named_by_an_f_string",
 )
 _REGISTRY_MATCHED = (
     "test_gated_on_the_registry_by_name",
@@ -1649,6 +1661,7 @@ _REGISTRY_MATCHED = (
     "test_gated_on_the_registry_through_the_package",
     "test_gated_on_a_scan_under_a_literal_root",
     "test_gated_on_a_substrate_named_by_a_literal",
+    "test_gated_on_a_scan_through_the_module_alias",
 )
 _UNITTEST_DECORATED = (
     "test_gated_by_a_unittest_decorator",
@@ -1732,28 +1745,22 @@ def test_every_reachability_spelling_is_refused():
     registry, worn as a form by putting the call in an `.exists()` receiver or on the left of an `in`,
     or HOISTED off the receiver to the line above, where the binding is read too, or wearing a
     registry name a `def`, a `class`, an assignment, a second `import ... as` or an attribute
-    assignment has taken over -- matches no form. The `..._hoisted...`, `..._of_a_fixture_parameter` and `..._of_an_imported_root`
-    cases are the operand predicate's refusing answers (spec 00114 D2): each a value this file cannot
-    root in a literal and each a value a venue may have decided. The last six are the registry arm's:
-    four binding forms that shadow the import Python would otherwise have run, and an attribute
-    assignment on the module at each of its two spellings, which rebinds nothing and changes what the
-    call runs. A name whose import is not its ONE binding is not a declaration, and neither is one the
-    module assigns an attribute on, whichever spelling the call uses. The
-    `..._module_of_ours_that_resolves` case is the price of following nothing: a call is a form only
-    into the registry (spec 00114 D3), so a sibling module declares itself there or is rewritten at
-    the gate, whatever that module happens to read. The last three are the registry's argument judged
-    (spec 00114 D10): a scan under an imported root, a scan under what a call returned, and a substrate
-    named by a call -- each a reading the form itself cannot see, refused as the operand predicate
-    refuses a path receiver."""
+    assignment has taken over -- matches no form. Each case name says which shape it is; what a name
+    cannot say is why. The operand predicate (spec 00114 D2) refuses a value this file cannot root in
+    a literal, at a path receiver and at a scan's root alike (spec 00114 D10), because it is a value a
+    venue may have decided. A name whose import is not its ONE binding is not a declaration, and
+    neither is one the module assigns an attribute on, although that rebinds nothing, because the
+    attribute assignment is what the call runs. The `..._module_of_ours_that_resolves` case is the
+    price of following nothing: a call is a form only into the registry (spec 00114 D3), so a sibling
+    module declares itself there or is rewritten at the gate, whatever that module happens to read. Two more are the form's own shape: a scan with its pattern missing and a substrate named by an f-string."""
     for name in _REACHABILITY_REFUSED:
         gate = _fixture(name)
         assert gate.forms == () and gate.opaque, f"{name}: {gate}"
 
 
 def test_the_registry_is_the_one_call_a_guard_may_make():
-    """The three spellings D3 accepts -- a name imported from the registry, an alias of the module, and
-    the `from tests import skip_gates` idiom this suite uses for every other `tests/` helper -- and the
-    two judged arguments D10 accepts, a scan under a literal root and a substrate named by a literal.
+    """Every spelling D3 accepts -- including the `from tests import skip_gates` idiom this suite uses
+    for every other `tests/` helper -- and every argument D10 judges, each case named for its shape.
     What it refuses is in `_REACHABILITY_REFUSED` and in the tree assertion's remedy, not here."""
     for name in _REGISTRY_MATCHED:
         gate = _fixture(name)
