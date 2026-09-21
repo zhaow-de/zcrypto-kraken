@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `seed_store` and `refresh_store` refuse a store frame, and `seed_store` a canonical before copying it, that is not the whole of `FRAME_SCHEMA` in order, non-empty, with no null or repeated stamp, every stamp on the leg's epoch-anchored grid and every present close finite and positive, naming the file, the pair, the grid, the first difference and one recovery per host; the three code carriers that named the workstation command route by host, the seam's absent-close refusal routes by the side that holds the null and `seed_store` claims a fresh copy only when it copied one, and the soak's off-grid refusal carries the same recovery and names the daily row's scratch store; the engine host's repair moves the store aside, converges with the flag and the digest, and purges the aside copy after the all-clear by value, in the runbook, the engine role's comment and `fail_msg`, and spec 00042; spec 00115 D2 is amended to the host read that settled it; T0199 is resolved.
+**Goal:** `seed_store` and `refresh_store` refuse a store frame, and `seed_store` a canonical before copying it, that is not the whole of `FRAME_SCHEMA` in order, non-empty, with no null or repeated stamp, every stamp on the leg's epoch-anchored grid and every present close finite and positive, naming the file, the pair, the grid, the first difference and one recovery per host; the three code carriers that named the workstation command route by host, the seam's absent-close refusal routes by the side that holds the null and `seed_store` claims a fresh copy only when it copied one, and the soak's off-grid refusal carries the same recovery and names the daily row's scratch store; the engine host's repair moves the store aside, converges with the flag and the digest, and purges the aside copy once the refused file has been read and the all-clear by value has landed, in the runbook, the engine role's comment and `fail_msg`, and spec 00042; spec 00115 D2 is amended to the host read that settled it; T0199 is resolved.
 
-**Architecture:** One `_frame_differences(frame, interval)` in `cli/engine/store.py` returning the first failing arm's differences, and `_require_store_frame` raising them with the recovery `frozen` picks, replacing `_require_joinable_ts` at its three call sites; three module constants hold the store recovery, the canonical recovery and the host routing, and `refresh_store`'s two hints and `run`'s bind-mount refusal in `cli/engine/command.py` end with the routing. `_reconcile` takes two hints beside `mismatch_hint` and its absent-close refusal picks one by side; its seam and merge, `read_store_series`, `cli/ohlc/seam.py` and `cli/ohlc/dataset.py` do not change. `realized_series`' off-grid refusal in `cli/engine/soak.py` imports the store recovery and names the daily row's scratch store, and `run_cycle`'s docstring gains the move-aside clause. Two cycle fixtures stop writing what the door refuses. The host carriers are prose: the engine role's delivery comment and `fail_msg`, spec 00042's item 4 with a `## Spec amendments` section, the cycle-stale bullet of `infra/runbooks/engine.md`, the workstation row of `docs/reference/fleet.md` and spec 00115's D2 with its own `## Spec amendments` section. The topic is resolved and archived.
+**Architecture:** One `_frame_differences(frame, interval)` in `cli/engine/store.py` returning the first failing arm's differences, and `_require_store_frame` raising them with the recovery `frozen` picks, replacing `_require_joinable_ts` at its three call sites; three module constants hold the store recovery, the canonical recovery and the host routing, and `refresh_store`'s two hints and `run`'s bind-mount refusal in `cli/engine/command.py` end with the routing. `_reconcile` takes two hints beside `mismatch_hint` and its absent-close refusal picks one by side, over the absent rows; its seam and merge, `read_store_series`' checks, `cli/ohlc/seam.py` and `cli/ohlc/dataset.py` do not change. `realized_series`' off-grid refusal in `cli/engine/soak.py` imports the store recovery and names the daily row's scratch store, and `run_cycle`'s docstring gains the move-aside clause. Two cycle fixtures stop writing what the door refuses. The host carriers are prose: the engine role's delivery comment and `fail_msg`, spec 00042's item 4 with a `## Spec amendments` section, the cycle-stale bullet of `infra/runbooks/engine.md`, the workstation row of `docs/reference/fleet.md` and spec 00115's D2 with its own `## Spec amendments` section. The topic is resolved and archived.
 
 **Tech Stack:** Python 3.14, pytest, polars 1.44.2 (`FRAME_SCHEMA`, `dt.epoch`, `is_infinite`, `with_row_index`); `infra/scripts/mutate-probe.sh` for the guard verdicts; `topic-ops` for the closeout; the universal test of `zcrypto-refine-rules` governs the runbook and fleet pages Task 3 edits, through the `guidance-guard` commit-msg hook.
 
@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- The source change is confined to `cli/engine/store.py` (the `cli.ohlc.dataset` import line, the six constants, `_frame_differences`, `_require_store_frame`, its three call sites, `_reconcile`'s two hint parameters and the hint its absent-close refusal picks by side, both callers' hint lines and one docstring clause in `read_store_series`), the `cli.engine.store` import line and the bind-mount refusal in `cli/engine/command.py`, the `cli.engine.store` import line and the off-grid refusal's text in `cli/engine/soak.py`, one docstring clause in `cli/engine/cycle.py` and one in `cli/ohlc/reach.py`. `_reconcile`'s seam and merge, `read_store_series`' checks, `_on_grid`, `cli/ohlc/seam.py`, `cli/ohlc/dataset.py` (spec 00116 D4 and T0200's ruling) and `run_cycle`'s code do not change (spec D1, D2, D6).
+- The source change is confined to `cli/engine/store.py` (the `cli.ohlc.dataset` import line, the six constants, `_frame_differences`, `_require_store_frame`, its three call sites, `_reconcile`'s two hint parameters and the hint and the side list its absent-close refusal reads off the absent rows, both callers' hint lines and three docstring clauses in `read_store_series`), the `cli.engine.store` import line and the bind-mount refusal in `cli/engine/command.py`, the `cli.engine.store` import line and the off-grid refusal's text in `cli/engine/soak.py`, one docstring clause in `cli/engine/cycle.py`, and one docstring line and the keys comment in `cli/ohlc/reach.py`. `_reconcile`'s seam and merge, `read_store_series`' checks, `_on_grid`, `cli/ohlc/seam.py`, `cli/ohlc/dataset.py` (spec 00116 D4 and T0200's ruling) and `run_cycle`'s code do not change (spec D1, D2, D6).
 - The refusal's message is `<fn_name>: <path> is not the frame the store readers join for <pair>@<interval> -- <differences>; <recovery>`, the differences spelled as `_read_canonical` in `cli/ohlc/reach.py` spells them and the close arm as spec 00116 D1's message spells it (spec D1, D2, D4). No string literal added under `cli/`, `infra/ansible/`, `infra/runbooks/` or `docs/reference/` names a spec, a decision or a topic: `tests/test_internal_terms_not_operator_visible.py` reads every string literal under `cli/`, every ansible task name and every runbook page. Provenance goes in the comment beside the code and in the commit message.
 - `None` is admitted as a close (spec D2); the filter reads `is_not_null()` before anything else. The grid is `interval` minutes from the Unix epoch, both grids (spec D3).
-- The store-file recovery is one text, `_STORE_RECOVERY`, for every arm, and the words `recast` and `promote the verified sibling` leave `cli/engine/store.py` (spec D4, D5); every text naming `zcrypto engine seed` ends with `_HOST_REDELIVERY` (spec D6).
+- The store-file recovery is one text, `_STORE_RECOVERY`, for every arm, and the words `recast` and `promote the verified sibling` leave `cli/engine/store.py` (spec D4, D5); every text naming `zcrypto engine seed` carries `_HOST_REDELIVERY`, and ends with it except `realized_series`' refusal, whose scratch-store sentence follows it (spec D6).
 - A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend, the tree clean: Task 1 Step 8 and Task 2 Step 6 are those steps. The probe never runs while a pytest run is in flight in the same checkout.
 - Every commit is green over the changed modules' consumers, the union of `grep -rlE 'engine\.store|engine import store' tests/test_*.py`, `grep -rlE 'engine\.command|engine import command' tests/test_*.py`, `grep -rlE 'engine\.soak|engine import soak' tests/test_*.py`, `grep -rlE 'engine\.cycle|engine import cycle' tests/test_*.py` and `grep -rlE 'ohlc\.reach' tests/test_*.py` as they read when this plan was written: `uv run pytest -q tests/test_basket_concordance.py tests/test_config.py tests/test_data_command.py tests/test_data_manifest.py tests/test_data_rebuild.py tests/test_engine_command.py tests/test_engine_concordance.py tests/test_engine_cycle.py tests/test_engine_execledger.py tests/test_engine_feeders.py tests/test_engine_flatten.py tests/test_engine_gate_cache.py tests/test_engine_gate_export_cache.py tests/test_engine_gate_export.py tests/test_engine_instruments.py tests/test_engine_metrics.py tests/test_engine_node.py tests/test_engine_soak_command.py tests/test_engine_soak.py tests/test_engine_store.py tests/test_engine_stub_fidelity.py tests/test_engine_venuestate.py tests/test_error_paths_are_logged.py tests/test_ohlc_reach.py tests/test_ops_daily_soak.py tests/test_ops_daily.py`; `uv run pre-commit run -a` is clean; the full suite is CI's, on the pull request.
 - `uv run pre-commit run -a` runs the pre-commit stage alone: `guidance-guard`, `message-citations` and `staged-kind` run at commit-msg. The first refuses a universal word (every, never, always, only, any, cannot) in the prose of a list item on a page under `infra/runbooks/` or in `docs/reference/fleet.md` with no count entry, so the texts Task 3 writes there carry none outside code spans; the second refuses a commit message whose `path:line`, `path::symbol` or `T<NNNN>` resolves nowhere, so the messages below cite symbols that exist at that commit and topics that exist on either side of it.
@@ -34,7 +34,7 @@ Claude-Session: https://claude.ai/code/session_01QL5VMcRChTfVeL5fwZb9rd
 ## File structure
 
 - Modify `cli/engine/store.py` — `FRAME_SCHEMA` imported; `_HOST_REDELIVERY`, `_STORE_RECOVERY`, `_CANONICAL_RECOVERY`; `_frame_differences` and `_require_store_frame` replace `_require_joinable_ts` at its three call sites; `read_store_series`' docstring names the new door (Task 1); `_ABSENT_REST_HINT`, `_FRESH_COPY`, `_RESEED_REFUSED`; `_reconcile` picks an absent-close hint by side; `refresh_store`'s hints route by host and `seed_store`'s claim a fresh copy only over one (Task 2).
-- Modify `cli/ohlc/reach.py` — `_read_canonical`'s sibling line names `_require_store_frame` (Task 1).
+- Modify `cli/ohlc/reach.py` — `_read_canonical`'s sibling line names `_require_store_frame`, and its keys comment drops the topic path Task 4 archives (Task 1).
 - Modify `tests/test_engine_store.py` — three existing cases re-pinned; a deviation fixture and five width cases (Task 1); two REST-side lines re-pinned; the routed-hints case, the side case and the fresh-copy case (Task 2).
 - Modify `tests/test_engine_cycle.py` — `_spoil` spoils past the door; the calendar pin's `/BTC`-only stamp moves onto the grid as an EUR gap; `_BTC_ONLY_OFFSET` goes (Task 1).
 - Modify `cli/engine/command.py` — `_HOST_REDELIVERY` imported; `run`'s bind-mount refusal routes by host (Task 2).
@@ -56,7 +56,7 @@ Claude-Session: https://claude.ai/code/session_01QL5VMcRChTfVeL5fwZb9rd
 
 **Files:**
 - Modify: `cli/engine/store.py` (the line `from cli.ohlc.dataset import read_parquet, to_frame, write_parquet`; the whole of `_require_joinable_ts`, from `def _require_joinable_ts(` to the blank lines before `def seed_store(`; the three calls of `_require_joinable_ts` in `seed_store` and `refresh_store`; the clause `(`_require_joinable_ts` above owns the exact dtype)` in `read_store_series`' docstring)
-- Modify: `cli/ohlc/reach.py` (the line `    Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.` in `_read_canonical`'s docstring)
+- Modify: `cli/ohlc/reach.py` (the line `    Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.` in `_read_canonical`'s docstring; the two comment lines above `        stamps = frame["ts"]`, from `        # The keys only:` to the line ending `are open (docs/open-topics/T0199-store-nan-drops-a-tail-instead-of-refusing.md).`)
 - Test: `tests/test_engine_store.py` (three existing assertion blocks; the fixture and five cases appended at the end of the file)
 - Test: `tests/test_engine_cycle.py` (`_spoil` and its three calls; the `_BTC_ONLY_INSERT_AT` block, `_real_rows`, `_real_store_rows`, `_standalone_ten_asset_targets` and `test_a_btc_stamp_the_eur_legs_lack_moves_no_eur_window`)
 - Test: `tests/test_engine_soak.py` (the `from datetime import` line; one case appended at the end of the file)
@@ -352,8 +352,10 @@ def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: i
     """Refuse a frame the store readers cannot join, merge or price, before the seam, the concat or the snapshot write
     gets it: `_frame_differences` is the check, and `frozen` picks the recovery, which is why the caller says which file
     it handed over. `seed_store` runs this over the canonical BEFORE the copy, so a refused canonical leaves no store
-    file for the next run to refuse under the store's recovery; `to_frame` writes exactly this frame, so nothing this
-    tree wrote is refused. Sibling: `cli/ohlc/reach.py::_read_canonical` holds a canonical the same way for the reach."""
+    file for the next run to refuse under the store's recovery; `to_frame` writes exactly this schema, so no schema or
+    order arm refuses a frame this tree wrote, while an off-grid stamp or an unusable close in a venue's own row is
+    written by that boundary's refresh and refused at the next. Sibling: `cli/ohlc/reach.py::_read_canonical` holds
+    a canonical the same way for the reach."""
     differs = _frame_differences(frame, interval)
     if differs:
         raise EngineError(
@@ -362,7 +364,27 @@ def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: i
         )
 ```
 
-Then rename the three call sites: `grep -c '_require_joinable_ts(' cli/engine/store.py` prints `3` before and, after the replacement of every `_require_joinable_ts(` by `_require_store_frame(` on those three lines, `0`. In `read_store_series`' docstring replace `(`_require_joinable_ts` above owns the exact dtype)` with `(`_require_store_frame` above owns the exact dtype)`. In `cli/ohlc/reach.py` replace the docstring line `    Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.` with `    Sibling: `cli/engine/store.py::_require_store_frame` holds the engine store's files under its own policy.`. Then `grep -rc '_require_joinable_ts' cli/` prints `0` for every file.
+Then rename the three call sites: `grep -c '_require_joinable_ts(' cli/engine/store.py` prints `3` before and, after the replacement of every `_require_joinable_ts(` by `_require_store_frame(` on those three lines, `0`. In `read_store_series`' docstring replace `(`_require_joinable_ts` above owns the exact dtype)` with `(`_require_store_frame` above owns the exact dtype)`, and the two paragraphs that send a reader chasing the grid and the value to the soak, the five lines from `    It reads TYPES, never the stamps' values:` through the line ending `What is refused is anything outside `int`/`float`, which`, with:
+
+```python
+    It reads TYPES, never the stamps' values: a stamp off the leg's grid passes here and is refused at the door
+    above, which every reader that joins runs over the file first; `realized_series` in `cli/engine/soak.py` refuses
+    one on the 4h leg it scores, the second reader, over a store no door of this module read -- the daily row's
+    scratch copy.
+
+    A non-finite close is NOT refused here either: the door above refuses it in a store file, and `realized_series`
+    drops the cycle it would score and names the bar and the value on the report's `dropped_tail` line. What is
+    refused here is anything outside `int`/`float`, which
+```
+
+In `cli/ohlc/reach.py` replace the docstring line `    Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.` with `    Sibling: `cli/engine/store.py::_require_store_frame` holds the engine store's files under its own policy.`, and the two comment lines above `        stamps = frame["ts"]`, whose second ends `are open (docs/open-topics/T0199-store-nan-drops-a-tail-instead-of-refusing.md).` — Task 4 archives that file, so the path stops resolving, and D1 and D2 close the two classes it calls open for the store, which the reach's own door keeps admitting (spec `## Out of scope`) — with:
+
+```python
+        # The keys only: a null close on a shared stamp is refused at the seam below, and a non-finite close or a
+        # null on an unshared stamp is admitted here, this command joining the canonical rather than pricing it.
+```
+
+Then `grep -rc '_require_joinable_ts' cli/` prints `0` for every file, and `grep -rc 'docs/open-topics/' cli/` prints `0` for every file.
 
 Run: `uv run pytest -q tests/test_engine_store.py`
 Expected: `72 passed`.
@@ -395,7 +417,7 @@ def _spoil(monkeypatch, store_dir: Path, symbol: str, interval: int, bars: dict[
     return {bar: stamps[bar] for bar in bars}
 ```
 
-Its three calls gain `monkeypatch` as the first argument: `    stamp = _spoil(config.store_dir, symbol, interval, {bar: bad})[bar]` becomes `    stamp = _spoil(monkeypatch, config.store_dir, symbol, interval, {bar: bad})[bar]`; `    _spoil(config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})` becomes `    _spoil(monkeypatch, config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})`; `    daily_stamp = _spoil(config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]` becomes `    daily_stamp = _spoil(monkeypatch, config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]`. `grep -c '_spoil(monkeypatch, ' tests/test_engine_cycle.py` prints `3`.
+Its three calls gain `monkeypatch` as the first argument: `    stamp = _spoil(config.store_dir, symbol, interval, {bar: bad})[bar]` becomes `    stamp = _spoil(monkeypatch, config.store_dir, symbol, interval, {bar: bad})[bar]`; `    _spoil(config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})` becomes `    _spoil(monkeypatch, config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})`; `    daily_stamp = _spoil(config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]` becomes `    daily_stamp = _spoil(monkeypatch, config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]`. `grep -c '_spoil(monkeypatch, ' tests/test_engine_cycle.py` prints `4`, the renamed def line and its three calls.
 
 Replace the four lines
 
@@ -525,12 +547,12 @@ Claude-Session: https://claude.ai/code/session_01QL5VMcRChTfVeL5fwZb9rd"
 Run: `git status --porcelain`
 Expected: empty.
 
-- [ ] **Step 8: Prove the guards with six probes, then record their verdicts by a message-only amend**
+- [ ] **Step 8: Prove the guards with seven probes, then record their verdicts by a message-only amend**
 
-The control changes the join phrase every width case asserts. The five mutations over the door remove the schema arm, the null-stamp arm and the grid arm, admit a zero close, and remove the canonical check before the copy; the sixth, over `cli/engine/soak.py`, makes `_on_grid` read the local hour, its control inverting the predicate:
+The control changes the join phrase every width case asserts. The six mutations over the door remove the schema arm, the null-stamp arm and the grid arm, admit a zero close, narrow the value filter so the null close the door admits is refused, and remove the canonical check before the copy; the seventh, over `cli/engine/soak.py`, makes `_on_grid` read the local hour, its control inverting the predicate:
 
 ```bash
-K="off_the_schema or unsound_stamps or unusable_present_close or deviated_canonical or unjoinable_ts_column"
+K="off_the_schema or unsound_stamps or unusable_present_close or null_close_at_an_unshared or deviated_canonical or unjoinable_ts_column"
 infra/scripts/mutate-probe.sh --file cli/engine/store.py \
   --control 's/is not the frame the store readers join/is not the frame the store readers use/' \
   --mutation 's/if frame.schema.get(column) != dtype/if False/' \
@@ -549,6 +571,10 @@ infra/scripts/mutate-probe.sh --file cli/engine/store.py \
   -- uv run pytest -q tests/test_engine_store.py -k "$K"
 infra/scripts/mutate-probe.sh --file cli/engine/store.py \
   --control 's/is not the frame the store readers join/is not the frame the store readers use/' \
+  --mutation 's/pl.col("close").is_not_null() &/pl.col("close").is_null() |/' \
+  -- uv run pytest -q tests/test_engine_store.py -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/store.py \
+  --control 's/is not the frame the store readers join/is not the frame the store readers use/' \
   --mutation 's/_require_store_frame(canonical_frame, canonical_path, pair, interval, "seed_store", frozen=True)/pass/' \
   -- uv run pytest -q tests/test_engine_store.py -k "$K"
 infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
@@ -562,11 +588,13 @@ Expected: each run ends `KILLED` with `control proven`. Then replace the `PROBE_
 ```
 Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/store.py`, control the join phrase of the
 message changed so every width case's match fails; through `-k "off_the_schema or unsound_stamps or
-unusable_present_close or deviated_canonical or unjoinable_ts_column"`: the schema arm removed,
-KILLED, control proven; the null-stamp arm removed, KILLED, control proven; the grid arm removed,
-KILLED, control proven; a zero close admitted, KILLED, control proven; the canonical check before
-the copy removed, KILLED, control proven; over `cli/engine/soak.py`, control the grid predicate
-inverted, `_on_grid` reading the local hour through `-k zoned_stamp`: KILLED, control proven.
+unusable_present_close or null_close_at_an_unshared or deviated_canonical or unjoinable_ts_column"`:
+the schema arm removed, KILLED, control proven; the null-stamp arm removed, KILLED, control proven;
+the grid arm removed, KILLED, control proven; a zero close admitted, KILLED, control proven; the
+value filter narrowed to refuse an admitted null close, KILLED, control proven; the canonical check
+before the copy removed, KILLED, control proven; over `cli/engine/soak.py`, control the grid
+predicate inverted, `_on_grid` reading the local hour through `-k zoned_stamp`: KILLED, control
+proven.
 ```
 
 Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
@@ -629,32 +657,38 @@ def test_refresh_store_hints_route_the_repair_by_host(tmp_path, fault):
         assert "whose re-seed over an existing file replaces the disagreeing tail inside the REST window" in msg
 
 
-@pytest.mark.parametrize("side", ["store", "rest"])
+@pytest.mark.parametrize("side", ["store", "rest", "both"])
 def test_refresh_store_routes_an_absent_close_by_the_side_that_holds_it(tmp_path, side):
     """The absent-close refusal runs whatever `allow_replace` is, so a null on the store tail is a refused store file a
-    plain re-seed refuses again, and a null in the REST fetch is nothing the store repairs."""
+    plain re-seed refuses again, and a null in the REST fetch is nothing the store repairs. Under `both` the REST null
+    is the earlier row, so a side read off the first absent row alone sends the store's own null to the fetch's hint."""
     store_dir = tmp_path / "store"
     rows = _rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)
     rest = _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 4)
     if side == "store":
         rows[N_CANON - 2][4] = None
-    else:
+    elif side == "rest":
         rest[1][4] = None
+    else:
+        rest[0][4] = None
+        rows[N_CANON - 1][4] = None
     write_parquet(to_frame(rows), _store_path(store_dir, "BTC/EUR", 1440))
-    stamp = DAILY_START + timedelta(days=N_CANON - 2)
+    stamp = DAILY_START + timedelta(days=N_CANON - 3 if side == "both" else N_CANON - 2)
 
     with pytest.raises(EngineError) as exc:
         refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: rest, clock=lambda: FAR_FUTURE)
 
     msg = str(exc.value)
     assert f"overlap mismatch for BTC/EUR@1440 at {stamp}" in msg
-    if side == "store":
+    if side == "rest":
+        assert "absent on the REST fetch" in msg and "no store repair" in msg
+        assert "move this leg aside" not in msg and "zcrypto engine seed" not in msg
+    else:
         assert "absent on the store tail" in msg and "a re-seed over this file refuses again" in msg
         assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
         assert "on the engine host the store is re-delivered, not seeded" in msg
-    else:
-        assert "absent on the REST fetch" in msg and "no store repair" in msg
-        assert "move this leg aside" not in msg and "zcrypto engine seed" not in msg
+    if side == "both":
+        assert "absent on the store tail and the REST fetch" in msg
     _, closes = read_store_series(store_dir, "BTC/EUR", 1440)
     assert len(closes) == N_CANON  # refused, not rewritten
 
@@ -708,7 +742,7 @@ In `tests/test_engine_soak.py`, `test_realized_series_refuses_an_interior_off_gr
 ```
 
 Run: `uv run pytest -q tests/test_engine_store.py -k "route_the_repair or absent_close or fresh_copy"`
-Expected: `8 failed`: the two routed cases on the routed clause, the two re-pinned REST-side cases on the workstation command and the fresh-copy claim, the two side cases and the two fresh-copy cases on the hints.
+Expected: `9 failed`: the two routed cases on the routed clause, the two re-pinned REST-side cases on the workstation command and the fresh-copy claim, the three side cases and the two fresh-copy cases on the hints.
 Run: `uv run pytest -q tests/test_engine_command.py -k neither_btc_leg`
 Expected: `1 failed`, on the routed clause.
 Run: `uv run pytest -q tests/test_engine_soak.py -k off_grid_stamp_on_a_non_btc_leg`
@@ -720,8 +754,8 @@ In `cli/engine/store.py`, after the `)` that closes `_CANONICAL_RECOVERY`, inser
 
 ```python
 _ABSENT_REST_HINT = (
-    "the REST fetch carries the absent close and the seam wrote nothing to the store, so there is no store repair: the "
-    "next run fetches again, and a fetch that returns it again is the venue's row to read, not the store's"
+    "the REST fetch carries the absent close, so there is no store repair: the next run fetches again, and a fetch "
+    "that returns it again is the venue's row to read, not the store's"
 )
 _FRESH_COPY = "this is a fresh canonical copy, so a disagreement with REST is a data-integrity error"
 _RESEED_REFUSED = "the re-seed replaced nothing, because the seam refused before the replace"
@@ -737,16 +771,20 @@ In `_reconcile`, replace the six lines from `    shortfall_hint: str,` through t
 ) -> tuple[int, int, pl.DataFrame]:
     """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally. `mismatch_hint` ends a price
     disagreement's refusal; an absent close at a shared stamp is refused whatever `allow_replace` is, ending with
-    `absent_store_hint` when the store tail holds the null (the leg is then a refused store file) and with
-    `absent_rest_hint` when the REST fetch alone does (nothing in the store is wrong).
+    `absent_store_hint` when the store side holds one among the absent rows (the leg is then a refused store file)
+    and with `absent_rest_hint` when the REST fetch alone does (nothing in the store is wrong); each side is read over
+    all the absent rows, since the first row's side is that row's alone.
 
     Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy."""
 ```
 
-and, in the `absent.height` branch, the five lines from `        raise EngineError(` through `        )` whose last f-string reads `f"re-seed replaces a store close with it; {mismatch_hint}"`, with:
+and, in the `absent.height` branch, the ten lines from `        sides = [` through the `        )` that closes its `raise EngineError(`, whose last f-string reads `f"re-seed replaces a store close with it; {mismatch_hint}"`, with:
 
 ```python
-        hint = absent_store_hint if absent["close"][0] is None else absent_rest_hint
+        sides = [
+            name for name, column in (("the store tail", "close"), ("the REST fetch", "close_rest")) if absent[column].null_count()
+        ]
+        hint = absent_store_hint if absent["close"].null_count() else absent_rest_hint
         raise EngineError(
             f"{fn_name}: overlap mismatch for {pair}@{interval} at {stamp} — a shared stamp's close is absent on "
             f"{' and '.join(sides)}, and an absent close is a disagreement whatever the other side carries, so no "
@@ -774,8 +812,13 @@ In `refresh_store`, replace the three lines from ``                shortfall_hin
 
 ```python
                 shortfall_hint=f"the store is catastrophically stale, past the REST window's reach -- {_STORE_RECOVERY}",
-                mismatch_hint=f"the store tail may be poisoned -- on the workstation run `zcrypto engine seed`, whose re-seed over an existing file replaces the disagreeing tail inside the REST window; {_HOST_REDELIVERY}",
-                absent_store_hint=f"the store tail holds the absent close, which a re-seed over this file refuses again -- {_STORE_RECOVERY}",
+                mismatch_hint=(
+                    "the store tail may be poisoned -- on the workstation run `zcrypto engine seed`, whose re-seed over "
+                    f"an existing file replaces the disagreeing tail inside the REST window; {_HOST_REDELIVERY}"
+                ),
+                absent_store_hint=(
+                    f"the store tail holds the absent close, which a re-seed over this file refuses again -- {_STORE_RECOVERY}"
+                ),
                 absent_rest_hint=_ABSENT_REST_HINT,
             )
 ```
@@ -813,9 +856,9 @@ and, in `realized_series`, the off-grid refusal's seven lines from `            
             raise EngineError(
                 f"realized_series: the store's 240 leg for {asset} holds {len(off_grid)} stamp(s) off the 4h grid "
                 f"(00/04/08/12/16/20 UTC), the first {off_grid[0].isoformat()} -- the stamps are the wrong instants, not "
-                f"a short store; {_STORE_RECOVERY}; under the daily row this store is the newest record's snapshots copied "
-                "aside, union-aligned across the basket, so the stamp was in a leg of the host store at that cycle and "
-                "the scratch leg is not the one to move"
+                f"a short store; {_STORE_RECOVERY}; if this run is the daily row's, the store is the newest record's "
+                "snapshots copied aside, union-aligned across the basket, so the stamp was in a leg of the host store at "
+                "that cycle and the scratch leg is not the one to move"
             )
 ```
 
@@ -827,7 +870,7 @@ In `cli/engine/cycle.py`, in `run_cycle`'s docstring, replace the line ``    re-
 ```
 
 Run: `uv run pytest -q tests/test_engine_store.py tests/test_engine_command.py`
-Expected: `143 passed`.
+Expected: `144 passed`.
 Run: `uv run pytest -q tests/test_engine_soak.py`
 Expected: `177 passed, 3 skipped`.
 Run: `uv run pytest -q tests/test_engine_soak_command.py`
@@ -893,7 +936,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/command.py \
   -- uv run pytest -q tests/test_engine_command.py -k neither_btc_leg
 infra/scripts/mutate-probe.sh --file cli/engine/store.py \
   --control 's/absent on /missing on /' \
-  --mutation 's/is None else absent_rest_hint/is not None else absent_rest_hint/' \
+  --mutation 's/hint = absent_store_hint if \(.*\) else absent_rest_hint/hint = absent_rest_hint if \1 else absent_store_hint/' \
   -- uv run pytest -q tests/test_engine_store.py -k "absent_close or fresh_copy"
 infra/scripts/mutate-probe.sh --file cli/engine/store.py \
   --control 's/absent on /missing on /' \
@@ -901,7 +944,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/store.py \
   -- uv run pytest -q tests/test_engine_store.py -k "absent_close or fresh_copy"
 infra/scripts/mutate-probe.sh --file cli/engine/soak.py \
   --control 's/off the 4h grid/off the four-hour grid/' \
-  --mutation 's/a short store; {_STORE_RECOVERY}; under the daily row/a short store; under the daily row/' \
+  --mutation 's/a short store; {_STORE_RECOVERY}; if this run/a short store; if this run/' \
   -- uv run pytest -q tests/test_engine_soak.py -k off_grid_stamp_on_a_non_btc_leg
 ```
 
@@ -948,10 +991,12 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 # VPS store repair, since `zcrypto engine seed` is workstation-only and the image carries no
 # canonical dataset (infra/runbooks/engine.md, zcrypto-engine-cycle-stale, holds the procedure):
 # stop the unit, move the store dir aside beside itself rather than deleting it (unversioned data
-# has no undo), re-run the engine-tagged converge with `-e converge_primary=true` and the digest --
-# the flag is required or the guard drops this host and the engine play silently skips -- so the
+# has no undo), re-run the engine-tagged converge with `-e converge_primary=true` and the digest,
+# inside the inter-cycle gap and outside a published Kraken maintenance window -- the flag is
+# required or the guard drops this host and the engine play silently skips -- so the
 # only-when-absent copy re-delivers the workstation's data/engine-store/ and this play starts the
-# unit; the aside dir is purged after the runbook's all-clear by value, the last of its measurements.
+# unit; the aside dir is purged once the refused file has been read and the runbook's all-clear by
+# value has landed.
 ```
 
 `grep -c 'poisoned-store runbook above' infra/ansible/roles/engine/tasks/main.yml` prints `1`. Replace the two lines under `    fail_msg: >-`, `      The delivered store looks incomplete (BTC/EUR/240.parquet missing or empty) — follow the` and `      poisoned-store runbook above: stop the unit, rm -rf the store, re-run --tags engine, start.`, with:
@@ -960,25 +1005,28 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
       The delivered store looks incomplete (BTC/EUR/240.parquet missing or empty). Stop the unit, move
       the store dir aside rather than deleting it, and re-run this converge with --tags engine,
       -e converge_primary=true and -e engine_image_digest=sha256:<full digest>, inside the inter-cycle
-      gap: infra/runbooks/engine.md's zcrypto-engine-cycle-stale section holds the whole repair.
+      gap and outside a published Kraken maintenance window checked immediately before:
+      infra/runbooks/engine.md's zcrypto-engine-cycle-stale section holds the whole repair.
 ```
 
 `grep -c 'rm -rf' infra/ansible/roles/engine/tasks/main.yml` prints `0`.
 
 - [ ] **Step 2: Spec 00042's item 4, amended**
 
-`grep -c 'rm -rf /var/lib/zcrypto-engine/store' docs/specs/00042-vps-deployment-design.md` prints `1`. In item 4 replace the sentence from `**VPS store-poisoning runbook (the code's `engine seed` repair is workstation-only — the image has no canonical dataset):**` to the end of the line, `stop the unit → `rm -rf /var/lib/zcrypto-engine/store` → re-run `site.yml --tags engine` (the only-when-absent copy re-delivers) → start.`, with:
+`grep -c 'rm -rf /var/lib/zcrypto-engine/store' docs/specs/00042-vps-deployment-design.md` prints `1`. In item 4 replace the text from `**Run the delivering converge away from a 4h-boundary+30-min window**` to the end of the line, which ends `stop the unit → `rm -rf /var/lib/zcrypto-engine/store` → re-run `site.yml --tags engine` (the only-when-absent copy re-delivers) → start.`, with:
 
 ```
-**VPS store repair (the code's `engine seed` repair is workstation-only — the image has no canonical dataset), amended 2026-09-21 by spec 00117 D7 and D8:** stop the unit → move the store dir aside beside itself, never delete it → re-run `site.yml --tags engine` with `-e converge_primary=true` and the digest (the only-when-absent copy re-delivers and the play starts the unit) → purge the aside dir after the runbook's all-clear by value; `infra/runbooks/engine.md`'s cycle-stale section holds the procedure.
+**Run the delivering converge after the workstation's `zcrypto engine seed` has returned, never beside it** (a mid-write copy could deliver a truncated parquet), inside the inter-cycle gap and outside a published Kraken maintenance window, and read-verify one file after delivery. **VPS store repair (the code's `engine seed` repair is workstation-only — the image has no canonical dataset), amended 2026-09-21 by spec 00117 D7 and D8:** stop the unit → move the store dir aside beside itself, never delete it → re-run `site.yml --tags engine` with `-e converge_primary=true` and the digest (the only-when-absent copy re-delivers and the play starts the unit) → purge the aside dir once the refused file has been read and the runbook's all-clear by value has landed; `infra/runbooks/engine.md`'s cycle-stale section holds the procedure.
 ```
+
+The replaced span carries the boundary-window rule and its reason, the workstation soak rewriting the store inside that window — the soak this spec's D8 records as no longer running there — so it goes with the repair sentence rather than standing beside a repair that reads by the seed's return.
 
 Append at the end of the file, after the `## Out of scope` paragraph, a blank line and:
 
 ```
 ## Spec amendments
 
-- 2026-09-21, spec 00117 D7 and D8: item 4's store-poisoning runbook (`rm -rf` the store, `site.yml --tags engine`, start) is replaced by the move-aside repair, the converge carrying `-e converge_primary=true` and the digest (spec 00082's guard postdates this spec), the play starting the unit itself, and the aside copy purged after the runbook's all-clear by value.
+- 2026-09-21, spec 00117 D7 and D8: item 4's delivery-timing sentence (away from a 4h-boundary+30-min window, the workstation soak rewriting the store inside it) is replaced by the seed-return ordering, that soak no longer running on the workstation, and its store-poisoning runbook (`rm -rf` the store, `site.yml --tags engine`, start) by the move-aside repair, the converge carrying `-e converge_primary=true` and the digest (spec 00082's guard postdates this spec), the play starting the unit itself, and the aside copy purged once the refused file has been read and the runbook's all-clear by value has landed. `docs/specs/00043-observability-design.md`'s metrics-flip window cites the replaced timing as the store delivery's rule; that flip is outside this change and its own timing is untouched.
 ```
 
 `grep -c 'rm -rf /var/lib' docs/specs/00042-vps-deployment-design.md` prints `0`; `grep '^#' docs/specs/00042-vps-deployment-design.md` ends with `## Out of scope` then `## Spec amendments`.
@@ -994,7 +1042,7 @@ so stop the unit, move the store dir aside rather than deleting it (`sudo mv /va
 `grep -cF "so the role's copy for an absent store re-delivers it, and start the unit." infra/runbooks/engine.md` prints `1`. Replace that clause, the bullet's end, with:
 
 ```
-so the role's copy for an absent store re-delivers it and the play's last task starts the unit itself; then take the measurements the converge owes, step 6's all-clear by value the last of them, and purge the aside dir after it (`sudo rm -r /var/lib/zcrypto-engine/store.aside-<stamp>`), naming the aside path and the purge in the commit that carries the converge's deploy-log row.
+so the role's copy for an absent store re-delivers it and the play starts the unit itself; then take the measurements the converge owes, step 6's all-clear by value the last of them, and purge the aside dir once the refused file has been read — on the host, or copied to the workstation for that read, since the all-clear reads the delivered store and not the aside copy — and that all-clear has landed (`sudo rm -r /var/lib/zcrypto-engine/store.aside-<stamp>`), naming the aside path and the purge in the commit that carries the converge's deploy-log row.
 ```
 
 Neither text carries a universal word (every, never, always, only, any, cannot) outside a code span: `uv run python infra/scripts/guidance-guard.py --uncounted infra/runbooks/engine.md` prints nothing.
@@ -1021,15 +1069,17 @@ Expected: every hook Passed; re-run after any rewrite until clean, then stage wh
 
 ```bash
 git add infra/ansible/roles/engine/tasks/main.yml docs/specs/00042-vps-deployment-design.md infra/runbooks/engine.md docs/reference/fleet.md
-git commit -m "docs(engine): the host's store repair moves the store aside in every carrier and purges it after the all-clear
+git commit -m "docs(engine): the host's store repair moves the store aside in every carrier and purges it after the read and the all-clear
 
 The engine role's delivery comment and its assert's fail_msg, spec 00042's item 4 and the
 cycle-stale bullet of infra/runbooks/engine.md say the same repair: stop the unit, move the store
 dir aside beside itself, re-run the engine-tagged converge with -e converge_primary=true and the
-digest inside the inter-cycle gap, the only-when-absent copy re-delivering the workstation's
-data/engine-store/ and the play starting the unit itself, and purge the aside dir after the
-runbook's all-clear by value, the last measurement the page prescribes and the first that reads
-the delivered store end to end. The rm -rf text leaves all three carriers; the fail_msg stops
+digest inside the inter-cycle gap and outside a published Kraken maintenance window, the
+only-when-absent copy re-delivering the workstation's data/engine-store/ and the play starting the
+unit itself, and purge the aside dir once the refused file has been read and the runbook's
+all-clear by value has landed, that all-clear being the last measurement the page prescribes and
+the first that reads the delivered store end to end, though it reads the delivered store and not
+the aside copy. The rm -rf text leaves all three carriers; the fail_msg stops
 pointing at a source comment ansible never prints and carries the flag and the digest it lacked;
 spec 00042 is unpinned by both registry counts and is amended in place, the amendment listed under
 a new Spec amendments section. The fleet page's workstation row says data/engine-store is the
@@ -1064,9 +1114,9 @@ Resolved on branch `fix/t0199-t0201-store-refusals`, on the owner's rulings of 2
 
 - Ruling (1), an absent close is a disagreement: `seam_overlap` in `cli/ohlc/seam.py` keeps a shared row whose close is null on either side among the mismatches, and both callers refuse it before their mismatch branches, naming the stamp and the side -- `_merge_or_detach` in `cli/ohlc/reach.py` as an `OHLCError`, `_reconcile` in `cli/engine/store.py` as an `EngineError` whatever `allow_replace` is. On `develop` the seam's filter dropped the null from the mismatches, so it was read as agreement and never replaced anything; the refusal is what keeps the new filter's null out of `allow_replace`'s replace. `to_frame` and `write_parquet` in `cli/ohlc/dataset.py` are untouched: a REST-only row with a null close stays admitted as an absent bar, because spec `00116` D2 admits `None` at the engine's own write and [[T0200]]'s ruling keeps the shared writer as it is.
 - Ruling (3), the report line: `RealizedSeries.dropped_reasons` names, per skipped cycle, a PRESENT non-finite close -- the cycle, the asset, the stamp and the value; `render_report` prints the entries under `dropped_tail` and `_json_payload` carries them in `provenance`. An absent close or a missing stamp is the short store the STORE-BOUND block already describes and gets no line, and no `dropped_tail > 0` trigger was added.
-- Ruling (2), the door's width (spec `00117` D1 to D5): `_require_store_frame` in `cli/engine/store.py`, over `_frame_differences`, holds a store frame and the canonical before it is copied to the whole of `FRAME_SCHEMA` in order, non-empty, with no null or repeated stamp, every stamp on the leg's epoch-anchored grid on both intervals, and every present close finite and positive as spec `00116` D1 holds the snapshot write, `None` admitted; the refusal names the file, the pair, the grid and the first difference the way `_read_canonical` does, and one recovery per host: a store file is moved aside on the workstation and `zcrypto engine seed` copies the canonical and fills the gap from REST, the loss any bar past the canonical's tail REST no longer reaches; a canonical is the data pipeline's to republish and nothing is copied. The in-place ts recast text and its seam clause left the tree. The enumeration behind the claim that every newly refused frame already failed downstream or is a shape no writer produces is the spec's D10, the test fixture crossed with the writer census; the two shapes nothing stopped, a repeated stamp and an interior off-grid stamp, are what the width closes, the second being the live-path case `select_model_inputs` admitted, now refused at the boundary's refresh before the calendar.
+- Ruling (2), the door's width (spec `00117` D1 to D5): `_require_store_frame` in `cli/engine/store.py`, over `_frame_differences`, holds a store frame and the canonical before it is copied to the whole of `FRAME_SCHEMA` in order, non-empty, with no null or repeated stamp, every stamp on the leg's epoch-anchored grid on both intervals, and every present close finite and positive as spec `00116` D1 holds the snapshot write, `None` admitted; the refusal names the file, the pair, the grid and the first difference the way `_read_canonical` does, and one recovery per host: a store file is moved aside on the workstation and `zcrypto engine seed` copies the canonical and fills the gap from REST, the loss any bar past the canonical's tail REST no longer reaches; a canonical is the data pipeline's to republish and nothing is copied. The in-place ts recast text and its seam clause left the tree. The enumeration behind the claim that every newly refused frame already failed downstream or is a shape no writer produces is the spec's D10, the test fixture crossed with the writer census; the two shapes nothing stopped, a repeated stamp and an interior off-grid stamp, are what the width closes, the second being the live-path case `select_model_inputs` admitted, now refused at the refresh of the boundary after the one it arrives in, the arriving boundary's own row being what the journal write and the next door catch (spec `00117` D3).
 - The carriers route by host, and the seam's absent close by side (spec `00117` D6): `refresh_store`'s shortfall and mismatch hints and `run`'s bind-mount refusal end with the engine host's re-delivery, the runbook's procedure, and name `zcrypto engine seed` as the workstation's command; `_reconcile`'s absent-close refusal, which runs whatever `allow_replace` is, ends with the store recovery when the store tail holds the null and with the fetch's own hint, no store repair, when the REST fetch alone does, and `seed_store` calls the file a fresh canonical copy only when it copied one; `run_cycle`'s docstring and `realized_series`' off-grid refusal carry the move-aside too, the soak's saying that under the daily row the store is the record's snapshots copied aside and the scratch leg is not the one to move.
-- The engine host's repair (spec `00117` D7 and D8): the cycle-stale bullet of `infra/runbooks/engine.md` names the aside destination beside the store, the converge that re-delivers the workstation's `data/engine-store/` with `-e converge_primary=true` and the digest and starts the unit itself, and the purge of the aside dir after the all-clear by value; the engine role's delivery comment and `fail_msg` and spec `00042`'s item 4, amended in place as an unpinned spec, say the same and the `rm -rf` text left all three; `docs/reference/fleet.md`'s workstation row says `data/engine-store/` is the delivery source the seed refreshes before a re-delivery, stale otherwise. No converge was part of the change.
+- The engine host's repair (spec `00117` D7 and D8): the cycle-stale bullet of `infra/runbooks/engine.md` names the aside destination beside the store, the converge that re-delivers the workstation's `data/engine-store/` with `-e converge_primary=true` and the digest and starts the unit itself, and the purge of the aside dir once the refused file has been read and the all-clear by value has landed; the engine role's delivery comment and `fail_msg` and spec `00042`'s item 4, amended in place as an unpinned spec, say the same and the `rm -rf` text left all three; `docs/reference/fleet.md`'s workstation row says `data/engine-store/` is the delivery source the seed refreshes before a re-delivery, stale otherwise. No converge was part of the change.
 - [[T0201]], the wrong-instant store frame, is resolved on the same branch: the soak's realized leg refuses a stamp off the 4h grid as a plain `EngineError`, and the store door now holds both grids at the write's readers; the host read its last step asked for settled spec `00115` D2's equality, and that spec's D2 is amended in place to say so (spec `00117` D11).
 ```
 
@@ -1138,4 +1188,4 @@ Claude-Session: https://claude.ai/code/session_01QL5VMcRChTfVeL5fwZb9rd"
 - Placeholders: `PROBE_VERDICT` is the one token, replaced in Task 1 Step 8 and Task 2 Step 6 and checked to be gone; `<model>` in the trailers is the executing model's own name, a Global Constraint; `<stamp>` and `<full digest>` in the prose are the operator's own values, named beside them.
 - Names: `FRAME_SCHEMA`, `read_parquet`, `to_frame`, `write_parquet`, `seam_overlap`, `drop_in_progress`, `EngineError`, `_store_path`, `_reconcile`, `seed_store`, `refresh_store`, `read_store_series`, `resolve_canonical_root`, `_read_canonical`, `_on_grid`, `aggregate_minutes`, `cycle.read_store_series`, `build_crossfreq_system_fast`, `select_model_inputs`, `from_json`, `_real_env`, `_real_store_rows`, `_real_closes`, `_row`, `_write_store`, `_tail_fetch`, `_clock`, `ASSETS`, `EUR_SYMBOLS`, `BTC_SYMBOLS`, `_REAL_N_H4`, `_REAL_N_DAILY`, `_REAL_DAILY_TS`, `_REAL_H4_TS`, `_BTC_ONLY_INSERT_AT`, `_run_env`, `runner`, `app`, `_output`, `soak._on_grid`, `CycleRecord`, `select_clean_segment`, `derive_soak_store` exist where the tasks say; `_frame_differences`, `_require_store_frame`, `_HOST_REDELIVERY`, `_STORE_RECOVERY`, `_CANONICAL_RECOVERY`, `_ABSENT_REST_HINT`, `_FRESH_COPY`, `_RESEED_REFUSED`, `absent_store_hint`, `absent_rest_hint`, `_deviated`, `_first_difference`, `_deviate_store_file`, `_run_reader`, `_assert_store_refusal` are this plan's; `_BTC_ONLY_OFFSET` and `_require_joinable_ts` leave the tree.
 - Order: Task 2's hints use Task 1's constants, Task 3's texts describe Tasks 1 and 2, Task 4's Resolution names all three, and a Global Constraint holds the four in order on one branch.
-- Fences run: every code fence above was applied in order on a scratch copy of the tree at `4d51700b0` under `git init`, and each `Run:` line's `Expected:` is that run's summary line; the eleven probes of Task 1 Step 8 and Task 2 Step 6 ran through `infra/scripts/mutate-probe.sh` on that copy, each `KILLED (control proven, tree restored byte-identically)`; the prose edits of Tasks 3 and 4 ran there too, with their guards green as their steps say.
+- Fences run: every code fence above was applied in order on a scratch copy of the tree at `4d51700b0` under `git init`, and each `Run:` line's `Expected:` is that run's summary line; the eleven probes of Task 1 Step 8 and Task 2 Step 6 ran through `infra/scripts/mutate-probe.sh` on that copy, each `KILLED (control proven, tree restored byte-identically)`; the prose edits of Tasks 3 and 4 ran there too, with their guards green as their steps say. The fences the first review round changed — the door's and `read_store_series`' docstrings, the reach's keys comment, `_reconcile`'s side list and hint, the absent-REST text, the two wrapped `refresh_store` hints, the soak refusal's hedged sentence and the side case's third arm — were re-applied on a copy of that same post-fence tree and their `Expected:` lines re-read from those runs; the probe Task 1 Step 8 gained had its control and its kill read by direct execution there, and is earned through the script at implementation like the rest.
