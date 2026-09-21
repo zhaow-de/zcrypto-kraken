@@ -403,7 +403,7 @@ def test_seed_refuses_when_no_whole_frozen_set_resolves(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     out = _output(result)
-    assert "engine seed: no canonical dataset to seed 24 absent series from" in out
+    assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
     assert "none found under data" in out
     assert isinstance(result.exception, SystemExit)
     assert calls == []
@@ -421,7 +421,7 @@ def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     out = _output(result)
-    assert "engine seed: no canonical dataset to seed 24 absent series from" in out
+    assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
     assert "no data_dir configured" in out
     assert calls == []
 
@@ -551,7 +551,8 @@ with
             canonical_dir = resolve_canonical_root(resolve_data_dir(None, app_config))
         except (ConfigError, DataSyncError) as exc:
             # The resolver's remedies are written for `data rebuild`; the seed says whose refusal this is first.
-            raise _abort(f"engine seed: no canonical dataset to seed {len(absent)} absent series from -- {exc}") from exc
+            named = ", ".join(absent[:3]) + (", ..." if len(absent) > 3 else "")
+            raise _abort(f"engine seed: no canonical dataset to seed {len(absent)} absent series ({named}) from -- {exc}") from exc
     try:
         report = seed_store(store_dir, canonical_dir)
     except EngineError as exc:
@@ -670,13 +671,13 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 `grep -c '^- \*\*`run_cycle` raised before writing anything\*\*: a poisoned store, a disk error\.' infra/runbooks/engine.md` prints `1`. Replace that lead, the text ``- **`run_cycle` raised before writing anything**: a poisoned store, a disk error.``, with ``- **`run_cycle` raised before journaling the boundary**: a poisoned store, a disk error.`` (the venue record of step 0 precedes the raise, so "writing anything" overstated it). The same bullet ends with the text `reads "the node is up but a cycle raised; suspect the store".` Append to the same line, after that full stop, one space and:
 
 ```
-A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number" is the snapshot write refusing to journal what the store holds at that stamp, before it journaled anything but the boundary's venue record: the store is readable and the refresh completed, and a re-run over the same store refuses the same way. The repair is the store's, and on this host it is a re-delivery, not a seed: `zcrypto engine seed` runs on the workstation alone (the image carries no canonical dataset) and over an existing file it replaces a divergent tail inside the REST window and nothing older, so stop the unit, move the store dir aside rather than deleting it (unversioned data has no undo), repair that series in the workstation's `data/engine-store/` first (read the stamp the traceback names; a series moved aside there is re-copied from the canonical and gap-filled from REST by `zcrypto engine seed`), then take step 5's attended converge with the engine tag, `-e converge_primary=true` and `-e engine_image_digest=sha256:<digest>` (the engine row of `docs/reference/fleet-pins.md`, its full operand under that page's `## Full digests`; the role asserts the digest before the store copy, so a converge without it aborts with the unit stopped), inside the inter-cycle gap and outside a published Kraken maintenance window checked immediately before (`.claude/rules/fleet-deploys.md`), so the role's copy for an absent store re-delivers it, and start the unit.
+A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number" is the snapshot write refusing to journal what the store holds at that stamp, before it journaled anything but the boundary's venue record: the store is readable and the refresh completed, and a re-run over the same store refuses the same way. The repair is the store's, and on this host it is a re-delivery, not a seed: `zcrypto engine seed` runs on the workstation alone (the image carries no canonical dataset) and over an existing file it replaces a divergent tail inside the REST window and nothing older, so stop the unit, move the store dir aside rather than deleting it (unversioned data has no undo), repair that series in the workstation's `data/engine-store/` first (read the stamp the traceback names; a series moved aside there is re-copied from the canonical and gap-filled from REST by `zcrypto engine seed`), then take step 5's attended converge with the engine tag, `-e converge_primary=true` and `-e engine_image_digest=sha256:<digest>` (the engine row's digest cell in `docs/reference/fleet-pins.md`, the first twelve hex of the full `sha256:` value listed under that page's `## Full digests`; the row's rollback operand is the previous image, not this one; the role asserts the digest before the store copy, so a converge without it aborts with the unit stopped), inside the inter-cycle gap and outside a published Kraken maintenance window checked immediately before (`.claude/rules/fleet-deploys.md`), so the role's copy for an absent store re-delivers it, and start the unit.
 ```
 
 `grep -c '^   A boundary with `snapshots/cycle-<HH>/` but no record raised' infra/runbooks/engine.md` prints `1`. Replace that whole line (it begins with three spaces and ends `go to the failed-cycle section below.`) with:
 
 ```
-   A boundary with `snapshots/cycle-<HH>/` but no record raised **after** snapshotting (store or model side); a boundary with no `snapshots/cycle-<HH>/` of its own (the day's `snapshots/` holds the earlier boundaries') raised before its first snapshot file: a store the reader cannot open, a config fault, or the snapshot write refusing a close the store holds at a present stamp, which the traceback step 2 greps names with its pair, grid, bar and value (the third bullet under *What it means*, with the repair). A `failed-cycle-<HH>.json` present means this is not your alert: go to the failed-cycle section below.
+   A boundary with `snapshots/cycle-<HH>/` but no record raised **after** snapshotting (store or model side); a boundary with no `snapshots/cycle-<HH>/` of its own (the day's `snapshots/` holds the earlier boundaries') raised before its first snapshot file: a store the reader fails to open, a config fault, or the snapshot write refusing a close the store holds at a present stamp, which the traceback step 2 greps names with its pair, grid, bar and value (the third bullet under *What it means*, with the repair). A `failed-cycle-<HH>.json` present means this is not your alert: go to the failed-cycle section below.
 ```
 
 `grep -c 'A store data-integrity failure has its own documented recovery (`zcrypto engine seed`), which is an attended action, not a per-cycle retry\.' infra/runbooks/engine.md` prints `1`. Replace that sentence, inside the `zcrypto-engine-cycle-failed` › What to do step 5 line, with:
