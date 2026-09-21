@@ -354,6 +354,29 @@ def symbol_keyed_targets(record: CycleRecord) -> dict[str, float]:
 
 
 def _journal_snapshots(journal_dir: Path, cycle_ts: datetime, aligned: dict) -> tuple[SnapshotEntry, ...]:
+    # Every series is read through the refusal before the first file is written, so a refused boundary leaves no
+    # snapshot directory: a present close the replay's validator would refuse is refused here, where the cycle
+    # still holds the frame and has published nothing (spec 00116 D1). `None` is a union absence and is admitted
+    # (D2); the type door is `read_store_series`'s, so nothing but a float or an int reaches this predicate, the
+    # value half of the replay validator's, which the forming-row guard below holds too and refuses `None` at the
+    # forming row where this admits it. The offenders are collected before the raise: a torn write spoils a span,
+    # and one traceback names the first bar and the extent.
+    offenders = []
+    for interval in GRID_INTERVALS:
+        union_ts, prices = aligned[interval]
+        for symbol in PAIR_KEYS:
+            for k, close in enumerate(prices[symbol]):
+                if close is not None and (not math.isfinite(close) or close <= 0):
+                    offenders.append((symbol, interval, k, union_ts[k], close))
+    if offenders:
+        symbol, interval, k, stamp, close = offenders[0]
+        n_series = len({(s, i) for s, i, *_ in offenders})
+        raise EngineError(
+            f"the snapshot for {symbol}@{interval} cannot be journaled: close[{k}] at {stamp.isoformat()} is {close!r}, "
+            f"not a finite positive number -- the store holds {len(offenders)} unusable close"
+            f"{'' if len(offenders) == 1 else 's'} at a present stamp in {n_series} series; none of this boundary's "
+            "snapshot, record, sidecar or orders was written and no target was published"
+        )
     rel_dir = Path(f"{cycle_ts:%Y-%m-%d}") / "snapshots" / f"cycle-{cycle_ts:%H}"
     entries = []
     for interval in GRID_INTERVALS:
@@ -578,8 +601,9 @@ def run_cycle(
     injected clock must return aware datetimes. `venue_state` is READ-ONLY: journaled and summarized onto
     `CycleResult.venue`, never consulted for targets or orders. A stale pair or an exhausted refresh reserve
     is a failed CycleResult with a sidecar, not a raise; a store data-integrity failure (refresh_store's
-    EngineError -- poisoned tail / catastrophic staleness) propagates, and its documented recovery is
-    `zcrypto engine seed`, not a per-cycle retry."""
+    EngineError -- poisoned tail / catastrophic staleness, the journal's own refusal of an unusable close) propagates,
+    and its documented recovery is the store's, not a per-cycle retry: on the engine host the cycle-stale runbook's
+    re-delivery, on the workstation `zcrypto engine seed`."""
     cycle_ts = _normalize_cycle_ts(cycle_ts)
     read_clock = _aware_clock(clock)
     started_at = read_clock()
@@ -637,6 +661,9 @@ def run_cycle(
     # negative or non-finite close caught only there produces the precise state this placement
     # exists to prevent: an orders block with no cycle-<HH>.json behind it, which the next
     # boundary's `_previous_success` silently globs past.
+    #
+    # The journal write one step earlier refuses these values at every bar, `None` excepted, so on the live path the
+    # arm this guard can reach is the `None` one; the others stay for what a stub or a replay hands it.
     model_closes = {}
     for base, series in model_h4.items():
         value = series[-1]
