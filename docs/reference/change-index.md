@@ -341,3 +341,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #580 | 2026-09-21 | fix(engine): T0200 — the snapshot write refuses an unusable close | — | 00116 | T0200 |
 | #583 | 2026-09-21 | test(skip-gates): T0206 the registry arguments are judged at the gate | — | 00114 | T0206 |
 | #584 | 2026-09-21 | fix(engine): T0199 T0201 absent close and off-grid store refused | — | 00117 | T0199, T0201 |
+| #585 | 2026-09-21 | docs(open-topics): T0027 archived, its last requirement carried by T0158 | — | — | T0027, T0158 |
