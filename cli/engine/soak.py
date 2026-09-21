@@ -75,8 +75,7 @@ def structural_metrics(
 
 
 def _measured_hhi(hhi: list[float]) -> list[float]:
-    """The concentration values with `structural_metrics`' no-book sentinel left out -- read off the sentinel,
-    as `_no_book_bars` reads it, never off a second spelling of the gross test."""
+    """The concentration values with the no-book sentinel left out, read off it exactly as `_no_book_bars` does."""
     return [h for h in hhi if h != 0.0]
 
 
@@ -1128,10 +1127,10 @@ def analyze_soak(
     (judged at DAY granularity, window = the realized day count) and cap_breach (at BAR granularity, window = L)
     from `internals`, which degrade to "n/a" with `internals_reason` when the rebuild is unavailable (spec 00059 D7) -- a
     missing rebuild degrades the fingerprint, it does not invalidate it. Turnover and P&L are prev-dependent, so
-    both aggregate INTERIOR bars (each series' first element dropped) on the live and null sides alike, while the
-    other metrics use all L bars. `null_mode` (spec 00061 D4) picks the null construction(s) for all four judging
-    call sites; under `"both"` each metric's reconciliation lands in `dual_verdicts`, its disclosure in
-    `disclosures`."""
+    both aggregate INTERIOR bars (each series' first element dropped) on the live and null sides alike; hhi takes
+    only the bars holding a book (spec 00058 D7), and the other metrics all L. `null_mode` (spec 00061 D4) picks
+    the null construction(s) for all four judging call sites; under `"both"` each metric's reconciliation lands in
+    `dual_verdicts`, its disclosure in `disclosures`."""
     if null_mode not in _NULL_MODES:
         raise SoakError(f"null_mode must be one of {_NULL_MODES}, got {null_mode!r}")
 
@@ -1152,11 +1151,9 @@ def analyze_soak(
         if m == "turnover":
             live_series, null_series, window = rm[m][1:], nm[m][1:], L - 1
         elif m == "hhi":
-            # A bar holding no book has no concentration to measure: `structural_metrics` writes its sentinel
-            # `0.0` there, below HHI's own floor of 1/n, and averaging it in reads the book as more diversified
-            # than it is. Both series drop those bars before anything aggregates them, and the window and
-            # `effective_n` are counted over the bars that remain (spec 00058 D7, the owner's ruling of
-            # 2026-09-20; T0184 measured the null carrying 8.36% sentinels era-matched, the realized none).
+            # A bar holding no book has no concentration to measure -- `structural_metrics` writes the sentinel
+            # `0.0` there -- while its gross, net, activity, turnover and cap state are measurements, so only this
+            # series drops those bars, and the window follows what remains (spec 00058 D7).
             live_series, null_series = _measured_hhi(rm[m]), _measured_hhi(nm[m])
             window = len(live_series)
         else:
