@@ -107,8 +107,7 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 def _on_grid(ts: datetime) -> bool:
     """Whether `ts` is a 4h boundary (00/04/08/12/16/20 UTC): the grid is epoch-anchored, as `cli/backfill/aggregate.py`
-    floors it, so no origin is read off any frame; datetime arithmetic rather than `timestamp()`, whose float loses
-    the microsecond that would put a stamp off it."""
+    floors it, so no origin is read off any frame."""
     return (ts - _EPOCH) % timedelta(hours=4) == timedelta(0)
 
 
@@ -245,7 +244,7 @@ def realized_series(
                 f"realized_series: the store's 240 leg for {asset} holds {len(off_grid)} stamp(s) off the 4h grid "
                 f"(00/04/08/12/16/20 UTC), the first {off_grid[0].isoformat()} -- the stamps are the wrong instants, not "
                 "a short store; re-seed the store from the canonical on the workstation (`zcrypto engine seed`), or "
-                "re-deliver it on the engine host as infra/runbooks/engine.md's store repair says"
+                "re-deliver it on the engine host as infra/runbooks/engine.md's zcrypto-engine-cycle-stale section says"
             )
 
     cycle_ts: list[datetime] = []
