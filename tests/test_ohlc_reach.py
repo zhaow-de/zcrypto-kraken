@@ -125,6 +125,30 @@ def test_seam_close_mismatch_aborts(tmp_path):
         reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
 
 
+@pytest.mark.parametrize("absent", ["canonical", "REST"])
+def test_seam_absent_close_aborts_naming_the_stamp_and_the_side(tmp_path, absent):
+    """A shared stamp whose close is null on one side is a disagreement, not a row to skip."""
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20, close=100.0)
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)  # ten shared stamps, every close equal
+    stamp = _BASE + timedelta(hours=15)
+    if absent == "canonical":
+        path = canonical / "BTC" / "EUR" / "60.parquet"
+        frame = read_parquet(path).with_columns(
+            pl.when(pl.col("ts") == pl.lit(stamp)).then(None).otherwise(pl.col("close")).alias("close")
+        )
+        write_parquet(frame, path)
+    else:
+        rest[5][4] = None  # the row at _BASE + 15h
+    now = _BASE + timedelta(hours=40)
+
+    with pytest.raises(OHLCError, match="seam mismatch") as exc:
+        reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    assert str(stamp) in str(exc.value)
+    assert f"absent on the {absent} side" in str(exc.value)
+
+
 def test_thin_overlap_aborts_rather_than_joining_on_one_bar(tmp_path):
     """An overlap below the floor is an unverified seam: refuse, don't guess."""
     canonical, out = tmp_path / "canon", tmp_path / "out"

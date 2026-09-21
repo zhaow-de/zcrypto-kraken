@@ -390,13 +390,21 @@
     - "{{ engine_state_dir }}/journal"
 
 # Store delivery, only when absent: converges never clobber a live store. Run a delivering converge
-# away from a 4h-boundary+30-min window, where the workstation soak rewrites the store and a mid-
-# write copy could deliver a truncated parquet.
+# after the workstation's `zcrypto engine seed` has returned, never beside it: a mid-write copy could
+# deliver a truncated parquet.
 #
-# VPS store-poisoning repair, since `zcrypto engine seed` is workstation-only and the image carries
-# no canonical dataset: stop the unit, remove the store dir, re-run the engine-tagged converge with
-# `-e converge_primary=true` and the digest -- the flag is required or the guard drops this host and
-# the engine play silently skips, and the only-when-absent copy re-delivers -- then start the unit.
+# VPS store repair, since `zcrypto engine seed` is workstation-only and the image carries no
+# canonical dataset (infra/runbooks/engine.md, zcrypto-engine-cycle-stale, holds the procedure):
+# repair the leg in the workstation's data/engine-store/ first, since that is the source this copy
+# delivers and a re-run delivers it again; then stop the unit, move the store dir aside beside
+# itself rather than deleting it (unversioned data has no undo), re-run the engine-tagged converge
+# with `-e converge_primary=true` and the digest, inside the inter-cycle gap and outside a published
+# Kraken maintenance window -- the flag is required or the guard drops this host and the engine play
+# silently skips -- so the only-when-absent copy re-delivers the workstation's data/engine-store/ and
+# this play starts the unit; the aside dir is purged once the refused file has been read and the
+# runbook's all-clear by value has landed. A seed or a boundary that refuses naming the REST fetch
+# rather than a file is a row the venue itself carries: it is the venue's to answer, nothing was
+# written, and no store repair or converge reaches it.
 - name: probe whether the store was already delivered (BTC subtree present)
   ansible.builtin.stat:
     path: "{{ engine_state_dir }}/store/BTC"
@@ -427,8 +435,16 @@
       - engine_store_verify.stat.exists
       - engine_store_verify.stat.size > 0
     fail_msg: >-
-      The delivered store looks incomplete (BTC/EUR/240.parquet missing or empty) — follow the
-      poisoned-store runbook above: stop the unit, rm -rf the store, re-run --tags engine, start.
+      The delivered store looks incomplete (BTC/EUR/240.parquet missing or empty). This copy came from
+      the workstation's data/engine-store/, so repair it there first (move that leg aside, outside the
+      store, then zcrypto engine seed, on the workstation) -- a re-run delivers the same source again,
+      and a seed that refuses naming the REST fetch rather than a file is a row the venue itself
+      carries, which is the venue's to answer and no store repair reaches. Then stop the unit, move
+      this delivered copy aside too (a second store.aside-<stamp> if the repair already made one,
+      purged with it), and re-run this converge with --tags engine, -e converge_primary=true and
+      -e engine_image_digest=sha256:<full digest>, inside the inter-cycle gap and outside a published
+      Kraken maintenance window checked immediately before: infra/runbooks/engine.md's
+      zcrypto-engine-cycle-stale section holds the whole repair.
   when: engine_store_delivery is changed and not ansible_check_mode
 
 # --- 5. The compose project dir + the secrets env file. The §8 gate above has already passed by

@@ -23,7 +23,7 @@ from cli.engine.journal import (
     snapshot_content_hash,
     validate_record,
 )
-from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, read_store_series
+from cli.engine.store import _STORE_RECOVERY, BASKET, GRID_INTERVALS, _store_path, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
 from cli.portfolio.crossfreq_system import apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
@@ -102,12 +102,23 @@ class SoakError(EngineError):
     """Raised when a soak-check input or an internal contract is structurally inconsistent."""
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _on_grid(ts: datetime) -> bool:
+    """Whether `ts` is a 4h boundary (00/04/08/12/16/20 UTC): the grid is epoch-anchored, as `cli/backfill/aggregate.py`
+    floors it, so no origin is read off any frame."""
+    return (ts - _EPOCH) % timedelta(hours=4) == timedelta(0)
+
+
 @dataclass(frozen=True)
 class RealizedSeries:
     """The realized forward-return observation over a clean run of journal cycles: each scored cycle's decided weights
-    and the forward 4h return they earned, joined to the price store BY TIMESTAMP. The last four fields say what ENDED
-    the window, which `dropped_tail` alone never says: `window_bound` is `"journal"` (the clean segment's own end),
-    `"store"` (the store ran out first) or `"clock"` (the trailing cycles' successors postdate `now`)."""
+    and the forward 4h return they earned, joined to the price store BY TIMESTAMP. `window_bound` and the three fields
+    after it say what ENDED the window, which `dropped_tail` alone never says: `window_bound` is `"journal"` (the clean
+    segment's own end), `"store"` (the store ran out first) or `"clock"` (the trailing cycles' successors postdate `now`).
+    `dropped_reasons` names, per skipped cycle, a PRESENT non-finite close that caused the skip; an absent close or
+    a missing stamp is the short store `window_bound` already describes and gets none."""
 
     cycle_ts: list[datetime]
     weights: list[dict[str, float]]
@@ -122,6 +133,7 @@ class RealizedSeries:
     store_last_ts: datetime | None
     journal_last_cycle_ts: datetime | None
     store_bound_cycles: int
+    dropped_reasons: tuple[str, ...] = ()
 
 
 def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None) -> list[CycleRecord]:
@@ -134,15 +146,12 @@ def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None
         return []
     ordered = sorted(records, key=lambda r: r.cycle_ts)
 
-    def _on_boundary(ts: datetime) -> bool:
-        return ts.hour in {0, 4, 8, 12, 16, 20} and ts.minute == 0 and ts.second == 0
-
     runs: list[tuple[int, int]] = []  # (start, length) of every boundary-contiguous run, oldest first
     run_start = run_len = 0
     for i, rec in enumerate(ordered):
         ts = rec.cycle_ts
         continues = run_len > 0 and ts - ordered[i - 1].cycle_ts == timedelta(hours=4)
-        if _on_boundary(ts) and (run_len == 0 or continues):
+        if _on_grid(ts) and (run_len == 0 or continues):
             if run_len == 0:
                 run_start = i
             run_len += 1
@@ -150,7 +159,7 @@ def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None
             if run_len:
                 runs.append((run_start, run_len))
             run_start = i
-            run_len = 1 if _on_boundary(ts) else 0
+            run_len = 1 if _on_grid(ts) else 0
     if run_len:
         runs.append((run_start, run_len))
     if not runs:
@@ -226,6 +235,18 @@ def realized_series(
             raise SoakError(f"cycle {rec.cycle_ts!r} final_targets asset set {sorted(targets[rec.cycle_ts])} != {list(assets)}")
 
     closes: dict[str, dict[datetime, float]] = {a: dict(zip(*read_store_series(store_dir, a, 240))) for a in assets}
+    # Every stamp, not the last usable one alone: an interior off-grid stamp is the one arm of this the daily pass can
+    # see. A plain `EngineError`, not `SoakError`, so `soak_report` does not fold it into a void payload at rc 0.
+    for asset in assets:
+        off_grid = [ts for ts in closes[asset] if not _on_grid(ts)]
+        if off_grid:
+            raise EngineError(
+                f"realized_series: the store's 240 leg for {asset} holds {len(off_grid)} stamp(s) off the 4h grid "
+                f"(00/04/08/12/16/20 UTC), the first {off_grid[0].isoformat()} -- the stamps are the wrong instants, not "
+                f"a short store; {_STORE_RECOVERY}; if this run is the daily row's, the store is the newest record's "
+                "snapshots copied aside, union-aligned across the basket, so the stamp was in a leg of the host store at "
+                "that cycle and the scratch leg is not the one to move"
+            )
 
     cycle_ts: list[datetime] = []
     weights: list[dict[str, float]] = []
@@ -237,6 +258,7 @@ def realized_series(
     # Why each candidate cycle was skipped, recorded at the gate that fired rather than re-derived
     # afterwards, and read after the loop to decide what bounded the window.
     skipped_because: dict[datetime, str] = {}
+    dropped_reasons: list[str] = []
 
     for i in range(len(clean) - 1):
         rec, nxt = clean[i], clean[i + 1]
@@ -262,6 +284,18 @@ def realized_series(
             for a in assets
         ):
             skipped_because[t] = "store"
+            non_finite = next(
+                (
+                    (a, ts)
+                    for a in assets
+                    for ts in (start_ts, end_ts)
+                    if closes[a].get(ts) is not None and not math.isfinite(closes[a][ts])
+                ),
+                None,
+            )
+            if non_finite is not None:
+                a, ts = non_finite
+                dropped_reasons.append(f"cycle {t.isoformat()}: {a} close at {ts.isoformat()} is {closes[a][ts]}")
             continue
 
         r_fwd = {a: closes[a][end_ts] / closes[a][start_ts] - 1.0 for a in assets}
@@ -307,6 +341,7 @@ def realized_series(
         store_last_ts=_store_last_usable(closes),
         journal_last_cycle_ts=clean[-1].cycle_ts,
         store_bound_cycles=store_bound_cycles,
+        dropped_reasons=tuple(dropped_reasons),
     )
 
 
@@ -1431,6 +1466,8 @@ def render_report(
         lines.append(f"  L (scored bars): {len(realized.net)}")
         lines.append(f"  span           : {span_days:.2f} days")
         lines.append(f"  dropped_tail   : {realized.dropped_tail}")
+        for reason in realized.dropped_reasons:
+            lines.append(f"    {reason}")
         lines.append(f"  chain_ok       : {'skipped' if realized.chain_ok is None else realized.chain_ok}")
     else:
         lines.append("  no realized series available")
@@ -1625,6 +1662,7 @@ def _json_payload(
             "last_cycle_ts": realized.cycle_ts[-1].isoformat(),
             "span_days": (realized.cycle_ts[-1] - realized.cycle_ts[0]).total_seconds() / 86400.0,
             "dropped_tail": realized.dropped_tail,
+            "dropped_reasons": list(realized.dropped_reasons),
             "chain_ok": realized.chain_ok,
             # A machine consumer gates on `window_bound == "store"` the way a reader gates on the text report's
             # STORE-BOUND WINDOW warning.

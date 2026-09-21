@@ -6,7 +6,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from cli.config import EngineConfig
@@ -384,16 +383,23 @@ def test_an_unusable_forming_row_close_fails_the_cycle_before_the_orders(tmp_pat
     assert "forming row" in str(excinfo.value)
 
 
-def _spoil(store_dir: Path, symbol: str, interval: int, bars: dict[int, float]) -> dict[int, datetime]:
-    """Overwrite the closes at `bars` (row index -> value) in one store series, below the engine's own writer --
-    `to_frame` refuses a NaN -- the way a torn or foreign writer would leave it. Returns each row's stamp."""
+def _spoil(monkeypatch, store_dir: Path, symbol: str, interval: int, bars: dict[int, float]) -> dict[int, datetime]:
+    """Hand `run_cycle` the closes at `bars` (row index -> value) in one series as `read_store_series` returns them,
+    past the store door, which refuses each of these values in the file at the refresh: the write door is then the one
+    refusal left on the path, the shape of a value that reached the read without passing that door. Returns each row's
+    stamp, read off the file."""
     base, quote = symbol.split("/")
-    path = store_dir / base / quote / f"{interval}.parquet"
-    frame = read_parquet(path)
-    closes, stamps = frame["close"].to_list(), frame["ts"].to_list()
-    for bar, value in bars.items():
-        closes[bar] = value
-    frame.with_columns(pl.Series("close", closes, dtype=pl.Float64)).write_parquet(path)
+    stamps = read_parquet(store_dir / base / quote / f"{interval}.parquet")["ts"].to_list()
+    real = cycle.read_store_series
+
+    def spoiled(root: Path, sym: str, iv: int) -> tuple[list[datetime], list[float | None]]:
+        ts, closes = real(root, sym, iv)
+        if (sym, iv) == (symbol, interval):
+            for bar, value in bars.items():
+                closes[bar] = value
+        return ts, closes
+
+    monkeypatch.setattr(cycle, "read_store_series", spoiled)
     return {bar: stamps[bar] for bar in bars}
 
 
@@ -405,13 +411,11 @@ def test_an_unusable_present_close_refuses_the_cycle_before_any_snapshot_is_writ
     """The journal's snapshot write is the door: a present close the replay's validator would refuse is refused
     before the first snapshot file exists, naming the pair, the grid, the bar, the stamp and the value.
 
-    `ETH/BTC` is a leg no builder input reads and both bars sit outside the refresh overlap (the last two rows), so
-    nothing else on the path refuses either value; with the stubbed builder the EUR leg's mid-series bar is the
-    same. Both legs have files written before them -- the daily grid goes first and `XRP/EUR` is its last leg, and
-    `ETH/BTC` sits mid-way through the 4h pass -- so a check that moved into the write loop would leave files
-    behind on both halves."""
+    `ETH/BTC` is a leg no builder input reads; with the stubbed builder the EUR leg's mid-series bar is the same. Both
+    legs have files written before them -- the daily grid goes first and `XRP/EUR` is its last leg, and `ETH/BTC` sits
+    mid-way through the 4h pass -- so a check that moved into the write loop would leave files behind on both halves."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
-    stamp = _spoil(config.store_dir, symbol, interval, {bar: bad})[bar]
+    stamp = _spoil(monkeypatch, config.store_dir, symbol, interval, {bar: bad})[bar]
 
     with pytest.raises(EngineError) as excinfo:
         run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
@@ -438,8 +442,8 @@ def test_unusable_present_closes_across_series_are_counted_and_the_first_grid_is
     grid walks first) and counts the closes and the series, so a poisoned run is read once, not one bar per boundary.
     Two of the three offenders share a series, which is what separates the series count from the close count."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
-    _spoil(config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})
-    daily_stamp = _spoil(config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]
+    _spoil(monkeypatch, config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})
+    daily_stamp = _spoil(monkeypatch, config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]
 
     with pytest.raises(EngineError) as excinfo:
         run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
@@ -1223,10 +1227,10 @@ _REAL_N_DAILY = 300  # > the longest daily lookback in play (A2's 240 arm): a sh
 _REAL_N_H4 = 420  # every target 0.0, which no assertion below could tell from a structural zero
 _REAL_DAILY_TS = tuple(DAILY_LAST - (_REAL_N_DAILY - 1 - i) * timedelta(days=1) for i in range(_REAL_N_DAILY))
 _REAL_H4_TS = tuple(H4_LAST - (_REAL_N_H4 - 1 - i) * timedelta(hours=4) for i in range(_REAL_N_H4))
-# An interior stamp near the tail. Near the tail is load-bearing: an all-None row further back
-# washes out of the builder's windows, and the pin would sit green either way (measured).
-_BTC_ONLY_INSERT_AT = -5
-_BTC_ONLY_OFFSET = {1440: timedelta(hours=5), 240: timedelta(hours=1)}  # off both grids, so no EUR leg has it
+# An interior stamp near the tail that the two /BTC legs carry and the ten EUR legs skip: on the grid, since the
+# store door refuses a stamp off it. Near the tail is load-bearing: an all-None row further back washes out of the
+# builder's windows, and the pin would sit green either way (measured).
+_BTC_ONLY_GAP_AT = -5
 
 
 def _real_closes(symbol: str, n: int, scale: int) -> list[float]:
@@ -1238,19 +1242,18 @@ def _real_closes(symbol: str, n: int, scale: int) -> list[float]:
     return [level * (1.0 + amplitude * math.sin(2 * math.pi * i / period) + 0.003 * i / scale) for i in range(n)]
 
 
-def _real_rows(symbol: str, interval: int, *, btc_only_stamp: bool = False) -> list[list]:
+def _real_rows(symbol: str, interval: int, *, eur_gap: bool = False) -> list[list]:
     ts = list(_REAL_DAILY_TS if interval == 1440 else _REAL_H4_TS)
     closes = _real_closes(symbol, len(ts), 1 if interval == 1440 else 6)
-    if btc_only_stamp:
-        at = len(ts) + _BTC_ONLY_INSERT_AT
-        stamp = ts[at - 1] + _BTC_ONLY_OFFSET[interval]
-        ts, closes = ts[:at] + [stamp] + ts[at:], closes[:at] + [closes[at - 1]] + closes[at:]
+    if eur_gap:
+        at = len(ts) + _BTC_ONLY_GAP_AT
+        ts, closes = ts[:at] + ts[at + 1 :], closes[:at] + closes[at + 1 :]
     return [_row(t, c) for t, c in zip(ts, closes)]
 
 
 def _real_store_rows(*, btc_only_stamp: bool = False) -> dict:
     return {
-        (symbol, interval): _real_rows(symbol, interval, btc_only_stamp=btc_only_stamp and symbol in BTC_SYMBOLS)
+        (symbol, interval): _real_rows(symbol, interval, eur_gap=btc_only_stamp and symbol in EUR_SYMBOLS)
         for symbol in ASSETS
         for interval in GRID_INTERVALS
     }
@@ -1262,12 +1265,19 @@ def _real_env(tmp_path, monkeypatch) -> EngineConfig:
     return EngineConfig(store_dir=tmp_path / "store", journal_dir=tmp_path / "journal", shadow_nav_eur=1000.0)
 
 
-def _standalone_ten_asset_targets() -> dict[str, float]:
+def _standalone_ten_asset_targets(*, eur_gap: bool = False) -> dict[str, float]:
     """build_crossfreq_system_fast over the ten EUR series ALONE, base-keyed: the model exactly as it
-    exists today, with nothing else in the room."""
+    exists today, with nothing else in the room; `eur_gap` skips the stamp `_real_rows` skips."""
+    daily_ts, h4_ts = list(_REAL_DAILY_TS), list(_REAL_H4_TS)
     daily = {s.split("/")[0]: _real_closes(s, _REAL_N_DAILY, 1) for s in EUR_SYMBOLS}
     h4 = {s.split("/")[0]: _real_closes(s, _REAL_N_H4, 6) for s in EUR_SYMBOLS}
-    result = build_crossfreq_system_fast(daily, list(_REAL_DAILY_TS), h4, list(_REAL_H4_TS))
+    if eur_gap:
+        for ts, closes in ((daily_ts, daily), (h4_ts, h4)):
+            at = len(ts) + _BTC_ONLY_GAP_AT
+            del ts[at]
+            for series in closes.values():
+                del series[at]
+    result = build_crossfreq_system_fast(daily, daily_ts, h4, h4_ts)
     targets = {base: series[result.n_periods] for base, series in result.final_targets.items()}
     # The fixture must be able to tell "the pipeline carried the model's value" from "a structural
     # zero was never touched" -- ten non-zero, pairwise-distinct targets is what makes that so.
@@ -1299,23 +1309,23 @@ def test_eur_targets_equal_a_standalone_ten_asset_build(tmp_path, monkeypatch):
 
 def test_a_btc_stamp_the_eur_legs_lack_moves_no_eur_window(tmp_path, monkeypatch):
     """The calendar pin (spec 00094 D2): a fixture whose twelve-symbol stamp union differs from the
-    ten-EUR union -- one /BTC-only timestamp per grid -- leaves every EUR target identical to the
-    unperturbed standalone build."""
+    ten-EUR union -- one on-grid stamp per grid the /BTC legs carry and the EUR legs skip -- leaves every
+    EUR target identical to the standalone build over the same ten EUR series."""
     config = _real_env(tmp_path, monkeypatch)
     rows_by = _real_store_rows(btc_only_stamp=True)
     _write_store(config.store_dir, rows_by)
 
     result = run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
 
-    # The perturbation really did reach the pipeline: the twelve-symbol union carries the extra
-    # stamp (so the journaled snapshots do too), and the contraction is what drops it again.
+    # The perturbation really did reach the pipeline: the twelve-symbol union carries the stamp the
+    # EUR legs skip (so the journaled snapshots do too), and the contraction is what drops it again.
     raw = {symbol: read_store_series(config.store_dir, symbol, 240) for symbol in ASSETS}
-    assert len({t for ts, _ in raw.values() for t in ts}) == _REAL_N_H4 + 1
-    assert len(select_model_inputs(raw)[0]) == _REAL_N_H4
+    assert len({t for ts, _ in raw.values() for t in ts}) == _REAL_N_H4
+    assert len(select_model_inputs(raw)[0]) == _REAL_N_H4 - 1
     snapshots = {(e.pair, e.grid): e for e in from_json(result.record_path.read_text()).snapshots}
-    assert snapshots[("BTC/EUR", "240")].n_bars == _REAL_N_H4 + 1
+    assert snapshots[("BTC/EUR", "240")].n_bars == _REAL_N_H4
 
-    standalone = _standalone_ten_asset_targets()
+    standalone = _standalone_ten_asset_targets(eur_gap=True)
     assert {s: result.targets[s] for s in EUR_SYMBOLS} == {f"{base}/EUR": v for base, v in standalone.items()}
 
 

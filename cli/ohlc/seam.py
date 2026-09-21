@@ -16,6 +16,7 @@ def drop_in_progress(frame: pl.DataFrame, interval: int, now: datetime) -> pl.Da
 
 
 def seam_overlap(left: pl.DataFrame, right: pl.DataFrame) -> tuple[int, pl.DataFrame]:
-    """Join `left` and `right` on `ts`, returning the shared-stamp count and the shared rows whose closes disagree (right-side columns suffixed `_rest`)."""
+    """Join `left` and `right` on `ts`, returning the shared-stamp count and the shared rows whose closes disagree (right-side columns suffixed `_rest`); a shared row whose close is null on either side is among them, an absent close being a disagreement."""
     shared = left.join(right, on="ts", how="inner", suffix="_rest")
-    return shared.height, shared.filter(pl.col("close") != pl.col("close_rest"))
+    disagrees = (pl.col("close") != pl.col("close_rest")) | pl.col("close").is_null() | pl.col("close_rest").is_null()
+    return shared.height, shared.filter(disagrees)

@@ -11,7 +11,7 @@ import polars as pl
 
 from cli.engine.errors import EngineError
 from cli.logging import get_logger
-from cli.ohlc.dataset import read_parquet, to_frame, write_parquet
+from cli.ohlc.dataset import FRAME_SCHEMA, read_parquet, to_frame, write_parquet
 from cli.ohlc.fetch import PAIR_KEYS as _FETCH_PAIR_KEYS
 from cli.ohlc.fetch import fetch_ohlc
 from cli.ohlc.seam import MIN_SEAM_OVERLAP, drop_in_progress, seam_overlap
@@ -92,8 +92,14 @@ def _reconcile(
     allow_replace: bool,
     shortfall_hint: str,
     mismatch_hint: str,
+    absent_store_hint: str,
+    absent_rest_hint: str,
 ) -> tuple[int, int, pl.DataFrame]:
-    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally.
+    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally. An absent close at a shared stamp is
+    refused whatever `allow_replace` is; the hint follows the side that holds the null ALONE, because a null the fetch
+    also holds at that stamp would be refilled from this same fetch by the re-seed a store repair prescribes. Each side
+    is read over all the absent rows and carries its own first absent stamp: the first row's side and stamp are that
+    row's alone.
 
     Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy."""
     overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
@@ -101,6 +107,21 @@ def _reconcile(
         raise EngineError(
             f"{fn_name}: window shortfall for {pair}@{interval} — only {overlap_bars} shared stamp(s) between "
             f"the store tail and the REST fetch (need >= {min_overlap}); {shortfall_hint}"
+        )
+
+    absent = mismatches.filter(pl.col("close").is_null() | pl.col("close_rest").is_null())
+    if absent.height:
+        sides = [
+            f"{name} (first at {absent.filter(pl.col(column).is_null())['ts'][0]})"
+            for name, column in (("the store tail", "close"), ("the REST fetch", "close_rest"))
+            if absent[column].null_count()
+        ]
+        store_only = absent.filter(pl.col("close").is_null() & pl.col("close_rest").is_not_null())
+        hint = absent_store_hint if store_only.height else absent_rest_hint
+        raise EngineError(
+            f"{fn_name}: overlap mismatch for {pair}@{interval} — a shared stamp's close is absent on "
+            f"{' and '.join(sides)}, and an absent close is a disagreement whatever the other side carries, so no "
+            f"re-seed replaces a store close with it; {hint}"
         )
 
     if mismatches.height and not allow_replace:
@@ -126,41 +147,101 @@ def _read_frame(path: Path, pair: str, interval: int, fn_name: str) -> pl.DataFr
         raise EngineError(f"{fn_name}: cannot read {path} for {pair}@{interval} — {exc}") from exc
 
 
-def _require_joinable_ts(frame: pl.DataFrame, path: Path, pair: str, interval: int, fn_name: str, *, frozen: bool) -> None:
-    """Refuse a `ts` column `seam_overlap` cannot join, and a `close` no reader can take as a price, before either gets there.
+_HOST_REDELIVERY = (
+    "on the engine host the store is re-delivered, not seeded: infra/runbooks/engine.md's zcrypto-engine-cycle-stale "
+    "section holds the procedure, and `zcrypto engine seed` is the workstation's command"
+)
+_STORE_RECOVERY = (
+    "on the workstation move this leg aside (outside the store) and run `zcrypto engine seed`, which copies the "
+    "canonical for the absent file and fills the gap from REST; what is lost is any bar past the canonical's tail that "
+    "REST no longer reaches, and when the canonical's tail is itself outside the REST window the seed refuses on its own "
+    f"shortfall until the next quarterly ingest is minted; {_HOST_REDELIVERY}"
+)
+_CANONICAL_RECOVERY = (
+    "nothing was copied to the store; a canonical is the data pipeline's to republish: rebuild the set "
+    "(`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the seed reads once it is whole) rather "
+    "than recast this file, whose `dataset_hash` a recast changes and nothing in this tree re-vouches"
+)
+_REST_REFUSED = (
+    "nothing from this fetch is written, so there is no store repair: the store holds what it held before the fetch, "
+    "the next run fetches again, and a row that returns is the venue's to answer, not the store's"
+)
+_ABSENT_REST_HINT = (
+    "the REST fetch carries the absent close, so there is no store repair: the next run fetches again, and a fetch "
+    "that returns it again is the venue's row to read, not the store's"
+)
+_EMPTY_REST_HINT = (
+    "the REST fetch carries no completed bar, so there is no store repair: the next run fetches again, and a fetch "
+    "that returns none again is the venue's to answer, not the store's"
+)
+_FRESH_COPY = "this is a fresh canonical copy, so a disagreement with REST is a data-integrity error"
+_RESEED_REFUSED = "the re-seed replaced nothing, because the seam refused before the replace"
 
-    Anything but `Datetime("us", "UTC")` raises a bare `SchemaError` at the join, past `run_cycle`'s
-    `except OHLCError` and both commands' `except EngineError` (T0193). The equality is exact because
-    `ns`/`ms` and a non-UTC zone all survive a parquet round trip and all break the same join; `to_frame`
-    writes exactly this dtype, so no frame this repo wrote is refused.
 
-    `frozen` picks between the two recoveries below, which is why the caller says which file it handed over;
-    `cli/registry/observed.py` is where a recast canonical is refused.
-    """
-    dtype = frame.schema.get("ts")
-    if dtype == pl.Datetime("us", "UTC"):
-        close = frame.schema.get("close")
-        if close is None:
-            raise EngineError(f"{fn_name}: {path} has no close column for {pair}@{interval}")
-        if not close.is_numeric():
-            raise EngineError(
-                f"{fn_name}: {path} types close as {close} for {pair}@{interval}, not a number a reader can take as a price"
-            )
+def _frame_differences(frame: pl.DataFrame, interval: int) -> list[str]:
+    """The first failing arm's differences, the arms ordered so a later one may presume the earlier; `None` is an
+    absent bar, not an unusable close. Empty when `frame` is the frame the store readers join."""
+    differs = [
+        f"{column} is {frame.schema[column]}, not {dtype}" if column in frame.schema else f"{column} is absent"
+        for column, dtype in FRAME_SCHEMA.items()
+        if frame.schema.get(column) != dtype
+    ]
+    differs += [f"{column} is not a column of it" for column in frame.schema if column not in FRAME_SCHEMA]
+    if differs:
+        return differs
+    if frame.columns != list(FRAME_SCHEMA):
+        return [f"the columns are in another order ({', '.join(frame.columns)})"]
+    if frame.is_empty():
+        return ["it has no rows"]
+    stamps = frame["ts"]
+    if stamps.null_count():
+        return [f"ts is null in {stamps.null_count()} row(s)"]
+    if stamps.n_unique() != frame.height:
+        return [f"{frame.height - stamps.n_unique()} row(s) repeat a stamp another row carries"]
+    # Microseconds, not seconds: `ts` is `Datetime("us", "UTC")` and `epoch("s")` floors a sub-second offset to a
+    # zero remainder, admitting at this door a stamp `cli/engine/soak.py::_on_grid` refuses at the same instant.
+    off_grid = frame.filter(pl.col("ts").dt.epoch("us") % (interval * 60 * 1_000_000) != 0)
+    if off_grid.height:
+        return [f"{off_grid.height} stamp(s) are off the {interval}-minute grid, the first {off_grid['ts'][0].isoformat()}"]
+    unusable = frame.with_row_index().filter(
+        pl.col("close").is_not_null() & (pl.col("close").is_nan() | pl.col("close").is_infinite() | (pl.col("close") <= 0))
+    )
+    if unusable.height:
+        k, stamp, close = unusable["index"][0], unusable["ts"][0], unusable["close"][0]
+        return [f"close[{k}] at {stamp.isoformat()} is {close!r}, not a finite positive number ({unusable.height} such close(s))"]
+    return []
+
+
+def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: int, fn_name: str, *, frozen: bool) -> None:
+    """Refuse a frame the store readers cannot join, merge or price, before the seam, the concat or the snapshot write
+    gets it: `_frame_differences` is the check, and `frozen` picks the recovery, which is why the caller says which file
+    it handed over. `seed_store` runs this over the canonical BEFORE the copy, so a refused canonical leaves no store
+    file for the next run to refuse under the store's recovery; `to_frame` writes exactly this schema, so no schema or
+    order arm refuses a frame this tree wrote. Sibling: `cli/ohlc/reach.py::_read_canonical` holds a canonical the same
+    way for the reach."""
+    differs = _frame_differences(frame, interval)
+    if differs:
+        raise EngineError(
+            f"{fn_name}: {path} is not the frame the store readers join for {pair}@{interval} -- {'; '.join(differs)}; "
+            f"{_CANONICAL_RECOVERY if frozen else _STORE_RECOVERY}"
+        )
+
+
+def _require_rest_frame(frame: pl.DataFrame, pair: str, interval: int, fn_name: str) -> None:
+    """Hold the REST fetch to the store frame's width before the merge makes one of its rows resident: a row the door
+    refuses, once in the store, is refused at every later boundary and written back by every re-seed from this same
+    window. The refusal is the venue's, so it names the fetch rather than a file. `seed_store` runs it BEFORE the
+    canonical copy lands, so a refused fetch leaves no store file. The schema, order and repeated-stamp arms cannot
+    fire on a frame `to_frame` wrote, and a null stamp, which it does admit, `drop_in_progress` removes before this
+    call, so what fires here is the grid arm and the value arm; an empty fetch is left to the seam's shortfall."""
+    if frame.is_empty():
         return
-    recovery = (
-        "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
-        "canonical name) rather than recast this file, whose `dataset_hash` a recast changes and nothing in this "
-        "tree re-vouches"
-        if frozen
-        else "copy the file aside (outside the dataset root), recast the column "
-        'in place (`pl.col("ts").cast(pl.Datetime("us", "UTC"))`) and re-run; a re-seed refuses this file, and '
-        "one forced by deleting it drops every bar the canonical lacks unless the re-seed's seam holds -- six shared "
-        "stamps into the canonical and every shared close equal"
-    )
-    raise EngineError(
-        f"{fn_name}: {path} types ts as {dtype} for {pair}@{interval}, not the aware "
-        f'`Datetime("us", "UTC")` every reader joins on -- {recovery}'
-    )
+    differs = _frame_differences(frame, interval)
+    if differs:
+        raise EngineError(
+            f"{fn_name}: the REST fetch for {pair}@{interval} is not the frame the store readers join -- "
+            f"{'; '.join(differs)}; {_REST_REFUSED}"
+        )
 
 
 def seed_store(
@@ -180,16 +261,17 @@ def seed_store(
             store_path = _store_path(store_dir, pair, interval)
             store_existed = store_path.exists()
             canonical_path = _store_path(canonical_dir, pair, interval)
+            rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+            _require_rest_frame(rest_frame, pair, interval, "seed_store")
             if not store_existed:
                 # The canonical is checked BEFORE it is copied: a refused copy left in the store is a file the
                 # next run refuses again, naming a path the operator never broke.
                 canonical_frame = _read_frame(canonical_path, pair, interval, "seed_store")
-                _require_joinable_ts(canonical_frame, canonical_path, pair, interval, "seed_store", frozen=True)
+                _require_store_frame(canonical_frame, canonical_path, pair, interval, "seed_store", frozen=True)
                 write_parquet(canonical_frame, store_path)
 
             store_frame = _read_frame(store_path, pair, interval, "seed_store")
-            _require_joinable_ts(store_frame, store_path, pair, interval, "seed_store", frozen=False)
-            rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+            _require_store_frame(store_frame, store_path, pair, interval, "seed_store", frozen=False)
 
             overlap_bars, replaced, merged = _reconcile(
                 store_frame,
@@ -199,8 +281,16 @@ def seed_store(
                 interval=interval,
                 min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
-                shortfall_hint="use the quarterly OHLCVT dump",
-                mismatch_hint="this is a fresh canonical copy, so a disagreement with REST is a data-integrity error",
+                shortfall_hint=(_EMPTY_REST_HINT if rest_frame.is_empty() else "use the quarterly OHLCVT dump"),
+                mismatch_hint=_FRESH_COPY,
+                absent_store_hint=(
+                    f"{_FRESH_COPY} in the canonical, whose copy already landed: move this leg aside (outside the store) "
+                    "and rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the "
+                    "next seed reads once it is whole)"
+                    if not store_existed
+                    else f"{_RESEED_REFUSED}, and a re-seed over this file refuses the same absent close -- {_STORE_RECOVERY}"
+                ),
+                absent_rest_hint=f"{_FRESH_COPY if not store_existed else _RESEED_REFUSED}; {_ABSENT_REST_HINT}",
             )
             appended = merged.height - store_frame.height
             if replaced or appended:
@@ -226,7 +316,7 @@ def refresh_store(
     clock=_utc_now,
 ) -> RefreshReport:
     """Append newly completed bars to an already-seeded `store_dir`, per pair x grid, refusing rather
-    than repairing a seam that does not hold -- the recovery is a re-seed."""
+    than repairing a seam that does not hold."""
     now = clock()
     entries = []
     for pair, pair_key in pairs.items():
@@ -235,8 +325,9 @@ def refresh_store(
             store_frame = _read_frame(store_path, pair, interval, "refresh_store")
             # An `EngineError` rather than the loop's retried `OHLCError`: a dtype-broken file is not a
             # transport error and every retry re-reads the same column.
-            _require_joinable_ts(store_frame, store_path, pair, interval, "refresh_store", frozen=False)
+            _require_store_frame(store_frame, store_path, pair, interval, "refresh_store", frozen=False)
             rest_frame = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+            _require_rest_frame(rest_frame, pair, interval, "refresh_store")
 
             _, _, merged = _reconcile(
                 store_frame,
@@ -246,8 +337,19 @@ def refresh_store(
                 interval=interval,
                 min_overlap=_REFRESH_MIN_OVERLAP,
                 allow_replace=False,
-                shortfall_hint="the store is catastrophically stale, run `zcrypto engine seed` to re-seed it",
-                mismatch_hint="the store tail may be poisoned, run `zcrypto engine seed` to repair it",
+                shortfall_hint=(
+                    _EMPTY_REST_HINT
+                    if rest_frame.is_empty()
+                    else f"the store is catastrophically stale, past the REST window's reach -- {_STORE_RECOVERY}"
+                ),
+                mismatch_hint=(
+                    "the store tail may be poisoned -- on the workstation run `zcrypto engine seed`, whose re-seed over "
+                    f"an existing file replaces the disagreeing tail inside the REST window; {_HOST_REDELIVERY}"
+                ),
+                absent_store_hint=(
+                    f"the store tail holds the absent close, which a re-seed over this file refuses again -- {_STORE_RECOVERY}"
+                ),
+                absent_rest_hint=_ABSENT_REST_HINT,
             )
             appended = merged.height - store_frame.height
             if appended:
@@ -260,20 +362,19 @@ def refresh_store(
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
     """A frame this function cannot turn into a price series is refused as an `EngineError` rather than as
     whatever polars or `math` raises, so `soak-check` aborts naming the file: a store frame the engine cannot
-    parse is a broken input, not a degraded metric (T0193). The column reads are inside the try for the same
-    reason, and both columns are checked because the return type promises both; `to_frame` writes `close` as
-    Float64 and a UTC-aware `ts` (`_require_joinable_ts` above owns the exact dtype), so no frame this repo
-    wrote is refused here.
+    parse is a broken input, not a degraded metric. The column reads are inside the try for the same reason, and
+    both columns are checked because the return type promises both; `to_frame` writes `close` as Float64 and a
+    UTC-aware `ts` (`_require_store_frame` above owns the exact dtype), so no frame this repo wrote is refused here.
 
-    It reads TYPES, never the stamps' values — T0201 carries what that leaves open, and
-    `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
-    drives it.
+    It reads TYPES, never the stamps' values: an off-grid stamp passes here and is refused at the door above, and in
+    `realized_series` (`cli/engine/soak.py`) for the daily row's scratch store, which no door of this module reads.
 
-    A non-finite close is NOT refused here. Spec 00059 D7 rules only the rebuild-unavailable case (the two
-    internals metrics read `n/a` with a reason rather than voiding the run); no decision rules on a store `nan`,
-    and what the code does with one is T0199's subject. What is refused is anything outside `int`/`float`, which is wider than
-    "anything `math.isfinite` would raise on" — a `Decimal` has `__float__`, so `math.isfinite` takes it and
-    this door does not, and the narrower rule would need a conversion this reader has no business making."""
+    A non-finite close is NOT refused here either: the door above refuses it in a store file, and `realized_series`
+    drops the cycle it would score and names the bar and the value on the report's `dropped_tail` line. What is
+    refused here is anything outside `int`/`float`, which
+    is wider than "anything `math.isfinite` would raise on" -- a `Decimal` has `__float__`, so `math.isfinite`
+    takes it and this door does not, and the narrower rule would need a conversion this reader has no business
+    making."""
     path = _store_path(store_dir, symbol, interval)
     try:
         frame = read_parquet(path)
