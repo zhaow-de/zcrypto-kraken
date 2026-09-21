@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'the next change to the store write path -- `seed_store` or its door `_require_joinable_ts` in `cli/engine/store.py`, or the shared `write_parquet` in `cli/ohlc/dataset.py` -- to `seam_overlap` in `cli/ohlc/seam.py`, or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store, or an absent close from an agreeing one.'
+ripe_when: 'the next change to the store write path -- `seed_store` or its door `_require_joinable_ts` in `cli/engine/store.py` -- to `seam_overlap` in `cli/ohlc/seam.py`, or to the `dropped_tail` render in `cli/engine/soak.py`; any is the commit that can distinguish a NaN-caused drop from a short store, or an absent close from an agreeing one.'
 ---
 
 # A NaN reaching the store drops a report tail instead of refusing it
@@ -35,7 +35,7 @@ REST parse, not the writer's — measured on T0193's branch, the writer refuses 
 
 What PR #514 (T0193) measured is the sections above.
 
-**This topic and [[T0200]] are one door.** [[T0200]]'s journal-snapshot write reaches the same `write_parquet` this topic's fork weighs as the place a non-finite close should be refused: `cli/engine/cycle.py` imports it from `cli/ohlc/dataset.py`. Settling them apart invites two incompatible answers on a single function, so whichever is decided first records what it decided for the other.
+**This topic and [[T0200]] are one door.** [[T0200]]'s journal-snapshot write reaches the same `write_parquet` this topic's fork weighs as the place a non-finite close should be refused: `cli/engine/cycle.py` imports it from `cli/ohlc/dataset.py`. Settling them apart invites two incompatible answers on a single function, so whichever is decided first records what it decided for the other. Decided first by [[T0200]], resolved by spec `00116`: the helper is not the door; the engine's own snapshot write refuses an unusable present close before its first file, and the shared `write_parquet` stays as it is, so this fork's helper arm is closed and its other halves stand.
 
 **A door at that helper is not local to the engine, which is a cost the fork has to carry.** Its callers reach past `cli/engine/` into the OHLC, backfill and derivatives packages, and two of them write frames with **no close column at all** (`cli/derivatives/funding.py`'s schema is `ts`/`funding_rate`/`interval_hours`; `cli/derivatives/oi.py` names no close), so a close-value door there cannot be unconditional. `cli/capture/segment_writer.py` is outside the blast radius entirely: it calls polars' own `df.write_parquet` method rather than this helper.
 
@@ -47,13 +47,11 @@ What PR #514 (T0193) measured is the sections above.
 
 ## Suggested next steps
 
-- Decide where the refusal belongs: at `write_parquet` (an engine, OHLC, backfill and derivatives blast radius, and it
-  would refuse a frame a research path may legitimately hold), or as a distinguishing REASON on the report's
-  `dropped_tail` line, which changes no writer.
+- Decide whether the refusal's second home is a distinguishing REASON on the report's `dropped_tail` line, which changes no writer; the `write_parquet` arm is closed (spec `00116` D4: the engine's own snapshot write refuses, the shared helper stays).
 - If the report line is chosen, the reason has to name the bar and the value, the way `_validate_grid`'s does.
 - A trigger on `dropped_tail > 0` alone will not do: spec `00058` D2 scores a cycle only if the next one exists,
   so a healthy run drops the last segment cycle and plan `00058`'s acceptance asserts `dropped_tail >= 1`.
 - The door's width is the same decision, and the check is the small half of it. Holding a store frame to `FRAME_SCHEMA` and to sound stamps is a few lines; the claim a change must carry is that every frame it newly refuses already fails — at the seam or at `_reconcile`'s concat — so it refuses nothing that works today — true of the type and shape deviations, and NOT of a null or repeated stamp, which work today in the sense that nothing stops them.
 - The recovery text is the large half. The door's two recoveries are written for `ts` alone, and `tests/test_engine_store.py` pins them. A Float32 price has no in-place recast — the precision is gone — so a deviated STORE file's recovery is a re-seed forced by deleting the file, which a plain re-seed leaves in place, with the loss and the seam condition that recovery already names. The store is unversioned and `docs/reference/data-catalog-full.md` records that rebuildable is not identical, so the text that prescribes the delete prescribes the copy aside before it. What an operator is told per deviation is a choice on the live trade path, so it takes a spec, and it reaches the engine only at a converge.
-- The engine host's store repair carries the same delete, and the recovery text covers it or says why not: the delivery comment in `infra/ansible/roles/engine/tasks/main.yml` and the assert's `fail_msg` remove the store dir for the converge to re-deliver the workstation's copy, naming no copy aside and no loss.
+- The engine host's store repair carries the same delete, and the recovery text covers it or says why not: the delivery comment in `infra/ansible/roles/engine/tasks/main.yml` and the assert's `fail_msg` remove the store dir for the converge to re-deliver the workstation's copy, naming no copy aside and no loss. Three code carriers send the host to the same workstation command: `refresh_store`'s shortfall and mismatch hints in `cli/engine/store.py` and `run`'s bind-mount refusal in `cli/engine/command.py`; the recovery text routes them by host too, as the engine runbook's cycle-stale bullet and failed-cycle step 5 now do.
 - Check the canonical before it is copied for everything the door will refuse, not for `ts` alone: the copy-then-fail order is what turns one bad canonical file into a poisoned store.
