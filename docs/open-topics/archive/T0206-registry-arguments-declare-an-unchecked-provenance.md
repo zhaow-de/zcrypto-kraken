@@ -32,4 +32,4 @@ Nothing in the tree caught that, and nothing will catch the next one: 13 gates d
 
 ## Resolution
 
-Resolved by spec `00114` D10 and the PR that carries it, on the owner's ruling of 2026-09-20. The registry gained the scan and config-rooted forms whose argument the matcher judges; the gates whose rows no path scan produces keep `nothing_found`, whose docstring names them as the declarations the call site owns, and `no_binary(name)` stays unjudged beside it. `CLAUDE.md`'s skip-gate clause still names this topic as the reading the count does not see; that clause is guidance, and its edit is the owner's on its own branch.
+Resolved by spec `00114` D10 and the PR that carries it, on the owner's ruling of 2026-09-20. The registry gained the scan and config-rooted forms whose argument the matcher judges; the gates whose rows no path scan produces keep `nothing_found`, whose docstring names them as the declarations the call site owns, and `no_binary(name)` and a scan form's pattern stay unjudged beside it. `CLAUDE.md`'s skip-gate clause still names this topic as the reading the count does not see; that clause is guidance, and its edit is the owner's on its own branch.
