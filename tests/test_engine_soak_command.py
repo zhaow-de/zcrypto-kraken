@@ -339,11 +339,10 @@ def test_soak_check_aborts_cleanly_on_a_journaled_cycle_with_a_naive_stamp(tmp_p
     assert "cycle_ts must be timezone-aware" in result.output and str(artifact) in result.output, result.output
 
 
-def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants(tmp_path, monkeypatch):
-    """What the store door does NOT promise (T0201), pinned so its docstring cannot go stale. The door reads
-    TYPES: a frame typed `Datetime("us", "UTC")` whose stamps are simply the WRONG instants passes it, and the
-    realized leg then finds no boundary at all -- rc 0, `no realized series available`, no refusal anywhere.
-    That is a value question a type door cannot answer, so it is read off the report instead."""
+def test_soak_check_refuses_a_store_frame_whose_stamps_are_the_wrong_instants(tmp_path, monkeypatch):
+    """The store door reads TYPES: a frame typed `Datetime("us", "UTC")` whose stamps are the WRONG instants passes
+    it, and the refusal is `realized_series`', where the interval is known -- a plain `EngineError` the command
+    aborts on, not the `SoakError` `soak_report` folds into a void payload at rc 0."""
     _patch_config(monkeypatch, tmp_path)
     d = datetime(2026, 7, 16, tzinfo=UTC)
     closes = {d - timedelta(hours=4): 100.0, d: 110.0, d + timedelta(hours=4): 121.0, d + timedelta(hours=8): 133.1}
@@ -359,13 +358,12 @@ def test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong
         ["engine", "soak-check", "--journal-dir", str(journal_dir), "--store-dir", str(store_dir)],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit), repr(result.exception)
     assert "read_store_series" not in result.output, result.output
-    assert "no realized series available" in result.output, result.output
-    # T0201's `ripe_when` is evaluated against these two rendered fields.
-    assert re.search(r"window_bound\s*: store", result.output) and re.search(
-        r"store last bar\s*: 2026-07-16T08:37:00\+00:00", result.output
-    ), result.output
+    assert "the store's 240 leg for BTC/EUR holds 4 stamp(s) off the 4h grid" in result.output, result.output
+    assert "the first 2026-07-15T20:37:00+00:00" in result.output, result.output
+    assert "no realized series available" not in result.output, result.output
 
 
 @pytest.mark.parametrize(

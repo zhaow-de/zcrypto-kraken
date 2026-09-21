@@ -274,20 +274,18 @@ def refresh_store(
 def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list[datetime], list[float | None]]:
     """A frame this function cannot turn into a price series is refused as an `EngineError` rather than as
     whatever polars or `math` raises, so `soak-check` aborts naming the file: a store frame the engine cannot
-    parse is a broken input, not a degraded metric (T0193). The column reads are inside the try for the same
-    reason, and both columns are checked because the return type promises both; `to_frame` writes `close` as
-    Float64 and a UTC-aware `ts` (`_require_joinable_ts` above owns the exact dtype), so no frame this repo
-    wrote is refused here.
+    parse is a broken input, not a degraded metric. The column reads are inside the try for the same reason, and
+    both columns are checked because the return type promises both; `to_frame` writes `close` as Float64 and a
+    UTC-aware `ts` (`_require_joinable_ts` above owns the exact dtype), so no frame this repo wrote is refused here.
 
-    It reads TYPES, never the stamps' values — T0201 carries what that leaves open, and
-    `tests/test_engine_soak_command.py::test_soak_check_degrades_at_rc_0_on_a_store_frame_whose_stamps_are_the_wrong_instants`
-    drives it.
+    It reads TYPES, never the stamps' values: a stamp off the 4h grid passes here and is refused where the interval
+    is known, `realized_series` in `cli/engine/soak.py`.
 
-    A non-finite close is NOT refused here. Spec 00059 D7 rules only the rebuild-unavailable case (the two
-    internals metrics read `n/a` with a reason rather than voiding the run); no decision rules on a store `nan`,
-    and what the code does with one is T0199's subject. What is refused is anything outside `int`/`float`, which is wider than
-    "anything `math.isfinite` would raise on" — a `Decimal` has `__float__`, so `math.isfinite` takes it and
-    this door does not, and the narrower rule would need a conversion this reader has no business making."""
+    A non-finite close is NOT refused here either: `realized_series` drops the cycle it would score and names the
+    bar and the value on the report's `dropped_tail` line. What is refused is anything outside `int`/`float`, which
+    is wider than "anything `math.isfinite` would raise on" -- a `Decimal` has `__float__`, so `math.isfinite`
+    takes it and this door does not, and the narrower rule would need a conversion this reader has no business
+    making."""
     path = _store_path(store_dir, symbol, interval)
     try:
         frame = read_parquet(path)

@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 
 import cli.engine.soak as soak
-from cli.engine.errors import EngineJournalError
+from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, snapshot_content_hash
 from cli.engine.soak import (
     DualVerdict,
@@ -3218,6 +3218,33 @@ def _mk_straddling_records_and_store(tmp_path, *, flip_at: int = 2, n_cycles: in
         )
     now = records[-1].cycle_ts + timedelta(hours=16)
     return records, store_dir, now
+
+
+def test_realized_series_refuses_an_interior_off_grid_stamp_on_a_non_btc_leg(tmp_path):
+    """Every stamp of every leg is held to the epoch-anchored 4h grid, not the last usable one alone, and the
+    refusal is a plain `EngineError`: a `SoakError` would be folded into a void payload at rc 0."""
+    records, store_dir, now = _mk_straddling_records_and_store(tmp_path)
+    path = store_dir / "ETH" / "BTC" / "240.parquet"
+    frame = read_parquet(path)
+    interior = frame["ts"][2]
+    shifted = interior + timedelta(minutes=37)
+    write_parquet(
+        frame.with_columns(pl.when(pl.col("ts") == pl.lit(interior)).then(pl.lit(shifted)).otherwise(pl.col("ts")).alias("ts")),
+        path,
+    )
+
+    with pytest.raises(EngineError) as exc:
+        realized_series(records, store_dir, fee=0.006, now=now)
+
+    assert not isinstance(exc.value, SoakError)
+    msg = str(exc.value)
+    assert "the store's 240 leg for ETH/BTC holds 1 stamp(s) off the 4h grid" in msg
+    assert f"the first {shifted.isoformat()}" in msg
+    assert "BTC/EUR" not in msg
+
+    write_parquet(frame, path)
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+    assert len(rs.cycle_ts) == 4
 
 
 def test_realized_series_spans_the_schema_boundary(tmp_path):

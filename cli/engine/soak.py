@@ -102,6 +102,16 @@ class SoakError(EngineError):
     """Raised when a soak-check input or an internal contract is structurally inconsistent."""
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _on_grid(ts: datetime) -> bool:
+    """Whether `ts` is a 4h boundary (00/04/08/12/16/20 UTC): the grid is epoch-anchored, as `cli/backfill/aggregate.py`
+    floors it, so no origin is read off any frame; datetime arithmetic rather than `timestamp()`, whose float loses
+    the microsecond that would put a stamp off it."""
+    return (ts - _EPOCH) % timedelta(hours=4) == timedelta(0)
+
+
 @dataclass(frozen=True)
 class RealizedSeries:
     """The realized forward-return observation over a clean run of journal cycles: each scored cycle's decided weights
@@ -137,15 +147,12 @@ def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None
         return []
     ordered = sorted(records, key=lambda r: r.cycle_ts)
 
-    def _on_boundary(ts: datetime) -> bool:
-        return ts.hour in {0, 4, 8, 12, 16, 20} and ts.minute == 0 and ts.second == 0
-
     runs: list[tuple[int, int]] = []  # (start, length) of every boundary-contiguous run, oldest first
     run_start = run_len = 0
     for i, rec in enumerate(ordered):
         ts = rec.cycle_ts
         continues = run_len > 0 and ts - ordered[i - 1].cycle_ts == timedelta(hours=4)
-        if _on_boundary(ts) and (run_len == 0 or continues):
+        if _on_grid(ts) and (run_len == 0 or continues):
             if run_len == 0:
                 run_start = i
             run_len += 1
@@ -153,7 +160,7 @@ def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None
             if run_len:
                 runs.append((run_start, run_len))
             run_start = i
-            run_len = 1 if _on_boundary(ts) else 0
+            run_len = 1 if _on_grid(ts) else 0
     if run_len:
         runs.append((run_start, run_len))
     if not runs:
@@ -229,6 +236,17 @@ def realized_series(
             raise SoakError(f"cycle {rec.cycle_ts!r} final_targets asset set {sorted(targets[rec.cycle_ts])} != {list(assets)}")
 
     closes: dict[str, dict[datetime, float]] = {a: dict(zip(*read_store_series(store_dir, a, 240))) for a in assets}
+    # Every stamp, not the last usable one alone: an interior off-grid stamp is the one arm of this the daily pass can
+    # see. A plain `EngineError`, not `SoakError`, so `soak_report` does not fold it into a void payload at rc 0.
+    for asset in assets:
+        off_grid = [ts for ts in closes[asset] if not _on_grid(ts)]
+        if off_grid:
+            raise EngineError(
+                f"realized_series: the store's 240 leg for {asset} holds {len(off_grid)} stamp(s) off the 4h grid "
+                f"(00/04/08/12/16/20 UTC), the first {off_grid[0].isoformat()} -- the stamps are the wrong instants, not "
+                "a short store; re-seed the store from the canonical on the workstation (`zcrypto engine seed`), or "
+                "re-deliver it on the engine host as infra/runbooks/engine.md's store repair says"
+            )
 
     cycle_ts: list[datetime] = []
     weights: list[dict[str, float]] = []
