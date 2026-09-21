@@ -259,11 +259,6 @@ def test_committed_zcrypto_toml_has_no_engine_table():
     assert cfg.engine == EngineConfig()
 
 
-def test_resolve_flag_wins(tmp_path):
-    cfg = load_config(_write(tmp_path, '[zcrypto]\ndata_dir = "from_config"\n'))
-    assert resolve_data_dir(Path("from_flag"), cfg) == Path("from_flag")
-
-
 def test_resolve_ohlcvt_source_dir_flag_wins(tmp_path):
     cfg = load_config(_write(tmp_path, '[zcrypto]\nnfs_mount_dir = "/mnt/nas"\n'))
     assert resolve_ohlcvt_source_dir(Path("from_flag"), cfg) == Path("from_flag")
@@ -275,14 +270,15 @@ def test_resolve_ohlcvt_source_dir_derives_from_nfs_mount(tmp_path):
     assert resolve_ohlcvt_source_dir(None, load_config(tmp_path / "absent.toml")) == Path("/mnt/zhao-crypto/kraken-ohlcvt-updates")
 
 
-def test_resolve_unconfigured_raises_with_both_remedies():
+def test_resolve_unconfigured_data_dir_names_the_config_remedy_alone():
     cfg = AppConfig(
         data_dir=None, nfs_mount_dir=Path("/mnt/zhao-crypto"), fetch=FetchConfig(), engine=EngineConfig(), data=DataConfig()
     )
     with pytest.raises(ConfigError) as exc:
-        resolve_data_dir(None, cfg)
+        resolve_data_dir(cfg)
     msg = str(exc.value)
-    assert "--data-dir" in msg and "[zcrypto].data_dir" in msg
+    assert "[zcrypto].data_dir" in msg
+    assert "--data-dir" not in msg
 
 
 def test_removed_keys_are_rejected(tmp_path):

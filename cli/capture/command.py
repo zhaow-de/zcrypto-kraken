@@ -21,7 +21,7 @@ from cli.capture.errors import CaptureError
 from cli.capture.gap_monitor import DiskWatermark, GapMonitor, ping_healthcheck
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter
 from cli.capture.ws_client import ALLOWED_DEPTHS, CaptureClient, classify
-from cli.config import load_config
+from cli.config import ConfigError, load_config
 from cli.logging import get_logger
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 
@@ -661,7 +661,11 @@ def capture(
     ),
 ) -> None:
     """Stream Kraken's public WS v2 book + trade feed for the universe pairs to hourly zstd-Parquet segments."""
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except ConfigError as exc:
+        logger.error("capture: %s", exc)
+        raise typer.Exit(code=1) from exc
     resolved_pairs = pairs or _default_pairs(resolve_universe_path(cfg.data_dir or Path("data")))
     resolved_data_dir = data_dir or Path(os.environ.get(DATA_DIR_ENV_VAR, str(DEFAULT_DATA_DIR)))
     healthcheck_url = os.environ.get(HEALTHCHECK_ENV_VAR)

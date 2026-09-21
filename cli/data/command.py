@@ -35,7 +35,7 @@ def fetch(
     try:
         cfg = load_config()
         resolved_hot_dir = resolve_hot_source(cfg)
-        data_root = resolve_data_dir(None, cfg)
+        data_root = resolve_data_dir(cfg)
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
 
@@ -53,7 +53,7 @@ def push() -> None:
     try:
         cfg = load_config()
         dest = resolve_push_dest(cfg)
-        data_root = resolve_data_dir(None, cfg)
+        data_root = resolve_data_dir(cfg)
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
 
@@ -76,7 +76,7 @@ def rebuild(
     """Re-freeze/refresh dataset(s) by minting a new sibling dir -- never touches the live set."""
     try:
         cfg = load_config()
-        data_root = resolve_data_dir(None, cfg)
+        data_root = resolve_data_dir(cfg)
     except ConfigError as exc:
         raise _abort(str(exc)) from exc
 
@@ -122,8 +122,11 @@ def migrate_manifests(
     """
     from cli.data.manifest import ManifestError, convert_dataset
 
-    cfg = load_config()
-    data_root = resolve_data_dir(None, cfg)
+    try:
+        cfg = load_config()
+        data_root = resolve_data_dir(cfg)
+    except ConfigError as exc:
+        raise _abort(str(exc)) from exc
     if not data_root.is_dir():
         raise _abort(f"data root {data_root} does not exist")
 
