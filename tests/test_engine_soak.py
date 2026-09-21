@@ -300,6 +300,62 @@ def test_realized_series_interior_store_hole_is_not_store_bound(tmp_path):
     assert rs.store_bound_cycles == 0
 
 
+def _set_close(store_dir, asset, stamp, value):
+    """Overwrite one close in the `asset` 240 parquet, past `to_frame`'s NaN refusal."""
+    p = _store_path(store_dir, asset, 240)
+    df = read_parquet(p).with_columns(pl.when(pl.col("ts") == pl.lit(stamp)).then(value).otherwise(pl.col("close")).alias("close"))
+    write_parquet(df, p)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_realized_series_names_a_present_non_finite_close_as_a_drop_reason(tmp_path, value):
+    """A drop caused by a close the store HOLDS, non-finite, is named with the cycle, the asset, the stamp and
+    the value -- what separates it on the page from the short store the STORE-BOUND block describes."""
+    records, store_dir, now = _mk_records_and_store(tmp_path, _full_closes(6), n_cycles=6)
+    poisoned = _WINDOW_BASE + timedelta(hours=8)  # exit stamp of cycle 08:00, entry stamp of cycle 12:00
+    _set_close(store_dir, "BTC", poisoned, value)
+
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    assert rs.dropped_tail == 3
+    assert rs.window_bound == "journal"
+    assert rs.dropped_reasons == (
+        f"cycle {(_WINDOW_BASE + timedelta(hours=8)).isoformat()}: BTC/EUR close at {poisoned.isoformat()} is {value}",
+        f"cycle {(_WINDOW_BASE + timedelta(hours=12)).isoformat()}: BTC/EUR close at {poisoned.isoformat()} is {value}",
+    )
+
+
+def test_a_tail_drop_and_an_absent_close_drop_carry_no_reason(tmp_path):
+    """The healthy run's newest-cycle drop and a null close are the short-store case, reasonless."""
+    records, store_dir, now = _mk_records_and_store(tmp_path, _full_closes(6), n_cycles=6)
+    assert realized_series(records, store_dir, fee=0.006, now=now).dropped_reasons == ()
+
+    _set_close(store_dir, "BTC", _WINDOW_BASE + timedelta(hours=8), None)
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+    assert rs.dropped_tail == 3
+    assert rs.dropped_reasons == ()
+
+
+def test_render_report_and_json_carry_the_drop_reasons(tmp_path):
+    records, store_dir, now = _mk_records_and_store(tmp_path, _full_closes(6), n_cycles=6)
+    poisoned = _WINDOW_BASE + timedelta(hours=8)
+    _set_close(store_dir, "BTC", poisoned, float("nan"))
+    rs = realized_series(records, store_dir, fee=0.006, now=now)
+
+    text = render_report(None, rs, None, None, void_reasons=["L=3 < floor=30"], band=0.90)
+    payload = soak._json_payload(None, rs, None, None, void_reasons=["L=3 < floor=30"], band=0.90, now=now)
+
+    lines = text.splitlines()
+    at = next(i for i, line in enumerate(lines) if line.startswith("  dropped_tail   : 3"))
+    assert lines[at + 1 : at + 3] == [f"    {r}" for r in rs.dropped_reasons]
+    assert f"BTC/EUR close at {poisoned.isoformat()} is nan" in text
+    low = text.lower()
+    for w in FORBIDDEN:
+        assert w not in low
+    assert payload["provenance"]["dropped_reasons"] == list(rs.dropped_reasons)
+    json.dumps(payload)
+
+
 def test_realized_series_clock_bound_is_not_reported_as_store_bound(tmp_path):
     """Trailing cycles whose successor postdates `now` are not a stale store -- they are cycles the
     clock has not caught up with. The store branch must not swallow them."""

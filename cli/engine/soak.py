@@ -107,7 +107,9 @@ class RealizedSeries:
     """The realized forward-return observation over a clean run of journal cycles: each scored cycle's decided weights
     and the forward 4h return they earned, joined to the price store BY TIMESTAMP. The last four fields say what ENDED
     the window, which `dropped_tail` alone never says: `window_bound` is `"journal"` (the clean segment's own end),
-    `"store"` (the store ran out first) or `"clock"` (the trailing cycles' successors postdate `now`)."""
+    `"store"` (the store ran out first) or `"clock"` (the trailing cycles' successors postdate `now`).
+    `dropped_reasons` names, per skipped cycle, a PRESENT non-finite close that caused the skip; an absent close or
+    a missing stamp is the short store `window_bound` already describes and gets none."""
 
     cycle_ts: list[datetime]
     weights: list[dict[str, float]]
@@ -122,6 +124,7 @@ class RealizedSeries:
     store_last_ts: datetime | None
     journal_last_cycle_ts: datetime | None
     store_bound_cycles: int
+    dropped_reasons: tuple[str, ...] = ()
 
 
 def select_clean_segment(records: list[CycleRecord], *, floor: int | None = None) -> list[CycleRecord]:
@@ -237,6 +240,7 @@ def realized_series(
     # Why each candidate cycle was skipped, recorded at the gate that fired rather than re-derived
     # afterwards, and read after the loop to decide what bounded the window.
     skipped_because: dict[datetime, str] = {}
+    dropped_reasons: list[str] = []
 
     for i in range(len(clean) - 1):
         rec, nxt = clean[i], clean[i + 1]
@@ -262,6 +266,18 @@ def realized_series(
             for a in assets
         ):
             skipped_because[t] = "store"
+            non_finite = next(
+                (
+                    (a, ts)
+                    for a in assets
+                    for ts in (start_ts, end_ts)
+                    if closes[a].get(ts) is not None and not math.isfinite(closes[a][ts])
+                ),
+                None,
+            )
+            if non_finite is not None:
+                a, ts = non_finite
+                dropped_reasons.append(f"cycle {t.isoformat()}: {a} close at {ts.isoformat()} is {closes[a][ts]}")
             continue
 
         r_fwd = {a: closes[a][end_ts] / closes[a][start_ts] - 1.0 for a in assets}
@@ -307,6 +323,7 @@ def realized_series(
         store_last_ts=_store_last_usable(closes),
         journal_last_cycle_ts=clean[-1].cycle_ts,
         store_bound_cycles=store_bound_cycles,
+        dropped_reasons=tuple(dropped_reasons),
     )
 
 
@@ -1431,6 +1448,8 @@ def render_report(
         lines.append(f"  L (scored bars): {len(realized.net)}")
         lines.append(f"  span           : {span_days:.2f} days")
         lines.append(f"  dropped_tail   : {realized.dropped_tail}")
+        for reason in realized.dropped_reasons:
+            lines.append(f"    {reason}")
         lines.append(f"  chain_ok       : {'skipped' if realized.chain_ok is None else realized.chain_ok}")
     else:
         lines.append("  no realized series available")
@@ -1625,6 +1644,7 @@ def _json_payload(
             "last_cycle_ts": realized.cycle_ts[-1].isoformat(),
             "span_days": (realized.cycle_ts[-1] - realized.cycle_ts[0]).total_seconds() / 86400.0,
             "dropped_tail": realized.dropped_tail,
+            "dropped_reasons": list(realized.dropped_reasons),
             "chain_ok": realized.chain_ok,
             # A machine consumer gates on `window_bound == "store"` the way a reader gates on the text report's
             # STORE-BOUND WINDOW warning.
