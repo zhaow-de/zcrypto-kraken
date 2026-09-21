@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import polars as pl
+import pytest
 
 from cli.ohlc.seam import drop_in_progress, seam_overlap
 
@@ -35,3 +36,14 @@ def test_seam_overlap_clean_seam_has_no_mismatches():
     overlap_bars, mismatches = seam_overlap(left, right)
     assert overlap_bars == 1
     assert mismatches.is_empty()
+
+
+@pytest.mark.parametrize("absent", ["left", "right"])
+def test_seam_overlap_counts_an_absent_close_among_the_mismatches(absent):
+    """A null close answers null to `!=`, and a plain filter drops the row as if it agreed."""
+    left = pl.DataFrame({"ts": [NOW, NOW + timedelta(hours=1)], "close": [1.0, None if absent == "left" else 2.0]})
+    right = pl.DataFrame({"ts": [NOW, NOW + timedelta(hours=1)], "close": [1.0, None if absent == "right" else 2.0]})
+    overlap_bars, mismatches = seam_overlap(left, right)
+    assert overlap_bars == 2
+    assert mismatches["ts"].to_list() == [NOW + timedelta(hours=1)]
+    assert mismatches["close" if absent == "left" else "close_rest"][0] is None

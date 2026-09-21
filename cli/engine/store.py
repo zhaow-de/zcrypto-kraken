@@ -103,6 +103,20 @@ def _reconcile(
             f"the store tail and the REST fetch (need >= {min_overlap}); {shortfall_hint}"
         )
 
+    absent = mismatches.filter(pl.col("close").is_null() | pl.col("close_rest").is_null())
+    if absent.height:
+        stamp = absent["ts"][0]
+        sides = [
+            name
+            for name, value in (("the store tail", absent["close"][0]), ("the REST fetch", absent["close_rest"][0]))
+            if value is None
+        ]
+        raise EngineError(
+            f"{fn_name}: overlap mismatch for {pair}@{interval} at {stamp} — a shared stamp's close is absent on "
+            f"{' and '.join(sides)}, and an absent close is a disagreement whatever the other side carries, so no "
+            f"re-seed replaces a store close with it; {mismatch_hint}"
+        )
+
     if mismatches.height and not allow_replace:
         stamp = mismatches["ts"][0]
         raise EngineError(

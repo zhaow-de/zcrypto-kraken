@@ -318,6 +318,47 @@ def test_refresh_store_overlap_mismatch_raises(tmp_path):
     assert "zcrypto engine seed" in str(exc.value)
 
 
+def test_refresh_store_refuses_an_absent_close_on_a_shared_stamp(tmp_path):
+    """A REST null at a stamp the store holds is a disagreement the merge must not read as agreement."""
+    store_dir = tmp_path / "store"
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
+
+    rest = _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 4)
+    rest[1][4] = None
+    stamp = DAILY_START + timedelta(days=N_CANON - 2)
+
+    with pytest.raises(EngineError) as exc:
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: rest, clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert f"overlap mismatch for BTC/EUR@1440 at {stamp}" in msg
+    assert "absent on the REST fetch" in msg
+    assert "zcrypto engine seed" in msg
+    _, closes = read_store_series(store_dir, "BTC/EUR", 1440)
+    assert closes == [100.0 + i for i in range(N_CANON)]  # nothing appended, nothing replaced
+
+
+def test_seed_store_reseed_refuses_an_absent_close_and_keeps_the_store_close(tmp_path):
+    """The re-seed's `allow_replace` repairs a divergent tail from REST; a REST null is not a repair."""
+    store_dir = tmp_path / "store"
+    canonical_dir = tmp_path / "unused_canonical"  # never read: the store pre-exists for every pair
+    _write_full_universe(store_dir, _canonical_rows)
+
+    rest = _good_rest_rows(1440)
+    rest[2][4] = None
+    stamp = DAILY_START + timedelta(days=N_CANON - 4)
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=_fetch_override("XXBTZEUR", 1440, rest), clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert f"overlap mismatch for BTC/EUR@1440 at {stamp}" in msg
+    assert "absent on the REST fetch" in msg
+    _, closes = read_store_series(store_dir, "BTC/EUR", 1440)
+    assert closes[N_CANON - 4] == 100.0 + N_CANON - 4
+    assert len(closes) == N_CANON
+
+
 def test_refresh_store_zero_overlap_is_distinct_error(tmp_path):
     store_dir = tmp_path / "store"
     write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))

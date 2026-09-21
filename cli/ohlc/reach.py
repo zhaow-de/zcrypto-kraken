@@ -129,6 +129,16 @@ def _merge_or_detach(
             "is receding past the canonical tail, so this series needs an intervening OHLCVT dump"
         )
 
+    absent = mismatches.filter(pl.col("close").is_null() | pl.col("close_rest").is_null())
+    if absent.height:
+        stamp = absent["ts"][0]
+        sides = [name for name, value in (("canonical", absent["close"][0]), ("REST", absent["close_rest"][0])) if value is None]
+        raise OHLCError(
+            f"reach_round: seam mismatch for {symbol}@{interval} at {stamp} -- a shared stamp's close is absent on the "
+            f"{' and the '.join(sides)} side; an absent close is a disagreement, and the canonical set is authoritative, "
+            "so this is a data-integrity error, not a seam to paper over"
+        )
+
     if mismatches.height:
         stamp = mismatches["ts"][0]
         raise OHLCError(
