@@ -989,14 +989,10 @@ def _call_root(node: ast.AST) -> str:
 
 
 def test_the_registry_reads_nothing_a_form_could_not():
-    """A call into `tests/skip_gates.py` is a form (spec 00114 D3), so the module is held closed: its
-    imports are within `REGISTRY_IMPORTS`, every call reaches a name one of those imports binds, a
-    builtin it is allowlisted for or a function the module defines, no binding it makes shadows one of
-    those, the one process it may launch is a `git` every word of whose argv is a literal on the
-    allowlist -- the checkout it runs in is handed to `cwd`, never written as a word -- and every
-    function it defines anywhere -- private ones too -- is one `return`. A registry
-    that could open a socket would be the reducer's leak, one file over -- and `subprocess` is on the
-    allowlist, so the launch and the walk are what close that direction."""
+    """A call into `tests/skip_gates.py` is a form (spec 00114 D3), so the module is held closed: the
+    assertions below are the clauses, decided in D4 of that spec. A registry that could open a socket
+    would be the reducer's leak, one file over -- and `subprocess` is on the allowlist, so the launch
+    and the walk are what close that direction."""
     tree = ast.parse(REGISTRY.read_text(), str(REGISTRY))
     bound = {
         (alias.asname or alias.name).split(".")[0]: (node.module if isinstance(node, ast.ImportFrom) else alias.name).split(".")[0]
