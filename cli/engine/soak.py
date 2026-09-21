@@ -114,9 +114,9 @@ def _on_grid(ts: datetime) -> bool:
 @dataclass(frozen=True)
 class RealizedSeries:
     """The realized forward-return observation over a clean run of journal cycles: each scored cycle's decided weights
-    and the forward 4h return they earned, joined to the price store BY TIMESTAMP. The last four fields say what ENDED
-    the window, which `dropped_tail` alone never says: `window_bound` is `"journal"` (the clean segment's own end),
-    `"store"` (the store ran out first) or `"clock"` (the trailing cycles' successors postdate `now`).
+    and the forward 4h return they earned, joined to the price store BY TIMESTAMP. `window_bound` and the three fields
+    after it say what ENDED the window, which `dropped_tail` alone never says: `window_bound` is `"journal"` (the clean
+    segment's own end), `"store"` (the store ran out first) or `"clock"` (the trailing cycles' successors postdate `now`).
     `dropped_reasons` names, per skipped cycle, a PRESENT non-finite close that caused the skip; an absent close or
     a missing stamp is the short store `window_bound` already describes and gets none."""
 
@@ -243,8 +243,9 @@ def realized_series(
             raise EngineError(
                 f"realized_series: the store's 240 leg for {asset} holds {len(off_grid)} stamp(s) off the 4h grid "
                 f"(00/04/08/12/16/20 UTC), the first {off_grid[0].isoformat()} -- the stamps are the wrong instants, not "
-                "a short store; re-seed the store from the canonical on the workstation (`zcrypto engine seed`), or "
-                "re-deliver it on the engine host as infra/runbooks/engine.md's zcrypto-engine-cycle-stale section says"
+                "a short store; move that leg aside on the workstation and re-seed (`zcrypto engine seed` copies the "
+                "canonical for an absent file alone), or re-deliver the store on the engine host as "
+                "infra/runbooks/engine.md's zcrypto-engine-cycle-stale section says"
             )
 
     cycle_ts: list[datetime] = []
