@@ -74,6 +74,11 @@ def structural_metrics(
     }
 
 
+def _measured_hhi(hhi: list[float]) -> list[float]:
+    """The concentration values with the no-book sentinel left out, read off it exactly as `_no_book_bars` does."""
+    return [h for h in hhi if h != 0.0]
+
+
 def _no_book_bars(weights_by_bar: list[dict[str, float]]) -> tuple[int, int]:
     """Bars holding no book at all, and the total they are out of -- read off `structural_metrics`' own
     hhi sentinel rather than a second spelling of its gross test, and shared by the text report and the
@@ -1122,10 +1127,10 @@ def analyze_soak(
     (judged at DAY granularity, window = the realized day count) and cap_breach (at BAR granularity, window = L)
     from `internals`, which degrade to "n/a" with `internals_reason` when the rebuild is unavailable (spec 00059 D7) -- a
     missing rebuild degrades the fingerprint, it does not invalidate it. Turnover and P&L are prev-dependent, so
-    both aggregate INTERIOR bars (each series' first element dropped) on the live and null sides alike, while the
-    other metrics use all L bars. `null_mode` (spec 00061 D4) picks the null construction(s) for all four judging
-    call sites; under `"both"` each metric's reconciliation lands in `dual_verdicts`, its disclosure in
-    `disclosures`."""
+    both aggregate INTERIOR bars (each series' first element dropped) on the live and null sides alike; hhi takes
+    only the bars holding a book (spec 00058 D7), and the other metrics all L. `null_mode` (spec 00061 D4) picks
+    the null construction(s) for all four judging call sites; under `"both"` each metric's reconciliation lands in
+    `dual_verdicts`, its disclosure in `disclosures`."""
     if null_mode not in _NULL_MODES:
         raise SoakError(f"null_mode must be one of {_NULL_MODES}, got {null_mode!r}")
 
@@ -1145,6 +1150,12 @@ def analyze_soak(
     for m in ("gross", "net", "active_frac", "turnover", "hhi"):
         if m == "turnover":
             live_series, null_series, window = rm[m][1:], nm[m][1:], L - 1
+        elif m == "hhi":
+            # A bar holding no book has no concentration to measure -- `structural_metrics` writes the sentinel
+            # `0.0` there -- while its gross, net, activity, turnover and cap state are measurements, so only this
+            # series drops those bars, and the window follows what remains (spec 00058 D7).
+            live_series, null_series = _measured_hhi(rm[m]), _measured_hhi(nm[m])
+            window = len(live_series)
         else:
             live_series, null_series, window = rm[m], nm[m], L
         eff_n = len(null_series) / window if window > 0 else 0.0
@@ -1444,7 +1455,7 @@ def render_report(
     if null is not None:
         null_flat, null_bars = _no_book_bars(null.weights)
         lines.append("  reference      : the canonical's complete-basket era, not its whole extent")
-        lines.append("  no-book bar    : held nothing at all -- its hhi reads 0, a sentinel not a measurement")
+        lines.append("  no-book bar    : held nothing at all -- its hhi reads 0, a sentinel the hhi row leaves out")
         lines.append(f"  retained bars  : {null.n_periods}")
         lines.append(f"  no-book bars   : {null_flat} of {null_bars}")
         # A null built anywhere but `build_null` carries no stamps; the lines above read none of them.
