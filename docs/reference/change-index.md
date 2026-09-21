@@ -339,3 +339,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #578 | 2026-09-20 | feat(data): T0065 the Q2 2026 OHLCVT ingest, reach over the new sibling | — | — | T0065 |
 | #579 | 2026-09-21 | fix(engine): T0184 the concentration aggregate leaves no-book bars out | — | — | T0184 |
 | #580 | 2026-09-21 | fix(engine): T0200 — the snapshot write refuses an unusable close | — | 00116 | T0200 |
+| #583 | 2026-09-21 | test(skip-gates): T0206 the registry arguments are judged at the gate | — | 00114 | T0206 |
