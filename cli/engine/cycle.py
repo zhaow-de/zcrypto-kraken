@@ -662,7 +662,7 @@ def run_cycle(
     # boundary's `_previous_success` silently globs past.
     #
     # The journal write one step earlier refuses these values at every bar, `None` excepted, so on the live path the
-    # arm this guard can reach is the `None` one; the others stay for what a stub or a replay hands it.
+    # arm this guard can reach is the `None` one; the others stay for what a stub of the contraction hands it.
     model_closes = {}
     for base, series in model_h4.items():
         value = series[-1]
