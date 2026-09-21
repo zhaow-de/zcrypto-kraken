@@ -38,6 +38,7 @@ Claude-Session: https://claude.ai/code/session_01QL5VMcRChTfVeL5fwZb9rd
 - Modify `cli/engine/command.py` — `seed` resolves its canonical through `resolve_canonical_root` over the configured data root when a store file is absent and refuses in its own voice; `CANONICAL_DIR` keeps `soak-check`'s null reference (Task 2).
 - Modify `tests/test_engine_command.py` — `_patch_config` takes a `data_dir`; the seed summary case follows the resolver and pins `CANONICAL_DIR`; the seed error case resolves a canonical first; two refusal cases, an every-file-present case and a `soak-check` default-binding case (Task 2).
 - Modify `docs/reference/data-catalog-full.md` — the `engine-store` bullet's account of the seed's canonical (Task 2).
+- Modify `README.md` — the `seed` row of the CLI reference says what the seed reads (Task 2).
 - Modify `infra/runbooks/engine.md` — the `zcrypto-engine-cycle-stale` › What it means bullet on a raising `run_cycle` is re-led and gains the reading and the repair; What to do step 3's artifact-state line reads the boundary's own snapshot directory and gains the third cause; the `zcrypto-engine-cycle-failed` › What to do step 5 routes the store recovery by host (Task 3).
 - Modify `docs/open-topics/T0200-journal-snapshot-metadata-carries-no-finiteness-claim.md` — resolved, moved to `docs/open-topics/archive/` (Task 3).
 - Modify `docs/open-topics/T0199-store-nan-drops-a-tail-instead-of-refusing.md` — the one-door paragraph records what T0200 decided for the shared helper; the `write_parquet` arm leaves its trigger and its first next step (Task 3).
@@ -289,6 +290,7 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 - Modify: `cli/engine/command.py` (the `from cli.config import ...` and `from cli.engine.store import ...` lines, `CANONICAL_DIR` at the module top, and `seed`, the command whose docstring begins `Seed/refresh the live price store`)
 - Modify: `tests/test_engine_command.py` (`_patch_config`, `test_seed_prints_per_pair_overlap_summary`, `test_seed_engine_error_is_a_clean_exit_1`, and four cases appended directly below the latter)
 - Modify: `docs/reference/data-catalog-full.md` (the `- **`engine-store`**` bullet under the machine-state section)
+- Modify: `README.md` (the `seed` row of the `zcrypto engine` reference table)
 
 **Interfaces:**
 - Consumes: `resolve_canonical_root(data_root: Path) -> Path` from `cli/data/rebuild.py`, raising `DataSyncError` from `cli/data/errors.py` when no whole frozen set resolves; `resolve_data_dir(flag_value, cfg) -> Path` from `cli/config.py`, raising `ConfigError` when `data_dir` is unset; `seed_store(store_dir, canonical_dir)`, `PAIR_KEYS`, `GRID_INTERVALS` and `_store_path(root, symbol, interval)` from `cli/engine/store.py`; `_load_app_config`, `_abort`, `ConfigError`, `runner`, `app`, `typer.main`, `_patch_config`, `_output`, `SeedReport`, `SeedEntry`, `EngineError`, `AppConfig` from the command module and the test module's existing imports.
@@ -345,8 +347,8 @@ with
     roots = []
     monkeypatch.setattr(command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or report)
     # The store dir does not exist, so every file is absent and the seed resolves a canonical under the configured
-    # data root: the resolver answers for it, with a fixed relative root so the canonical adds no digit to the output
-    # the assertions below read (the tmp store path is the one path left in it).
+    # data root: the resolver answers for it, with a fixed relative root whose digits are no substring the assertions
+    # below match (the tmp store path is the one path left in the output).
     monkeypatch.setattr(
         "cli.data.rebuild.resolve_canonical_root", lambda data_root: roots.append(data_root) or Path("data/ohlc-full-20260920")
     )
@@ -583,7 +585,19 @@ Expected: every test passed; the skips are the files' existing live-venue and da
 with
 
 ```
-`engine seed` reads the canonical only where a store file is absent, and resolves one only then: its canonical is the newest whole frozen `ohlc-full` sibling under the configured data root, or the unstamped set when there is none (`resolve_canonical_root`, the root `ohlc-reach` joins), so on a checkout carrying the 2026-06-30 sibling a series moved aside is re-copied from a set whose tail the REST window overlaps. The two `/BTC` legs' **4h** grids were seeded **REST-only** at the twelve-leg widening — 720 bars from 2026-04-17, when the unstamped set ended 2026-03-31 and the REST window had receded past it — while every `/EUR` leg and both `/BTC` **daily** grids were canonical-backed from the start (REST reaches 2024-08-25 on the daily grid). Harmless to the model today because `select_model_inputs` contracts to the ten `/EUR` legs, so no `/BTC` datum reaches it — but a loop that starts consuming a `/BTC` series must not assume history before 2026-04-17 exists in the store as it stands; a re-seed of that series from the 2026-06-30 sibling carries the full tail.
+`engine seed` reads the canonical only where a store file is absent, and resolves one only then: its canonical is the newest whole frozen `ohlc-full` sibling under the configured data root, or the unstamped set when there is none (`resolve_canonical_root`, the root `ohlc-reach` joins), so on a checkout carrying the 2026-06-30 sibling a series moved aside is re-copied from a set whose tail the REST window overlaps, while that tail lies inside the 4h REST window of about 120 days (until about 2026-10-28 for that sibling), else the next quarterly ingest is minted first. The two `/BTC` legs' **4h** grids were seeded **REST-only** at the twelve-leg widening — 720 bars from 2026-04-17, when the unstamped set ended 2026-03-31 and the REST window had receded past it — while every `/EUR` leg and both `/BTC` **daily** grids were canonical-backed from the start (REST reaches 2024-08-25 on the daily grid). Harmless to the model today because `select_model_inputs` contracts to the ten `/EUR` legs, so no `/BTC` datum reaches it — but a loop that starts consuming a `/BTC` series must not assume history before 2026-04-17 exists in the store as it stands; a re-seed of that series from the 2026-06-30 sibling carries the full tail.
+```
+
+`grep -c '^| `seed` | Seed/refresh the live price store (`store_dir`) from the canonical dataset (`data/ohlc-full`) plus a REST gap-fill;' README.md` prints `1`. In that row, replace the text
+
+```
+Seed/refresh the live price store (`store_dir`) from the canonical dataset (`data/ohlc-full`) plus a REST gap-fill; idempotent,
+```
+
+with
+
+```
+Seed/refresh the live price store (`store_dir`): a REST gap-fill over every series, and for an absent store file a copy of the newest whole frozen `ohlc-full` sibling under the configured data root (the unstamped set when there is none); workstation-only, the engine image carrying no canonical dataset; idempotent,
 ```
 
 - [ ] **Step 6: The commit gate, then commit**
@@ -592,7 +606,7 @@ Run: `uv run pre-commit run -a`
 Expected: every hook Passed; re-run after any rewrite until clean, then stage what it rewrote.
 
 ```bash
-git add cli/engine/command.py tests/test_engine_command.py docs/reference/data-catalog-full.md
+git add cli/engine/command.py tests/test_engine_command.py docs/reference/data-catalog-full.md README.md
 git commit -m "fix(engine): the seed reads the newest whole frozen ohlc-full sibling, for an absent store file alone
 
 \`zcrypto engine seed\` pinned its canonical at the unstamped \`data/ohlc-full\`, frozen at 2026-03-31,
@@ -607,8 +621,8 @@ or the resolver aborts in the seed's own voice, naming the absent count, with th
 after it, since the resolver's remedies are written for \`data rebuild\`; the seed prints the root it
 read or that none was. \`soak-check\`'s null reference keeps the unstamped set, its span the null's
 instrument, and two cases pin the constant's value and the option's binding to it now that the seed
-no longer reads it. The data catalog's \`engine-store\` bullet says which canonical the seed reads and
-what a re-seed of a BTC-quoted 4h leg carries.
+no longer reads it. The data catalog's \`engine-store\` bullet and the README's \`seed\` row say which
+canonical the seed reads and what a re-seed of a BTC-quoted 4h leg carries.
 
 Cases: the seed summary follows the resolver's root under the configured data dir and prints it;
 a resolver refusal and an unset data dir are each a clean exit 1 in the seed's voice with no store
@@ -671,7 +685,7 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 `grep -c '^- \*\*`run_cycle` raised before writing anything\*\*: a poisoned store, a disk error\.' infra/runbooks/engine.md` prints `1`. Replace that lead, the text ``- **`run_cycle` raised before writing anything**: a poisoned store, a disk error.``, with ``- **`run_cycle` raised before journaling the boundary**: a poisoned store, a disk error.`` (the venue record of step 0 precedes the raise, so "writing anything" overstated it). The same bullet ends with the text `reads "the node is up but a cycle raised; suspect the store".` Append to the same line, after that full stop, one space and:
 
 ```
-A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number" is the snapshot write refusing to journal what the store holds at that stamp, before it journaled anything but the boundary's venue record: the store is readable and the refresh completed, and a re-run over the same store refuses the same way. The repair is the store's, and on this host it is a re-delivery, not a seed: `zcrypto engine seed` runs on the workstation alone (the image carries no canonical dataset) and over an existing file it replaces a divergent tail inside the REST window and nothing older, so stop the unit, move the store dir aside rather than deleting it (unversioned data has no undo), repair that series in the workstation's `data/engine-store/` first (read the stamp the traceback names; a series moved aside there is re-copied from the canonical and gap-filled from REST by `zcrypto engine seed`), then take step 5's attended converge with the engine tag, `-e converge_primary=true` and `-e engine_image_digest=sha256:<digest>` (the engine row's digest cell in `docs/reference/fleet-pins.md`, the first twelve hex of the full `sha256:` value listed under that page's `## Full digests`; the row's rollback operand is the previous image, not this one; the role asserts the digest before the store copy, so a converge without it aborts with the unit stopped), inside the inter-cycle gap and outside a published Kraken maintenance window checked immediately before (`.claude/rules/fleet-deploys.md`), so the role's copy for an absent store re-delivers it, and start the unit.
+A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number" is the snapshot write refusing to journal what the store holds at that stamp, before it journaled anything but the boundary's venue record: the store is readable and the refresh completed, and a re-run over the same store refuses the same way. The repair is the store's, and on this host it is a re-delivery, not a seed: `zcrypto engine seed` runs on the workstation alone (the image carries no canonical dataset) and over an existing file it replaces a divergent tail inside the REST window and nothing older, so stop the unit, move the store dir aside rather than deleting it (unversioned data has no undo), repair that series in the workstation's `data/engine-store/` first (read the stamp the traceback names; a series moved aside there is re-copied from the canonical and gap-filled from REST by `zcrypto engine seed`, while the newest frozen sibling's last stamp lies inside the 4h REST window of about 120 days, else the next quarterly ingest is minted first), then take step 5's attended converge with the engine tag, `-e converge_primary=true` and `-e engine_image_digest=sha256:<digest>` (the full 64-hex value listed under `## Full digests` in `docs/reference/fleet-pins.md`, the one whose first twelve hex are the engine row's digest cell; the row's rollback operand is the previous image, not this one; the role asserts the digest before the store copy, so a converge without it aborts with the unit stopped), inside the inter-cycle gap and outside a published Kraken maintenance window checked immediately before (`.claude/rules/fleet-deploys.md`), so the role's copy for an absent store re-delivers it, and start the unit.
 ```
 
 `grep -c '^   A boundary with `snapshots/cycle-<HH>/` but no record raised' infra/runbooks/engine.md` prints `1`. Replace that whole line (it begins with three spaces and ends `go to the failed-cycle section below.`) with:
@@ -702,7 +716,10 @@ Then `grep '^#' docs/open-topics/T0200-journal-snapshot-metadata-carries-no-fini
 
 ```bash
 git mv docs/open-topics/T0200-journal-snapshot-metadata-carries-no-finiteness-claim.md docs/open-topics/archive/
+git add docs/open-topics/archive/T0200-journal-snapshot-metadata-carries-no-finiteness-claim.md
 ```
+
+The `git add` is the remedy the repo's `git-mv-guard` hook prints after a `git mv` of an edited file, whose staged rename would otherwise carry the pre-edit content until Step 6 stages the path.
 
 - [ ] **Step 3: Tell T0199 what was decided for the shared helper, and close that arm in its trigger and its first next step**
 
@@ -710,6 +727,12 @@ git mv docs/open-topics/T0200-journal-snapshot-metadata-carries-no-finiteness-cl
 
 ```
 Decided first by [[T0200]], resolved by spec `00116`: the helper is not the door; the engine's own snapshot write refuses an unusable present close before its first file, and the shared `write_parquet` stays as it is, so this fork's helper arm is closed and its other halves stand.
+```
+
+`grep -c '^- The engine host.s store repair carries the same delete' docs/open-topics/T0199-store-nan-drops-a-tail-instead-of-refusing.md` prints `1`. That one-line bullet ends `naming no copy aside and no loss.` Append to the same line, after that full stop, one space and:
+
+```
+Three code carriers send the host to the same workstation command: `refresh_store`'s shortfall and mismatch hints in `cli/engine/store.py` and `run`'s bind-mount refusal in `cli/engine/command.py`; the recovery text routes them by host too, as the engine runbook's cycle-stale bullet and failed-cycle step 5 now do.
 ```
 
 In the file's `ripe_when:` line (line 3, one line), delete the text `, or the shared `write_parquet` in `cli/ohlc/dataset.py`` so the clause reads `-- `seed_store` or its door `_require_joinable_ts` in `cli/engine/store.py` -- to `seam_overlap``.
