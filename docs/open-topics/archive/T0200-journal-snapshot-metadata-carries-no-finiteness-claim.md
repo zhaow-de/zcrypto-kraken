@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'the next change to `SnapshotEntry` in `cli/engine/journal.py`, or to the snapshot write path in `cli/engine/cycle.py` -- either is the commit that can add the claim at the write instead of the read.'
+status: resolved
 ---
 
 # The journal's snapshot metadata carries no finiteness claim about the data behind its `content_hash`
@@ -30,10 +29,6 @@ What PR #514 (T0193) measured is the sections above.
 
 **The helper is shared well beyond the engine**, and two of its callers write frames carrying no close column at all, so a claim stated at the write cannot assume the frame has one. Carrying it on `SnapshotEntry` instead keeps the change inside the journal's own record and avoids that reach.
 
-## Suggested next steps
+## Resolution
 
-- Enumerate what a write-time claim would cost: `snapshot_content_hash` already walks the closes, so the check
-  is one pass over data already in hand.
-- Decide whether the claim is a new `SnapshotEntry` field (a schema bump, so a reader migration) or a refusal
-  at write with no field at all — the latter needs no schema change and leaves the record format alone.
-- A refusal at write reaches the OHLC, backfill and derivatives packages as well as the engine, so it takes the care any change with that reach does; capture does not call this helper.
+Resolved by spec `00116` and the PR that carries it: the refusal lives at the engine's own write. `_journal_snapshots` in `cli/engine/cycle.py` walks every close of every grid before the first snapshot file is written and refuses a present close that is not a finite positive number as an `EngineError` naming the pair, the grid, the bar index, the stamp and the value, so a refused boundary leaves no snapshot directory, no record, no sidecar and no orders beside the venue record of step 0; `None` at a union absence is admitted. No `SnapshotEntry` field was added and the shared `write_parquet` is untouched, which answers the third next step, since the door is the engine's and reaches no other package, and records for [[T0199]] that its helper arm is not the place. The read-side refusal from [[T0193]] stays for records written before the door. The abort's shape is the raise, as the forming-row guard's; the operator reading is the cycle-stale runbook's bullet and its step 3, naming the host's repair as a re-delivery by the engine-tagged converge, since `zcrypto engine seed` is the workstation's command; and that seed reads the newest whole frozen `ohlc-full` sibling under the configured data root for an absent store file, the same PR's earlier commit, without which a 4h leg could not be re-seeded. Measured before the change over the NAS journal mirror on 2026-09-21: 433 records, 9,508 snapshot files, 0 unusable present closes among 156,359,450 close rows, so no record on disk is refused by the read for this reason. The owner's ruling of 2026-09-20 in chat set the placement and the shape.

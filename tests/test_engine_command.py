@@ -25,7 +25,7 @@ from cli.engine.errors import EngineError
 from cli.engine.execgate import GateLevel, GateVerdict
 from cli.engine.execledger import append_plan_entry, write_exec_record
 from cli.engine.journal import CycleRecord, SnapshotEntry, snapshot_content_hash, to_json, validate_record
-from cli.engine.store import BASKET, GRID_INTERVALS, SeedEntry, SeedReport, _store_path
+from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, SeedEntry, SeedReport, _store_path
 from cli.engine.venue import VenueStatus
 from cli.ohlc.dataset import write_parquet
 
@@ -44,10 +44,11 @@ def _output(result) -> str:
     return _ANSI_RE.sub("", result.output)
 
 
-def _patch_config(monkeypatch, tmp_path: Path) -> EngineConfig:
-    """Point load_config (as cli.engine.command sees it) at tmp-dir engine paths."""
+def _patch_config(monkeypatch, tmp_path: Path, *, data_dir: Path | None = None) -> EngineConfig:
+    """Point load_config (as cli.engine.command sees it) at tmp-dir engine paths; `data_dir` stays unset unless a
+    case reads it."""
     cfg = AppConfig(
-        data_dir=None,
+        data_dir=data_dir,
         nfs_mount_dir=Path("/mnt/zhao-crypto"),
         fetch=FetchConfig(),
         engine=EngineConfig(store_dir=tmp_path / "store", journal_dir=tmp_path / "journal"),
@@ -158,7 +159,7 @@ def _fake_builder(targets: dict[str, float]):
 
 
 def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
-    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    engine_cfg = _patch_config(monkeypatch, tmp_path, data_dir=Path("data"))
     report = SeedReport(
         entries=(
             SeedEntry(pair="BTC", interval=1440, overlap_bars=98, appended=12, replaced_tail_rows=0),
@@ -166,13 +167,23 @@ def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
         )
     )
     calls = []
+    roots = []
     monkeypatch.setattr(command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or report)
+    # The store dir does not exist, so every file is absent and the seed resolves a canonical under the configured
+    # data root: the resolver answers for it, with a fixed relative root whose digits are no substring the assertions
+    # below match (the tmp store path is the one path left in the output).
+    monkeypatch.setattr(
+        "cli.data.rebuild.resolve_canonical_root", lambda data_root: roots.append(data_root) or Path("data/ohlc-full-20260920")
+    )
 
     result = runner.invoke(app, ["engine", "seed"])
 
     assert result.exit_code == 0, _output(result)
-    assert calls == [(engine_cfg.store_dir, Path("data/ohlc-full"))]
+    assert roots == [Path("data")]
+    assert calls == [(engine_cfg.store_dir, Path("data/ohlc-full-20260920"))]
+    assert command.CANONICAL_DIR == Path("data/ohlc-full")
     out = _output(result)
+    assert "ohlc-full-20260920" in out
     assert "BTC" in out
     assert "1440" in out and "240" in out
     assert "98" in out and "621" in out  # per-pair x grid overlap_bars -- the seam-QA evidence
@@ -182,7 +193,8 @@ def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
 
 
 def test_seed_engine_error_is_a_clean_exit_1(tmp_path, monkeypatch):
-    _patch_config(monkeypatch, tmp_path)
+    _patch_config(monkeypatch, tmp_path, data_dir=Path("data"))
+    monkeypatch.setattr("cli.data.rebuild.resolve_canonical_root", lambda data_root: Path("data/ohlc-full-20260920"))
 
     def boom(store_dir, canonical_dir):
         raise EngineError("window shortfall for BTC@240 -- use the quarterly OHLCVT dump")
@@ -194,6 +206,85 @@ def test_seed_engine_error_is_a_clean_exit_1(tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert "OHLCVT" in _output(result)
     assert isinstance(result.exception, SystemExit)  # clean typer.Exit, not an EngineError traceback
+
+
+def test_seed_refuses_when_no_whole_frozen_set_resolves(tmp_path, monkeypatch):
+    """The resolver's refusal is the seed's, in the seed's own voice: with a store file absent, a missing or partial
+    frozen set aborts the command before any store file is touched, the resolver's message after the seed's own."""
+    from cli.data.errors import DataSyncError
+
+    _patch_config(monkeypatch, tmp_path, data_dir=Path("data"))
+    calls = []
+    monkeypatch.setattr(
+        command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or SeedReport(entries=())
+    )
+
+    def refuse(data_root):
+        raise DataSyncError("data rebuild: ohlc-reach needs a frozen ohlc-full set to join, none found under data")
+
+    monkeypatch.setattr("cli.data.rebuild.resolve_canonical_root", refuse)
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 1
+    out = _output(result)
+    assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
+    assert "none found under data" in out
+    assert isinstance(result.exception, SystemExit)
+    assert calls == []
+
+
+def test_seed_refuses_without_a_configured_data_dir(tmp_path, monkeypatch):
+    """No `data_dir` in the config is the same refusal: the seed cannot name a canonical without a data root."""
+    _patch_config(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or SeedReport(entries=())
+    )
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 1
+    out = _output(result)
+    assert "engine seed: no canonical dataset to seed 24 absent series (ADA/EUR@1440, ADA/EUR@240, AVAX/EUR@1440, ...) from" in out
+    assert "no data_dir configured" in out
+    assert "--data-dir" not in out
+    assert calls == []
+
+
+def test_seed_reads_no_canonical_when_every_store_file_is_present(tmp_path, monkeypatch):
+    """`seed_store` opens the canonical for an absent file alone, so the seed resolves one for an absent file alone:
+    a canonical that cannot resolve blocks no repair over a complete store, and the summary says none was read."""
+    engine_cfg = _patch_config(monkeypatch, tmp_path)
+    for symbol in PAIR_KEYS:
+        base, quote = symbol.split("/")
+        for interval in GRID_INTERVALS:
+            path = engine_cfg.store_dir / base / quote / f"{interval}.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+    calls = []
+    monkeypatch.setattr(
+        command, "seed_store", lambda store_dir, canonical_dir: calls.append((store_dir, canonical_dir)) or SeedReport(entries=())
+    )
+
+    def refuse(data_root):
+        raise AssertionError("the resolver must not be consulted when no store file is absent")
+
+    monkeypatch.setattr("cli.data.rebuild.resolve_canonical_root", refuse)
+
+    result = runner.invoke(app, ["engine", "seed"])
+
+    assert result.exit_code == 0, _output(result)
+    assert calls == [(engine_cfg.store_dir, command.CANONICAL_DIR)]
+    assert "no store file absent, canonical not read" in _output(result)
+
+
+def test_soak_check_reads_the_unstamped_set_by_default():
+    """The option's default is bound to the constant the seed no longer reads, and the constant is the unstamped
+    set: the null's reference span moves with neither."""
+    soak = typer.main.get_command(app).commands["engine"].commands["soak-check"]
+    default = next(param.default for param in soak.params if param.name == "canonical_dir")
+    assert default == command.CANONICAL_DIR == Path("data/ohlc-full")
 
 
 def test_config_error_is_a_clean_exit_1(monkeypatch):

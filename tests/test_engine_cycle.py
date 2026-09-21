@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 from cli.config import EngineConfig
@@ -381,6 +382,72 @@ def test_an_unusable_forming_row_close_fails_the_cycle_before_the_orders(tmp_pat
     assert not (day_dir / "orders.jsonl").exists()
     assert not (day_dir / "cycle-08.json").exists()
     assert "forming row" in str(excinfo.value)
+
+
+def _spoil(store_dir: Path, symbol: str, interval: int, bars: dict[int, float]) -> dict[int, datetime]:
+    """Overwrite the closes at `bars` (row index -> value) in one store series, below the engine's own writer --
+    `to_frame` refuses a NaN -- the way a torn or foreign writer would leave it. Returns each row's stamp."""
+    base, quote = symbol.split("/")
+    path = store_dir / base / quote / f"{interval}.parquet"
+    frame = read_parquet(path)
+    closes, stamps = frame["close"].to_list(), frame["ts"].to_list()
+    for bar, value in bars.items():
+        closes[bar] = value
+    frame.with_columns(pl.Series("close", closes, dtype=pl.Float64)).write_parquet(path)
+    return {bar: stamps[bar] for bar in bars}
+
+
+@pytest.mark.parametrize(("symbol", "interval", "bar"), [("ETH/BTC", 240, 2), ("XRP/EUR", 1440, 1)])
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), 0.0, -5.0])
+def test_an_unusable_present_close_refuses_the_cycle_before_any_snapshot_is_written(
+    tmp_path, monkeypatch, symbol, interval, bar, bad
+):
+    """The journal's snapshot write is the door: a present close the replay's validator would refuse is refused
+    before the first snapshot file exists, naming the pair, the grid, the bar, the stamp and the value.
+
+    `ETH/BTC` is a leg no builder input reads and both bars sit outside the refresh overlap (the last two rows), so
+    nothing else on the path refuses either value; with the stubbed builder the EUR leg's mid-series bar is the
+    same. Both legs have files written before them -- the daily grid goes first and `XRP/EUR` is its last leg, and
+    `ETH/BTC` sits mid-way through the 4h pass -- so a check that moved into the write loop would leave files
+    behind on both halves."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    stamp = _spoil(config.store_dir, symbol, interval, {bar: bad})[bar]
+
+    with pytest.raises(EngineError) as excinfo:
+        run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    message = str(excinfo.value)
+    assert f"{symbol}@{interval}" in message
+    assert f"close[{bar}]" in message
+    assert stamp.isoformat() in message
+    assert repr(bad) in message
+    assert "1 unusable close at a present stamp in 1 series" in message
+    assert "none of this boundary's snapshot, record, sidecar or orders was written" in message
+    day_dir = config.journal_dir / "2026-07-10"
+    # Refused before the FIRST file: no snapshot directory, no record, no sidecar, no orders. The venue record of
+    # step 0 is already there and stays.
+    assert not (day_dir / "snapshots").exists()
+    assert not (day_dir / "cycle-08.json").exists()
+    assert not (day_dir / "failed-cycle-08.json").exists()
+    assert not (day_dir / "orders.jsonl").exists()
+    assert (day_dir / "venue-08.json").exists()
+
+
+def test_unusable_present_closes_across_series_are_counted_and_the_first_grid_is_named_first(tmp_path, monkeypatch):
+    """One traceback for a spoiled span: the message names the first offender in grid-then-pair order (the daily
+    grid walks first) and counts the closes and the series, so a poisoned run is read once, not one bar per boundary.
+    Two of the three offenders share a series, which is what separates the series count from the close count."""
+    config, rows_by, _ = _env(tmp_path, monkeypatch)
+    _spoil(config.store_dir, "ETH/BTC", 240, {1: float("nan"), 2: float("nan")})
+    daily_stamp = _spoil(config.store_dir, "XRP/EUR", 1440, {1: 0.0})[1]
+
+    with pytest.raises(EngineError) as excinfo:
+        run_cycle(CYCLE_TS, config=config, fetch_fn=_tail_fetch(rows_by), clock=_clock())
+
+    message = str(excinfo.value)
+    assert message.startswith(f"the snapshot for XRP/EUR@1440 cannot be journaled: close[1] at {daily_stamp.isoformat()} is 0.0")
+    assert "3 unusable closes at a present stamp in 2 series" in message
+    assert not (config.journal_dir / "2026-07-10" / "snapshots").exists()
 
 
 # --- the limit-bound verdict ---------------------------------------------------------------------
