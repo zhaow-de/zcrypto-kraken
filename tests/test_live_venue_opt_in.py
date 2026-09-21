@@ -1017,6 +1017,12 @@ def test_the_registry_reads_nothing_a_form_could_not():
     roots = {_call_root(call.func) for call in calls}
     allowed = set(bound) | REGISTRY_BUILTINS | {f.name for f in defined}
     assert roots <= allowed, f"the registry calls {sorted(roots - allowed)}"
+    rebound = {n.arg for n in ast.walk(tree) if isinstance(n, ast.arg)} | {
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    }
+    assert not rebound & allowed, (
+        f"the registry binds {sorted(rebound & allowed)} as a parameter or a target, shadowing a name a call may reach"
+    )
     for call in calls:
         if bound.get(_call_root(call.func)) != "subprocess":
             continue
@@ -1034,7 +1040,8 @@ def test_the_registry_reads_nothing_a_form_could_not():
     judged = REGISTRY_ROOTED | REGISTRY_LITERAL
     assert len(judged) == len(REGISTRY_ROOTED) + len(REGISTRY_LITERAL), "a name is judged two ways"
     assert judged | REGISTRY_DECLARED == REGISTRY_PUBLIC and not judged & REGISTRY_DECLARED, (
-        f"the registry's names are not partitioned into judged and declared: {sorted(REGISTRY_PUBLIC ^ (judged | REGISTRY_DECLARED))}"
+        f"the registry's names are not partitioned into judged and declared: "
+        f"{sorted(REGISTRY_PUBLIC ^ (judged | REGISTRY_DECLARED))} in one side only, {sorted(judged & REGISTRY_DECLARED)} in both"
     )
     for f in defined:
         body = [s for s in f.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]

@@ -44,7 +44,8 @@ def nothing_found_under(root: Path, pattern: str) -> bool:
 
 
 def scan(root: Path, pattern: str) -> list[Path]:
-    """The glob a test body needs, sorted by name so a stamped filename orders it."""
+    """The glob a test body needs, sorted by name so a stamped filename orders it; the matcher holds
+    `root` literal-rooted as it holds `nothing_found_under`'s, and `pattern` is the call site's own."""
     return sorted(Path(root).glob(pattern))
 
 
