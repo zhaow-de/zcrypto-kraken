@@ -1752,7 +1752,7 @@ def test_every_reachability_spelling_is_refused():
     neither is one the module assigns an attribute on, although that rebinds nothing, because the
     attribute assignment is what the call runs. The `..._module_of_ours_that_resolves` case is the
     price of following nothing: a call is a form only into the registry (spec 00114 D3), so a sibling
-    module declares itself there or is rewritten at the gate, whatever that module happens to read. Two more are the form's own shape: a scan with its pattern missing and a substrate named by an f-string."""
+    module declares itself there or is rewritten at the gate, whatever that module happens to read."""
     for name in _REACHABILITY_REFUSED:
         gate = _fixture(name)
         assert gate.forms == () and gate.opaque, f"{name}: {gate}"

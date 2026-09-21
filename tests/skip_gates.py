@@ -6,7 +6,7 @@ here reads the filesystem, the repo, the local config, or the value it is handed
 `test_the_registry_reads_nothing_a_form_could_not` holds the module to that. The matcher checks what
 it can of each call's argument: a scan's root is held literal-rooted the way a path receiver is, and
 a config-rooted form's name is held a literal, so those declarations are judged at the gate;
-`nothing_found` alone is a declaration the call site owns, and its docstring says for which gates.
+`nothing_found` and `no_binary` are the call site's own, the former's docstring naming its gates.
 """
 
 import shutil
