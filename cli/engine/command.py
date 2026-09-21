@@ -47,7 +47,7 @@ from cli.engine.instruments import INSTRUMENT_IDS, _floor_to_step
 from cli.engine.journal import CycleRecord, SnapshotEntry, from_json, validate_record
 from cli.engine.probeplan import ProbePlanError, parse_plan, plan_refusals
 from cli.engine.soak import soak_report
-from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, _store_path, seed_store
+from cli.engine.store import _HOST_REDELIVERY, BASKET, GRID_INTERVALS, PAIR_KEYS, _store_path, seed_store
 from cli.engine.tracking import Fill, cost_blend, extract_fills, read_ledger_export, reconcile_ledger, weekly_tracking
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
@@ -796,7 +796,8 @@ def run() -> None:
         raise _abort(
             f"store_dir {config.store_dir} is missing {len(missing)} of the {len(BASKET) * len(GRID_INTERVALS)} "
             f"basket series a cycle reads: {', '.join(missing)} -- a node without a complete store is always "
-            "misconfigured; fix the bind-mount or run `zcrypto engine seed`"
+            f"misconfigured; fix the bind-mount, or have the converge deliver the store, whose copy runs for an absent "
+            f"store alone: {_HOST_REDELIVERY}"
         )
     logger.info(
         "engine run: exec_enabled=%s, store_dir=%s, journal_dir=%s", config.exec_enabled, config.store_dir, config.journal_dir

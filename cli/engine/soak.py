@@ -23,7 +23,7 @@ from cli.engine.journal import (
     snapshot_content_hash,
     validate_record,
 )
-from cli.engine.store import BASKET, GRID_INTERVALS, _store_path, read_store_series
+from cli.engine.store import _STORE_RECOVERY, BASKET, GRID_INTERVALS, _store_path, read_store_series
 from cli.portfolio import CrossfreqSystemConfig, PortfolioError, build_crossfreq_system, build_crossfreq_system_fast
 from cli.portfolio.crossfreq_system import apply_whole_book_limits
 from cli.risk.limits import apply_position_caps
@@ -243,9 +243,9 @@ def realized_series(
             raise EngineError(
                 f"realized_series: the store's 240 leg for {asset} holds {len(off_grid)} stamp(s) off the 4h grid "
                 f"(00/04/08/12/16/20 UTC), the first {off_grid[0].isoformat()} -- the stamps are the wrong instants, not "
-                "a short store; move that leg aside on the workstation and re-seed (`zcrypto engine seed` copies the "
-                "canonical for an absent file alone), or re-deliver the store on the engine host as "
-                "infra/runbooks/engine.md's zcrypto-engine-cycle-stale section says"
+                f"a short store; {_STORE_RECOVERY}; if this run is the daily row's, the store is the newest record's "
+                "snapshots copied aside, union-aligned across the basket, so the stamp was in a leg of the host store at "
+                "that cycle and the scratch leg is not the one to move"
             )
 
     cycle_ts: list[datetime] = []

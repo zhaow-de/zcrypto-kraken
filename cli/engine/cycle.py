@@ -600,9 +600,11 @@ def run_cycle(
     injected clock must return aware datetimes. `venue_state` is READ-ONLY: journaled and summarized onto
     `CycleResult.venue`, never consulted for targets or orders. A stale pair or an exhausted refresh reserve
     is a failed CycleResult with a sidecar, not a raise; a store data-integrity failure (refresh_store's
-    EngineError -- poisoned tail / catastrophic staleness, the journal's own refusal of an unusable close) propagates,
-    and its documented recovery is the store's, not a per-cycle retry: on the engine host the cycle-stale runbook's
-    re-delivery, on the workstation `zcrypto engine seed`."""
+    EngineError over the store file -- poisoned tail / catastrophic staleness, the journal's own refusal of an unusable
+    close) propagates, and its documented recovery is the store's, not a per-cycle retry: on the engine host the
+    cycle-stale runbook's re-delivery, on the workstation `zcrypto engine seed`, the refused leg moved aside first
+    where the refusal says so. Its refusal of the REST fetch propagates the same way and prescribes none of that: the
+    row is the venue's to answer."""
     cycle_ts = _normalize_cycle_ts(cycle_ts)
     read_clock = _aware_clock(clock)
     started_at = read_clock()

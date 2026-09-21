@@ -92,8 +92,16 @@ def _reconcile(
     allow_replace: bool,
     shortfall_hint: str,
     mismatch_hint: str,
+    absent_store_hint: str,
+    absent_rest_hint: str,
 ) -> tuple[int, int, pl.DataFrame]:
-    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally.
+    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally. `mismatch_hint` ends a price
+    disagreement's refusal; an absent close at a shared stamp is refused whatever `allow_replace` is, ending with
+    `absent_store_hint` when some absent row's null is the store's alone, the fetch answering that stamp with a value
+    (the leg is then a refused store file), and with `absent_rest_hint` otherwise -- the fetch's own null, and a null
+    both sides hold at one stamp, which no store repair reaches because the re-seed refills that stamp from this same
+    fetch; each side is read over all the absent rows and carries its own first absent stamp, since the first row's
+    side and stamp are that row's alone and the two sides can be absent at different rows.
 
     Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy."""
     overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
@@ -105,16 +113,17 @@ def _reconcile(
 
     absent = mismatches.filter(pl.col("close").is_null() | pl.col("close_rest").is_null())
     if absent.height:
-        stamp = absent["ts"][0]
         sides = [
-            name
-            for name, value in (("the store tail", absent["close"][0]), ("the REST fetch", absent["close_rest"][0]))
-            if value is None
+            f"{name} (first at {absent.filter(pl.col(column).is_null())['ts'][0]})"
+            for name, column in (("the store tail", "close"), ("the REST fetch", "close_rest"))
+            if absent[column].null_count()
         ]
+        store_only = absent.filter(pl.col("close").is_null() & pl.col("close_rest").is_not_null())
+        hint = absent_store_hint if store_only.height else absent_rest_hint
         raise EngineError(
-            f"{fn_name}: overlap mismatch for {pair}@{interval} at {stamp} — a shared stamp's close is absent on "
+            f"{fn_name}: overlap mismatch for {pair}@{interval} — a shared stamp's close is absent on "
             f"{' and '.join(sides)}, and an absent close is a disagreement whatever the other side carries, so no "
-            f"re-seed replaces a store close with it; {mismatch_hint}"
+            f"re-seed replaces a store close with it; {hint}"
         )
 
     if mismatches.height and not allow_replace:
@@ -159,6 +168,12 @@ _REST_REFUSED = (
     "nothing from this fetch is written, so there is no store repair: the store holds what it held before the fetch, "
     "the next run fetches again, and a row that returns is the venue's to answer, not the store's"
 )
+_ABSENT_REST_HINT = (
+    "the REST fetch carries the absent close, so there is no store repair: the next run fetches again, and a fetch "
+    "that returns it again is the venue's row to read, not the store's"
+)
+_FRESH_COPY = "this is a fresh canonical copy, so a disagreement with REST is a data-integrity error"
+_RESEED_REFUSED = "the re-seed replaced nothing, because the seam refused before the replace"
 
 
 def _frame_differences(frame: pl.DataFrame, interval: int) -> list[str]:
@@ -269,7 +284,15 @@ def seed_store(
                 min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
                 shortfall_hint="use the quarterly OHLCVT dump",
-                mismatch_hint="this is a fresh canonical copy, so a disagreement with REST is a data-integrity error",
+                mismatch_hint=_FRESH_COPY,
+                absent_store_hint=(
+                    f"{_FRESH_COPY} in the canonical, whose copy already landed: move this leg aside (outside the store) "
+                    "and rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the "
+                    "next seed reads once it is whole)"
+                    if not store_existed
+                    else f"{_RESEED_REFUSED}, and a re-seed over this file refuses the same absent close -- {_STORE_RECOVERY}"
+                ),
+                absent_rest_hint=f"{_FRESH_COPY if not store_existed else _RESEED_REFUSED}; {_ABSENT_REST_HINT}",
             )
             appended = merged.height - store_frame.height
             if replaced or appended:
@@ -316,8 +339,15 @@ def refresh_store(
                 interval=interval,
                 min_overlap=_REFRESH_MIN_OVERLAP,
                 allow_replace=False,
-                shortfall_hint="the store is catastrophically stale, run `zcrypto engine seed` to re-seed it",
-                mismatch_hint="the store tail may be poisoned, run `zcrypto engine seed` to repair it",
+                shortfall_hint=f"the store is catastrophically stale, past the REST window's reach -- {_STORE_RECOVERY}",
+                mismatch_hint=(
+                    "the store tail may be poisoned -- on the workstation run `zcrypto engine seed`, whose re-seed over "
+                    f"an existing file replaces the disagreeing tail inside the REST window; {_HOST_REDELIVERY}"
+                ),
+                absent_store_hint=(
+                    f"the store tail holds the absent close, which a re-seed over this file refuses again -- {_STORE_RECOVERY}"
+                ),
+                absent_rest_hint=_ABSENT_REST_HINT,
             )
             appended = merged.height - store_frame.height
             if appended:

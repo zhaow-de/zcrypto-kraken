@@ -329,9 +329,9 @@ def test_refresh_store_refuses_an_absent_close_on_a_shared_stamp(tmp_path):
         refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: rest, clock=lambda: FAR_FUTURE)
 
     msg = str(exc.value)
-    assert f"overlap mismatch for BTC/EUR@1440 at {stamp}" in msg
+    assert "overlap mismatch for BTC/EUR@1440" in msg and f"the REST fetch (first at {stamp})" in msg
     assert "absent on the REST fetch" in msg
-    assert "zcrypto engine seed" in msg
+    assert "no store repair" in msg and "zcrypto engine seed" not in msg  # the null is the fetch's, not the store's
     _, closes = read_store_series(store_dir, "BTC/EUR", 1440)
     assert closes == [100.0 + i for i in range(N_CANON)]  # nothing appended, nothing replaced
 
@@ -350,8 +350,9 @@ def test_seed_store_reseed_refuses_an_absent_close_and_keeps_the_store_close(tmp
         seed_store(store_dir, canonical_dir, fetch_fn=_fetch_override("XXBTZEUR", 1440, rest), clock=lambda: FAR_FUTURE)
 
     msg = str(exc.value)
-    assert f"overlap mismatch for BTC/EUR@1440 at {stamp}" in msg
+    assert "overlap mismatch for BTC/EUR@1440" in msg and f"the REST fetch (first at {stamp})" in msg
     assert "absent on the REST fetch" in msg
+    assert "fresh canonical copy" not in msg  # the store pre-existed: nothing was copied
     _, closes = read_store_series(store_dir, "BTC/EUR", 1440)
     assert closes[N_CANON - 4] == 100.0 + N_CANON - 4
     assert len(closes) == N_CANON
@@ -619,3 +620,118 @@ def test_seed_store_refuses_a_rest_row_the_venue_carries_before_the_canonical_co
     assert "seed_store: the REST fetch for ADA/EUR@1440 is not the frame the store readers join -- " in msg
     assert f"close[{last}] at {stamp.isoformat()} is -1.0, not a finite positive number (1 such close(s))" in msg
     assert not _store_path(store_dir, "ADA/EUR", 1440).exists()  # ADA/EUR@1440 is the first leg: nothing was copied
+
+
+@pytest.mark.parametrize("fault", ["shortfall", "mismatch"])
+def test_refresh_store_hints_route_the_repair_by_host(tmp_path, fault):
+    """`refresh_store` runs at each boundary on the engine host, where `zcrypto engine seed` does not exist."""
+    store_dir = tmp_path / "store"
+    write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
+    if fault == "shortfall":
+        rest = _rows_from(DAILY_START, timedelta(days=1), 100, 5)
+    else:
+        rest = _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 3)
+        for row in rest:
+            row[4] = str(float(row[4]) + 500.0)
+
+    with pytest.raises(EngineError) as exc:
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: rest, clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "on the engine host the store is re-delivered, not seeded" in msg and "zcrypto-engine-cycle-stale" in msg
+    assert "`zcrypto engine seed` is the workstation's command" in msg
+    if fault == "shortfall":
+        assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+    else:
+        assert "whose re-seed over an existing file replaces the disagreeing tail inside the REST window" in msg
+
+
+@pytest.mark.parametrize("side", ["store", "rest", "both", "both at one stamp"])
+def test_refresh_store_routes_an_absent_close_by_the_side_that_holds_it(tmp_path, side):
+    """The absent-close refusal runs whatever `allow_replace` is, so a null the store tail holds alone is a refused
+    store file a plain re-seed refuses again, and a null in the REST fetch is nothing the store repairs. Under `both`
+    the REST null is the earlier row, so a side or a stamp read off the first absent row alone sends the store's own
+    null to the fetch's hint, at a stamp whose store close is present. Under `both at one stamp` the fetch answers the
+    store's null with the same null, so the re-seed the store recovery prescribes would fill it back from this fetch
+    and the next refresh would refuse it again: that one routes to the fetch."""
+    store_dir = tmp_path / "store"
+    rows = _rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)
+    rest = _rows_from(DAILY_START, timedelta(days=1), N_CANON - 3, 4)
+    if side == "store":
+        rows[N_CANON - 2][4] = None
+    elif side == "rest":
+        rest[1][4] = None
+    elif side == "both at one stamp":
+        rows[N_CANON - 2][4] = None
+        rest[1][4] = None
+    else:
+        rest[0][4] = None
+        rows[N_CANON - 1][4] = None
+    write_parquet(to_frame(rows), _store_path(store_dir, "BTC/EUR", 1440))
+    store_stamp = DAILY_START + timedelta(days=N_CANON - 1 if side == "both" else N_CANON - 2)
+    rest_stamp = DAILY_START + timedelta(days=N_CANON - 3 if side == "both" else N_CANON - 2)
+
+    with pytest.raises(EngineError) as exc:
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: rest, clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "overlap mismatch for BTC/EUR@1440" in msg
+    both_sides = f"absent on the store tail (first at {store_stamp}) and the REST fetch (first at {rest_stamp})"
+    if side == "rest":
+        assert f"absent on the REST fetch (first at {rest_stamp})" in msg and "no store repair" in msg
+        assert "move this leg aside" not in msg and "zcrypto engine seed" not in msg
+    elif side == "both at one stamp":
+        assert both_sides in msg and "no store repair" in msg
+        assert "move this leg aside" not in msg and "zcrypto engine seed" not in msg
+    else:
+        assert f"the store tail (first at {store_stamp})" in msg and "a re-seed over this file refuses again" in msg
+        assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+        assert "on the engine host the store is re-delivered, not seeded" in msg
+    if side == "both":
+        assert both_sides in msg
+        assert "@1440 at " not in msg  # one headline stamp cannot be true of two sides absent at different rows
+    _, closes = read_store_series(store_dir, "BTC/EUR", 1440)
+    assert len(closes) == N_CANON  # refused, not rewritten
+
+
+@pytest.mark.parametrize("case", ["existing store", "fresh copy", "fresh copy rest null"])
+def test_seed_store_claims_a_fresh_copy_for_an_absent_close_only_when_it_copied(tmp_path, case):
+    """Over an existing store the seed copies nothing, so its refusal of a null on the store tail must not call the
+    file a fresh canonical copy: the leg is a refused store file, moved aside before the seed that does copy. On a
+    fresh copy the claim holds on either side, the canonical's own null and a null the REST fetch brings."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    rest_null = case == "fresh copy rest null"
+
+    def _nulled(interval: int) -> list[list]:
+        rows = _canonical_rows(interval)
+        if interval == 1440 and not rest_null:
+            rows[N_CANON - 4][4] = None
+        return rows
+
+    _write_full_universe(canonical_dir, _nulled)
+    if case == "existing store":
+        _write_full_universe(store_dir, _nulled)
+    rest = _good_rest_rows(1440)
+    if rest_null:
+        rest[2][4] = None
+    stamp = DAILY_START + timedelta(days=N_CANON - 4)
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=_fetch_override("ADAEUR", 1440, rest), clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "overlap mismatch for ADA/EUR@1440" in msg
+    if rest_null:
+        assert f"absent on the REST fetch (first at {stamp})" in msg
+        assert "this is a fresh canonical copy" in msg and "no store repair" in msg
+        assert "move this leg aside" not in msg
+    elif case == "existing store":
+        assert f"absent on the store tail (first at {stamp})" in msg
+        assert "fresh canonical copy" not in msg
+        assert "the re-seed replaced nothing, because the seam refused" in msg
+        assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+    else:
+        assert f"absent on the store tail (first at {stamp})" in msg
+        assert "this is a fresh canonical copy" in msg and "whose copy already landed" in msg
+        assert "move this leg aside (outside the store) and rebuild the set" in msg

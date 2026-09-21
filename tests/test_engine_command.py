@@ -846,6 +846,9 @@ def test_run_aborts_when_the_store_holds_every_eur_leg_but_neither_btc_leg(tmp_p
     assert "SOL/BTC@240" in out and "SOL/BTC@1440" in out
     assert "ADA/EUR" not in out  # only the absent legs are named -- the present ones are not noise
     assert str(tmp_path / "store") in out
+    # `run` is the node's own entry point, so its recovery is the host's, never the workstation's command.
+    assert "on the engine host the store is re-delivered, not seeded" in out and "zcrypto-engine-cycle-stale" in out
+    assert "`zcrypto engine seed` is the workstation's command" in out
 
 
 def test_run_starts_on_a_complete_twelve_leg_store(tmp_path, monkeypatch):

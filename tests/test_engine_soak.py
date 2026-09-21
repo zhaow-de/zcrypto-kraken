@@ -3241,6 +3241,9 @@ def test_realized_series_refuses_an_interior_off_grid_stamp_on_a_non_btc_leg(tmp
     assert "the store's 240 leg for ETH/BTC holds 1 stamp(s) off the 4h grid" in msg
     assert f"the first {shifted.isoformat()}" in msg
     assert "BTC/EUR" not in msg
+    assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+    assert "on the engine host the store is re-delivered, not seeded" in msg
+    assert "the scratch leg is not the one to move" in msg
 
     write_parquet(frame, path)
     rs = realized_series(records, store_dir, fee=0.006, now=now)
