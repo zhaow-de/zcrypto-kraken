@@ -353,8 +353,8 @@ def _write_prom_textfile(
 def seed() -> None:
     """Seed/refresh the live price store: a Kraken REST gap-fill over every series, and for a store file that is
     absent a copy of the newest whole frozen ohlc-full sibling under the configured data root, or the unstamped set
-    when there is none (idempotent; also the documented repair for a poisoned store tail). A workstation command:
-    the engine image carries no canonical dataset."""
+    when no stamped sibling exists (idempotent; also the documented repair for a poisoned store tail). A workstation
+    command: the engine image carries no canonical dataset."""
     # Imported here: the resolver lives with the rebuild tree, which the engine's own startup has no use for.
     from cli.data.errors import DataSyncError
     from cli.data.rebuild import resolve_canonical_root

@@ -181,8 +181,6 @@ def test_seed_prints_per_pair_overlap_summary(tmp_path, monkeypatch):
     assert result.exit_code == 0, _output(result)
     assert roots == [Path("data")]
     assert calls == [(engine_cfg.store_dir, Path("data/ohlc-full-20260920"))]
-    # `soak-check`'s null reference is the unstamped set and stays so: the seed no longer reads this constant, so
-    # nothing else in the suite holds its value.
     assert command.CANONICAL_DIR == Path("data/ohlc-full")
     out = _output(result)
     assert "ohlc-full-20260920" in out

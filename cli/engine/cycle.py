@@ -358,9 +358,8 @@ def _journal_snapshots(journal_dir: Path, cycle_ts: datetime, aligned: dict) -> 
     # snapshot directory: a present close the replay's validator would refuse is refused here, where the cycle
     # still holds the frame and has published nothing (spec 00116 D1). `None` is a union absence and is admitted
     # (D2); the type door is `read_store_series`'s, so nothing but a float or an int reaches this predicate, the
-    # value half of the replay validator's, which the forming-row guard below holds too and refuses `None` at the
-    # forming row where this admits it. The offenders are collected before the raise: a torn write spoils a span,
-    # and one traceback names the first bar and the extent.
+    # value half of the replay validator's. The offenders are collected before the raise: a torn write spoils a
+    # span, and one traceback names the first bar and the extent.
     offenders = []
     for interval in GRID_INTERVALS:
         union_ts, prices = aligned[interval]
