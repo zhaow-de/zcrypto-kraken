@@ -6,7 +6,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
-import polars as pl
 import pytest
 
 from cli.config import EngineConfig
@@ -412,9 +411,9 @@ def test_an_unusable_present_close_refuses_the_cycle_before_any_snapshot_is_writ
     """The journal's snapshot write is the door: a present close the replay's validator would refuse is refused
     before the first snapshot file exists, naming the pair, the grid, the bar, the stamp and the value.
 
-    `ETH/BTC` is a leg no builder input reads and both bars sit outside the refresh overlap (the last two rows), so
-    nothing else on the path refuses either value; with the stubbed builder the EUR leg's mid-series bar is the
-    same. Both legs have files written before them -- the daily grid goes first and `XRP/EUR` is its last leg, and
+    `ETH/BTC` is a leg no builder input reads, and the value is injected at the read, past the store door, so the
+    snapshot write is the only refusal left on the path; with the stubbed builder the EUR leg's mid-series bar is
+    the same. Both legs have files written before them -- the daily grid goes first and `XRP/EUR` is its last leg, and
     `ETH/BTC` sits mid-way through the 4h pass -- so a check that moved into the write loop would leave files
     behind on both halves."""
     config, rows_by, _ = _env(tmp_path, monkeypatch)
