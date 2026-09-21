@@ -650,3 +650,28 @@ def test_parse_ts_refuses_a_stamp_it_cannot_represent_in_utc():
         _parse_ts("not-a-timestamp")
     assert isinstance(caught.value.__cause__, ValueError)  # the PARSE arm -- so the check above discriminates
     assert _parse_ts("9999-12-31T23:59:59Z").year == 9999  # the same edge in UTC is representable and kept
+
+
+@pytest.fixture
+def zcrypto_log(caplog):
+    """The same remedy, and mechanism, as `zcrypto_log` in `tests/test_data_command.py:116`."""
+    zlogger = logging.getLogger("zcrypto")
+    zlogger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.ERROR, logger="zcrypto"):
+            yield caplog
+    finally:
+        zlogger.removeHandler(caplog.handler)
+
+
+def test_capture_refuses_a_config_fault_cleanly(tmp_path, monkeypatch, zcrypto_log):
+    # The fake client: a relaxed config validation must not turn this case into a live venue socket.
+    monkeypatch.setattr("cli.capture.command.CaptureClient", _FakeClient)
+    (tmp_path / "zcrypto.toml").write_text("[zcrypto]\ndata_dir = 3\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["capture", "--pairs", "BTC/EUR", "--data-dir", str(tmp_path), "--duration", "1"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "must be a non-empty string" in zcrypto_log.text

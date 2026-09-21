@@ -211,16 +211,11 @@ def load_config(config_path: Path = Path(CONFIG_FILENAME)) -> AppConfig:
     )
 
 
-def _resolve(flag_value: Path | None, config_value: Path | None, *, name: str, flag: str) -> Path:
-    if flag_value is not None:
-        return flag_value
-    if config_value is not None:
-        return config_value
-    raise ConfigError(f"no {name} configured — set [{CONFIG_TABLE}].{name} in {CONFIG_FILENAME} or pass {flag} <path>.")
-
-
-def resolve_data_dir(flag_value: Path | None, cfg: AppConfig) -> Path:
-    return _resolve(flag_value, cfg.data_dir, name="data_dir", flag="--data-dir")
+def resolve_data_dir(cfg: AppConfig) -> Path:
+    # No caller of this resolver defines a `--data-dir` option, so the remedy names the toml alone.
+    if cfg.data_dir is not None:
+        return cfg.data_dir
+    raise ConfigError(f"no data_dir configured — set [{CONFIG_TABLE}].data_dir in {CONFIG_FILENAME}.")
 
 
 def resolve_ohlcvt_source_dir(flag_value: Path | None, cfg: AppConfig) -> Path:

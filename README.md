@@ -414,7 +414,7 @@ data_dir = "data"                  # compiled dataset directory
 nfs_mount_dir = "/mnt/zhao-crypto"  # NAS mount root: the hot/ fetch source and the custody sets (kraken-ohlcvt-updates, ...) derive from it
 ```
 
-`data_dir` resolves via **flag → config → error**: if it is neither passed as a CLI flag nor set in `zcrypto.toml`, the command exits immediately with a clear error message (`ERROR: no data_dir configured — set [zcrypto].data_dir in zcrypto.toml or pass --data-dir <path>`). `nfs_mount_dir` instead has a built-in default (`/mnt/zhao-crypto`, aligned across the workstation and ops so one committed value serves both), so it always resolves; override it in `zcrypto.toml` only if a node mounts the NAS elsewhere.
+`data_dir` resolves via **config → error**: unset in `zcrypto.toml`, the resolver refuses with the remedy `set [zcrypto].data_dir in zcrypto.toml`. `nfs_mount_dir` instead has a built-in default (`/mnt/zhao-crypto`, aligned across the workstation and ops so one committed value serves both), so it always resolves; override it in `zcrypto.toml` only if a node mounts the NAS elsewhere.
 
 ### `[zcrypto.engine]`: shadow-engine settings<a name="zcryptoengine-shadow-engine-settings"></a>
 

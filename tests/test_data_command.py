@@ -216,3 +216,15 @@ def test_rebuild_ohlc_reach_aborts_naming_a_canonical_file_it_cannot_join(tmp_pa
     assert isinstance(result.exception, SystemExit)
     assert str(path) in zcrypto_log.text
     assert [p.name for p in (tmp_path / "data").iterdir()] == ["ohlc-full"]
+
+
+def test_migrate_manifests_refuses_an_unset_data_dir_cleanly(tmp_path, monkeypatch, zcrypto_log):
+    (tmp_path / "zcrypto.toml").write_text('[zcrypto]\nnfs_mount_dir = "/mnt/zhao-crypto"\n')
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["data", "migrate-manifests"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "no data_dir configured" in zcrypto_log.text
+    assert "--data-dir" not in zcrypto_log.text
