@@ -71,7 +71,7 @@ def _canonical_symbols(canonical_root: Path, interval: int) -> list[str]:
 def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     """Refuse a canonical file `_merge_or_detach` cannot take, before the REST call is spent on it.
 
-    Sibling: `cli/engine/store.py::_require_joinable_ts` holds the engine store's files under its own policy.
+    Sibling: `cli/engine/store.py::_require_store_frame` holds the engine store's files under its own policy.
     """
     try:
         frame = read_parquet(path)
@@ -87,8 +87,8 @@ def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     if not differs and frame.columns != list(FRAME_SCHEMA):
         differs = [f"the columns are in another order ({', '.join(frame.columns)})"]
     if not differs:
-        # The keys only: a null close on a shared stamp is refused at the seam below; a non-finite close, and a null on
-        # an unshared stamp, are open (docs/open-topics/T0199-store-nan-drops-a-tail-instead-of-refusing.md).
+        # The keys only: a null close on a shared stamp is refused at the seam below, and a non-finite close or a
+        # null on an unshared stamp is admitted here, this command joining the canonical rather than pricing it.
         stamps = frame["ts"]
         if frame.is_empty():
             differs = ["it has no rows"]

@@ -2,7 +2,7 @@ import json
 import math
 import types
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -3402,3 +3402,28 @@ def test_load_canonical_reads_only_the_ten_legs_the_model_uses(tmp_path):
     assert set(daily_prices) == set(CrossfreqSystemConfig().assets)
     assert set(h4_prices) == set(CrossfreqSystemConfig().assets)
     assert daily_ts == ts[1440] and h4_ts == ts[240]
+
+
+def test_the_clean_segment_judges_a_zoned_stamp_by_its_instant():
+    """`_on_grid` reads the instant, not the local hour: an aware +02:00 stamp on the UTC grid enters the clean
+    segment, and one on the +02:00 wall clock's own 4h marks, off the UTC grid, does not."""
+
+    def _bare(cycle_ts):
+        return CycleRecord(
+            schema_version=1,
+            cycle_ts=cycle_ts,
+            snapshots=(),
+            final_targets={},
+            started_at=cycle_ts,
+            completed_at=cycle_ts + timedelta(minutes=1),
+            code_version="test",
+            builder_path="fast",
+        )
+
+    plus_two = timezone(timedelta(hours=2))
+    on_grid = [_bare(datetime(2026, 7, 16, 2 + 4 * k, tzinfo=plus_two)) for k in range(3)]  # 00/04/08 UTC
+    off_grid = [_bare(datetime(2026, 7, 16, 4 * k, tzinfo=plus_two)) for k in range(3)]  # 22/02/06 UTC
+    assert [soak._on_grid(r.cycle_ts) for r in on_grid] == [True, True, True]
+    assert [soak._on_grid(r.cycle_ts) for r in off_grid] == [False, False, False]
+    assert [r.cycle_ts for r in select_clean_segment(on_grid)] == [r.cycle_ts for r in on_grid]
+    assert select_clean_segment(off_grid) == []
