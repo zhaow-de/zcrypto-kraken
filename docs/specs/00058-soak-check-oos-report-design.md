@@ -39,6 +39,7 @@ At `L ≈ 84` 4h cycles (14 days × 6/day) a Sharpe/return statistic has near-ze
   - **Degeneracy override** — near-zero exposure window (echoing the record-33 `[0,0]` holdout) → **INDETERMINATE — DEGENERATE WINDOW**, no "consistent" emitted.
   - **Plausibility bounds** — `|r_fwd| ≤ 0.5`/4h; gross ∈ `[0,2]`; rates ∈ `[0,1]`; realizable count == success − unrealized tail. `L < --floor` (30) / non-contiguous run / implausible bar → **"no verdict."**
   - **Vocabulary lock** — never "validated/passed/confirmed/proven"; the banner is always present.
+- **D7 — a bar holding no book is left out of the concentration aggregate, on both sides.** `structural_metrics` writes `0.0` for `hhi` where a bar's gross is zero, a value below HHI's own floor of `1/n`; it is a sentinel, not a measurement, and `_no_book_bars` counts it as one. `analyze_soak` drops those bars from the realized `hhi` series and from the null series handed to `windowed_null` and `block_bootstrap_null`, and counts the window and `effective_n` over the bars that remain, so a flat bar inside an active window never reads the book as more diversified than it is. The owner's ruling of 2026-09-20 on T0184, whose measurement found the null carrying 8.36% such bars over the complete-basket era and 53.72% of realized-length windows holding one, the realized series none. The other six metrics keep every bar: a flat bar's gross, net, activity, turnover and cap state are measurements.
 
 ## Report shape (D5/D6 rendered)
 

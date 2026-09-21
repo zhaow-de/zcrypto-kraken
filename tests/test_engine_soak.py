@@ -1154,6 +1154,49 @@ def test_analyze_soak_degenerate_zero_exposure():
     assert a.is_degenerate is True
 
 
+def test_the_concentration_aggregate_leaves_no_book_bars_out_on_both_paths():
+    """A flat bar inside an active window carries the sentinel `0.0`, below HHI's own floor; averaging it in
+    reads the book as more diversified than it is (T0184). Realized and null alike are judged as if the flat
+    bars were not there: the same verdict, band and `effective_n` as the inputs with those bars removed."""
+    active = {"BTC": 0.15, "ETH": 0.15}
+    skew = {"BTC": 0.25, "ETH": 0.05}
+    flat = {"BTC": 0.0, "ETH": 0.0}
+    live_mixed = [active, skew, flat, active, skew, active]
+    null_mixed = ([skew, flat, active] * 40)[:100]
+    live_active = [w for w in live_mixed if w is not flat]
+    null_active = [w for w in null_mixed if w is not flat]
+
+    mixed = analyze_soak(_mk_realized(live_mixed, [0.001] * 6), _mk_null(null_mixed, [0.001] * 100), band=0.90)
+    active_only = analyze_soak(
+        _mk_realized(live_active, [0.001] * len(live_active)), _mk_null(null_active, [0.001] * len(null_active)), band=0.90
+    )
+
+    hhi_of = lambda w: sum((abs(x) / sum(abs(y) for y in w.values())) ** 2 for x in w.values())  # noqa: E731
+    assert math.isclose(mixed.gating_verdicts["hhi"].live, sum(hhi_of(w) for w in live_active) / len(live_active))
+    assert mixed.gating_verdicts["hhi"] == active_only.gating_verdicts["hhi"]
+    assert math.isclose(mixed.effective_n["hhi"], len(null_active) / len(live_active))
+    assert mixed.effective_n["hhi"] == active_only.effective_n["hhi"]
+
+
+def test_an_all_active_window_judges_concentration_over_every_bar():
+    live = [{"BTC": 0.15, "ETH": 0.15}] * 6
+    null = [{"BTC": 0.25, "ETH": 0.05}] * 100
+    a = analyze_soak(_mk_realized(live, [0.001] * 6), _mk_null(null, [0.001] * 100), band=0.90)
+    assert math.isclose(a.gating_verdicts["hhi"].live, 0.5)
+    assert math.isclose(a.effective_n["hhi"], 100 / 6)
+
+
+def test_an_all_flat_window_has_no_concentration_to_judge():
+    """Every realized bar is the sentinel, so nothing is measured: the metric reads `n/a` with nothing
+    counted, beside the degeneracy the window already declares."""
+    a = analyze_soak(
+        _mk_realized([{"BTC": 0.0, "ETH": 0.0}] * 6, [0.0] * 6), _mk_null([{"BTC": 0.15, "ETH": 0.15}] * 100, [0.0] * 100)
+    )
+    assert a.is_degenerate is True
+    assert a.gating_verdicts["hhi"].verdict == "n/a"
+    assert a.effective_n["hhi"] == 0.0
+
+
 def test_analyze_soak_context_and_d4():
     nw = [{"BTC": 0.15, "ETH": 0.15}] * 100
     null = _mk_null(nw, [0.001] * 100, multipliers=[1.0] * 50 + [0.5] * 50, cap_breach_bars=10, governed_net=[0.0015] * 100)

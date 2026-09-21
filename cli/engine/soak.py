@@ -74,6 +74,12 @@ def structural_metrics(
     }
 
 
+def _measured_hhi(hhi: list[float]) -> list[float]:
+    """The concentration values with `structural_metrics`' no-book sentinel left out -- read off the sentinel,
+    as `_no_book_bars` reads it, never off a second spelling of the gross test."""
+    return [h for h in hhi if h != 0.0]
+
+
 def _no_book_bars(weights_by_bar: list[dict[str, float]]) -> tuple[int, int]:
     """Bars holding no book at all, and the total they are out of -- read off `structural_metrics`' own
     hhi sentinel rather than a second spelling of its gross test, and shared by the text report and the
@@ -1145,6 +1151,14 @@ def analyze_soak(
     for m in ("gross", "net", "active_frac", "turnover", "hhi"):
         if m == "turnover":
             live_series, null_series, window = rm[m][1:], nm[m][1:], L - 1
+        elif m == "hhi":
+            # A bar holding no book has no concentration to measure: `structural_metrics` writes its sentinel
+            # `0.0` there, below HHI's own floor of 1/n, and averaging it in reads the book as more diversified
+            # than it is. Both series drop those bars before anything aggregates them, and the window and
+            # `effective_n` are counted over the bars that remain (spec 00058 D7, the owner's ruling of
+            # 2026-09-20; T0184 measured the null carrying 8.36% sentinels era-matched, the realized none).
+            live_series, null_series = _measured_hhi(rm[m]), _measured_hhi(nm[m])
+            window = len(live_series)
         else:
             live_series, null_series, window = rm[m], nm[m], L
         eff_n = len(null_series) / window if window > 0 else 0.0
