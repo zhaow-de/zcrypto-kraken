@@ -1,0 +1,37 @@
+---
+status: resolved
+---
+
+# Unattended-upgrades auto-reboot policy for the live VPS
+
+## Context — what
+
+The capture/engine VPS ran `unattended-upgrades` configured to **auto-reboot at 21:25 UTC (re-decided 2026-07-14 from measured traffic — was 04:00, then 02:00; the re-decision is spec `00050`'s)** whenever an update set `/var/run/reboot-required` (typically a kernel upgrade). On **2026-07-11 04:00 UTC** it rebooted for kernel `6.12.88 → 6.12.95`; both containers auto-restarted cleanly (`restart: unless-stopped` + the `zcrypto-capture`/`zcrypto-engine` systemd units), capture gap ~83 s, engine `ExitCode 0`.
+
+## Why this matters
+
+- **Capture (7-day mission):** one auto-reboot is a ~83 s gap ≈ **0.014 %** of a 7-day window — within the `<0.1 %` exit-bar budget for one or a few, but repeated unattended reboots erode the budget, and **each one is also a trade-segment-overwrite event** ([[T0026]]).
+- **Engine (live — the bigger risk):** an **unattended** reboot at an arbitrary 04:00 UTC restarts the engine **mid-UTC-day**. During the **Stage-6a gate** (clock from 2026-07-11 00:00 UTC) an unplanned restart risks a disrupted/failed gate cycle; during **Stage-6b** (real orders) it risks an in-flight order-state / reconciliation problem. 04:00 UTC bears no relation to the engine's decision cadence.
+
+## Findings so far
+
+- 2026-07-11 event: clean recovery of both containers (details in [[T0003]] investigation). Config: `Unattended-Upgrade::Automatic-Reboot "true"`, `Automatic-Reboot-Time "04:00"` (04:00 UTC, host tz = UTC).
+- **Fleet-window note (spec `00050`, 2026-07-17).** The capture fleet became **two** hosts: primary `zcrypto` at **21:25 UTC** and secondary `zcrypto-red` at **22:25 UTC**, deliberately **+1 h apart** so a same-night kernel reboot never overlapped both and a failed primary reboot had time to page before the secondary followed. A converge-time assert that the two hosts' reboot times differ pins this fleet-window policy in config (spec `00050`; also [[T0033]]).
+
+## Resolution
+
+**The day-1 proof (2026-07-11) — the engine's gate cycle came through intact.** The reboot killed the engine dead on the **04:00 UTC boundary** (a 4h cycle stamp), but `node.py`'s restart-inside-a-passable-window rule (`startup_action`) re-ran it: `cycle-04.json` is a **success** record — `started_at 04:01:24 → completed_at 04:01:34`, `cycle_ts 04:00:00` (the no-peek boundary invariant holds), completing at the same ~+90 s offset as every other cycle. Day 2026-07-11 is a **complete clean day**: all six cycles present, zero failed sidecars, and `zcrypto engine replay --date 2026-07-11 --path fast` recomputes **bit-identical** targets for all six (worst |diff| 0.00e+00, the 04:00 cycle included); `zcrypto engine report` shows **streak 1 clean day, last failure none**. So the **Stage-6a gate clock is intact from day 1** — the reboot cost the gate nothing.
+
+**Decision + attended-reboot guideline (2026-07-23).** **The human ops decision is made: option (b) — attended reboots, capture VPSes only.** `zcrypto` and `zcrypto-red` get `Automatic-Reboot "false"`; ops keeps auto-reboot at 02:25 (its poller has recovered cleanly historically, and this keeps the standing manual duty minimal); the NAS is DSM — outside this regime either way. Security patches still auto-install; only the reboot becomes manual. Decided in the 2026-07-23 grooming session; **recorded now, executed later** — the flip rides its own small converge after `chore/topics-grooming` and PR #191 merge, never a rollout converge (one change at a time keeps rollout verification attributable).
+
+**The flip and its detector (2026-07-26).** **The attended-reboot guidance shipped as operating-surface text, not as a skill (decided 2026-08-22, owner-approved).** This topic had asked for it as a sibling of [[T0081]]/[[T0084]]; both of those resolved and both skills exist, so that precondition fired. The work landed in a different shape: `docs/reference/fleet.md` § Reboots carries the whole discipline — secondary-before-primary canary order, the schedule constraints (≥1 h from any 4h bar boundary, off the hour, primary in the measured book-traffic trough, ≥1 h host separation, right after a completed engine cycle), the expected ~83 s capture gap, the alert that pages until the reboot happens, and — added in the same change, because this sub-item explicitly asked for it and § Reboots did not yet carry it — the verify-by-outcome checks a reboot owes. A skill was the wrong shape: `zcrypto-bump-alloy` and `zcrypto-rollout-image` wrap multi-host rollouts with canary ordering and verification, whereas a reboot is a single attended act with no staging, no digest and no bake — its whole procedure is when to go and what to read afterwards, which is five bullets of reference text, not a skill. Same disposition the iter-140 probe-checklist items took: operating-surface text, not a registration.
+
+**The flip is live on both capture VPSes.** `Automatic-Reboot "false"`, verified on-host; `zcrypto-ops` still reads `"true"` at 02:25, untouched, because the role default preserves today's behaviour and only `group_vars/capture_host` overrides it. Patches still auto-install. Delivered by spec `00071`.
+
+**The detector that makes attended mode safe is live and proven end-to-end.** `zcrypto-reboot-check` publishes `node_reboot_required` every 15 min; touching `/run/reboot-required` flipped it to 1 in Grafana Cloud and removing it returned it to 0. Four alert rules back it: pending-reboot, plus absent / unreadable / stale coverage for the transport itself.
+
+**The recorded guideline's transport did not exist**, and that is the substantive finding. It called for "the same `integrations/unix` transport that already carries the NAS `gate.prom` — no regex, no new plumbing", but the capture hosts ran **no textfile collector** (dropped with spec `00069` for a reason that had since expired), and `integrations/unix` is static-mode Grafana Agent vocabulary this flow-mode fleet does not use. Building it was its own defect, [[T0100]], which had already cost [[T0021]] all of its observability.
+
+**Ordering hazard, found before it fired:** this topic's own verification step — "touch and remove the flag file" — would have rebooted the live capture + engine primary had it run while `Automatic-Reboot` was still `"true"`, because a present `/run/reboot-required` is exactly what unattended-upgrades acts on. The flip was landed and verified first; the precondition was re-checked on-host in the same command that touched the flag.
+
+The last sub-item — order-state reconciliation surviving a reboot of the engine host with an order resting or filling while it is down — is transferred to [[T0158]]: it passes when `docs/reference/drill-log.md` carries A1, A2 and G entries reading `pass` (spec `00105` D4, `infra/runbooks/drills-order-path.md`). A reboot timed between submit and acknowledgement is not among those drills and is not claimed here.
