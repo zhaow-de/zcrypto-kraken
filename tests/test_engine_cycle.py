@@ -1230,7 +1230,7 @@ _REAL_H4_TS = tuple(H4_LAST - (_REAL_N_H4 - 1 - i) * timedelta(hours=4) for i in
 # An interior stamp near the tail that the two /BTC legs carry and the ten EUR legs skip: on the grid, since the
 # store door refuses a stamp off it. Near the tail is load-bearing: an all-None row further back washes out of the
 # builder's windows, and the pin would sit green either way (measured).
-_BTC_ONLY_INSERT_AT = -5
+_BTC_ONLY_GAP_AT = -5
 
 
 def _real_closes(symbol: str, n: int, scale: int) -> list[float]:
@@ -1246,7 +1246,7 @@ def _real_rows(symbol: str, interval: int, *, eur_gap: bool = False) -> list[lis
     ts = list(_REAL_DAILY_TS if interval == 1440 else _REAL_H4_TS)
     closes = _real_closes(symbol, len(ts), 1 if interval == 1440 else 6)
     if eur_gap:
-        at = len(ts) + _BTC_ONLY_INSERT_AT
+        at = len(ts) + _BTC_ONLY_GAP_AT
         ts, closes = ts[:at] + ts[at + 1 :], closes[:at] + closes[at + 1 :]
     return [_row(t, c) for t, c in zip(ts, closes)]
 
@@ -1273,7 +1273,7 @@ def _standalone_ten_asset_targets(*, eur_gap: bool = False) -> dict[str, float]:
     h4 = {s.split("/")[0]: _real_closes(s, _REAL_N_H4, 6) for s in EUR_SYMBOLS}
     if eur_gap:
         for ts, closes in ((daily_ts, daily), (h4_ts, h4)):
-            at = len(ts) + _BTC_ONLY_INSERT_AT
+            at = len(ts) + _BTC_ONLY_GAP_AT
             del ts[at]
             for series in closes.values():
                 del series[at]
