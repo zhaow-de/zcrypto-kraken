@@ -55,7 +55,7 @@ Alloy: `cpus: "0.5"`, `memory: 512m`, `cpu_shares: 256`, **`GOMEMLIMIT` ≈ 460 
 The app-exporter compose deltas are **gated behind role variables `capture_metrics_enabled` / `engine_metrics_enabled`, both defaulting `false`** — an unrelated `site.yml` converge before the windows below therefore cannot restart either container into its metrics configuration by accident. The embargo is mechanical, not memorial; the flags flip in the attended execution window and double as the rollback knob.
 
 - **capture** (exporter = capture image rebuild + container restart = a small, *unbackfillable* L2 gap): flip `capture_metrics_enabled` **only after the ≥7-day clean-run clock completes (≈ 2026-07-15)**, ideally inside the same attended window as T0003's workstation/NAS remainder. Never spend gap budget early.
-- **engine**: flip away from a 4h-boundary+30-min window (same rule as the store delivery) so no Stage-6a gate cycle is put at risk.
+- **engine**: flip away from a 4h-boundary+30-min window so no Stage-6a gate cycle is put at risk.
 - **Alloy + proxy**: no dependency on either container — may deploy first and begin shipping logs + host/container metrics immediately (`up` for the two app scrape jobs stays 0 until the exporters exist; the app-level and container-absent alert rules are created in the same attended pass as the exporters, so the interim is alert-silent by construction).
 
 ## Testing
@@ -67,3 +67,7 @@ The app-exporter compose deltas are **gated behind role variables `capture_metri
 ## Out of scope
 
 The workstation (soak retires at the 6a exit; journalctl suffices). Replacing healthchecks.io — noting that **Grafana Cloud IRM (OnCall) heartbeats do offer dead-man semantics**: the deliberate choice is to keep the external service as an **independent failure domain** (if the Alloy→Grafana pipeline breaks, an in-Grafana heartbeat can die with it); consolidation is registered as an explicit option in T0020, not silently dropped. Behavioral capture changes (additive counters + the two log-hygiene lines are the entire capture delta). WS-disconnect gap accounting in `GapMonitor` (documented limitation of the gap-ratio rule). Traces/profiling. Log-retention tuning beyond free-tier defaults.
+
+## Spec amendments
+
+- 2026-09-21, spec 00117 D8: the engine flip's bullet loses its `(same rule as the store delivery)` cross-reference. The rule it pointed at, `docs/specs/00042-vps-deployment-design.md`'s item 4 delivery timing, was replaced in that same change by the seed-return ordering, so the site carries no such rule; the flip's own window, a 4h boundary plus 30 minutes, is untouched and stands on the bullet's own words.
