@@ -95,13 +95,11 @@ def _reconcile(
     absent_store_hint: str,
     absent_rest_hint: str,
 ) -> tuple[int, int, pl.DataFrame]:
-    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally. `mismatch_hint` ends a price
-    disagreement's refusal; an absent close at a shared stamp is refused whatever `allow_replace` is, ending with
-    `absent_store_hint` when some absent row's null is the store's alone, the fetch answering that stamp with a value
-    (the leg is then a refused store file), and with `absent_rest_hint` otherwise -- the fetch's own null, and a null
-    both sides hold at one stamp, which no store repair reaches because the re-seed refills that stamp from this same
-    fetch; each side is read over all the absent rows and carries its own first absent stamp, since the first row's
-    side and stamp are that row's alone and the two sides can be absent at different rows.
+    """Returns `(overlap_bars, replaced_tail_rows, merged_frame)` positionally. An absent close at a shared stamp is
+    refused whatever `allow_replace` is; the hint follows the side that holds the null ALONE, because a null the fetch
+    also holds at that stamp would be refilled from this same fetch by the re-seed a store repair prescribes. Each side
+    is read over all the absent rows and carries its own first absent stamp: the first row's side and stamp are that
+    row's alone.
 
     Sibling: cli/ohlc/reach.py::_merge_or_detach guards the same seam definition under its own policy."""
     overlap_bars, mismatches = seam_overlap(store_frame, rest_frame)
@@ -177,10 +175,8 @@ _RESEED_REFUSED = "the re-seed replaced nothing, because the seam refused before
 
 
 def _frame_differences(frame: pl.DataFrame, interval: int) -> list[str]:
-    """What keeps `frame` from being the frame the store readers join, the first arm that fails in the order a later arm
-    presumes the earlier: the whole of `FRAME_SCHEMA` (each dtype, no other column), its column order, then the keys (rows,
-    no null stamp, no repeated stamp, each stamp on the leg's epoch-anchored `interval` grid), then the value (a present
-    close finite and positive; `None` is an absent bar and passes). Empty when nothing differs."""
+    """The first failing arm's differences, the arms ordered so a later one may presume the earlier; `None` is an
+    absent bar, not an unusable close. Empty when `frame` is the frame the store readers join."""
     differs = [
         f"{column} is {frame.schema[column]}, not {dtype}" if column in frame.schema else f"{column} is absent"
         for column, dtype in FRAME_SCHEMA.items()
@@ -215,9 +211,8 @@ def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: i
     gets it: `_frame_differences` is the check, and `frozen` picks the recovery, which is why the caller says which file
     it handed over. `seed_store` runs this over the canonical BEFORE the copy, so a refused canonical leaves no store
     file for the next run to refuse under the store's recovery; `to_frame` writes exactly this schema, so no schema or
-    order arm refuses a frame this tree wrote, and an off-grid stamp or an unusable close in a venue's own row is
-    refused at `_require_rest_frame` below, in the fetch that carries it, before a merge makes it resident. Sibling:
-    `cli/ohlc/reach.py::_read_canonical` holds a canonical the same way for the reach."""
+    order arm refuses a frame this tree wrote. Sibling: `cli/ohlc/reach.py::_read_canonical` holds a canonical the same
+    way for the reach."""
     differs = _frame_differences(frame, interval)
     if differs:
         raise EngineError(
@@ -227,15 +222,12 @@ def _require_store_frame(frame: pl.DataFrame, path: Path, pair: str, interval: i
 
 
 def _require_rest_frame(frame: pl.DataFrame, pair: str, interval: int, fn_name: str) -> None:
-    """Hold the REST fetch to the same width before the merge makes one of its rows resident: a stamp off the grid or
-    an unusable present close in the venue's own row is what `to_frame` admits, and one in the store would be refused
-    at every later boundary and written back by every re-seed, the seed filling the gap from this same window. The
-    refusal is the venue's, so it names the fetch rather than a file and prescribes no repair and no edit. `seed_store`
-    runs it BEFORE the canonical copy lands, so a refused fetch leaves no store file and the next seed still reads the
-    leg as absent, where a disagreement with REST is its data-integrity abort rather than a tail to replace. The schema,
-    order and repeated-stamp arms cannot fire on a frame `to_frame` wrote, and a null stamp, which it does admit, is
-    dropped by `drop_in_progress` before this call, so what this catches is the grid arm and the value arm; an empty
-    fetch is left to the seam, whose shortfall names it with its own recovery."""
+    """Hold the REST fetch to the store frame's width before the merge makes one of its rows resident: a row the door
+    refuses, once in the store, is refused at every later boundary and written back by every re-seed from this same
+    window. The refusal is the venue's, so it names the fetch rather than a file. `seed_store` runs it BEFORE the
+    canonical copy lands, so a refused fetch leaves no store file. The schema, order and repeated-stamp arms cannot
+    fire on a frame `to_frame` wrote, and a null stamp, which it does admit, `drop_in_progress` removes before this
+    call, so what fires here is the grid arm and the value arm; an empty fetch is left to the seam's shortfall."""
     if frame.is_empty():
         return
     differs = _frame_differences(frame, interval)
@@ -364,10 +356,8 @@ def read_store_series(store_dir: Path, symbol: str, interval: int) -> tuple[list
     both columns are checked because the return type promises both; `to_frame` writes `close` as Float64 and a
     UTC-aware `ts` (`_require_store_frame` above owns the exact dtype), so no frame this repo wrote is refused here.
 
-    It reads TYPES, never the stamps' values: a stamp off the leg's grid passes here and is refused at the door
-    above, which every reader that joins runs over the file first; `realized_series` in `cli/engine/soak.py` refuses
-    one on the 4h leg it scores, the second reader, over a store no door of this module read -- the daily row's
-    scratch copy.
+    It reads TYPES, never the stamps' values: an off-grid stamp passes here and is refused at the door above, and in
+    `realized_series` (`cli/engine/soak.py`) for the daily row's scratch store, which no door of this module reads.
 
     A non-finite close is NOT refused here either: the door above refuses it in a store file, and `realized_series`
     drops the cycle it would score and names the bar and the value on the report's `dropped_tail` line. What is
