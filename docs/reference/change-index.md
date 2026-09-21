@@ -340,4 +340,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #579 | 2026-09-21 | fix(engine): T0184 the concentration aggregate leaves no-book bars out | — | — | T0184 |
 | #580 | 2026-09-21 | fix(engine): T0200 — the snapshot write refuses an unusable close | — | 00116 | T0200 |
 | #583 | 2026-09-21 | test(skip-gates): T0206 the registry arguments are judged at the gate | — | 00114 | T0206 |
-| #584 | 2026-09-21 | fix(engine): T0199 T0201 absent close and off-grid store refused | — | — | T0199, T0201 |
+| #584 | 2026-09-21 | fix(engine): T0199 T0201 absent close and off-grid store refused | — | 00117 | T0199, T0201 |
