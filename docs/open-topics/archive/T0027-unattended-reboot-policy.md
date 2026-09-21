@@ -6,7 +6,7 @@ status: resolved
 
 ## Context — what
 
-The capture/engine VPS ran `unattended-upgrades` configured to **auto-reboot at 21:25 UTC (re-decided 2026-07-14 from measured traffic — was 04:00, then 02:00; see `docs/reference/fleet.md` § Reboots)** whenever an update set `/var/run/reboot-required` (typically a kernel upgrade). On **2026-07-11 04:00 UTC** it rebooted for kernel `6.12.88 → 6.12.95`; both containers auto-restarted cleanly (`restart: unless-stopped` + the `zcrypto-capture`/`zcrypto-engine` systemd units), capture gap ~83 s, engine `ExitCode 0`.
+The capture/engine VPS ran `unattended-upgrades` configured to **auto-reboot at 21:25 UTC (re-decided 2026-07-14 from measured traffic — was 04:00, then 02:00; the re-decision is spec `00050`'s)** whenever an update set `/var/run/reboot-required` (typically a kernel upgrade). On **2026-07-11 04:00 UTC** it rebooted for kernel `6.12.88 → 6.12.95`; both containers auto-restarted cleanly (`restart: unless-stopped` + the `zcrypto-capture`/`zcrypto-engine` systemd units), capture gap ~83 s, engine `ExitCode 0`.
 
 ## Why this matters
 
