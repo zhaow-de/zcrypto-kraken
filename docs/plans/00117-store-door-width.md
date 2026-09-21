@@ -1053,12 +1053,12 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 
 ```yaml
       The delivered store looks incomplete (BTC/EUR/240.parquet missing or empty). This copy came from
-      the workstation's data/engine-store/, so repair it there first (zcrypto engine seed, on the
-      workstation) -- a re-run delivers the same source again. Then stop the unit, move the store dir
-      aside rather than deleting it, and re-run this converge with --tags engine,
-      -e converge_primary=true and -e engine_image_digest=sha256:<full digest>, inside the inter-cycle
-      gap and outside a published Kraken maintenance window checked immediately before:
-      infra/runbooks/engine.md's zcrypto-engine-cycle-stale section holds the whole repair.
+      the workstation's data/engine-store/, so repair it there first (move that leg aside, outside the
+      store, then zcrypto engine seed, on the workstation) -- a re-run delivers the same source again.
+      Then stop the unit, move the store dir aside rather than deleting it, and re-run this converge
+      with --tags engine, -e converge_primary=true and -e engine_image_digest=sha256:<full digest>,
+      inside the inter-cycle gap and outside a published Kraken maintenance window checked immediately
+      before: infra/runbooks/engine.md's zcrypto-engine-cycle-stale section holds the whole repair.
 ```
 
 `grep -c 'rm -rf' infra/ansible/roles/engine/tasks/main.yml` prints `0`.
@@ -1100,7 +1100,7 @@ so the role's copy for an absent store re-delivers it and the play starts the un
 `grep -cF 'is the snapshot write refusing to journal what the store holds at that stamp' infra/runbooks/engine.md` prints `1`. Replace the sentence that carries it, in the same bullet, from `A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number"` through `and a re-run over the same store refuses the same way.`, with:
 
 ```
-A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number" comes from one of two doors: the refresh's own, when the same traceback names the store file and `is not the frame the store readers join`, the sentence that refusal also carries for a stamp off the leg's grid, a null or repeated stamp and a frame whose shape the readers refuse; and the snapshot write, when it names neither, the store readable and the refresh done. Both raise before the boundary is journaled, and a re-run over the same store refuses the same way at whichever door.
+A traceback naming a pair, a grid, a bar and a close that is "not a finite positive number" comes from one of two doors: the refresh's own, when the same traceback names the store file and `is not the frame the store readers join`, the sentence that refusal also carries for a stamp off the leg's grid, a null or repeated stamp and a frame whose shape the readers refuse; and the snapshot write, when it names neither, the store readable and the refresh done. Both raise before the boundary is journaled, the step-0 venue record excepted, and a re-run over the same store refuses the same way at whichever door.
 ```
 
 That sentence is the bullet's identification of what raised, and after Task 1 the refresh's door is the earlier of the two and reads a resident value the snapshot write used to be the first to see: `refresh_store` is `run_cycle`'s step 1, so a store file carrying an unusable close, an off-grid stamp or an unsound stamp set is refused there, before any snapshot, and the boundary raises with no sidecar and no `/fail` ping — the shape this bullet already tells the operator to read as "suspect the store".
@@ -1247,7 +1247,7 @@ Claude-Session: https://claude.ai/code/session_01QL5VMcRChTfVeL5fwZb9rd"
 
 - [ ] **Step 6: The pull request carries the read the live-path claim rests on**
 
-No test on this branch opens `/var/lib/zcrypto-engine/store`, the corpus the door judges twenty-four times a boundary, and the claim that the width refuses nothing that works today is measured over the two corpora the repo holds plus that read. The read spec D7 names was taken on 2026-09-21, read-only and with no fence run against the host: the store pulled to the workstation as a copy, its 24 legs held to the door's arms with this repo's `read_parquet` and `FRAME_SCHEMA`, 0 refused, and the copy deleted after the read (spec `00117`, `## The measured basis`). The PR body states that read, its date and its verdict, so the branch ships the premise it rests on. This step re-takes nothing: it copies the verdict the spec records. The converge that later restarts the engine on that store re-takes the read immediately before it, since the store gains rows at every boundary, and records its verdict with the deploy-log row — `.claude/rules/fleet-deploys.md`'s concern, not this change's.
+No test on this branch opens `/var/lib/zcrypto-engine/store`, the corpus the door judges twenty-four times a boundary, and the claim that the width refuses nothing that works today is measured over the two corpora the repo holds plus that read. The read spec D7 names was taken on 2026-09-21, read-only and with no fence run against the host: the store pulled to the workstation as a copy, its 24 legs held to the door's arms with this repo's `read_parquet` and `FRAME_SCHEMA`, 0 refused, and the copy deleted after the read (spec `00117`, `## The measured basis`). The PR body, edited through the `open-pr` skill that owns every PR create and every PR-body edit, states that read, its date and its verdict, so the branch ships the premise it rests on. This step re-takes nothing: it copies the verdict the spec records. The converge that later restarts the engine on that store re-takes the read immediately before it, since the store gains rows at every boundary, and records its verdict with the deploy-log row — `.claude/rules/fleet-deploys.md`'s concern, not this change's.
 
 ---
 
