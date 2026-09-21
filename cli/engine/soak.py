@@ -1455,7 +1455,7 @@ def render_report(
     if null is not None:
         null_flat, null_bars = _no_book_bars(null.weights)
         lines.append("  reference      : the canonical's complete-basket era, not its whole extent")
-        lines.append("  no-book bar    : held nothing at all -- its hhi reads 0, a sentinel not a measurement")
+        lines.append("  no-book bar    : held nothing at all -- its hhi reads 0, a sentinel the concentration row leaves out")
         lines.append(f"  retained bars  : {null.n_periods}")
         lines.append(f"  no-book bars   : {null_flat} of {null_bars}")
         # A null built anywhere but `build_null` carries no stamps; the lines above read none of them.
