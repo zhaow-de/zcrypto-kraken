@@ -13,7 +13,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0201 — The store's type door cannot see a wrong instant, and the store leg then degrades at rc 0](T0201-store-type-door-cannot-see-a-wrong-instant.md) — ripe when: `cli/engine/store.py` is next changed -- a session already at the two doors this topic is about, and the arm the daily pass decides; OR a soak-check run renders `window_bound : store` with a `store last bar` that is not on a 4h boundary (00/04/08/12/16/20 UTC) -- the shape a wrong-instant store frame produces, and one a legitimately short store cannot.
 - [T0203 — The release skill has never run, and three of its steps are broken as written](T0203-the-release-skill-has-never-run-and-three-steps-are-broken.md) — ripe when: a release is being cut: `git branch -a --list "*release/*"` prints a branch, or `git log --oneline main | wc -l` reads more than 1.
 - [T0205 — The primary's clean-close reconnect rate is charted and never alerted](T0205-primary-reconnect-rate-unalerted.md) — ripe when: 2026-10-01 — a second fortnight of reconnects on the board to set the bar against, read as `uv run python infra/scripts/grafana-query.py 'sum by (host) (increase(zcrypto_capture_reconnects_total[13d]))'`
-- [T0206 — The registry's arguments declare an unchecked provenance](T0206-registry-arguments-declare-an-unchecked-provenance.md) — ripe when: the next branch that adds a `nothing_found(...)` gate — the guard's own walk counts 13 of them at this registration, and the branch writing the fourteenth is already holding the claim this topic would have the helper check
 
 ## Partially done
 
@@ -214,6 +213,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0198 — Gate cache reverification slice is clock keyed](archive/T0198-gate-cache-reverification-slice-is-clock-keyed.md)
 - [T0200 — The journal's snapshot metadata carries no finiteness claim about the data behind its `content_hash`](archive/T0200-journal-snapshot-metadata-carries-no-finiteness-claim.md)
 - [T0202 — The canonical root's only join has no door, so `data rebuild ohlc-reach` tracebacks on a foreign-typed frame](archive/T0202-the-canonical-roots-only-join-has-no-door.md)
+- [T0206 — The registry's arguments declare an unchecked provenance](archive/T0206-registry-arguments-declare-an-unchecked-provenance.md)
 - [T0207 — Gate discovery beyond the fixture's positions](archive/T0207-gate-discovery-beyond-the-fixtures-positions.md)
 - [T0208 — Guidance clauses the skip-gate matcher falsifies](archive/T0208-guidance-clauses-the-skip-gate-matcher-falsifies.md)
 - [T0209 — The branch pre-review fans out per task range](archive/T0209-the-branch-pre-review-fans-out-per-task-range.md)

@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'the next branch that adds a `nothing_found(...)` gate — the guard''s own walk counts 13 of them at this registration, and the branch writing the fourteenth is already holding the claim this topic would have the helper check'
+status: resolved
 ---
 
 # The registry's arguments declare an unchecked provenance
@@ -31,9 +30,6 @@ Nothing in the tree caught that, and nothing will catch the next one: 13 gates d
 - What blocks it is the migration: most of the 13 sites compute their collection for the test BODY as well as for the gate, so moving the glob into the registry means either scanning twice or handing the rows back, which is a larger change than the matcher itself needed.
 - Five of the 13 are rooted in a path the local config names — `_substrate_root(...)` in the two derivatives files and `load_config().nfs_mount_dir` in `tests/test_tape_bars_rest_control.py` — and a root the matcher cannot read stays a claim whichever argument carries it; three more are handed rows no path scan produces (`records`, `archived`, `day`), so a scan helper closes five of the 13 and not all of them.
 
-## Suggested next steps
+## Resolution
 
-- Add `nothing_found_under(root: Path, pattern: str) -> bool` to `tests/skip_gates.py` and teach the registry form to judge that first argument with `_rooted`, the predicate the matcher already applies to a path receiver — a root the gate's own scope supplies is then refused at the gate with the remedy, rather than accepted as a claim.
-- Where the test body needs the rows, give the registry a `scan(root, pattern) -> list` beside it and gate on its result, so the scan happens once; migrate the five literal-rooted sites one file at a time and confirm each gate's decision is unchanged by running the file with and without its dataset present.
-- Decide the five config-rooted gates separately — a form that reads the config, a literal mount the config no longer owns, or a recorded acceptance that they stay declarations — and record the decision where the next reader of `nothing_found`'s docstring will meet it.
-- Keep `nothing_found(rows)` only as long as a site still needs it: while both exist, a gate can pick the unchecked one, so the docstring has to say which is which.
+Resolved by spec `00114` D10 and the PR that carries it, on the owner's ruling of 2026-09-20. The registry gained the forms whose argument the matcher judges: `nothing_found_under(root, pattern)` and `scan(root, pattern)`, whose root the operand predicate holds literal-rooted as it holds a path receiver, and `substrate_root`, `substrate_absent` and `mount_absent`, which read the local config, a tracked toml, and take one literal name; the closure test admits `cli.config` for those two names alone and the three builtins the forms fold with, and holds the public set to the eight names. Of the thirteen gates, five over a glob or a presence took the scan forms, five rooted in the config took the config forms, and three whose rows no path scan produces, the registry filter of `tests/test_registry_conformance.py` and the index of archived days and the heal-complete day chosen from it in `tests/test_tape_bars_rest_control.py`, keep `nothing_found`, whose docstring names them as the declarations the call site owns. Each gate's decision was confirmed unchanged with the datasets present, on the workstation, and without them, in a worktree of the branch beside one of `develop`. The fixture holds the two judged arguments matched and the three refusals, and the commit records its probe verdicts. `CLAUDE.md`'s skip-gate clause names this topic as the reading the count does not see; that clause is guidance, and its edit is the owner's on its own branch.
