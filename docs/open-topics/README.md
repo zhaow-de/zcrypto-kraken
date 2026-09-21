@@ -29,7 +29,6 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0159 — `zcrypto engine flatten` — the red button](T0159-engine-flatten-the-red-button.md) — ripe when: per sub-item, both attended. Read-only dry run: the engine row of `docs/reference/fleet-pins.md` names a revision that pins the same `nautilus-trader` version as the working tree (`git show <revision>:pyproject.toml | grep nautilus-trader` against `grep nautilus-trader pyproject.toml`), so the deployed wrapper runs the version the row will name. First real press: a `docs/reference/adapter-verification/` row records the read-only dry run.
 - [T0160 — nautilus-trader nightly bump, and the flatten contract checks it must not skip](T0160-nautilus-nightly-bump-and-flatten-contract-checks.md) — ripe when: per sub-item. Cancel sweep and adopt pass: `grep nautilus-trader pyproject.toml` shows a version carrying neither `rc` nor `dev`. The attended-start arm is spent -- the reading was taken 2026-09-19 and reproduced the blindness, so what remains is the repair. Unpark spec 00111: `grep nautilus-trader pyproject.toml` shows a version carrying neither `rc` nor `dev`
 - [T0183 — A reconciliation reports a perfect score when it compared nothing](T0183-reconciliation-reports-perfect-on-an-empty-set.md) — ripe when: T0187 is resolved: ls docs/open-topics/archive/T0187-*.md succeeds
-- [T0199 — A NaN reaching the store drops a report tail instead of refusing it](T0199-store-nan-drops-a-tail-instead-of-refusing.md) — ripe when: the writing of the recovery-text spec for the store door's width, or the next change to `_require_joinable_ts` in `cli/engine/store.py`
 
 ## Resolved
 
@@ -210,6 +209,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0196 — Two `..._can_fail_alone` test names claim isolation their shared fixture value does not pin](archive/T0196-cost-stress-alone-test-name-does-not-isolate.md)
 - [T0197 — The OI level-column null-density guard is unscoped, unlike its sibling zero-population guard](archive/T0197-oi-null-density-guard-is-unscoped-against-forward-refresh.md)
 - [T0198 — Gate cache reverification slice is clock keyed](archive/T0198-gate-cache-reverification-slice-is-clock-keyed.md)
+- [T0199 — A NaN reaching the store drops a report tail instead of refusing it](archive/T0199-store-nan-drops-a-tail-instead-of-refusing.md)
 - [T0200 — The journal's snapshot metadata carries no finiteness claim about the data behind its `content_hash`](archive/T0200-journal-snapshot-metadata-carries-no-finiteness-claim.md)
 - [T0201 — The store's type door cannot see a wrong instant, and the store leg then degrades at rc 0](archive/T0201-store-type-door-cannot-see-a-wrong-instant.md)
 - [T0202 — The canonical root's only join has no door, so `data rebuild ohlc-reach` tracebacks on a foreign-typed frame](archive/T0202-the-canonical-roots-only-join-has-no-door.md)
