@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 import pytest
 
+from cli.data.manifest import build_manifest, read_manifest, series_entry
 from cli.ohlc.dataset import read_parquet, write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.reach import MIN_SEAM_OVERLAP, reach_round
@@ -185,6 +186,46 @@ def test_manifest_records_per_series_status_so_a_mixed_set_cannot_be_read_as_uni
     assert {e.status for e in report.entries} == {"continuous", "detached"}
 
 
+def _round_over(canonical, out):
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+    now = _BASE + timedelta(hours=40)
+    reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+    return json.loads((out / "manifest.json").read_text())
+
+
+def test_the_manifest_names_the_canonical_the_round_joined(tmp_path):
+    canonical, out = tmp_path / "ohlc-full-20260920", tmp_path / "ohlc-reach-20260921"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    frame = read_parquet(canonical / "BTC" / "EUR" / "60.parquet")
+    manifest = build_manifest(
+        {"BTC/EUR/60.parquet": series_entry(frame, "BTC/EUR/60.parquet")}, written_at="2026-09-20T00:00:00+00:00"
+    )
+    (canonical / "manifest.json").write_text(json.dumps(manifest))
+
+    recorded = _round_over(canonical, out)["provenance"]["canonical"]
+
+    assert recorded == {"dir": "ohlc-full-20260920", "identity_digest": read_manifest(canonical / "manifest.json").identity_digest}
+
+
+def test_a_canonical_without_a_manifest_is_named_with_no_digest(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    assert _round_over(canonical, out)["provenance"]["canonical"] == {"dir": "canon", "identity_digest": None}
+
+
+def test_an_unreadable_canonical_manifest_refuses_the_round_before_any_fetch(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    (canonical / "manifest.json").write_text("{not json")
+
+    def _must_not_fetch(pair_key, interval):
+        raise AssertionError("the canonical was refused too late -- after a REST call")
+
+    with pytest.raises(OHLCError, match=r"the canonical's manifest cannot be read -- .*manifest\.json"):
+        reach_round(canonical, out, fetch_fn=_must_not_fetch, clock=lambda: _BASE, sleep_fn=_no_sleep)
+    assert not out.exists()
+
+
 def test_reach_discovers_both_quotes_of_a_base(tmp_path):
     from cli.ohlc.reach import _canonical_symbols
 
@@ -268,6 +309,36 @@ _FOREIGN_CANONICALS = {
 
 def _must_not_fetch(pair_key: str, interval: int) -> list[list]:
     raise AssertionError(f"the canonical frame was refused too late: REST was asked for {pair_key}@{interval}")
+
+
+def test_a_canonical_symbol_with_no_rest_pair_key_is_skipped_with_a_warning(tmp_path, caplog):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    _write_canonical(canonical, "FOO/EUR", 60, _BASE, 20)
+    # A foreign frame on the unmapped symbol: read before the filter it would refuse the round, so the skip must come first.
+    foo = canonical / "FOO" / "EUR" / "60.parquet"
+    write_parquet(_FOREIGN_CANONICALS["no-rows"](read_parquet(foo)), foo)
+    rest = _rest_rows(_BASE + timedelta(hours=10), 25, close=110.0)
+    now = _BASE + timedelta(hours=40)
+
+    with caplog.at_level("WARNING", logger="zcrypto.ohlc.reach"):
+        report = reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    assert [(e.symbol, e.interval) for e in report.entries] == [("BTC/EUR", 60)]
+    assert "no REST pair key for FOO/EUR" in caplog.text
+    assert not (out / "FOO").exists()
+
+
+def test_a_foreign_frame_on_a_later_leg_is_refused_before_any_leg_is_fetched(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)
+    _write_canonical(canonical, "ETH/EUR", 60, _BASE, 20)
+    path = canonical / "ETH" / "EUR" / "60.parquet"
+    write_parquet(_FOREIGN_CANONICALS["no-rows"](read_parquet(path)), path)
+
+    with pytest.raises(OHLCError, match="ETH/EUR@60"):
+        reach_round(canonical, out, fetch_fn=_must_not_fetch, clock=lambda: _BASE + timedelta(hours=40), sleep_fn=_no_sleep)
+    assert not out.exists()
 
 
 @pytest.mark.parametrize("variant", sorted(_FOREIGN_CANONICALS))

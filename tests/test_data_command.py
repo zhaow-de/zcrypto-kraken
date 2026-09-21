@@ -183,17 +183,29 @@ def test_rebuild_lets_an_error_no_builder_raises_on_purpose_through(tmp_path, mo
 
 
 def test_rebuild_ohlc_reach_aborts_naming_a_canonical_file_it_cannot_join(tmp_path, monkeypatch, zcrypto_log):
+    import json
+
     import polars as pl
 
     from cli.data import rebuild as rebuild_module
+    from cli.data.manifest import build_manifest, series_entry
     from cli.ohlc.dataset import to_frame, write_parquet
     from cli.ohlc.reach import reach_round
 
     def _must_not_fetch(pair_key, interval):
         raise AssertionError("the canonical frame was refused too late")
 
-    path = tmp_path / "data" / "ohlc-full" / "BTC" / "EUR" / "60.parquet"
+    # A whole frozen set, since the resolver refuses anything less before the round reads a frame; the frame the
+    # round cannot join sits at the first leg it reads -- the first symbol at the first interval.
+    root = tmp_path / "data" / "ohlc-full"
     rows = [[1_767_225_600 + 3600 * i, "1", "2", "0.5", "1.5", "1.2", "10", 3] for i in range(8)]
+    for leg in rebuild_module._basket_legs():
+        write_parquet(to_frame(rows), root / leg)
+    entry = series_entry(to_frame(rows), "BTC/EUR/60.parquet")
+    (root / "manifest.json").write_text(
+        json.dumps(build_manifest({"BTC/EUR/60.parquet": entry}, written_at="2026-09-20T00:00:00+00:00"))
+    )
+    path = root / "ADA" / "EUR" / "1440.parquet"
     write_parquet(to_frame(rows).with_columns(pl.col("ts").dt.cast_time_unit("ns")), path)
     monkeypatch.setattr(rebuild_module, "reach_round", functools.partial(reach_round, fetch_fn=_must_not_fetch))
     _write_config(tmp_path, nfs_mount_dir=tmp_path, push_dest="nas-hot:", authored_sets=["ohlc-full"])

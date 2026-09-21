@@ -75,9 +75,11 @@ def _rebuild_ohlc_15m(ctx: RebuildContext, out_root: Path) -> None:
 
 
 def _rebuild_ohlc_reach(ctx: RebuildContext, out_root: Path) -> None:
-    """Carry `ohlc-full` forward from Kraken's REST OHLC window (T0065); series the window no longer
-    reaches land `.detached` and are warned about, not refused."""
-    report = reach_round(_require_ohlc_full(ctx), out_root)
+    """Carry the newest frozen `ohlc-full` forward from Kraken's REST OHLC window (T0065); series the window
+    no longer reaches land `.detached` and are warned about, not refused."""
+    canonical_root = resolve_canonical_root(ctx.data_root)
+    logger.info("data rebuild: ohlc-reach joins the canonical at %s", canonical_root)
+    report = reach_round(canonical_root, out_root)
     detached = report.detached
     if detached:
         logger.warning(
@@ -121,14 +123,44 @@ def _require_fresh_ohlc(last_bars: dict[str, datetime], ctx: RebuildContext) -> 
         )
 
 
-def _require_ohlc_full(ctx: RebuildContext) -> Path:
-    ohlc_root = ctx.data_root / "ohlc-full"
-    if not ohlc_root.exists():
-        raise DataSyncError(f"data rebuild: universe needs the live ohlc-full/ set, not found at {ohlc_root}")
-    return ohlc_root
-
-
 _STAMPED_REACH = re.compile(r"ohlc-reach-\d{8}")
+_STAMPED_FULL = re.compile(r"ohlc-full-\d{8}")
+
+
+def _basket_legs() -> list[str]:
+    return [f"{symbol}/{interval}.parquet" for symbol in CANDIDATE_SYMBOLS for interval in _OHLC_INTERVALS]
+
+
+def _missing_from_whole_set(root: Path) -> list[str]:
+    missing = [leg for leg in _basket_legs() if not (root / leg).is_file()]
+    if not (root / "manifest.json").is_file():
+        missing.append("manifest.json")
+    return missing
+
+
+def resolve_canonical_root(data_root: Path) -> Path:
+    """A dump ingest re-freezes the canonical as an `ohlc-full-<stamp>` sibling and never in place (spec 00056
+    D1c), so the frozen set reaching furthest is the newest stamp, not `ohlc-full`. Either is refused unless it is
+    whole -- the manifest is the last thing `backfill_basket` writes -- because a round joined to a half-written
+    set would seam a short basket and report success."""
+    stamped = sorted(
+        (p for p in data_root.glob("ohlc-full-*") if p.is_dir() and _STAMPED_FULL.fullmatch(p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    if stamped:
+        chosen = stamped[0]
+    else:
+        chosen = data_root / "ohlc-full"
+        if not chosen.exists():
+            raise DataSyncError(f"data rebuild: ohlc-reach needs a frozen ohlc-full set to join, none found under {data_root}")
+    missing = _missing_from_whole_set(chosen)
+    if missing:
+        raise DataSyncError(
+            f"data rebuild: the frozen ohlc-full set {chosen} is not a whole set -- missing "
+            f"{', '.join(missing)}; re-mint it -- a whole stamped sibling outranks whatever is broken here"
+        )
+    return chosen
 
 
 def resolve_ohlc_source(data_root: Path) -> Path:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import polars as pl
 
-from cli.data.manifest import build_manifest, series_entry
+from cli.data.manifest import ManifestError, build_manifest, read_manifest, series_entry
 from cli.logging import get_logger
 from cli.ohlc.dataset import FRAME_SCHEMA, dataset_hash, read_parquet, to_frame, write_parquet
 from cli.ohlc.errors import OHLCError
@@ -98,8 +98,8 @@ def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     if differs:
         raise OHLCError(
             f"reach_round: {path} is not the frame this command joins for {symbol}@{interval} -- {'; '.join(differs)}; "
-            "rebuild the set (`zcrypto data rebuild ohlc-full --no-push`, then promote the verified sibling into the "
-            "canonical name) rather than recast this file, which would change its dataset hash"
+            "rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the reach "
+            "joins) rather than recast this file, which would change its dataset hash"
         )
     return frame
 
@@ -157,53 +157,76 @@ def reach_round(
     Writes into `out_root` only: the canonical set is immutable, and a revision mints a sibling root, never an edit.
     """
     now = clock()
+    # Named and read here, not per leg: a canonical the round cannot name or join costs no REST call and no leg.
+    joined = _joined_canonical(canonical_root)
+    canonicals = _read_canonicals(canonical_root, intervals)
     entries: list[ReachEntry] = []
     fetched = 0
 
-    for interval in intervals:
-        for symbol in _canonical_symbols(canonical_root, interval):
-            pair_key = PAIR_KEYS.get(symbol)
-            if pair_key is None:
-                logger.warning("reach_round: no REST pair key for %s -- skipping", symbol)
-                continue
+    for (interval, symbol), canonical in canonicals.items():
+        pair_key = PAIR_KEYS[symbol]
+        base, quote = symbol.split("/")
 
-            base, quote = symbol.split("/")
+        # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
+        if fetched:
+            sleep_fn(MIN_REST_INTERVAL_SECONDS)
+        fetched += 1
+        rest = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
+        if rest.is_empty():
+            logger.warning("reach_round: REST returned no completed bars for %s@%d", symbol, interval)
+            continue
 
-            canonical = _read_canonical(canonical_root / base / quote / f"{interval}.parquet", symbol, interval)
-            # Pace BETWEEN calls only -- never before the first, so a single-series run pays nothing.
-            if fetched:
-                sleep_fn(MIN_REST_INTERVAL_SECONDS)
-            fetched += 1
-            rest = drop_in_progress(to_frame(fetch_fn(pair_key, interval)), interval, now)
-            if rest.is_empty():
-                logger.warning("reach_round: REST returned no completed bars for %s@%d", symbol, interval)
-                continue
+        status, frame, overlap_bars, gap_bars = _merge_or_detach(canonical, rest, symbol=symbol, interval=interval)
+        name = f"{interval}.parquet" if status == "continuous" else f"{interval}.detached.parquet"
+        write_parquet(frame, out_root / base / quote / name)
 
-            status, frame, overlap_bars, gap_bars = _merge_or_detach(canonical, rest, symbol=symbol, interval=interval)
-            name = f"{interval}.parquet" if status == "continuous" else f"{interval}.detached.parquet"
-            write_parquet(frame, out_root / base / quote / name)
-
-            appended = frame.height - canonical.height if status == "continuous" else frame.height
-            entries.append(
-                ReachEntry(
-                    symbol=symbol,
-                    interval=interval,
-                    status=status,
-                    rest_first=rest["ts"].min(),
-                    rest_last=rest["ts"].max(),
-                    overlap_bars=overlap_bars,
-                    appended=appended,
-                    gap_bars=gap_bars,
-                )
+        appended = frame.height - canonical.height if status == "continuous" else frame.height
+        entries.append(
+            ReachEntry(
+                symbol=symbol,
+                interval=interval,
+                status=status,
+                rest_first=rest["ts"].min(),
+                rest_last=rest["ts"].max(),
+                overlap_bars=overlap_bars,
+                appended=appended,
+                gap_bars=gap_bars,
             )
+        )
 
     report = ReachReport(entries=tuple(entries))
-    _write_manifest(out_root, report, now)
+    _write_manifest(out_root, report, now, joined)
     return report
 
 
-def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
-    """Record per-series provenance plus separate continuous/detached basket hashes.
+def _read_canonicals(canonical_root: Path, intervals: tuple[int, ...]) -> dict[tuple[int, str], pl.DataFrame]:
+    frames: dict[tuple[int, str], pl.DataFrame] = {}
+    for interval in intervals:
+        for symbol in _canonical_symbols(canonical_root, interval):
+            if symbol not in PAIR_KEYS:
+                logger.warning("reach_round: no REST pair key for %s -- skipping", symbol)
+                continue
+            base, quote = symbol.split("/")
+            frames[(interval, symbol)] = _read_canonical(canonical_root / base / quote / f"{interval}.parquet", symbol, interval)
+    return frames
+
+
+def _joined_canonical(canonical_root: Path) -> dict:
+    """The set this round seamed onto, by name and by its manifest's identity digest -- `None` where that manifest is
+    absent -- since the root varies between rounds once dump ingests mint siblings. Unreadable refuses the round, a legacy
+    shape included, where `cli/data/sync.py` and `_refresh_universe` degrade: the additive hub keeps whatever was pushed."""
+    manifest_path = canonical_root / "manifest.json"
+    digest = None
+    if manifest_path.is_file():
+        try:
+            digest = read_manifest(manifest_path).identity_digest
+        except ManifestError as exc:
+            raise OHLCError(f"reach_round: the canonical's manifest cannot be read -- {exc}") from exc
+    return {"dir": canonical_root.name, "identity_digest": digest}
+
+
+def _write_manifest(out_root: Path, report: ReachReport, now: datetime, joined: dict) -> None:
+    """Record per-series provenance and separate continuous/detached basket hashes.
 
     A reach set is mixed by construction, so the per-series rows -- never one set-wide claim -- say which are continuous.
     """
@@ -232,6 +255,11 @@ def _write_manifest(out_root: Path, report: ReachReport, now: datetime) -> None:
         written_at=now.isoformat(),
         identity=identity,
         subsets=subsets,
-        provenance={"built_at": now.isoformat(), "min_seam_overlap": MIN_SEAM_OVERLAP, "series": seam},
+        provenance={
+            "built_at": now.isoformat(),
+            "min_seam_overlap": MIN_SEAM_OVERLAP,
+            "series": seam,
+            "canonical": joined,
+        },
     )
     (out_root / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))

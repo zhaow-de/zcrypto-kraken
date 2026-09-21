@@ -486,7 +486,7 @@ def test_a_stray_non_stamp_directory_never_outranks_a_dated_source(tmp_path):
 
 def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(tmp_path, monkeypatch):
     """The WIRING, not just the resolver in isolation: `_refresh_universe` must call
-    `resolve_ohlc_source(ctx.data_root)`, not `_require_ohlc_full(ctx)` directly. Here `ohlc-full` is stale
+    `resolve_ohlc_source(ctx.data_root)`, not a hard-coded `ohlc-full`. Here `ohlc-full` is stale
     (refuses if read) and a fresh, complete stamped sibling is what must actually get read, so a
     revert flips this test from a passing rebuild to an unhandled staleness DataSyncError."""
     monkeypatch.setattr(rebuild, "fetch_public", _fake_fetch_public)
@@ -518,10 +518,92 @@ def test_refresh_universe_reads_the_resolved_source_not_the_hardcoded_ohlc_full(
     assert payload["provenance"]["ohlc_dataset_hash"] == "fresh"
 
 
-def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling(tmp_path, monkeypatch):
-    """The reach builder must read the LIVE ohlc-full and write into the minted sibling only --
-    reading the sibling instead would reach forward from an empty set."""
+def _whole_frozen_set(root: Path, *, without: str | None = None) -> Path:
+    """A stamped sibling as `backfill_basket` leaves it: every basket leg, then the manifest."""
+    for leg in rebuild._basket_legs() + ["manifest.json"]:
+        if leg == without:
+            continue
+        (root / leg).parent.mkdir(parents=True, exist_ok=True)
+        (root / leg).write_bytes(b"")
+    return root
+
+
+def test_the_newest_stamped_ohlc_full_sibling_is_the_canonical_the_reach_joins(tmp_path):
     (tmp_path / "ohlc-full").mkdir()
+    for stamp in ("20260701", "20260920"):
+        _whole_frozen_set(tmp_path / f"ohlc-full-{stamp}")
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
+def test_ohlc_full_is_the_canonical_when_no_stamped_sibling_exists(tmp_path):
+    _whole_frozen_set(tmp_path / "ohlc-full")
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full"
+
+
+def test_a_partial_unstamped_ohlc_full_is_refused_naming_the_leg(tmp_path):
+    _whole_frozen_set(tmp_path / "ohlc-full", without="XRP/EUR/60.parquet")
+    with pytest.raises(DataSyncError, match=r"ohlc-full is not a whole set -- missing XRP/EUR/60\.parquet"):
+        rebuild.resolve_canonical_root(tmp_path)
+
+
+def test_a_stamped_sibling_alone_is_the_canonical(tmp_path):
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
+def test_a_stray_ohlc_full_directory_never_outranks_a_dated_sibling(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
+    for name in ("ohlc-full-backup", "ohlc-full-20260920.bak"):
+        (tmp_path / name).mkdir()
+    assert rebuild.resolve_canonical_root(tmp_path).name == "ohlc-full-20260920"
+
+
+def test_the_newest_sibling_without_its_manifest_is_refused_naming_it(tmp_path):
+    """The older whole sibling is in the tree on purpose: a refusal must not fall back to it behind the
+    operator's back."""
+    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260701")
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="manifest.json")
+    with pytest.raises(DataSyncError, match=r"ohlc-full-20260920 is not a whole set -- missing manifest\.json"):
+        rebuild.resolve_canonical_root(tmp_path)
+
+
+def test_the_newest_sibling_missing_a_basket_leg_is_refused_naming_the_leg(tmp_path):
+    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920", without="ETH/EUR/240.parquet")
+    with pytest.raises(DataSyncError, match=r"missing ETH/EUR/240\.parquet"):
+        rebuild.resolve_canonical_root(tmp_path)
+
+
+def test_no_frozen_ohlc_full_at_all_is_refused(tmp_path):
+    with pytest.raises(DataSyncError):
+        rebuild.resolve_canonical_root(tmp_path)
+
+
+def test_rebuild_ohlc_reach_joins_the_newest_stamped_ohlc_full_sibling(tmp_path, monkeypatch):
+    """The WIRING: a dump ingest re-freezes the canonical as `ohlc-full-<stamp>`, and a reach round that still
+    joined the unstamped set would seam against the tail the ingest just moved past."""
+    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full-20260920")
+    seen = {}
+
+    def _fake_reach(canonical_root, out_root, **kwargs):
+        seen["canonical"] = canonical_root
+        return ReachReport(entries=())
+
+    monkeypatch.setattr(rebuild, "reach_round", _fake_reach)
+    ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260921")
+
+    rebuild.rebuild_sets(["ohlc-reach"], ctx)
+
+    assert seen["canonical"] == tmp_path / "ohlc-full-20260920"
+
+
+def test_rebuild_ohlc_reach_joins_ohlc_full_without_a_sibling_and_writes_only_the_minted_one(tmp_path, monkeypatch):
+    """No stamped sibling here, so the builder joins `ohlc-full` -- and writes into the minted sibling
+    only, reading which would reach forward from an empty set."""
+    _whole_frozen_set(tmp_path / "ohlc-full")
     seen = {}
 
     def _fake_reach(canonical_root, out_root, **kwargs):
@@ -542,7 +624,7 @@ def test_rebuild_ohlc_reach_reads_the_live_canonical_and_writes_only_the_sibling
 
 def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeypatch, caplog):
     """A detached series is the case an operator must not miss, so it is logged by name."""
-    (tmp_path / "ohlc-full").mkdir()
+    _whole_frozen_set(tmp_path / "ohlc-full")
     entries = (
         ReachEntry(
             symbol="BTC",
@@ -581,8 +663,8 @@ def test_rebuild_ohlc_reach_warns_naming_every_detached_series(tmp_path, monkeyp
     assert "BTC@240" not in caplog.text
 
 
-def test_rebuild_ohlc_reach_fails_closed_without_a_live_canonical(tmp_path, monkeypatch):
-    """No ohlc-full means nothing to reach forward FROM -- refuse rather than mint an empty set."""
+def test_rebuild_ohlc_reach_fails_closed_without_any_frozen_ohlc_full(tmp_path):
+    """Nothing to reach forward FROM -- refuse rather than mint an empty set."""
     ctx = rebuild.RebuildContext(data_root=tmp_path, ohlcvt_source_dir=None, stamp="20260723")
     with pytest.raises(DataSyncError):
         rebuild.rebuild_sets(["ohlc-reach"], ctx)
