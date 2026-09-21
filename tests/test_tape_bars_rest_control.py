@@ -17,7 +17,7 @@ import pytest
 from cli.config import load_config
 from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.tick.materialize import BASE_INTERVAL_MINUTES, build_day, is_heal_complete, segment_index
-from tests.skip_gates import nothing_found
+from tests.skip_gates import mount_absent, nothing_found
 
 PAIR = "BTC/EUR"
 PAIR_KEY = PAIR_KEYS[PAIR]
@@ -56,8 +56,7 @@ def test_tape_bars_match_kraken_rest_ohlc() -> None:
     # once the flag is set `fetch_ohlc`'s OHLCError is left to FAIL this test rather than skip it.
     if os.environ.get("ZCRYPTO_LIVE_VENUE_TESTS") != "1":
         pytest.skip("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
-    _primary_present = [PRIMARY_ROOT] if PRIMARY_ROOT.exists() else []
-    if nothing_found(_primary_present):
+    if mount_absent("capture-segments"):
         pytest.skip(f"trade archive absent at {PRIMARY_ROOT} — data-bearing workstation only")
 
     index = segment_index(PRIMARY_ROOT, RECONCILED_ROOT)

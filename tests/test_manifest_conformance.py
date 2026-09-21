@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from cli.data.manifest import ManifestError, read_manifest
-from tests.skip_gates import nothing_found
+from tests.skip_gates import nothing_found_under
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DATA = _ROOT / "data"
@@ -53,7 +53,7 @@ def test_every_manifest_on_disk_either_conforms_or_is_a_named_out_of_contract_se
 @pytest.mark.parametrize("name", _MUST_CONFORM)
 def test_the_committed_floor_of_sets_is_conformant(name):
     path = _DATA / name / "manifest.json"
-    if nothing_found([path] if path.is_file() else []):
+    if nothing_found_under(_DATA, f"{name}/manifest.json"):
         pytest.skip(f"{name} not present on this node")
     m = read_manifest(path)
     assert m.identity_digest and m.vouched

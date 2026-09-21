@@ -11,7 +11,7 @@ import pytest
 from cli.ohlc.dataset import to_frame, write_parquet
 from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
-from tests.skip_gates import nothing_found
+from tests.skip_gates import nothing_found_under
 
 
 def _rows(n, start=1577836800):  # 2020-01-01, daily steps
@@ -143,7 +143,7 @@ def test_loader_reproduces_the_frozen_full_set_extents(dataset):
     # A figure that stops reproducing means the canonical dataset drifted — STOP, the same contract
     # as tests/test_crossfreq_system.py.
     root = Path(__file__).resolve().parents[1] / "data"
-    if nothing_found([root / dataset] if (root / dataset).is_dir() else []):
+    if nothing_found_under(root, dataset):
         pytest.skip(f"{dataset} not on this host — data-bearing workstation only")
     reader = ObservedReader(root)
     for f in sorted((root / dataset).rglob("*.parquet")):
