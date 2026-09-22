@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: 'a release is being cut: `git branch -a --list "*release/*"` prints a branch, or `git log --oneline main | wc -l` reads more than 1.'
+status: resolved
 ---
 
 # The release skill has never run, and three of its steps are broken as written
@@ -36,12 +35,28 @@ plausible changelog that is missing four fifths of the work, and nothing in the 
   fixing it blind now. The trigger above is the repo state that ruling produces; cutting a release is the
   release's work, not this topic's.
 
-## Suggested next steps
+## Resolution
 
-- Decide `cz`'s home: add commitizen to the dev group and rewrite the four call sites as `uv run cz …`, or make
-  step 1 install it (`uv tool install commitizen`). Four sites must agree with whichever is chosen.
-- Replace the two harness variables with names this harness sets, or with paths.
-- Raise `fetch-pr-data.py`'s limit and refuse on saturation: if the page count equals the limit, exit non-zero
-  naming the incompleteness rather than writing a truncated JSON.
-- Give step 14 the check-runs poll `dependabot` §2d already carries, aimed at the release branch's head sha.
-- Run it end to end on the real cut, with the whole skill read against what actually happened.
+Fixed ahead of a release rather than during one, on the owner's word of 2026-09-22 that the trigger above was
+artificial: none of the four defects needed a real cut to see, and every one of them would have been found by
+the person least able to afford it.
+
+- **`cz`'s home — ruled: install it at step 1.** `uv tool install commitizen`, with the four call sites left
+  bare. `pyproject.toml` and `uv.lock` are untouched, so no dev dependency and no CI install time is spent on a
+  tool only a release uses. Step 1 now installs it and proves it answers instead of stopping on its absence, and
+  the `## Context` block tolerates it being missing so the skill can still load.
+- **The two harness variables are gone, not replaced.** `${CLAUDE_SKILL_DIR}` became the repo-relative path the
+  skill's own Notes already assume, and `${CLAUDE_SESSION_ID}` became a `tempfile` path the script prints on
+  stdout alone for the caller to capture. Swapping in a name this harness happens to set would have left the
+  same coupling that broke it.
+- **The fetch limit is 2000 and saturation refuses.** A list as long as the limit exits non-zero naming the
+  incompleteness, because `gh pr list` is silent when it truncates and the result is a changelog that reads
+  complete.
+- **Step 14 reads the suite by name on the release head's sha** before it merges, and `.github/settings.yml` now
+  requires the `Full test suite` context on `main` as well as `develop` — the release PR was the one merge in
+  the repo that nothing gated, from either side.
+
+What a first cut can still teach is an instruction on the skill itself, not a deferral: its banner tells the
+runner of the first real release to re-read the whole skill against what happened and correct it in the same
+branch. That lands the remaining item on the surface that performs it, which is why this topic closes with no
+live sub-item rather than splitting one off.
