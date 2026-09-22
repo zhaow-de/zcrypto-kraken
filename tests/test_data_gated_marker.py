@@ -112,10 +112,11 @@ def test_the_marked_set_is_exactly_the_gated_set():
 
     assert marked == gated, (
         f"marked but not gated: {sorted(marked - gated)}; gated but not marked: {sorted(gated - marked)}. "
-        f"A file in the first list is not necessarily wrong to carry the mark: it is a file whose gate "
-        f"`is_data_absence` does not recognise, so widen `_DATA_ABSENCE` in "
-        f"`infra/scripts/data-gated-run.py` until it does. Removing the mark also makes this pass, and "
-        f"leaves the file unselected by `-m data` with nothing to say so -- never take that remedy."
+        f"For a file in the first list, read its skip reasons: a gate that wants a dataset in wording "
+        f"`is_data_absence` misses is a vocabulary gap -- widen `_DATA_ABSENCE` in "
+        f"`infra/scripts/data-gated-run.py` until it matches, never past the family, since that regex also "
+        f"decides what the nightly runner counts as a data skip. No such gate at all is an unearned mark, "
+        f"and dropping it is the only remedy for that case. A file in the second list wants the mark added."
     )
 
 
