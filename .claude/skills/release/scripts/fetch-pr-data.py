@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Fetch merged PRs since the last release tag and prepare data for changelog generation."""
+"""Fetch merged PRs since the last release tag and prepare data for changelog generation.
+
+Writes one JSON file and prints its path on stdout, alone, so the caller captures it with `$(...)`.
+Everything a human reads goes to stderr; the path comes from `tempfile`, so two runs never collide.
+"""
 
 import json
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 
-session_id = sys.argv[1] if len(sys.argv) > 1 else "default"
+# `gh pr list` returns at most `--limit` rows and says nothing when it truncates, so a limit below
+# the real count silently drops the oldest PRs. The number is headroom; the refusal below is the
+# guard, because any fixed number is outgrown eventually.
+PR_LIMIT = 2000
 
 version_result = subprocess.run(["cz", "version", "--project"], capture_output=True, text=True)
 new_version = version_result.stdout.strip()
@@ -35,7 +43,7 @@ result = subprocess.run(
         "--base",
         "develop",
         "--limit",
-        "100",
+        str(PR_LIMIT),
         "--json",
         "number,title,body,url,author,mergedAt",
     ],
@@ -43,6 +51,16 @@ result = subprocess.run(
     text=True,
 )
 prs = json.loads(result.stdout)
+
+# `>=`, not `>`: saturation is indistinguishable from a coincidence at exactly the limit.
+if len(prs) >= PR_LIMIT:
+    print(
+        f"REFUSING: `gh pr list` returned {len(prs)} PRs against --limit {PR_LIMIT}, so the list may be "
+        f"truncated and the changelog would silently lose its oldest entries. Raise PR_LIMIT in "
+        f"{__file__} above the real count and re-run.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 filtered_prs = []
 for pr in prs:
@@ -96,8 +114,9 @@ output = {
     "prs": pr_data,
 }
 
-with open(f"/tmp/release_pr_data_{session_id}.json", "w") as f:
-    json.dump(output, f, indent=2)
+with tempfile.NamedTemporaryFile(mode="w", prefix="release_pr_data_", suffix=".json", delete=False) as handle:
+    json.dump(output, handle, indent=2)
+    out_path = handle.name
 
-print(f"Prepared {len(pr_data)} PRs for changelog generation")
-print(f"Data saved to /tmp/release_pr_data_{session_id}.json")
+print(f"Prepared {len(pr_data)} PRs for changelog generation", file=sys.stderr)
+print(out_path)
