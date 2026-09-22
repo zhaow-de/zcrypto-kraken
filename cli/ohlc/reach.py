@@ -105,6 +105,27 @@ def _read_canonical(path: Path, symbol: str, interval: int) -> pl.DataFrame:
     return frame
 
 
+def _thin_seam_measurements(canonical: pl.DataFrame, rest: pl.DataFrame, interval: int) -> str:
+    """What the two frames measure at a thin seam, and nothing about which of them caused it: any cause named here
+    would be wrong wherever a second measurement binds."""
+    span_head = max(canonical["ts"].min(), rest["ts"].min())
+    span_tail = min(canonical["ts"].max(), rest["ts"].max())
+    if span_tail < span_head:
+        return (
+            "the two sides share no range at all: the canonical runs "
+            f"{canonical['ts'].min()} to {canonical['ts'].max()} and the REST window {rest['ts'].min()} to "
+            f"{rest['ts'].max()}. Read where each one ends before choosing"
+        )
+    span_bars = int((span_tail - span_head).total_seconds() // (interval * 60)) + 1
+    in_span = (pl.col("ts") >= span_head) & (pl.col("ts") <= span_tail)
+    return (
+        f"the two sides share a range of {span_bars} bar(s) ({span_head} to {span_tail}), the canonical holding "
+        f"{canonical.filter(in_span).height} row(s) in it and the REST window "
+        f"{rest.filter(in_span).height}. Each of those bounds the overlap on its own and more than one can fall "
+        "short at once, so read them before choosing"
+    )
+
+
 def _merge_or_detach(
     canonical: pl.DataFrame,
     rest: pl.DataFrame,
@@ -126,8 +147,10 @@ def _merge_or_detach(
     if overlap_bars < MIN_SEAM_OVERLAP:
         raise OHLCError(
             f"reach_round: seam too thin for {symbol}@{interval} -- only {overlap_bars} shared stamp(s) "
-            f"between the canonical tail and the REST window (need >= {MIN_SEAM_OVERLAP}); the REST window "
-            "is receding past the canonical tail, so this series needs an intervening OHLCVT dump"
+            f"between the canonical tail and the REST window (need >= {MIN_SEAM_OVERLAP}). Measured at this seam: "
+            f"{_thin_seam_measurements(canonical, rest, interval)}: an intervening OHLCVT dump carries "
+            "the canonical forward, `zcrypto data rebuild ohlc-full --no-push` republishes it over its own range, "
+            "and the window is the next round's fetch to answer"
         )
 
     absent = mismatches.filter(pl.col("close").is_null() | pl.col("close_rest").is_null())
