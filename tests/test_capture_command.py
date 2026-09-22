@@ -20,6 +20,8 @@ from cli.capture.command import _default_pairs, _parse_ts, resolve_universe_path
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
 
+pytestmark = pytest.mark.data
+
 runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")

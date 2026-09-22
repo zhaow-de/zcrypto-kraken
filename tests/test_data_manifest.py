@@ -222,6 +222,8 @@ def test_an_empty_series_map_is_refused_at_build():
 
 from pathlib import Path as _Path
 
+pytestmark = pytest.mark.data
+
 _HUB_REACH = _Path("/mnt/zhao-crypto/hot/ohlc-reach/manifest.json")
 _LOCAL_REACH = _Path("data/ohlc-reach-20260813/manifest.json")
 

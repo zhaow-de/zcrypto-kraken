@@ -21,6 +21,8 @@ from cli.derivatives.funding import (
 )
 from tests.skip_gates import substrate_absent, substrate_root
 
+pytestmark = pytest.mark.data
+
 
 def _ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)

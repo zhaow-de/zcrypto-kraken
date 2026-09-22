@@ -28,6 +28,8 @@ from cli.engine.store import BASKET
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from tests import basket_fixture
 
+pytestmark = pytest.mark.data
+
 
 def test_stage_grosses_sums_absolute_positions():
     sleeves = {"B": {"BTC": 0.10, "ETH": -0.04}, "A1": {"BTC": 0.02, "ETH": 0.0}, "A2": {"BTC": 0.0, "ETH": 0.06}}

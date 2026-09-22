@@ -11,6 +11,8 @@ A PR delivers **one completed, nameable component**. Before anything below: (1) 
 
 **The rider that is not a second component.** A follow-up whose trigger would name a file this PR ALREADY touches is done here, not registered: the reader is in those files, and a topic saying "next time someone is here" written by someone who is here is satisfied the moment it is filed. Both halves bind — the file must be one this branch has opened, and the work must be cheap BECAUSE you are already there. Anything needing its own design decision, its own spec, or a file this branch has not touched stays a topic and the one-component rule holds. Name the rider under `## Changes`; it needs no separate word.
 
+**Before the first push, run `uv run pytest -m data` on the checkout that holds the datasets.** Every gate in the family skips where they are absent — CI, and any worktree they were not linked into — so read the skip count: an all-skipped green is not a pass.
+
 **A draft is not a delivery.** `.github/workflows/coverage.yml` fires on `pull_request` alone, so a branch with no PR runs no CI at all and its author pays for the whole suite by hand. Open the PR as a draft (`gh pr create --draft`) at the branch's first green commit: CI then runs the suite on every push, and `merge-pr`'s first gate refuses a draft, so nothing leaves early. The three conditions above are read at the undraft, not at the create; the body and Step 4's change-index row are written at create time, except the `Read before push by:` line, which names a read that has not happened yet and is written at the undraft.
 
 ## Title (iteration PRs)
@@ -73,7 +75,9 @@ The refusal is the branch above, in the same call as the measurement and never i
 
 ```bash
 SHA=$(git rev-parse HEAD)   # the pushed head; a later push restarts the watch on its sha
-until R=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" --jq '.check_runs[] | select(.name == "Full test suite") | "\(.status) \(.conclusion // "")"'); [[ "${R,,}" == completed* ]]; do sleep 45; done; echo "$R"; [[ "${R,,}" == *success* ]]
+# Bounded at 40 reads, ~30 min: `gh` writes an error body to stdout, which matches no state,
+# so an unbounded `until` on a revoked token or a wrong sha sleeps and re-reads forever.
+for i in $(seq 1 40); do R=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" --jq '.check_runs[] | select(.name == "Full test suite") | "\(.status) \(.conclusion // "")"'); [[ "${R,,}" == completed* ]] && break; sleep 45; done; echo "${R:-no reading}"; [[ "${R,,}" == *success* ]]
 ```
 
 **Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section — and a topic the PR only **registers** is not a key: it is a cross-reference like the iteration above, recorded by `docs/open-topics/README.md`, and a row claiming it says the index delivered what it only filed. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:

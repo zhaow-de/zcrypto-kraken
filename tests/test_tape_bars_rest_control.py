@@ -19,6 +19,8 @@ from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.tick.materialize import BASE_INTERVAL_MINUTES, build_day, is_heal_complete, segment_index
 from tests.skip_gates import mount_absent, nothing_found
 
+pytestmark = pytest.mark.data
+
 PAIR = "BTC/EUR"
 PAIR_KEY = PAIR_KEYS[PAIR]
 

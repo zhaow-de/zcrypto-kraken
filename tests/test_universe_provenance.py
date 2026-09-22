@@ -9,6 +9,8 @@ import pytest
 
 from tests.skip_gates import nothing_found_under
 
+pytestmark = pytest.mark.data
+
 _ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _ROOT / "docs"
 _CATALOG = _DOCS / "reference" / "data-catalog.md"

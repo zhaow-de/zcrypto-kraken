@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.data
+
 _ROOT = Path(__file__).resolve().parents[1]
 _PINS = _ROOT / "docs" / "reference" / "legacy-dataset-pins.jsonl"
 _REGISTRY = _ROOT / "docs" / "reference" / "trial-registry.jsonl"

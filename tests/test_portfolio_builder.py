@@ -6,6 +6,8 @@ import pytest
 from cli.portfolio import CombinedSystemConfig, CombinedSystemResult, PortfolioError, build_combined_system
 from cli.risk import GovernorConfig
 
+pytestmark = pytest.mark.data
+
 # Small-window config so ~40 synthetic bars exercise every stage (defaults need 200+ bars).
 SMALL = dict(basket_lookback=3, gate_window=5, vol_lookback=3)
 # Overlay-disabling knobs: a cap that can never clip and a governor whose rules cannot fire.

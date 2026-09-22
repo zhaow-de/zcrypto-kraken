@@ -13,6 +13,8 @@ from cli.registry import TrialRegistry
 from cli.registry.observed import ObservedReader
 from tests.skip_gates import nothing_found
 
+pytestmark = pytest.mark.data
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DATA_ROOT = _REPO_ROOT / "data"
 _CANONICAL = _DATA_ROOT / "ohlc-full"

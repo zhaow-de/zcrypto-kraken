@@ -122,7 +122,14 @@ SHA=$(git rev-parse HEAD)
 timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
   --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]' | python3 -c '
 import sys, json
-runs = json.load(sys.stdin)
+# `gh api --jq` writes an error BODY to stdout, and a killed `timeout` writes nothing: both
+# parse to something that is not a check-run list, and `r["n"]` over either raises mid-run.
+try:
+    runs = json.loads(sys.stdin.read())
+except ValueError:
+    runs = None
+if not isinstance(runs, list):
+    print("no reading — the call did not return a check-run list; re-read it"); raise SystemExit
 REQUIRED = "Full test suite"          # the context branch protection requires on develop
 run = next((r for r in runs if r["n"] == REQUIRED), None)
 if run is None:

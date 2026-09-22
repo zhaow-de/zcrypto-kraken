@@ -20,6 +20,8 @@ from cli.engine.venuestate import (
 )
 from tests.skip_gates import nothing_found_under, scan
 
+pytestmark = pytest.mark.data
+
 FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
 
 # spec 00094: the two /BTC legs' instruments carry XBT-denominated attributes, deliberately

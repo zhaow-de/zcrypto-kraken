@@ -39,6 +39,8 @@ from cli.ohlc.dataset import write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from tests import basket_fixture
 
+pytestmark = pytest.mark.data
+
 _BOUNDARY = "2026-09-01T00:00:00+00:00"
 
 

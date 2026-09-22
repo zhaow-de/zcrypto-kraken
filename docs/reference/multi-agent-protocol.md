@@ -28,6 +28,7 @@ Sessions talk through `SendMessage`, addressed by name. Session identity is not 
   Concurrency: <how many subagents at once, and what may run in parallel>
   A gap is decided by: <marco, or the session itself, and for which class>
   ```
+- **A topic registration is asked for in a message of its own**, and answered in one: asked inside a longer relay, a one-clause approval is read as a decision on the whole.
 - An assignment whose pre-push loop reaches a third round carrying a Critical or Important gets a transcript retro by marco before that session's next assignment, written to a dated directory under `.local/retro/` with a proposed rule or skill change.
 
 ## Mechanics

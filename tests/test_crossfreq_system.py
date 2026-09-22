@@ -19,6 +19,8 @@ from cli.portfolio import (
     build_crossfreq_system_fast,
 )
 
+pytestmark = pytest.mark.data
+
 CFG2 = CrossfreqSystemConfig(assets=("AAA", "BTC"))
 
 

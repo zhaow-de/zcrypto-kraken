@@ -23,6 +23,8 @@ from cli.derivatives.oi import (
 from cli.ohlc.dataset import write_parquet
 from tests.skip_gates import substrate_absent, substrate_root
 
+pytestmark = pytest.mark.data
+
 _HEADER = (
     "create_time,symbol,sum_open_interest,sum_open_interest_value,"
     "count_toptrader_long_short_ratio,sum_toptrader_long_short_ratio,"

@@ -24,6 +24,8 @@ from cli.portfolio.record43_book import (
 )
 from cli.registry import TrialRegistry
 
+pytestmark = pytest.mark.data
+
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "ohlc-full"
 
 # Bar counts of the frozen trial-43/44 oracle. Cheap stand-in for the full extent guard: if the

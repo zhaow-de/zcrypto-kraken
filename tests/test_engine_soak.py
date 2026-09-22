@@ -47,6 +47,8 @@ from cli.portfolio.crossfreq_system import CrossfreqSystemConfig, apply_whole_bo
 from cli.risk.limits import apply_position_caps
 from tests import basket_fixture
 
+pytestmark = pytest.mark.data
+
 
 def test_structural_metrics_basic():
     bars = [

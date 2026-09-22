@@ -8,6 +8,8 @@ from cli.engine.feeders import load_minimums
 from cli.engine.instruments import COSTMIN
 from tests.skip_gates import nothing_found_under, scan
 
+pytestmark = pytest.mark.data
+
 # The two /BTC legs: load_minimums's quote == "EUR" filter drops them by design, so they are read
 # from the snapshot's `universe` block instead of through that reader.
 _BTC_QUOTED_SYMBOLS = ("ETH/BTC", "SOL/BTC")

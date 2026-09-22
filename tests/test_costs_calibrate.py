@@ -10,6 +10,8 @@ import pytest
 
 from cli.costs.calibrate import calibrate
 
+pytestmark = pytest.mark.data
+
 
 def _panel_hour(root: Path, pair: str, hour: datetime, *, mid: float, fill: float) -> None:
     base, quote = pair.split("/")
