@@ -138,7 +138,9 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     try:
         runs = json.loads(sys.stdin.read())
     except ValueError:
-        print("pending (no reading — the call returned nothing)"); raise SystemExit
+        runs = None
+    if not isinstance(runs, list):
+        print("no reading — the call answered with something other than a check-run list"); raise SystemExit
     run = next((r for r in runs if r["n"] == "Full test suite"), None)
     if run is None:
         print("pending (not registered yet)"); raise SystemExit
@@ -148,7 +150,7 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     '
     ```
 
-    A `pending` reading is this poll working: re-read it. One still pending 30 minutes after the PR opened is stalled and worth attention. A `failed` reading stops the release, as do the two states this step's opening names — a PR with conflicts, and one closed without merging. Steps 9, 10 and 11 have already run on every path that reaches here, so each of the three stops leaves the same three things to remove: the local tag (`git tag -d v<VERSION>`), or step 9 of the re-cut fails on a tag naming a version that must not ship; the PR step 11 opened and the branch step 10 pushed, or the re-cut's PR is the second one open against `main`. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
+    A `pending` reading is this poll working: re-read it. One still pending 30 minutes after the PR opened is stalled and worth attention. A `failed` reading stops the release, as do the two states this step's opening names. Steps 9, 10 and 11 have already run on every path that reaches here, so each of the three stops leaves the local tag (`git tag -d v<VERSION>`), or step 9 of the re-cut fails on a tag naming a version that must not ship; the branch step 10 pushed, and the PR step 11 opened unless the stop is that it was closed, or the re-cut's PR is the second one open against `main`. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 
