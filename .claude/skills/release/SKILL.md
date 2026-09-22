@@ -148,7 +148,7 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     '
     ```
 
-    A `pending` reading is this poll working: re-read it. One still pending 30 minutes after the push is stalled and worth attention, not a stop. A `failed` reading stops the release, and then delete the local tag (`git tag -d v<VERSION>`) first, or step 9 of the re-cut fails on a tag naming a version that must not ship. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
+    A `pending` reading is this poll working: re-read it. One still pending 30 minutes after the PR opened is stalled and worth attention. A `failed` reading stops the release: a stopped release leaves three things behind, and the re-cut needs all three gone: delete the local tag (`git tag -d v<VERSION>`), or step 9 fails on a tag naming a version that must not ship; close the PR step 11 opened; and delete the release branch step 10 pushed. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 
