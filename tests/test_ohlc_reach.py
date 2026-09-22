@@ -43,6 +43,24 @@ def _write_canonical(root, symbol: str, interval: int, start: datetime, n: int, 
     write_parquet(frame, root / base / quote / f"{interval}.parquet")
 
 
+def _write_canonical_at(root, symbol: str, interval: int, stamps: list[datetime], *, close: float = 100.0) -> None:
+    base, quote = symbol.split("/")
+    n = len(stamps)
+    frame = pl.DataFrame(
+        {
+            "ts": list(stamps),
+            "open": [1.0] * n,
+            "high": [2.0] * n,
+            "low": [0.5] * n,
+            "close": [close + i for i in range(n)],
+            "vwap": [1.5] * n,
+            "volume": [10.0] * n,
+            "count": [3] * n,
+        }
+    ).with_columns(pl.col("ts").dt.cast_time_unit("us").dt.replace_time_zone("UTC"))
+    write_parquet(frame, root / base / quote / f"{interval}.parquet")
+
+
 def _no_sleep(_seconds: float) -> None:
     """Tests must never pay the real inter-call pacing."""
 
@@ -158,8 +176,87 @@ def test_thin_overlap_aborts_rather_than_joining_on_one_bar(tmp_path):
     now = _BASE + timedelta(hours=45)
 
     assert MIN_SEAM_OVERLAP > 2
-    with pytest.raises(OHLCError, match="seam too thin"):
+    with pytest.raises(OHLCError, match="seam too thin") as exc:
         reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    msg = str(exc.value)
+    # all three numbers are short at once here
+    assert f"the two sides share a range of 2 bar(s) ({_BASE + timedelta(hours=18)} to {_BASE + timedelta(hours=19)})" in msg
+    assert "the canonical holding 2 row(s) in it and the REST window 2" in msg
+
+
+def test_a_thin_seam_names_its_measurements_and_asserts_no_single_cause(tmp_path):
+    """The arm above this one returns on `rest_head > canonical_tail`, so a receding window is ruled out on this one."""
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)  # tail at _BASE + 19h
+    rest = _rest_rows(_BASE + timedelta(hours=18), 20, close=118.0)
+    now = _BASE + timedelta(hours=45)
+
+    with pytest.raises(OHLCError, match="seam too thin") as exc:
+        reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    msg = str(exc.value)
+    assert "receding" not in msg
+    assert "so this series needs" not in msg
+    assert "Each of those bounds the overlap on its own and more than one can fall short at once" in msg
+    assert "an intervening OHLCVT dump carries the canonical forward" in msg
+    assert "`zcrypto data rebuild ohlc-full --no-push` republishes it over its own range" in msg
+    assert "the window is the next round's fetch to answer" in msg
+
+
+def test_a_thin_seam_over_a_window_holed_inside_a_wide_span_reports_that_count(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE, 20)  # whole, tail at _BASE + 19h
+    # the span stops at the canonical's tail, so the stamps past 19h are outside it
+    rest = [
+        [int((_BASE + timedelta(hours=h)).timestamp()), "1", "2", "0.5", "118.0", "1.5", "10", 3]
+        for h in (6, 12, 19, 20, 21, 22, 23, 24)
+    ]
+    now = _BASE + timedelta(hours=50)
+
+    with pytest.raises(OHLCError, match="seam too thin") as exc:
+        reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    msg = str(exc.value)
+    assert "the two sides share a range of 14 bar(s)" in msg
+    assert "the canonical holding 14 row(s) in it and the REST window 3" in msg
+    assert "receding" not in msg
+
+
+def test_a_seam_whose_sides_share_no_range_names_both_ranges_and_no_span(tmp_path):
+    """`detached` returns only when the window starts after the canonical's tail, so a window lying entirely before
+    the canonical's first stamp reaches the thin-seam refusal instead. There is no shared range to measure, and a
+    span computed over one would run backwards."""
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    _write_canonical(canonical, "BTC/EUR", 60, _BASE + timedelta(hours=20), 20)
+    rest = _rest_rows(_BASE, 6, close=118.0)
+    now = _BASE + timedelta(hours=60)
+
+    with pytest.raises(OHLCError, match="seam too thin") as exc:
+        reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    msg = str(exc.value)
+    assert "the two sides share no range at all" in msg
+    assert f"the canonical runs {_BASE + timedelta(hours=20)} to {_BASE + timedelta(hours=39)}" in msg
+    assert f"the REST window {_BASE} to {_BASE + timedelta(hours=5)}" in msg
+    assert "bar(s)" not in msg
+    assert "Read where each one ends before choosing" in msg
+
+
+def test_a_thin_seam_over_a_canonical_holed_inside_a_wide_span_reports_that_count(tmp_path):
+    canonical, out = tmp_path / "canon", tmp_path / "out"
+    rows = [_BASE + timedelta(hours=h) for h in (0, 1, 2, 3, 4, 5, 19)]
+    _write_canonical_at(canonical, "BTC/EUR", 60, rows)
+    rest = _rest_rows(_BASE + timedelta(hours=6), 30, close=118.0)
+    now = _BASE + timedelta(hours=50)
+
+    with pytest.raises(OHLCError, match="seam too thin") as exc:
+        reach_round(canonical, out, fetch_fn=_fetcher({"XXBTZEUR": rest}), clock=lambda: now, sleep_fn=_no_sleep)
+
+    msg = str(exc.value)
+    assert "the two sides share a range of 14 bar(s)" in msg
+    assert "the canonical holding 1 row(s) in it and the REST window 14" in msg
+    assert "receding" not in msg
 
 
 def test_in_progress_candle_is_dropped(tmp_path):
