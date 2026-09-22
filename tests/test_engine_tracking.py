@@ -39,8 +39,6 @@ from cli.ohlc.dataset import write_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
 from tests import basket_fixture
 
-# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
-# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
 pytestmark = pytest.mark.data
 
 _BOUNDARY = "2026-09-01T00:00:00+00:00"

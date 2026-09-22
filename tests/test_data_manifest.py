@@ -222,8 +222,6 @@ def test_an_empty_series_map_is_refused_at_build():
 
 from pathlib import Path as _Path
 
-# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
-# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
 pytestmark = pytest.mark.data
 
 _HUB_REACH = _Path("/mnt/zhao-crypto/hot/ohlc-reach/manifest.json")

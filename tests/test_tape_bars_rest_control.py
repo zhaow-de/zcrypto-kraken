@@ -19,8 +19,6 @@ from cli.ohlc.fetch import PAIR_KEYS, fetch_ohlc
 from cli.tick.materialize import BASE_INTERVAL_MINUTES, build_day, is_heal_complete, segment_index
 from tests.skip_gates import mount_absent, nothing_found
 
-# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
-# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
 pytestmark = pytest.mark.data
 
 PAIR = "BTC/EUR"

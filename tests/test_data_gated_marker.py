@@ -8,8 +8,8 @@ it -- the failure this file exists to make loud, at the moment the gate lands ra
 
 The mark is the MODULE's. A per-test mark cannot be checked here without resolving the f-strings
 some reasons are built from, the helpers that raise a skip on a caller's behalf, and the fixture
-graph that carries one to its consumers -- three refinements that each found gates the last had
-missed. A file-level mark needs none of them: a file either holds such a gate or it does not.
+graph that carries one to its consumers. A file-level mark needs none of them: a file either holds
+such a gate or it does not.
 
 The vocabulary is `infra/scripts/data-gated-run.py`'s own `is_data_absence`, imported rather than
 restated, so the runner that parses the nightly skips and the guard that marks their sites cannot

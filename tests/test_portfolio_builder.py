@@ -6,8 +6,6 @@ import pytest
 from cli.portfolio import CombinedSystemConfig, CombinedSystemResult, PortfolioError, build_combined_system
 from cli.risk import GovernorConfig
 
-# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
-# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
 pytestmark = pytest.mark.data
 
 # Small-window config so ~40 synthetic bars exercise every stage (defaults need 200+ bars).
