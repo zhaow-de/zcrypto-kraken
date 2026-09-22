@@ -157,6 +157,11 @@ def test_seed_store_happy_path(tmp_path):
 
 
 def test_seed_store_window_shortfall_names_ohlcvt_dump(tmp_path):
+    """`rest_head` (day 50) is newer than `store_tail` (day 9, the canonical's), so the two sides are disjoint by
+    construction and the cause is ambiguous: both candidates are named with a next step each, the store-side one is
+    the quarterly dump because this seed created the store file from the canonical, and the measurements an operator
+    would read to tell them apart are carried. The copy has already landed when the seam refuses, so that repair opens
+    by moving the landed leg aside -- without it the next seed reads the same leg and refuses the same way."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -167,15 +172,156 @@ def test_seed_store_window_shortfall_names_ohlcvt_dump(tmp_path):
     with pytest.raises(EngineError) as exc:
         seed_store(store_dir, canonical_dir, fetch_fn=fetch_fn, clock=lambda: FAR_FUTURE)
 
-    assert "OHLCVT" in str(exc.value)
-    assert "shortfall" in str(exc.value)
+    msg = str(exc.value)
+    assert "OHLCVT" in msg
+    assert "shortfall" in msg
+    assert "move this leg aside (outside the store) and use the quarterly OHLCVT dump" in msg
+    assert "a seed over a present file never reads the canonical again" in msg  # why the move-aside comes first
+    assert _store_path(store_dir, "BTC/EUR", 1440).exists()  # the leg the repair moves aside is on disk already
+    assert "the venue answered with a shorter history than the seam needs" in msg  # the fetch-side candidate
+    # The store side is the canonical here, not a file that predates the run: this seed copied it in.
+    assert "the canonical this run copied into the store was already behind the REST window's reach" in msg
+    assert "if the venue is the cause there is no store repair and the next run fetches again" in msg
+    assert "9 completed row(s) the fetch carries" in msg  # a measurement; the forming bar is already dropped
+    assert f"({DAILY_START + timedelta(days=9)})" in msg  # the store's last stamp, a measurement
+    assert f"({DAILY_START + timedelta(days=50)})" in msg  # the fetch's oldest stamp, a measurement
+
+
+def test_seed_store_seam_holes_names_a_step_on_each_side(tmp_path):
+    """`rest_head` (day 5) is at or behind `store_tail` (day 9), so the window is proven to still reach it and a
+    receded window is refuted, and the store leg (10 rows) clears the floor of 6 on its own: what is left is holes at
+    the stamps the seam needs. Here they are the fetch's -- days 8 and 9 -- but the door cannot measure that, so it
+    names both sides, the reading that separates them, and a step on each: the next fetch for the venue's side, and
+    for the store's the repair its neighbouring arms name, which on a first seed opens by moving the landed leg
+    aside. The dump stays out: it answers a receded window, which this arm has refuted."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, _canonical_rows)
+
+    hole_rows = _rows_from(DAILY_START, timedelta(days=1), 5, 3) + _rows_from(DAILY_START, timedelta(days=1), 10, 2)
+    fetch_fn = _fetch_override("XXBTZEUR", 1440, hole_rows)
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=fetch_fn, clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "seed_store: window shortfall for BTC/EUR@1440 — only 3 shared stamp(s)" in msg
+    assert "the stamps the seam needs are missing on one side or the other" in msg
+    assert "absent from the fetch's answer, or absent from the store leg" in msg  # both candidates
+    assert "read the two sides' stamps across the span they both cover" in msg  # the reading that separates them
+    assert "there is no store repair -- the next run fetches again" in msg  # the fetch-side step
+    assert "the store leg carries enough rows to clear the floor on its own" in msg
+    assert "OHLCVT" not in msg and "quarterly" not in msg
+    # The store-side step, routed as the neighbouring arms route it: this seed copied the leg in, so it is the
+    # canonical's and it is already on disk, which is why the repair opens by moving it aside.
+    assert "and if the store leg is the holed side, the leg is the canonical's, copied into the store by this seed" in msg
+    assert "move this leg aside (outside the store) and rebuild the set" in msg
+    assert _store_path(store_dir, "BTC/EUR", 1440).exists()
+    assert "zcrypto engine seed" not in msg  # the store file's own recovery answers a re-seed, not a first seed
+
+
+@pytest.mark.parametrize("seeding", ["first seed", "re-seed"])
+def test_seed_store_short_store_leg_names_the_store_side_repair(tmp_path, seeding):
+    """The leg holds 3 rows against a floor of 6, and the shared stamps being a subset of the leg's own, no answer
+    the venue could send clears it -- so the height settles the arm and the fetch's reach is neither read nor
+    claimed. The repair is routed by which file the short leg is: the canonical this seed copied, or the live store
+    file."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir if seeding == "first seed" else store_dir, lambda iv: _rows_from(*_grid_ref(iv), 0, 3))
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=lambda pk, iv: _rows_from(*_grid_ref(iv), 1, 5), clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "seed_store: window shortfall for ADA/EUR@1440 — only 2 shared stamp(s)" in msg
+    assert "the store leg carries 3 row(s) against a floor of 6" in msg
+    assert "no answer the venue could send clears it and the store side is the cause" in msg
+    assert "the venue answered with a shorter history" not in msg  # one cause, not two candidates
+    if seeding == "first seed":
+        assert "the leg is the canonical's, copied into the store by this seed" in msg
+        assert "`zcrypto data rebuild ohlc-full --no-push`" in msg
+        # The copy already landed, so the rebuild alone never reaches the next seed: the move-aside comes first.
+        assert "move this leg aside (outside the store) and rebuild the set" in msg
+        assert _store_path(store_dir, "ADA/EUR", 1440).exists()
+    else:
+        assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+        assert "rebuild the set" not in msg
+
+
+def test_seed_store_short_store_leg_is_answered_as_short_even_when_disjoint(tmp_path):
+    """The height test runs above the reach test: this leg holds 3 rows against a floor of 6 AND shares no stamp with
+    the fetch (days 50-58), and its own height settles it. Routed by reach instead, it would take the disjoint hint,
+    whose reading weighs a venue candidate the leg's height has already refuted."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir, lambda iv: _rows_from(*_grid_ref(iv), 0, 3))
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=lambda pk, iv: _rows_from(*_grid_ref(iv), 50, 9), clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "seed_store: window shortfall for ADA/EUR@1440 — only 0 shared stamp(s)" in msg
+    assert "the store leg carries 3 row(s) against a floor of 6" in msg
+    assert "no answer the venue could send clears it and the store side is the cause" in msg
+    assert "the venue answered with a shorter history than the seam needs" not in msg  # the disjoint arm's reading
+    assert "share no stamp by construction" not in msg
+    assert "the window still reaches the tail" not in msg  # the fetch is disjoint: nothing here proves reach
+
+
+@pytest.mark.parametrize("seeding", ["first seed", "re-seed"])
+def test_seed_store_short_store_leg_is_answered_as_short_even_when_the_fetch_is_empty(tmp_path, seeding):
+    """The height test runs above the empty-fetch test: this leg holds 3 rows against a floor of 6 AND the fetch
+    carries no completed bar, and its own height settles it. Routed by emptiness instead, it would be answered with a
+    next fetch that cannot clear a floor the leg itself misses, at either seeding."""
+    canonical_dir = tmp_path / "canonical"
+    store_dir = tmp_path / "store"
+    _write_full_universe(canonical_dir if seeding == "first seed" else store_dir, lambda iv: _rows_from(*_grid_ref(iv), 0, 3))
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=lambda pk, iv: [], clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "seed_store: window shortfall for ADA/EUR@1440 — only 0 shared stamp(s)" in msg
+    assert "the store leg carries 3 row(s) against a floor of 6" in msg
+    assert "no answer the venue could send clears it and the store side is the cause" in msg
+    assert "the REST fetch carries no completed bar" not in msg  # the empty arm's text, which sits below this one
+    if seeding == "first seed":
+        assert "move this leg aside (outside the store) and rebuild the set" in msg
+        assert _store_path(store_dir, "ADA/EUR", 1440).exists()
+    else:
+        assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+
+
+def test_seed_store_disjoint_reseed_names_store_file_recovery_not_the_dump(tmp_path):
+    """On a re-seed the tail read is the live store file's, not the canonical's, so the store-side candidate the
+    disjoint hint names is the store-file recovery (move the leg aside and re-seed) -- never the quarterly dump,
+    whose repair only answers a first seed's canonical-derived tail."""
+    store_dir = tmp_path / "store"
+    canonical_dir = tmp_path / "unused_canonical"  # never read: the store pre-exists for every pair
+    _write_full_universe(store_dir, _canonical_rows)
+
+    disjoint_rows = _rows_from(DAILY_START, timedelta(days=1), 50, 9)  # zero overlap w/ the store's own i=0..9
+    fetch_fn = _fetch_override("XXBTZEUR", 1440, disjoint_rows)
+
+    with pytest.raises(EngineError) as exc:
+        seed_store(store_dir, canonical_dir, fetch_fn=fetch_fn, clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "shortfall" in msg
+    assert "OHLCVT" not in msg  # the dump is not named; _STORE_RECOVERY's own "quarterly ingest" is a distinct phrase
+    assert "the venue answered with a shorter history than the seam needs" in msg
+    assert "the store fell behind the REST window's reach" in msg
+    assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
+    assert "on the engine host the store is re-delivered, not seeded" in msg
 
 
 def test_seed_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path):
     """The seed's shortfall arm is reached by an empty REST answer as well as by a canonical tail outside the REST
-    window, and only the second is answered by a dump: the case above, whose fetch carries rows, keeps that hint.
-    The canonical copy has already landed when the seam refuses -- `seed_store` copies an absent leg before the
-    reconcile -- so the leg is present for the next run and the refusal prescribes nothing over it."""
+    window, and only the second names the dump, as a candidate: an empty answer is decided before either frame's
+    stamps are read and names the fetch alone. The canonical copy has already landed when the seam refuses --
+    `seed_store` copies an absent leg before the reconcile -- so the leg is present for the next run and the refusal
+    prescribes nothing over it."""
     canonical_dir = tmp_path / "canonical"
     store_dir = tmp_path / "store"
     _write_full_universe(canonical_dir, _canonical_rows)
@@ -188,7 +334,12 @@ def test_seed_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path
     assert "the REST fetch carries no completed bar, so there is no store repair" in msg
     assert "the next run fetches again" in msg
     assert "OHLCVT" not in msg and "quarterly" not in msg
+    # The landed copy is named, in the wording the first-seed arms use for it, and nothing is prescribed over it:
+    # no move-aside, no re-seed -- the fetch is still the only thing that can change.
+    assert "the leg is the canonical's, copied into the store by this seed" in msg
+    assert "a seed over a present file never reads the canonical again" in msg
     assert "zcrypto engine seed" not in msg and "move this leg aside" not in msg
+    assert "rebuild the set" not in msg
     landed = _store_path(store_dir, "ADA/EUR", 1440)
     assert read_parquet(landed).equals(to_frame(_canonical_rows(1440)))
 
@@ -381,6 +532,10 @@ def test_seed_store_reseed_refuses_an_absent_close_and_keeps_the_store_close(tmp
 
 
 def test_refresh_store_zero_overlap_is_distinct_error(tmp_path):
+    """`rest_head` (day 100) is newer than `store_tail` (day 9), so the two sides are disjoint by construction and
+    the cause is ambiguous rather than a single claim of staleness: both candidates are named with a next step each,
+    with the measurements an operator would read to tell them apart, and the host-routed store repair named only as
+    the store-side one."""
     store_dir = tmp_path / "store"
     write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
 
@@ -390,14 +545,52 @@ def test_refresh_store_zero_overlap_is_distinct_error(tmp_path):
         refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: disjoint_rows, clock=lambda: FAR_FUTURE)
 
     msg = str(exc.value)
-    assert "catastrophically stale" in msg
+    assert "catastrophically stale" not in msg  # no longer a single unconditional claim
+    assert "the venue answered with a shorter history than the seam needs" in msg
+    assert "the store fell behind the REST window's reach before this run started" in msg
+    assert "if the venue is the cause there is no store repair and the next run fetches again" in msg
+    assert "5 completed row(s) the fetch carries" in msg  # the forming bar is already dropped
+    assert f"({DAILY_START + timedelta(days=9)})" in msg  # the store's last stamp
+    assert f"({DAILY_START + timedelta(days=100)})" in msg  # the fetch's oldest stamp
+    assert "move this leg aside (outside the store) and run `zcrypto engine seed`" in msg
     assert "mismatch" not in msg  # distinct from the overlap-mismatch guard
 
 
+def test_refresh_store_seam_holes_names_a_step_on_each_side(tmp_path):
+    """`rest_head` (day 1) is at or behind `store_tail` (day 9) and the leg clears the floor of 1, so the window is
+    proven to still reach the tail and the leg's length is not the cause -- yet here the holes are the STORE's: the
+    four days the fetch carries are exactly the four the store lacks. Nothing at this door measures whose holes they
+    are, so the hint names both sides and a step on each, the store's being the store file's own recovery: the leg
+    predates this run, so there is no canonical copy of this run's to move aside instead."""
+    store_dir = tmp_path / "store"
+    sparse_days = (0, 2, 4, 6, 8, 9)
+    sparse_rows = [_row(DAILY_START + timedelta(days=d), 100.0 + d) for d in sparse_days]
+    write_parquet(to_frame(sparse_rows), _store_path(store_dir, "BTC/EUR", 1440))
+
+    hole_days = (1, 3, 5, 7)
+    hole_rows = [_row(DAILY_START + timedelta(days=d), 100.0 + d) for d in hole_days]
+
+    with pytest.raises(EngineError) as exc:
+        refresh_store(store_dir, pairs={"BTC/EUR": "XXBTZEUR"}, fetch_fn=lambda pk, iv: hole_rows, clock=lambda: FAR_FUTURE)
+
+    msg = str(exc.value)
+    assert "refresh_store: window shortfall for BTC/EUR@1440 — only 0 shared stamp(s)" in msg
+    assert "absent from the fetch's answer, or absent from the store leg" in msg  # both candidates, neither alone
+    assert "whose own gaps can fall exactly where the fetch covers" in msg  # this very case, named
+    assert "read the two sides' stamps across the span they both cover" in msg  # the reading that separates them
+    assert "there is no store repair -- the next run fetches again" in msg  # the fetch-side step
+    assert "catastrophically stale" not in msg
+    assert (
+        "and if the store leg is the holed side, on the workstation move this leg aside (outside the store) and run "
+        "`zcrypto engine seed`"
+    ) in msg
+    assert "on the engine host the store is re-delivered, not seeded" in msg  # the store-side step is host-routed
+
+
 def test_refresh_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_path):
-    """`_require_rest_frame` returns early on an empty fetch and leaves it to this arm, which a store past the REST
+    """`_require_rest_frame` returns early on an empty fetch and leaves it to this arm, which a store behind the REST
     window's reach reaches too: the hint follows the cause, so an empty answer names the fetch and prescribes no
-    store repair, where the case above, whose fetch carries rows, keeps the stale-store recovery."""
+    store repair, decided before either frame's stamps are read rather than by where they sit."""
     store_dir = tmp_path / "store"
     write_parquet(to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON)), _store_path(store_dir, "BTC/EUR", 1440))
 
@@ -410,6 +603,7 @@ def test_refresh_store_routes_a_shortfall_from_an_empty_fetch_to_the_fetch(tmp_p
     assert "the next run fetches again" in msg
     assert "catastrophically stale" not in msg
     assert "zcrypto engine seed" not in msg and "move this leg aside" not in msg
+    assert "copied into the store by this seed" not in msg  # no copy landed here: the leg predates this run
     assert read_parquet(_store_path(store_dir, "BTC/EUR", 1440)).equals(
         to_frame(_rows_from(DAILY_START, timedelta(days=1), 0, N_CANON))
     )

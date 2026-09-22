@@ -157,9 +157,12 @@ _STORE_RECOVERY = (
     "REST no longer reaches, and when the canonical's tail is itself outside the REST window the seed refuses on its own "
     f"shortfall until the next quarterly ingest is minted; {_HOST_REDELIVERY}"
 )
+_REBUILD_THE_SET = (
+    "rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the next seed reads "
+    "once it is whole)"
+)
 _CANONICAL_RECOVERY = (
-    "nothing was copied to the store; a canonical is the data pipeline's to republish: rebuild the set "
-    "(`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the seed reads once it is whole) rather "
+    f"nothing was copied to the store; a canonical is the data pipeline's to republish: {_REBUILD_THE_SET} rather "
     "than recast this file, whose `dataset_hash` a recast changes and nothing in this tree re-vouches"
 )
 _REST_REFUSED = (
@@ -176,6 +179,97 @@ _EMPTY_REST_HINT = (
 )
 _FRESH_COPY = "this is a fresh canonical copy, so a disagreement with REST is a data-integrity error"
 _RESEED_REFUSED = "the re-seed replaced nothing, because the seam refused before the replace"
+
+_SEAM_REACHED = (
+    "the REST fetch's oldest stamp is the store's last stamp or earlier, so the window still reaches the tail and a "
+    "receded window is refuted"
+)
+_FIRST_SEED_LEG_LANDED = (
+    "the leg is the canonical's, copied into the store by this seed, and a seed over a present file never reads the canonical again"
+)
+_FIRST_SEED_LEG_ASIDE = f"{_FIRST_SEED_LEG_LANDED}, so move this leg aside (outside the store) and"
+_FIRST_SEED_REBUILD = f"{_FIRST_SEED_LEG_ASIDE} {_REBUILD_THE_SET}"
+_DISJOINT_CANONICAL_DUMP = f"{_FIRST_SEED_LEG_ASIDE} use the quarterly OHLCVT dump"
+
+
+def _seam_holes_hint(store_side_repair: str) -> str:
+    """Called only once the short-leg arm has passed and `rest_head <= store_tail` holds: both claims the text opens
+    with are the caller's routing, not this function's."""
+    return (
+        f"{_SEAM_REACHED}, and the store leg carries enough rows to clear the floor on its own: the shared stamps still "
+        "fall short of the floor, so the stamps the seam needs are missing on one side or the other -- absent from the "
+        "fetch's answer, or absent from the store leg, whose own gaps can fall exactly where the fetch covers -- and "
+        "nothing here measures whose they are; read the two sides' stamps across the span they both cover, a store leg "
+        "whole across it putting the holes in the fetch's answer and a gapped one putting them in the store, and if the "
+        "fetch is the side with the holes there is no store repair -- the next run fetches again, and an answer short of "
+        "the floor again is the venue's to explain, not the store's; and if the store leg is the holed side, "
+        f"{store_side_repair}"
+    )
+
+
+def _short_leg_shortfall_hint(store_height: int, min_overlap: int, store_side_repair: str) -> str:
+    """The one arm the store leg settles alone, which is why it is read before the fetch is weighed at all: the
+    shared stamps are a subset of the leg's own, so a leg holding fewer rows than the floor cannot clear it whatever
+    the venue sends, an empty answer included, and the fetch is then neither read nor spoken of."""
+    return (
+        f"the store leg carries {store_height} row(s) against a floor of {min_overlap}, so no answer the venue could "
+        f"send clears it and the store side is the cause: {store_side_repair}"
+    )
+
+
+def _disjoint_shortfall_hint(
+    store_frame: pl.DataFrame,
+    rest_frame: pl.DataFrame,
+    *,
+    store_predates_this_run: bool,
+    store_side_repair: str,
+) -> str:
+    """Called only once the caller has ruled out `rest_head <= store_tail`: the two sides then share no stamp by
+    construction, so the overlap is zero and proves nothing about which side receded -- read as a store fault
+    regardless, it would send an operator to repair a leg that was never behind."""
+    store_tail = store_frame["ts"].max()
+    rest_head = rest_frame["ts"].min()
+    store_side = (
+        "the store fell behind the REST window's reach before this run started"
+        if store_predates_this_run
+        else "the canonical this run copied into the store was already behind the REST window's reach"
+    )
+    return (
+        f"the REST fetch's oldest stamp ({rest_head}) is newer than the store's own last stamp ({store_tail}), so the "
+        f"two sides share no stamp by construction; the {rest_frame.height} completed row(s) the fetch carries cannot "
+        f"say on their own whether the venue answered with a shorter history than the seam needs, or {store_side} -- read "
+        "the store's last stamp against how far behind now it sits to tell them apart, close behind pointing at the "
+        "venue's own answer and far behind at the store; if the venue is the cause there is no store repair and the "
+        f"next run fetches again, and if the store is the cause, {store_side_repair}"
+    )
+
+
+def _shortfall_hint(
+    store_frame: pl.DataFrame,
+    rest_frame: pl.DataFrame,
+    *,
+    min_overlap: int,
+    store_predates_this_run: bool,
+    disjoint_store_side_repair: str,
+) -> str:
+    """`_reconcile`'s `shortfall_hint`. The leg's own repair, which the short-leg and holes arms share, is its
+    provenance alone -- which `store_predates_this_run` already carries -- so no caller passes one for an arm it may
+    not even reach."""
+    leg_repair = _STORE_RECOVERY if store_predates_this_run else _FIRST_SEED_REBUILD
+    if store_frame.height < min_overlap:
+        return _short_leg_shortfall_hint(store_frame.height, min_overlap, leg_repair)
+    if rest_frame.is_empty():
+        if store_predates_this_run:
+            return _EMPTY_REST_HINT
+        return f"{_EMPTY_REST_HINT}; {_FIRST_SEED_LEG_LANDED}"
+    if rest_frame["ts"].min() <= store_frame["ts"].max():
+        return _seam_holes_hint(leg_repair)
+    return _disjoint_shortfall_hint(
+        store_frame,
+        rest_frame,
+        store_predates_this_run=store_predates_this_run,
+        store_side_repair=disjoint_store_side_repair,
+    )
 
 
 def _frame_differences(frame: pl.DataFrame, interval: int) -> list[str]:
@@ -281,12 +375,17 @@ def seed_store(
                 interval=interval,
                 min_overlap=MIN_SEAM_OVERLAP,
                 allow_replace=store_existed,
-                shortfall_hint=(_EMPTY_REST_HINT if rest_frame.is_empty() else "use the quarterly OHLCVT dump"),
+                shortfall_hint=_shortfall_hint(
+                    store_frame,
+                    rest_frame,
+                    min_overlap=MIN_SEAM_OVERLAP,
+                    store_predates_this_run=store_existed,
+                    disjoint_store_side_repair=_STORE_RECOVERY if store_existed else _DISJOINT_CANONICAL_DUMP,
+                ),
                 mismatch_hint=_FRESH_COPY,
                 absent_store_hint=(
                     f"{_FRESH_COPY} in the canonical, whose copy already landed: move this leg aside (outside the store) "
-                    "and rebuild the set (`zcrypto data rebuild ohlc-full --no-push` mints the newer stamped sibling the "
-                    "next seed reads once it is whole)"
+                    f"and {_REBUILD_THE_SET}"
                     if not store_existed
                     else f"{_RESEED_REFUSED}, and a re-seed over this file refuses the same absent close -- {_STORE_RECOVERY}"
                 ),
@@ -337,10 +436,14 @@ def refresh_store(
                 interval=interval,
                 min_overlap=_REFRESH_MIN_OVERLAP,
                 allow_replace=False,
-                shortfall_hint=(
-                    _EMPTY_REST_HINT
-                    if rest_frame.is_empty()
-                    else f"the store is catastrophically stale, past the REST window's reach -- {_STORE_RECOVERY}"
+                # The store file was read above, so it predates this run; the short-leg arm is unreachable here,
+                # `_REFRESH_MIN_OVERLAP` being 1 and `_require_store_frame` refusing a frame with no rows.
+                shortfall_hint=_shortfall_hint(
+                    store_frame,
+                    rest_frame,
+                    min_overlap=_REFRESH_MIN_OVERLAP,
+                    store_predates_this_run=True,
+                    disjoint_store_side_repair=_STORE_RECOVERY,
                 ),
                 mismatch_hint=(
                     "the store tail may be poisoned -- on the workstation run `zcrypto engine seed`, whose re-seed over "
