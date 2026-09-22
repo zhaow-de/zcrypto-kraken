@@ -1,6 +1,6 @@
 """A test file whose gates skip for want of data carries `pytestmark = pytest.mark.data`.
 
-CI has no `data/` and no NAS mount, so the data-gated family skips there whatever is run; the only
+CI has no datasets and no NAS mount, so the data-gated family skips there whatever is run; the only
 place it runs is a data-bearing workstation, and the pre-push run that reaches it is `uv run pytest
 -m data`. That selection is only as good as the marks, and a gate added without one is invisible to
 it -- the failure this file exists to make loud, at the moment the gate lands rather than the night
