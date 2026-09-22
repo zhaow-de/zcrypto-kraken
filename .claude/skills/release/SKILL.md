@@ -140,7 +140,7 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     except ValueError:
         runs = None
     if not isinstance(runs, list):
-        print("no reading — the call answered with something other than a check-run list"); raise SystemExit
+        print("no reading — the call did not return a check-run list; re-read it"); raise SystemExit
     run = next((r for r in runs if r["n"] == "Full test suite"), None)
     if run is None:
         print("pending (not registered yet)"); raise SystemExit
