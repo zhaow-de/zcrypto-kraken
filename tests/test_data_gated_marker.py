@@ -116,7 +116,7 @@ def test_the_marked_set_is_exactly_the_gated_set():
         f"`is_data_absence` misses is a vocabulary gap -- widen `_DATA_ABSENCE` in "
         f"`infra/scripts/data-gated-run.py` until it matches, never past the family, since that regex also "
         f"decides what the nightly runner counts as a data skip. No such gate at all is an unearned mark, "
-        f"and dropping it is the only remedy for that case. A file in the second list wants the mark added."
+        f"and dropping it is the only remedy for that case."
     )
 
 
