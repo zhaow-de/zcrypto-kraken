@@ -100,13 +100,7 @@ def test_a_file_whose_gates_want_data_carries_the_module_mark(path: Path):
 
 def test_the_marked_set_is_exactly_the_gated_set():
     """The mark is not claimed where no gate wants data: an unearned mark makes the selection wider
-    than the family it names, and the next reader cannot tell which files the runner is really for.
-
-    The failure is two-sided and the message says so: a mark this case does not recognise may be a
-    gate worded outside `is_data_absence`'s vocabulary rather than an unearned mark, and the remedy
-    is to widen that vocabulary. Dropping the mark passes this case and the parametrised one above --
-    which early-returns when it sees no gate -- and leaves the file out of `-m data` silently.
-    """
+    than the family it names, and the next reader cannot tell which files the runner is really for."""
     is_data_absence = _is_data_absence()
     gated, marked = set(), set()
     for path in _files():
