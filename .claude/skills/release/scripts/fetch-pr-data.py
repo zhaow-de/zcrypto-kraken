@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch merged PRs since the last release tag and prepare data for changelog generation.
 
-Writes one JSON file and prints its path on stdout, alone, so the caller captures it with `$(...)`.
+Writes one JSON file and prints its path on stdout, alone, so whoever runs it reads the path.
 Everything a human reads goes to stderr; the path comes from `tempfile`, so two runs never collide.
 """
 
