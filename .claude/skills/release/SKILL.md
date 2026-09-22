@@ -1,20 +1,30 @@
 ---
 name: release
 description: Cut a release — bump the version on develop, open a PR into main, merge it, push the v<version> tag, create the GitHub Release, and back-merge main into develop
-allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
+allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
 ---
 
-> **Unrun, and three steps are broken as written** — read `docs/open-topics/T0203-the-release-skill-has-never-run-and-three-steps-are-broken.md` first and fix as you go: this skill is refined on the first real release, not before.
+> **This skill has never been run end to end.** Its steps are verified against the tree, not against a real cut, so read what each one prints rather than assuming it worked. After the first real release, re-read the whole skill against what actually happened and correct it in the same branch — that read is owed once and is the only thing a first cut can give.
 
 ## Context
 
 - Current branch: !`git branch --show-current`
-- Current version: !`cz version --project`
-- Prerequisites: !`which cz && which gh && which python3 && which uv && echo "all found" || echo "MISSING tools"`
+- Current version: !`cz version --project 2>/dev/null || echo "(cz not installed yet — step 1 installs it)"`
+- Prerequisites: !`which gh && which python3 && which uv && echo "all found" || echo "MISSING tools"`
+- `cz` present already: !`which cz || echo "(absent — step 1 installs it)"`
 
 ## Instructions
 
-1. **Verify prerequisites** from the context above. If not on `develop`, ask the user to switch branches first. If any tool is missing (`cz`, `gh`, `python3`, `uv`), report and stop. `cz` is installed with `uv tool install commitizen` (or your platform's package manager). Confirm `gh auth status` succeeds — if it returns 401, ask the user to run `gh auth refresh -h github.com` first.
+1. **Verify prerequisites and install `cz`** from the context above. If not on `develop`, ask the user to switch branches first. If `gh`, `python3` or `uv` is missing, report and stop — those three are the environment's, not this skill's to install.
+
+   `cz` is deliberately not a project dependency — a release is the only thing that uses it. Install it, then prove it answers:
+
+   ```bash
+   uv tool install commitizen
+   cz version --project
+   ```
+
+   If `cz version --project` still fails after the install, stop and report — every later step that bumps, reads the version, or builds the changelog runs through it. Confirm `gh auth status` succeeds — if it returns 401, ask the user to run `gh auth refresh -h github.com` first.
 
 2. **Update develop and verify it is synced with main**:
    ```bash
@@ -81,14 +91,16 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
 
    If this fails, stop and report — do not proceed.
 
-7. **Fetch PR data for the changelog**:
+7. **Fetch PR data for the changelog.** It prints the path it wrote on stdout alone; step 8 needs that path itself, since a variable dies with this command:
    ```bash
-   python3 ${CLAUDE_SKILL_DIR}/scripts/fetch-pr-data.py ${CLAUDE_SESSION_ID}
+   python3 .claude/skills/release/scripts/fetch-pr-data.py
    ```
+
+   If the script refuses a possibly truncated `gh pr list`, do what its message says and re-run this step.
 
 8. **Generate the user-friendly changelog**:
 
-   Read the PR data from `/tmp/release_pr_data_${CLAUDE_SESSION_ID}.json` and follow the format and guidelines in [changelog-format.md](changelog-format.md). Replace the raw commit list `cz bump` wrote into `CHANGELOG.md` with the user-friendly section for the new version at the top, and **preserve all previous version sections below it**.
+   Read the PR data from the path step 7 printed and follow the format and guidelines in [changelog-format.md](changelog-format.md). Replace the raw commit list `cz bump` wrote into `CHANGELOG.md` with the user-friendly section for the new version at the top, and **preserve all previous version sections below it**.
 
 9. **Commit the release and create the tag**:
    ```bash
@@ -114,7 +126,31 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     git checkout develop
     ```
 
-14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging. Otherwise read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s (never one long foreground loop), and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
+14. **Auto-merge the release PR** with a merge commit (preserving the tagged bump commit on `main`). Releases run end-to-end without pausing to ask. Stop only if something is genuinely worth attention: the PR has conflicts, or it was closed without merging.
+
+    **Read the suite's verdict first, by name, on the release branch's own head sha.** `.github/settings.yml` requires the `Full test suite` context on `main`, so this read is the same verdict the merge below waits on, not a second opinion. Run it as its OWN command, re-read every ~45 s, and never as one long foreground loop:
+
+    ```bash
+    SHA=$(git rev-parse "v<VERSION>")
+    timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
+      --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]' | python3 -c '
+    import sys, json
+    try:
+        runs = json.loads(sys.stdin.read())
+    except ValueError:
+        runs = None
+    if not isinstance(runs, list):
+        print("no reading — the call did not return a check-run list; re-read it"); raise SystemExit
+    run = next((r for r in runs if r["n"] == "Full test suite"), None)
+    if run is None:
+        print("pending (not registered yet)"); raise SystemExit
+    if run["s"] != "completed":
+        print(f"pending ({run["s"]})"); raise SystemExit
+    print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed ({run["c"]})")
+    '
+    ```
+
+    A `pending` reading is this poll working: re-read it. Either it or the refusal above still repeating 30 minutes after the PR opened is stalled and worth attention. A `failed` reading stops the release, as do the two states this step's opening names. Steps 9, 10 and 11 have already run on every path that reaches here, so each of the three stops leaves the local tag (`git tag -d v<VERSION>`), or step 9 of the re-cut fails on a tag naming a version that must not ship; the branch step 10 pushed, and the PR step 11 opened unless the stop is that it was closed, or the re-cut's PR is the second one open against `main`. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 

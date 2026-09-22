@@ -1,8 +1,10 @@
-"""The required status check on `develop` must name a job that actually runs on PRs into it.
+"""A required status check must name a job that actually runs on PRs into the branch requiring it.
 
 A required context GitHub never receives blocks every pull request permanently, and this repo
-sets `enforce_admins: true`, so that includes the owner -- recovery means hand-editing branch
-protection outside the repo.
+sets `enforce_admins: true` on both protected branches, so that includes the owner -- recovery
+means hand-editing branch protection outside the repo. `main` is read as well as `develop`: it
+gates the release PR, which is rarer than a develop merge and so has fewer chances to reveal a
+context that never reports.
 """
 
 from pathlib import Path
@@ -88,25 +90,33 @@ def _check_names_reported_on_prs_into(branch: str) -> tuple[dict[str, Path], lis
     return names, skipped
 
 
-def test_settings_yml_is_parseable_and_pins_develop():
+PROTECTED = ("develop", "main")
+
+
+@pytest.mark.parametrize("branch", PROTECTED)
+def test_settings_yml_is_parseable_and_pins_each_protected_branch(branch):
     assert SETTINGS.is_file(), f"{SETTINGS} is missing -- branch protection is managed by this file"
-    assert _required_contexts("develop"), "develop must require at least one status check"
+    assert _required_contexts(branch), f"{branch} must require at least one status check"
 
 
-@pytest.mark.parametrize("context", _required_contexts("develop"))
-def test_every_required_context_is_a_job_that_runs_on_prs_into_develop(context):
-    reported, skipped = _check_names_reported_on_prs_into("develop")
+@pytest.mark.parametrize(
+    ("branch", "context"),
+    [(branch, context) for branch in PROTECTED for context in _required_contexts(branch)],
+)
+def test_every_required_context_is_a_job_that_runs_on_prs_into_its_branch(branch, context):
+    reported, skipped = _check_names_reported_on_prs_into(branch)
     assert context in reported, (
         f"required context {context!r} is not UNCONDITIONALLY produced by a workflow running on "
-        f"pull requests into develop, so some PR would wait for it forever and could never merge "
+        f"pull requests into {branch}, so some PR would wait for it forever and could never merge "
         f"(enforce_admins is true -- the owner could not override). "
         f"Names always reported: {sorted(reported)}. "
         f"Workflows excluded because their trigger is conditional: {skipped or 'none'}"
     )
 
 
-def test_the_suite_check_is_required_so_a_red_run_cannot_merge():
+@pytest.mark.parametrize("branch", PROTECTED)
+def test_the_suite_check_is_required_so_a_red_run_cannot_merge(branch):
     # The whole point of the branch rule: CI is the only place the full suite runs, so a green
     # merge button must mean a green suite. Named explicitly rather than inferred from the list,
     # so deleting it from settings.yml fails here rather than silently widening what can merge.
-    assert "Full test suite" in _required_contexts("develop")
+    assert "Full test suite" in _required_contexts(branch)
