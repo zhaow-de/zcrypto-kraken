@@ -73,7 +73,9 @@ The refusal is the branch above, in the same call as the measurement and never i
 
 ```bash
 SHA=$(git rev-parse HEAD)   # the pushed head; a later push restarts the watch on its sha
-until R=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" --jq '.check_runs[] | select(.name == "Full test suite") | "\(.status) \(.conclusion // "")"'); [[ "${R,,}" == completed* ]]; do sleep 45; done; echo "$R"; [[ "${R,,}" == *success* ]]
+# Bounded at 40 reads, ~30 min: `gh` writes an error body to stdout, which matches no state,
+# so an unbounded `until` on a revoked token or a wrong sha sleeps and re-reads forever.
+for i in $(seq 1 40); do R=$(timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" --jq '.check_runs[] | select(.name == "Full test suite") | "\(.status) \(.conclusion // "")"' 2>/dev/null); [[ "${R,,}" == completed* ]] && break; sleep 45; done; echo "${R:-no reading}"; [[ "${R,,}" == *success* ]]
 ```
 
 **Step 4 — the change-index row.** Parse the keys — iterations `\biter-(\d{1,3})\b` from the branch name and the PR title only, since a `## Spec / Plan` sentence naming an earlier iteration as its precedent is a cross-reference, not a delivery; spec serials `\b\d{5}\b`, topics `\bT\d{4}\b` matched case-insensitively (`(?i)` — a branch spells it `t0189`) and written with an upper-case `T`, from the branch name, the title and the body's `## Spec / Plan` section — and a topic the PR only **registers** is not a key: it is a cross-reference like the iteration above, recorded by `docs/open-topics/README.md`, and a row claiming it says the index delivered what it only filed. If **at least one** key is present, append one row to `docs/reference/change-index.md`, commit it on the branch, and push:

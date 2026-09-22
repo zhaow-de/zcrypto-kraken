@@ -67,7 +67,7 @@ A topic may be closed only when **all three** hold:
 - **the file itself records HOW** — a `## Resolution` section naming the commits / PR / spec / measurement that disposed of it; a `partial` topic's `## Done so far` is renamed to it and no `## Suggested next steps` survives (`tests/test_open_topics_frontmatter.py` refuses either heading in `archive/`); **and**
 - **it carries no live deferred sub-item** — a remaining "do X when Y" is first split into its own topic (with its `ripe_when:`), because a deferral left inside an archived file is lost.
 
-If only some sub-items are done the topic is `partial`, not resolved (see *Partially completing a topic*). If none are, it stays `open`.
+If only some sub-items are done the topic is `partial`, not resolved (see *Partially completing a topic*). If none are, it stays `open`. The split above is a condition on CLOSING, never a remedy for a live arm: a topic with one arm still open goes `partial`, and minting a second topic to carry that arm needs the owner's word like any other registration.
 
 Write the evidence at close, while it is known: an archived topic whose work is done but **unrecorded** is indistinguishable on inspection from one whose work was never done.
 
