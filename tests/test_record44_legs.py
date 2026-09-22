@@ -17,6 +17,10 @@ from cli.portfolio.record44_legs import (
 )
 from cli.registry import TrialRegistry
 
+# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
+# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
+pytestmark = pytest.mark.data
+
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data" / "ohlc-full"
 
 # Bar counts of the frozen trial-44 oracle. Cheap stand-in for the full extent guard: if the dataset

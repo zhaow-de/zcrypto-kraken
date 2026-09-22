@@ -11,6 +11,10 @@ import pytest
 from cli.data.manifest import ManifestError, read_manifest
 from tests.skip_gates import nothing_found_under
 
+# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
+# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
+pytestmark = pytest.mark.data
+
 _ROOT = Path(__file__).resolve().parents[1]
 _DATA = _ROOT / "data"
 _MARKER = _DATA / "ohlc-full" / "manifest.json"  # present only on a workstation with datasets

@@ -31,6 +31,15 @@ explicit = true
 [tool.uv.sources]
 nautilus-trader = { index = "nautechsystems" }
 
+[tool.pytest.ini_options]
+# `data`: the test needs a dataset under `data/` or a mount this machine may not have, so CI
+# structurally skips it and only a data-bearing workstation runs it. The marker is declared on the
+# MODULE (`pytestmark = pytest.mark.data`), not the test: a gate's reason is an f-string in places,
+# it is sometimes raised by a helper a fixture calls, and a file-level mark cannot miss one of those
+# where a per-test mark would. `tests/test_data_gated_marker.py` holds every file carrying such a
+# gate to the mark, reading the same vocabulary `infra/scripts/data-gated-run.py` parses skips with.
+markers = ["data: needs a dataset under data/ or a mount CI does not have"]
+
 [tool.coverage.run]
 source = ["cli"]
 

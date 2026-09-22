@@ -20,6 +20,10 @@ from cli.engine.venuestate import (
 )
 from tests.skip_gates import nothing_found_under, scan
 
+# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
+# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
+pytestmark = pytest.mark.data
+
 FIXED_NOW = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
 
 # spec 00094: the two /BTC legs' instruments carry XBT-denominated attributes, deliberately

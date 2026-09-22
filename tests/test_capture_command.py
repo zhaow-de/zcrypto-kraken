@@ -20,6 +20,10 @@ from cli.capture.command import _default_pairs, _parse_ts, resolve_universe_path
 from cli.capture.errors import CaptureError
 from cli.capture.segment_writer import BOOK_SCHEMA, TRADE_SCHEMA, HourOracle, SegmentWriter, verify_manifest
 
+# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
+# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
+pytestmark = pytest.mark.data
+
 runner = CliRunner()
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")

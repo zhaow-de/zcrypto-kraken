@@ -13,6 +13,10 @@ from cli.registry.errors import RegistryError
 from cli.registry.observed import ObservedReader
 from tests.skip_gates import nothing_found_under
 
+# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
+# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
+pytestmark = pytest.mark.data
+
 
 def _rows(n, start=1577836800):  # 2020-01-01, daily steps
     return [[start + i * 86400, "1", "2", "0.5", "1.5", "1.2", "10", 3] for i in range(n)]

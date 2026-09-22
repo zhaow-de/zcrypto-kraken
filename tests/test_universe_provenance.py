@@ -9,6 +9,10 @@ import pytest
 
 from tests.skip_gates import nothing_found_under
 
+# Every gate in this file skips for want of a dataset or a mount; the mark is the module's so a
+# reason built as an f-string, or raised by a helper a fixture calls, cannot slip past it.
+pytestmark = pytest.mark.data
+
 _ROOT = Path(__file__).resolve().parent.parent
 _DOCS = _ROOT / "docs"
 _CATALOG = _DOCS / "reference" / "data-catalog.md"
