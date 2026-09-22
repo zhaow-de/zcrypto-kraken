@@ -49,6 +49,8 @@ Telemetry-only, so the order optimizes for verification quality, not blast radiu
 
 Between hosts: wait until the just-bumped host's verification (Step 3) is fully green. No timed bake beyond that.
 
+**A host whose converge would deploy more than Alloy is HELD, and the bump carries on without it.** The converge preview (the block) names every file it would change, and a role that renders a script or an entrypoint can carry a change no Alloy pin implies. Holding a host means three things in the same breath: revert Step 1's pin for it so the repo's desired state matches what the host actually runs, give it its own row in `docs/reference/fleet-pins.md` carrying the old digest and the reason, and say in the commit message what the held converge would have deployed. The NAS is the standing case and its hazard is written where the runner works: `infra/ansible/host_vars/nas/vars.yml` carries the `--slice` constraint note immediately above the capture pin, three lines above the Alloy pin Step 1 edits.
+
 ### ops
 
 ```bash
@@ -134,5 +136,5 @@ Re-pin the previous digest (Step 0's baseline record) and repeat the same conver
 
 ## Closeout
 
-- `docs/reference/fleet-pins.md`: the alloy row — digest and version, `since` from the container's `.State.StartedAt`, the operand — re-trued per the block.
-- The prune (the block) is owed four times — each host after its own row lands.
+- `docs/reference/fleet-pins.md`: each reached host's alloy row — digest, version, `since` from its `.State.StartedAt`, operand — re-trued per the block. A NAS leg also re-trues `archive-pull | nas`'s `since` from that container, its digest unchanged.
+- The prune (the block) is owed once per host the bump actually reached — each after its own row lands.
