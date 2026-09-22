@@ -47,7 +47,14 @@ branches:
         dismiss_stale_reviews: true
         require_code_owner_reviews: false
       # Required. Require status checks to pass before merging. Set to null to disable
-      required_status_checks: null
+      required_status_checks:
+        # `strict: false` for develop's reason: `true` would demand the release branch be rebased
+        # onto main before merging, and the release PR is cut from develop by definition.
+        strict: false
+        contexts:
+          # `coverage.yml` triggers on pull requests into `main` as well as `develop`, so this
+          # context does report here; develop's block below carries the exact-name warning.
+          - Full test suite
       # Required. Enforce all configured restrictions for administrators. Set to true to enforce required status checks for repository administrators. Set to null to disable.
       enforce_admins: true
       required_linear_history: false
