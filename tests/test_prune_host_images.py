@@ -1,7 +1,4 @@
-"""TDD for `infra/scripts/prune-host-images.py` — the image prune the pins-update step runs. The
-capture daemon stops appending below `DEFAULT_MIN_FREE_BYTES` and L2 capture is unbackfillable, so a
-host that never removes an image is one pull from permanent data loss; the mirror danger is the
-SILENT UNDER-KEEP, where a dropped row takes the rollback operand no container holds."""
+"""TDD for `infra/scripts/prune-host-images.py` — the image prune the pins-update step runs."""
 
 import ast
 import importlib.util
@@ -90,7 +87,10 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
         ("capture", ("zcrypto",)),
         ("capture", ("zcrypto-red",)),
         ("engine", ("zcrypto",)),
-        ("alloy", ("zcrypto", "zcrypto-red", "zcrypto-ops", "nas")),
+        ("alloy", ("zcrypto",)),
+        ("alloy", ("zcrypto-red",)),
+        ("alloy", ("zcrypto-ops",)),
+        ("alloy", ("nas",)),
         ("ops (timers + liquidations)", ("zcrypto-ops",)),
         ("archive-pull", ("nas",)),
     }
@@ -109,16 +109,25 @@ def test_the_real_file_puts_capture_and_the_engine_on_one_host_sharing_one_repo(
 
 
 @pytest.mark.parametrize("host", ["zcrypto", "zcrypto-red", "zcrypto-ops", "nas"])
-def test_the_multi_host_alloy_row_contributes_to_every_host_it_names(host):
-    """The host cell lists its hosts comma-separated. Read as one opaque string, Alloy's digests
-    would be missing from every host's keep-set and the resident Alloy would be pruned."""
+def test_every_hosts_own_alloy_digest_is_in_its_keep_set(host):
     rows = pm.parse_pins_table(pm.DEFAULT_PINS.read_text())
-    (alloy,) = [row for row in rows if row.service == "alloy"]
+    (alloy,) = [row for row in rows if row.service == "alloy" and host in row.hosts]
 
     keep = pm.keep_for_host(rows, host)
 
     assert alloy.current in keep, host
     assert alloy.operand in keep, host
+
+
+@pytest.mark.parametrize("host", ["zcrypto-red", "zcrypto-ops", "nas"])
+def test_a_comma_separated_host_cell_reaches_every_name_after_the_first(host):
+    """`DIVERGED_ROWS`' alloy row names four hosts in one cell, and every other case in this file
+    asks about its first."""
+    rows = pm.parse_pins_table(_pins(DIVERGED_ROWS))
+    (alloy,) = [row for row in rows if row.service == "alloy"]
+
+    assert host in alloy.hosts
+    assert set(pm.keep_for_host(rows, host)) == {ALLOY_CUR, ALLOY_OP}
 
 
 def test_the_real_zcrypto_keep_set_carries_every_row_that_names_the_host():
