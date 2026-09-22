@@ -1,7 +1,7 @@
 ---
 name: release
 description: Cut a release — bump the version on develop, open a PR into main, merge it, push the v<version> tag, create the GitHub Release, and back-merge main into develop
-allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(gh api:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
+allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git status:*), Bash(git commit:*), Bash(git push:*), Bash(git pull:*), Bash(git fetch:*), Bash(git merge:*), Bash(git log:*), Bash(git branch:*), Bash(git show:*), Bash(gh pr:*), Bash(gh release:*), Bash(gh auth:*), Bash(gh api:*), Bash(git rev-parse:*), Bash(cz:*), Bash(uv:*), Bash(python3:*), Bash(sleep:*), Bash(timeout:*), Bash(which:*), Bash(awk:*), Bash(sed:*), Bash(grep:*), Bash(echo:*), Read, Edit, Write, AskUserQuestion
 ---
 
 > **This skill has never been run end to end.** Its steps are verified against the tree, not against a real cut, so read what each one prints rather than assuming it worked. After the first real release, re-read the whole skill against what actually happened and correct it in the same branch — that read is owed once and is the only thing a first cut can give.
@@ -135,7 +135,10 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     timeout 40 gh api "repos/zhaow-de/zcrypto-kraken/commits/$SHA/check-runs" \
       --jq '[.check_runs[] | {n: .name, s: .status, c: (.conclusion // "")}]' | python3 -c '
     import sys, json
-    runs = json.load(sys.stdin)
+    try:
+        runs = json.loads(sys.stdin.read())
+    except ValueError:
+        print("pending (no reading — the call returned nothing)"); raise SystemExit
     run = next((r for r in runs if r["n"] == "Full test suite"), None)
     if run is None:
         print("pending (not registered yet)"); raise SystemExit
@@ -145,7 +148,7 @@ allowed-tools: Bash(git add:*), Bash(git checkout:*), Bash(git tag:*), Bash(git 
     '
     ```
 
-    Anything other than `success` stops the release: delete the local tag (`git tag -d v<VERSION>`) first, or step 9 of the re-cut fails on a tag naming a version that must not ship. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
+    A `pending` reading is this poll working: re-read it. One still pending 30 minutes after the push is stalled and worth attention, not a stop. A `failed` reading stops the release, and then delete the local tag (`git tag -d v<VERSION>`) first, or step 9 of the re-cut fails on a tag naming a version that must not ship. Only once it prints `success`, read the PR's state with per-call timeouts, as its OWN command re-issued every ~30 s, and merge as soon as GitHub reports it mergeable and not blocked by branch protection:
     ```bash
     PR_NUMBER=<the PR number from step 12>
 
