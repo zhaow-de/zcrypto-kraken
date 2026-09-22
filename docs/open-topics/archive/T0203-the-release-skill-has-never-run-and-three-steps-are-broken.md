@@ -47,7 +47,7 @@ the person least able to afford it.
   the `## Context` block tolerates it being missing so the skill can still load.
 - **The two harness variables are gone, not replaced.** `${CLAUDE_SKILL_DIR}` became the repo-relative path the
   skill's own Notes already assume, and `${CLAUDE_SESSION_ID}` became a `tempfile` path the script prints on
-  stdout alone for the caller to capture. Swapping in a name this harness happens to set would have left the
+  stdout alone for the runner to read. Swapping in a name this harness happens to set would have left the
   same coupling that broke it.
 - **The fetch limit is 2000 and saturation refuses.** A list as long as the limit exits non-zero naming the
   incompleteness, because `gh pr list` is silent when it truncates and the result is a changelog that reads

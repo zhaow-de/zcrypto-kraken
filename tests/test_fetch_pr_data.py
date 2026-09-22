@@ -1,8 +1,8 @@
 """`.claude/skills/release/scripts/fetch-pr-data.py` prepares the changelog's input: the version `cz version --project`
 reports, today's date, and of the merged PRs into `develop` that `gh pr list` returns, those merged after the last tag
 reachable from `origin/main` -- every one when there is no such tag -- each classified by its Conventional Commits
-type, written to a `tempfile` path the script prints on stdout ALONE so a caller can capture it with `$(...)`. It takes
-no argument and reads no environment variable, and it refuses rather than write a list `gh` may have truncated.
+type, written to a `tempfile` path the script prints on stdout ALONE so the runner can read it. It takes no argument
+and reads no environment variable, and it refuses rather than write a list `gh` may have truncated.
 `cz` and `gh` are PATH stubs here; git is real, over a scratch repository."""
 
 from __future__ import annotations
@@ -179,7 +179,7 @@ def test_a_list_as_long_as_the_limit_refuses_instead_of_writing_a_truncated_chan
     done, _ = _prepare(tmp_path, tagged=True, prs=saturated)
 
     assert done.returncode == 1, done.stdout
-    assert done.stdout == "", "a refusal prints no path, so `$(...)` captures nothing to read"
+    assert done.stdout == "", "a refusal prints no path, so there is nothing to read"
     assert f"--limit {limit}" in done.stderr and "REFUSING" in done.stderr
 
 
