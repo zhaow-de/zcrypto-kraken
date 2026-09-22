@@ -92,14 +92,21 @@ def test_a_file_whose_gates_want_data_carries_the_module_mark(path: Path):
         return
     assert "data" in _module_marks(tree), (
         f"{path.name} gates on a dataset this machine may not have -- {gated[0]!r} -- but carries no "
-        f"`pytestmark = pytest.mark.data`, so `uv run pytest -m data` does not select it and the gate "
-        f"runs nowhere: CI skips it for want of data and the marked run never reaches it."
+        f"`pytestmark = pytest.mark.data`, so `uv run pytest -m data` does not select it: CI skips it for "
+        f"want of data, and the only run that reaches it is the nightly timer's, which is the one a marked "
+        f"pre-push run exists to pre-empt. Add the mark."
     )
 
 
 def test_the_marked_set_is_exactly_the_gated_set():
     """The mark is not claimed where no gate wants data: an unearned mark makes the selection wider
-    than the family it names, and the next reader cannot tell which files the runner is really for."""
+    than the family it names, and the next reader cannot tell which files the runner is really for.
+
+    The failure is two-sided and the message says so: a mark this case does not recognise may be a
+    gate worded outside `is_data_absence`'s vocabulary rather than an unearned mark, and the remedy
+    is to widen that vocabulary. Dropping the mark passes this case and the parametrised one above --
+    which early-returns when it sees no gate -- and leaves the file out of `-m data` silently.
+    """
     is_data_absence = _is_data_absence()
     gated, marked = set(), set()
     for path in _files():
@@ -109,7 +116,13 @@ def test_the_marked_set_is_exactly_the_gated_set():
         if "data" in _module_marks(tree):
             marked.add(path.name)
 
-    assert marked == gated, f"marked but not gated: {sorted(marked - gated)}; gated but not marked: {sorted(gated - marked)}"
+    assert marked == gated, (
+        f"marked but not gated: {sorted(marked - gated)}; gated but not marked: {sorted(gated - marked)}. "
+        f"A file in the first list is not necessarily wrong to carry the mark: it is a file whose gate "
+        f"`is_data_absence` does not recognise, so widen `_DATA_ABSENCE` in "
+        f"`infra/scripts/data-gated-run.py` until it does. Removing the mark also makes this pass, and "
+        f"leaves the file unselected by `-m data` with nothing to say so -- never take that remedy."
+    )
 
 
 def test_the_guard_reads_the_runners_vocabulary_and_not_a_copy_of_it():

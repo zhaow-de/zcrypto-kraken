@@ -19,7 +19,7 @@ The engine's order path submits **only operator-authored probe plans**, and only
 Where everything lives — never guess these:
 
 - **Engine host** `zcrypto` (`ssh zcrypto`); the container is `zcrypto-engine`; the CLI and the rendered config live inside it.
-- **Every engine converge re-owes the proving cycle** (no count command: the proof is a journal artifact on the engine host and reading it is an operator act nothing in the tree records). A changed render restarts the engine through its handler, so the deployed digest owes one clean boundary cycle again, whatever the converge was for — the disarm step below spells out what that cycle has to look like, and its own re-owe is one instance rather than the rule.
+- **An engine converge that changes the render re-owes the proving cycle** (no count command: the proof is a journal artifact on the engine host and reading it is an operator act nothing in the tree records). A changed render restarts the engine through its handler, so the deployed digest owes one clean boundary cycle again, whatever the converge was for — the disarm step below spells out what that cycle has to look like, and its own re-owe is one instance rather than the rule.
 - **Control files**: `/var/lib/zcrypto-engine/exec/` — `armed`, `kill`, `restart-hold`, and the plan file `probe-plan.json`. Presence is the whole protocol; contents are informational.
 - **Journal**: `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/` — `cycle-<HH>.json`, `exec-<HH>.json`, `venue-<HH>.json`.
 - **`<HH>` is the 4-hourly cycle boundary** (00/04/08/12/16/20 UTC), never the wall-clock hour (no count command: `_boundary` in `cli/engine/executor.py` floors the hour an exec record is filed under). A record written at 09:14 UTC is `…-08.json`.
