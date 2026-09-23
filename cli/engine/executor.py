@@ -1172,12 +1172,14 @@ class ProbeExecutor:
         When both could speak, the venue's status wins -- it is truth about the ORDER's lifecycle,
         where the completion is an inference from the ledgered quantity -- and the outcome is
         counted only when the state actually written is `filled`, so the counter can never say
-        `filled` over a row that says `canceled`. No test pins that precedence, deliberately: the
-        library's own state machine makes the conflict unreachable, since an order filled to its
-        quantity is FILLED and never CANCELED/EXPIRED/REJECTED/DENIED, and the one shape that could
-        fake it (an unreadable ledgered qty, which reads 0.0) routes to the overshoot trip before
-        the completion arm is consulted. Pinning an input the venue cannot produce would be a guard
-        on a door with no caller.
+        `filled` over a row that says `canceled`. No test pins that precedence, deliberately: neither
+        source of the status can produce the conflict. A Cache order's status comes from the
+        library's own state machine, where an order filled to its quantity is FILLED and never
+        CANCELED/EXPIRED/REJECTED/DENIED. A venue report's status is the adapter's mapping of
+        Kraken's own, where an order executed to its full volume is `closed`, and `closed` maps to
+        FILLED. The one shape that could fake the conflict on either (an unreadable ledgered qty,
+        which reads 0.0) routes to the overshoot trip before the completion arm is consulted.
+        Pinning an input the venue cannot produce would be a guard on a door with no caller.
 
         Every ledger write here is wrapped where it is MADE, never by the caller's per-row wrapper:
         both trip arms have a write in front of them -- the repair on the overshoot arm, the
