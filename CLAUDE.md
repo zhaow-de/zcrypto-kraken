@@ -15,7 +15,6 @@
 - Python is pinned to 3.14 (`.python-version`); PEP 758 makes `except ValueError, IndexError:` valid syntax — do not flag it or "fix" it in review.
 - A new Markdown file is written with one line per paragraph and per list item — no column wrap, no filler blank lines; a fenced block keeps its own lines; an existing file is left as it is.
 - The commit gate is `uv run pre-commit run -a`; a run that rewrites files reports Failed and leaves the rewrites unstaged — re-run until clean, then stage what it rewrote.
-- Before a branch's first push, run `uv run pytest -m data` where the datasets are: the family skips where they are not, so an all-skipped green is not a pass.
 - A tree sweep that must see `.local/` runs `infra/scripts/sweep.sh -e <pattern>`, the pattern its own word: a bare `grep` honours `.gitignore` and reports clean over files it did not open. Its clean costs `--control <pattern>` that hit — the known positive proving the sweep could see.
 
 ## Secrets
