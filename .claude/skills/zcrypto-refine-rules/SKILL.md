@@ -73,7 +73,7 @@ Read the corpus and you can find a stale path, two texts that disagree, and a na
 
 In order, all five before anything is deleted:
 
-- **(a) Cold read** — the `review` workflow over the round's range at the tip the PR body names, read for weakened or lost invariants on every changed line, not only removals: rewording can weaken a `Never` without deleting it. A commit made after that read re-opens it: the read covers the tip it names and nothing past it — save the closing commit below, which changes no file and which `merge-pr`'s gate admits past the read as it does the change-index row. Its message is the whole of it and no read line covers it, so it takes a `pre-review` over itself alone before the undraft.
+- **(a) Cold read** — the `review` workflow over the round's range at the tip the PR body names, read for weakened or lost invariants on every changed line, not only removals: rewording can weaken a `Never` without deleting it. A commit made after that read re-opens it, save the closing commit below, which `merge-pr`'s gate admits past the read: no read line covers its message, so it takes a `pre-review` over itself alone before the undraft.
 - **(b) Modal floor** — `grep -cE 'Never|never|MUST|must|only|refuse|explicit' CLAUDE.md .claude/rules/*.md` before vs after; any decrease itemized and justified line by line, never summarized.
 - **(c) Graduation table check** — every row's content verified present at its named landing path, staged files included.
 - **(d) Net measurement** — `infra/scripts/count-list.sh ambient-bytes` before vs after; the delta goes in the closeout.
@@ -83,7 +83,7 @@ Then, and only then, delete the staged memory files and update `MEMORY.md`.
 
 ### Closing
 
-The round closes with one commit that changes no file: Step 5 (d)'s delta in its body as prose — never an `Ambient grows by` line, which belongs to the commit that grew the set, and which on a commit touching no ambient file no hook or gate judges — the watermark trailer — `Refine-Round-Closed: <ISO-8601 UTC>` — below `Co-Authored-By:`, which opens the trailer block. Verify end-to-end before reporting done:
+The round closes with one commit that changes no file: Step 5 (d)'s delta in its body as prose, never as an `Ambient grows by` line, which belongs to the commits that grew the set; then the watermark trailer, `Refine-Round-Closed: <ISO-8601 UTC>`, below `Co-Authored-By:`, which opens the trailer block. Verify end-to-end before reporting done:
 
 ```bash
 test "$(git log -1 --grep='^Refine-Round-Closed:' --format=%H)" = "$(git rev-parse HEAD)"
