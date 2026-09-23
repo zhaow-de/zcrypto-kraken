@@ -334,6 +334,78 @@ def test_the_cancel_by_hand_banner_names_each_order_from_the_cache_before_it_is_
 
 
 # ---------------------------------------------------------------------------------------------
+# Probes 2 and 6 as the strategy runs them
+# ---------------------------------------------------------------------------------------------
+
+
+class _Venue:
+    """What a started node's Cache and Portfolio answer: fixed open orders, no position, no account."""
+
+    def __init__(self, open_orders) -> None:
+        self._open = list(open_orders)
+
+    def orders_open(self, venue=None):
+        return list(self._open)
+
+    def positions_open(self, venue=None):
+        return []
+
+    def account(self, venue):
+        return None
+
+
+class _ReadingStrategy(probe.ProbeStrategy):
+    cache = property(lambda s: s._venue)
+    portfolio = property(lambda s: s._venue)
+
+
+def _row(label: str, open_orders, *, prior=(), known=(), submitted=()):
+    """Probe 2's or 6's row as the strategy records it over `open_orders`, with an exec client."""
+    args = probe.build_parser().parse_args([])
+    args.selected_probes = {int(label)}
+    state = probe.RunState(submitted=list(submitted), prior_venue_order_ids=set(prior), known_venue_order_ids=set(known))
+    strategy = _ReadingStrategy(args, state)
+    strategy._venue = _Venue(open_orders)
+    strategy._advance = lambda: None
+    getattr(strategy, f"_probe{label}")()
+    (row,) = state.results
+    return row
+
+
+def test_probe_6s_row_fails_on_an_earlier_runs_leftover_named_or_not():
+    """The row §5.4 reads and the write-up pastes, over the leftover its evidence file records."""
+    assert _row("6", [_LEFTOVER], prior={"OLEFTO-VERPR-OBE001"}).verdict == "FAIL"
+    assert _row("6", [_LEFTOVER], prior={"OLEFTO-VERPR-OBE001"}, known={"OLEFTO-VERPR-OBE001"}).verdict == "FAIL"
+
+
+def test_probe_6s_row_passes_with_only_named_orders_open():
+    row = _row("6", [_OWNER_BTC, _OWNER_SOL], known={"OWNERB-TCEUR-000001", "OWNERS-OLEUR-000002"})
+
+    assert row.verdict == "PASS"
+    assert "(ours 0, known 2, unclaimed 0, other 0)" in row.observed
+
+
+def test_probe_6s_row_reviews_a_read_that_predates_this_runs_orders():
+    row = _row("6", [], submitted=["O-20260923-120000-901-P6V-1"])
+
+    assert row.verdict == "REVIEW"
+    assert "NOT re-read" in row.observed
+
+
+def test_probe_2s_row_reviews_an_unnamed_order_and_passes_a_named_one():
+    assert _row("2", [_OWNER_BTC]).verdict == "REVIEW"
+    assert _row("2", [_OWNER_BTC], known={"OWNERB-TCEUR-000001"}).verdict == "PASS"
+
+
+def test_probe_2_prints_an_open_order_by_its_txid_and_no_price(capsys):
+    _row("2", [_OWNER_BTC])
+
+    out = capsys.readouterr().out
+    assert "pre-existing open order: txid OWNERB-TCEUR-000001 BTC/EUR.KRAKEN SELL" in out
+    assert [line for line in out.splitlines() if "@" in line] == []
+
+
+# ---------------------------------------------------------------------------------------------
 # A node start that fails at startup reconciliation
 # ---------------------------------------------------------------------------------------------
 
