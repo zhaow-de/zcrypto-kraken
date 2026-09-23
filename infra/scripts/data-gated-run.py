@@ -6,16 +6,13 @@ workstation runs it: this is the runner `infra/systemd/zcrypto-data-gated-tests.
 It runs `pytest -q -p no:cacheprovider -rfEs` with no path -- the suite CI runs -- through the TARGET
 checkout's own environment (`uv run --directory <repo>`), never the interpreter that launched it: a
 hand run from a worktree would otherwise import the worktree's `cli` under the main checkout's tests.
-It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`: the started/finished stamps,
-the git sha, whether the datasets were there, the exit code, the counts parsed from pytest's summary
-line, the ids the `-rfE` lines name, and the `-rs` skips whose reason says a dataset was absent. A
-run in which the whole family skipped for want of data is exactly the night this exists to catch, so
-such a skip is a failure -- `data_gated_skipped` names the sites and `ok` is false -- and a checkout
-with no dataset under `data/` is refused before pytest starts, with a result that says so. A run whose
-summary cannot be parsed -- a usage error, a timeout, an interrupted session -- writes a result that
-says so rather than nothing, because `zcrypto-daily-ops` has to tell an absent file from a failed
-run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is
-as much a finding as a failure's.
+It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`. A run in which the whole
+family skipped for want of data is exactly the night this exists to catch, so such a skip is a
+failure, and a checkout with no dataset under `data/` is refused before pytest starts. A run whose
+summary cannot be parsed -- a usage error, a timeout, an interrupted session -- still writes a
+result, because `zcrypto-daily-ops` has to tell an absent file from a failed run. `-rfE` rather than
+the bare `-rf`: an error at setup is a test that did not run, and its id is as much a finding as a
+failure's.
 
 Python rather than shell because the parser is the substance and `tests/test_data_gated_run.py`
 imports it; a JSON writer in bash is a hand-rolled serialiser.

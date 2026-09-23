@@ -191,8 +191,6 @@ def test_the_command_runs_through_the_target_checkouts_environment_not_this_one(
 
 
 def _checkout(tmp_path: Path, body: str, *, data: bool = True, datasets: bool = True) -> Path:
-    """`data=False` leaves no `data/` at all; `datasets=False` gives it the `.gitignore` git tracks and nothing
-    else, which is what a fresh worktree of the real repo carries."""
     repo = tmp_path / "checkout"
     (repo / "tests").mkdir(parents=True)
     (repo / "tests" / "test_synthetic.py").write_text(textwrap.dedent(body))
@@ -379,8 +377,6 @@ def test_a_checkout_without_data_is_refused_before_anything_runs(tmp_path):
 
 
 def test_a_checkout_whose_data_holds_only_its_gitignore_is_refused_too(tmp_path):
-    """The shape a worktree of this repo actually has: `data/.gitignore` is tracked, so git materialises `data/`
-    everywhere and `is_dir()` would call an empty worktree data-bearing and run the whole family into skips."""
     repo = _checkout(tmp_path, "def test_ok(): pass\n", datasets=False)
     proc = _run(tmp_path, repo)
     assert proc.returncode == 1, proc.stdout + proc.stderr
