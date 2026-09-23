@@ -142,13 +142,13 @@ def _rebased_repo(
     empties = 2 if two_empty_above else 1 if empty_above else 0
     if empty_first:
         for n in range(empties):
-            _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})")
+            _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})", "-m", CLOSED)
     for number in (5, 7) if two_rows_above else (5,) if row_above else ():
         (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + f"| #{number} | r |\n")
         _git(root, "commit", "-q", "-am", f"docs(change-index): row #{number}")
     if not empty_first:
         for n in range(empties):
-            _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})")
+            _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})", "-m", CLOSED)
     _git(root, "checkout", "-q", "develop")
     if collide:
         rows(1, 2)
@@ -197,9 +197,12 @@ def _rebased_repo(
     return read, _git(root, "rev-parse", "HEAD")
 
 
+CLOSED = "Refine-Round-Closed: 2026-09-23T00:00:00Z"
+
+
 def _unmoved_repo(root: pathlib.Path, extras: str, *, merge_above: bool = False) -> tuple[str, str]:
-    """The read on a base that has not moved, with `extras` above it in order -- `r` the Step 4 row, `e` an empty
-    commit. `merge_above` tops the head with a merge whose tree adds a file the read never saw: `git log --no-merges`
+    """The read on a base that has not moved, with `extras` above it in order -- `r` the Step 4 row, `e` a refine
+    round's empty closing commit, `x` an empty commit with no closing trailer. `merge_above` tops the head with a merge whose tree adds a file the read never saw: `git log --no-merges`
     drops it from the message list, so only a tree check can refuse it."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
@@ -217,8 +220,10 @@ def _unmoved_repo(root: pathlib.Path, extras: str, *, merge_above: bool = False)
         if kind == "r":
             (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
             _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
+        elif kind == "e":
+            _git(root, "commit", "-q", "--allow-empty", "-m", "claude(refine): round 9 closes", "-m", CLOSED)
         else:
-            _git(root, "commit", "-q", "--allow-empty", "-m", "claude(refine): round 9 closes")
+            _git(root, "commit", "-q", "--allow-empty", "-m", "chore: an empty commit that closes no round")
     if merge_above:
         (root / "unread.py").write_text("x = 666\n")
         _git(root, "add", "unread.py")
@@ -281,6 +286,13 @@ def test_the_arm_refuses_a_merge_carrying_a_file_the_read_never_saw_on_a_base_th
     read, head = _unmoved_repo(tmp_path / extras, extras, merge_above=True)
     answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / extras)
     assert isinstance(answer, str) and answer.startswith("the head's tree is not the read's"), answer
+
+
+@pytest.mark.parametrize("extras", ["x", "rx", "xr"])
+def test_the_arm_refuses_an_empty_commit_above_the_read_that_closes_no_refine_round(tmp_path, extras):
+    read, head = _unmoved_repo(tmp_path / extras, extras)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / extras)
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
 
 
 def test_the_arm_refuses_a_read_commit_remade_above_the_row_with_a_file_the_read_never_saw(tmp_path):

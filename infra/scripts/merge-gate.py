@@ -496,13 +496,22 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
     return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
 
 
+# The refine skill requires a pre-review of its closing commit's message before the undraft, so that is the one empty
+# commit whose message has a read owed; any other empty commit above the read carries a message nothing read.
+REFINE_CLOSED = re.compile(r"^Refine-Round-Closed:", re.M)
+
+
 def _extra_kind(cwd: pathlib.Path | None, sha: str) -> str | None:
-    """A commit above the read that cannot move what it graded: `open-pr`'s Step 4 change-index row, or one that
-    changes no file, a refine round's closing commit."""
+    """A commit above the read that cannot move what it graded: `open-pr`'s Step 4 change-index row, or a refine
+    round's closing commit, which changes no file and carries the `Refine-Round-Closed:` trailer."""
     if len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) != 2:
         return None
     touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
-    return "row" if touched == [INDEX] else "empty" if touched == [] else None
+    if touched == [INDEX]:
+        return "row"
+    if touched == [] and REFINE_CLOSED.search(_git(cwd, "log", "-1", "--format=%B", sha)):
+        return "empty"
+    return None
 
 
 def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None = None) -> bool | str:
