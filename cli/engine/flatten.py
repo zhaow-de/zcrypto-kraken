@@ -286,23 +286,31 @@ async def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
     client. The adapter resolves every later read -- open orders, positions, the book -- through
     that cache alone, so a client never fed one fails them or drops their rows. A per-pair request
     would error on an unknown pair and abort the sweep over an unrelated holding; pairlessness is
-    read from this map."""
+    read from this map.
+
+    Every row is cached, and the ORDER is load-bearing. The adapter's cache holds one instrument per
+    symbol, the last one cached, and resolves a venue spelling either by that instrument's raw
+    symbol or through the altname index `request_instruments` records, which points an altname at
+    the AssetPairs key it differs from. Kraken lists each tokenized equity under two keys that map
+    to one symbol -- `AAOISPVUSD` with altname `AAOIxUSD`, beside `AAOIxUSD` itself -- and only the
+    first, the key NOT spelled as the symbol without its slash, is reachable under both spellings.
+    So rows spelled as their own symbol are cached first and the other key last, and the map below
+    keeps the row the adapter keeps.
+    """
     try:
         rows = await rec.call("request_instruments", {"pairs": None}, lambda: client.request_instruments())
     except FlattenUnreachable:
         raise
     except Exception as exc:  # noqa: BLE001
         raise FlattenUnreachable(f"the instrument listing could not be read: {exc}") from exc
-    listing = {}
-    for row in list(rows or []):
-        instrument_id = getattr(row, "id", None)
-        if instrument_id is None:
-            continue
-        listing[_symbol_of(instrument_id)] = row
+    rows = [row for row in list(rows or []) if getattr(row, "id", None) is not None]
+    # Stable, so every symbol listed once keeps the venue's own order.
+    rows.sort(key=lambda row: str(getattr(row, "raw_symbol", "")) != _symbol_of(row.id).replace("/", ""))
+    listing = {_symbol_of(row.id): row for row in rows}
     if not listing:
         raise FlattenUnreachable("the instrument listing came back empty -- every pair lookup after it would read as pairless")
     try:
-        for row in listing.values():
+        for row in rows:
             client.cache_instrument(row)
     except Exception as exc:  # noqa: BLE001
         raise FlattenUnreachable(f"the instrument listing could not be cached: {exc}") from exc
