@@ -1,9 +1,11 @@
 """The keep-alive runner's output, rendered through Ansible's own `Templar` and run against a stub `curl`."""
 
 import pathlib
+import re
 import subprocess
 
 import pytest
+import yaml
 
 from tests.test_infra_shell_templates_render import ansible_render, role_variables
 
@@ -136,7 +138,8 @@ def test_a_failed_run_carries_the_previous_success_stamp_forward(tmp_path):
 def test_no_token_writes_no_file_at_all(tmp_path):
     """Before the owner mints it there is nothing to say, and `(no series)` says that honestly where a
     zero status would read as a call that happened and failed."""
-    assert _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="") == {}
+    metrics, stdout = _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="", want_stdout=True)
+    assert metrics == {} and stdout == "", "no file and no journal line: the runbook reads a start without one as no token"
     assert not (tmp_path / "grafana-keepalive.prom").exists(), "no file at all, not an empty one"
 
 
@@ -170,3 +173,20 @@ def test_every_family_carries_its_help_and_type(tmp_path, family):
     written = (tmp_path / "grafana-keepalive.prom").read_text()
     assert f"# HELP {family} " in written
     assert f"# TYPE {family} gauge" in written
+
+
+def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
+    """Between two periods and three: one skipped slot peaks near two and stays quiet, two skipped peak near three
+    and page. Change the timer and this fails until the rule moves with it."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    timer = (TEMPLATE.parent / "grafana-keepalive.timer.j2").read_text()
+    step = re.search(r"^OnCalendar=\*:\d+/(\d+):00$", timer, re.M)
+    assert step, "the timer is no longer `*:MM/SS:00`; read its period some other way"
+    period = int(step.group(1)) * 60
+    rule = next(
+        r
+        for r in yaml.safe_load((root / "infra/grafana/alerts.yaml").read_text())["rules"]
+        if r["uid"] == "zcrypto-ops-grafana-keepalive-stale"
+    )
+    (threshold,) = next(d for d in rule["data"] if d["refId"] == "C")["model"]["conditions"][0]["evaluator"]["params"]
+    assert 2 * period < threshold < 3 * period, f"threshold {threshold} s against a {period} s timer"

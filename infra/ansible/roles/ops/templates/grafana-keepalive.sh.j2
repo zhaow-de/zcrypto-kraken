@@ -75,4 +75,4 @@ tmp="$PROM.tmp"
 } > "$tmp"
 mv -f "$tmp" "$PROM"
 # One line per run in the unit's journal: the textfile keeps only the last run.
-printf 'status=%s duration=%ss\n' "$code" "$seconds"
+printf 'status=%s duration=%ss\n' "$code" "$seconds" || true
