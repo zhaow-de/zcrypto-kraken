@@ -4433,12 +4433,16 @@ def test_the_venue_is_read_once_from_the_earliest_row_that_needs_it_and_only_whe
 
 
 def test_a_failed_venue_read_leaves_the_rows_and_refuses_every_plan_for_the_life_of_the_process(tmp_path):
-    """Fail closed without a trip: the rows keep what they say, the resting reducer the Cache still
-    answers is classified as ever, the read is not repeated, and every plan is refused with the reason
-    until a restart reads again."""
+    """Fail closed without a trip: the rows keep what they say -- the open row the read was for and
+    the finished one with fills alike, neither marked as a row the read has no order for -- the
+    resting reducer the Cache still answers is classified as ever, the read is not repeated, and every
+    plan is refused with the reason until a restart reads again."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-closed", reduce_only=True, when=earlier, venue_order_id=_TXID)
     _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, index=1, venue_order_id="ORESTI-NG000-000001")
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, index=2, venue_order_id="OFINIS-HED00-000003")
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    before = _record(tmp_path, earlier)["submitted"]
     client = StubClient(StubCache(open_orders=[_resting_limit_order("ORESTI-NG000-000001", venue_order_id="ORESTI-NG000-000001")]))
     venue = _VenueOrders(raises=RuntimeError("EAPI:Invalid nonce"))
     ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
@@ -4449,17 +4453,17 @@ def test_a_failed_venue_read_leaves_the_rows_and_refuses_every_plan_for_the_life
         ex.on_timer(NOW + timedelta(seconds=5))
 
     reason = (
-        "the startup reconciliation could not read the venue's orders, so 1 ledgered row(s) were never compared "
+        "the startup reconciliation could not read the venue's orders, so 2 ledgered row(s) were never compared "
         "against venue truth -- restart the engine to retry"
     )
     assert [r.getMessage() for r in records] == [
-        "the venue's orders could not be read at startup -- 1 ledgered row(s) were never compared against venue "
+        "the venue's orders could not be read at startup -- 2 ledgered row(s) were never compared against venue "
         "truth; every plan is refused until the engine is restarted",
         f"probe plan p-1 refused: {reason}",
     ]
     assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]  # read once, never retried
     assert client.canceled == [] and "ORESTI-NG000-000001" in ex._attached  # the resting reducer is kept
-    assert [r["state"] for r in _record(tmp_path, earlier)["submitted"]] == ["accepted", "accepted"]
+    assert _record(tmp_path, earlier)["submitted"] == before
     entry = _plan_entry(tmp_path)
     assert (entry["disposition"], entry["reasons"]) == ("refused", [reason])
     assert client.submitted == [] and not _plan_path(tmp_path).exists()
