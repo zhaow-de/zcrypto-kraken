@@ -136,9 +136,6 @@ def test_the_guard_reads_the_runners_vocabulary_and_not_a_copy_of_it():
 
 
 def test_a_mark_outside_the_registry_is_refused_at_collection(tmp_path):
-    """`markers` alone only silences a warning: without `--strict-markers` a typo like `pytest.mark.dta`
-    collects and passes, and the file it marks is simply absent from `-m data` with nothing said. The two
-    cases above hold the marked set to the gated set; neither can see a mark that is not the one they read."""
     config = ROOT / "pyproject.toml"
     addopts = tomllib.loads(config.read_text())["tool"]["pytest"]["ini_options"]["addopts"]
     assert "--strict-markers" in addopts, f"pyproject.toml addopts is {addopts!r}"
