@@ -4521,6 +4521,35 @@ def test_a_finished_row_with_fills_and_no_recorded_txid_takes_the_mark_but_keeps
     assert (unfilled["state"], unfilled["events"]) == ("canceled", [])
 
 
+def test_a_row_whose_events_record_two_txids_vouches_for_neither_order(tmp_path):
+    """Its acceptance names one Kraken order and a fill another, so the row matches neither: the
+    reducer resting under the acceptance's txid is not kept on its word, no venue read is asked for
+    it, and the mark says what the row records rather than that it records nothing."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-conflict", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    other = "OOTHER-ORDER-000009"
+    fill = {"event": "fill", "at": earlier.isoformat(), "qty": 0.0004, "px": 30000.0, "venue_order_id": other}
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-conflict", event=fill, add_filled_qty=0.0004)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders()
+
+    for _ in range(2):
+        _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue).on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "ambiguous"
+    assert [e for e in row["events"] if e.get("type") == "ambiguous"] == [
+        {
+            "type": "ambiguous",
+            "at": NOW.isoformat(),
+            "what": f"its events record 2 different Kraken order ids ({other}, {_TXID}), so a restart cannot tell "
+            "which venue order is its own",
+        }
+    ]
+    assert [str(cid) for cid in client.canceled] == [_TXID, _TXID]  # canceled as unledgered, by each process
+    assert venue.calls == []
+
+
 @pytest.mark.parametrize("finished", [False, True])
 def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp_path, finished):
     earlier = NOW - timedelta(hours=4)

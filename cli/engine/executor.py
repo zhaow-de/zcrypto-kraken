@@ -359,18 +359,35 @@ def _venue_order_id_of(order_or_event) -> str | None:
     return None if venue_order_id is None else str(venue_order_id)
 
 
+def _row_venue_order_ids(row: dict) -> set[str]:
+    return {
+        event["venue_order_id"]
+        for event in row.get("events") or ()
+        if isinstance(event, dict) and isinstance(event.get("venue_order_id"), str) and event["venue_order_id"]
+    }
+
+
 def _row_venue_order_id(row: dict) -> str | None:
     """The Kraken txid this row's order was accepted under, read off the row's own events: the
     acceptance, or a fill where no acceptance reached the ledger.
 
     None when no event carries one, and None when two disagree: a row naming two venue orders vouches
-    for neither, so it is handled as a row that names none."""
-    found = {
-        event["venue_order_id"]
-        for event in row.get("events") or ()
-        if isinstance(event, dict) and isinstance(event.get("venue_order_id"), str) and event["venue_order_id"]
-    }
+    for neither, so it is handled as a row that names none, and `_unmatchable_what` says which of the
+    two it is."""
+    found = _row_venue_order_ids(row)
     return next(iter(found)) if len(found) == 1 else None
+
+
+def _unmatchable_what(row: dict) -> str:
+    """The `what` of the `ambiguous` mark on a row `_row_venue_order_id` gives no txid. Sorted, so a
+    later restart writes the same text and `_mark_unmatched` finds its mark already there."""
+    found = sorted(_row_venue_order_ids(row))
+    if len(found) < 2:
+        return _NO_VENUE_ORDER_ID
+    return (
+        f"its events record {len(found)} different Kraken order ids ({', '.join(found)}), so a restart cannot tell "
+        "which venue order is its own"
+    )
 
 
 def _row_label(row: dict, venue_order_id: str | None) -> str:
@@ -963,8 +980,8 @@ class ProbeExecutor:
         is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL.
 
         A row neither answers is never given a venue truth nobody read. A row that recorded no txid,
-        or one whose txid the venue read does not return, cannot be matched to any venue order, and
-        `_mark_unmatched` marks it `ambiguous`. A row that needed the read when the read itself failed
+        or two that disagree, or one whose txid the venue read does not return, cannot be matched to
+        any venue order, and `_mark_unmatched` marks it `ambiguous`. A row that needed the read when the read itself failed
         is left exactly as it is: its truth is unread rather than unknowable, and `_read_venue_orders`
         has already turned the failure into a refusal of every plan. The order behind any of these
         rows is neither attached nor kept by the pass above; `_on_external_event` says what becomes of
@@ -998,7 +1015,7 @@ class ProbeExecutor:
                         )
                         continue
                     if venue_order_id is None:
-                        self._mark_unmatched(boundary, row, _NO_VENUE_ORDER_ID, open_row=True)
+                        self._mark_unmatched(boundary, row, _unmatchable_what(row), open_row=True)
                         continue
                     if venue_orders is None:
                         continue  # the read failed: unread, not unknowable, and every plan is refused
@@ -1259,7 +1276,7 @@ class ProbeExecutor:
                     venue_order_id = _row_venue_order_id(row)
                     order = self._cached_order(row, venue_order_id)
                     if order is None and venue_order_id is None:
-                        self._mark_unmatched(boundary, row, _NO_VENUE_ORDER_ID, open_row=False)
+                        self._mark_unmatched(boundary, row, _unmatchable_what(row), open_row=False)
                         continue
                     if order is None:
                         if venue_orders is None:
@@ -2584,9 +2601,9 @@ class ProbeExecutor:
         NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
         is what keeps the unknown-order trip scoped while this second stream exists at all.
         The set is wider than "no ledgered row" by the rows the startup pass could not match to an
-        order: a row that recorded no txid names an order the Cache holds only under its txid, so
-        it was never attached, and a fill on it lands here -- no row write, no counters, no overfill
-        trip -- with nothing in the log line saying the ledger knew the order.
+        order: a row that recorded no single txid names an order the Cache holds only under its
+        txid, so it was never attached, and a fill on it lands here -- no row write, no counters, no
+        overfill trip -- with nothing in the log line saying the ledger knew the order.
 
         An event names its order the Cache's way, which after a restart is the txid, while the
         ledger keys the row by the id this engine minted: `_attached_for` finds the row by either,
