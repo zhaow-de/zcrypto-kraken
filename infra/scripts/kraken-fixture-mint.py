@@ -415,31 +415,61 @@ def require_credentials() -> tuple[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
-async def read_pair(client, pair: str) -> tuple[float, object]:
-    """The run's own best bid, and the instrument object -- for `cache_instrument` and nothing else.
-    The object is needed because `submit_order` documents `The instrument is not found in cache.`
-    among its errors and the cache's only writer is `cache_instrument`. It is NOT where a size comes
-    from, and the reason is categorical rather than incidental: this adapter never maps `costmin`
-    into `min_notional` at all, so the object answers None for it on every pair. A floor that arrives
-    as None and is read as 0.0 always clears, so `pair_limits` reads the row the venue enforces
-    instead.
+async def _read(what: str, call):
+    """One adapter read, or a refusal naming it: the operator gets a sentence, not a traceback.
+
+    `flatten` refuses a read that answers nothing rather than reading it as a flat account, and so
+    does this: `None` would mean "no resting order / no position / no balance" and re-mint the leg
+    on every run. An empty list is an answer; an absent one is not.
+    """
+    try:
+        answer = await call()
+    except Exception as exc:
+        raise Refusal(f"REFUSING: {what} could not be read: {exc}") from exc
+    if answer is None:
+        raise Refusal(f"REFUSING: {what} could not be read -- the venue answered nothing")
+    return answer
+
+
+async def read_listing(client) -> list:
+    """Every row of the venue's instrument listing, each cached into the client before any other read.
+
+    The adapter answers the book read, and resolves each row of an unscoped order or position read,
+    through that cache alone, and it fails the whole read on a row it cannot resolve -- so an open
+    order or margin position on ANY pair needs its row cached, not only the mint pair's. Every row
+    rather than one per instrument id: some ids carry more than one row, one per venue spelling, and
+    an order names one of them.
+    """
+    rows = list(await _read("the instrument listing", lambda: client.request_instruments(pairs=None)))
+    if not rows:
+        raise Refusal("REFUSING: the instrument listing came back empty -- every read after it would fail")
+    try:
+        for row in rows:
+            client.cache_instrument(row)
+    except Exception as exc:
+        raise Refusal(f"REFUSING: the instrument listing could not be cached: {exc}") from exc
+    return rows
+
+
+async def read_pair(client, pair: str, listing: list) -> float:
+    """The run's own best bid, read after `read_listing` has cached the pair.
+
+    Never a size: the adapter's instrument object never maps `costmin` into `min_notional`, so it
+    answers None for it on every pair, and a floor read as 0.0 always clears -- `pair_limits` reads
+    the row the venue enforces instead.
     """
     from nautilus_trader.model import InstrumentId
 
     instrument_id = InstrumentId.from_str(INSTRUMENT_IDS[pair])
-    rows = await client.request_instruments(pairs=None)
-    match = [row for row in rows if str(getattr(row, "id", "")) == str(instrument_id)]
-    if not match:
+    if not any(str(getattr(row, "id", "")) == str(instrument_id) for row in listing):
         raise Refusal(f"REFUSING: {pair} is not in the venue's listing")
-    row = match[0]
-
-    book = await client.request_book_snapshot(instrument_id, depth=1)
+    book = await _read(f"{pair}'s order book", lambda: client.request_book_snapshot(instrument_id, depth=1))
     # `bids`/`asks` are METHODS on the real `OrderBook`, not sequences -- reading the attribute
     # hands back a bound method, which is truthy and would price the leg off nonsense.
     bids = book.bids()
     if not bids:
         raise Refusal(f"REFUSING: {pair}'s book has no bid to price the resting leg from")
-    return float(bids[0].price), row
+    return float(bids[0].price)
 
 
 async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -> AccountState:
@@ -451,24 +481,21 @@ async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -
     account, and it fails in the expensive direction: a leg minted again on every run.
     """
     account = AccountId(FIXTURE_ACCOUNT_ID)
-    orders = await client.request_order_status_reports(account, open_only=True)
+    orders = await _read("open orders", lambda: client.request_order_status_reports(account, open_only=True))
     # WITHOUT these three the client's own docstring says it "returns an empty vector" -- the CASH
     # default with spot reports off reads no leveraged position at all. This guard would then pass
     # against an account already carrying one and open another 2x position on every `--execute`,
     # while the printed plan says `positions: (none)`.
-    positions = await client.request_position_status_reports(
-        account,
-        account_type=AccountType.MARGIN,
-        use_spot_position_reports=False,
-        quote_currency=QUOTE_CURRENCY,
+    positions = await _read(
+        "positions",
+        lambda: client.request_position_status_reports(
+            account,
+            account_type=AccountType.MARGIN,
+            use_spot_position_reports=False,
+            quote_currency=QUOTE_CURRENCY,
+        ),
     )
-    state = await client.request_account_state(account, account_type=AccountType.CASH)
-    # `flatten` refuses a read that answers nothing rather than reading it as a flat account, and
-    # so does this: `None` here would mean "no resting order / no position / no balance" and re-mint
-    # the leg on every run. An empty list is an answer; an absent one is not.
-    for what, answer in (("open orders", orders), ("positions", positions), ("the account state", state)):
-        if answer is None:
-            raise Refusal(f"REFUSING: {what} could not be read -- the venue answered nothing")
+    state = await _read("the account state", lambda: client.request_account_state(account, account_type=AccountType.CASH))
     base = pair.split("/")[0]
     return AccountState(
         resting_pairs=tuple({str(getattr(o, "instrument_id", "")).split(".")[0] for o in orders or ()}),
@@ -517,11 +544,11 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
     return tuple(sorted(held))
 
 
-async def submit(client, leg: Leg, instrument, client_order_id: str) -> None:
-    """Send one leg. The only write this script makes, and there is no cancel to pair with it."""
+async def submit(client, leg: Leg, client_order_id: str) -> None:
+    """Send one leg. The only write this script makes, and there is no cancel to pair with it.
+    `submit_order` refuses an instrument the client has not cached; `read_listing` cached it."""
     from nautilus_trader.model import InstrumentId
 
-    client.cache_instrument(instrument)
     quantity = Quantity.from_str(str(leg.quantity))
     price = Price.from_str(str(leg.price)) if leg.price is not None else None
     # `from_str` parses a repr, and a float whose shortest repr runs past the venue's precision
@@ -595,12 +622,8 @@ async def _run(
 
     client = client_factory(key, secret)
     limits = pair_limits(listing_factory(), args.pair)
-    best_bid, instrument = await read_pair(client, args.pair)
-    # Warmed BEFORE the account reads, not just before `submit`. The order-report read resolves
-    # rows through this cache, and the adapter drops a row it cannot resolve while returning
-    # success -- so a cold cache would empty the resting-order guard rather than fail it. Cheap,
-    # and it closes the question from this side rather than leaving it to the live run.
-    client.cache_instrument(instrument)
+    listing = await read_listing(client)
+    best_bid = await read_pair(client, args.pair, listing)
     print(
         f"{args.pair} now: best bid {best_bid}, ordermin {limits.ordermin}, "
         f"costmin {limits.costmin} (read this run, not remembered)"
@@ -623,7 +646,7 @@ async def _run(
 
     for leg in legs:
         coid = mint_client_order_id(leg.kind, stamp)
-        await submit(client, leg, instrument, coid)
+        await submit(client, leg, coid)
         print(f"  sent {leg.kind} as {coid}")
     print(f"\nminted {len(legs)} leg(s). Nothing here cancels them.")
     return 0

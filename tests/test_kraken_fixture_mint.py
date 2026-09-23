@@ -528,7 +528,7 @@ class _Recorder:
     would let a regression that called it pass unnoticed.
     """
 
-    def __init__(self, *, positions=(), balances=(), orders=()) -> None:
+    def __init__(self, *, positions=(), balances=(), orders=(), instruments=None) -> None:
         self.calls: list[str] = []
         self.submitted: list[dict] = []
         self.cached: list[object] = []
@@ -536,13 +536,23 @@ class _Recorder:
         self._positions = tuple(positions)
         self._balances = tuple(balances)
         self._orders = tuple(orders)
+        self._instruments = list(instruments) if instruments is not None else [_Instrument(), _Instrument("BTC/EUR.KRAKEN")]
+
+    def _require_cached(self, what: str, instrument_ids) -> None:
+        """The wheel answers the book, and resolves every open-order and open-position row, only
+        through instruments cached into the client, and fails the whole read on a miss."""
+        cached = {str(instrument.id) for instrument in self.cached}
+        missing = sorted(str(i) for i in instrument_ids if str(i) not in cached)
+        if missing:
+            raise RuntimeError(f"{what}: instrument not in cache for {missing[0]}")
 
     async def request_instruments(self, pairs=None):
         self.calls.append("request_instruments")
-        return [_Instrument()]
+        return list(self._instruments)
 
     async def request_book_snapshot(self, instrument_id, depth=1):
         self.calls.append("request_book_snapshot")
+        self._require_cached("book", [instrument_id])
         return _Book()
 
     async def request_order_status_reports(self, account, **kw):
@@ -551,11 +561,13 @@ class _Recorder:
         cancelled FIXMINT rows -- and the resting guard would skip its leg on every later run."""
         self.calls.append("request_order_status_reports")
         self.read_kwargs["orders"] = kw
+        rows = list(self._orders)
         if kw.get("open_only") is not True:
             # On the MINT pair, so the leftover can actually produce the skip: a closed row on some
             # other pair fails the kwarg assertion but never reaches the guard it is meant to fool.
-            return [*self._orders, _Order("SOL/EUR.KRAKEN")]
-        return list(self._orders)
+            rows.append(_Order("SOL/EUR.KRAKEN"))
+        self._require_cached("OpenOrders", [row.instrument_id for row in rows])
+        return rows
 
     async def request_position_status_reports(self, account, **kw):
         """Answers what the venue answers, which is NOT the same in every mode.
@@ -569,6 +581,7 @@ class _Recorder:
         self.read_kwargs["positions"] = kw
         if kw.get("account_type") is not AccountType.MARGIN:
             return []
+        self._require_cached("OpenPositions", [row.instrument_id for row in self._positions])
         return list(self._positions)
 
     async def request_account_state(self, account, **kw):
@@ -595,11 +608,13 @@ class _Instrument:
     reached back into the object raises on `float(None)` instead of freezing a floor to zero.
     """
 
-    id = "SOL/EUR.KRAKEN"
     min_quantity = None
     min_notional = None
     size_increment = None
     price_increment = None
+
+    def __init__(self, instrument_id: str = "SOL/EUR.KRAKEN") -> None:
+        self.id = instrument_id
 
 
 class _Currency:
@@ -653,6 +668,18 @@ async def _answer_none(*_args, **_kwargs):
 def _factories(rec: object) -> dict:
     """Both live doors, replaced. Neither has a default, so a forgotten one is a TypeError."""
     return {"client_factory": lambda _k, _s: rec, "listing_factory": lambda: _LISTING}
+
+
+def _read_account(rec, pair: str = "SOL/EUR", limits=_LIMITS, best_bid: float = _BEST_BID):
+    """`read_account` as `_run` reaches it: after `read_listing`, since `_Recorder` resolves rows
+    only through what was cached, as the wheel does."""
+    import asyncio
+
+    async def _both():
+        await mint.read_listing(rec)
+        return await mint.read_account(rec, pair, limits, best_bid)
+
+    return asyncio.run(_both())
 
 
 @pytest.fixture
@@ -723,9 +750,7 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     """
 
     def _state(self, rec) -> object:
-        import asyncio
-
-        return asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS, _BEST_BID))
+        return _read_account(rec)
 
     def test_positions_are_requested_in_margin_mode(self) -> None:
         """The client returns an empty vector in the cash default, whatever the account holds."""
@@ -744,7 +769,6 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         returns the previous pass's cancelled FIXMINT rows, and the plan then silently drops the one
         leg the pass most needs -- indistinguishable, in the printed plan, from a real resting order.
         """
-        import asyncio
 
         # Driven through `read_account`, not by calling the stub: a test that calls the stub proves
         # what the stub does. `_Blind` is the defect itself -- a client that drops `open_only`.
@@ -752,7 +776,7 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
             async def request_order_status_reports(self, account, **kw):
                 return await super().request_order_status_reports(account)
 
-        state = asyncio.run(mint.read_account(_Blind(), "SOL/EUR", _LIMITS, _BEST_BID))
+        state = _read_account(_Blind())
         assert state.resting_pairs == ("SOL/EUR",)
         kinds = [leg.kind for leg in mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=state)]
         assert "resting" not in kinds
@@ -809,20 +833,16 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     def test_a_balance_whose_notional_misses_costmin_does_not_satisfy_it(self) -> None:
         """`flatten` classifies that balance `dust` and does not sell it, so counting it here would
         leave the sell path a balance the command declines to touch. Quantity alone is not enough."""
-        import asyncio
-
         limits = mint.PairLimits(ordermin=1.0, costmin=20.0, lot_step=0.001, price_step=0.0001)
         rec = _Recorder(balances=[_Balance("SOL", 1.5)])
-        state = asyncio.run(mint.read_account(rec, "SOL/EUR", limits, best_bid=2.0))
+        state = _read_account(rec, limits=limits, best_bid=2.0)
         assert 1.5 >= limits.ordermin and 1.5 * 2.0 < limits.costmin
         assert state.non_eur_assets == ()
 
     def test_the_venues_own_spelling_of_an_asset_is_resolved(self) -> None:
         """`XXDG` is how the venue spells DOGE; compared raw it never equals the pair's base."""
-        import asyncio
-
         rec = _Recorder(balances=[_Balance("XXDG", 1000.0)])
-        state = asyncio.run(mint.read_account(rec, "DOGE/EUR", _LIMITS, _BEST_BID))
+        state = _read_account(rec, pair="DOGE/EUR")
         assert state.non_eur_assets == ("DOGE",)
 
     def test_eur_never_counts_as_the_non_eur_balance(self) -> None:
@@ -840,22 +860,115 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     def test_a_read_that_answers_nothing_refuses_rather_than_reading_as_flat(self, method: str, what: str) -> None:
         """`None` is not an empty account. Read as one it re-mints the leg on every run, and for the
         margin leg that is another leveraged position each time -- while the plan prints `(none)`."""
-        import asyncio
-
         rec = _Recorder()
         setattr(rec, method, _answer_none)
         with pytest.raises(mint.Refusal) as exc:
-            asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS, _BEST_BID))
+            _read_account(rec)
         assert what in str(exc.value)
 
     def test_the_instrument_is_cached_before_the_account_is_read(self, _creds) -> None:
-        """The order-report read resolves rows through the cache and drops what it cannot resolve
-        while returning success, so a cold cache would empty this guard rather than fail it."""
+        """The unscoped order-report read resolves each row through the cache and fails the whole read
+        on a row it cannot resolve."""
         import asyncio
 
         rec = _Recorder()
         asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
         assert rec.calls.index("cache_instrument") < rec.calls.index("request_order_status_reports")
+
+
+class TestTheListingIsCachedBeforeAnyRead:
+    """The wheel answers the book, and resolves every open-order and open-position row, only through
+    instruments cached into the client, and the client starts bare. `_Recorder` enforces that, so
+    every `_run` test in this module also fails on a read made before the cache."""
+
+    def _dry_run(self, rec) -> str:
+        """The dry run's account line: what the operator reads the account as."""
+        import asyncio
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert asyncio.run(mint._run(_args(execute=False), **_factories(rec))) == 0
+        return next(line for line in out.getvalue().splitlines() if line.startswith("account already holds"))
+
+    def test_every_listing_row_is_cached_before_the_book_is_read(self, _creds) -> None:
+        rec = _Recorder()
+        self._dry_run(rec)
+        assert rec.calls.index("request_book_snapshot") > max(i for i, c in enumerate(rec.calls) if c == "cache_instrument")
+        assert rec.cached == rec._instruments
+
+    def test_every_row_is_cached_even_where_rows_share_an_instrument_id(self, _creds) -> None:
+        """Some ids carry one row per venue spelling, and an order names one of them: a cache built
+        from one row per id leaves the other spelling unresolvable."""
+        rows = [_Instrument(), _Instrument("BTC/EUR.KRAKEN"), _Instrument("BTC/EUR.KRAKEN")]
+        rec = _Recorder(instruments=rows)
+        self._dry_run(rec)
+        assert len(rec.cached) == len(rows)
+        assert all(any(cached is row for cached in rec.cached) for row in rows)
+
+    def test_an_order_resting_on_another_pair_is_read_rather_than_failing_the_run(self, _creds) -> None:
+        """The owner's own BTC/EUR order, say: caching the mint pair alone fails the unscoped read."""
+        rec = _Recorder(orders=[_Order("BTC/EUR.KRAKEN")])
+        assert "resting: ('BTC/EUR',)" in self._dry_run(rec)
+
+    def test_a_position_on_another_pair_is_read_rather_than_failing_the_run(self, _creds) -> None:
+        rec = _Recorder(positions=[_Position("BTC/EUR.KRAKEN")])
+        assert "positions: ('BTC/EUR',)" in self._dry_run(rec)
+
+
+class TestEveryReadFailureIsARefusalNamingTheRead:
+    """`main` catches `Refusal` alone, so any other exception reaches the operator as a traceback."""
+
+    @pytest.mark.parametrize(
+        ("method", "what"),
+        [
+            ("request_instruments", "the instrument listing"),
+            ("request_book_snapshot", "SOL/EUR's order book"),
+            ("request_order_status_reports", "open orders"),
+            ("request_position_status_reports", "positions"),
+            ("request_account_state", "the account state"),
+        ],
+    )
+    def test_an_adapter_error_on_a_read_refuses_and_names_it(self, _creds, method: str, what: str) -> None:
+        import asyncio
+
+        async def _fails(*_args, **_kwargs):
+            raise RuntimeError("API error: EGeneral:Temporary lockout")
+
+        rec = _Recorder()
+        setattr(rec, method, _fails)
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert f"{what} could not be read" in str(exc.value)
+        assert "EGeneral:Temporary lockout" in str(exc.value)
+
+    def test_an_uncached_row_is_a_refusal_too(self) -> None:
+        """What the wheel raises for an order on a pair the cache lacks."""
+        rec = _Recorder(orders=[_Order("ADA/EUR.KRAKEN")])
+        with pytest.raises(mint.Refusal) as exc:
+            _read_account(rec)
+        assert "open orders could not be read" in str(exc.value)
+        assert "ADA/EUR.KRAKEN" in str(exc.value)
+
+    def test_a_listing_that_cannot_be_cached_refuses(self, _creds) -> None:
+        import asyncio
+
+        def _fails(_instrument):
+            raise RuntimeError("cache poisoned")
+
+        rec = _Recorder()
+        rec.cache_instrument = _fails
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert "could not be cached" in str(exc.value)
+
+    def test_an_empty_listing_refuses(self, _creds) -> None:
+        import asyncio
+
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), **_factories(_Recorder(instruments=[]))))
+        assert "came back empty" in str(exc.value)
 
 
 class TestWhatIsSentIsWhatWasPlanned:
