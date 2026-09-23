@@ -425,6 +425,13 @@ def render_table(results: list[ProbeResult]) -> str:
     return "\n".join(lines)
 
 
+def describe_open_order(order) -> str:
+    """An open order the way it is adjudicated at Kraken: by its venue txid. No price -- the adapter
+    reads a reconciled order's price from Kraken's average-price field, so a resting limit order
+    reads 0.0 and would match nothing on the Open Orders page."""
+    return f"txid {order.venue_order_id} {order.instrument_id} {order.side} {order.quantity}"
+
+
 def event_detail(event) -> str:
     bits = []
     for attr in ("reason", "last_qty", "last_px", "commission", "due_post_only"):
@@ -1082,10 +1089,9 @@ class ProbeStrategy(Strategy):
         orders = self.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
         for o in orders:
-            print(
-                f"      pre-existing open order: {o.client_order_id} {o.instrument_id} {o.side} "
-                f"{o.quantity} @ {getattr(o, 'price', None)}"
-            )
+            print(f"      pre-existing open order: {describe_open_order(o)}")
+        if orders:
+            print("      (no limit price above: the adapter's order read does not carry it -- read it at Kraken by txid)")
         for p in positions:
             print(f"      pre-existing open position: {p.instrument_id} {p.side} {p.quantity}")
         observed = f"open orders {len(orders)}, open positions {len(positions)}"

@@ -101,6 +101,32 @@ def test_the_classification_never_infers_never_submitted_from_a_status():
 
 
 # ---------------------------------------------------------------------------------------------
+# An open order as the operator reads it
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass
+class _Reconciled:
+    """An order startup reconciliation put in the Cache: named by its txid, priced at the adapter's 0.0."""
+
+    venue_order_id: str = "OWNERB-TCEUR-000001"
+    client_order_id: str = "OWNERB-TCEUR-000001"
+    instrument_id: str = "BTC/EUR.KRAKEN"
+    side: str = "SELL"
+    quantity: str = "0.00010000"
+    price: float = 0.0
+
+
+def test_an_open_order_is_named_by_its_txid_and_not_priced_at_the_adapters_zero():
+    """A resting limit order read back through the adapter carries price 0.0, which matches nothing
+    on Kraken's Open Orders page; the txid is what the operator can look up."""
+    line = probe.describe_open_order(_Reconciled())
+
+    assert line.startswith("txid OWNERB-TCEUR-000001 BTC/EUR.KRAKEN SELL 0.00010000")
+    assert "@" not in line
+
+
+# ---------------------------------------------------------------------------------------------
 # The waiting primitive
 # ---------------------------------------------------------------------------------------------
 
