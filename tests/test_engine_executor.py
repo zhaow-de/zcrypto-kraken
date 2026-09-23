@@ -3046,6 +3046,34 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
     assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]
 
 
+@pytest.mark.parametrize(
+    "armed_in_config, control_files, reasons",
+    [
+        # The engine's resting state: disarmed, with the hold every start writes. No kill file exists.
+        (False, (RESTART_HOLD_FILE,), "config_not_armed, arm_file_absent, restart_hold"),
+        (True, (ARM_FILE, KILL_FILE), "kill_switch"),
+    ],
+)
+def test_the_startup_cancel_at_level_none_names_the_gates_own_reasons(tmp_path, armed_in_config, control_files, reasons):
+    """The gate reads `none` for a disarmed engine as surely as for a latched kill file, and the
+    operator reading this line during a restart acts on its cause -- a kill switch named over a
+    disarmed engine sends them looking for a file and a trip that do not exist."""
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True, exist_ok=True)
+    for name in control_files:
+        (d / name).touch()
+    gate = ExecutionGate(armed_in_config=armed_in_config, state_dir=tmp_path, venue_reader=_venue_reader())
+    assert gate.evaluate(NOW).level == GateLevel.NONE
+    client = StubClient(StubCache(open_orders=[_open_order("O-orphan")]))
+    ex = _executor(tmp_path, client=client, gate=gate)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == ["O-orphan"]
+    assert [r.getMessage() for r in records] == [f"canceling adopted resting order O-orphan -- the gate reads none ({reasons})"]
+
+
 # --- the external topic: an adopted order's own events (spec 00098) ------------------------------
 
 

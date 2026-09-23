@@ -74,7 +74,7 @@ The reboot's own verify-by-outcome list in `docs/reference/fleet.md` § Reboots 
    ```
    sudo docker logs --since 30m zcrypto-engine | grep -E 'adopted resting order'
    ```
-   A `canceling adopted resting order …` line names the order; a `… is a ledgered reducer -- left resting and re-attached` line means the row was classified a reducer and kept, which on an opener is a finding. No line at all is a finding only once the pair precondition held (no count command: the adopt pass's two lines, `cli/engine/executor.py:804,807`): on a blind leg the pass logs nothing whatever it found.
+   A `canceling adopted resting order …` line names the order; a `… is a ledgered reducer -- left resting and re-attached` line means the row was classified a reducer and kept, which on an opener is a finding. No line at all is a finding only once the pair precondition held (no count command: the adopt pass's two lines, in `cli/engine/executor.py::_adopt_resting_orders`): on a blind leg the pass logs nothing whatever it found.
 3. **The ledger**, with the probe window's ledger read: the order's row carries a terminal `state` and `filled_qty 0.0`, and no `fill` lines at all.
 4. **Kraken's own open-orders view**, by hand. The engine's belief and the venue's are two readings; compare them.
 

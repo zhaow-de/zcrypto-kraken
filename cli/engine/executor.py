@@ -799,9 +799,11 @@ class ProbeExecutor:
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
         # Read AFTER both sweeps: a repair or a withdrawal that latched the kill switch above makes
-        # this `none`, and then the pass cancels everything, ledgered reducers included -- which is
-        # exactly what a latched kill file means.
-        kill_latched = self._evaluate(now).level == GateLevel.NONE
+        # this `none`, and then the pass cancels everything, ledgered reducers included. A kill file
+        # is only one of the reasons the gate reads `none` -- a disarmed engine reads it too -- so the
+        # cancel line names the verdict's own reasons rather than assuming one.
+        verdict = self._evaluate(now)
+        cancel_all = verdict.level == GateLevel.NONE
 
         for order in resting:
             client_order_id = str(getattr(order, "client_order_id", ""))
@@ -809,13 +811,15 @@ class ProbeExecutor:
             if attached is not None:
                 self._attached[client_order_id] = attached
             payload = attached[1].get("order") if attached is not None else None
-            if isinstance(payload, dict) and payload.get("reduce_only") is True and not kill_latched:
+            if isinstance(payload, dict) and payload.get("reduce_only") is True and not cancel_all:
                 logger.warning("adopted resting order %s is a ledgered reducer -- left resting and re-attached", client_order_id)
                 continue
             logger.warning(
                 "canceling adopted resting order %s -- %s",
                 client_order_id,
-                "the kill switch is latched" if kill_latched else "the ledger does not carry it as a resting reducer",
+                f"the gate reads none ({', '.join(verdict.reasons) or '-'})"
+                if cancel_all
+                else "the ledger does not carry it as a resting reducer",
             )
             try:
                 self._client.cancel_order(order.client_order_id)
