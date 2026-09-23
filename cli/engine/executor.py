@@ -380,6 +380,22 @@ def _row_label(row: dict, venue_order_id: str | None) -> str:
     return own if venue_order_id is None else f"{own} (Kraken {venue_order_id})"
 
 
+def _log_resting_outside_the_cache(label: str, report) -> None:
+    """A venue report stands in for a Cache order only when the Cache holds none under the row's
+    ids, so a report that is not terminal names an order resting at Kraken that startup
+    reconciliation dropped (`_cancel_resting` says how). Every cancel this process can issue goes
+    through the Cache, so neither the startup pass nor a kill trip reaches it, and the operator is
+    the only one who can."""
+    if report.order_status in _ADOPTED_TERMINAL_STATES:
+        return
+    logger.critical(
+        "ledgered order %s rests at Kraken (%s) but this process's Cache does not hold it, so neither the startup "
+        "pass nor a kill trip can cancel it -- cancel it by hand on Kraken's open-orders page",
+        label,
+        report.order_status.name,
+    )
+
+
 def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     """Every order the venue reports open, or closed since `since`, as the adapter's
     `OrderStatusReport`s: the startup pass's only source for an order the Cache cannot hold. The
@@ -826,8 +842,8 @@ class ProbeExecutor:
         resting orders, `_poll` already revokes even a resting close when the level drops there, and
         "nothing is working at the venue" must not have a restart-shaped hole -- a kill file that
         survived the restart is exactly the state the operator pulled the switch for. "EVERYTHING" is
-        everything the Cache holds, which at startup is every order resting at the venue:
-        `_cancel_resting` says why, and what the Cache cannot hold.
+        everything the Cache holds, which at startup is every order resting at the venue that
+        reconciliation did not drop: `_cancel_resting` says why, and what it drops.
 
         EVERY matched row is attached, canceled ones included, before any cancel goes out: a cancel
         is a request, not an outcome, and an order can still fill between it and the venue's answer.
@@ -943,7 +959,8 @@ class ProbeExecutor:
         txid, for an order that filled, was canceled or expired while this process was down, which the
         startup reconciliation never puts in the Cache because it reads open orders only. Both answers
         take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
-        its terminal state and both trips exactly as a resting one does.
+        its terminal state and both trips exactly as a resting one does. A report that is still open
+        is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL.
 
         A row neither answers is never given a venue truth nobody read. A row that recorded no txid,
         or one whose txid the venue read does not return, cannot be matched to any venue order, and
@@ -989,6 +1006,7 @@ class ProbeExecutor:
                     if report is None:
                         self._mark_unmatched(boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True)
                         continue
+                    _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
                     self._reconcile_adopted_row(
                         boundary,
                         row,
@@ -1247,6 +1265,8 @@ class ProbeExecutor:
                         if venue_orders is None:
                             continue  # the read failed: unread, not unknowable, and every plan is refused
                         order = venue_orders.get(venue_order_id)
+                        if order is not None:
+                            _log_resting_outside_the_cache(_row_label(row, venue_order_id), order)
                     if order is None:
                         self._mark_unmatched(boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=False)
                         continue
@@ -2111,16 +2131,22 @@ class ProbeExecutor:
         one placed by hand before the start -- reaches the Cache only through startup reconciliation:
         the executions subscription carries `snap_orders:false`, so no WS event heals it afterwards.
         On the pinned wheel that reconciliation reads open orders unscoped and resolves both of
-        Kraken's pair spellings through the listing's altname index, and an open order it cannot
-        resolve fails the read and stops the node from starting. So the list below holds every order
-        resting at the start, named by its Kraken txid rather than this engine's id, and the cancel
-        goes out by that name. `filter_unclaimed_external_orders=False` in `cli/engine/node.py` is
-        what keeps such an order in the Cache at all.
+        Kraken's pair spellings through the listing's altname index, and an open order whose pair it
+        cannot resolve fails the read and stops the node from starting. So the list below holds the
+        orders resting at the start, named by their Kraken txid rather than this engine's id, and
+        the cancel goes out by that name. `filter_unclaimed_external_orders=False` in
+        `cli/engine/node.py` is what keeps such an order in the Cache at all.
 
-        The cancel is issued PER ORDER off that list, where flatten's is account-wide, so an order
-        the Cache does not hold is never requested. No retry of the trip reaches one, and neither
-        does a wider Cache query, which reads the same populated set: only a venue-side open-order
-        read at trip time would.
+        Not every resting order reaches the list, though: an order row the adapter cannot parse, or
+        whose report the library cannot build an order from, is dropped with a log line of the
+        library's own, and the node starts without it. The cancel is issued PER ORDER off the list,
+        where flatten's is account-wide, so such an order is never requested. No retry of the trip
+        reaches one, and neither does a wider Cache query, which reads the same populated set: only a
+        venue-side open-order read at trip time would. The startup pass's venue read parses the same
+        way, so of the two it can report only the second, and only to a row that recorded its txid:
+        `_log_resting_outside_the_cache` then logs it CRITICAL. A row whose order the adapter could
+        not parse finds nothing in that read and is marked `ambiguous` (`_mark_unmatched`), and an
+        order no row names is seen by nothing in this process.
 
         Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
         outcome, the rows keep their open states, and a fill racing a cancel still lands through the

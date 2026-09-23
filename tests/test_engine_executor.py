@@ -4539,6 +4539,42 @@ def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp
     assert len(venue.calls) == 1
 
 
+@pytest.mark.parametrize("finished", [False, True])
+@pytest.mark.parametrize(
+    "status, resting",
+    [
+        (OrderStatus.ACCEPTED, True),  # Kraken's `open`
+        (OrderStatus.INITIALIZED, True),  # Kraken's `pending`
+        (OrderStatus.CANCELED, False),
+    ],
+)
+def test_a_venue_report_still_resting_for_an_order_the_cache_lacks_is_logged_critical(tmp_path, finished, status, resting):
+    """The Cache holds no order under the row's ids, yet the venue reports one still resting: startup
+    reconciliation dropped it, and no cancel this process can issue reaches it. A report that ended
+    says nothing of the kind."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-dropped", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    if finished:
+        update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-dropped", state="canceled", add_filled_qty=0.0004)
+    venue = _VenueOrders(_report(_TXID, status, filled_qty="0.0004" if finished else "0"))
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+
+    assert [r.getMessage() for r in records] == (
+        [
+            f"ledgered order O-dropped (Kraken {_TXID}) rests at Kraken ({status.name}) but this process's Cache does not "
+            "hold it, so neither the startup pass nor a kill trip can cancel it -- cancel it by hand on Kraken's "
+            "open-orders page"
+        ]
+        if resting
+        else []
+    )
+    assert not _kill_file(tmp_path).exists()
+
+
 # --- read_venue_orders against a loopback venue: the wheel's own client, offline ----------------------
 
 
