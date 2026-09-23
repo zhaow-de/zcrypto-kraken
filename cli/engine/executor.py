@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model import ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue
+from nautilus_trader.model import ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue, VenueOrderId
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
@@ -343,9 +343,30 @@ def _ordered_qty(row: dict) -> float:
         return 0.0
 
 
-def _event_venue_order_id(event) -> str | None:
-    venue_order_id = getattr(event, "venue_order_id", None)
+def _venue_order_id_of(order_or_event) -> str | None:
+    venue_order_id = getattr(order_or_event, "venue_order_id", None)
     return None if venue_order_id is None else str(venue_order_id)
+
+
+def _row_venue_order_id(row: dict) -> str | None:
+    """The Kraken txid this row's order was accepted under, read off the row's own events: the
+    acceptance, or a fill where no acceptance reached the ledger.
+
+    None when no event carries one, and None when two disagree: a row naming two venue orders vouches
+    for neither, so it is handled as a row that names none."""
+    found = {
+        event["venue_order_id"]
+        for event in row.get("events") or ()
+        if isinstance(event, dict) and isinstance(event.get("venue_order_id"), str) and event["venue_order_id"]
+    }
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def _row_label(row: dict, venue_order_id: str | None) -> str:
+    """How a log line or a kill reason names a row's order: the id this engine keys it by, and the
+    txid an operator finds it under on Kraken's own pages when the row recorded one."""
+    own = row["client_order_id"]
+    return own if venue_order_id is None else f"{own} (Kraken {venue_order_id})"
 
 
 def _newest_venue_balances(journal_dir: Path) -> dict:
@@ -579,6 +600,9 @@ class ProbeExecutor:
         # adopted order is dropped by the client-order-id filter, which costs the row (D5) and
         # understates the remainder the next resubmission is sized against.
         self._attached: dict[str, tuple[datetime, dict]] = {}
+        # The same entries by the order's Kraken txid, for an event whose client order id is none of
+        # the keys above. A row's own id is the key of every ledger write, whichever map found it.
+        self._attached_by_venue: dict[str, tuple[datetime, dict]] = {}
         # Instrument ids this process has actually filled in, for the realized-PnL sum. Scoped to
         # them rather than to the whole basket so a leg this process never touched cannot drag a
         # previous run's closed positions into a number presented as this window's. Held as
@@ -768,7 +792,8 @@ class ProbeExecutor:
         filled, was canceled or expired while this process was down is reconciled as CLOSED and never
         appears in `orders_open` at all, so the pass cannot return early when nothing is resting -- an
         idle startup can still owe row repairs. It reaches those orders one at a time, by the id each
-        ROW already names.
+        ROW names and then by the txid the row recorded at acceptance. The same pair matches a
+        resting order to its row below: the Cache names a previous process's order by its txid.
         """
         try:
             resting = list(self._client.cache.orders_open(venue=_VENUE))
@@ -810,11 +835,21 @@ class ProbeExecutor:
         verdict = self._evaluate(now)
         cancel_all = verdict.level == GateLevel.NONE
 
+        # A resting order a previous process placed is named by its Kraken txid in the Cache, so the
+        # row it belongs to is found by the txid the row recorded when its own id misses.
+        rows_by_venue = {}
+        for entry in rows.values():
+            venue_order_id = _row_venue_order_id(entry[1])
+            if venue_order_id is not None:
+                rows_by_venue[venue_order_id] = entry
         for order in resting:
             client_order_id = str(getattr(order, "client_order_id", ""))
+            venue_order_id = _venue_order_id_of(order)
             attached = rows.get(client_order_id)
+            if attached is None and venue_order_id is not None:
+                attached = rows_by_venue.get(venue_order_id)
             if attached is not None:
-                self._attached[client_order_id] = attached
+                self._attach(attached, client_order_id, venue_order_id=venue_order_id)
             payload = attached[1].get("order") if attached is not None else None
             if isinstance(payload, dict) and payload.get("reduce_only") is True and not cancel_all:
                 logger.warning("adopted resting order %s is a ledgered reducer -- left resting and re-attached", client_order_id)
@@ -844,15 +879,17 @@ class ProbeExecutor:
         as the account gets older, and every one of those orders would be materialised to answer a
         question about at most a handful of ids.
 
-        A row whose order the cache holds no record of at all is left exactly as it is -- there is
-        no venue-truth source for it at this point in startup, and inventing one would be worse than
-        an open row a human can read. That miss is SILENT and it is not rare: on the legs
-        `_cancel_resting` names it is what happens to every row whose order the startup reconciliation
-        read cannot resolve, and the order's state does not narrow it -- still resting at the start, or
-        filled/canceled/expired while this process was down, the lookup answers `None` either way. So
-        such a row is neither repaired nor terminated here, and the order behind it is neither attached
-        nor cancelled by the pass above. `_on_external_event` says what becomes of its later fills;
-        `_reconcile_finished_rows` loses the withdrawal sweep to the same miss.
+        Each row asks for its order by the id this engine minted and, when that misses, by the txid
+        the row recorded at acceptance (`_cached_order`): after a restart the Cache holds every order
+        under its txid alone. A row whose order the Cache holds under neither is left exactly as it
+        is -- there is no venue-truth source for it at this point in startup, and inventing one would
+        be worse than an open row a human can read. That miss is SILENT and it is not rare. The
+        startup reconciliation reads open orders only, so an order that filled, was canceled or
+        expired while this process was down is in the Cache under no name; and a row that recorded
+        no txid cannot name the order that is still resting. Such a row is neither repaired nor
+        terminated here, and the order behind it is neither attached nor kept by the pass above.
+        `_on_external_event` says what becomes of its later fills; `_reconcile_finished_rows` loses
+        the withdrawal sweep to the same miss.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -869,20 +906,64 @@ class ProbeExecutor:
         try:
             for client_order_id, (boundary, row) in rows.items():
                 try:
-                    # `cache.order` is typed and refuses a plain str, and it serves closed orders as
-                    # readily as open ones -- which is the whole reason a row can be repaired at all
-                    # after the order it names filled or was canceled while this process was down.
-                    order = self._client.cache.order(ClientOrderId(client_order_id))
+                    venue_order_id = _row_venue_order_id(row)
+                    order = self._cached_order(row, venue_order_id)
                     if order is None:
                         continue
-                    self._reconcile_adopted_row(boundary, client_order_id, row, order)
+                    self._reconcile_adopted_row(
+                        boundary,
+                        row,
+                        float(order.filled_qty),
+                        order.status,
+                        order_id=str(order.client_order_id),
+                        venue_order_id=venue_order_id or _venue_order_id_of(order),
+                    )
                 except Exception:
                     logger.critical("adopted row %s could not be reconciled against the venue", client_order_id, exc_info=True)
         except Exception:
             logger.critical("the startup reconciliation sweep raised -- classifying resting orders anyway", exc_info=True)
 
-    def _reconcile_adopted_row(self, boundary: datetime, client_order_id: str, row: dict, order) -> None:
-        """One ledgered row against the venue truth the reconciled order carries.
+    def _cached_order(self, row: dict, venue_order_id: str | None):
+        """The Cache's order for `row`: by the id this engine minted, then by the txid the row
+        recorded. The second lookup is the one every order a restart reconciled needs, since the
+        adapter's reports carry no client order id and reconciliation names the order by its txid;
+        it goes through the Cache's own venue-order-id index rather than an assumption about how
+        reconciliation names what it adopts. `cache.order` serves closed orders as readily as open
+        ones, and both accessors are typed and refuse a plain str."""
+        cache = self._client.cache
+        order = cache.order(ClientOrderId(row["client_order_id"]))
+        if order is None and venue_order_id is not None:
+            client_order_id = cache.client_order_id(VenueOrderId(venue_order_id))
+            order = None if client_order_id is None else cache.order(client_order_id)
+        return order
+
+    def _attach(self, entry: tuple[datetime, dict], *client_order_ids: str, venue_order_id: str | None) -> None:
+        for client_order_id in client_order_ids:
+            self._attached[client_order_id] = entry
+        if venue_order_id is not None:
+            self._attached_by_venue[venue_order_id] = entry
+
+    def _attached_for(self, event) -> tuple[datetime, dict] | None:
+        """The row an order event belongs to: by the event's client order id, then by its venue order
+        id, which finds a row whose order the event names by an id no key in `_attached` holds."""
+        attached = self._attached.get(str(getattr(event, "client_order_id", "")))
+        venue_order_id = _venue_order_id_of(event)
+        if attached is None and venue_order_id is not None:
+            attached = self._attached_by_venue.get(venue_order_id)
+        return attached
+
+    def _reconcile_adopted_row(
+        self,
+        boundary: datetime,
+        row: dict,
+        venue_filled: float,
+        status,
+        *,
+        order_id: str | None,
+        venue_order_id: str | None,
+    ) -> None:
+        """One ledgered row against the venue truth its order carries: the quantity the venue says
+        filled, and the order's status.
 
         The comparison takes exactly one of four arms, on a dead-band of `_OVERFILL_TOLERANCE`: the
         ledgered figure is a SUM of per-fill floats and the venue's is one exactly-rounded
@@ -920,14 +1001,17 @@ class ProbeExecutor:
         in-process figures are mirrored either way, `_record_trip_fill`'s ruling: they track what
         the venue says filled, not what could be written down.
 
-        The row is written into `self._attached` here rather than left to the classification loop,
-        which only ever sees the RESTING orders: that is what puts a closed order's row in the map
-        too, so a late duplicate or racing event for it lands matched rather than counted as the
-        operator's hand settle. The mirror carries `state` as well as the quantity -- the external
-        path's once-only completion guard reads that state, and its overfill trip reads that
-        quantity.
+        The row is attached here rather than left to the classification loop, which only ever sees
+        the RESTING orders: that is what puts a closed order's row in the maps too, so a late
+        duplicate or racing event for it lands matched rather than counted as the operator's hand
+        settle. It is attached under the row's own id, the id the Cache names the order by, and the
+        txid, since an event names the order the Cache's way; every ledger write here keys on the
+        row's own id whichever of them found it. The mirror carries `state` as well as the quantity
+        -- the external path's once-only completion guard reads that state, and its overfill trip
+        reads that quantity.
         """
-        venue_filled = float(order.filled_qty)
+        client_order_id = row["client_order_id"]
+        label = _row_label(row, venue_order_id)
         ledgered = row["filled_qty"]
         delta = venue_filled - ledgered
         ordered = _ordered_qty(row)
@@ -937,25 +1021,25 @@ class ProbeExecutor:
             try:
                 update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload, add_filled_qty=delta)
             except Exception:
-                logger.critical("the repair for adopted order %s could not be journaled", client_order_id, exc_info=True)
+                logger.critical("the repair for adopted order %s could not be journaled", label, exc_info=True)
             row["filled_qty"] = ledgered + delta
             logger.warning(
                 "adopted order %s reconciled against the venue: %.10g filled there against the %.10g recorded here",
-                client_order_id,
+                label,
                 venue_filled,
                 ledgered,
             )
         total = row["filled_qty"]
         overshoots = repairs and total > ordered + _OVERFILL_TOLERANCE
         completes = repairs and not overshoots and row.get("state") != "filled" and total >= ordered - _OVERFILL_TOLERANCE
-        state = _ADOPTED_TERMINAL_STATES.get(order.status) or ("filled" if completes else None)
+        state = _ADOPTED_TERMINAL_STATES.get(status) or ("filled" if completes else None)
         if state is not None:
             try:
                 update_submitted_row(self._journal_dir, boundary, client_order_id, state=state)
             except Exception:
-                logger.critical("the startup state for adopted row %s could not be journaled", client_order_id, exc_info=True)
+                logger.critical("the startup state for adopted row %s could not be journaled", label, exc_info=True)
             row["state"] = state
-        self._attached[client_order_id] = (boundary, row)
+        self._attach((boundary, row), client_order_id, *([order_id] if order_id else []), venue_order_id=venue_order_id)
         if completes and state == "filled":
             _inc_order("filled")
         if delta < -_OVERFILL_TOLERANCE:
@@ -963,14 +1047,14 @@ class ProbeExecutor:
             # engine believes it reduced more than it did. Clamping it to zero would swallow the
             # signal, and it is the same class of divergence the per-order fill trip already guards.
             self._trip_kill(
-                f"adopted order {client_order_id} shows {venue_filled:.10g} filled at the venue, "
+                f"adopted order {label} shows {venue_filled:.10g} filled at the venue, "
                 f"less than the {ledgered:.10g} this engine has already recorded"
             )
         elif overshoots:
             # The repair is journaled above, before this: the fill happened at the venue, and
             # no-fill-without-a-record has no divergence exemption.
             self._trip_kill(
-                f"adopted order {client_order_id} shows {total:.10g} filled at the venue, "
+                f"adopted order {label} shows {total:.10g} filled at the venue, "
                 f"more than the {ordered:.10g} the ledger says it was submitted for"
             )
 
@@ -990,10 +1074,10 @@ class ProbeExecutor:
         venue order whose own `filled_qty` has come DOWN -- and the ledger row beside it still
         carries the quantity this engine recorded, published and sized against.
 
-        This sweep is blind wherever `_reconcile_adopted_rows` is, and for the same reason: a row
-        this engine closed names an order the read cannot resolve on the legs `_cancel_resting`
-        names, so the lookup below answers `None` and the withdrawal this exists to latch on is
-        never compared there.
+        This sweep asks the Cache the way `_reconcile_adopted_rows` does, and after a restart the
+        Cache holds no closed order under any name -- the startup reconciliation reads open orders
+        only -- so the lookup below answers `None` and the withdrawal this exists to latch on is
+        never compared.
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
@@ -1002,16 +1086,17 @@ class ProbeExecutor:
         try:
             for client_order_id, (boundary, row) in rows.items():
                 try:
-                    order = self._client.cache.order(ClientOrderId(client_order_id))
+                    venue_order_id = _row_venue_order_id(row)
+                    order = self._cached_order(row, venue_order_id)
                     if order is None:
                         continue  # no venue-truth source for it -- the same answer the sweep above gives
-                    self._reconcile_finished_row(boundary, client_order_id, row, order)
+                    self._reconcile_finished_row(boundary, row, float(order.filled_qty), _row_label(row, venue_order_id))
                 except Exception:
                     logger.critical("finished row %s could not be reconciled against the venue", client_order_id, exc_info=True)
         except Exception:
             logger.critical("the finished-row sweep raised -- classifying resting orders anyway", exc_info=True)
 
-    def _reconcile_finished_row(self, boundary: datetime, client_order_id: str, row: dict, order) -> None:
+    def _reconcile_finished_row(self, boundary: datetime, row: dict, venue_filled: float, label: str) -> None:
         """One closed row against the venue's own figure: does the venue still report the quantity
         this row was closed on?
 
@@ -1032,7 +1117,6 @@ class ProbeExecutor:
         this process decides about trading.
         """
         ledgered = row["filled_qty"]
-        venue_filled = float(order.filled_qty)
         if venue_filled >= ledgered - _OVERFILL_TOLERANCE:
             return
         payload = {
@@ -1042,11 +1126,11 @@ class ProbeExecutor:
             "venue_filled_qty": venue_filled,
         }
         try:
-            update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload)
+            update_submitted_row(self._journal_dir, boundary, row["client_order_id"], event=payload)
         except Exception:
-            logger.critical("the withdrawal on finished row %s could not be journaled", client_order_id, exc_info=True)
+            logger.critical("the withdrawal on finished row %s could not be journaled", label, exc_info=True)
         self._trip_kill(
-            f"order {client_order_id} shows {venue_filled:.10g} filled at the venue, less than the "
+            f"order {label} shows {venue_filled:.10g} filled at the venue, less than the "
             f"{ledgered:.10g} this engine recorded and closed it on"
         )
 
@@ -1914,7 +1998,7 @@ class ProbeExecutor:
         operator to the ladder's remainder arithmetic instead.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
-        attached = self._attached.get(client_order_id)
+        attached = self._attached_for(event)
         if attached is None:
             # Says "no open record", not "never submitted": a terminal row, or one older than the
             # ledger scan window, is not in the attachment map either, and firing is still right
@@ -1925,14 +2009,15 @@ class ProbeExecutor:
         qty = float(event.last_qty)
         ordered = _ordered_qty(row)
         if row["filled_qty"] + qty > ordered + _OVERFILL_TOLERANCE:
-            self._record_trip_fill(boundary, client_order_id, row, event, qty)
+            self._record_trip_fill(boundary, row, event, qty)
             self._trip_kill(
-                f"order {client_order_id} has now filled {row['filled_qty']:.10g} of the {ordered:.10g} it was submitted for"
+                f"order {_row_label(row, _row_venue_order_id(row))} has now filled {row['filled_qty']:.10g} "
+                f"of the {ordered:.10g} it was submitted for"
             )
             return True
         active = self._active
         if active is not None and self._claims(row, active) and active.filled + qty > active.target_qty + _OVERFILL_TOLERANCE:
-            self._record_trip_fill(boundary, client_order_id, row, event, qty)
+            self._record_trip_fill(boundary, row, event, qty)
             self._trip_kill(
                 f"intent {active.index} has now filled {active.filled:.10g} across its orders, "
                 f"more than the {active.target_qty:.10g} it asked for"
@@ -1940,13 +2025,14 @@ class ProbeExecutor:
             return True
         return False
 
-    def _record_trip_fill(self, boundary: datetime, client_order_id: str, row: dict, event, qty: float) -> None:
+    def _record_trip_fill(self, boundary: datetime, row: dict, event, qty: float) -> None:
         """The fill that is about to trip the switch still gets its forensic row. It HAPPENED at the
         venue, and the no-fill-without-a-record invariant has no divergence exemption -- the operator
         reading the kill reason needs the fill itself sitting next to it. Wrapped, because a ledger
         failure may never cost the trip; the in-process quantities are credited either way, since
         they track what filled rather than what could be written down.
         """
+        client_order_id = row["client_order_id"]
         try:
             update_submitted_row(self._journal_dir, boundary, client_order_id, event=self._fill_payload(event), add_filled_qty=qty)
         except Exception:
@@ -2037,7 +2123,7 @@ class ProbeExecutor:
         active = self._active
         client_order_id = str(getattr(event, "client_order_id", ""))
         if active is None or active.client_order_id is None or client_order_id != active.client_order_id:
-            self._on_detached_event(client_order_id, event)
+            self._on_detached_event(event)
             return
 
         name = type(event).__name__
@@ -2299,13 +2385,17 @@ class ProbeExecutor:
         Unmatched (the operator's hand settle, any genuinely external act): counted, logged, and
         NOTHING else -- it must never reach `_trip_on_fill`, a row write, or a cancel. That filter
         is what keeps the unknown-order trip scoped while this second stream exists at all.
-        The set is wider than "no ledgered row", and the difference is the hole `_cancel_resting`
-        names: on those legs the pass could not see the order, so its LEDGERED row was never
-        attached, and a fill on it lands here -- no row write, no counters, no overfill trip -- with
-        nothing in the log line saying the ledger knew the order.
+        The set is wider than "no ledgered row" by the rows the startup pass could not match to an
+        order: a row that recorded no txid names an order the Cache holds only under its txid, so
+        it was never attached, and a fill on it lands here -- no row write, no counters, no overfill
+        trip -- with nothing in the log line saying the ledger knew the order.
+
+        An event names its order the Cache's way, which after a restart is the txid, while the
+        ledger keys the row by the id this engine minted: `_attached_for` finds the row by either,
+        and every write here names the row by its own id.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
-        attached = self._attached.get(client_order_id)
+        attached = self._attached_for(event)
         name = type(event).__name__
         if attached is None:
             _inc_external("unmatched")
@@ -2320,7 +2410,7 @@ class ProbeExecutor:
         if name == "OrderFilled":
             if self._trip_on_fill(event):
                 return
-            self._on_detached_event(client_order_id, event)
+            self._on_detached_event(event)
             # `_on_detached_event` mirrored the fill into the attached row, so this reads the
             # post-fill total. The unpack stays inside each branch deliberately: the early return
             # above is meant to be the ONLY thing between an unmatched event and this pipeline, and
@@ -2331,7 +2421,7 @@ class ProbeExecutor:
             # A row whose ledgered qty is unreadable reads 0.0 and never arrives here at all --
             # its first fill trips there too.
             if row.get("state") != "filled" and row["filled_qty"] >= _ordered_qty(row) - _OVERFILL_TOLERANCE:
-                update_submitted_row(self._journal_dir, boundary, client_order_id, state="filled")
+                update_submitted_row(self._journal_dir, boundary, row["client_order_id"], state="filled")
                 row["state"] = "filled"
                 _inc_order("filled")
             return
@@ -2346,7 +2436,7 @@ class ProbeExecutor:
             # completed it happened and `_inc_order("filled")` already counted them, and the venue
             # can legitimately cancel the REMAINDER of an order whose ledgered quantity is full.
             terminal_state = None
-        update_submitted_row(self._journal_dir, boundary, client_order_id, state=terminal_state, event=payload)
+        update_submitted_row(self._journal_dir, boundary, row["client_order_id"], state=terminal_state, event=payload)
         if terminal_state is not None:
             row["state"] = terminal_state  # the mirror the completion guard and D7 both read
 
@@ -2448,10 +2538,10 @@ class ProbeExecutor:
             "fee_currency": None if commission is None else commission.currency.code,
             "liquidity": _liquidity(event.liquidity_side),
             "trade_id": str(event.trade_id),
-            "venue_order_id": _event_venue_order_id(event),
+            "venue_order_id": _venue_order_id_of(event),
         }
 
-    def _on_detached_event(self, client_order_id: str, event) -> None:
+    def _on_detached_event(self, event) -> None:
         """An event for an order that is not the one in flight: an order this process superseded, one
         it already finished with, or one the startup pass adopted from a previous process.
 
@@ -2472,8 +2562,11 @@ class ProbeExecutor:
         with a row adopted from that window. The boundary is that `_attached` outlives the window:
         a process still running two days past an adopted row's boundary could accept a plan reusing
         its plan_id, and that fill would then be credited to the running intent.
+
+        The row is found by `_attached_for` and written by its own id: an adopted order's event names
+        it by the txid, which is no key the ledger holds.
         """
-        attached = self._attached.get(client_order_id)
+        attached = self._attached_for(event)
         if attached is None:
             return  # an order this process never ledgered -- nothing to append to
         boundary, row = attached
@@ -2484,9 +2577,11 @@ class ProbeExecutor:
             # record `_on_order_event` writes for the one in flight.
             payload["venue_order_id"] = str(event.venue_order_id)
         qty = float(event.last_qty) if is_fill else 0.0
-        update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload, add_filled_qty=qty)
+        update_submitted_row(self._journal_dir, boundary, row["client_order_id"], event=payload, add_filled_qty=qty)
         if qty:
-            self._mirror_row_fill(client_order_id, qty)
+            # The mirror `_mirror_row_fill` makes, on the row already in hand: the event's own id
+            # may be no key of `_attached`.
+            row["filled_qty"] = row["filled_qty"] + qty
             active = self._active
             if active is not None and self._claims(row, active):
                 active.filled += qty
