@@ -257,7 +257,7 @@ The counts are totals for the account, for the reason §5.1 gives: the fresh nod
 The buckets go by the venue order id (the txid), because that is the id that comes back. The adapter sends a probe id over Kraken's 18 characters as `O` plus its last 17, so the `-901-P6V-` infix does reach the venue, but the adapter's order read carries no client order id back, and the fresh node's reconciliation names each order it adopts by its txid. An earlier run's order is therefore recognised by the txid its `evidence-<stamp>.json` in `--evidence-dir` records, and a run whose evidence file was never written (a `kill -9`, or another `--evidence-dir`) leaves an order that nothing names.
 
 - `ours` non-zero ⇒ verdict FAIL: an order this invocation submitted, or one whose txid an evidence file in `--evidence-dir` records, is still open. Go to §8 now, and expect exit 3 with the cancel-by-hand banner. FAIL and the banner read the same cache at different moments, so an id can move between them while the node still holds its clients open after the stop.
-- `unclaimed` non-zero ⇒ verdict FAIL and exit 3: an open order on `--pair` that neither an evidence file nor `--known-order` names. A probe leftover with no evidence file reads exactly like this. Cancel it at Kraken, or, if it is yours, re-run naming it with `--known-order <txid>`.
+- `unclaimed` non-zero ⇒ verdict FAIL and exit 3: an open order on `--pair` that neither an evidence file nor `--known-order` names. A probe leftover with no evidence file reads exactly like this. Cancel it at Kraken, or, if you placed it on purpose and mean it to rest, re-run naming it with `--known-order <txid>`.
 - `other` non-zero ⇒ `REVIEW`: an open order that nothing names, on a pair other than this invocation's `--pair`. It is a probe leftover when an earlier run on another `--pair` left no evidence file, which is why §5.4 and §8 run with the `--pair` of §5.2–5.3. Adjudicate before signing off, or name it with `--known-order`.
 - `known` counts the orders you named; a named txid that is not open is listed after the counts and makes the row `REVIEW`.
 
@@ -333,7 +333,7 @@ The memo must state the exact version the verification now binds to, and every o
 
 ### 8. If something is left resting
 
-The harness exits 3 and prints, between two 78-character `!` rules, every client order id / venue order id it believes is still working, and under a second heading each open order on `--pair` that nothing claims (§5.4's `unclaimed`). An unclaimed order is cancelled by hand like the rest, unless it is yours: then re-run naming it with `--known-order <txid>`.
+The harness exits 3 and prints, between two 78-character `!` rules, every client order id / venue order id it believes is still working, and under a second heading each open order on `--pair` that nothing claims (§5.4's `unclaimed`). An unclaimed order is cancelled by hand like the rest, unless you placed it on purpose and mean it to rest: then re-run naming it with `--known-order <txid>`.
 
 1. Kraken → Trade → Open Orders. Cancel each listed order by hand. Do not leave the terminal until they are gone.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.
