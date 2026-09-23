@@ -201,9 +201,8 @@ CLOSED = "Refine-Round-Closed: 2026-09-23T00:00:00Z"
 
 
 def _unmoved_repo(root: pathlib.Path, extras: str, *, merge_above: bool = False) -> tuple[str, str]:
-    """The read on a base that has not moved, with `extras` above it in order -- `r` the Step 4 row, `e` a refine
-    round's empty closing commit, `x` an empty commit with no closing trailer. `merge_above` tops the head with a merge whose tree adds a file the read never saw: `git log --no-merges`
-    drops it from the message list, so only a tree check can refuse it."""
+    """The read on a base that has not moved, with `extras` above it in order; `merge_above` tops the head with a merge,
+    which `git log --no-merges` drops from the message list, so only a tree check can refuse the file it adds."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
     (root / gate.INDEX).parent.mkdir(parents=True, exist_ok=True)
@@ -263,14 +262,14 @@ def test_the_arm_judges_a_row_commit_above_the_read_by_the_tip_under_it(tmp_path
 
 
 @pytest.mark.parametrize("shape", list(_SHAPES))
-def test_the_arm_admits_one_commit_above_the_read_that_changes_no_file(tmp_path, shape):
+def test_the_arm_admits_a_refine_closing_commit_above_the_read(tmp_path, shape):
     read, head = _rebased_repo(tmp_path / shape, empty_above=True, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
 
 
 @pytest.mark.parametrize("empty_first", [False, True], ids=["row-then-empty", "empty-then-row"])
 @pytest.mark.parametrize("shape", list(_SHAPES))
-def test_the_arm_admits_a_row_and_a_commit_that_changes_no_file_together(tmp_path, shape, empty_first):
+def test_the_arm_admits_a_row_and_a_refine_closing_commit_together(tmp_path, shape, empty_first):
     read, head = _rebased_repo(tmp_path / shape, row_above=True, empty_above=True, empty_first=empty_first, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
 
@@ -316,7 +315,7 @@ def test_the_arm_refuses_a_second_row_above_the_read(tmp_path):
     assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
 
 
-def test_the_arm_refuses_a_second_commit_above_the_read_that_changes_no_file(tmp_path):
+def test_the_arm_refuses_a_second_refine_closing_commit_above_the_read(tmp_path):
     read, head = _rebased_repo(tmp_path / "two-empty", two_empty_above=True)
     answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "two-empty")
     assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer

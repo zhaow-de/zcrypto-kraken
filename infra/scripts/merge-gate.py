@@ -496,14 +496,13 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
     return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
 
 
-# The refine skill requires a pre-review of its closing commit's message before the undraft, so that is the one empty
-# commit whose message has a read owed; any other empty commit above the read carries a message nothing read.
+# The refine skill requires a pre-review of its closing commit's message before the undraft, so it is the one empty commit
+# above the read whose message has a read owed.
 REFINE_CLOSED = re.compile(r"^Refine-Round-Closed:", re.M)
 
 
 def _extra_kind(cwd: pathlib.Path | None, sha: str) -> str | None:
-    """A commit above the read that cannot move what it graded: `open-pr`'s Step 4 change-index row, or a refine
-    round's closing commit, which changes no file and carries the `Refine-Round-Closed:` trailer."""
+    """A commit above the read that cannot move what it graded: `open-pr`'s Step 4 change-index row, or a refine round's closing commit."""
     if len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) != 2:
         return None
     touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
@@ -543,9 +542,7 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
                 "takes `pre-review` over the amended commits and `re-review` over `<read>..<head>`"
             )
         if old_base == new_base:
-            # With a row set aside, the tree below it must be the read's and the tree above it the row's: the row's own
-            # file is the one difference allowed, and a merge above it -- which `--no-merges` hides from the message
-            # list -- is not.
+            # The row's own file is the one difference allowed: the tree under the row must be the read's, and the head's the row's.
             for a, b in ((read, f"{row}~1"), (row, head)) if row else ((read, head),):
                 same = subprocess.run(["git", "diff", "--quiet", a, b], capture_output=True, text=True, timeout=120, cwd=cwd)
                 if same.returncode == 1:
