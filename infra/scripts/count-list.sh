@@ -76,21 +76,21 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
-# This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: three reads found three
-# divergences in the jq that tried to, each in a different direction, and a counter that disagrees with the gate
-# about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
-# journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
-# the change-index-row exception all come from there, and a change to the gate moves this count by construction.
-# The window starts where the read arm last changed what it admits, which `git log -S head_is_the_read
-# --format=%cI -- infra/scripts/merge-gate.py` names: a PR merged before that was judged by the arms of its
-# day and breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network,
-# for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs cannot run,
-# so a row failing ONLY on a sha mismatch is counted rather than excused.
+# This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: a counter that disagrees with the gate
+# about the same rule measures nothing, and a change to the gate moves this count by construction. A gate change
+# moves this window to its own instant only when it counts a PR merged before it: that PR was judged by the gate of
+# its day and breaks no rule.
 READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
 # A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
 # the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
 # empty set in the morning. `tests/test_count_list.py` refuses any RULE_SINCE that is not an instant.
 PROSE_ONLY_RULE_SINCE="2026-09-13T00:00:00Z"
+# One second past 095f96016 (2026-09-21T17:42:22Z), excusing it and 07aeec2f2 (17:42:01Z) and nothing else: the
+# 00117 spec and plan docs commits of PR #584, merged and unrewritable, whose "KILLED with control proven" sums up
+# verdicts their sibling fix(engine) commits earned through the script. Unexcused they pin this count above 0 for
+# good, and a count that cannot read 0 is not a detector. The window is the LATER of this and the clause's landing,
+# so an earlier value cannot widen the count past the rule.
+PROBE_VERDICT_RULE_SINCE="2026-09-21T17:42:23Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
   if [ -n "${COUNT_LIST_PRS_SNAPSHOT:-}" ]; then prs="$(cat "$COUNT_LIST_PRS_SNAPSHOT")" || return 2
@@ -278,12 +278,14 @@ c_prose_only_commits_without_the_prover() {
 # Anchor and arms read `develop HEAD`: develop's history plus the branch being read, so a violation is caught
 # where it can still be reworded. A window anchored on one ref and measured on another can miss the set entirely.
 c_probe_verdicts_without_the_script() {
-  local since
-  since="$(git log develop HEAD --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
-  if [ -z "$since" ]; then
+  local landed since
+  landed="$(git log develop HEAD --reverse --format=%cI -S'probe-verdicts-without-the-script' -- CLAUDE.md | head -1)"
+  if [ -z "$landed" ]; then
     echo "count-list: no commit adds the probe-block clause to CLAUDE.md, so this count has no window" >&2
     return 2
   fi
+  since="$landed"
+  [[ "$PROBE_VERDICT_RULE_SINCE" > "$since" ]] && since="$PROBE_VERDICT_RULE_SINCE"
   comm -23 <(git log develop HEAD --since="$since" --grep='control proven' --grep=KILLED --grep=SURVIVED --format=%h | sort) \
            <(git log develop HEAD --since="$since" --grep=mutate-probe --format=%h | sort) | wc -l
 }

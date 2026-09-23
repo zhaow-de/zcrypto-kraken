@@ -64,11 +64,14 @@ const VERDICT = {
 }
 
 // --- prompts -----------------------------------------------------------------------------------
+// One report per lens per read, as pre-review's and re-review's: a fixed path lets a branch's second review overwrite its first.
+const lensPath = (name) => `${reportDir}/${name}-${tip}.md`
+
 const readerPrompt = (lens) => `You are one of ${lenses.length} independent readers, a different agent from the author, of \`git log ${range}\` at tip \`${tip}\` in ${repo}. ${RULES} ${CHECKOUT(`read-${lens.name}`)} ${SCOPE} Grading: ${GRADING}
 
 YOUR LENS — ${lens.name}: ${lens.brief} The other lenses are ${lenses.filter((o) => o.name !== lens.name).map((o) => o.name).join(', ') || 'none'}; leave their ground to them. The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
-Ask of every surface the range adds or keeps whether it should exist at all, before asking whether it is true: a surface that should not exist outranks every truth finding about it. Read \`git diff ${range}\` first, then each commit message. Write a Markdown report to ${reportDir}/${lens.name}.md with \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
+Ask of every surface the range adds or keeps whether it should exist at all, before asking whether it is true: a surface that should not exist outranks every truth finding about it. Read \`git diff ${range}\` first, then each commit message. Write a Markdown report to ${lensPath(lens.name)} with \`## Verdict\`, \`## Findings\` (one \`### [Severity] path:line — claim\` heading per finding with evidence and a \`Consequence:\` line) and \`## Executed\`, then return the structured output with the same findings; the report and the structure must agree.`
 
 const refutePrompt = (f) => `You are the skeptic. ${RULES} ${CHECKOUT(`refute-${f.id}`)} ${SCOPE}
 
@@ -88,7 +91,7 @@ const LEDGER_ENTRY = {
   required: ['kind', 'range', 'tip', 'ts'],
 }
 const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
-const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
+const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' }, note: { type: 'string', description: 'only when a report file had to be created rather than appended to' } }, required: ['appended'] }
 const ledgerPath = `${reportDir}/ledger.jsonl`
 phase('Ledger')
 const ledger = await agent(
@@ -148,18 +151,29 @@ const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important / ${count('Minor', standing)} Minor standing, ${graded.length - standing.length} refuted`)
 
 // --- Record -------------------------------------------------------------------------------------
+// The lenses write their reports before any skeptic runs, and a skeptic writes nothing to the repo, so without this block
+// each lens report heads every refuted finding by its first severity, and its next reader reports one this read answered.
 phase('Record')
+const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 300)
+const refutation = graded.length
+  ? `## Refutation\n\nWritten after the skeptics ran, over the union of every lens; a row here outranks the severity in a heading above.\n\n| # | severity | site | lenses | verdict |\n| --- | --- | --- | --- | --- |\n${graded
+      .map((f) => `| ${f.id} | ${f.severity} | \`${f.path}:${f.line}\` | ${f.lenses.join(', ')} | ${f.severity === 'Minor' ? 'no skeptic: a Minor is reported, never refuted' : f.refuted ? `REFUTED — ${oneLine(f.skeptic && f.skeptic.reason)}` : `stands — ${oneLine(f.skeptic && f.skeptic.reason) || 'the skeptic could not refute it'}`} |`)
+      .join('\n')}`
+  : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
+const lensReports = live.map((r) => lensPath(r.lens))
 const recorded = await agent(
-  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  `Bookkeeping only. (1) Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. (2) Append the block below to each of ${lensReports.join(', ')}, preceded by a blank line, byte for byte as given — do not reword it, re-sort it, or renumber it, and do not touch anything already in those files; a file that does not exist is created holding the block alone, and \`note\` names it. Return appended true once the ledger line and every block are on disk.\n\nThe block:\n\n${refutation}\n\nNo other file, no other command.`,
   { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
 )
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this review — a re-review of this branch refuses until a review row exists; append it by hand`)
+if (!recorded || !recorded.appended) log(`${ledgerPath} or a lens report did not take this review's rows — a re-review of this branch refuses until a review row exists, and a lens report may still head a refuted finding by its first severity; write them by hand`)
+if (recorded && recorded.note) log(`record: ${recorded.note}`)
+for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block went to the path this workflow names`)
 
 return {
   range,
   tip,
   recorded: Boolean(recorded && recorded.appended),
-  lenses: live.map((r) => ({ name: r.lens, verdict: r.verdict, reportPath: r.reportPath, executed: r.executed })),
+  lenses: live.map((r) => ({ name: r.lens, verdict: r.verdict, reportPath: lensPath(r.lens), executed: r.executed })),
   droppedLenses: dropped,
   counts: { Critical: count('Critical', standing), Important: count('Important', standing), Minor: count('Minor', standing), refuted: graded.length - standing.length },
   findings: graded,

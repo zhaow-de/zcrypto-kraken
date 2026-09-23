@@ -24,6 +24,9 @@ for (const p of prior) {
 if (left && !/#\d+/.test(left)) throw new Error('left names each consciously-left prior by id (#<id>) with its reason')
 if (drive && drive.length > 400) throw new Error(`drive is ${drive.length} characters, at most 400: one sentence naming what the standing brief does not cover — cut every clause that names a figure, a path or a command, the brief re-measures those itself`)
 
+// One report per read, as pre-review's: a fixed path lets a branch's second re-review overwrite its first.
+const reportPath = `${reportDir}/re-review-${tip}.md`
+
 // --- shared with pre-review.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
 const GRADING = `Critical = a defect that reaches the operator as a traceback, silently degrades a report, refuses something legitimate, instructs the operator to destroy or invalidate data, or changes live-trade-path behaviour no test drives; a count that reads 0 over a set that misses the violation's usual shape; a guard that passes when it should refuse. Important = a claim a commit message makes that does not reproduce with the command it quotes, a probe verdict earned by something other than the guard it names, a number typed rather than pasted from the run it describes, a test that can pass vacuously, prose that, acted on as written, breaks something no test stops, or a change that alters behaviour or a guard's reach whatever its size. Minor = everything else in prose: wrong, dead, self-contradictory, naming a site a reader cannot find, or a comment or docstring a reader would not act on.`
 const SCOPE = `Re-run a probe only through the case its message records (a \`-k\` case), never a whole test file; re-derive a number only where the range's correctness rests on it; never run the full suite, prose-chars or the whole count list — they are CI's and the author's. About 40 tool calls: when the range is graded, stop and write.`
@@ -81,7 +84,7 @@ Minors the prior read reported, fixed or left with their reasons — context, no
 
 The pre-review has already graded the range's prose and re-run its message claims: grade prose only where acting on it as written breaks something, and re-measure a claim only where the range's correctness rests on it.${drive ? ` Beyond the standing brief, drive this: ${drive}` : ''}
 
-Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of, both ways — the text (sibling spellings, other carriers of the same claim, other branches of the same condition) and the space (the categories the fixed code's input or state ranges over, judged against the invariant the fix restores) — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-review, not a row for the next read. Write a Markdown report to ${reportDir}/re-review.md with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
+Read \`git diff ${range}\` first, then each commit message. Then walk every prior finding by id: closed (name the hunk or commit, AND name the class the finding is an instance of, both ways — the text (sibling spellings, other carriers of the same claim, other branches of the same condition) and the space (the categories the fixed code's input or state ranges over, judged against the invariant the fix restores) — and say what you checked beyond the instance the finding named; where the finding has no class beyond itself say that instead; a hunk that answers the finding as written and leaves a sibling standing has not closed it), left (only when the author's words above name it by id AND the reason holds against the tree), or open — a prior finding neither closed nor named as left is open; report it in the prior table only, since the workflow carries an open one forward itself. Grade anything else in the diff you would grade as a new finding; a Minor you list is context for the author's next pre-review, not a row for the next read. Write a Markdown report to ${reportPath} with \`## Verdict\`, \`## Prior findings\` (a table), \`## Findings\` and \`## Executed\`, then return the structured output; the report and the structure must agree.`
 
 const refutePrompt = (f) => `You are the skeptic. ${RULES} ${CHECKOUT(`refute-${f.id}`)} ${SCOPE}
 
@@ -101,7 +104,7 @@ const LEDGER_ENTRY = {
   required: ['kind', 'range', 'tip', 'ts'],
 }
 const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
-const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
+const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' }, note: { type: 'string', description: 'only when the report file had to be created rather than appended to' } }, required: ['appended'] }
 const ledgerPath = `${reportDir}/ledger.jsonl`
 phase('Ledger')
 const ledger = await agent(
@@ -155,19 +158,29 @@ const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
 // --- Record -------------------------------------------------------------------------------------
+// The reader writes its report before any skeptic runs, and a skeptic writes nothing to the repo, so without this block
+// the report at reportPath heads every refuted finding by its first severity, and its next reader reports one this read answered.
 phase('Record')
+const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 300)
+const refutation = graded.length
+  ? `## Refutation\n\nWritten after the skeptics ran; a row here outranks the severity in the heading above.\n\n| # | severity | site | verdict |\n| --- | --- | --- | --- |\n${graded
+      .map((f) => `| ${f.id} | ${f.severity} | \`${f.path}:${f.line}\` | ${f.severity === 'Minor' ? 'no skeptic: a Minor is reported, never refuted' : f.refuted ? `REFUTED — ${oneLine(f.skeptic && f.skeptic.reason)}` : `stands — ${oneLine(f.skeptic && f.skeptic.reason) || 'the skeptic could not refute it'}`} |`)
+      .join('\n')}`
+  : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
 const recorded = await agent(
-  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"re-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
+  `Bookkeeping only, two files. (1) Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"re-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. (2) Append the block below to ${reportPath}, preceded by a blank line, byte for byte as given — do not reword it, re-sort it, or renumber it, and do not touch anything already in that file; if that file does not exist, create it holding the block alone and say so in \`note\`. Return appended true once BOTH are on disk.\n\nThe block:\n\n${refutation}\n\nNo other file, no other command.`,
   { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
 )
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this re-review — the ledger will not show ${tip} was re-reviewed; append the row by hand`)
+if (!recorded || !recorded.appended) log(`${ledgerPath} or ${reportPath} did not take this re-review's rows — the ledger may not show ${tip} was re-reviewed and the report may still head a refuted finding by its first severity; write them by hand`)
+if (recorded && recorded.note) log(`record: ${recorded.note}`)
+if (report.reportPath && report.reportPath !== reportPath) log(`the reader says it wrote ${report.reportPath}, not ${reportPath}: the refutation block went to the path this workflow names`)
 
 return {
   range,
   tip,
   recorded: Boolean(recorded && recorded.appended),
   verdict: report.verdict,
-  reportPath: report.reportPath,
+  reportPath,
   executed: report.executed,
   prior: report.prior,
   unaccounted,

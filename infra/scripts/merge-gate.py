@@ -496,16 +496,27 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
     return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
 
 
-def _row_commit_alone(cwd: pathlib.Path | None, sha: str) -> bool:
+# The refine skill requires a pre-review of its closing commit's message before the undraft, so it is the one empty commit
+# above the read whose message has a read owed.
+REFINE_CLOSED = re.compile(r"^Refine-Round-Closed:", re.M)
+
+
+def _extra_kind(cwd: pathlib.Path | None, sha: str) -> str | None:
+    """A commit above the read that cannot move what it graded: `open-pr`'s Step 4 change-index row, or a refine round's closing commit."""
+    if len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) != 2:
+        return None
     touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
-    return touched == [INDEX] and len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) == 2
+    if touched == [INDEX]:
+        return "row"
+    if touched == [] and REFINE_CLOSED.search(_git(cwd, "log", "-1", "--format=%B", sha)):
+        return "empty"
+    return None
 
 
 def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None = None) -> bool | str:
-    """True when `head` carries the read's own commits and nothing more, by the checks below — one change-index row commit
-    among them set aside, the Step 4 row `open-pr` pushes after the read — on the base they were
-    read on, or on one that moved under them; otherwise a string naming the check that failed, or what the arm could
-    not compare."""
+    """True when `head` carries the read's own commits and nothing more, by the checks below — at most one commit of
+    each kind `_extra_kind` names set aside — on the base they were read on, or on one that moved under them; otherwise
+    a string naming the check that failed, or what the arm could not compare."""
     try:
         try:
             read = _git(cwd, "rev-parse", "--verify", "--quiet", f"{read}^{{commit}}")
@@ -521,21 +532,24 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
         cells = _git(cwd, "log", "--no-merges", "--format=%H%x00%B%x00", f"{new_base}..{head}").split("\x00")
         head_msgs = [(cells[i].strip(), cells[i + 1].strip()) for i in range(0, len(cells) - 1, 2)]
         extra = [sha for sha, msg in head_msgs if msg not in read_msgs]
-        row = extra[0] if len(extra) == 1 and _row_commit_alone(cwd, extra[0]) else None
-        if [msg for sha, msg in head_msgs if sha != row] != read_msgs:
+        kinds = [_extra_kind(cwd, sha) for sha in extra] if len(extra) <= 2 else [None]
+        admitted = set(extra) if None not in kinds and len(set(kinds)) == len(kinds) else set()
+        # The empty commit moves no tree, so only the row needs the tree checks below to look past it.
+        row = next((sha for sha, kind in zip(extra, kinds) if kind == "row"), None) if admitted else None
+        if [msg for sha, msg in head_msgs if sha not in admitted] != read_msgs:
             return (
                 "the messages from the base to the head are not the read's, a commit reworded, added or dropped: a reword "
                 "takes `pre-review` over the amended commits and `re-review` over `<read>..<head>`"
             )
         if old_base == new_base:
-            same = subprocess.run(
-                ["git", "diff", "--quiet", read, f"{row}~1" if row else head], capture_output=True, text=True, timeout=120, cwd=cwd
-            )
-            if same.returncode == 0:
-                return True  # re-dated, re-signed or re-created on the same base: the tree and the messages the read graded
-            if same.returncode == 1:
-                return "the head's tree is not the read's"
-            return f"`git diff` exited {same.returncode}: {same.stderr.strip() or 'no stderr'}"
+            # The row's own file is the one difference allowed: the tree under the row must be the read's, and the head's the row's.
+            for a, b in ((read, f"{row}~1"), (row, head)) if row else ((read, head),):
+                same = subprocess.run(["git", "diff", "--quiet", a, b], capture_output=True, text=True, timeout=120, cwd=cwd)
+                if same.returncode == 1:
+                    return "the head's tree is not the read's"
+                if same.returncode != 0:
+                    return f"`git diff` exited {same.returncode}: {same.stderr.strip() or 'no stderr'}"
+            return True  # re-dated, re-signed or re-created on the same base: the tree and the messages the read graded
         merged = subprocess.run(
             ["git", "merge-tree", "--write-tree", f"--merge-base={old_base}", read, new_base],
             capture_output=True,

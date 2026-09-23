@@ -72,9 +72,13 @@ def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
     assert re.fullmatch(
         r'develop HEAD --since="\$since" --grep=\'control proven\' --grep=KILLED --grep=SURVIVED ', left.group("opts")
     ), left.group("opts")
-    assert re.search(r'^\s*since="\$\(git log develop HEAD --reverse ', fn.group(0), re.M), (
+    assert re.search(r'^\s*landed="\$\(git log develop HEAD --reverse ', fn.group(0), re.M), (
         "the anchor reads a different ref from the arms"
     )
+    assert re.search(r'^\s*since="\$landed"$', fn.group(0), re.M), "the window no longer starts at the clause's landing"
+    assert re.search(
+        r'^\s*\[\[ "\$PROBE_VERDICT_RULE_SINCE" > "\$since" \]\] && since="\$PROBE_VERDICT_RULE_SINCE"$', fn.group(0), re.M
+    ), "the amnesty no longer moves the window forward only, or no longer reads the named constant"
     right = r'^\s*<\(git log develop HEAD --since="\$since" --grep=mutate-probe --format=%h \| sort\) \| wc -l$'
     assert re.search(right, fn.group(0), re.M), "the right arm no longer excuses exactly a commit naming the script"
 
