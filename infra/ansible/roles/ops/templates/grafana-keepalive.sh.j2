@@ -2,14 +2,11 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-grafana-keepalive — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2 instead.
 #
-# One authenticated Grafana Cloud request per run, four runs an hour, and a textfile recording what it got.
+# One authenticated Grafana Cloud request, and a textfile and a journal line recording what it got.
 #
 # The hypothesis this tests: Grafana Cloud counts AUTHENTICATED requests as activity and ignores
-# anonymous ones. The evidence for it is negative -- the unauthenticated 5-minute watchdog probe has
-# run for months against an endpoint the app itself serves, and the instance hibernated regardless --
-# so the keep-alive half of this script is a hypothesis under test, not a known fix. The measuring
-# half is what makes it an experiment: what each call got is recorded, and none of it is visible in
-# any series today.
+# anonymous ones -- the unauthenticated 5-minute watchdog probe did not stop the instance
+# hibernating -- so the keep-alive half of this script is a hypothesis under test, not a known fix.
 set -euo pipefail
 
 PROM="{{ ops_textfile_dir }}/grafana-keepalive.prom"
@@ -77,6 +74,5 @@ tmp="$PROM.tmp"
   printf 'zcrypto_grafana_keepalive_last_success_timestamp_seconds %s\n' "$success"
 } > "$tmp"
 mv -f "$tmp" "$PROM"
-# One line per run in the unit's journal, so a result is readable on this host while Grafana is dark --
-# which is when it is wanted, since Grafana being dark is what this records.
+# One line per run in the unit's journal: the textfile keeps only the last run.
 printf 'status=%s duration=%ss\n' "$code" "$seconds"

@@ -1,6 +1,4 @@
-"""The keep-alive runner's output, rendered through Ansible's own `Templar` and run against a stub
-`curl`: a 503 recorded rather than swallowed, a dead network recorded rather than leaving no file at
-all, and the last-success stamp surviving a failed run."""
+"""The keep-alive runner's output, rendered through Ansible's own `Templar` and run against a stub `curl`."""
 
 import pathlib
 import subprocess
@@ -14,7 +12,7 @@ TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles
 
 def _run(tmp_path, curl_body, *, token="tok", prom_seed=None, want_stdout=False):
     """Render the script with `ops_textfile_dir` pointed at `tmp_path`, run it against a stub curl,
-    and return the metrics it wrote as a name -> value dict (empty when it wrote no file)."""
+    and return the metrics it wrote (empty for no file), and its stdout if asked."""
     variables = role_variables(TEMPLATE)
     variables["ops_textfile_dir"] = str(tmp_path)
     script = tmp_path / "keepalive.sh"
