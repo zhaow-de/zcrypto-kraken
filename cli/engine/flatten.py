@@ -1365,8 +1365,9 @@ async def run_flatten(
     """The whole button. Returns the process exit code; raises nothing.
 
     0 flat (or the default dry run completed) · 1 refused with nothing sent · 2 partial:
-    the final snapshot is not flat, or a write-side failure means it cannot be called flat ·
-    3 the venue could not be reached or read BEFORE the first write, which is the cancel.
+    the final snapshot is not flat, a write-side failure means it cannot be called flat, or a read
+    before the cancel could not see every order or position (`exit_code`) · 3 the venue could not
+    be reached or read BEFORE the first write, which is the cancel.
     """
     stamp = now()
     say = _Echo(echo)
