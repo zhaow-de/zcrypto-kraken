@@ -2195,7 +2195,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--probe5", action="store_true", help="additionally allow probe 5, the only probe that spends money. Requires --apply."
     )
     p.add_argument("--probes", default="all", help="which probes to run, e.g. '1,2,3' or 'all' (default: all)")
-    p.add_argument("--pair", default="BTC/EUR", help="the instrument probes 4-5 trade (default: BTC/EUR)")
+    p.add_argument(
+        "--pair",
+        default="BTC/EUR",
+        help="the instrument probes 4-5 trade (default: BTC/EUR); an open order on it that neither an evidence file in "
+        "--evidence-dir nor --known-order names reads as unclaimed (probe 6 FAIL, exit 3)",
+    )
     p.add_argument(
         "--notional", type=float, default=DEFAULT_NOTIONAL_EUR, help=f"per-order notional in EUR (default: {DEFAULT_NOTIONAL_EUR})"
     )
