@@ -6,9 +6,11 @@
         query_order's read (upstream `70d887545790`, execution/spot.rs:1356 and :1433); open_only=False
         is the engine's single-report read (spot.rs:1263-1265), which also pages the whole ClosedOrders
         history, so its round trip is timed on its own. SAFE needs exactly one row per TXID in each
-        shape and each round trip inside one engine tick. The scoped read (instrument_id given) is
-        printed as a contrast and never counts: on this wheel it skips a two-way-spelled leg before
-        resolving it (upstream #5067), so BTC/EUR reads 0 rows there while the unscoped shapes see it.
+        shape and each round trip inside one engine tick. The verdict never reads a row's instrument_id:
+        each target row is printed with it, and a spelling other than BTC/EUR.KRAKEN on the BTC order
+        is the operator's to catch. The scoped read (instrument_id given) is printed as a contrast and
+        never counts: on this wheel it skips a two-way-spelled leg before resolving it (upstream #5067),
+        so BTC/EUR reads 0 rows there while the unscoped shapes see it.
   absent <TXID>...  After the restart: SAFE when none of the TXIDs is still open at the venue.
 
 Every row of the listing is read and cached first: a bare client's unscoped read raises on the first
@@ -17,8 +19,9 @@ reading.
 
 Exit: 0 SAFE, 1 HAZARD, 2 nothing was read (usage, or no credentials), 3 the listing could not be read.
 
-Run it FROM the workstation, never on the engine host, inside the engine's inter-cycle gap -- its reads
-share the trade key with the running engine:
+Run it FROM the workstation, never on the engine host: ssh forwards local stdin into the container, so
+the source never lands on the host. Run it inside the engine's inter-cycle gap -- its reads share the
+trade key with the running engine:
     IMAGE=$(ssh zcrypto sudo docker inspect --format '{{.Config.Image}}' zcrypto-engine)
     ssh zcrypto sudo docker run --rm -i --env-file /opt/zcrypto-engine/engine.env \
       --entrypoint python "$IMAGE" - orders <BTC-TXID> <SOL-TXID> < infra/scripts/kraken-window-reads.py
