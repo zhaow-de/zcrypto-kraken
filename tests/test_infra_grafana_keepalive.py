@@ -14,7 +14,7 @@ TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles
 
 def _run(tmp_path, curl_body, *, token="tok", prom_seed=None, want_stdout=False):
     """Render the script with `ops_textfile_dir` pointed at `tmp_path`, run it against a stub curl,
-    and return the metrics it wrote (empty for no file), and its stdout if asked."""
+    and return the metrics it wrote (empty for no file), and its stdout and stderr if asked."""
     variables = role_variables(TEMPLATE)
     variables["ops_textfile_dir"] = str(tmp_path)
     script = tmp_path / "keepalive.sh"
@@ -42,7 +42,7 @@ def _run(tmp_path, curl_body, *, token="tok", prom_seed=None, want_stdout=False)
         if prom.exists()
         else {}
     )
-    return (metrics, result.stdout) if want_stdout else metrics
+    return (metrics, result.stdout, result.stderr) if want_stdout else metrics
 
 
 def test_a_success_is_recorded_with_its_duration_and_both_stamps(tmp_path):
@@ -104,7 +104,7 @@ def test_a_503_is_recorded_rather_than_swallowed(tmp_path):
     [('#!/bin/sh\nprintf "503 0.419"\n', "status=503 duration=0.419s"), ("#!/bin/sh\nexit 7\n", "status=0 duration=0s")],
 )
 def test_each_run_logs_its_result_to_the_journal(tmp_path, curl_body, line):
-    _, stdout = _run(tmp_path, curl_body, want_stdout=True)
+    _, stdout, _ = _run(tmp_path, curl_body, want_stdout=True)
     assert stdout.splitlines() == [line], stdout
 
 
@@ -138,8 +138,10 @@ def test_a_failed_run_carries_the_previous_success_stamp_forward(tmp_path):
 def test_no_token_writes_no_file_at_all(tmp_path):
     """Before the owner mints it there is nothing to say, and `(no series)` says that honestly where a
     zero status would read as a call that happened and failed."""
-    metrics, stdout = _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="", want_stdout=True)
-    assert metrics == {} and stdout == "", "no file and no journal line: the runbook reads a start without one as no token"
+    metrics, stdout, stderr = _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="", want_stdout=True)
+    assert metrics == {} and stdout == "" and stderr == "", (
+        "no file and no journal line: the runbook reads a start without one as no token"
+    )
     assert not (tmp_path / "grafana-keepalive.prom").exists(), "no file at all, not an empty one"
 
 
@@ -176,12 +178,11 @@ def test_every_family_carries_its_help_and_type(tmp_path, family):
 
 
 def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
-    """Between two periods and three: one skipped slot peaks near two and stays quiet, two skipped peak near three
-    and page. Change the timer and this fails until the rule moves with it."""
+    """One skipped slot peaks near two periods and must stay quiet; two peak near three, and page only if the threshold plus `for` is below that."""
     root = pathlib.Path(__file__).resolve().parent.parent
     timer = (TEMPLATE.parent / "grafana-keepalive.timer.j2").read_text()
     step = re.search(r"^OnCalendar=\*:\d+/(\d+):00$", timer, re.M)
-    assert step, "the timer is no longer `*:MM/SS:00`; read its period some other way"
+    assert step, "the timer is no longer `*:MM/N:00`; read its period some other way"
     period = int(step.group(1)) * 60
     rule = next(
         r
@@ -189,4 +190,8 @@ def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
         if r["uid"] == "zcrypto-ops-grafana-keepalive-stale"
     )
     (threshold,) = next(d for d in rule["data"] if d["refId"] == "C")["model"]["conditions"][0]["evaluator"]["params"]
-    assert 2 * period < threshold < 3 * period, f"threshold {threshold} s against a {period} s timer"
+    held = re.fullmatch(r"(\d+)([smh])", rule["for"])
+    assert held, f"`for: {rule['for']}` is not a single-unit duration; read it some other way"
+    for_s = int(held.group(1)) * {"s": 1, "m": 60, "h": 3600}[held.group(2)]
+    assert 2 * period < threshold, f"threshold {threshold} s pages on one skipped slot of a {period} s timer"
+    assert threshold + for_s < 3 * period, f"threshold {threshold} s plus `for` {for_s} s never pages on two skipped slots"
