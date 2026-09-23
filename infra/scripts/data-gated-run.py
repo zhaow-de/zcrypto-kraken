@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the whole test suite from a checkout where `data/` is present and write the result as JSON.
+"""Run the whole test suite from a checkout where the datasets are present and write the result as JSON.
 
 Every `skipif(not <data>.exists())` test skips in CI, so the data-gated family runs nowhere unless a
 workstation runs it: this is the runner `infra/systemd/zcrypto-data-gated-tests.timer` fires nightly.
@@ -7,11 +7,11 @@ It runs `pytest -q -p no:cacheprovider -rfEs` with no path -- the suite CI runs 
 checkout's own environment (`uv run --directory <repo>`), never the interpreter that launched it: a
 hand run from a worktree would otherwise import the worktree's `cli` under the main checkout's tests.
 It writes `.local/data-gated-runs/<UTC stamp>.json` plus `latest.json`: the started/finished stamps,
-the git sha, whether `<repo>/data` was there, the exit code, the counts parsed from pytest's summary
+the git sha, whether the datasets were there, the exit code, the counts parsed from pytest's summary
 line, the ids the `-rfE` lines name, and the `-rs` skips whose reason says a dataset was absent. A
 run in which the whole family skipped for want of data is exactly the night this exists to catch, so
 such a skip is a failure -- `data_gated_skipped` names the sites and `ok` is false -- and a checkout
-with no `data/` at all is refused before pytest starts, with a result that says so. A run whose
+with no dataset under `data/` is refused before pytest starts, with a result that says so. A run whose
 summary cannot be parsed -- a usage error, a timeout, an interrupted session -- writes a result that
 says so rather than nothing, because `zcrypto-daily-ops` has to tell an absent file from a failed
 run. `-rfE` rather than the bare `-rf`: an error at setup is a test that did not run, and its id is
@@ -235,12 +235,15 @@ def main(argv: list[str] | None = None) -> int:
     repo = args.repo.resolve()
     if not repo.is_dir():
         parser.error(f"--repo {repo} is not a directory")
-    data_present = (repo / "data").is_dir()
+    data_dir = repo / "data"
+    # Not `is_dir()`: `data/.gitignore` is tracked, so git materialises `data/` in every checkout --
+    # a worktree with nothing linked in included, which is exactly the tree this refusal is for.
+    data_present = data_dir.is_dir() and any(p.name != ".gitignore" for p in data_dir.iterdir())
     uv = os.environ.get("UV") or shutil.which("uv")
     started = datetime.now(timezone.utc)
     command, exit_code, output, run_error = None, None, "", None
     if not data_present:
-        run_error = f"data absent: {repo / 'data'} is not a directory; nothing ran"
+        run_error = f"data absent: {data_dir} holds no dataset; nothing ran"
     elif uv is None:
         run_error = "uv not found: set UV or put it on PATH; nothing ran"
     else:
