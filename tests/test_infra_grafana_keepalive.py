@@ -193,5 +193,5 @@ def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
     held = re.fullmatch(r"(\d+)([smh])", rule["for"])
     assert held, f"`for: {rule['for']}` is not a single-unit duration; read it some other way"
     for_s = int(held.group(1)) * {"s": 1, "m": 60, "h": 3600}[held.group(2)]
-    assert 2 * period < threshold, f"threshold {threshold} s pages on one skipped slot of a {period} s timer"
+    assert 2 * period < threshold, f"threshold {threshold} s is not above one skip's peak, {2 * period} s"
     assert threshold + for_s < 3 * period, f"threshold {threshold} s plus `for` {for_s} s never pages on two skipped slots"
