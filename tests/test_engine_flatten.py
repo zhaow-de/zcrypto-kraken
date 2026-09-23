@@ -18,6 +18,7 @@ import threading
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -672,7 +673,7 @@ def test_a_spot_leg_above_every_floor_is_sent_with_its_estimate_in_its_own_quote
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.0, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ADA, 0.40)
     assert sized.send is True and sized.reason is None
-    assert sized.qty == 1200.0
+    assert sized.qty == 1199.99999999  # one 8-decimal unit short of the reported balance
     assert sized.quote == "EUR"
     assert sized.estimate == pytest.approx(480.0)
     assert sized.fee_estimate == pytest.approx(480.0 * flatten.TAKER_RATE)
@@ -683,7 +684,8 @@ def test_a_btc_quoted_leg_estimates_in_btc_and_never_in_euros():
     leg = flatten.Leg("spot", "ETH", "ETH/BTC", "SELL", 2.0, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ETHBTC, 0.03)
     assert sized.quote == "BTC"
-    assert sized.estimate == pytest.approx(0.06)
+    # `_ETHBTC`'s coarse 0.00001 lot turns the one-unit shave into one lot step: 1.99999 ETH.
+    assert sized.estimate == pytest.approx(1.99999 * 0.03)
 
 
 def test_an_unpriced_leg_is_sized_and_sent_with_no_estimate_invented():
@@ -694,7 +696,7 @@ def test_an_unpriced_leg_is_sized_and_sent_with_no_estimate_invented():
     spot = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.0, "CASH", "account_state.free")
     sized = flatten.size_leg(spot, _ADA, None)
     assert sized.send is True and sized.reason is None
-    assert sized.qty == 1200.0
+    assert sized.qty == 1199.99999999
     assert sized.reference_price is None
     assert sized.estimate is None
     assert sized.fee_estimate is None
@@ -733,6 +735,59 @@ def test_a_margin_leg_quantity_never_exceeds_the_report_s_own():
     assert sized.qty <= leg.quantity
 
 
+_SOL = flatten.PairConstraints("SOL/EUR", "SOL/EUR.KRAKEN", ordermin=0.06, lot_step=0.00000001, tick_size=0.01)
+
+
+def _balance_as_the_adapter_reports_it(code: str, venue_figure: str):
+    """A real `AccountBalance` built the way the adapter builds one: a currency at 8 decimals, the
+    venue's figure rounded into it by the library's own `Money.from_decimal`."""
+    from nautilus_trader.model import AccountBalance, Currency, CurrencyType, Money
+
+    currency = Currency(code, 8, 0, code, CurrencyType.CRYPTO)
+    free = Money.from_decimal(Decimal(venue_figure), currency)
+    return AccountBalance(free, Money(0, currency), free)
+
+
+def test_a_balance_the_adapter_rounded_up_is_sold_one_unit_short_so_the_venue_can_fill_it(tmp_path):
+    """Kraken keeps SOL to 10 decimals and the adapter reports 8, so 0.0999999951 SOL reads as
+    0.10000000 -- a sell of that is more than the account holds, refused on every pass and every
+    re-run. One 8-decimal unit less still clears SOL/EUR's floors, so that is what goes out."""
+    _armed(tmp_path)
+    held = _balance_as_the_adapter_reports_it("SOL", "0.0999999951")
+    assert float(held.free) == 0.1  # the premise: the library's rounding lands ABOVE the venue's figure
+    client = _flat_client(
+        balances=[[held], [held], [], []],
+        symbols=("BTC/EUR", "SOL/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "SOL/EUR.KRAKEN": _Book(150.0, 150.1)},
+    )
+    for row in client._instruments:
+        if row.id.startswith("SOL"):
+            row.min_quantity = 0.06
+    assert _run(client, tmp_path) == 0
+    assert [(sent["instrument_id"], sent["quantity"]) for sent in client.submitted] == [("SOL/EUR.KRAKEN", 0.09999999)]
+
+
+def test_a_balance_exactly_at_ordermin_is_sold_whole_and_never_shaved_into_dust():
+    """The fixture's spot SOL is exactly SOL/EUR's 0.06 ordermin. Shaved, it would be 0.05999999:
+    below the floor, so judged on the shaved figure it would be dust, unsent, and the account would
+    read flat with the SOL still held. It is judged on the reported figure and sent whole."""
+    leg = flatten.Leg("spot", "SOL", "SOL/EUR", "SELL", 0.06, "CASH", "account_state.free")
+    assert flatten.classify_balance(0.06, _SOL, 150.0) == "residual"
+    sized = flatten.size_leg(leg, _SOL, 150.0)
+    assert sized.send is True and sized.reason is None
+    assert sized.qty == 0.06
+
+
+def test_the_shave_is_withheld_where_it_would_fall_under_the_notional_floor():
+    """The notional floor binds on its own: 1 ADA at 0.45 EUR is exactly the 0.45 EUR costmin and
+    well over this pair's 0.5 ordermin, so only costmin can refuse the shaved 0.99999999."""
+    loose = flatten.PairConstraints("ADA/EUR", "ADA/EUR.KRAKEN", ordermin=0.5, lot_step=0.00000001, tick_size=0.000001)
+    leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1.0, "CASH", "account_state.free")
+    sized = flatten.size_leg(leg, loose, 0.45)
+    assert sized.send is True
+    assert sized.qty == 1.0
+
+
 def test_the_send_decision_and_the_residual_verdict_cannot_disagree():
     """One predicate serves both, so a balance skipped as dust can never be reported as a residual
     -- the contradiction that would tell an operator the account is both flat and not."""
@@ -761,7 +816,7 @@ def test_a_spot_quantity_is_floored_to_the_lot_step_before_it_is_sent():
     leg = flatten.Leg("spot", "ADA", "ADA/EUR", "SELL", 1200.123456789, "CASH", "account_state.free")
     sized = flatten.size_leg(leg, _ADA, 0.40)
     assert sized.send is True
-    assert sized.qty == 1200.12345678
+    assert sized.qty == 1200.12345677  # floored to the lot step, then one 8-decimal unit short
     assert sized.qty < leg.quantity
 
 

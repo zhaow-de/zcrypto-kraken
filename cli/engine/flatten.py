@@ -73,6 +73,10 @@ MARGIN_LEVERAGE = 2
 # `request_instruments()` alone answers with ~1600 rows -- around 110 KB at the installed adapter's
 # ~68-char `CurrencyPair.__repr__`. Capped so the incident artifact stays openable mid-incident.
 _ANSWER_REPR_LIMIT = 4000
+# The adapter builds every balance at 8 decimals, rounding half to even, while Kraken keeps SOL and
+# BTC to 10: a reported free balance can exceed the venue's by up to half this unit, and a sell of
+# the reported figure is then refused for insufficient funds on every pass and every re-run.
+_BALANCE_UNIT = Decimal("0.00000001")
 # Nothing in this module reads it; `infra/scripts/kraken-fixture-mint.py` imports it.
 BLIND_ORDER_READ_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
@@ -674,8 +678,15 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     only unsendable case is a quantity that floors to nothing: there is no order to construct.
     A spot leg below any applicable floor is listed and not sent; the venue would reject it, and it
     does not make the account not-flat.
+
+    A spot sell goes out one `_BALANCE_UNIT` short of the floored balance, floored to the lot step
+    again -- a whole step on a pair whose lot is coarser than eight decimals -- whenever that still
+    clears every floor, so a figure the adapter rounded up cannot be refused. Where it would not --
+    a balance exactly at `ordermin` -- the balance goes out as reported and the venue rules on it.
+    Whether the leg is sent at all is still judged on the reported figure (`classify_balance`), so
+    the shave can never turn a sellable balance into dust.
     """
-    from cli.engine.instruments import _floor_to_step
+    from cli.engine.instruments import BelowMinimum, _floor_to_step
 
     quote = constraints.symbol.split("/")[1]
     qty = _floor_to_step(leg.quantity, constraints.lot_step)
@@ -683,18 +694,21 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     # quantity at the floored price, so an estimate printed off the raw balance or the raw book
     # price would disagree with the dust boundary this same leg is judged by.
     price = _tick_floored(reference_price, constraints)
-    estimate = qty * price if price is not None else None
-    fee = estimate * TAKER_RATE if estimate is not None else None
-    base = dict(leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee)
-
+    send, reason = True, None
     if leg.kind == "margin":
         if qty <= 0.0:
-            return SizedLeg(**base, send=False, reason="unclosable_below_minimum")
-        return SizedLeg(**base, send=True, reason=None)
-
-    if classify_balance(leg.quantity, constraints, price) == "residual":
-        return SizedLeg(**base, send=True, reason=None)
-    return SizedLeg(**base, send=False, reason="dust_below_venue_minimum")
+            send, reason = False, "unclosable_below_minimum"
+    elif classify_balance(leg.quantity, constraints, price) != "residual":
+        send, reason = False, "dust_below_venue_minimum"
+    else:
+        shaved = _floor_to_step(float(Decimal(str(qty)) - _BALANCE_UNIT), constraints.lot_step)
+        if shaved > 0.0 and not isinstance(_size(shaved, constraints, price), BelowMinimum):
+            qty = shaved
+    estimate = qty * price if price is not None else None
+    fee = estimate * TAKER_RATE if estimate is not None else None
+    return SizedLeg(
+        leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee, send=send, reason=reason
+    )
 
 
 @dataclass(frozen=True)
