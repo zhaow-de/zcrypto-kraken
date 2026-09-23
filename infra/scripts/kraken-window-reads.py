@@ -35,7 +35,8 @@ from typing import Any
 
 API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
-# `cli/engine/node.py`'s account id: a read under another id answers a different question.
+# The label the engine's reports carry (`cli/engine/node.py`'s `_ACCOUNT_ID`); the adapter only stamps it
+# on each report, so it selects no rows.
 ACCOUNT_ID = "KRAKEN-001"
 SCOPED = ("BTC/EUR.KRAKEN", "SOL/EUR.KRAKEN")
 # The engine's tick: a read slower than this does not finish inside the tick that issued it.
