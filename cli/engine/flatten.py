@@ -73,9 +73,11 @@ MARGIN_LEVERAGE = 2
 # `request_instruments()` alone answers with ~1600 rows -- around 110 KB at the installed adapter's
 # ~68-char `CurrencyPair.__repr__`. Capped so the incident artifact stays openable mid-incident.
 _ANSWER_REPR_LIMIT = 4000
-# The adapter builds every balance at 8 decimals, rounding half to even, while Kraken keeps SOL and
-# BTC to 10: a reported free balance can exceed the venue's by up to half this unit, and a sell of
-# the reported figure is then refused for insufficient funds on every pass and every re-run.
+# The adapter rounds a balance's total and its held amount to 8 decimals each, half to even, and
+# takes free as their difference, while Kraken keeps SOL and BTC to 10: a reported free balance can
+# exceed the venue's by up to one whole unit, half from each rounding, which is why the shave is a
+# whole unit. Unshaved, a sell of the reported figure is refused for insufficient funds on every
+# pass and every re-run.
 _BALANCE_UNIT = Decimal("0.00000001")
 # Nothing in this module reads it; `infra/scripts/kraken-fixture-mint.py` imports it.
 BLIND_ORDER_READ_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
@@ -197,7 +199,8 @@ async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     first and falls back to the altname index it records with the listing (`XBTEUR`). A row it
     cannot resolve at all fails the WHOLE read rather than dropping out of it, so a list this
     returns is every order the venue reported. Before the cancel that failure degrades
-    (`read_snapshot`); after it, it ends the run at exit 2.
+    (`read_snapshot`); in the final snapshot it ends the run at exit 2; the journal-only read right
+    after the cancel steps over it (`_read_for_the_record`).
     """
     # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
     kwargs: dict[str, Any] = {"open_only": True}
@@ -1135,8 +1138,10 @@ async def _read_for_the_record(what: str, read: Callable[[], Any]) -> Any:
     survives either way; only the abort goes away.
 
     Never widened to a read something DOES consume. The post-cancel position read that sizes the
-    closers must still abort -- degraded, it would size them from an empty list and report the
-    account flat.
+    closers never comes through here: read as nothing, it would size them from an empty list and
+    report the account flat. Its one degradation is `read_margin_positions`' per-pair retry, which
+    names what it could not read; a position that read missed gets no closer, and the final
+    snapshot reads the account again and judges it.
     """
     try:
         return await read()
