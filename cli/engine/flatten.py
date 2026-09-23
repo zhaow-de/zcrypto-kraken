@@ -188,26 +188,20 @@ def _journalled(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
-    """The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
-    order resting at the venue. Only the LIST is load-bearing here -- its length decides the exit
-    code -- so no per-row field is required: an unparseable row must not abort a sweep whose whole
-    answer is 'something is still working'.
+    """The orders resting at the venue that the adapter can resolve an instrument for. Only the LIST
+    is load-bearing here -- its length decides the exit code -- so no per-row field is required: an
+    unparseable row must not abort a sweep whose whole answer is 'something is still working'.
 
-    The gap is spelling-shaped, and it is the adapter's, not this module's. Its instrument cache is
-    scanned by `raw_symbol`, which is Kraken's `AssetPairs` KEY (`XXBTZEUR`), while an open order is
-    looked up by its own `descr.pair`, which is the ALTNAME (`XBTEUR`); the comparison is raw
-    equality with no `else` on a miss, so a row on a leg spelled both ways is dropped and the call
-    returns success. `BLIND_ORDER_READ_LEGS` names those legs.
+    Each row resolves through the instrument cache `read_listing` fills before this read. Which of
+    Kraken's two pair spellings resolves is the adapter's: the cache is keyed on the `AssetPairs`
+    KEY (`XXBTZEUR`) while an open order names the ALTNAME (`XBTEUR`), and an adapter without an
+    altname index drops such a row and returns success. `BLIND_ORDER_READ_LEGS` names those legs.
 
     What that costs is the VERDICT, never the cancel: `sweep`'s `cancel_all_orders` is account-wide,
     names no pair, and reaches an order on a blind leg -- so exit 0 can be a false all-clear while
     the sweep itself did its job, and re-running the command is a real mitigation rather than a
     retry of the same blindness. `run_flatten` prints that caveat beside the flat verdict, and
     `infra/runbooks/engine-procedures.md`'s flatten procedure carries it for the operator.
-
-    Not repaired here: repairing it means priming the adapter's instrument cache with both
-    spellings before this read, which is a change to what the button does rather than to what it
-    says. `T0160` carries the registration.
     """
     # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
     kwargs: dict[str, Any] = {"open_only": True}
@@ -288,8 +282,11 @@ async def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
 
 
 async def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
-    """ONE no-argument call for the whole listing. A per-pair request would error on an unknown
-    pair and abort the sweep over an unrelated holding; pairlessness is read from this map."""
+    """ONE no-argument call for the whole listing, read before anything else and cached into the
+    client. The adapter resolves every later read -- open orders, positions, the book -- through
+    that cache alone, so a client never fed one fails them or drops their rows. A per-pair request
+    would error on an unknown pair and abort the sweep over an unrelated holding; pairlessness is
+    read from this map."""
     try:
         rows = await rec.call("request_instruments", {"pairs": None}, lambda: client.request_instruments())
     except FlattenUnreachable:
@@ -304,6 +301,11 @@ async def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
         listing[_symbol_of(instrument_id)] = row
     if not listing:
         raise FlattenUnreachable("the instrument listing came back empty -- every pair lookup after it would read as pairless")
+    try:
+        for row in listing.values():
+            client.cache_instrument(row)
+    except Exception as exc:  # noqa: BLE001
+        raise FlattenUnreachable(f"the instrument listing could not be cached: {exc}") from exc
     return listing
 
 
@@ -418,8 +420,9 @@ def margin_legs(positions: list[PositionRow], listing: dict[str, Any]) -> tuple[
     """One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
 
     A FLAT row is not a leg. Every other row this code cannot act on -- a side that is none of the
-    three (the installed `PositionSide` carries a fourth member and which ones the adapter emits is
-    unmeasured), a pair the listing does not carry -- is NAMED rather than raised on and never read
+    three (none today: the enum carries FLAT, LONG and SHORT, and a report refuses a `None` side; the
+    arm stands for a member a later wheel adds, which `EXHAUSTIVE_MEMBERS` catches first), a pair
+    the listing does not carry -- is NAMED rather than raised on and never read
     as flat: nothing can be sized for it, and one such row must not abort a button that has not yet
     cancelled an order, closed another position or sold a single balance. `judge_final` reads both
     classes back out of the final snapshot, so neither can leave the run reading 0.
@@ -1254,8 +1257,8 @@ async def run_flatten(
     record["venue_status"] = {"status": status.status, "ok": status.ok}
 
     try:
-        snapshot = await read_snapshot(client, rec)
         listing = await read_listing(client, rec)
+        snapshot = await read_snapshot(client, rec)
         plan = await build_plan(client, rec, snapshot, listing)
     except FlattenUnreachable as exc:
         record["error"] = str(exc)

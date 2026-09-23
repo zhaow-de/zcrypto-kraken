@@ -99,7 +99,9 @@ class FakeClient:
     # that would leak rather than on the name of the variable it arrived in.
     api_key = "kNEVER-IN-THE-JOURNAL-0000"
 
-    def __init__(self, *, instruments=None, orders=None, positions=None, balances=None, books=None) -> None:
+    def __init__(
+        self, *, instruments=None, orders=None, positions=None, balances=None, books=None, resolves_cached_only=False
+    ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._instruments = instruments if instruments is not None else []
         self._orders = list(orders or [[]])
@@ -113,6 +115,18 @@ class FakeClient:
         # `_norm`'d, and `_norm` reduces a plain `"MARKET"` to the text a real `OrderType.MARKET`
         # gives -- it cannot tell the two apart, and only one of them reaches the venue.
         self.submitted_raw: list[tuple[tuple, dict]] = []
+        # The real adapter resolves orders, positions and the book only through instruments cached into
+        # it. Set, the fake does the same and raises on an uncached one, as the pinned wheel does.
+        self._resolves_cached_only = resolves_cached_only
+        self._cached: set[str] = set()
+
+    def cache_instrument(self, instrument):
+        self._cached.add(str(instrument.id))
+
+    def _require_cached(self, what, instrument_ids):
+        missing = sorted(i for i in instrument_ids if i not in self._cached)
+        if self._resolves_cached_only and missing:
+            raise RuntimeError(f"{what}: instrument not in cache for {missing[0]}")
 
     def _maybe_raise(self, name):
         exc = self.raises.pop(name, None)
@@ -133,12 +147,16 @@ class FakeClient:
     async def request_order_status_reports(self, account_id, **kw):
         self._record("request_order_status_reports", account_id, kw)
         self._maybe_raise("request_order_status_reports")
-        return self._next(self._orders)
+        rows = self._next(self._orders)
+        self._require_cached("OpenOrders", [str(r.instrument_id) for r in rows or [] if hasattr(r, "instrument_id")])
+        return rows
 
     async def request_position_status_reports(self, account_id, **kw):
         self._record("request_position_status_reports", account_id, kw)
         self._maybe_raise("request_position_status_reports")
-        return self._next(self._positions)
+        rows = self._next(self._positions)
+        self._require_cached("OpenPositions", [str(r.instrument_id) for r in rows or [] if hasattr(r, "instrument_id")])
+        return rows
 
     async def request_account_state(self, account_id, **kw):
         self._record("request_account_state", account_id, kw)
@@ -148,6 +166,7 @@ class FakeClient:
     async def request_book_snapshot(self, instrument_id, depth=None):
         self.calls.append(("request_book_snapshot", {"instrument_id": str(instrument_id), "depth": depth}))
         self._maybe_raise("request_book_snapshot")
+        self._require_cached("book", [str(instrument_id)])
         return self._books[str(instrument_id)]
 
     async def cancel_all_orders(self):
@@ -1606,6 +1625,23 @@ def test_the_default_invocation_sends_nothing_needs_no_kill_file_and_exits_zero(
     assert list(_exec_dir(tmp_path).glob("flatten-*.json")) == []
 
 
+def test_a_client_that_resolves_only_cached_instruments_still_runs_the_whole_dry_run(tmp_path):
+    """The real adapter answers open orders, positions and the book only for instruments cached into
+    its client, and the button's client starts bare, so the listing has to be read and cached before
+    the first account read or every one of them fails."""
+    order = type("Order", (), {"instrument_id": "SOL/EUR.KRAKEN"})()
+    client = FakeClient(
+        instruments=[_Instrument("BTC/EUR"), _Instrument("SOL/EUR")],
+        orders=[[order]],
+        positions=[[_Position("SOL/EUR", "LONG", 0.06)]],
+        balances=[[_Balance("SOL", 1.0)]],
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "SOL/EUR.KRAKEN": _Book(150.0, 150.1)},
+        resolves_cached_only=True,
+    )
+    assert _run(client, tmp_path, execute=False) == 0
+    assert names(client)[0] == "request_instruments"
+
+
 @pytest.mark.parametrize(
     ("setup", "reply", "tty", "armed"),
     [("kill-absent", "FLATTEN", True, False), ("confirm", "nope", True, True), ("no-tty", "FLATTEN", False, True)],
@@ -2408,12 +2444,15 @@ _FAKE_CLIENT_PLUMBING = frozenset(
         "submitted_raw",
         "_balances",
         "_books",
+        "_cached",
         "_instruments",
         "_maybe_raise",
         "_next",
         "_orders",
         "_positions",
         "_record",
+        "_require_cached",
+        "_resolves_cached_only",
     }
 )
 
