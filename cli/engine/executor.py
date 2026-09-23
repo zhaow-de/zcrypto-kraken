@@ -343,6 +343,11 @@ def _ordered_qty(row: dict) -> float:
         return 0.0
 
 
+def _event_venue_order_id(event) -> str | None:
+    venue_order_id = getattr(event, "venue_order_id", None)
+    return None if venue_order_id is None else str(venue_order_id)
+
+
 def _newest_venue_balances(journal_dir: Path) -> dict:
     """`state.balances` from the newest `ok`, schema-2 `venue-<HH>.json`, or `{}` when the journal
     holds none. Mirrors `command._seed_exec_positions`: every record is `validate_venue_record`-
@@ -2079,6 +2084,11 @@ class ProbeExecutor:
             # a fallback attempt back in the reprice regime, so its unfilled remainder returning as
             # an unrequested cancel would read as the crossing surface and submit a new post-only
             # GTC after the time-box had already expired.
+            #
+            # The venue order id is recorded here because nothing else can find this order after a
+            # restart: the adapter's order reports carry no client order id, so reconciliation names
+            # the order by its Kraken txid and this engine's own id no longer resolves it.
+            payload["venue_order_id"] = str(event.venue_order_id)
             self._update_row(active, state="accepted", event=payload)
             _inc_order("accepted")
             if active.intent.mode == "rest-cancel":
@@ -2416,7 +2426,12 @@ class ProbeExecutor:
 
     def _fill_payload(self, event) -> dict:
         """The forensic shape of one fill. Shared by the in-flight path and the detached one so an
-        adopted order's fill is recorded in exactly the same terms as an order this process placed."""
+        adopted order's fill is recorded in exactly the same terms as an order this process placed.
+
+        It carries the venue order id beside the acceptance's copy: an order can reach FILLED with no
+        acceptance in the ledger -- the library admits SUBMITTED to FILLED, and an acceptance whose
+        write failed leaves none -- and a filled row with no venue id cannot be checked for a
+        withdrawn fill after a restart."""
         commission = event.commission
         return {
             "event": "fill",
@@ -2433,6 +2448,7 @@ class ProbeExecutor:
             "fee_currency": None if commission is None else commission.currency.code,
             "liquidity": _liquidity(event.liquidity_side),
             "trade_id": str(event.trade_id),
+            "venue_order_id": _event_venue_order_id(event),
         }
 
     def _on_detached_event(self, client_order_id: str, event) -> None:
@@ -2463,6 +2479,10 @@ class ProbeExecutor:
         boundary, row = attached
         is_fill = type(event).__name__ == "OrderFilled"
         payload = self._fill_payload(event) if is_fill else {"type": type(event).__name__, "at": self._now().isoformat()}
+        if type(event).__name__ == "OrderAccepted":
+            # A superseded order's acceptance can land after the order it was replaced by: the same
+            # record `_on_order_event` writes for the one in flight.
+            payload["venue_order_id"] = str(event.venue_order_id)
         qty = float(event.last_qty) if is_fill else 0.0
         update_submitted_row(self._journal_dir, boundary, client_order_id, event=payload, add_filled_qty=qty)
         if qty:

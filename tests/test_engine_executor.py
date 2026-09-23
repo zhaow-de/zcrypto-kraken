@@ -1695,6 +1695,42 @@ def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_start
     assert client.subscribed == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
 
 
+# A Kraken txid in the venue's own shape. After a restart the reconciled order carries it as BOTH its
+# client and its venue order id, because the adapter's reports carry no client order id.
+_TXID = "OQCLML-BW3P3-BUCMWZ"
+
+
+def test_the_acceptance_and_each_fill_record_the_venue_order_id_in_the_row(tmp_path):
+    """The only link from a ledger row to its order once this process is gone: the next process's
+    Cache names the order by its txid, never by the id this row is keyed on."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    _deliver_fill(ex, client, "O-1", 0.0004, venue_order_id=VenueOrderId(_TXID))
+
+    events = _record(tmp_path)["submitted"][0]["events"]
+    assert [(e.get("type") or e.get("event"), e["venue_order_id"]) for e in events] == [("OrderAccepted", _TXID), ("fill", _TXID)]
+    assert events[0] == {"type": "OrderAccepted", "at": NOW.isoformat(), "venue_order_id": _TXID}
+
+
+def test_a_superseded_orders_late_acceptance_records_its_venue_order_id_too(tmp_path):
+    """The detached path writes the same record: an acceptance that lands after its order was
+    replaced is still the only place that order's txid reaches the ledger."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
+    ex.on_order_event(_canceled("O-1"))
+    assert client.last_order_id == "O-2"  # O-1 is superseded by the fallback IOC
+
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+
+    row = next(r for r in _record(tmp_path)["submitted"] if r["client_order_id"] == "O-1")
+    assert row["events"][-1] == {"type": "OrderAccepted", "at": clock.now.isoformat(), "venue_order_id": _TXID}
+
+
 # --- the fill metrics -----------------------------------------------------------------------------
 
 
