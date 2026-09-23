@@ -81,9 +81,9 @@ c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 # about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
 # journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
 # the change-index-row exception all come from there, and a change to the gate moves this count by construction.
-# The window starts where the read arm last changed what it admits, which `git log -S head_is_the_read
-# --format=%cI -- infra/scripts/merge-gate.py` names: a PR merged before that was judged by the arms of its
-# day and breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded `gh pr list` JSON instead of the network,
+# A change to the arm moves the window to its own instant only when the changed arm counts a PR merged before it:
+# that PR was judged by the arms of its day and breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded
+# `gh pr list` JSON instead of the network,
 # for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs cannot run,
 # so a row failing ONLY on a sha mismatch is counted rather than excused.
 READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
