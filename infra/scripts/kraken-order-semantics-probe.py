@@ -142,12 +142,13 @@ EUR_UNIVERSE = (
 )
 BTC_QUOTED_LEGS = ("ETH/BTC", "SOL/BTC")
 
-# The legs Kraken spells two ways -- `AssetPairs` key `XXBTZEUR` against altname `XBTEUR`. The
-# adapter's instrument cache is scanned by the KEY while an open order is looked up by the order's
-# own altname, and the lookup drops an unresolved row with no warning and a successful return, so
-# startup reconciliation cannot see an order resting on one of these -- which is what probe 6 reads.
-# Restated here rather than imported: this script must run when the repo's own code is what changed.
-# `--pair` defaults to one of them, so the default run trades a blind leg.
+# The legs Kraken spells two ways -- `AssetPairs` key `XXBTZEUR` against altname `XBTEUR`. A build
+# without upstream #5034 (2.0.0rc6.dev20260918 and earlier) scanned its instrument cache by the key,
+# looked an open order up by its altname and silently dropped the unresolved row, so its startup
+# reconciliation could not see an order resting on one of these. The build this harness binds to
+# carries #5034; the list stays for the preflight reminder about the production engine, whose running
+# image may still predate it. Restated here rather than imported: this script must run when the
+# repo's own code is what changed.
 RECONCILE_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The production engine's identity -- the source of the infix our ids must never carry.
@@ -1073,13 +1074,11 @@ class ProbeStrategy(Strategy):
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             self._advance()
             return
-        # A FLOOR, never a total -- the same startup-reconciliation cache probe 6 reads, one probe
-        # earlier. That read cannot see an order resting on `RECONCILE_BLIND_LEGS`, and `--pair`
-        # defaults to one of them, so a previous run's leftover on the very pair this run is about to
-        # trade is exactly what this row cannot list. The banner below is unconditional: probe 6
-        # gates its own on the anchor, but nothing has been submitted here yet, so the anchor always
-        # holds -- and a REVIEW naming one order is no evidence about a second on a blind leg.
-        # Section 5.1 of infra/runbooks/order-semantics-verification.md owns the by-eye read.
+        # The same startup-reconciliation cache probe 6 reads, one probe earlier. On a build carrying
+        # upstream #5034 that read is unscoped and resolves both spellings of a pair, and an open
+        # order the listing cannot resolve fails the node's start rather than dropping out of the
+        # list -- so a node that started holds every open order on the account here. Section 5.1 of
+        # infra/runbooks/order-semantics-verification.md owns the by-eye read all the same.
         orders = self.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
         for o in orders:
@@ -1089,9 +1088,6 @@ class ProbeStrategy(Strategy):
             )
         for p in positions:
             print(f"      pre-existing open position: {p.instrument_id} {p.side} {p.quantity}")
-        print(f"      !! this read CANNOT see an order resting on {', '.join(RECONCILE_BLIND_LEGS)},")
-        print("      !! so the list above is a floor. Read Kraken -> Trade -> Open Orders by eye")
-        print("      !! before you place a probe order.")
         observed = f"open orders {len(orders)}, open positions {len(positions)}"
         if orders or positions:
             observed += " -- PRE-EXISTING venue state, listed above; adjudicate before ordering"
@@ -1459,12 +1455,6 @@ class ProbeStrategy(Strategy):
             self._advance()
             return
         venue_anchored = self._venue_anchored()
-        # A FLOOR, never a total. This cache is populated by startup reconciliation, whose order read
-        # cannot see a row on `RECONCILE_BLIND_LEGS` -- and `--pair` defaults to one of them, so the
-        # order this probe is most likely to have left resting is exactly the one it cannot count.
-        # A zero therefore cannot be signed off on its own; the banner below says so on the row that
-        # counts, and section 8 of infra/runbooks/order-semantics-verification.md owns the by-hand
-        # read that closes it.
         orders = self.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
         # Match the probe INFIX, not this process's minted set. A fresh `--probes 6` invocation --
@@ -1479,10 +1469,6 @@ class ProbeStrategy(Strategy):
             print(f"      open order: {o.client_order_id} {o.instrument_id} {o.side} {o.quantity} status={o.status.name}")
         for p in positions:
             print(f"      open position: {p.instrument_id} {p.side} {p.quantity}")
-        if venue_anchored:
-            print(f"      !! this read CANNOT see an order resting on {', '.join(RECONCILE_BLIND_LEGS)},")
-            print("      !! so a zero above is a floor. Read Kraken -> Trade -> Open Orders by eye")
-            print("      !! before signing this probe off.")
         anchor = (
             "startup reconciliation, nothing submitted since"
             if venue_anchored
@@ -1520,10 +1506,6 @@ class ProbeStrategy(Strategy):
         engine -- so an invocation that submitted orders AFTER its start is reading a cache whose
         venue answer predates them. Such a run cannot report a clean venue; a separate `--probes 6`
         invocation, which submits nothing, can.
-
-        True only of the ANCHOR, not of completeness: even a correctly anchored read is missing any
-        row on `RECONCILE_BLIND_LEGS`. This method answers "is this cache still speaking for the
-        venue?", never "is this cache the whole venue" -- probe 6's banner carries the second.
 
         `state.submitted` is the test: it holds exactly the ids handed to `submit_order`, which is
         the conservative set -- an order whose submission raised is still counted as possibly
@@ -2118,8 +2100,9 @@ def preflight(args) -> None:
     print("reminder: the production engine reconciles this same account. Our orders reach it as")
     print("          events.order.EXTERNAL with no ledgered row -> its unmatched branch (counts, logs,")
     print("          returns). Anything left RESTING would be cancelled by its adopt pass at a restart --")
-    print(f"          except on {', '.join(RECONCILE_BLIND_LEGS)}, which that pass")
-    print("          cannot see either, so a leftover there keeps working. Cancel it by hand.")
+    print("          except, while the engine runs a build without upstream #5034 (2.0.0rc6.dev20260918")
+    print(f"          or earlier), on {', '.join(RECONCILE_BLIND_LEGS)}, which that")
+    print("          build's pass cannot see, so a leftover there keeps working. Cancel it by hand.")
 
 
 def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
