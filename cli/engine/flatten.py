@@ -837,18 +837,19 @@ def _leg_line(sized: SizedLeg) -> str:
     return f"{head} -- {tail}"
 
 
-def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
+def render_plan(plan: Plan, echo: Callable[[str], None], *, execute: bool) -> None:
     """What an operator reads before typing the word. Estimates stay in each leg's own quote
     currency and no grand total is printed -- summing a BTC-quoted leg into a euro figure would
     need an FX rate this command has no mandate to invent.
 
     The order count is the whole list the venue reported, each order named under it: an order
     `read_open_orders` cannot resolve fails that read, and a failed read prints as one, never as a
-    count."""
+    count. What a failed read costs the verdict is worded by `execute`: a dry run ends at 0, so
+    there the line speaks of the run `--execute` would make."""
     if plan.orders is None:
         # The error already reads "open orders could not be read: <the venue's words>".
         failure = "; ".join(row["error"] for row in plan.unread if row["kind"] == "order")
-        echo(f"{failure} -- the account-wide cancel still goes out, and this run cannot end at exit 0")
+        echo(f"{failure} -- the cancel is account-wide and reaches them unread")
     else:
         echo(f"{len(plan.orders)} resting order(s) seen -- the cancel is account-wide")
         for order in plan.orders:
@@ -863,6 +864,13 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
                 f"  the whole-account position read failed ({row['error']}) -- each basket pair was read "
                 "on its own, and a position outside those reads is not in this plan"
             )
+    if plan.unread and execute:
+        echo("  a read above failed: the cancel and every leg below still go out, and this run cannot end at exit 0")
+    elif plan.unread:
+        echo(
+            "  a read above failed: with --execute the cancel and every leg below would still go out,"
+            " and that run could not end at exit 0"
+        )
     if not plan.margin:
         echo("no margin position to close")
     for sized in plan.margin:
@@ -1405,7 +1413,7 @@ async def run_flatten(
         return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), say)
 
     record["snapshot_before"] = _snapshot_payload(snapshot)
-    render_plan(plan, say)
+    render_plan(plan, say, execute=execute)
     if not say.ok:
         # Pre-write, so aborting is free and correct -- but cleanly: the plan is what the word is
         # typed against, and a dry run's whole product is that plan. Either way nothing was sent.

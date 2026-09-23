@@ -1007,7 +1007,7 @@ def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_can
         flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
     )
     lines: list[str] = []
-    flatten.render_plan(plan, lines.append)
+    flatten.render_plan(plan, lines.append, execute=True)
     text = "\n".join(lines)
     assert "BTC/EUR" in text and "SELL" in text
     assert "ADA/EUR" in text
@@ -1079,7 +1079,7 @@ def test_the_rendered_plan_prints_no_cross_currency_total():
         flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
     )
     lines: list[str] = []
-    flatten.render_plan(plan, lines.append)
+    flatten.render_plan(plan, lines.append, execute=True)
     assert not any("total" in line.lower() for line in lines)
 
 
@@ -1110,7 +1110,7 @@ def test_a_venue_that_answers_empty_is_a_plan_with_no_legs_that_says_so_in_words
     assert (plan.orders, plan.unread) == ([], [])
     assert "request_book_snapshot" not in names(client)
     lines: list[str] = []
-    flatten.render_plan(plan, lines.append)
+    flatten.render_plan(plan, lines.append, execute=True)
     assert "no margin position to close" in lines
     assert "no non-EUR spot balance to sell" in lines
 
@@ -1927,6 +1927,7 @@ def test_a_failed_open_order_read_before_the_cancel_still_sends_the_cancel_and_e
     assert "cancel_all_orders" in names(client)
     assert [sent["instrument_id"] for sent in client.submitted] == ["BTC/EUR.KRAKEN", "ADA/EUR.KRAKEN"]
     assert any(line.startswith("open orders could not be read") and "FOOEUR" in line for line in lines)
+    assert any("this run cannot end at exit 0" in line for line in lines)
     assert any("cannot call the account flat" in line for line in lines)
     assert [line for line in lines if line.count("could not be read") > 1] == []
     (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
@@ -1938,7 +1939,8 @@ def test_a_failed_open_order_read_before_the_cancel_still_sends_the_cancel_and_e
 
 def test_a_failed_open_order_read_leaves_the_dry_run_a_plan_that_says_so(tmp_path):
     """The dry run shows what the pressed button would do, and that is now the cancel and every
-    leg -- an exit 3 here would tell the operator the button cannot run."""
+    leg -- an exit 3 here would tell the operator the button cannot run. It ends at 0 itself, so
+    no line may say THIS run cannot: the cost is stated for the run `--execute` would make."""
     client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)]])
     client.raises["request_order_status_reports"] = RuntimeError("OpenOrders: instrument not in cache for pair FOOEUR")
     lines: list[str] = []
@@ -1946,6 +1948,8 @@ def test_a_failed_open_order_read_leaves_the_dry_run_a_plan_that_says_so(tmp_pat
     assert "cancel_all_orders" not in names(client) and client.submitted == []
     assert any(line.startswith("open orders could not be read") for line in lines)
     assert any("BTC/EUR" in line and "SELL" in line for line in lines)
+    assert [line for line in lines if "this run cannot" in line] == []
+    assert any("with --execute" in line and "could not end at exit 0" in line for line in lines)
 
 
 def test_an_unrecognised_position_side_never_aborts_the_button_and_exits_two(tmp_path):
@@ -2098,6 +2102,7 @@ def test_a_position_read_that_failed_before_the_cancel_exits_two_even_when_the_f
     doc = json.loads(path.read_text())
     assert doc["residuals"] == [] and doc["snapshot_after"]["unread"] == []
     assert "positions_unreadable" in [row["reason"] for row in doc["snapshot_before"]["unread"]]
+    assert any("this run cannot end at exit 0" in line for line in lines)
     (at,) = [i for i, line in enumerate(lines) if "cannot call the account flat" in line]
     assert "GONE/EUR" in lines[at + 1]
     assert not [line for line in lines if "reads flat" in line]
