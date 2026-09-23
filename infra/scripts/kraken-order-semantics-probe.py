@@ -2294,6 +2294,31 @@ def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
     return split
 
 
+def print_leftover_banner(node: LiveNode, state: RunState, leftovers: LeftoverSplit) -> None:
+    print("\n" + "!" * 78)
+    if leftovers.outstanding:
+        print("!! ORDERS THIS HARNESS PLACED ARE STILL OPEN. Cancel them BY HAND at Kraken now:")
+        for coid in leftovers.outstanding:
+            order = node.cache.order(ClientOrderId(coid))
+            if order is None:
+                print(f"!!   client_order_id={coid} (no cache record -- look it up at the venue)")
+            else:
+                print(
+                    f"!!   client_order_id={coid} venue_order_id={order.venue_order_id} "
+                    f"{order.instrument_id} {order.side} {order.quantity} status={order.status.name}"
+                )
+    if leftovers.unclaimed:
+        print(f"!! OPEN ORDERS ON {state.pair} THAT NOTHING CLAIMS -- neither an evidence file in --evidence-dir")
+        print("!! nor --known-order names them, and a probe leftover whose evidence was never written looks")
+        print("!! exactly like this. Cancel each BY HAND at Kraken, or, if it is an order you placed on")
+        print("!! purpose, re-run naming it with --known-order <txid>:")
+        for txid in leftovers.unclaimed:
+            order = node.cache.order(ClientOrderId(txid))
+            print(f"!!   {describe_open_order(order) if order is not None else f'txid {txid}'}")
+    print("!! Kraken -> Trade -> Open Orders. Do NOT leave the terminal until each is accounted for.")
+    print("!" * 78)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.selftest:
@@ -2342,35 +2367,17 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 2
 
     leftovers = final_read(node, state)
-    node.dispose()
 
     if state.aborted_by and exit_code == 0:
         exit_code = 2
 
-    if leftovers.outstanding or leftovers.unclaimed:
-        exit_code = 3
-        print("\n" + "!" * 78)
-        if leftovers.outstanding:
-            print("!! ORDERS THIS HARNESS PLACED ARE STILL OPEN. Cancel them BY HAND at Kraken now:")
-            for coid in leftovers.outstanding:
-                order = node.cache.order(ClientOrderId(coid))
-                if order is None:
-                    print(f"!!   client_order_id={coid} (no cache record -- look it up at the venue)")
-                else:
-                    print(
-                        f"!!   client_order_id={coid} venue_order_id={order.venue_order_id} "
-                        f"{order.instrument_id} {order.side} {order.quantity} status={order.status.name}"
-                    )
-        if leftovers.unclaimed:
-            print(f"!! OPEN ORDERS ON {state.pair} THAT NOTHING CLAIMS -- neither an evidence file in --evidence-dir")
-            print("!! nor --known-order names them, and a probe leftover whose evidence was never written looks")
-            print("!! exactly like this. Cancel each BY HAND at Kraken, or, if it is an order you placed on")
-            print("!! purpose, re-run naming it with --known-order <txid>:")
-            for txid in leftovers.unclaimed:
-                order = node.cache.order(ClientOrderId(txid))
-                print(f"!!   {describe_open_order(order) if order is not None else f'txid {txid}'}")
-        print("!! Kraken -> Trade -> Open Orders. Do NOT leave the terminal until each is accounted for.")
-        print("!" * 78)
+    try:
+        if leftovers.outstanding or leftovers.unclaimed:
+            exit_code = 3
+            print_leftover_banner(node, state, leftovers)
+    finally:
+        # Only now: disposing the node empties its Cache, and the banner reads each order from it.
+        node.dispose()
 
     print("\n" + "=" * 78)
     print(f"PROBE RESULTS -- paste these rows into {VERIFICATION_DOC_DIR}<version>.md")

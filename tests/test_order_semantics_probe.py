@@ -284,8 +284,15 @@ def test_the_final_read_holds_an_earlier_runs_leftover_and_an_unclaimed_order_fo
     assert split.unclaimed == ["OUNCLA-IMEDX-000004"]
 
 
+class _DisposingNode(_NodeOpen):
+    """Disposing a node empties its Cache, as a real node's does."""
+
+    def dispose(self) -> None:
+        self._open = []
+
+
 def _main_against(open_orders, tmp_path, monkeypatch, *extra: str) -> int:
-    monkeypatch.setattr(probe, "build_node", lambda args, strategy: _NodeOpen(open_orders))
+    monkeypatch.setattr(probe, "build_node", lambda args, strategy: _DisposingNode(open_orders))
     argv = ["--no-exec", "--probes", "6", "--evidence-dir", str(tmp_path), *extra]
     return probe.main(["--expect-nautilus", nautilus_trader.__version__, *argv])
 
@@ -309,6 +316,21 @@ def test_a_leftover_an_earlier_evidence_file_records_exits_3(tmp_path, monkeypat
 
     assert _main_against([_LEFTOVER], tmp_path, monkeypatch, "--known-order", "OLEFTO-VERPR-OBE001") == 3
     assert "ORDERS THIS HARNESS PLACED ARE STILL OPEN" in capsys.readouterr().out
+
+
+def test_the_cancel_by_hand_banner_names_each_order_from_the_cache_before_it_is_disposed(tmp_path, monkeypatch, capsys):
+    """The banner is what the operator cancels from; an entry reading "no cache record" leaves them
+    to find the order at Kraken with nothing but an id."""
+    earlier = {"submitted_client_order_ids": ["c"], "events": [{"client_order_id": "c", "venue_order_id": "OLEFTO-VERPR-OBE001"}]}
+    (tmp_path / "evidence-20260923-210010.json").write_text(json.dumps(earlier))
+    unclaimed = _Reconciled(venue_order_id="OUNCLA-IMEDX-000004", client_order_id="OUNCLA-IMEDX-000004")
+
+    assert _main_against([_LEFTOVER, unclaimed], tmp_path, monkeypatch) == 3
+
+    out = capsys.readouterr().out
+    assert "client_order_id=OLEFTO-VERPR-OBE001 venue_order_id=OLEFTO-VERPR-OBE001 BTC/EUR.KRAKEN BUY" in out
+    assert "!!   txid OUNCLA-IMEDX-000004 BTC/EUR.KRAKEN SELL 0.00010000" in out
+    assert "no cache record" not in out
 
 
 # ---------------------------------------------------------------------------------------------
