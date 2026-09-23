@@ -252,8 +252,11 @@ async def read_margin_positions(client: Any, rec: Recorder, listing: dict[str, A
     instrument skips every other pair's row before resolving any. It matches a row only under the
     pair's AssetPairs key, so a position Kraken spells by its altname is not seen there either.
     What the retry cannot cover -- anything outside the basket, and a basket pair whose own read
-    failed -- is named, never read as flat, so the run cannot end at exit 0. A retry that reads
-    nothing at all is the venue's failure, not a row's, and raises the original.
+    failed -- is named, never read as flat, so the run cannot end at exit 0.
+
+    Because a scoped read skips the other pairs' rows first, the FIRST one failing is the venue's
+    failure, not a row's: the original is raised at once, so an outage costs one extra request and
+    not twelve, each of which can be a timeout. A retry with no basket pair to ask for raises it too.
 
     A shape this module refuses in the whole-account answer -- no answer at all, a row missing a
     named field -- still raises here: that is a changed venue, not an unreadable row.
@@ -284,6 +287,8 @@ async def _positions_pair_by_pair(
         try:
             rows.extend(_position_rows(await _position_reports(client, rec, instrument_id=row.id)))
         except FlattenUnreachable as exc:
+            if not read_any:
+                raise failure
             unread.append({"kind": "position", "symbol": symbol, "reason": "position_unread", "error": str(exc)})
             continue
         read_any = True

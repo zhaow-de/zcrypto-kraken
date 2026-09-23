@@ -331,20 +331,25 @@ def test_a_whole_account_position_read_one_row_fails_is_retried_pair_by_pair_and
     json.dumps(rec.entries)
 
 
-def test_a_position_read_that_fails_pair_by_pair_as_well_raises_the_original_failure():
-    """Every read failing is the venue, not a row: before the cancel that is exit 3 with nothing
-    sent, the contract's own answer to an account that could not be read."""
-    client = _listed(FakeClient(instruments=[_Instrument("BTC/EUR")], positions=[[_Position("BTC/EUR", "LONG", 0.5)]]))
-    real = client.request_position_status_reports
+@pytest.mark.parametrize(("symbols", "scoped_reads"), [(("ADA/EUR", "BTC/EUR", "SOL/EUR"), 1), (("FOO/EUR",), 0)])
+def test_a_position_read_whose_retry_fails_first_or_has_nothing_to_ask_raises_the_original_at_once(symbols, scoped_reads):
+    """A scoped read skips the other pairs' rows before it resolves any, so the first one failing
+    is the venue and not a row: before the cancel that is exit 3 with nothing sent, reached after
+    one extra request rather than twelve timeouts. A listing with no basket pair leaves nothing to
+    ask for. The two failures carry different words, so what is raised is the whole-account one."""
+    client = _listed(FakeClient(instruments=[_Instrument(s) for s in symbols], positions=[[]]))
 
     async def down(account_id, **kw):
-        await real(account_id, **kw)
+        if kw.get("instrument_id") is None:
+            raise RuntimeError("OpenPositions: instrument not in cache for pair FOOEUR")
         raise RuntimeError("connection refused")
 
     client.request_position_status_reports = down
+    rec = flatten.Recorder()
     with pytest.raises(flatten.FlattenUnreachable) as exc:
-        _sync(flatten.read_margin_positions(client, flatten.Recorder(), {"BTC/EUR": _Instrument("BTC/EUR")}))
-    assert "connection refused" in str(exc.value)
+        _sync(flatten.read_margin_positions(client, rec, {s: _Instrument(s) for s in symbols}))
+    assert "FOOEUR" in str(exc.value) and "connection refused" not in str(exc.value)
+    assert len([e for e in rec.entries if "instrument_id" in e["params"]]) == scoped_reads
 
 
 def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
