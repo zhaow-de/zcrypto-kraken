@@ -13,7 +13,7 @@ import base64
 import json
 import threading
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -78,6 +78,16 @@ def closed_order(pair: str, *, price: str, volume: str, side: str = "buy") -> di
     return row
 
 
+def depth(*, bids: Sequence[tuple[str, str]], asks: Sequence[tuple[str, str]] = ()) -> dict[str, Any]:
+    """One Depth book, each `(price, volume)` level best first."""
+    return {side: [[price, volume, 1758600000] for price, volume in levels] for side, levels in (("bids", bids), ("asks", asks))}
+
+
+def balance(amount: str, *, hold: str = "0.00000000") -> dict[str, str]:
+    """One BalanceEx row. The adapter reports `amount - hold` as free and drops a row whose amount is zero."""
+    return {"balance": amount, "hold_trade": hold}
+
+
 def margin_position(pair: str, *, volume: str, side: str = "buy") -> dict[str, Any]:
     """One OpenPositions row, `pair` spelled however the test needs it."""
     return {
@@ -109,6 +119,11 @@ class KrakenLoopback:
     open_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     closed_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     positions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Depth books by the pair a request names, which the adapter spells as the AssetPairs key. A pair
+    # with no book answers `EQuery:Unknown asset pair`, never an empty book.
+    books: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # BalanceEx rows by the venue's own asset code (`ZEUR`, `SOL`).
+    balances: dict[str, dict[str, str]] = field(default_factory=dict)
     # Endpoint name -> the Kraken error string it answers with instead of a result.
     errors: dict[str, str] = field(default_factory=dict)
     # AssetPairs keys TradeVolume leaves out of an otherwise well-formed answer.
@@ -131,6 +146,13 @@ class KrakenLoopback:
         if path == "/0/public/AssetPairs":
             tokenized = "tokenized_asset" in query.get("aclass_base", [])
             return ({} if tokenized else self.asset_pairs), []
+        if path == "/0/public/Depth":
+            pair = query.get("pair", [""])[-1]
+            if pair not in self.books:
+                return None, ["EQuery:Unknown asset pair"]
+            return {pair: self.books[pair]}, []
+        if path == "/0/private/BalanceEx":
+            return dict(self.balances), []
         if path == "/0/private/TradeVolume":
             return self._trade_volume(), []
         if path == "/0/private/OpenOrders":
