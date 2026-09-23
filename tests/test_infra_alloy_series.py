@@ -493,7 +493,7 @@ _OPS_ROLE = REPO / "infra/ansible/roles/ops"
 # Deliberately unshipped: the parse stage below the keep rule reads the Python logging shape.
 _JOURNAL_NOT_SHIPPED = {
     "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
-    "zcrypto-grafana-keepalive": "a shell curl loop; same shape, and its silence is what the keepalive alert reads",
+    "zcrypto-grafana-keepalive": "a shell curl call; its one line a run is read on the host, which stays readable while Grafana is dark",
 }
 
 

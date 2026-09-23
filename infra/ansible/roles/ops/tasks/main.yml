@@ -479,7 +479,7 @@
         state: started
       ignore_errors: "{{ ansible_check_mode }}"
 
-# --- The Grafana Cloud keep-alive: one authenticated call an hour, and the metric that measures it -
+# --- The Grafana Cloud keep-alive, and the metric that measures it
 # Unconditional like the watchdog above (curl-only). Only the secrets file is gated, so a converge
 # before the token exists installs a timer that runs and exits without writing, never one that fails
 # every slot -- the unit's `EnvironmentFile=-` is the other half of that.

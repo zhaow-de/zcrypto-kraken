@@ -1,20 +1,23 @@
-"""The keep-alive runner's output, rendered through Ansible's own `Templar` and run against a stub
-`curl`: a 503 recorded rather than swallowed, a dead network recorded rather than leaving no file at
-all, and the last-success stamp surviving a failed run."""
+"""The keep-alive runner's output, rendered through Ansible's own `Templar` and run against a stub `curl`."""
 
 import pathlib
+import re
 import subprocess
 
 import pytest
+import yaml
 
 from tests.test_infra_shell_templates_render import ansible_render, role_variables
 
 TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2"
+# The group's evaluation interval is a Grafana stack setting (infra/runbooks/drills-telemetry.md), not a field of the rule, so
+# it is stated here rather than read.
+EVAL_INTERVAL_S = 60
 
 
-def _run(tmp_path, curl_body, *, token="tok", prom_seed=None):
+def _run(tmp_path, curl_body, *, token="tok", prom_seed=None, want_stdout=False):
     """Render the script with `ops_textfile_dir` pointed at `tmp_path`, run it against a stub curl,
-    and return the metrics it wrote as a name -> value dict (empty when it wrote no file)."""
+    and return the metrics it wrote (empty for no file), and its stdout and stderr if asked."""
     variables = role_variables(TEMPLATE)
     variables["ops_textfile_dir"] = str(tmp_path)
     script = tmp_path / "keepalive.sh"
@@ -37,9 +40,12 @@ def _run(tmp_path, curl_body, *, token="tok", prom_seed=None):
     }
     result = subprocess.run([str(script)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, f"the runner must not fail the unit: {result.stderr}"
-    if not prom.exists():
-        return {}
-    return {line.split()[0]: line.split()[1] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
+    metrics = (
+        {line.split()[0]: line.split()[1] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
+        if prom.exists()
+        else {}
+    )
+    return (metrics, result.stdout, result.stderr) if want_stdout else metrics
 
 
 def test_a_success_is_recorded_with_its_duration_and_both_stamps(tmp_path):
@@ -96,6 +102,15 @@ def test_a_503_is_recorded_rather_than_swallowed(tmp_path):
     assert metrics["zcrypto_grafana_keepalive_last_success_timestamp_seconds"] == "0", "no 200 yet"
 
 
+@pytest.mark.parametrize(
+    ("curl_body", "line"),
+    [('#!/bin/sh\nprintf "503 0.419"\n', "status=503 duration=0.419s"), ("#!/bin/sh\nexit 7\n", "status=0 duration=0s")],
+)
+def test_each_run_logs_its_result_to_the_journal(tmp_path, curl_body, line):
+    _, stdout, _ = _run(tmp_path, curl_body, want_stdout=True)
+    assert stdout.splitlines() == [line], stdout
+
+
 def test_an_unreachable_host_writes_the_failure_rather_than_nothing(tmp_path):
     """A missing file is `(no series)`, which reads as an absent exporter rather than a failed call --
     so a curl that never got a status must still leave a sample saying so."""
@@ -126,7 +141,10 @@ def test_a_failed_run_carries_the_previous_success_stamp_forward(tmp_path):
 def test_no_token_writes_no_file_at_all(tmp_path):
     """Before the owner mints it there is nothing to say, and `(no series)` says that honestly where a
     zero status would read as a call that happened and failed."""
-    assert _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="") == {}
+    metrics, stdout, stderr = _run(tmp_path, '#!/bin/sh\nprintf "200 0.1"\n', token="", want_stdout=True)
+    assert metrics == {} and stdout == "" and stderr == "", (
+        "no file and no journal line: the runbook reads a start without one as no token"
+    )
     assert not (tmp_path / "grafana-keepalive.prom").exists(), "no file at all, not an empty one"
 
 
@@ -160,3 +178,26 @@ def test_every_family_carries_its_help_and_type(tmp_path, family):
     written = (tmp_path / "grafana-keepalive.prom").read_text()
     assert f"# HELP {family} " in written
     assert f"# TYPE {family} gauge" in written
+
+
+def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
+    """One skipped slot peaks near two periods and must stay quiet; two peak near three, and page only if the threshold plus
+    `for` and one evaluation tick is below that."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    timer = (TEMPLATE.parent / "grafana-keepalive.timer.j2").read_text()
+    step = re.search(r"^OnCalendar=\*:\d+/(\d+):00$", timer, re.M)
+    assert step, "the timer is no longer `*:MM/N:00`; read its period some other way"
+    period = int(step.group(1)) * 60
+    rule = next(
+        r
+        for r in yaml.safe_load((root / "infra/grafana/alerts.yaml").read_text())["rules"]
+        if r["uid"] == "zcrypto-ops-grafana-keepalive-stale"
+    )
+    (threshold,) = next(d for d in rule["data"] if d["refId"] == "C")["model"]["conditions"][0]["evaluator"]["params"]
+    held = re.fullmatch(r"(\d+)([smh])", rule["for"])
+    assert held, f"`for: {rule['for']}` is not a single-unit duration; read it some other way"
+    for_s = int(held.group(1)) * {"s": 1, "m": 60, "h": 3600}[held.group(2)]
+    assert 2 * period < threshold, f"threshold {threshold} s is not above one skip's peak, {2 * period} s"
+    assert threshold + for_s + EVAL_INTERVAL_S < 3 * period, (
+        f"threshold {threshold} s plus `for` {for_s} s and a {EVAL_INTERVAL_S} s tick is not below two skips' peak, {3 * period} s"
+    )
