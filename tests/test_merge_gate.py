@@ -309,6 +309,29 @@ def test_the_arm_refuses_a_read_commit_remade_above_the_row_with_a_file_the_read
     assert isinstance(answer, str) and answer.startswith("the head's tree is not the read's"), answer
 
 
+@pytest.mark.parametrize("below", ["merge", "remade"])
+def test_the_arm_refuses_a_file_the_read_never_saw_below_the_row_on_a_base_that_has_not_moved(tmp_path, below):
+    root = tmp_path / below
+    read, _ = _unmoved_repo(root, "")
+    if below == "remade":
+        _git(root, "commit", "-q", "--allow-empty", "-m", "claude(refine): round 9 closes")
+        read = _git(root, "rev-parse", "HEAD")
+        _git(root, "reset", "-q", "--hard", "HEAD~1")
+    (root / "unread.py").write_text("x = 666\n")
+    _git(root, "add", "unread.py")
+    if below == "merge":
+        merge = _git(
+            root, "commit-tree", _git(root, "write-tree"), "-p", "HEAD", "-p", "refs/remotes/origin/develop", "-m", "Merge develop"
+        )
+        _git(root, "reset", "-q", "--hard", merge)
+    else:
+        _git(root, "commit", "-q", "-m", "claude(refine): round 9 closes")  # the read's own message: the list still matches
+    (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
+    _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
+    answer = gate.head_is_the_read(read, _git(root, "rev-parse", "HEAD"), "origin/develop", cwd=root)
+    assert isinstance(answer, str) and answer.startswith("the head's tree is not the read's"), answer
+
+
 def test_the_arm_refuses_a_second_row_above_the_read(tmp_path):
     read, head = _rebased_repo(tmp_path / "two-rows", two_rows_above=True)
     answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "two-rows")
