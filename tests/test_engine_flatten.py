@@ -963,6 +963,53 @@ def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_can
     assert "1 resting order" in text
 
 
+def _resting(symbol: str, side: str, quantity: float, txid: str):
+    """A real `OrderStatusReport` for one resting limit order -- constructible offline, so the
+    fields the plan prints are the library's own rather than a restatement of them."""
+    from nautilus_trader.model import (
+        AccountId,
+        InstrumentId,
+        OrderSide,
+        OrderStatus,
+        OrderStatusReport,
+        OrderType,
+        Quantity,
+        TimeInForce,
+        VenueOrderId,
+    )
+
+    return OrderStatusReport(
+        account_id=AccountId(flatten.ACCOUNT_ID),
+        instrument_id=InstrumentId.from_str(f"{symbol}.KRAKEN"),
+        venue_order_id=VenueOrderId(txid),
+        order_side=getattr(OrderSide, side),
+        order_type=OrderType.LIMIT,
+        time_in_force=TimeInForce.GTC,
+        order_status=OrderStatus.ACCEPTED,
+        quantity=Quantity(quantity, 8),
+        filled_qty=Quantity(0, 8),
+        ts_accepted=0,
+        ts_last=0,
+        ts_init=0,
+    )
+
+
+def test_the_dry_run_names_each_resting_order_under_the_count(tmp_path):
+    """The operator decides on an order by NAME -- a BTC/EUR one resting beside the fixture's own
+    -- and a count alone cannot say which orders the cancel is about to take. Each line carries
+    the pair, the side, the volume and the venue's txid, the one handle Kraken's own pages share."""
+    orders = [_resting("BTC/EUR", "BUY", 0.0001, "OAAAAA-BBBBB-CCCC01"), _resting("SOL/EUR", "SELL", 0.06, "OAAAAA-BBBBB-CCCC02")]
+    client = _flat_client(orders=[orders], symbols=("BTC/EUR", "SOL/EUR"))
+    lines: list[str] = []
+    assert _run(client, tmp_path, execute=False, lines=lines) == 0
+    count = next(i for i, line in enumerate(lines) if "resting order(s) seen" in line)
+    assert lines[count].startswith("2 resting order(s) seen")
+    assert lines[count + 1 : count + 3] == [
+        "  order BTC/EUR BUY 0.00010000 -- venue txid OAAAAA-BBBBB-CCCC01",
+        "  order SOL/EUR SELL 0.06000000 -- venue txid OAAAAA-BBBBB-CCCC02",
+    ]
+
+
 def test_the_rendered_plan_prints_no_cross_currency_total():
     """A BTC-quoted estimate and a EUR one are not summable without an FX rate this command has no
     mandate to invent, so no grand total is printed at all."""

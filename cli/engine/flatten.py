@@ -807,6 +807,19 @@ async def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: di
     )
 
 
+def _order_line(order: Any) -> str:
+    """One resting order, every field read leniently: before the cancel the list only tells the
+    operator what the cancel will reach, so a field it lacks prints as `?` rather than aborting."""
+
+    def read(name: str) -> str:
+        value = getattr(order, name, None)
+        return "?" if value is None else str(value)
+
+    symbol = read("instrument_id").rsplit(".", 1)[0]
+    side = read("order_side").rsplit(".", 1)[-1].upper()
+    return f"  order {symbol} {side} {read('quantity')} -- venue txid {read('venue_order_id')}"
+
+
 def _leg_line(sized: SizedLeg) -> str:
     head = f"  {sized.leg.kind:<6} {sized.leg.symbol} {sized.leg.side} {sized.qty:.8f}".rstrip()
     if not sized.send:
@@ -835,6 +848,8 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
         )
     else:
         echo(f"{len(plan.orders)} resting order(s) seen -- the cancel is account-wide and reaches any this read could not see")
+        for order in plan.orders:
+            echo(_order_line(order))
     for row in plan.unread:
         if row["kind"] != "position":
             continue
