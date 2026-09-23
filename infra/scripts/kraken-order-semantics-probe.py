@@ -209,8 +209,12 @@ TERMINAL_STATUSES = frozenset(
 # exclude these two explicitly, or the wait resolves on the local echo of our own submission.
 PRE_VENUE_STATUSES = frozenset({OrderStatus.INITIALIZED, OrderStatus.SUBMITTED})
 
+_P2 = "Reconciliation at node start"
+_P2_EXPECTED = "Open orders + positions empty-or-actual, no spurious entries"
 _P4A = "Spot post-only limit, resting"
 _P4B = "Crossing post-only"
+_P6 = "Post-run reconciliation"
+_P6_EXPECTED = "No open orders/positions; balances reflect only probe 5"
 
 
 class Refusal(Exception):
@@ -527,6 +531,35 @@ def render_table(results: list[ProbeResult]) -> str:
     return "\n".join(lines)
 
 
+# The two ways a node start fails at startup reconciliation, before any strategy runs, as the
+# binding's RuntimeError spells them (upstream crates/live/src/node/mod.rs).
+UNRESOLVED_POSITIONS = "Unresolved positions during startup reconciliation"
+MASS_STATUS_FAILED = "Failed to get mass status"
+_UNRESOLVED_ENTRY = re.compile(
+    r"instrument=(?P<instrument>[^,]+), venue_position_id=.*?, venue_quantity=(?P<quantity>[^:]+): (?P<reason>[^;]+)"
+)
+
+
+@dataclass
+class UnresolvedPosition:
+    instrument: str
+    quantity: str
+    reason: str
+
+
+def unresolved_positions(message: str) -> list[UnresolvedPosition] | None:
+    """The positions a node refused to start over, or None when `message` is not that refusal.
+
+    The entries are `; `-joined; one whose shape moved upstream is dropped rather than guessed at,
+    and the caller then shows the whole message."""
+    if UNRESOLVED_POSITIONS not in message:
+        return None
+    return [
+        UnresolvedPosition(m["instrument"].strip(), m["quantity"].strip(), m["reason"].strip())
+        for m in _UNRESOLVED_ENTRY.finditer(message)
+    ]
+
+
 def describe_open_order(order) -> str:
     """An open order the way it is adjudicated at Kraken: by its venue txid. No price -- the adapter
     reads a reconciled order's price from Kraken's average-price field, so a resting limit order
@@ -822,7 +855,7 @@ class ProbeStrategy(Strategy):
         short_name = f"Margin short (leverage {self.args.leverage}), resting"
         catalogue: dict[int, list[tuple[str, str, Callable[[], None]]]] = {
             1: [("1", "Auth + account read", self._probe1)],
-            2: [("2", "Reconciliation at node start", self._probe2)],
+            2: [("2", _P2, self._probe2)],
             3: [("3", "WS market data", self._probe3)],
             4: [
                 ("4a", _P4A, lambda: self._resting("4a", _P4A, "BUY", None)),
@@ -831,7 +864,7 @@ class ProbeStrategy(Strategy):
                 ("4d", short_name, lambda: self._resting("4d", short_name, "SELL", self.args.leverage)),
             ],
             5: [("5", "Real ~EUR 10 fill round-trip", self._probe5)],
-            6: [("6", "Post-run reconciliation", self._probe6)],
+            6: [("6", _P6, self._probe6)],
         }
         steps: list[tuple[str, str, Callable[[], None]]] = []
         for n in sorted(self.args.selected_probes):
@@ -1182,8 +1215,7 @@ class ProbeStrategy(Strategy):
     # -- probe 2 -------------------------------------------------------------------------
 
     def _probe2(self) -> None:
-        label, name = "2", "Reconciliation at node start"
-        expected = "Open orders + positions empty-or-actual, no spurious entries"
+        label, name, expected = "2", _P2, _P2_EXPECTED
         if self.args.no_exec:
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             self._advance()
@@ -1568,8 +1600,7 @@ class ProbeStrategy(Strategy):
     # -- probe 6 -------------------------------------------------------------------------
 
     def _probe6(self) -> None:
-        label, name = "6", "Post-run reconciliation"
-        expected = "No open orders/positions; balances reflect only probe 5"
+        label, name, expected = "6", _P6, _P6_EXPECTED
         if self.args.no_exec:
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             self._advance()
@@ -2294,6 +2325,39 @@ def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
     return split
 
 
+def record_unresolved_start(state: RunState, selected: set[int], positions: list[UnresolvedPosition], message: str) -> None:
+    """A FAIL on the reconciliation probe that was asked for -- 2, 6 or both, and 2 when neither
+    was -- because the start that failed is that probe's read. Not an abnormal stop: nothing was
+    submitted, so there is no position of the harness's own to flatten, and the operator's action
+    is the pre-existing position this names."""
+    held = "; ".join(f"{p.instrument} quantity {p.quantity} ({p.reason})" for p in positions) or message
+    observed = (
+        f"the node refused to start: the venue holds an open position startup reconciliation cannot adopt -- {held}. "
+        f"Nothing was submitted."
+    )
+    print("\n!! the node refused to start over an open position it cannot adopt; nothing was submitted:")
+    for p in positions:
+        print(f"!!   {p.instrument} quantity {p.quantity} -- {p.reason}")
+    if not positions:
+        print(f"!!   {message}")
+    print("!! It is not the harness's to close: find its owner (Kraken -> Positions), and re-run once it is")
+    print("!! closed. Runbook section 6.")
+    rows = {2: (_P2, _P2_EXPECTED), 6: (_P6, _P6_EXPECTED)}
+    for n in [n for n in (2, 6) if n in selected] or [2]:
+        name, expected = rows[n]
+        state.results.append(ProbeResult(str(n), name, expected, observed, VERDICT_FAIL))
+    state.notes.append(f"an open position stopped the node's start: {held} -- close it before re-running")
+
+
+def print_mass_status_causes() -> None:
+    print("!! a start-time venue read failed; nothing was submitted, so there is nothing of this run's to")
+    print("!! flatten. The binding drops the cause. In order of likelihood:")
+    print("!!   1. the key lacks a query permission (Query Open Orders & Trades, Query Closed Orders & Trades);")
+    print("!!   2. a WARN above -- `Failed to fetch tokenized asset pairs`, `Failed to parse instrument` --")
+    print("!!      left a pair out of the listing;")
+    print("!!   3. an open order or position sits on a pair outside the listing: Kraken -> Open Orders, Positions.")
+
+
 def print_leftover_banner(node: LiveNode, state: RunState, leftovers: LeftoverSplit) -> None:
     print("\n" + "!" * 78)
     if leftovers.outstanding:
@@ -2362,9 +2426,15 @@ def main(argv: list[str] | None = None) -> int:
         # that case, and the raise is the report.
         node.run()
     except BaseException as exc:  # noqa: BLE001 - the table and the leftover read are owed on every path
-        print(f"\n!! the node stopped abnormally: {exc!r}")
-        state.notes.append(f"the node stopped abnormally: {exc!r}")
-        exit_code = 2
+        refused = unresolved_positions(str(exc)) if not state.submitted else None
+        if refused is not None:
+            record_unresolved_start(state, args.selected_probes, refused, str(exc))
+        else:
+            print(f"\n!! the node stopped abnormally: {exc!r}")
+            state.notes.append(f"the node stopped abnormally: {exc!r}")
+            if MASS_STATUS_FAILED in str(exc) and not state.submitted:
+                print_mass_status_causes()
+            exit_code = 2
 
     leftovers = final_read(node, state)
 

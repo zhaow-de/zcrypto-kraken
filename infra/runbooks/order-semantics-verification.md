@@ -85,6 +85,12 @@ Decide this first; it can predate everything above. Stop bumping the pin, and ke
 
 While the engine is disarmed, bump freely. The freeze starts when the pass is scheduled and ends when the arming window closes. The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
 
+#### 1.7 No margin position is open
+
+On the workstation, `kraken positions -o json` must print no position. Check again immediately before §5.1.
+
+From 2.0.0rc6.dev20260921 a node refuses to start while the account holds a Kraken margin position its startup reconciliation cannot rebuild, and the adapter's margin position report carries no entry price, so an ordinary open position can be enough: the start fails with `Unresolved positions during startup reconciliation ... missing avg_px_open for position recovery`. The harness records that as `FAIL` on probe 2 or 6, naming the instrument and quantity (§6). It is not the harness's position to close: find its owner, and run the pass once it is closed.
+
 ### 2. Environment: the interpreter under test
 
 Run from a tree whose lockfile already carries the version under test, the bump branch itself, so the harness binds the exact interpreter the engine will run:
@@ -258,11 +264,17 @@ The buckets go by the venue order id (the txid), because that is the id that com
 | Code | Meaning | Action |
 | -- | -- | -- |
 | 0 | every executed probe passed | proceed to §7 |
-| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers the kickoff design's pre-approved fallback<!-- spec 00039 D1 -->; escalate anything else |
+| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers the kickoff design's pre-approved fallback<!-- spec 00039 D1 -->, except the start refused over an open position (below); escalate anything else |
 | 2 | a probe was refused, **or** the run stopped before its sequence finished | the two need opposite actions; read the paragraph below the table before deciding which |
-| 3 | **something was left resting** | §8, immediately |
+| 3 | **something was left resting**, or an open order on `--pair` that nothing claims (§5.4) | §8, immediately |
 
-Exit 2 is two different events. A refusal (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that stopped (an interrupt, an exec client that died, any abnormal exit from the node) may have left a real open position that no order read can see: probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so, in the `!!` banner `a fill with no closing leg is an OPEN POSITION` and under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything.
+Exit 2 is two different events. A refusal (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that stopped (an interrupt, an exec client that died, an abnormal exit from the node other than the two start failures below) may have left a real open position that no order read can see: probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so, in the `!!` banner `a fill with no closing leg is an OPEN POSITION` and under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything.
+
+Two node-start failures read differently. Both happen inside startup reconciliation, before any probe runs, so nothing was submitted and §8's flatten-by-hand does not apply:
+
+`Unresolved positions during startup reconciliation … missing avg_px_open for position recovery` is exit 1, with probe 2 and/or 6 `FAIL` naming each instrument and quantity. The account holds a margin position the node cannot adopt (§1.7). That is a precondition of the pass, not an adapter result, so the pre-approved fallback does not apply: find the position's owner, have it closed, and re-run.
+
+`Failed to get mass status from KRAKEN` is exit 2, and the harness prints the candidate causes, because the binding drops the adapter's own. In order of likelihood: the key lacks a query permission (Query Open Orders & Trades, Query Closed Orders & Trades); a WARN line earlier in the same run (`Failed to fetch tokenized asset pairs`, `Failed to parse instrument`) left a pair out of the listing; an open order or position sits on a pair outside the listing, which Kraken → Open Orders and Positions show.
 
 ### 7. Post-run reconciliation
 

@@ -334,6 +334,91 @@ def test_the_cancel_by_hand_banner_names_each_order_from_the_cache_before_it_is_
 
 
 # ---------------------------------------------------------------------------------------------
+# A node start that fails at startup reconciliation
+# ---------------------------------------------------------------------------------------------
+
+# The refusal as the binding raises it: the node's prefix, then the manager's per-position reasons.
+_REFUSAL = (
+    "Unresolved positions during startup reconciliation for KRAKEN: account=KRAKEN-901, instrument=SOL/EUR.KRAKEN, "
+    "venue_position_id=None, venue_quantity=0.06000000: missing avg_px_open for position recovery"
+)
+
+
+def test_the_start_refusal_is_read_into_each_position_it_could_not_adopt():
+    two = (
+        f"{_REFUSAL}; account=KRAKEN-901, instrument=BTC/EUR.KRAKEN, venue_position_id=None, "
+        "venue_quantity=-0.00100000: missing avg_px_open for position recovery"
+    )
+
+    assert probe.unresolved_positions(two) == [
+        probe.UnresolvedPosition("SOL/EUR.KRAKEN", "0.06000000", "missing avg_px_open for position recovery"),
+        probe.UnresolvedPosition("BTC/EUR.KRAKEN", "-0.00100000", "missing avg_px_open for position recovery"),
+    ]
+
+
+def test_another_start_failure_is_not_read_as_the_position_refusal():
+    assert probe.unresolved_positions("Failed to get mass status from KRAKEN") is None
+
+
+class _RaisingNode(_NodeOpen):
+    """A node whose start fails the way `LiveNode.run` raises it."""
+
+    def __init__(self, exc: BaseException) -> None:
+        super().__init__([])
+        self._exc = exc
+
+    def run(self) -> None:
+        raise self._exc
+
+
+def _main_raising(exc, tmp_path, monkeypatch, probes: str) -> int:
+    monkeypatch.setattr(probe, "build_node", lambda args, strategy: _RaisingNode(exc))
+    argv = ["--no-exec", "--probes", probes, "--evidence-dir", str(tmp_path)]
+    return probe.main(["--expect-nautilus", nautilus_trader.__version__, *argv])
+
+
+def _rows(out: str) -> list[str]:
+    return [line for line in out.splitlines() if line.startswith("| ") and not line.startswith(("| #", "| --"))]
+
+
+def test_a_start_refused_over_an_open_position_fails_each_reconciliation_probe_and_names_it(tmp_path, monkeypatch, capsys):
+    """Not an abnormal stop: that reading sends the operator to flatten a position of the harness's
+    own, and nothing was submitted -- the position is somebody else's, and the row names it."""
+    assert _main_raising(RuntimeError(_REFUSAL), tmp_path, monkeypatch, probes="1,2,6") == 1
+
+    out = capsys.readouterr().out
+    rows = _rows(out)
+    assert [r.split(" | ")[0] for r in rows] == ["| 2", "| 6"]
+    assert all("SOL/EUR.KRAKEN quantity 0.06000000" in r and r.endswith("| FAIL |") for r in rows)
+    assert "stopped abnormally" not in out
+
+
+def test_the_refusal_lands_on_probe_2_when_no_reconciliation_probe_was_selected(tmp_path, monkeypatch, capsys):
+    assert _main_raising(RuntimeError(_REFUSAL), tmp_path, monkeypatch, probes="3") == 1
+
+    assert [r.split(" | ")[0] for r in _rows(capsys.readouterr().out)] == ["| 2"]
+
+
+def test_a_failed_mass_status_stays_exit_2_and_names_its_likely_causes(tmp_path, monkeypatch, capsys):
+    assert _main_raising(RuntimeError("Failed to get mass status from KRAKEN"), tmp_path, monkeypatch, probes="6") == 2
+
+    out = capsys.readouterr().out
+    assert "nothing was submitted" in out
+    assert "the key lacks a query permission" in out
+
+
+def test_any_other_start_failure_is_still_an_abnormal_stop(tmp_path, monkeypatch, capsys):
+    """The true positive for both readings above: an unrecognised failure keeps the generic path."""
+    exc = RuntimeError("readiness timeout while waiting for engine connections")
+
+    assert _main_raising(exc, tmp_path, monkeypatch, probes="6") == 2
+
+    out = capsys.readouterr().out
+    assert "the node stopped abnormally" in out
+    assert "query permission" not in out and _rows(out) == []
+
+
+# ---------------------------------------------------------------------------------------------
 # The waiting primitive
 # ---------------------------------------------------------------------------------------------
 
