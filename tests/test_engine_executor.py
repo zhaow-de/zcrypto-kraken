@@ -4449,6 +4449,76 @@ def test_a_failed_venue_read_leaves_the_rows_and_refuses_every_plan_for_the_life
     assert client.submitted == [] and not _plan_path(tmp_path).exists()
 
 
+# --- a row no venue order matches is marked ambiguous ---------------------------------------------
+
+_NO_TXID = "no Kraken order id is recorded for it, so a restart cannot match it to a venue order"
+
+
+def test_an_open_row_with_no_recorded_txid_is_marked_ambiguous_once(tmp_path):
+    """A row written before the acceptance recorded a txid, or one whose order never got an
+    acceptance: nothing can match it to the venue's orders, which name themselves by txid alone. It
+    takes the ledger's own word for that, keeps pointing at a possibly-live order, and asks no venue
+    read -- and a second restart does not mark it again."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-legacy", reduce_only=True, when=earlier)
+    venue = _VenueOrders()
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "ambiguous"
+    assert row["events"] == [{"type": "ambiguous", "at": NOW.isoformat(), "what": _NO_TXID}]
+    assert [r.getMessage() for r in records] == 2 * [
+        f"ledgered order O-legacy matches no venue order -- {_NO_TXID}; its row is marked ambiguous"
+    ]
+    assert venue.calls == []
+
+
+def test_a_finished_row_with_fills_and_no_recorded_txid_takes_the_mark_but_keeps_its_state(tmp_path):
+    """Its order ended, so the state `ambiguous` -- "may be resting" -- would be false; what nobody can
+    establish is only whether the venue withdrew a fill since. A finished row with no fill has none
+    to withdraw and is not marked at all."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-filled", reduce_only=False, when=earlier)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-filled", state="filled", add_filled_qty=0.001)
+    _submitted_row(tmp_path, "O-unfilled", reduce_only=False, when=earlier, index=1)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-unfilled", state="canceled")
+
+    for _ in range(2):
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=_VenueOrders()
+        ).on_timer(NOW)
+
+    filled, unfilled = _record(tmp_path, earlier)["submitted"]
+    assert filled["state"] == "filled"
+    assert filled["events"] == [{"type": "ambiguous", "at": NOW.isoformat(), "what": _NO_TXID}]
+    assert (unfilled["state"], unfilled["events"]) == ("canceled", [])
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp_path, finished):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-gone", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    if finished:
+        update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-gone", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(_report("OOTHER-ORDER-000009", OrderStatus.CANCELED))
+
+    _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue).on_timer(
+        NOW
+    )
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == ("filled" if finished else "ambiguous")
+    assert row["events"][-1] == {"type": "ambiguous", "at": NOW.isoformat(), "what": f"the venue's order read has no order {_TXID}"}
+    assert len(venue.calls) == 1
+
+
 # --- read_venue_orders against a loopback venue: the wheel's own client, offline ----------------------
 
 

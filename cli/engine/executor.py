@@ -174,6 +174,9 @@ _VENUE_READ_TIMEOUT_SECONDS = 30.0
 # How far before the earliest row's boundary that read reaches. A row's order is submitted after the
 # boundary it is filed under; the margin covers clock skew against the venue, not a real gap.
 _VENUE_READ_MARGIN = timedelta(hours=1)
+# Why a row that names no venue order cannot be matched after a restart: written into the row as the
+# `what` of its `ambiguous` event, and compared there so a later restart does not append it again.
+_NO_VENUE_ORDER_ID = "no Kraken order id is recorded for it, so a restart cannot match it to a venue order"
 
 # Module-level, None-safe, installed by command.run() -- the `cycle.set_metrics_sink` pattern. Left
 # unset (the default), every call below is a no-op, so a one-shot subcommand or a test that never
@@ -939,12 +942,13 @@ class ProbeExecutor:
         take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
         its terminal state and both trips exactly as a resting one does.
 
-        A row neither answers is left exactly as it is, since inventing a venue truth would be worse
-        than an open row a human can read: a row that recorded no txid, or one whose txid the venue
-        read does not return, or every row that needed the read when the read itself failed
-        (`venue_orders` None, which `_read_venue_orders` has already turned into a refusal of every
-        plan). The order behind such a row is neither attached nor kept by the pass above;
-        `_on_external_event` says what becomes of its later fills.
+        A row neither answers is never given a venue truth nobody read. A row that recorded no txid,
+        or one whose txid the venue read does not return, cannot be matched to any venue order, and
+        `_mark_unmatched` marks it `ambiguous`. A row that needed the read when the read itself failed
+        is left exactly as it is: its truth is unread rather than unknowable, and `_read_venue_orders`
+        has already turned the failure into a refusal of every plan. The order behind any of these
+        rows is neither attached nor kept by the pass above; `_on_external_event` says what becomes of
+        its later fills.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -973,8 +977,14 @@ class ProbeExecutor:
                             venue_order_id=venue_order_id or _venue_order_id_of(order),
                         )
                         continue
-                    report = None if venue_order_id is None or not venue_orders else venue_orders.get(venue_order_id)
+                    if venue_order_id is None:
+                        self._mark_unmatched(boundary, row, _NO_VENUE_ORDER_ID, open_row=True)
+                        continue
+                    if venue_orders is None:
+                        continue  # the read failed: unread, not unknowable, and every plan is refused
+                    report = venue_orders.get(venue_order_id)
                     if report is None:
+                        self._mark_unmatched(boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True)
                         continue
                     self._reconcile_adopted_row(
                         boundary,
@@ -988,6 +998,35 @@ class ProbeExecutor:
                     logger.critical("adopted row %s could not be reconciled against the venue", client_order_id, exc_info=True)
         except Exception:
             logger.critical("the startup reconciliation sweep raised -- classifying resting orders anyway", exc_info=True)
+
+    def _mark_unmatched(self, boundary: datetime, row: dict, what: str, *, open_row: bool) -> None:
+        """A row this pass cannot match to any venue order, marked in the ledger's own word for an
+        outcome this process could not establish: `ambiguous`, with the event `_mark_ambiguous`
+        writes.
+
+        An open row takes the state as well. It is one of `execledger._OPEN_ORDER_STATES`, so the row
+        stays in the re-attach set, pointing at an order that may still rest. A finished row takes the
+        event only: its order ended, so the state would falsely claim it may be resting, and what is
+        unestablished is only whether the venue has since withdrawn a fill.
+
+        A row already carrying the mark is left alone, so a row that stays unmatched does not gain an
+        event every restart. Nothing is refused and nothing trips: the operator reads the row against
+        Kraken's own open and closed orders. The write is not wrapped: the caller's per-row `try` logs
+        its failure, and no trip stands behind it."""
+        client_order_id = row["client_order_id"]
+        logger.warning("ledgered order %s matches no venue order -- %s; its row is marked ambiguous", client_order_id, what)
+        if open_row:
+            marked = row.get("state") == "ambiguous"
+        else:
+            marked = any(
+                isinstance(e, dict) and e.get("type") == "ambiguous" and e.get("what") == what for e in row.get("events") or ()
+            )
+        if marked:
+            return
+        event = {"type": "ambiguous", "at": self._now().isoformat(), "what": what}
+        update_submitted_row(self._journal_dir, boundary, client_order_id, state="ambiguous" if open_row else None, event=event)
+        if open_row:
+            row["state"] = "ambiguous"
 
     def _read_venue_orders(self, rows: dict, finished: dict) -> dict | None:
         """The venue's own orders by txid, for the rows the Cache cannot answer: `{}` when no row
@@ -1184,7 +1223,8 @@ class ProbeExecutor:
         sized against. After a restart the Cache holds no closed order under any name -- the startup
         reconciliation reads open orders only -- so the figure comes from `venue_orders`, the venue's
         report found by the txid the row recorded, when the Cache (`_cached_order`) has none. A row
-        neither answers is not compared, which `_reconcile_adopted_rows` lists the cases of.
+        neither answers is not compared: `_reconcile_adopted_rows` lists the cases, and
+        `_mark_unmatched` says what a finished row that no venue order matches is given.
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
@@ -1197,10 +1237,16 @@ class ProbeExecutor:
                         continue
                     venue_order_id = _row_venue_order_id(row)
                     order = self._cached_order(row, venue_order_id)
+                    if order is None and venue_order_id is None:
+                        self._mark_unmatched(boundary, row, _NO_VENUE_ORDER_ID, open_row=False)
+                        continue
                     if order is None:
-                        order = None if venue_order_id is None or not venue_orders else venue_orders.get(venue_order_id)
+                        if venue_orders is None:
+                            continue  # the read failed: unread, not unknowable, and every plan is refused
+                        order = venue_orders.get(venue_order_id)
                     if order is None:
-                        continue  # no venue-truth source for it -- the same answer the sweep above gives
+                        self._mark_unmatched(boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=False)
+                        continue
                     self._reconcile_finished_row(boundary, row, float(order.filled_qty), _row_label(row, venue_order_id))
                 except Exception:
                     logger.critical("finished row %s could not be reconciled against the venue", client_order_id, exc_info=True)
