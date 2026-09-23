@@ -108,3 +108,12 @@ def test_a_refusal_while_the_node_is_built_is_exit_2_not_a_traceback(capsys):
     out = capsys.readouterr().out
     assert "mode: DRY-RUN -- nothing will be submitted" in out
     assert f"!! REFUSED before the node was built: {_STUB}" in out
+
+
+def test_the_reconcile_blind_legs_are_the_two_way_spelled_basket_legs():
+    """The script restates the list, so a basket change reaches it only through this recompute."""
+    from cli.backfill.read import dump_pair_name
+    from cli.engine.store import BASKET, PAIR_KEYS
+
+    two_way = {symbol for symbol in BASKET if dump_pair_name(symbol) != PAIR_KEYS[symbol]}
+    assert two_way == set(probe.RECONCILE_BLIND_LEGS)
