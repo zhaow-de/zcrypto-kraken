@@ -1,12 +1,11 @@
 """The fixture minter's pure core — the rails that decide what reaches a live account: a leg minted
-on a two-way-spelled pair rests where the verdict it exists to exercise cannot see it, a size taken
+on a two-way-spelled pair rests where a read scoped to that pair cannot see it, a size taken
 from a remembered figure rather than the venue's own `ordermin` is rejected at submit or accepted at
 a notional nobody chose, and leverage reaching a leg meant to be spot is a position nobody planned.
 """
 
 from __future__ import annotations
 
-import ast
 import importlib.util
 import json
 import os
@@ -68,7 +67,7 @@ def _no_unintended_dialling(monkeypatch):
 
 
 class TestTheSameKeyGuard:
-    """A leg on a pair Kraken spells two ways rests where flatten's verdict cannot see it."""
+    """A leg on a pair Kraken spells two ways rests where a read scoped to that pair cannot see it."""
 
     @pytest.mark.parametrize("pair", ["BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC"])
     def test_it_refuses_every_two_way_spelled_leg(self, pair: str) -> None:
@@ -80,28 +79,18 @@ class TestTheSameKeyGuard:
         """The true positive. A guard that refuses everything ships green and proves nothing."""
         mint.assert_same_key("SOL/EUR")
 
-    def test_the_blind_list_is_imported_rather_than_restated(self) -> None:
-        """Two copies of this list already exist on the live trade path. A third would rot apart."""
-        from cli.engine.flatten import BLIND_ORDER_READ_LEGS
+    def test_the_blind_legs_are_the_two_way_spelled_basket_legs(self) -> None:
+        """The list is frozen text; recomputing it keeps a basket change from leaving it stale. A scoped
+        read keeps the rows whose pair is the instrument's `raw_symbol` -- the AssetPairs KEY, which
+        `PAIR_KEYS` carries -- while an open order names the altname `dump_pair_name` derives."""
+        from cli.backfill.read import dump_pair_name
+        from cli.engine.store import BASKET, PAIR_KEYS
 
-        assert mint.BLIND_ORDER_READ_LEGS is BLIND_ORDER_READ_LEGS
-
-    def test_the_probe_and_flatten_agree_on_the_blind_legs(self) -> None:
-        """The list exists twice on the live trade path. This is the guard that keeps them equal.
-
-        `cli/engine/flatten.py` and `infra/scripts/kraken-order-semantics-probe.py` each define it.
-        Neither is edited here; this asserts they have not drifted, which is what makes leaving the
-        pair in place safe and what a third copy would have made unenforceable.
-        """
-        from cli.engine.flatten import BLIND_ORDER_READ_LEGS
-
-        probe_path = _REPO / "infra" / "scripts" / "kraken-order-semantics-probe.py"
-        src = probe_path.read_text()
-        # Read the literal rather than importing: the probe pulls in a live-venue import surface at
-        # module scope, and this assertion needs the constant, not the module.
-        match = re.search(r"^RECONCILE_BLIND_LEGS = (\([^)]*\))", src, re.MULTILINE)
-        assert match, "the probe's blind-leg constant moved or was renamed"
-        assert ast.literal_eval(match.group(1)) == tuple(BLIND_ORDER_READ_LEGS)
+        two_way = {symbol for symbol in BASKET if dump_pair_name(symbol) != PAIR_KEYS[symbol]}
+        assert two_way == set(mint.SCOPED_ORDER_READ_BLIND_LEGS)
+        # Not a degenerate fixture: a basket spelled one way throughout would make the set empty and
+        # let the equality above pass against a guard that refused nothing.
+        assert len(BASKET) == 12 and len(two_way) == 5
 
     def test_the_planner_refuses_before_it_sizes_anything(self) -> None:
         """The guard runs at plan time, so a dry run on a blind leg refuses rather than printing."""
@@ -192,7 +181,7 @@ class TestTheMeasuredSameKeyRefusal:
         with pytest.raises(mint.Refusal) as exc:
             mint.pair_limits(listing, "SOL/EUR")
         assert "is behind the venue" in str(exc.value)
-        assert "SOL/EUR" not in mint.BLIND_ORDER_READ_LEGS
+        assert "SOL/EUR" not in mint.SCOPED_ORDER_READ_BLIND_LEGS
 
     def test_the_healthy_row_passes(self) -> None:
         """The true positive. SOL/EUR's key and altname are the same string, so nothing fires."""

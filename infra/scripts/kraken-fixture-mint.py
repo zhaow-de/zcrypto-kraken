@@ -4,10 +4,10 @@
 its own client did not place, a MARGIN POSITION, and a NON-EUR SPOT BALANCE for the sell path.
 This mints those and stops. It has no cancel path -- not for its own legs, not for anything else
 -- so it cannot unmake a fixture, its own or a hand-placed one.
-EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and on those the
-adapter's order-report read returns success with the row dropped -- so a fixture resting there is
-invisible to the very verdict the attended pass reads, and the pass would report clean against an
-account it cannot see. `BLIND_ORDER_READ_LEGS` is imported rather than restated.
+EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and a read scoped to
+one of those pairs sees none of its open orders -- so a fixture resting there is invisible to any
+reader that asks about its pair by name, though an unscoped read sees it.
+`SCOPED_ORDER_READ_BLIND_LEGS` names those pairs and states the mechanism.
 EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME, never from a remembered figure -- which is
 rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose
 if it has not -- and never from the adapter's instrument object, which is a TRANSLATION of that
@@ -41,7 +41,7 @@ from nautilus_trader.model import (
     TimeInForce,
 )
 
-from cli.engine.flatten import BLIND_ORDER_READ_LEGS, QUOTE_CURRENCY, resolve_base
+from cli.engine.flatten import QUOTE_CURRENCY, resolve_base
 from cli.engine.instruments import (
     INSTRUMENT_IDS,
     BelowMinimum,
@@ -56,6 +56,12 @@ API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
 DEFAULT_PAIR = "SOL/EUR"
+
+# The basket pairs Kraken spells two ways: an AssetPairs key and a different altname. A read scoped
+# to one instrument keeps only the rows whose pair is that instrument's key, while an open order
+# names the altname (upstream #5067), so a scoped read on these pairs sees none of their orders. An
+# unscoped read resolves both spellings.
+SCOPED_ORDER_READ_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The resting leg sits this far below the run's own best bid. Far enough that it cannot fill while
 # the fixture is wanted; a fraction rather than a price, because a price is a fact about one minute.
@@ -127,50 +133,46 @@ class AccountState:
 
 
 def assert_same_key(pair: str) -> None:
-    """Refuse a pair whose Kraken altname differs from its AssetPairs key.
-
-    The adapter caches instruments under the key and looks an order up by its altname, comparing by
-    raw equality with no miss branch, so a row on one of these legs is dropped and the read returns
-    success. A fixture there is invisible to the verdict it exists to exercise.
-    """
+    """Refuse a pair whose Kraken altname differs from its AssetPairs key: a read scoped to it
+    sees none of its open orders, so a fixture there is invisible to any reader that asks about
+    that pair by name."""
     if pair not in INSTRUMENT_IDS:
         raise Refusal(
             f"REFUSING: {pair} is not one of the basket's instruments, so this guard has no opinion "
             f"about it. Mint on a basket pair; {DEFAULT_PAIR} is the default.",
         )
-    if pair in BLIND_ORDER_READ_LEGS:
+    if pair in SCOPED_ORDER_READ_BLIND_LEGS:
         raise Refusal(
-            f"REFUSING: {pair} is spelled two ways at the venue, so a resting order on it is "
-            f"dropped by the order-report read and the attended pass would read clean against an "
-            f"account it cannot see. Mint on a same-key pair; {DEFAULT_PAIR} is the default.",
+            f"REFUSING: {pair} is spelled two ways at the venue, so a read scoped to {pair} sees "
+            f"none of its open orders and a fixture resting there is invisible to it. Mint on a "
+            f"same-key pair; {DEFAULT_PAIR} is the default.",
         )
 
 
 def assert_row_is_same_key(pair: str, pair_key: str, row: dict) -> None:
     """The same property as `assert_same_key`, measured from the venue's row instead of remembered.
 
-    `assert_same_key` reads a list this repo maintains; this reads the property that list describes,
+    `assert_same_key` reads a list this script keeps; this reads the property that list describes,
     off the row the run has already fetched. Two producers of one fact are the check on each other,
     and each refusal names which fired: a leg the list has not learned about yet is caught here, and
     a disagreement between the two is a finding about the list rather than a duplicate refusal.
 
     It cannot replace the list. It needs the listing, so it fires later than `assert_same_key`,
-    which refuses before anything is read at all -- and the list's identity with `flatten`'s own
-    constant is what keeps this script and the engine talking about the same five legs.
+    which refuses before anything is read at all.
     """
     altname = _row_field(row, "altname", pair)
     if altname == pair_key:
         return
     remembered = (
         "the hardcoded list agrees"
-        if pair in BLIND_ORDER_READ_LEGS
-        else "and BLIND_ORDER_READ_LEGS does NOT carry this leg -- the list in cli/engine/flatten.py "
-        "is behind the venue, which is a finding about the list"
+        if pair in SCOPED_ORDER_READ_BLIND_LEGS
+        else "and SCOPED_ORDER_READ_BLIND_LEGS does NOT carry this leg -- the list in "
+        "infra/scripts/kraken-fixture-mint.py is behind the venue, which is a finding about the list"
     )
     raise Refusal(
         f"REFUSING (measured from the listing, not from the list): {pair} is keyed {pair_key} and "
-        f"spelled {altname}, so an order on it is dropped by the adapter's order-report read and a "
-        f"fixture there is invisible to the verdict it exists to exercise; {remembered}.",
+        f"spelled {altname}, so a read scoped to {pair} sees none of its open orders and a fixture "
+        f"there is invisible to it; {remembered}.",
     )
 
 
