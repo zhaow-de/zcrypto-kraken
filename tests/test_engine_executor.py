@@ -4201,6 +4201,18 @@ def test_a_post_restart_fill_named_by_the_txid_lands_in_the_row_the_engine_keyed
     assert not _kill_file(tmp_path).exists()
 
 
+def test_a_txid_named_fill_completing_the_ledgered_quantity_closes_the_row(tmp_path):
+    """Nautilus publishes no terminal event after a resting order's final fill, so the completion
+    write is the only thing that closes this row -- and it too must name the row by its own id."""
+    ex, _client, earlier = _txid_adopted_executor(tmp_path)
+
+    ex.on_external_order_event(_fill(_TXID, 0.001, venue_order_id=VenueOrderId(_TXID)))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled" and row["filled_qty"] == 0.001
+    assert not _kill_file(tmp_path).exists()
+
+
 def test_the_startup_cancel_of_an_opener_named_by_its_txid_closes_its_row_on_the_ack(tmp_path):
     """What Drill G reads: the pass cancels the adopted opener, and the venue's ack -- naming the
     order by its txid -- arrives matched and gives the row its terminal state."""
