@@ -16,9 +16,6 @@ Learning-for-Fun quant-trading research project for Kraken (spot + spot-margin).
   - [`zcrypto liquidations`](#zcrypto-liquidations)
   - [`zcrypto liquidations-poll`](#zcrypto-liquidations-poll)
   - [`zcrypto engine`](#zcrypto-engine)
-    - [Shadow soak service (systemd user unit)](#shadow-soak-service-systemd-user-unit)
-    - [Nightly data-gated tests (systemd user unit)](#nightly-data-gated-tests-systemd-user-unit)
-    - [VPS journal pull and daily gate ops — retired (moved to the NAS)](#vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas)
   - [`zcrypto archive`](#zcrypto-archive)
   - [`zcrypto panel`](#zcrypto-panel)
   - [`zcrypto data`](#zcrypto-data)
@@ -127,7 +124,7 @@ zcrypto engine <subcommand> [OPTIONS]
 | `flatten --state-dir <PATH> [--execute]` | Close every open position and sell every non-EUR balance at **market**, account-wide — the emergency halt, run on the engine host through `sudo zcrypto-flatten` and never by hand. Without `--execute` it reads the account, prints every leg with its side, quantity, pair and estimate at the taker rate, lists every balance below the venue minimum and every balance no EUR or BTC pair can carry, and **sends nothing**. With `--execute` it refuses unless the engine's kill file is already present, refuses without a controlling terminal, prints the same plan, and reads a typed `FLATTEN` from the terminal (never from stdin; there is deliberately no flag that skips it) before it cancels every resting order account-wide, closes each margin position with a reduce-only market IOC order sized from a fresh post-cancel read, and sells each non-EUR balance at market in two passes so a BTC-quoted leg's proceeds are sold too. Dust — a balance below the venue's quantity or notional minimum — is listed and not sent, and does not make the account not-flat; a margin remainder is never dust and is sent regardless. Every request and every venue answer is written to `<state-dir>/exec/flatten-<timestamp>.json`. Exit **0** the final read shows no resting order, no open position and nothing sellable left — **that read cannot see an order resting on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC**, so exit 0 is not proof those pairs are clear and the command prints that caveat beside the verdict; the account-wide cancel is unaffected and does reach such an order, so confirming open orders on Kraken's own page and re-running is the mitigation (`infra/runbooks/engine-procedures.md` states the limit in full); **1** refused with nothing sent, the reason printed; **2** something is still open, or the cancel failed, or a read after the cancel failed; **3** the venue could not be reached or read before anything was sent. Re-runnable: a second run finds less to do and does it. |
 | `probe-plan <PATH> --check` | Validate an operator-authored probe plan offline before it is placed: plan shape, expiry, duplicate plan ids against the execution ledger, the plan-level notional cap and margin floor, each intent's floors against the newest journaled venue snapshot, and the current gate verdict. Advisory only — the engine re-validates every plan live before any order. A plan is placed by staging it under another name in the engine state directory and **renaming** it onto `exec/probe-plan.json`, never by writing that path in place: the executor reads it every five seconds, so a half-written file is refused and deleted. Only the account owner places a plan, following the `engine-probe-window` procedure in `infra/runbooks/engine-procedures.md`. Exits non-zero on any refusal. Read-only. |
 
-#### Shadow soak service (systemd user unit)<a name="shadow-soak-service-systemd-user-unit"></a>
+**Shadow soak service (systemd user unit)**
 
 `infra/systemd/zcrypto-engine-shadow.service` is a systemd **user**-unit template that keeps `zcrypto engine run` alive on a workstation (`Restart=on-failure`, `RestartSec=30`, `WantedBy=default.target`). Its `<repo>`/`<uv>` placeholders are filled into a copy at install time — the tracked file is never edited; its render is a test — from the checkout root:
 
@@ -141,7 +138,7 @@ systemctl --user enable --now zcrypto-engine-shadow.service
 systemctl --user status zcrypto-engine-shadow.service    # confirm: active (running)
 ```
 
-#### Nightly data-gated tests (systemd user unit)<a name="nightly-data-gated-tests-systemd-user-unit"></a>
+**Nightly data-gated tests (systemd user unit)**
 
 `infra/systemd/zcrypto-data-gated-tests.service` and `.timer` are a systemd **user**-unit pair that runs the whole test suite nightly (02:30 UTC, `Persistent=true`) from a checkout where `data/` is present — the tests CI skips for want of local data run for real here — through `infra/scripts/data-gated-run.py`, which writes `.local/data-gated-runs/<UTC stamp>.json` and `latest.json` (counts, failing ids, the git sha, whether `data/` was there, the skips whose reason says a dataset was absent, and an `ok` flag that neither a run without a summary line nor a data-gated skip earns). The daily operations pass reads `latest.json` and reports a missing, stale (older than 26 h) or failed result. Enable lingering, then, from the main checkout's root, render a copy of the service with its `<repo>`/`<uv>`/`<path>` placeholders filled into `~/.config/systemd/user/` — the tracked template keeps them, so the units test reads it as committed — and copy the timer, which has none:
 
@@ -159,7 +156,7 @@ systemctl --user start --no-block zcrypto-data-gated-tests.service   # a first r
 journalctl --user -u zcrypto-data-gated-tests.service -f      # follow it; the last line names the files written
 ```
 
-#### VPS journal pull and daily gate ops — retired (moved to the NAS)<a name="vps-journal-pull-and-daily-gate-ops-%E2%80%94-retired-moved-to-the-nas"></a>
+**VPS journal pull and daily gate ops — retired (moved to the NAS)**
 
 **Retired.** The daily gate ops (journal pull → verified replay → report) ran on the workstation as a systemd `--user` timer; it lagged whenever the workstation was offline. It is superseded by the always-on NAS gate-verify tier — the `archive-pull` container pulls the journal and runs `zcrypto engine gate-export` (fast-path gate scoring, emitted to Grafana + a dead-man ping) on every cycle (spec `docs/specs/00049-role-b-nas-gate-verify-design.md`, `infra/nas/`). The `infra/systemd/zcrypto-engine-gateops.{service,timer}` templates are removed.
 
