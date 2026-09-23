@@ -4,6 +4,7 @@ import ast
 import json
 import logging
 import shutil
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -31,6 +32,7 @@ from nautilus_trader.model import (
     OrderRejected,
     OrderSide,
     OrderStatus,
+    OrderStatusReport,
     OrderSubmitted,
     OrderType,
     Position,
@@ -61,7 +63,7 @@ from cli.engine.execledger import (
     update_submitted_row,
     write_exec_record,
 )
-from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_order
+from cli.engine.executor import ProbeExecutor, read_venue_orders, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
@@ -481,14 +483,28 @@ def _config(tmp_path: Path, **overrides) -> EngineConfig:
     return EngineConfig(**base)
 
 
-def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None) -> ProbeExecutor:
+def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None) -> ProbeExecutor:
     client = client if client is not None else StubClient()
     return ProbeExecutor(
         client=client,
         gate=gate if gate is not None else _gate(tmp_path),
         config=config if config is not None else _config(tmp_path),
         clock=clock if clock is not None else (lambda: NOW),
+        venue_orders=venue_orders,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_production_venue_read(monkeypatch):
+    """The executor's default venue read is a real client on the trade credentials, and a developer's
+    shell may hold them. A test that needs the venue's orders hands the executor its own reader;
+    reaching the default fails the test through every `except Exception` on the way, because
+    `pytest.fail` raises a BaseException."""
+
+    def _refuse(since, **kwargs):
+        pytest.fail(f"a test reached the production venue read (since {since.isoformat()}) -- pass venue_orders")
+
+    monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
 
 
 def _intent(**overrides):
@@ -570,6 +586,42 @@ def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0, venue_
         is_open=True,
         status=OrderStatus.ACCEPTED,
     )
+
+
+def _report(txid, status, *, filled_qty="0", quantity="0.001"):
+    """A REAL `OrderStatusReport` in the shape the adapter builds from Kraken's order rows -- which
+    carries no client order id, ever: the txid is the only name the venue's answer has."""
+    return OrderStatusReport(
+        account_id=AccountId("KRAKEN-001"),
+        instrument_id=InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]),
+        venue_order_id=VenueOrderId(txid),
+        order_side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        time_in_force=TimeInForce.GTC,
+        order_status=status,
+        quantity=Quantity.from_str(quantity),
+        filled_qty=Quantity.from_str(filled_qty),
+        ts_accepted=0,
+        ts_last=0,
+        ts_init=0,
+        client_order_id=None,
+    )
+
+
+class _VenueOrders:
+    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the
+    `since` of every call -- the read is once per process, and a second call is a finding."""
+
+    def __init__(self, *reports, raises=None):
+        self.reports = list(reports)
+        self.calls: list[datetime] = []
+        self._raises = raises
+
+    def __call__(self, since):
+        self.calls.append(since)
+        if self._raises is not None:
+            raise self._raises
+        return list(self.reports)
 
 
 def _closed_order(client_order_id, status, *, filled_qty=0.0, venue_order_id=None):
@@ -4282,6 +4334,263 @@ def test_a_finished_row_is_compared_with_the_order_the_cache_holds_under_its_txi
     assert f"order O-finished (Kraken {_TXID}) shows 0 filled at the venue" in _kill_file(tmp_path).read_text()
 
 
+# --- the closed-order read: what the venue says about an order the restarted Cache cannot hold ------
+
+
+@pytest.mark.parametrize(
+    "status, venue_filled, state, events",
+    [
+        # The commonest closed-while-down shape: cancelled with no fill, so no delta, only the state.
+        (OrderStatus.CANCELED, "0", "canceled", ["OrderAccepted"]),
+        (OrderStatus.FILLED, "0.001", "filled", ["OrderAccepted", "reconciled"]),
+    ],
+)
+def test_an_order_that_closed_while_down_is_read_at_the_venue_by_its_txid(tmp_path, status, venue_filled, state, events):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    venue = _VenueOrders(_report(_TXID, status, filled_qty=venue_filled))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == state
+    assert [e.get("type") or e.get("event") for e in row["events"]] == events
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+
+
+def test_a_closed_while_down_order_the_ledger_is_ahead_of_trips_the_kill_switch(tmp_path, kill_trip_expected):
+    """The boot divergence latch on a closed order, which only the venue read can reach: the ledger
+    says 0.0006 filled and the venue says the order ended with 0.0002."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0006)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0002"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+    assert (
+        f"adopted order O-reducer (Kraken {_TXID}) shows 0.0002 filled at the venue, less than the 0.0006"
+        in _kill_file(tmp_path).read_text()
+    )
+
+
+def test_a_withdrawn_fill_on_a_finished_row_is_read_at_the_venue_by_its_txid(tmp_path, kill_trip_expected):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["events"][-1] == {"event": "withdrawn", "at": NOW.isoformat(), "qty": -0.001, "venue_filled_qty": 0.0}
+    assert "shows 0 filled at the venue, less than the 0.001" in _kill_file(tmp_path).read_text()
+
+
+def test_the_venue_is_read_once_from_the_earliest_row_that_needs_it_and_only_when_one_does(tmp_path):
+    """No row needing it -- nothing ledgered, a row the Cache answers, a finished row with no fill --
+    means no read and no second client. Rows that need it are answered by ONE read."""
+    early, late = NOW - timedelta(hours=8), NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-cached", reduce_only=True, when=late, venue_order_id="OCACHE-D0000-000001")
+    _submitted_row(tmp_path, "O-unfilled", reduce_only=False, when=early, index=1, venue_order_id="OUNFIL-LED00-000002")
+    update_submitted_row(tmp_path / "journal", _boundary(early), "O-unfilled", state="canceled")
+    cache = StubCache(open_orders=[_open_order("OCACHE-D0000-000001", venue_order_id="OCACHE-D0000-000001")])
+    idle = _VenueOrders()
+    _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=idle).on_timer(NOW)
+    assert idle.calls == []
+
+    _submitted_row(tmp_path, "O-closed", reduce_only=True, when=late, index=2, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=early, index=3, venue_order_id="OFINIS-HED00-000003")
+    update_submitted_row(tmp_path / "journal", _boundary(early), "O-finished", state="filled", add_filled_qty=0.001)
+    needed = _VenueOrders(
+        _report(_TXID, OrderStatus.CANCELED), _report("OFINIS-HED00-000003", OrderStatus.FILLED, filled_qty="0.001")
+    )
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=needed)
+    ex.on_timer(NOW)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert needed.calls == [_boundary(early) - timedelta(hours=1)]
+
+
+def test_a_failed_venue_read_leaves_the_rows_and_refuses_every_plan_for_the_life_of_the_process(tmp_path):
+    """Fail closed without a trip: the rows keep what they say, the resting reducer the Cache still
+    answers is classified as ever, the read is not repeated, and every plan is refused with the reason
+    until a restart reads again."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-closed", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, index=1, venue_order_id="ORESTI-NG000-000001")
+    client = StubClient(StubCache(open_orders=[_resting_limit_order("ORESTI-NG000-000001", venue_order_id="ORESTI-NG000-000001")]))
+    venue = _VenueOrders(raises=RuntimeError("EAPI:Invalid nonce"))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+        _drop_plan(tmp_path, _plan_dict())
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    reason = (
+        "the startup reconciliation could not read the venue's orders, so 1 ledgered row(s) were never compared "
+        "against venue truth -- restart the engine to retry"
+    )
+    assert [r.getMessage() for r in records] == [
+        "the venue's orders could not be read at startup -- 1 ledgered row(s) were never compared against venue "
+        "truth; every plan is refused until the engine is restarted",
+        f"probe plan p-1 refused: {reason}",
+    ]
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]  # read once, never retried
+    assert client.canceled == [] and "ORESTI-NG000-000001" in ex._attached  # the resting reducer is kept
+    assert [r["state"] for r in _record(tmp_path, earlier)["submitted"]] == ["accepted", "accepted"]
+    entry = _plan_entry(tmp_path)
+    assert (entry["disposition"], entry["reasons"]) == ("refused", [reason])
+    assert client.submitted == [] and not _plan_path(tmp_path).exists()
+
+
+# --- read_venue_orders against a loopback venue: the wheel's own client, offline ----------------------
+
+
+def _asset_pair(altname, wsname, base, *, pair_decimals, tick_size, ordermin):
+    """One AssetPairs row in the full shape the pinned adapter deserialises -- `aclass_base` and the
+    decimals are required fields, which tests/fixtures/kraken_assetpairs.json's trimmed rows lack."""
+    return {
+        "altname": altname, "wsname": wsname, "aclass_base": "currency", "base": base, "aclass_quote": "currency",
+        "quote": "ZEUR", "lot": "unit", "cost_decimals": 5, "pair_decimals": pair_decimals, "lot_decimals": 8,
+        "lot_multiplier": 1, "leverage_buy": [2, 3], "leverage_sell": [2, 3], "fees": [], "fees_maker": [],
+        "fee_volume_currency": "ZUSD", "margin_call": 80, "margin_stop": 40, "ordermin": ordermin, "costmin": "0.45",
+        "tick_size": tick_size, "status": "online", "execution_venue": "international",
+    }  # fmt: skip
+
+
+# Keyed as AssetPairs keys them. BTC/EUR's key is not the `XBTEUR` Kraken's order rows spell it by,
+# which is what the listing's altname index is for.
+_LOOPBACK_ASSET_PAIRS = {
+    "XXBTZEUR": _asset_pair("XBTEUR", "XBT/EUR", "XXBT", pair_decimals=1, tick_size="0.1", ordermin="0.00005"),
+    "SOLEUR": _asset_pair("SOLEUR", "SOL/EUR", "SOL", pair_decimals=2, tick_size="0.01", ordermin="0.06"),
+}
+
+
+class _LoopbackKraken:
+    """Kraken's REST surface on 127.0.0.1, enough for `read_venue_orders`: a two-pair public listing,
+    a TradeVolume refusal (the listing falls back to public fees), and the two order reads, recording
+    each ClosedOrders form. `stall` delays ClosedOrders."""
+
+    def __init__(self, *, open_orders=None, closed_orders=None, stall=0.0):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from urllib.parse import parse_qs
+
+        listing = _LOOPBACK_ASSET_PAIRS
+        self.closed_forms: list[dict] = []
+        venue = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            def _answer(self, result, error=()):
+                body = json.dumps({"error": list(error), "result": result}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                self._answer({} if "tokenized" in self.path else listing)
+
+            def do_POST(self):
+                form = {k: v[0] for k, v in parse_qs(self.rfile.read(int(self.headers["Content-Length"] or 0)).decode()).items()}
+                name = self.path.rsplit("/", 1)[-1]
+                if name == "TradeVolume":
+                    return self._answer(None, ["EGeneral:Permission denied"])
+                if name == "OpenOrders":
+                    return self._answer({"open": open_orders or {}})
+                if name == "ClosedOrders":
+                    venue.closed_forms.append({k: v for k, v in form.items() if k != "nonce"})
+                    time.sleep(stall)
+                    first_page = form.get("ofs", "0") == "0"
+                    return self._answer({"closed": (closed_orders or {}) if first_page else {}, "count": len(closed_orders or {})})
+                return self._answer({})
+
+            def log_message(self, *args):
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
+
+    def close(self):
+        self._server.shutdown()
+
+
+def _kraken_order(pair, status, vol_exec, *, cl_ord_id):
+    """One row of Kraken's OpenOrders/ClosedOrders answer, carrying the `cl_ord_id` the venue stores --
+    which the adapter's report drops."""
+    return {
+        "refid": None, "userref": 0, "cl_ord_id": cl_ord_id, "status": status, "opentm": 1758600000.0, "starttm": 0,
+        "expiretm": 0, "closetm": None if status == "open" else 1758601000.0, "reason": None,
+        "descr": {"pair": pair, "type": "sell", "ordertype": "limit", "price": "30000.0", "price2": "0",
+                  "leverage": "none", "order": f"sell 0.00100000 {pair} @ limit 30000.0", "close": ""},
+        "vol": "0.00100000", "vol_exec": vol_exec, "cost": "0", "fee": "0", "price": "0", "stopprice": "0",
+        "limitprice": "0", "misc": "", "oflags": "fciq,post",
+    }  # fmt: skip
+
+
+@pytest.fixture
+def _loopback_credentials(monkeypatch):
+    """Stand-in credentials for the loopback venue only -- not a key any venue has issued."""
+    import base64
+    import os
+
+    monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "loopback-key")
+    monkeypatch.setenv("KRAKEN_SPOT_API_SECRET", base64.b64encode(os.urandom(64)).decode())
+
+
+def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client_order_id(_loopback_credentials):
+    """The reader's whole contract on the pinned wheel, offline: the listing is cached first, so an
+    order Kraken spells by its altname (`XBTEUR`) resolves; open and closed orders both come back;
+    every report carries `client_order_id` None whatever `cl_ord_id` Kraken stored; and ClosedOrders
+    is asked from `since`."""
+    venue = _LoopbackKraken(
+        open_orders={"OOPENA-XBT00-000001": _kraken_order("XBTEUR", "open", "0.00000000", cl_ord_id="O-120000-001-000-1")},
+        closed_orders={
+            _TXID: _kraken_order("XBTEUR", "closed", "0.00100000", cl_ord_id="O-080000-001-000-2"),
+            "OCANCL-SOL00-000003": _kraken_order("SOLEUR", "canceled", "0.00000000", cl_ord_id="O-080000-001-000-3"),
+        },
+    )
+    since = NOW - timedelta(hours=9)
+    try:
+        reports = {str(r.venue_order_id): r for r in read_venue_orders(since, base_url=venue.url)}
+    finally:
+        venue.close()
+
+    assert sorted(reports) == sorted(["OOPENA-XBT00-000001", _TXID, "OCANCL-SOL00-000003"])
+    assert {txid: r.client_order_id for txid, r in reports.items()} == dict.fromkeys(reports)
+    assert (reports[_TXID].order_status, float(reports[_TXID].filled_qty)) == (OrderStatus.FILLED, 0.001)
+    assert str(reports[_TXID].instrument_id) == "BTC/EUR.KRAKEN"
+    assert reports["OCANCL-SOL00-000003"].order_status == OrderStatus.CANCELED
+    assert venue.closed_forms[0]["start"] == str(int(since.timestamp()))
+
+
+def test_read_venue_orders_raises_past_its_bound(_loopback_credentials, monkeypatch):
+    monkeypatch.setattr(executor_module, "_VENUE_READ_TIMEOUT_SECONDS", 0.5)
+    venue = _LoopbackKraken(stall=3.0)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            read_venue_orders(NOW, base_url=venue.url)
+    finally:
+        venue.close()
+    assert time.monotonic() - started < 2.5
+
+
+def test_read_venue_orders_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        read_venue_orders(NOW, base_url="http://127.0.0.1:9")
+
+
 # --- D11: the first automatic kill trips ----------------------------------------------------------
 
 
@@ -4417,8 +4726,11 @@ def test_a_tripped_kill_switch_refuses_every_later_plan(tmp_path, kill_trip_expe
     ex.on_order_event(_fill("O-unknown", 0.001))
     assert _kill_file(tmp_path).exists()
 
+    # The trip cancelled the resting order, and after the restart the venue says so: the row that
+    # recorded its txid at acceptance is read at the venue, which the restarted Cache cannot answer.
+    canceled = _VenueOrders(_report(str(_venue_order_id(client.last_order_id)), OrderStatus.CANCELED))
     restarted_client = StubClient()
-    restarted = _executor(tmp_path, client=restarted_client, gate=_gate(tmp_path, GateLevel.NONE))
+    restarted = _executor(tmp_path, client=restarted_client, gate=_gate(tmp_path, GateLevel.NONE), venue_orders=canceled)
     later = NOW + timedelta(seconds=5)
     _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=later - timedelta(minutes=1)))
     restarted.on_timer(later)
