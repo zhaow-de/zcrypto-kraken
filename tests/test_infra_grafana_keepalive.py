@@ -10,8 +10,8 @@ import yaml
 from tests.test_infra_shell_templates_render import ansible_render, role_variables
 
 TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2"
-# A rule's bound is its `for` plus its group's evaluation interval, and that interval is a stack setting at 60 s
-# (infra/runbooks/drills-telemetry.md), not a field of the rule, so it is stated here rather than read.
+# The group's evaluation interval is a Grafana stack setting (infra/runbooks/drills-telemetry.md), not a field of the rule, so
+# it is stated here rather than read.
 EVAL_INTERVAL_S = 60
 
 
@@ -181,9 +181,8 @@ def test_every_family_carries_its_help_and_type(tmp_path, family):
 
 
 def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
-    """One skipped slot peaks near two periods and must stay quiet -- the lower bound credits no `for`, so it is the
-    stricter of the two; two peak near three, and page only if the threshold plus `for` and one evaluation tick is
-    below that."""
+    """One skipped slot peaks near two periods and must stay quiet; two peak near three, and page only if the threshold plus
+    `for` and one evaluation tick is below that."""
     root = pathlib.Path(__file__).resolve().parent.parent
     timer = (TEMPLATE.parent / "grafana-keepalive.timer.j2").read_text()
     step = re.search(r"^OnCalendar=\*:\d+/(\d+):00$", timer, re.M)
