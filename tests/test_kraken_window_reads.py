@@ -164,6 +164,13 @@ def test_main_reads_nothing_on_a_usage_error(capsys, argv):
     assert capsys.readouterr().out == "usage: kraken-window-reads.py orders|absent <TXID>...\n"
 
 
+_SECRET = "s3cr3t-not-a-real-secret"
+
+
+def _raise_with_the_secret(_key, secret):
+    raise ValueError(f"cannot decode {secret}")
+
+
 def test_main_refuses_without_credentials_and_never_echoes_a_value(monkeypatch, capsys):
     """Exit 2, never 1: an operator reads 1 as HAZARD. The refusal names the VARIABLES."""
     monkeypatch.delenv(wr.API_KEY_VAR, raising=False)
@@ -171,6 +178,24 @@ def test_main_refuses_without_credentials_and_never_echoes_a_value(monkeypatch, 
     assert wr.main(["orders", BTC_TXID]) == 2
     out = capsys.readouterr().out
     assert out == f"refusing: {wr.API_KEY_VAR} not set in the environment\n"
+
+
+@pytest.mark.parametrize(
+    ("break_the_build", "kind"),
+    [
+        (lambda mp: mp.setitem(sys.modules, "nautilus_trader.adapters.kraken", None), "ModuleNotFoundError"),
+        (lambda mp: mp.setattr(nautilus_trader.adapters.kraken, "KrakenSpotHttpClient", _raise_with_the_secret), "ValueError"),
+    ],
+    ids=["no-wheel-in-the-image", "constructor-raises"],
+)
+def test_main_refuses_when_no_client_can_be_built_and_prints_only_the_type(monkeypatch, capsys, break_the_build, kind):
+    """Exit 2, never 1: nothing was read. The type is printed and the message never is, since a
+    constructor's message can quote the secret it was handed."""
+    monkeypatch.setenv(wr.API_KEY_VAR, "k")
+    monkeypatch.setenv(wr.API_SECRET_VAR, _SECRET)
+    break_the_build(monkeypatch)
+    assert wr.main(["orders", BTC_TXID]) == 2
+    assert capsys.readouterr().out == f"refusing: the client could not be built: {kind}\n"
 
 
 def test_credentials_return_both_when_set(monkeypatch):

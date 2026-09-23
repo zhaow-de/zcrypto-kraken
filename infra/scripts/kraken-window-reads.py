@@ -17,7 +17,8 @@ Every row of the listing is read and cached first: a bare client's unscoped read
 open order it cannot place. `orders` takes one read on the bare client before that and prints it as a
 reading.
 
-Exit: 0 SAFE, 1 HAZARD, 2 nothing was read (usage, or no credentials), 3 the listing could not be read.
+Exit: 0 SAFE, 1 HAZARD, 2 nothing was read (usage, no credentials, or no client could be built), 3 the
+listing could not be read.
 
 Run it FROM the workstation, never on the engine host: ssh forwards local stdin into the container, so
 the source never lands on the host. Run it inside the engine's inter-cycle gap -- its reads share the
@@ -160,7 +161,11 @@ def main(argv: list[str]) -> int:
     except Refusal as exc:
         print(f"refusing: {exc}")
         return 2
-    client = build_client(key, secret)
+    try:
+        client = build_client(key, secret)
+    except Exception as exc:  # noqa: BLE001 -- the type only: a message could carry what it was handed
+        print(f"refusing: the client could not be built: {type(exc).__name__}")
+        return 2
     return asyncio.run(orders(client, txids) if mode == "orders" else absent(client, txids))
 
 
