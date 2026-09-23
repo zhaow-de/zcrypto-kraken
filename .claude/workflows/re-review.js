@@ -24,8 +24,7 @@ for (const p of prior) {
 if (left && !/#\d+/.test(left)) throw new Error('left names each consciously-left prior by id (#<id>) with its reason')
 if (drive && drive.length > 400) throw new Error(`drive is ${drive.length} characters, at most 400: one sentence naming what the standing brief does not cover — cut every clause that names a figure, a path or a command, the brief re-measures those itself`)
 
-// One report per read: `re-review.md` was one path for every re-review of a branch, so the second overwrote the first
-// and the refutations below, which run after the reader has written, never reached the file a later reader opens.
+// One report per read, as pre-review's: a fixed path lets a branch's second re-review overwrite its first.
 const reportPath = `${reportDir}/re-review-${tip}.md`
 
 // --- shared with pre-review.js and review.js; tests/test_review_workflows.py holds GRADING, SCOPE and RULES equal across the three ---
@@ -159,9 +158,8 @@ const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important standing, ${count('Minor', standing)} Minor reported, ${graded.length - standing.length} refuted`)
 
 // --- Record -------------------------------------------------------------------------------------
-// The reader writes its report before any skeptic runs, and a skeptic writes nothing to the repo, so without this
-// the file on disk heads every refuted finding `[Severity]` for good and the next reader of it reports one that
-// this read already answered. One line per finding, in the report the reader named.
+// The reader writes its report before any skeptic runs, and a skeptic writes nothing to the repo, so without this block
+// the report at reportPath heads every refuted finding by its first severity, and its next reader reports one this read answered.
 phase('Record')
 const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 300)
 const refutation = graded.length
