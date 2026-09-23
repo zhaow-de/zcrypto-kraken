@@ -113,6 +113,8 @@ def _rebased_repo(
     row_above: bool = False,
     empty_above: bool = False,
     two_empty_above: bool = False,
+    empty_first: bool = False,
+    two_rows_above: bool = False,
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
     that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
@@ -137,11 +139,16 @@ def _rebased_repo(
     rows(1, 3)
     _git(root, "commit", "-q", "-am", "docs(change-index): row #3")
     read = _git(root, "rev-parse", "HEAD")
-    if row_above:
-        (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
-        _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
-    for n in range(2 if two_empty_above else 1 if empty_above else 0):
-        _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})")
+    empties = 2 if two_empty_above else 1 if empty_above else 0
+    if empty_first:
+        for n in range(empties):
+            _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})")
+    for number in (5, 7) if two_rows_above else (5,) if row_above else ():
+        (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + f"| #{number} | r |\n")
+        _git(root, "commit", "-q", "-am", f"docs(change-index): row #{number}")
+    if not empty_first:
+        for n in range(empties):
+            _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})")
     _git(root, "checkout", "-q", "develop")
     if collide:
         rows(1, 2)
@@ -225,6 +232,20 @@ def test_the_arm_admits_one_commit_above_the_read_that_changes_no_file(tmp_path,
     moves nothing the read graded of the tree, and the arm sets it aside as it does the Step 4 row."""
     read, head = _rebased_repo(tmp_path / shape, empty_above=True, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
+
+
+@pytest.mark.parametrize("empty_first", [False, True], ids=["row-then-empty", "empty-then-row"])
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_admits_a_row_and_a_commit_that_changes_no_file_together(tmp_path, shape, empty_first):
+    """A keyed refine round puts both above the read: the Step 4 row, and the closing commit."""
+    read, head = _rebased_repo(tmp_path / shape, row_above=True, empty_above=True, empty_first=empty_first, **_SHAPES[shape])
+    assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
+
+
+def test_the_arm_refuses_a_second_row_above_the_read(tmp_path):
+    read, head = _rebased_repo(tmp_path / "two-rows", two_rows_above=True)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "two-rows")
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
 
 
 def test_the_arm_refuses_a_second_commit_above_the_read_that_changes_no_file(tmp_path):
