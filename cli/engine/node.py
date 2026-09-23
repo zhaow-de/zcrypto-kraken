@@ -418,8 +418,7 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     resting order, the kill switch's cancel sweep could not reach it either, and the whole
     external-events path would go dark without one ERROR anywhere. Pinned by the config-shape
     test. Necessary and NOT sufficient: what populates the cache with such an order is the
-    reconciliation read, which drops a row whose pair the adapter's instrument lookup cannot
-    resolve -- `executor._cancel_resting` states which legs that costs and what it costs them.
+    reconciliation read -- `executor._cancel_resting` states what that read has missed, and on which legs.
 
     The three in-flight knobs together set how long the engine waits on an unanswered order before
     it mints that order's terminal event itself -- roughly the threshold plus the retries times the
