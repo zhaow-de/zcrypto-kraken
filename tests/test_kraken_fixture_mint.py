@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -594,8 +595,10 @@ class _Recorder:
         self.cached.append(instrument)
 
     async def submit_order(self, **kwargs):
+        """Answers the venue order id, as the wheel's `submit_order` does."""
         self.calls.append("submit_order")
         self.submitted.append(kwargs)
+        return f"OTX{len(self.submitted):03d}-AAAAA-BBBBBB"
 
 
 class _Instrument:
@@ -1052,3 +1055,126 @@ class TestTheExecutePath:
             self._run_execute(rec, typed="yes")
         assert rec.submitted == []
         assert "submit_order" not in rec.calls
+
+
+def _upstream_truncate_cl_ord_id(client_order_id: str) -> str:
+    """A replica of the pinned adapter's `truncate_cl_ord_id`, which every AddOrder's `cl_ord_id`
+    passes through (crates/adapters/kraken/src/common/parse.rs at 70d887545790). Re-read it there on a
+    bump: the vectors below are upstream's own tests, so they pin the replica, not the adapter."""
+    raw = client_order_id.encode()
+    if len(raw) <= 18:
+        return client_order_id
+    if len(raw) == 36 and raw.count(b"-") == 4:
+        return client_order_id
+    if len(raw) == 32 and all(byte in b"0123456789abcdefABCDEF" for byte in raw):
+        return client_order_id
+    return "O" + raw[-17:].decode()
+
+
+class TestTheClientOrderIds:
+    """Each leg reaches the venue under its own id, carrying the tag, exactly as printed."""
+
+    # Every field two digits wide, and the widest day and time a month has.
+    _NOWS = (datetime(2026, 9, 3, 4, 5, 6, tzinfo=UTC), datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC))
+
+    @pytest.mark.parametrize(
+        ("sent", "wire"),
+        [
+            ("ABCDEFGHIJKLMNOPQR", "ABCDEFGHIJKLMNOPQR"),
+            ("O202602270023210040", "O02602270023210040"),
+            ("O202602270023210040011", "O02270023210040011"),
+            ("0123456789abcdef0123456789abcdeg", "Of0123456789abcdeg"),
+            ("6d47a5f0-6fd4-4b84-b56e-c23f0f689c20", "6d47a5f0-6fd4-4b84-b56e-c23f0f689c20"),
+            ("6D47A5F06FD44B84B56EC23F0F689C20", "6D47A5F06FD44B84B56EC23F0F689C20"),
+        ],
+    )
+    def test_the_replica_matches_upstreams_own_vectors(self, sent: str, wire: str) -> None:
+        assert _upstream_truncate_cl_ord_id(sent) == wire
+
+    def _ids(self, now) -> list[str]:
+        legs = mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=mint.AccountState())
+        return [mint.mint_client_order_id(leg.kind, now) for leg in legs]
+
+    @pytest.mark.parametrize("now", _NOWS)
+    def test_every_id_reaches_the_venue_unchanged(self, now) -> None:
+        for coid in self._ids(now):
+            assert len(coid) <= 18, coid
+            assert _upstream_truncate_cl_ord_id(coid) == coid
+
+    @pytest.mark.parametrize("now", _NOWS)
+    def test_the_legs_ids_are_distinct(self, now) -> None:
+        """Kraken requires a `cl_ord_id` unique among open orders, and the resting leg is still open
+        when the margin leg goes out."""
+        ids = self._ids(now)
+        assert len(ids) == 3
+        assert len(set(ids)) == len(ids), ids
+
+    @pytest.mark.parametrize("now", _NOWS)
+    def test_every_id_is_tagged_and_uppercase(self, now) -> None:
+        """Uppercase letters, digits and hyphens are the free-text ids the venue has accepted."""
+        for coid in self._ids(now):
+            assert coid.startswith(f"{mint.FIXTURE_ORDER_TAG}-"), coid
+            assert re.fullmatch(r"[A-Z0-9-]+", coid), coid
+
+
+class TestTheSendLoop:
+    """Each leg is reported with the id it went out under and the venue's txid for it, and a failure
+    partway names what was sent and what was not."""
+
+    @pytest.fixture(autouse=True)
+    def _tty(self, monkeypatch, _creds):
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+
+    def _run_execute(self, rec, capsys):
+        import asyncio
+
+        rc = asyncio.run(mint._run(_args(execute=True), **_factories(rec), prompt=lambda _m: mint.CONFIRM_WORD))
+        return rc, capsys.readouterr().out
+
+    def test_each_sent_line_carries_the_wire_id_and_the_venue_txid(self, capsys) -> None:
+        rec = _Recorder()
+        rc, out = self._run_execute(rec, capsys)
+        assert rc == 0
+        sent = [line.strip() for line in out.splitlines() if line.strip().startswith("sent ")]
+        wire = [str(kw["client_order_id"]) for kw in rec.submitted]
+        assert sent == [
+            f"sent {kind} as {coid} -> venue txid OTX00{n}-AAAAA-BBBBBB"
+            for n, (kind, coid) in enumerate(zip(("resting", "margin", "spot"), wire, strict=True), start=1)
+        ]
+
+    def test_the_plan_prints_the_ids_that_go_out(self, capsys) -> None:
+        rec = _Recorder()
+        _, out = self._run_execute(rec, capsys)
+        for kw in rec.submitted:
+            assert f"as {kw['client_order_id']}\n" in out
+
+    def test_a_failure_on_the_second_leg_names_what_went_out(self, capsys) -> None:
+        class _SecondFails(_Recorder):
+            async def submit_order(self, **kwargs):
+                if len(self.submitted) == 1:
+                    self.submitted.append(kwargs)
+                    raise RuntimeError("API error: EOrder:Margin allowance exceeded")
+                return await super().submit_order(**kwargs)
+
+        rec = _SecondFails()
+        with pytest.raises(mint.Refusal) as exc:
+            self._run_execute(rec, capsys)
+        text = str(exc.value)
+        first = rec.submitted[0]["client_order_id"]
+        assert f"sent: resting as {first} -> venue txid OTX001-AAAAA-BBBBBB" in text
+        assert "the margin leg failed at submit, and whether the venue took it is unknown" in text
+        assert "EOrder:Margin allowance exceeded" in text
+        assert "not attempted: spot" in text
+        assert len(rec.submitted) == 2
+
+    def test_a_refusal_before_the_first_send_says_that_leg_was_not_sent(self, capsys, monkeypatch) -> None:
+        async def _refuses(_client, leg, _coid):
+            raise mint.Refusal(f"REFUSING: the {leg.kind} leg's numbers changed in translation")
+
+        monkeypatch.setattr(mint, "submit", _refuses)
+        rec = _Recorder()
+        with pytest.raises(mint.Refusal) as exc:
+            self._run_execute(rec, capsys)
+        assert "the resting leg was not sent" in str(exc.value)
+        assert "sent: (none)" in str(exc.value)
+        assert "not attempted: margin, spot" in str(exc.value)

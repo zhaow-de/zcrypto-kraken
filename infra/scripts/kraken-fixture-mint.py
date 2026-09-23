@@ -73,19 +73,14 @@ FIXTURE_ORDER_TAG = "FIXMINT"
 # Typed in full, and deliberately not a word a reflex answers.
 CONFIRM_WORD = "MINT"
 
-# The longest client order id this venue is RECORDED as having accepted: the order-semantics probe's
-# `O-<YYYYMMDD>-<HHMMSS>-901-P6V-<seq>` at one-digit seq, whose passing runs the adapter-verification
-# rows carry. It is a measurement, not a limit, which is why it is printed beside this script's own
-# longer ids rather than used to size them.
-_PROVEN_COID_LENGTH = 27
-
 # Flooring can drop a target under a floor it cleared; a few steps is ample and a runaway is a
 # listing that is not what this script assumes, which is a refusal rather than a loop.
 _SIZE_WALK_LIMIT = 8
 
 
 class Refusal(Exception):
-    """A precondition this script will not proceed without. Never caught inside it."""
+    """A precondition this script will not proceed without. Caught inside it only by the send loop,
+    which re-raises it naming the legs already sent."""
 
 
 @dataclass(frozen=True)
@@ -350,7 +345,7 @@ def check_confirmation(typed: str) -> None:
         )
 
 
-def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) -> str:
+def render_plan(legs: list[Leg], existing: AccountState, pair: str, now: datetime) -> str:
     """What the operator reads before deciding. Every leg states what it would spend."""
     lines = [
         f"account already holds -- resting: {existing.resting_pairs or '(none)'} - "
@@ -363,35 +358,44 @@ def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) 
     for leg in legs:
         price = f"@ {leg.price}" if leg.price is not None else "@ market"
         lev = f" leverage {leg.leverage}" if leg.leverage is not None else ""
-        coid = mint_client_order_id(leg.kind, stamp)
+        coid = mint_client_order_id(leg.kind, now)
         lines.append(
             f"  {leg.kind:<8} {leg.side} {leg.quantity} {leg.pair} {price} "
             f"= EUR {leg.notional_eur:.2f} [{leg.account_type} {leg.time_in_force}]{lev} as {coid}"
         )
     total = sum(leg.notional_eur for leg in legs if leg.order_type == "MARKET")
     lines.append(f"  spends at market: EUR {total:.2f} (the resting leg rests, it does not spend)")
-    # What the repo holds about id length is one measurement and one claim that cannot both be read
-    # as written. The probe's ids were ACCEPTED AT SUBMIT at `_PROVEN_COID_LENGTH`; a comment in that
-    # same probe asserts an 18-character venue truncation. Acceptance at submit does not refute a
-    # truncation in what the venue STORES -- no run has ever read an id back -- so the two are not
-    # strictly contradictory; what is self-inconsistent is the comment, which relies on an infix
-    # sitting past character 18 surviving that very cut. The operator gets the measured number and
-    # the open question, because picking one silently is how a contradiction becomes a fact.
-    longest = max(len(mint_client_order_id(leg.kind, stamp)) for leg in legs)
-    lines.append(
-        f"  longest client order id here: {longest} characters. The only MEASURED acceptance on "
-        f"this adapter is the order-semantics probe's shape, at {_PROVEN_COID_LENGTH}, and that is "
-        f"acceptance AT SUBMIT -- no id has ever been read back from the venue. A comment in that "
-        f"probe also claims an 18-character truncation. Record what the venue does with these ids "
-        f"-- accepted, refused, or echoed back shortened -- in the version's "
-        f"docs/reference/adapter-verification/ row."
-    )
     return "\n".join(lines)
 
 
-def mint_client_order_id(kind: str, stamp: str) -> str:
-    """Identifiable by construction, so a later reader can tell what minted a row."""
-    return f"{FIXTURE_ORDER_TAG}-{kind}-{stamp}"
+def mint_client_order_id(kind: str, now: datetime) -> str:
+    """Identifiable by construction, so a later reader can tell what minted a row: the tag, one
+    letter per leg, and the run's day and time -- 17 characters, uppercase.
+
+    At most 18, because the adapter sends a longer free-text id as `O` plus its last 17 characters:
+    that cut drops the tag and the leg letter, and the three legs would reach the venue under one
+    id, while Kraken requires a `cl_ord_id` unique among open orders and the resting leg is open when
+    the next leg goes out.
+    """
+    return f"{FIXTURE_ORDER_TAG}-{kind[0].upper()}{now:%d%H%M%S}"
+
+
+def partial_mint(legs: list[Leg], sent: list[str], failed: int, exc: Exception) -> str:
+    """What a send loop stopped at leg `failed` leaves behind, leg by leg.
+
+    A `Refusal` from `submit` is raised before that leg's order goes out. Any other exception can
+    come after the venue accepted it, so that leg is stated as unknown rather than as not sent.
+    """
+    leg = legs[failed]
+    outcome = "was not sent" if isinstance(exc, Refusal) else "failed at submit, and whether the venue took it is unknown"
+    untried = ", ".join(later.kind for later in legs[failed + 1 :]) or "(none)"
+    return (
+        f"REFUSING to continue: the {leg.kind} leg {outcome}: {exc}\n"
+        f"  sent: {'; '.join(sent) or '(none)'}\n"
+        f"  not attempted: {untried}\n"
+        f"Re-run without --execute first: the dry run reads what the account now holds and plans only "
+        f"what is missing."
+    )
 
 
 def require_credentials() -> tuple[str, str]:
@@ -544,7 +548,7 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
     return tuple(sorted(held))
 
 
-async def submit(client, leg: Leg, client_order_id: str) -> None:
+async def submit(client, leg: Leg, client_order_id: str):
     """Send one leg. The only write this script makes, and there is no cancel to pair with it.
     `submit_order` refuses an instrument the client has not cached; `read_listing` cached it."""
     from nautilus_trader.model import InstrumentId
@@ -561,7 +565,7 @@ async def submit(client, leg: Leg, client_order_id: str) -> None:
             f"REFUSING: the {leg.kind} leg's numbers changed in translation to the venue's types "
             f"({leg.quantity} -> {quantity}, {leg.price} -> {price}); nothing further was sent.",
         )
-    await client.submit_order(
+    return await client.submit_order(
         account_id=AccountId(FIXTURE_ACCOUNT_ID),
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[leg.pair]),
         client_order_id=ClientOrderId(client_order_id),
@@ -632,8 +636,8 @@ async def _run(
     legs = plan_legs(pair=args.pair, limits=limits, best_bid=best_bid, existing=existing)
     # Minted BEFORE the plan is printed and reused at submit, so the ids the operator reads are the
     # ids that go out -- not a second set generated after they approved the first.
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    print(render_plan(legs, existing, args.pair, stamp))
+    now = datetime.now(UTC)
+    print(render_plan(legs, existing, args.pair, now))
 
     if not args.execute:
         print("\nDRY RUN -- nothing was sent. Re-run with --execute to mint.")
@@ -644,10 +648,16 @@ async def _run(
         raise Refusal("REFUSING: --execute needs a terminal for the confirmation")
     check_confirmation(prompt(f"\nType {CONFIRM_WORD} to send the plan above: ").strip())
 
-    for leg in legs:
-        coid = mint_client_order_id(leg.kind, stamp)
-        await submit(client, leg, coid)
-        print(f"  sent {leg.kind} as {coid}")
+    sent: list[str] = []
+    for index, leg in enumerate(legs):
+        coid = mint_client_order_id(leg.kind, now)
+        try:
+            txid = await submit(client, leg, coid)
+        except Exception as exc:
+            raise Refusal(partial_mint(legs, sent, index, exc)) from exc
+        sent.append(f"{leg.kind} as {coid} -> venue txid {txid}")
+        # Flushed, or a piped log lands these after the refusal that `main` writes to stderr.
+        print(f"  sent {sent[-1]}", flush=True)
     print(f"\nminted {len(legs)} leg(s). Nothing here cancels them.")
     return 0
 
