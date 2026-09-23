@@ -846,11 +846,9 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
     `read_open_orders` cannot resolve fails that read, and a failed read prints as one, never as a
     count."""
     if plan.orders is None:
+        # The error already reads "open orders could not be read: <the venue's words>".
         failure = "; ".join(row["error"] for row in plan.unread if row["kind"] == "order")
-        echo(
-            f"open orders could not be read ({failure}) -- "
-            "the account-wide cancel still goes out, and this run cannot end at exit 0"
-        )
+        echo(f"{failure} -- the account-wide cancel still goes out, and this run cannot end at exit 0")
     else:
         echo(f"{len(plan.orders)} resting order(s) seen -- the cancel is account-wide")
         for order in plan.orders:
@@ -1458,9 +1456,7 @@ async def run_flatten(
             lines.append(f"  the account-wide cancel failed: {result.cancel_error}")
         for row in plan.unread:
             if row["kind"] == "order":
-                lines.append(
-                    f"  the open orders could not be read before the cancel, so this run cannot call the account flat: {row['error']}"
-                )
+                lines.append(f"  before the cancel, {row['error']} -- so this run cannot call the account flat")
     return _finish(code, *lines)
 
 

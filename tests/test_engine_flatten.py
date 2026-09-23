@@ -1928,6 +1928,7 @@ def test_a_failed_open_order_read_before_the_cancel_still_sends_the_cancel_and_e
     assert [sent["instrument_id"] for sent in client.submitted] == ["BTC/EUR.KRAKEN", "ADA/EUR.KRAKEN"]
     assert any(line.startswith("open orders could not be read") and "FOOEUR" in line for line in lines)
     assert any("cannot call the account flat" in line for line in lines)
+    assert [line for line in lines if line.count("could not be read") > 1] == []
     (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
     doc = json.loads(path.read_text())
     assert doc["snapshot_before"]["open_orders"] is None
