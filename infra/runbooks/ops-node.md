@@ -156,13 +156,13 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds > 9000`, `for: 5m`, `noDataState: Alerting`, panel `zcrypto-fleet`/803.
+A **warning** Grafana alert (`Ops · Grafana keep-alive stopped running`): `time() - zcrypto_grafana_keepalive_last_run_timestamp_seconds > 2250`, `for: 5m`, `noDataState: Alerting`, panel `zcrypto-fleet`/803.
 
 ### What it means
 
-`zcrypto-grafana-keepalive.timer` fires hourly at `:37` and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom`. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the healthchecks.io dead-man, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
+`zcrypto-grafana-keepalive.timer` fires four times an hour, at `:02`, `:17`, `:32` and `:47`, and its unit makes one authenticated call to Grafana Cloud, writing `/var/lib/zcrypto-ops/textfile/grafana-keepalive.prom` and one `status=… duration=…` line to its journal — `sudo journalctl -u zcrypto-grafana-keepalive.service` on the host reads each run's result while Grafana is dark. The gauge this rule reads is the stamp of the last completed **run**, whatever that run got back, so it advances on a 503 and on a 401 exactly as it does on a 200. **This rule is about the keep-alive service, not about Grafana.** A hibernating or dark Grafana Cloud leaves the service running and this rule quiet, by design. **No Grafana rule pages on that state** — a rule cannot page about the system that evaluates it — so what reaches you is the healthchecks.io dead-man, a separate failure domain on purpose. The procedure for it is [`observability.md#grafana-cloud-dark`](observability.md#grafana-cloud-dark).
 
-The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 3600, one missed hour peaks near 7200, and the timer carries no `Persistent=`, so a converge landing on `:37` legitimately skips a slot. Two consecutive misses are not a schedule artefact.
+The threshold tolerates one skipped tick. A healthy value sawtooths from about 0 up to 900, one missed slot peaks near 1800, and the timer carries no `Persistent=`, so a converge landing on a slot legitimately skips it. Two consecutive misses are not a schedule artefact.
 
 **`noDataState: Alerting` is deliberate**: no series at all means the host is down, its Alloy is dark, the unit has never run since the textfile was last cleared, the role has not yet been converged onto the host, or **the timer is firing and the runner is exiting before it writes because no token was rendered** — each of which is the alarm rather than an absence of one. It is the only one of those five causes where the unit runs, succeeds and leaves no file.
 

@@ -2,7 +2,7 @@
 # Rendered by the `ops` Ansible role at /usr/local/sbin/zcrypto-grafana-keepalive — do not
 # hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2 instead.
 #
-# One authenticated Grafana Cloud request per hour, and a textfile recording what it got.
+# One authenticated Grafana Cloud request per run, four runs an hour, and a textfile recording what it got.
 #
 # The hypothesis this tests: Grafana Cloud counts AUTHENTICATED requests as activity and ignores
 # anonymous ones. The evidence for it is negative -- the unauthenticated 5-minute watchdog probe has
@@ -63,7 +63,7 @@ tmp="$PROM.tmp"
 # the repo. Panels and runbooks report and point here, and restate nothing -- six surfaces each
 # carrying their own reading is what the review rounds of contradictions came from.
 {
-  printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last hourly authenticated Grafana call, or 0 when it got no status at all. 200 is the call succeeding. 503 is what a hibernation and a Grafana Cloud outage both return and this call cannot tell them apart. For 0, read the duration beside it: a call that ran to its 120 s timeout is indistinguishable from here between an instance waking and egress going nowhere, while 0 in a fraction of a second is nothing answering. 401 or 403 is the unambiguous bad case -- the hypothesis under test is that AUTHENTICATED requests count as activity, so a call that does not authenticate is not the call being made. For any other value, whether the call counted as activity is unknown.\n'
+  printf '# HELP zcrypto_grafana_keepalive_status HTTP status of the last authenticated Grafana call, or 0 when it got no status at all. 200 is the call succeeding. 503 is what a hibernation and a Grafana Cloud outage both return and this call cannot tell them apart. For 0, read the duration beside it: a call that ran to its 120 s timeout is indistinguishable from here between an instance waking and egress going nowhere, while 0 in a fraction of a second is nothing answering. 401 or 403 is the unambiguous bad case -- the hypothesis under test is that AUTHENTICATED requests count as activity, so a call that does not authenticate is not the call being made. For any other value, whether the call counted as activity is unknown.\n'
   printf '# TYPE zcrypto_grafana_keepalive_status gauge\n'
   printf 'zcrypto_grafana_keepalive_status %s\n' "$code"
   printf '# HELP zcrypto_grafana_keepalive_duration_seconds Total time of that request, capped by its 120 s timeout. A call that reaches the cap records a status of 0, so read the two together.\n'
@@ -77,3 +77,6 @@ tmp="$PROM.tmp"
   printf 'zcrypto_grafana_keepalive_last_success_timestamp_seconds %s\n' "$success"
 } > "$tmp"
 mv -f "$tmp" "$PROM"
+# One line per run in the unit's journal, so a result is readable on this host while Grafana is dark --
+# which is when it is wanted, since Grafana being dark is what this records.
+printf 'status=%s duration=%ss\n' "$code" "$seconds"

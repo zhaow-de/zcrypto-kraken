@@ -12,7 +12,7 @@ from tests.test_infra_shell_templates_render import ansible_render, role_variabl
 TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2"
 
 
-def _run(tmp_path, curl_body, *, token="tok", prom_seed=None):
+def _run(tmp_path, curl_body, *, token="tok", prom_seed=None, want_stdout=False):
     """Render the script with `ops_textfile_dir` pointed at `tmp_path`, run it against a stub curl,
     and return the metrics it wrote as a name -> value dict (empty when it wrote no file)."""
     variables = role_variables(TEMPLATE)
@@ -37,9 +37,12 @@ def _run(tmp_path, curl_body, *, token="tok", prom_seed=None):
     }
     result = subprocess.run([str(script)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, f"the runner must not fail the unit: {result.stderr}"
-    if not prom.exists():
-        return {}
-    return {line.split()[0]: line.split()[1] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
+    metrics = (
+        {line.split()[0]: line.split()[1] for line in prom.read_text().splitlines() if line and not line.startswith("#")}
+        if prom.exists()
+        else {}
+    )
+    return (metrics, result.stdout) if want_stdout else metrics
 
 
 def test_a_success_is_recorded_with_its_duration_and_both_stamps(tmp_path):
@@ -94,6 +97,15 @@ def test_a_503_is_recorded_rather_than_swallowed(tmp_path):
     assert metrics["zcrypto_grafana_keepalive_status"] == "503"
     assert metrics["zcrypto_grafana_keepalive_duration_seconds"] == "12.8"
     assert metrics["zcrypto_grafana_keepalive_last_success_timestamp_seconds"] == "0", "no 200 yet"
+
+
+@pytest.mark.parametrize(
+    ("curl_body", "line"),
+    [('#!/bin/sh\nprintf "503 0.419"\n', "status=503 duration=0.419s"), ("#!/bin/sh\nexit 7\n", "status=0 duration=0s")],
+)
+def test_each_run_logs_its_result_to_the_journal(tmp_path, curl_body, line):
+    _, stdout = _run(tmp_path, curl_body, want_stdout=True)
+    assert stdout.splitlines() == [line], stdout
 
 
 def test_an_unreachable_host_writes_the_failure_rather_than_nothing(tmp_path):

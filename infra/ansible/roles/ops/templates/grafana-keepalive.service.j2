@@ -2,7 +2,7 @@
 # not hand-edit on the host, edit infra/ansible/roles/ops/templates/grafana-keepalive.service.j2
 # instead.
 [Unit]
-Description=Hourly authenticated Grafana Cloud call, and the textfile recording what it got
+Description=Authenticated Grafana Cloud call, four times an hour, and the textfile recording what it got
 Wants=network-online.target
 After=network-online.target
 
