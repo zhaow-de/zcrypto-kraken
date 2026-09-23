@@ -390,8 +390,9 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
 
     A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
     so this client's can reach the venue out of order against the execution client's, and one of them
-    is answered `Invalid nonce`. The caller therefore makes this read once per process, before the
-    startup pass has sent anything, and never retries it.
+    is answered `Invalid nonce`. The caller therefore makes this read once per process, before this
+    process has sent anything -- the startup pass reads it before its own cancels, and no plan is
+    picked up before the pass has run -- and never retries it.
 
     The listing is cached into the client first because the order read resolves every row through
     that cache and its altname index: an open order it cannot resolve fails the whole read, and a
@@ -759,7 +760,10 @@ class ProbeExecutor:
             now = _aware_utc(now)
             if not self._adopted:
                 self._adopt_resting_orders(now)
-            if self._plan is None:
+            # No plan before the startup pass has run: until it has, no row is reconciled against the
+            # venue, and the pass's one venue read must reach the venue before any order of this
+            # process does (`read_venue_orders` says why).
+            if self._plan is None and self._adopted:
                 self._pickup(now)
             self._pump(now)
             self._publish_resting_age(now)

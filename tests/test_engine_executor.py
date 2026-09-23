@@ -3151,6 +3151,21 @@ def test_a_raising_orders_read_leaves_the_startup_pass_able_to_run_again(tmp_pat
     assert [str(cid) for cid in client.canceled] == ["O-orphan"]
 
 
+def test_no_plan_is_picked_up_before_the_startup_pass_has_run(tmp_path):
+    """Until the pass has run, no row is compared with the venue and its one venue read has not gone
+    out -- a read that must reach the venue before any order of this process does. A plan waiting on
+    disk is picked up on the tick the pass completes, not before."""
+    client = StubClient(_FlakyOrdersCache())
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.FULL))
+    plan_path = _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    assert plan_path.exists() and not exec_record_path(tmp_path / "journal", _boundary(NOW)).exists()
+
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert not plan_path.exists() and _plan_entry(tmp_path)["disposition"] == "accepted"
+
+
 @pytest.mark.parametrize(
     "level, expected",
     [
