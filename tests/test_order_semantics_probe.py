@@ -495,7 +495,10 @@ def test_any_other_start_failure_is_still_an_abnormal_stop(tmp_path, monkeypatch
 # ---------------------------------------------------------------------------------------------
 
 # Lines as the file log writes them.
-_NONCE = "2026-09-23T21:06:30.627000002Z [DEBUG] P6PROBE-901.nautilus_kraken::http::spot::client: Generated nonce 1790197590626999753 for /0/private/TradeVolume"
+_NONCE = (
+    "2026-09-23T21:06:30.627000002Z [DEBUG] P6PROBE-901.nautilus_kraken::http::spot::client: Generated nonce "
+    "1790197590626999753 for /0/private/TradeVolume"
+)
 _FELL_BACK = (
     "2026-09-23T21:06:30.627754997Z [WARN] P6PROBE-901.nautilus_kraken::http::spot::client: Failed to request Kraken "
     "account fee rates, falling back to public rates: API error: EGeneral:Permission denied"

@@ -4,8 +4,9 @@ value outside 1-6 or not a number; an installed nautilus-trader other than the e
 `--allow-version-mismatch`; a missing `KRAKEN_SPOT_API_KEY` or `KRAKEN_SPOT_API_SECRET` unless `--no-exec`, naming
 the variable and never a value; `--probe5` without `--apply`; a `--max-notional` above the absolute ceiling; a
 `--notional` above `--max-notional` or under the costmin floor; an `--away` under the protocol floor; a `--leverage`
-under 1; an empty `--known-order`. A `Refusal` while the node is built is exit 2 with its message, not a traceback. `build_node` is replaced
-for every case, so a preflight that let a run through stops at the stub instead of connecting. The harness's pure
+under 1; an empty `--known-order`. A `Refusal` while the node is built is exit 2 with its message, not a traceback.
+`build_node` is replaced for every case, so a preflight that let a run through stops at the stub instead of
+connecting. The harness's pure
 core is `tests/test_order_semantics_probe.py`'s."""
 
 from __future__ import annotations
