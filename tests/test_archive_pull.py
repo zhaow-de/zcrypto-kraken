@@ -448,8 +448,6 @@ def test_pull_default_scope_is_full_and_the_line_keeps_the_dead_mans_token(tmp_p
 
 @pytest.mark.parametrize("channel", ["liquidations", None])
 def test_the_verified_line_ends_with_its_channel(tmp_path: Path, monkeypatch, channel: str | None) -> None:
-    """The liquidations, panel and reconciled pulls share one `source=`, so `channel=` is the field that
-    tells their lines apart. It goes last, after `pruned_hours=`, so `failed=` keeps its place."""
     dest = tmp_path / "dest"
     _seg(dest, "BTC", "book", "00")
     extra = ["--textfile", str(tmp_path / "p.prom"), "--channel", channel] if channel else []
@@ -462,9 +460,7 @@ def test_the_verified_line_ends_with_its_channel(tmp_path: Path, monkeypatch, ch
 
 @pytest.mark.parametrize("corrupt", [False, True])
 def test_a_vanished_file_pass_hashes_what_it_transferred(tmp_path: Path, monkeypatch, corrupt: bool) -> None:
-    """rsync's 24 is the source moving under the pull, not a transport failure. Exiting 2 before the
-    verify left the pass's transfers unhashed under the incremental scope, since the next pass hashes
-    only its own; the slice here holds neither final, so only the transfer list can hash `01`."""
+    """The slice holds neither final, so only the transfer list can hash `01`."""
     _seg(tmp_path, "BTC", "book", "00")
     _seg(tmp_path, "BTC", "book", "01", corrupt=corrupt)
     got = _rel("BTC", "book", "01")
