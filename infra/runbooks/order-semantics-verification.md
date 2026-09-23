@@ -187,6 +187,8 @@ Read every `PLAN` line before continuing. For each one confirm:
 
 Also read probe 2's row: it lists the pre-existing open orders and positions startup reconciliation found. Anything there must be explained before you place a probe order; a `REVIEW` verdict on probe 2 is a stop sign, not a footnote. On a build carrying upstream #5034 (2.0.0rc6.dev20260921 and later) that read is unscoped and resolves both spellings of a pair such as BTC/EUR (`XXBTZEUR` and `XBTEUR`), and an open order the listing cannot resolve stops the node's start with `Failed to get mass status from KRAKEN` rather than dropping out of the row, so a node that started lists the whole account. Read Kraken → Trade → Open Orders by eye before §5.2 places anything all the same: the UI is the tie-breaker (§7.1).
 
+An order you placed yourself and mean to leave resting through the pass is named by its Kraken txid (Kraken → Trade → Open Orders, or `kraken open-orders -o json` on the workstation) with `--known-order <txid>`, repeated per order, on this and every later `$RUN` line of the pass. Probes 2 and 6 list each open order with its bucket (`ours`, `known`, `unclaimed`, `other`, defined in §5.4); a named order reads `known` and leaves both verdicts at `PASS`. Unnamed, it makes both `REVIEW`, and if it rests on `--pair` probe 6 reads `FAIL` and the run exits 3. A named txid the read does not find open makes both `REVIEW`: it filled, was cancelled, or is mistyped.
+
 Verdicts you should see: 1 `PASS`, 2 `PASS`, 3 `PASS`, 4a–4d `DRY-RUN`, 5 `GATED`, 6 `PASS`. Probe 5 reads `GATED` rather than `DRY-RUN` because its money gate `--probe5` was not given; it still prints the money order it would place, so read that line here rather than meeting it for the first time in the live run.
 
 #### 5.2 Probes 1–4 for real: the zero-fill sweep
@@ -240,12 +242,16 @@ $RUN --probes 6 --evidence-dir "$EVID"
 
 Running it as its own invocation is deliberate: the new node's startup reconciliation reads venue truth rather than the previous process's cache. Probe 6 also runs in-process at the end of every run, but a run that submitted anything cannot force a fresh venue read and marks its own row `REVIEW`; the separate invocation is the one to quote.
 
-Expect `open orders 0 (ours 0, other 0), open positions 0`, `PASS`, exit 0.
+Expect `open orders 0 (ours 0, known 0, unclaimed 0, other 0), open positions 0`, `PASS`, exit 0. With orders named by `--known-order` (§5.1) resting, expect them under `known` and the same `PASS`.
 
 The counts are totals for the account, for the reason §5.1 gives: the fresh node's startup read resolves both spellings of a pair, and an order it cannot resolve stops the start instead of going uncounted. §7.1's by-eye read at Kraken still closes the pass.
 
-- `ours` non-zero ⇒ verdict FAIL, the open ids printed in probe 6's own rows ⇒ go to §8 now, and expect exit 3 with the cancel-by-hand banner. The final read adopts probe-shaped orders this invocation did not submit, so an earlier run's leftover is counted here, subject to the floor above. FAIL and the banner read the same cache at different moments, so an id can move between them while the node still holds its clients open after the stop.
-- `other` non-zero ⇒ `REVIEW` ⇒ something at the venue is not ours. Adjudicate before signing off.
+The buckets go by the venue order id (the txid), because that is the id that comes back. The adapter sends a probe id over Kraken's 18 characters as `O` plus its last 17, so the `-901-P6V-` infix does reach the venue, but the adapter's order read carries no client order id back, and the fresh node's reconciliation names each order it adopts by its txid. An earlier run's order is therefore recognised by the txid its `evidence-<stamp>.json` in `--evidence-dir` records, and a run whose evidence file was never written (a `kill -9`, or another `--evidence-dir`) leaves an order that nothing names.
+
+- `ours` non-zero ⇒ verdict FAIL: an order this invocation submitted, or one whose txid an evidence file in `--evidence-dir` records, is still open. Go to §8 now, and expect exit 3 with the cancel-by-hand banner. FAIL and the banner read the same cache at different moments, so an id can move between them while the node still holds its clients open after the stop.
+- `unclaimed` non-zero ⇒ verdict FAIL and exit 3: an open order on `--pair` that neither an evidence file nor `--known-order` names. A probe leftover with no evidence file reads exactly like this. Cancel it at Kraken, or, if it is yours, re-run naming it with `--known-order <txid>`.
+- `other` non-zero ⇒ `REVIEW`: an open order on another pair that nothing names, so not one of the harness's. Adjudicate before signing off, or name it with `--known-order`.
+- `known` counts the orders you named; a named txid that is not open is listed after the counts and makes the row `REVIEW`.
 
 ### 6. Exit codes
 
@@ -313,7 +319,7 @@ The memo must state the exact version the verification now binds to, and every o
 
 ### 8. If something is left resting
 
-The harness exits 3 and prints, between two 78-character `!` rules, every client order id / venue order id it believes is still working.
+The harness exits 3 and prints, between two 78-character `!` rules, every client order id / venue order id it believes is still working, and under a second heading each open order on `--pair` that nothing claims (§5.4's `unclaimed`). An unclaimed order is cancelled by hand like the rest, unless it is yours: then re-run naming it with `--known-order <txid>`.
 
 1. Kraken → Trade → Open Orders. Cancel each listed order by hand. Do not leave the terminal until they are gone.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.

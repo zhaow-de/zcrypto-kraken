@@ -6,10 +6,12 @@ loads via `importlib.util.spec_from_file_location` (the precedent `test_grafana_
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import nautilus_trader
 import pytest
@@ -115,6 +117,7 @@ class _Reconciled:
     side: str = "SELL"
     quantity: str = "0.00010000"
     price: float = 0.0
+    status: SimpleNamespace = field(default_factory=lambda: SimpleNamespace(name="ACCEPTED"))
 
 
 def test_an_open_order_is_named_by_its_txid_and_not_priced_at_the_adapters_zero():
@@ -124,6 +127,188 @@ def test_an_open_order_is_named_by_its_txid_and_not_priced_at_the_adapters_zero(
 
     assert line.startswith("txid OWNERB-TCEUR-000001 BTC/EUR.KRAKEN SELL 0.00010000")
     assert "@" not in line
+
+
+# ---------------------------------------------------------------------------------------------
+# Whose open orders these are
+# ---------------------------------------------------------------------------------------------
+
+_PAIR = "BTC/EUR.KRAKEN"
+# An earlier run's probe order as a fresh node adopts it: the report carries no client order id,
+# so reconciliation names it by its txid, and the probe infix it went out with is gone.
+_LEFTOVER = _Reconciled(venue_order_id="OLEFTO-VERPR-OBE001", client_order_id="OLEFTO-VERPR-OBE001", side="BUY")
+_OWNER_BTC = _Reconciled()
+_OWNER_SOL = _Reconciled(
+    venue_order_id="OWNERS-OLEUR-000002", client_order_id="OWNERS-OLEUR-000002", instrument_id="SOL/EUR.KRAKEN"
+)
+
+
+def _classify(orders, *, submitted=(), ours=(), known=()):
+    return probe.classify_open_orders(
+        orders, pair=_PAIR, submitted=set(submitted), ours_venue_ids=set(ours), known_venue_ids=set(known)
+    )
+
+
+def test_an_earlier_runs_leftover_is_ours_by_the_txid_its_evidence_recorded():
+    """The fresh `--probes 6` read: the leftover carries no probe infix, only its txid."""
+    assert probe.PROBE_ORDER_ID_INFIX not in _LEFTOVER.client_order_id
+
+    split = _classify([_LEFTOVER], ours={"OLEFTO-VERPR-OBE001"})
+
+    assert split.ours == [_LEFTOVER]
+    assert split.counts() == "ours 1, known 0, unclaimed 0, other 0"
+
+
+def test_this_invocations_own_order_is_ours_before_the_venue_has_named_it():
+    own = _Reconciled(venue_order_id=None, client_order_id="O-20260923-120000-901-P6V-1")
+
+    assert _classify([own], submitted={"O-20260923-120000-901-P6V-1"}).ours == [own]
+
+
+def test_an_order_named_with_known_order_is_known():
+    split = _classify([_OWNER_BTC, _OWNER_SOL], known={"OWNERB-TCEUR-000001", "OWNERS-OLEUR-000002"})
+
+    assert split.known == [_OWNER_BTC, _OWNER_SOL]
+    assert split.ours == split.unclaimed == split.other == []
+
+
+def test_naming_a_probe_leftover_does_not_wave_it_through():
+    split = _classify([_LEFTOVER], ours={"OLEFTO-VERPR-OBE001"}, known={"OLEFTO-VERPR-OBE001"})
+
+    assert split.ours == [_LEFTOVER]
+    assert split.known == []
+
+
+def test_an_unnamed_order_on_the_pair_is_unclaimed_and_one_elsewhere_is_other():
+    """Probe orders only go out on `--pair`, so there an unnamed order may be a leftover whose
+    evidence file was never written; elsewhere it cannot be one of ours."""
+    split = _classify([_LEFTOVER, _OWNER_SOL])
+
+    assert split.unclaimed == [_LEFTOVER]
+    assert split.other == [_OWNER_SOL]
+
+
+def test_a_named_order_the_read_does_not_find_is_reported():
+    assert _classify([_OWNER_BTC], known={"OWNERB-TCEUR-000001", "OMISTY-PEDTX-000009"}).known_absent == ["OMISTY-PEDTX-000009"]
+
+
+def test_probe_6_fails_on_an_order_of_ours_or_an_unclaimed_one_even_off_its_anchor():
+    assert probe.verdict_after_run(_classify([_LEFTOVER], ours={"OLEFTO-VERPR-OBE001"}), 0, anchored=True) == "FAIL"
+    assert probe.verdict_after_run(_classify([_LEFTOVER]), 0, anchored=True) == "FAIL"
+    assert probe.verdict_after_run(_classify([_LEFTOVER]), 0, anchored=False) == "FAIL"
+
+
+def test_probe_6_passes_with_only_named_orders_open():
+    """The true positive: the owner's orders, named, rest through the pass without a verdict to adjudicate."""
+    split = _classify([_OWNER_BTC, _OWNER_SOL], known={"OWNERB-TCEUR-000001", "OWNERS-OLEUR-000002"})
+
+    assert probe.verdict_after_run(split, 0, anchored=True) == "PASS"
+
+
+@pytest.mark.parametrize(
+    ("orders", "known", "positions", "anchored"),
+    [
+        ([_OWNER_SOL], (), 0, True),
+        ([], (), 1, True),
+        ([], ("OMISTY-PEDTX-000009",), 0, True),
+        ([], (), 0, False),
+    ],
+    ids=["other-open", "a-position", "named-but-absent", "read-predates-the-run"],
+)
+def test_probe_6_reviews_what_is_not_ours_but_not_clean(orders, known, positions, anchored):
+    assert probe.verdict_after_run(_classify(orders, known=known), positions, anchored=anchored) == "REVIEW"
+
+
+def test_probe_2_passes_on_named_orders_and_reviews_anything_else():
+    named = _classify([_OWNER_BTC], known={"OWNERB-TCEUR-000001"})
+
+    assert probe.verdict_at_start(named, 0) == "PASS"
+    assert probe.verdict_at_start(_classify([]), 0) == "PASS"
+    assert probe.verdict_at_start(_classify([_OWNER_BTC]), 0) == "REVIEW"
+    assert probe.verdict_at_start(named, 1) == "REVIEW"
+    assert probe.verdict_at_start(_classify([], known={"OMISTY-PEDTX-000009"}), 0) == "REVIEW"
+
+
+def test_an_evidence_file_yields_the_txids_of_the_orders_its_run_submitted():
+    evidence = {
+        "submitted_client_order_ids": ["O-1-901-P6V-1", "O-1-901-P6V-2"],
+        "events": [
+            {"client_order_id": "O-1-901-P6V-1", "venue_order_id": "OLEFTO-VERPR-OBE001"},
+            {"client_order_id": "O-1-901-P6V-2", "venue_order_id": None},
+            {"client_order_id": "SOMEONE-ELSE", "venue_order_id": "OOTHER-XXXXX-000003"},
+        ],
+    }
+
+    assert probe.probe_venue_order_ids(evidence) == {"OLEFTO-VERPR-OBE001"}
+
+
+def test_the_evidence_dir_is_read_whole_and_an_unreadable_file_is_named(tmp_path):
+    good = {"submitted_client_order_ids": ["c"], "events": [{"client_order_id": "c", "venue_order_id": "OAAAAA-BBBBB-CCCCC1"}]}
+    (tmp_path / "evidence-20260923-100000.json").write_text(json.dumps(good))
+    (tmp_path / "evidence-20260923-110000.json").write_text("{not json")
+    (tmp_path / "other.json").write_text(json.dumps({**good, "events": [{"client_order_id": "c", "venue_order_id": "OZZZZZ"}]}))
+
+    ids, unreadable = probe.load_probe_venue_order_ids(tmp_path)
+
+    assert ids == {"OAAAAA-BBBBB-CCCCC1"}
+    assert len(unreadable) == 1 and "evidence-20260923-110000.json" in unreadable[0]
+
+
+class _NodeOpen:
+    """A node whose Cache holds a fixed set of open orders, found by their client order id."""
+
+    def __init__(self, open_orders) -> None:
+        self.cache = self
+        self._open = list(open_orders)
+
+    def order(self, coid):
+        return next((o for o in self._open if o.client_order_id == str(coid)), None)
+
+    def orders_open(self, venue=None):
+        return list(self._open)
+
+    def run(self) -> None:
+        pass
+
+    def dispose(self) -> None:
+        pass
+
+
+def test_the_final_read_holds_an_earlier_runs_leftover_and_an_unclaimed_order_for_exit_3():
+    state = probe.RunState(sequence_complete=True, pair=_PAIR, prior_venue_order_ids={"OLEFTO-VERPR-OBE001"})
+    unclaimed = _Reconciled(venue_order_id="OUNCLA-IMEDX-000004", client_order_id="OUNCLA-IMEDX-000004")
+
+    split = probe.final_read(_NodeOpen([_LEFTOVER, unclaimed, _OWNER_SOL]), state)
+
+    assert split.outstanding == ["OLEFTO-VERPR-OBE001"]
+    assert split.unclaimed == ["OUNCLA-IMEDX-000004"]
+
+
+def _main_against(open_orders, tmp_path, monkeypatch, *extra: str) -> int:
+    monkeypatch.setattr(probe, "build_node", lambda args, strategy: _NodeOpen(open_orders))
+    argv = ["--no-exec", "--probes", "6", "--evidence-dir", str(tmp_path), *extra]
+    return probe.main(["--expect-nautilus", nautilus_trader.__version__, *argv])
+
+
+def test_an_unnamed_open_order_on_the_pair_exits_3(tmp_path, monkeypatch, capsys):
+    assert _main_against([_OWNER_BTC], tmp_path, monkeypatch) == 3
+    assert f"OPEN ORDERS ON {_PAIR} THAT NOTHING CLAIMS" in capsys.readouterr().out
+
+
+def test_the_same_order_named_with_known_order_exits_0(tmp_path, monkeypatch):
+    """The true positive for the exit-3 rule: the owner's order, named, leaves the run clean."""
+    assert _main_against([_OWNER_BTC], tmp_path, monkeypatch, "--known-order", "OWNERB-TCEUR-000001") == 0
+
+
+def test_a_leftover_an_earlier_evidence_file_records_exits_3(tmp_path, monkeypatch, capsys):
+    earlier = {
+        "submitted_client_order_ids": ["O-20260923-210010-901-P6V-1"],
+        "events": [{"client_order_id": "O-20260923-210010-901-P6V-1", "venue_order_id": "OLEFTO-VERPR-OBE001"}],
+    }
+    (tmp_path / "evidence-20260923-210010.json").write_text(json.dumps(earlier))
+
+    assert _main_against([_LEFTOVER], tmp_path, monkeypatch, "--known-order", "OLEFTO-VERPR-OBE001") == 3
+    assert "ORDERS THIS HARNESS PLACED ARE STILL OPEN" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------------------------
