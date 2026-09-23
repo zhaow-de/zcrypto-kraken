@@ -821,10 +821,9 @@ class ProbeExecutor:
         At level NONE the pass cancels EVERYTHING, ledgered reducers included: a trip cancels
         resting orders, `_poll` already revokes even a resting close when the level drops there, and
         "nothing is working at the venue" must not have a restart-shaped hole -- a kill file that
-        survived the restart is exactly the state the operator pulled the switch for. The hole this
-        paragraph forbids exists today in a different shape, and it reaches this pass through the
-        same `orders_open` list: `_cancel_resting` states it. "EVERYTHING" is everything the Cache
-        holds, and on a leg Kraken spells two ways a previous process's order is not in it.
+        survived the restart is exactly the state the operator pulled the switch for. "EVERYTHING" is
+        everything the Cache holds, which at startup is every order resting at the venue:
+        `_cancel_resting` says why, and what the Cache cannot hold.
 
         EVERY matched row is attached, canceled ones included, before any cancel goes out: a cancel
         is a request, not an outcome, and an order can still fill between it and the venue's answer.
@@ -2044,7 +2043,7 @@ class ProbeExecutor:
     def _trip_kill(self, reason: str) -> None:
         """Latch the execution kill switch: create the kill file, pull everything the Cache reports
         still working at the venue, and stop the plan. "Everything the Cache reports" is narrower
-        than "everything working" on the legs `_cancel_resting` names.
+        than "everything working" by any order the Cache does not hold; `_cancel_resting` says which.
 
         The file's semantics are `00088`'s, untouched -- presence is the whole protocol, the contents
         are for the human who finds it, and NO code path anywhere clears it. That is what makes this
@@ -2104,27 +2103,20 @@ class ProbeExecutor:
         left resting. That pass makes the same call when it starts up onto a latched kill -- a
         tripped switch has no order it is willing to leave working, however well justified.
 
-        THAT INVARIANT HAS A HOLE, and it is spelling-shaped rather than restart-shaped. An order
-        ALREADY RESTING at the venue when this process started -- a previous process's, or one placed
-        by hand before the start -- reaches the Cache only through startup reconciliation (the
-        executions subscription carries `snap_orders:false`, so no WS event heals it afterwards), and
-        reconciliation obtains open orders through the same adapter read `cli/engine/flatten.py`'s
-        `read_open_orders` documents: the instrument lookup compares Kraken's `AssetPairs` key
-        against the order's altname and drops the row on a miss, silently and with a successful
-        return. On the legs spelled both ways -- `BLIND_ORDER_READ_LEGS` there, BTC/EUR among them --
-        such an order never enters the Cache, so `orders_open` never lists it and `cancel_order` is
-        never called for it. `_adopt_resting_orders` reads the same list and is blind the same way.
+        An order ALREADY RESTING at the venue when this process started -- a previous process's, or
+        one placed by hand before the start -- reaches the Cache only through startup reconciliation:
+        the executions subscription carries `snap_orders:false`, so no WS event heals it afterwards.
+        On the pinned wheel that reconciliation reads open orders unscoped and resolves both of
+        Kraken's pair spellings through the listing's altname index, and an open order it cannot
+        resolve fails the read and stops the node from starting. So the list below holds every order
+        resting at the start, named by its Kraken txid rather than this engine's id, and the cancel
+        goes out by that name. `filter_unclaimed_external_orders=False` in `cli/engine/node.py` is
+        what keeps such an order in the Cache at all.
 
-        This is the OPPOSITE failure to flatten's, and the difference decides what an operator does.
-        Flatten's cancel is account-wide and reaches a blind leg; only its verdict is blind, so a
-        re-run mitigates. Here the cancel is issued PER ORDER off that list, so an order the list
-        omits is never requested at all: a capability gap, which no retry of the trip closes.
-        `filter_unclaimed_external_orders=False` in `cli/engine/node.py` is necessary for this sweep
-        to reach such an order and is not sufficient.
-
-        Not repaired here. The repair owes a venue-side open-order read at trip time, independent of
-        the Cache -- not a wider Cache query, which reads the same populated set. `T0160` carries the
-        registration and the reading that would settle it.
+        The cancel is issued PER ORDER off that list, where flatten's is account-wide, so an order
+        the Cache does not hold is never requested. No retry of the trip reaches one, and neither
+        does a wider Cache query, which reads the same populated set: only a venue-side open-order
+        read at trip time would.
 
         Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
         outcome, the rows keep their open states, and a fill racing a cancel still lands through the
@@ -2508,10 +2500,11 @@ class ProbeExecutor:
         Three further things mean the same thing here -- no terminal state, row untouched: a status
         outside the map (every OPEN one, so a refused cancel leaves the row pointing at a live
         order), an order the Cache does not hold, and a Cache that cannot be read at all. The last is
-        not hypothetical: a read inside a handler for an event this process's own command generated
-        raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the write
-        that produced it. Letting that escape would abandon the whole handler and cost the row its
-        event payload -- the forensic record this path exists to keep -- to decide a state those
+        not hypothetical: a read inside the handler for an event a command of this process emits
+        itself -- `OrderPendingCancel`, which the adopt pass's and a trip's cancels put on this path
+        -- raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the
+        write that produced it. Letting that escape would abandon the whole handler and cost the row
+        its event payload -- the forensic record this path exists to keep -- to decide a state those
         events never carried anyway.
         """
         if getattr(event, "reconciliation", False):

@@ -1698,9 +1698,10 @@ def _cache_reads_at_dispatch() -> dict:
         def on_order_event(self, event):
             name = type(event).__name__
             if name not in ("OrderFilled", "OrderCanceled"):
-                # An event this process's own command generates is dispatched while the Cache is
-                # still mutably borrowed for the write that produced it, and a read there raises
-                # `Already mutably borrowed`. Only the venue's own answers are read here.
+                # The event a command emits itself -- `OrderInitialized` at submit, `OrderPendingCancel`
+                # at cancel -- is dispatched while the Cache is still mutably borrowed for the write
+                # that produced it, and a read there raises `Already mutably borrowed`. Only the
+                # venue's own answers are read here.
                 return
             order = self.cache.order(event.client_order_id)
             readings[name] = {
