@@ -111,6 +111,8 @@ def _rebased_repo(
     drop_a_commit: bool = False,
     stack_a_commit: bool = False,
     row_above: bool = False,
+    empty_above: bool = False,
+    two_empty_above: bool = False,
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
     that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
@@ -138,6 +140,8 @@ def _rebased_repo(
     if row_above:
         (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
         _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
+    for n in range(2 if two_empty_above else 1 if empty_above else 0):
+        _git(root, "commit", "-q", "--allow-empty", "-m", f"claude(refine): round 9 closes ({n})")
     _git(root, "checkout", "-q", "develop")
     if collide:
         rows(1, 2)
@@ -213,6 +217,21 @@ def test_the_arm_judges_a_row_commit_above_the_read_by_the_tip_under_it(tmp_path
     """The Step 4 row commit above the read, with the base moved under both: open-pr's first admitted head on a moved base."""
     read, head = _rebased_repo(tmp_path / shape, row_above=True, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_the_arm_admits_one_commit_above_the_read_that_changes_no_file(tmp_path, shape):
+    """A refine round's closing commit is empty — its delta and watermark trailer are its whole content — so it
+    moves nothing the read graded of the tree, and the arm sets it aside as it does the Step 4 row."""
+    read, head = _rebased_repo(tmp_path / shape, empty_above=True, **_SHAPES[shape])
+    assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
+
+
+def test_the_arm_refuses_a_second_commit_above_the_read_that_changes_no_file(tmp_path):
+    """One is set aside, never a run of them: each carries a message the read line does not cover."""
+    read, head = _rebased_repo(tmp_path / "two-empty", two_empty_above=True)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "two-empty")
+    assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
 
 
 @pytest.mark.parametrize(("shape", "more"), [(s, m) for s in _SHAPES for m in _MORE], ids=lambda v: v)

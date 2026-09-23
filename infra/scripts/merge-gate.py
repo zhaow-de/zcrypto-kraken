@@ -496,14 +496,18 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
     return sorted(line for line in diff.splitlines() if line[:1] in "+-" and not _DIFF_HEADER.match(line))
 
 
-def _row_commit_alone(cwd: pathlib.Path | None, sha: str) -> bool:
+def _admitted_extra(cwd: pathlib.Path | None, sha: str) -> bool:
+    """The one commit above the read this arm sets aside: `open-pr`'s Step 4 change-index row, or a commit that
+    changes no file at all — a refine round's closing commit, whose delta and watermark trailer are its whole
+    content. Neither can move what the read graded of the tree; both carry a message the read line does not cover,
+    which is why exactly one is admitted and a second of either kind is not."""
     touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()
-    return touched == [INDEX] and len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) == 2
+    return touched in ([INDEX], []) and len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) == 2
 
 
 def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None = None) -> bool | str:
-    """True when `head` carries the read's own commits and nothing more, by the checks below — one change-index row commit
-    among them set aside, the Step 4 row `open-pr` pushes after the read — on the base they were
+    """True when `head` carries the read's own commits and nothing more, by the checks below — one commit among them
+    set aside, the Step 4 row `open-pr` pushes after the read or a commit that changes no file — on the base they were
     read on, or on one that moved under them; otherwise a string naming the check that failed, or what the arm could
     not compare."""
     try:
@@ -521,7 +525,7 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
         cells = _git(cwd, "log", "--no-merges", "--format=%H%x00%B%x00", f"{new_base}..{head}").split("\x00")
         head_msgs = [(cells[i].strip(), cells[i + 1].strip()) for i in range(0, len(cells) - 1, 2)]
         extra = [sha for sha, msg in head_msgs if msg not in read_msgs]
-        row = extra[0] if len(extra) == 1 and _row_commit_alone(cwd, extra[0]) else None
+        row = extra[0] if len(extra) == 1 and _admitted_extra(cwd, extra[0]) else None
         if [msg for sha, msg in head_msgs if sha != row] != read_msgs:
             return (
                 "the messages from the base to the head are not the read's, a commit reworded, added or dropped: a reword "
