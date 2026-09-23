@@ -419,6 +419,71 @@ def test_any_other_start_failure_is_still_an_abnormal_stop(tmp_path, monkeypatch
 
 
 # ---------------------------------------------------------------------------------------------
+# The run's file log, and what it says about the credentialed listing's fee rates
+# ---------------------------------------------------------------------------------------------
+
+# Lines as the file log writes them.
+_NONCE = "2026-09-23T21:06:30.627000002Z [DEBUG] P6PROBE-901.nautilus_kraken::http::spot::client: Generated nonce 1790197590626999753 for /0/private/TradeVolume"
+_FELL_BACK = (
+    "2026-09-23T21:06:30.627754997Z [WARN] P6PROBE-901.nautilus_kraken::http::spot::client: Failed to request Kraken "
+    "account fee rates, falling back to public rates: API error: EGeneral:Permission denied"
+)
+_LOADED = "2026-09-23T21:06:30.629024319Z [DEBUG] P6PROBE-901.nautilus_kraken::execution::spot: Loaded 4 Spot instruments"
+
+
+def test_every_run_logs_at_debug_into_the_evidence_dir_beside_its_evidence():
+    args = probe.build_parser().parse_args(["--evidence-dir", "/evid"])
+
+    config = probe.logger_config(args, "20260923-120000")
+
+    assert config.fileout_level == probe.LogLevel.DEBUG
+    assert (config.file_config.directory, config.file_config.file_name) == ("/evid", "probe-20260923-120000")
+    assert probe.run_log_path("/evid", "20260923-120000") == Path("/evid/probe-20260923-120000.log")
+
+
+def test_a_fallback_warn_reads_as_fell_back_with_its_reason_and_its_call_count():
+    got = probe.tradevolume_fallback("\n".join([_NONCE, _FELL_BACK, _NONCE, _FELL_BACK, _LOADED]))
+
+    assert got["fell_back"] is True
+    assert got["tradevolume_calls"] == 2
+    assert got["warnings"] == [_FELL_BACK[_FELL_BACK.index("Failed to request") :]] * 2
+
+
+def test_a_listing_that_finished_without_the_warn_did_not_fall_back():
+    assert probe.tradevolume_fallback("\n".join([_NONCE, _LOADED]))["fell_back"] is False
+
+
+def test_a_log_that_never_saw_the_listing_finish_cannot_say():
+    """A partial TradeVolume answer fails the exec client's connect outright; no WARN there is not "no fallback"."""
+    assert probe.tradevolume_fallback(_NONCE)["fell_back"] is None
+
+
+def test_without_an_exec_client_or_a_readable_log_the_reading_is_none(tmp_path):
+    missing = tmp_path / "probe-x.log"
+
+    assert probe.read_tradevolume_fallback(missing, exec_client=False)["fell_back"] is None
+    assert probe.read_tradevolume_fallback(missing, exec_client=True)["fell_back"] is None
+
+
+def test_the_evidence_json_records_what_the_runs_log_says(tmp_path, monkeypatch):
+    monkeypatch.setenv(probe.API_KEY_VAR, "k")
+    monkeypatch.setenv(probe.API_SECRET_VAR, "s")
+
+    def node_that_logged(args, strategy):
+        probe.run_log_path(args.evidence_dir, strategy.stamp).write_text("\n".join([_NONCE, _FELL_BACK, _LOADED]))
+        return _NodeOpen([])
+
+    monkeypatch.setattr(probe, "build_node", node_that_logged)
+    argv = ["--expect-nautilus", nautilus_trader.__version__, "--probes", "6", "--evidence-dir", str(tmp_path)]
+
+    assert probe.main(argv) == 0
+
+    (evidence,) = tmp_path.glob("evidence-*.json")
+    recorded = json.loads(evidence.read_text())["tradevolume_fallback"]
+    assert recorded["fell_back"] is True and recorded["log_file"].endswith(".log")
+
+
+# ---------------------------------------------------------------------------------------------
 # The waiting primitive
 # ---------------------------------------------------------------------------------------------
 

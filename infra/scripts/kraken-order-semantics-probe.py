@@ -96,7 +96,7 @@ from nautilus_trader.adapters.kraken import (
     KrakenProductType,
 )
 from nautilus_trader.common import Environment, LogLevel
-from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
+from nautilus_trader.config import FileWriterConfig, LiveExecutionEngineConfig, LoggerConfig
 from nautilus_trader.live import LiveNode, LiveNodeBuilder
 from nautilus_trader.model import (
     AccountId,
@@ -487,6 +487,62 @@ def verdict_after_run(split: OpenOrderSplit, open_positions: int, anchored: bool
     if split.other or open_positions or split.known_absent or not anchored:
         return VERDICT_REVIEW
     return VERDICT_PASS
+
+
+def run_log_path(evidence_dir: str | Path, stamp: str) -> Path:
+    """The run's DEBUG file log, beside its evidence JSON. The logger appends `.log` to the stem."""
+    return Path(evidence_dir) / f"probe-{stamp}.log"
+
+
+# The adapter's WARN when the credentialed TradeVolume call fails and the listing takes the public
+# fee schedule instead; the exec client makes that call once for the regular pairs and once more
+# when the tokenized listing is not empty. The DEBUG nonce line counts the calls, and the exec
+# client's `Loaded N Spot instruments` says its listing finished, which is what lets an absent WARN
+# mean "no fallback" rather than "never got that far".
+TRADEVOLUME_FALLBACK = "falling back to public rates"
+_TRADEVOLUME_CALL = re.compile(r"Generated nonce \d+ for /0/private/TradeVolume")
+_EXEC_LISTING_LOADED = re.compile(r"nautilus_kraken::execution::spot: Loaded \d+ Spot instruments")
+
+
+def tradevolume_fallback(log_text: str) -> dict:
+    """`fell_back` is True on any fallback WARN, False only once the exec client's listing is seen
+    to finish without one, and None when the log cannot say."""
+    lines = log_text.splitlines()
+    warnings = [
+        line[line.find("Failed to request") :] if "Failed to request" in line else line
+        for line in lines
+        if TRADEVOLUME_FALLBACK in line
+    ]
+    loaded = any(_EXEC_LISTING_LOADED.search(line) for line in lines)
+    return {
+        "fell_back": True if warnings else (False if loaded else None),
+        "tradevolume_calls": sum(1 for line in lines if _TRADEVOLUME_CALL.search(line)),
+        "exec_listing_loaded": loaded,
+        "warnings": warnings,
+    }
+
+
+def read_tradevolume_fallback(log_path: Path, *, exec_client: bool) -> dict:
+    if not exec_client:
+        return {"log_file": str(log_path), "fell_back": None, "why": "no exec client (--no-exec), so no credentialed listing"}
+    try:
+        text = log_path.read_text(errors="replace")
+    except OSError as exc:
+        return {"log_file": str(log_path), "fell_back": None, "why": f"the run's log could not be read: {exc!r}"}
+    return {"log_file": str(log_path), **tradevolume_fallback(text)}
+
+
+def describe_tradevolume_fallback(fallback: dict) -> str:
+    log = f"(log: {fallback['log_file']})"
+    if fallback["fell_back"] is True:
+        return (
+            f"TradeVolume: the credentialed listing FELL BACK to public fee rates on {len(fallback['warnings'])} of "
+            f"{fallback['tradevolume_calls']} call(s) -- {fallback['warnings'][0]} {log}"
+        )
+    if fallback["fell_back"] is False:
+        return f"TradeVolume: the account's fee rates answered all {fallback['tradevolume_calls']} call(s), no fallback {log}"
+    why = fallback.get("why") or "the exec client's listing never finished"
+    return f"TradeVolume: the log cannot say whether the listing fell back -- {why} {log}"
 
 
 EVIDENCE_GLOB = "evidence-*.json"
@@ -1749,6 +1805,16 @@ def exec_client_config() -> KrakenExecutionClientConfig:
     )
 
 
+def logger_config(args, stamp: str) -> LoggerConfig:
+    """The terminal at `--log-level`, and every run's DEBUG log into `--evidence-dir` beside its
+    evidence JSON -- the TradeVolume fallback WARN is read back out of that file, not scrollback."""
+    return LoggerConfig(
+        stdout_level=LogLevel(args.log_level),
+        fileout_level=LogLevel.DEBUG,
+        file_config=FileWriterConfig(directory=str(args.evidence_dir), file_name=run_log_path(args.evidence_dir, stamp).stem),
+    )
+
+
 def build_node(args, strategy: ProbeStrategy) -> LiveNode:
     """The assembled node, with the probe strategy attached.
 
@@ -1760,7 +1826,7 @@ def build_node(args, strategy: ProbeStrategy) -> LiveNode:
     the venue, so it is sized to the same timeout the sequence gives a cancel to confirm."""
     builder: LiveNodeBuilder = (
         LiveNode.builder(name=PROBE_NODE_NAME, trader_id=TraderId(PROBE_TRADER_ID), environment=Environment.LIVE)
-        .with_logging(LoggerConfig(stdout_level=LogLevel(args.log_level)))
+        .with_logging(logger_config(args, strategy.stamp))
         .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False))
         .with_timeout_connection(int(args.connect_timeout))
         .with_delay_post_stop_secs(int(max(10.0, args.order_timeout)))
@@ -2449,6 +2515,12 @@ def main(argv: list[str] | None = None) -> int:
         # Only now: disposing the node empties its Cache, and the banner reads each order from it.
         node.dispose()
 
+    fallback = read_tradevolume_fallback(run_log_path(args.evidence_dir, strategy.stamp), exec_client=not args.no_exec)
+    fallback_line = describe_tradevolume_fallback(fallback)
+    print(f"\n{fallback_line}")
+    if fallback["fell_back"] is not False and not args.no_exec:
+        state.notes.append(fallback_line)
+
     print("\n" + "=" * 78)
     print(f"PROBE RESULTS -- paste these rows into {VERIFICATION_DOC_DIR}<version>.md")
     print("=" * 78)
@@ -2486,6 +2558,7 @@ def main(argv: list[str] | None = None) -> int:
         "events": [asdict(e) for e in state.events],
         "filled_notional_eur": state.filled_notional_eur,
         "notes": state.notes,
+        "tradevolume_fallback": fallback,
         "exit_code": exit_code,
     }
     try:
