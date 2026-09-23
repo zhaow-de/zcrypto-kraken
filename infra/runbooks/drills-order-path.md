@@ -11,7 +11,7 @@ Every drill below has the same seven parts: *What this proves* · *Preconditions
 - **Every drill here runs inside an attended probe window**, never beside one (no count command: the arm file and the plan file live on the engine host, outside the tree). The window's pre-probe checklist, its two arming keys and its own two drills come first, in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window). Only the account owner authors and places a plan, and no funded plan is dropped inside the final 60 minutes before a 4-hourly boundary (00/04/08/12/16/20 UTC). Run `date -u` immediately before.
 - **Never induce inside a published Kraken maintenance window.** Read `curl -fsS https://status.kraken.com/api/v2/scheduled-maintenances.json` at planning time and again immediately before each induction; an empty feed is never evidence the window is clear (no count command: `converges-inside-a-kraken-window` reads deploy-log rows, and an induction is not one). Which entries count is the same standing rule in [`drills-telemetry.md`](drills-telemetry.md) and the converge bullet of `.claude/rules/fleet-deploys.md`.
 - **A drill whose instrument is not on the host is `blocked`, never `fail`** (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it). Both instruments are in the tree: the `rest-hold` plan mode (`cli/engine/probeplan.py`'s `MODES`), an order priced `offset_pct` passive of the touch, deliberately not cancelled on the venue's acknowledgement and resting for its declared `hold_minutes`, which `rest-cancel` cannot give; and Drill B's flatten command (`cli/engine/flatten.py`), whose procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the engine host is running them is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Each affected drill states its own gap in its *Preconditions*. Never run with a substitute plan mode: an order cancelled a second after it was placed exercises none of what these drills measure. The first live rest-hold order will be a drill's: `docs/open-topics/T0018-phase6-build-sequence.md` records that none has been placed.
-- **An order on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC is invisible to the startup adopt pass, so A1, A2, F2 and G must not rest theirs there.** On those five legs the pass adopts, re-attaches, reconciles and cancels nothing and logs nothing, and it misses the same order after it closes, so a fill that landed while the engine was down is not repaired either ([`engine-procedures.md#adopt-pass-blind-legs`](engine-procedures.md#adopt-pass-blind-legs)). A restart does not clear such an order; Kraken's own page does. Author those four drills' plan on one of the seven legs Kraken spells one way, listed beside the `rest-hold` plan shape in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window); the example there is on BTC/EUR as a shape, not the pair to copy. A run made on one of the five is recorded `blocked` with that reason, never `fail` (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it).
+- **No drill starts, restarts or converges the engine with a Kraken margin position open while the engine's build lacks upstream #5065** ([`engine-procedures.md#engine-restart-margin-position`](engine-procedures.md#engine-restart-margin-position)): that start fails and the container restarts into the same failure, or it boots with the position's entry price at 0. A2 lands there by design, since its fill opens a leveraged position while the host is down, so A2 is recorded `blocked` with that reason until the engine runs such a build (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it). D's restore, and a restart after another drill's leveraged order filled, wait until the position is closed, by B or by hand on Kraken.
 - **One induction at a time. Revert it and verify the revert by value before the next one starts.** An instrument is never widened (no count command: it lands in a drill-log body, which `tests/test_drill_log.py` does not read): each *Induce* names exactly what to do, and anything heavier is a different act with a different blast radius (the same rule in `drills-telemetry.md`).
 - **A start or a reboot moves the `.State.StartedAt` of every container it touches, which is what a `since` cell of [`fleet-pins.md`](../../docs/reference/fleet-pins.md) records — re-true every row it moved, with the revert** (no count command: a drill entry's *operator action* clause is prose). One `docker inspect <name> --format '{{.State.StartedAt}}'` per row is the whole cost; skipped, the cell keeps a value the container no longer has and no later reader can tell it from a converge-clock value.
 - **The engine's own money guards are not suspended for a drill.** A kill trip during one of these is real: resting orders cancelled, every further intent refused (no count command: the kill-switch tests in `tests/test_engine_execgate.py` and `tests/test_engine_executor.py` hold it), and nothing continues until a human reads and removes the file. Work [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) when that happens; do not treat it as drill noise.
@@ -35,14 +35,14 @@ A bound is derived or it is not written. Nothing below is an estimate. The deriv
 
 ### What this proves
 
-That an attended reboot of the capture primary, the host that also runs the engine, leaves the order path in a state an operator can account for: the capture gap healed from the secondary, the reduce-only hold latched, and the resting opener cancelled by the startup adopt pass. The last is a claim about the pass only on a leg it can see, hence the pair precondition below.
+That an attended reboot of the capture primary, the host that also runs the engine, leaves the order path in a state an operator can account for: the capture gap healed from the secondary, the reduce-only hold latched, and the resting opener cancelled by the startup adopt pass.
 
 It does not prove what the venue did with the order across the stop. That is G's question, whose stop is engine-only and therefore readable while the engine is down; here the host goes with it.
 
 ### Preconditions
 
 - The window open per [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window), the engine armed, and no intent in flight.
-- **A far-from-touch order resting, on a one-way-spelled leg**: the `rest-hold` gate and the blind-leg rule, both in the standing rules. Not runnable without either; record `blocked`.
+- **A far-from-touch order resting**: the `rest-hold` gate in the standing rules. Not runnable without it; record `blocked`.
 - **The secondary read whole by value immediately before**, because it is what heals the gap this reboot opens:
   ```
   uv run python infra/scripts/grafana-query.py 'up{job="capture_app",host="zcrypto-red"}' 'min(zcrypto_capture_seconds_since_last_book_message{host="zcrypto-red"})'
@@ -101,7 +101,7 @@ The startup pass compares each preserved row against the quantity the venue repo
 ### Preconditions
 
 - A1's preconditions in full, with one difference: the plan is priced marketable, so a fill is expected rather than avoided. That is real money at probe size, and the position it leaves is the input to D and to B.
-- **Know before you start that `matched` will read 0 here, and that this is not a finding.** A fill applied during the node's own startup reconciliation is published before the adopt pass has attached a single row, so it counts `unmatched` by design. The by-value `zcrypto_exec_external_events_total{disposition="matched"}` reading that proves Kraken echoes `cl_ord_id` belongs to G, where the cancel ack arrives after the rows are attached.
+- **Know before you start that `matched` will read 0 here, and that this is not a finding.** A fill applied during the node's own startup reconciliation is published before the adopt pass has attached a single row, so it counts `unmatched` by design. The by-value `zcrypto_exec_external_events_total{disposition="matched"}` reading that proves a restart re-attaches a row by the Kraken txid it recorded belongs to G, where the cancel ack arrives after the rows are attached.
 
 ### Induce
 
@@ -115,7 +115,7 @@ A1's set, unchanged: `zcrypto-fleet-daemon-restarted` and nothing else on an ~83
 
 ### Operator action
 
-1. **Read the repair, by value.** In the ledger, the row carries a `reconciled` event with the delta and the venue's total; in the log, `sudo docker logs --since 30m zcrypto-engine | grep -E 'reconciled against the venue'` names both figures. No event and no line is a finding only once the pair precondition held (no count command: the ledger and the log live on the engine host, outside the tree): on a blind leg nothing is compared, written or logged, at step 4 included. Check the pair the plan actually named, record `blocked`, and read Kraken's own trades page for the fill.
+1. **Read the repair, by value.** In the ledger, the row carries a `reconciled` event with the delta and the venue's total; in the log, `sudo docker logs --since 30m zcrypto-engine | grep -E 'reconciled against the venue'` names both figures. No event and no line is a finding (no count command: the ledger and the log live on the engine host, outside the tree), and two readings in the probe window's step 4 explain one before anything else does ([`engine-procedures.md#adopt-pass-by-txid`](engine-procedures.md#adopt-pass-by-txid)): the row marked `ambiguous` in the ledger read, because it recorded no Kraken txid for the pass to match, or the engine's CRITICAL line `the venue's orders could not be read at startup`, which leaves the row unread and refuses plans until a restart. Read Kraken's own trades page for the fill either way.
 2. **Confirm the repair moved no fill counters**: from the workstation, `uv run python infra/scripts/grafana-query.py 'zcrypto_exec_fills_total{host="zcrypto"}' 'zcrypto_exec_fees_eur_total{host="zcrypto"}'` against their pre-reboot values. A number, never `(no series)` (no count command: the reading is a live Grafana query taken at drill time).
 3. **Read venue truth** with the probe window's venue-truth read, and Kraken's own positions view beside it. The position is real; decide deliberately whether it stands for D or is closed now.
 4. **A venue figure lower than the ledger's is the dangerous direction and latches the kill switch.** Nothing is repaired, and `sudo cat /var/lib/zcrypto-engine/exec/kill` names the order and both quantities. That is [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped)'s withdrawn-fill path, not a drill outcome to clear and move past.
@@ -136,7 +136,7 @@ Entry `A2`: the venue's figure, the ledgered figure, the delta, that the fill co
 
 **Decision-to-flat**: how long it takes, in wall-clock minutes, from an operator deciding to close everything to the account actually being flat. That is the number an operator needs before promising anything about a bad afternoon, and nothing in this system has produced it.
 
-**What stops the clock is venue truth.** The command's own flat verdict is blind to an order resting on five legs ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), so a clock stopped on its exit 0 measures decision-to-*verdict* against a read that can say flat while an order rests. Stop it on Kraken's own pages.
+**What stops the clock is venue truth.** The command's exit 0 is its own final read, taken the moment its writes finish ([`engine-procedures.md#flat-verdict-reads`](engine-procedures.md#flat-verdict-reads)), so a clock stopped on it measures decision-to-*verdict*, not decision-to-flat. Stop it on Kraken's own pages.
 
 ### Preconditions
 
@@ -159,7 +159,7 @@ Two exceptions:
 
 ### Operator action
 
-The measurement is the operator action: note the decision time, run the procedure, and stop the clock on venue truth reading flat: no order resting, positions empty and balances EUR-only, read with the probe window's venue-truth read rather than from anything the engine reports about itself. The open-orders half is the one the command's own verdict cannot supply.
+The measurement is the operator action: note the decision time, run the procedure, and stop the clock on venue truth reading flat: no order resting, positions empty and balances EUR-only, read with the probe window's venue-truth read rather than from anything the engine reports about itself. The open-orders half is read on Kraken's own Open Orders page, since the venue-truth read carries no orders.
 
 The kill file the flatten placed stays until a human clears it. Read it (`sudo cat /var/lib/zcrypto-engine/exec/kill`) before removing it, exactly as after any other trip.
 
@@ -215,7 +215,7 @@ sudo systemctl stop zcrypto-engine
 
 **The drill is what the responder does with the page, so work it from the page and not from here.** Open [`engine.md#zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) from the notification, on the phone, and follow it from the top: ruling out the plane first, then reading the engine directly, and only then reaching for B. Whether the responder stops at the discriminator or reaches B is the finding; prompting them from this page destroys it.
 
-Then restore:
+Then restore, once the position is closed — by B, or by hand on Kraken — while the engine's build lacks upstream #5065 (the restart rule in the standing rules):
 
 ```
 sudo systemctl start zcrypto-engine
@@ -315,7 +315,7 @@ The expected sequence, from `cli/engine/executor.py`: on the first tick after 30
 
 ### Preconditions
 
-- The window open, the engine armed, and a resting plan: the `rest-hold` gate. Step 4's restart route needs the blind-leg rule too: rest it on a one-way-spelled leg, or a restart is not one of this drill's two exits.
+- The window open, the engine armed, and a resting plan: the `rest-hold` gate.
 - **The order is priced far from the touch.** It may survive the whole drill at the venue; a marketable one can fill while the engine is blind to it, which is A2's scenario arriving on a path with no reboot to explain it.
 - **Read the engine container's network by value before disconnecting it.** The compose project is `/opt/zcrypto-engine` and its template declares no `networks:` key, so the network is that project's default; confirm the name on the host rather than typing it from this page:
   ```
@@ -349,7 +349,7 @@ The container is bridge-networked with `127.0.0.1:9102:9102` published (`infra/a
    and `sudo docker exec zcrypto-engine zcrypto engine exec-status`.
 2. **Reconnect**: `sudo docker network connect <the network> zcrypto-engine`, then `up{job="engine_app",host="zcrypto"}` back at 1 by value.
 3. **Read Kraken's open orders by hand.** The order may still be resting there and nothing in this engine will cancel it: the intent is terminal, so a hand-placed kill file sweeps nothing.
-4. **Clear it deliberately.** A direct cancel in the Kraken web UI always works (no count command: the venue's behaviour; the five are `cli/engine/flatten.py`'s `BLIND_ORDER_READ_LEGS`). A restart works only on a leg its adopt pass can see; on the five the standing rules name it cancels nothing and says nothing, so a restart taken as the remedy there leaves the order working with no line to tell you. Note the wall-clock time it rested, from the disconnect to the cancel.
+4. **Clear it deliberately.** A direct cancel in the Kraken web UI always works (no count command: the venue's behaviour). A restart inside the inter-cycle gap works too: its adopt pass finds the order's row by the Kraken txid the row recorded and cancels the opener, logging `canceling adopted resting order <txid>`. Read Kraken's positions page before taking that route: if the order filled, a margin position is open and the restart waits for it to close (the restart rule in the standing rules). Note the wall-clock time it rested, from the disconnect to the cancel.
 
 If the property you wanted is "the order dies with the socket", that is re-cancel-on-reconnect, a build-sequence item not yet delivered<!-- T0018 -->, never an expectation to write against this drill.
 
@@ -371,13 +371,13 @@ Three things, in the order they can be observed, and the first is unverified in 
 
 1. **What the venue does with a resting GTC order across an engine stop.** `ExecStop` is a compose down and nothing cancels resting openers before the process exits, so the answer is Kraken's, not the engine's, and it is readable only while the engine is down (no count command: `cli/engine/executor.py`'s `_adopt_resting_orders` acts on the first tick after a start).
 2. That the restart latches the reduce-only hold (no count command: `tests/test_engine_command.py::test_engine_startup_latches_the_restart_hold` holds it).
-3. That the adopt pass attaches every matched row before it cancels that row's opener (no count command: `cli/engine/executor.py`'s `_adopt_resting_orders` attaches a row before its own cancel call). That ordering is what puts a fill landing during the stop into its own row rather than into nothing, on a leg the pass can see the order at all, which is the pair precondition below.
+3. That the adopt pass attaches every matched row before it cancels that row's opener (no count command: `cli/engine/executor.py`'s `_adopt_resting_orders` attaches a row before its own cancel call). That ordering is what puts a fill landing during the stop into its own row rather than into nothing; the pass finds that row by the Kraken txid it recorded when the order was accepted, since after a restart the order is named by its txid.
 
 **G is the measurement cancel-on-stop is waiting on.** That enhancement is ruled only once G says what the venue actually does, so do not "fix" the behaviour first and then run the drill against the fix.
 
 ### Preconditions
 
-- The window open, the engine armed, a resting plan: the `rest-hold` gate and the blind-leg rule. All three of this drill's deliverables are about the adopt pass, which on the five legs never runs on the order at all (no count command: the five are `cli/engine/flatten.py`'s `BLIND_ORDER_READ_LEGS`), so a plan resting there makes the whole drill `blocked`.
+- The window open, the engine armed, a resting plan: the `rest-hold` gate in the standing rules.
 - **The stop lands inside the 4-hourly inter-cycle gap** (boundaries 00/04/08/12/16/20 UTC). Run `date -u` first: a stop that kills a running cycle costs that boundary's record and confuses everything this drill measures.
 - No intent in flight beyond the resting one.
 
@@ -420,9 +420,9 @@ uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total
 
 **The `disposition="matched"` selector is the whole reading.** Both label children are registered at engine startup, so an unselected query returns two series, and in a window that already ran A2 the `unmatched` one reads non-zero by design.
 
-- **1 is the expected value**: the adopt pass's own cancel ack arrives on the external stream and keys back through the row the pass attached.
-- **2 under a fill racing the cancel.** Either value proves Kraken echoes the client order id across a restart, which is the question this reading exists to answer.
-- **0 is recorded as "0, cause undetermined" until two artefacts have been read**: the `canceling adopted resting order` line above and the row's own `events`. A line with no matching cancel event on the row says the cancel was issued and its acknowledgement went nowhere, which has two causes the artefacts do not separate: Kraken did not echo the client order id, or the cancel's ack never reached the external stream (no count command: both artefacts live on the engine host, outside the tree) — how nautilus routes a strategy-issued cancel on an order tagged external is unmeasured in this repo, and if that is the answer it is an engine-side defect on the live trade path rather than a fact about the venue. No line at all says nothing was cancelled, and on one of the five blind legs there was no cancel to acknowledge, so check the pair the plan actually named before reading a bare "no line" as anything about the venue or the adapter.
+- **2 is the expected value**: the adopt pass's cancel puts the order's `OrderPendingCancel` and then its `OrderCanceled` on the external stream, and each keys back through the row the pass attached — by the Kraken txid the row recorded at acceptance, since Kraken's order reads carry no client order id back and a restart names the order by its txid.
+- **One more per fill racing the cancel**, keyed back the same way. Either reading proves a restart re-attaches a ledgered order by its txid, which is the question this reading exists to answer.
+- **0 is recorded as "0, cause undetermined" until two artefacts have been read**: the `canceling adopted resting order` line above and the row's own `events` and state in the ledger read. A row marked `ambiguous` recorded no txid, so the pass cancelled the order as one it could not match and both events counted `unmatched`. A line with no matching cancel event on a row that did record its txid says the cancel was issued and its acknowledgement did not reach the row (no count command: both artefacts live on the engine host, outside the tree): read Kraken's open orders — an order still resting there is the venue's answer, and one that is gone leaves an engine-side defect on the live trade path rather than a fact about the venue. No line at all says nothing was cancelled: read Kraken's open orders and the row's state before reading a bare "no line" as anything about the venue or the adapter.
 - `(no series)` is a FAIL of the telemetry path and never a zero (no count command: `tests/test_engine_metrics.py::test_external_events_counter_preregisters_both_dispositions` holds it): both dispositions are registered at engine startup, so the family is present on a healthy engine whatever the counts.
 
 ### Retire when
