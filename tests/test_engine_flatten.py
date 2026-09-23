@@ -105,9 +105,7 @@ class FakeClient:
     # that would leak rather than on the name of the variable it arrived in.
     api_key = "kNEVER-IN-THE-JOURNAL-0000"
 
-    def __init__(
-        self, *, instruments=None, orders=None, positions=None, balances=None, books=None, resolves_cached_only=False
-    ) -> None:
+    def __init__(self, *, instruments=None, orders=None, positions=None, balances=None, books=None) -> None:
         self.calls: list[tuple[str, dict]] = []
         self._instruments = instruments if instruments is not None else []
         self._orders = list(orders or [[]])
@@ -122,16 +120,19 @@ class FakeClient:
         # gives -- it cannot tell the two apart, and only one of them reaches the venue.
         self.submitted_raw: list[tuple[tuple, dict]] = []
         # The real adapter resolves orders, positions and the book only through instruments cached into
-        # it. Set, the fake does the same and raises on an uncached one, as the pinned wheel does.
-        self._resolves_cached_only = resolves_cached_only
+        # it, and one row it cannot resolve fails the whole read. The fake does the same, always.
         self._cached: set[str] = set()
+        # The account's positions as the last whole-account read found them. A read scoped to one
+        # instrument answers from the same state rather than advancing the script, since it is the
+        # retry of that read.
+        self._position_state = self._positions[0]
 
     def cache_instrument(self, instrument):
         self._cached.add(str(instrument.id))
 
     def _require_cached(self, what, instrument_ids):
         missing = sorted(i for i in instrument_ids if i not in self._cached)
-        if self._resolves_cached_only and missing:
+        if missing:
             raise RuntimeError(f"{what}: instrument not in cache for {missing[0]}")
 
     def _maybe_raise(self, name):
@@ -160,7 +161,16 @@ class FakeClient:
     async def request_position_status_reports(self, account_id, **kw):
         self._record("request_position_status_reports", account_id, kw)
         self._maybe_raise("request_position_status_reports")
-        rows = self._next(self._positions)
+        target = kw.get("instrument_id")
+        if target is None:
+            self._position_state = self._next(self._positions)
+            rows = self._position_state
+        else:
+            # The adapter's own order: an uncached target answers nothing, and every other pair's row
+            # is skipped BEFORE any row is resolved, so a foreign unresolvable row cannot fail it.
+            if str(target) not in self._cached:
+                return []
+            rows = [r for r in self._position_state or [] if str(getattr(r, "instrument_id", "")) == str(target)]
         self._require_cached("OpenPositions", [str(r.instrument_id) for r in rows or [] if hasattr(r, "instrument_id")])
         return rows
 
@@ -257,17 +267,24 @@ def test_an_empty_listing_aborts():
         _sync(flatten.read_listing(FakeClient(instruments=[]), flatten.Recorder()))
 
 
+def _listed(client: FakeClient) -> FakeClient:
+    """`client` with its listing read and cached, as `run_flatten` does before any account read."""
+    _sync(flatten.read_listing(client, flatten.Recorder()))
+    return client
+
+
 def test_positions_are_read_by_named_fields_and_a_missing_one_aborts():
     """`position_side` and `quantity` are the two fields a close is built from; a row missing
     either is a shape this process may not reason about."""
+    listed = [_Instrument("BTC/EUR"), _Instrument("ETH/EUR")]
     rows = [_Position("BTC/EUR", "LONG", 0.5), _Position("ETH/EUR", "FLAT", 0.0)]
-    read = _sync(flatten.read_positions(FakeClient(positions=[rows]), flatten.Recorder()))
+    read = _sync(flatten.read_positions(_listed(FakeClient(instruments=listed, positions=[rows])), flatten.Recorder()))
     assert [(r.symbol, r.side, r.quantity) for r in read] == [("BTC/EUR", "LONG", 0.5), ("ETH/EUR", "FLAT", 0.0)]
 
     broken = _Position("BTC/EUR", "LONG", 0.5)
     del broken.position_side
     with pytest.raises(flatten.FlattenUnreachable) as exc:
-        _sync(flatten.read_positions(FakeClient(positions=[[broken]]), flatten.Recorder()))
+        _sync(flatten.read_positions(_listed(FakeClient(instruments=listed, positions=[[broken]])), flatten.Recorder()))
     assert "position_side" in str(exc.value)
 
 
@@ -281,6 +298,52 @@ def test_a_position_read_that_answers_nothing_aborts_rather_than_reading_as_flat
     assert "answered nothing" in str(exc.value)
     # The read went out and its answer is what was refused -- not a refusal before reaching the venue.
     assert names(client) == ["request_position_status_reports"]
+
+
+def test_a_whole_account_position_read_one_row_fails_is_retried_pair_by_pair_and_never_read_as_flat():
+    """The adapter fails the whole read on one row it cannot resolve. Raised, that costs the button
+    every close and sale over one row; read as nothing, it is a flat account over open leverage.
+    So each basket pair is read on its own, and what those reads cannot cover is NAMED: the failed
+    read itself, and a basket pair whose own read failed. The retry asks for the pair by
+    instrument, and that parameter is journalled as text so the record stays plain JSON."""
+    rows = [_Position("GONE/EUR", "LONG", 1.0), _Position("BTC/EUR", "SHORT", 0.5), _Position("SOL/EUR", "LONG", 2.0)]
+    client = _listed(FakeClient(instruments=[_Instrument(s) for s in ("BTC/EUR", "SOL/EUR", "ADA/EUR")], positions=[rows]))
+    scoped = client.request_position_status_reports
+
+    async def sol_fails(account_id, **kw):
+        if str(kw.get("instrument_id")) == "SOL/EUR.KRAKEN":
+            raise RuntimeError("EAPI:Rate limit exceeded")
+        return await scoped(account_id, **kw)
+
+    client.request_position_status_reports = sol_fails
+    rec = flatten.Recorder()
+    read, unread = _sync(flatten.read_margin_positions(client, rec, {s: _Instrument(s) for s in ("BTC/EUR", "SOL/EUR", "ADA/EUR")}))
+    assert [(r.symbol, r.side, r.quantity) for r in read] == [("BTC/EUR", "SHORT", 0.5)]
+    named = {row.get("symbol"): row for row in unread}
+    assert "GONE/EUR" in named[None]["error"] and named[None]["reason"] == "positions_unreadable"
+    assert "Rate limit" in named["SOL/EUR"]["error"] and named["SOL/EUR"]["reason"] == "position_unread"
+    # A basket pair the listing does not carry cannot be asked for by instrument, so it is unread too.
+    assert named["ETH/EUR"]["reason"] == "position_unread"
+    assert "ADA/EUR" not in named and "BTC/EUR" not in named
+    scoped_params = [e["params"] for e in rec.entries if "instrument_id" in e["params"]]
+    assert "BTC/EUR.KRAKEN" in [p["instrument_id"] for p in scoped_params]
+    json.dumps(rec.entries)
+
+
+def test_a_position_read_that_fails_pair_by_pair_as_well_raises_the_original_failure():
+    """Every read failing is the venue, not a row: before the cancel that is exit 3 with nothing
+    sent, the contract's own answer to an account that could not be read."""
+    client = _listed(FakeClient(instruments=[_Instrument("BTC/EUR")], positions=[[_Position("BTC/EUR", "LONG", 0.5)]]))
+    real = client.request_position_status_reports
+
+    async def down(account_id, **kw):
+        await real(account_id, **kw)
+        raise RuntimeError("connection refused")
+
+    client.request_position_status_reports = down
+    with pytest.raises(flatten.FlattenUnreachable) as exc:
+        _sync(flatten.read_margin_positions(client, flatten.Recorder(), {"BTC/EUR": _Instrument("BTC/EUR")}))
+    assert "connection refused" in str(exc.value)
 
 
 def test_the_position_read_is_scoped_to_margin_with_spot_reports_off():
@@ -767,7 +830,7 @@ def test_the_snapshot_reads_orders_then_positions_then_balances():
     """Order matters: an order that fills between the reads must land in a read that FOLLOWS, so
     it cannot vanish from both."""
     client = _client_with(symbols=("BTC/EUR",))
-    _sync(flatten.read_snapshot(client, flatten.Recorder()))
+    _sync(flatten.read_snapshot(client, flatten.Recorder(), {}))
     assert names(client) == ["request_order_status_reports", "request_position_status_reports", "request_account_state"]
 
 
@@ -781,7 +844,7 @@ def test_the_plan_reads_one_book_per_leg_pair_and_the_btc_euro_pair_when_a_leg_r
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    snapshot = _sync(flatten.read_snapshot(client, rec))
+    snapshot = _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True))
     plan = _sync(flatten.build_plan(client, rec, snapshot, listing))
     assert sorted(plan.prices) == ["BTC/EUR", "ETH/BTC"]
     assert plan.prices["ETH/BTC"] == 0.03
@@ -793,7 +856,9 @@ def test_no_btc_euro_book_is_read_when_no_leg_routes_through_btc():
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     assert sorted(plan.prices) == ["ADA/EUR"]
 
 
@@ -806,7 +871,9 @@ def test_a_short_leg_prices_off_the_ask_and_a_long_off_the_bid():
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     assert plan.prices["BTC/EUR"] == 60010.0  # SHORT -> the closer BUYs -> priced off the ask
     assert plan.prices["ETH/EUR"] == 3000.0  # LONG -> the closer SELLs -> priced off the bid
 
@@ -824,7 +891,9 @@ def test_a_book_read_failure_on_one_leg_never_aborts_the_plan_or_any_other_leg()
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     assert plan.prices == {"BTC/EUR": 60000.0}
     assert [sized.leg.symbol for sized in plan.spot] == ["ADA/EUR"]
     assert plan.spot[0].send is True and plan.spot[0].reference_price is None
@@ -839,7 +908,9 @@ def test_a_book_that_prices_at_zero_leaves_the_leg_unpriced_and_still_sold():
     client = _client_with(balances=[_Balance("ADA", 1200.0)], symbols=("ADA/EUR",), books={"ADA/EUR.KRAKEN": zero})
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     assert plan.prices == {}
     (sized,) = plan.spot
     assert sized.send is True and sized.reference_price is None
@@ -852,17 +923,23 @@ def test_a_missing_constraint_on_a_leg_s_pair_aborts_the_plan():
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
     with pytest.raises(flatten.FlattenUnreachable):
-        _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+        _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing))
 
 
 def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_cannot_touch():
     """What the operator reads has to include what the sweep will NOT do -- a balance no pair can
-    carry and a position whose pair the listing does not have are both still there afterwards."""
+    carry, a position on a side no closer can be derived from, and a position on a pair the listing
+    does not have are all still there afterwards. The last fails the whole-account read, so it is
+    named through the read that failed rather than as a row."""
     client = _client_with(
         orders=[object()],
-        positions=[_Position("BTC/EUR", "LONG", 0.5), _Position("GONE/EUR", "LONG", 1.0)],
+        positions=[
+            _Position("BTC/EUR", "LONG", 0.5),
+            _Position("ETH/EUR", "NO_POSITION_SIDE", 2.0),
+            _Position("GONE/EUR", "LONG", 1.0),
+        ],
         balances=[_Balance("ADA", 1200.0), _Balance("DOT", 0.001), _Balance("WEIRD", 3.0)],
-        symbols=("BTC/EUR", "ADA/EUR", "DOT/EUR"),
+        symbols=("BTC/EUR", "ETH/EUR", "ADA/EUR", "DOT/EUR"),
         books={
             "BTC/EUR.KRAKEN": _Book(60000.0, 60010.0),
             "ADA/EUR.KRAKEN": _Book(0.4, 0.41),
@@ -871,7 +948,9 @@ def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_can
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     lines: list[str] = []
     flatten.render_plan(plan, lines.append)
     text = "\n".join(lines)
@@ -879,7 +958,8 @@ def test_the_rendered_plan_names_every_leg_every_dust_line_and_everything_it_can
     assert "ADA/EUR" in text
     assert "DOT/EUR" in text and "not sent" in text
     assert "WEIRD" in text
-    assert "GONE/EUR" in text and "cannot be closed here" in text
+    assert "ETH/EUR" in text and "cannot be closed here" in text
+    assert "GONE/EUR" in text and "not in this plan" in text
     assert "1 resting order" in text
 
 
@@ -893,20 +973,23 @@ def test_the_rendered_plan_prints_no_cross_currency_total():
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     lines: list[str] = []
     flatten.render_plan(plan, lines.append)
     assert not any("total" in line.lower() for line in lines)
 
 
 def test_a_snapshot_read_that_answers_nothing_aborts_instead_of_becoming_an_empty_snapshot():
-    """`read_snapshot` composes three aborting reads and must not soften any of them: a `Snapshot`
-    carrying `positions=[]` because the venue answered `None` is the shape that confirms itself all
-    the way to exit 0 over open leverage. The abort also STOPS the sequence -- the balance read must
+    """Before the cancel too, where a failed ORDER read degrades: a `Snapshot` carrying
+    `positions=[]` because the venue answered `None` is the shape that confirms itself all the way
+    to exit 0 over open leverage, and it is not a row the adapter could not resolve, so it is no
+    reason to read pair by pair either. The abort also STOPS the sequence -- the balance read must
     not run and hand the operator a plan built from half a snapshot."""
     client = FakeClient(positions=[None], balances=[[_Balance("ADA", 1200.0)]])
     with pytest.raises(flatten.FlattenUnreachable):
-        _sync(flatten.read_snapshot(client, flatten.Recorder()))
+        _sync(flatten.read_snapshot(client, flatten.Recorder(), {}, before_the_cancel=True))
     assert names(client) == ["request_order_status_reports", "request_position_status_reports"]
 
 
@@ -918,9 +1001,11 @@ def test_a_venue_that_answers_empty_is_a_plan_with_no_legs_that_says_so_in_words
     client = _client_with(symbols=("BTC/EUR",))
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     assert (plan.margin, plan.spot, plan.unsellable, plan.unclosable, plan.prices) == ([], [], [], [], {})
-    assert plan.n_open_orders == 0
+    assert (plan.orders, plan.unread) == ([], [])
     assert "request_book_snapshot" not in names(client)
     lines: list[str] = []
     flatten.render_plan(plan, lines.append)
@@ -941,7 +1026,9 @@ def test_a_margin_and_a_spot_leg_on_one_pair_share_one_book_read_taken_on_the_ma
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     assert names(client).count("request_book_snapshot") == 1
     assert plan.prices == {"BTC/EUR": 60010.0}
     assert [sized.leg.symbol for sized in plan.margin] == ["BTC/EUR"]
@@ -960,7 +1047,9 @@ def test_each_leg_is_sized_with_the_price_and_the_constraints_of_its_own_pair():
     )
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     (sized,) = plan.spot
     assert sized.leg.symbol == "ETH/BTC"
     assert sized.reference_price == 0.03
@@ -1174,7 +1263,9 @@ def _sweep_client(*, orders, positions, balances, symbols, books):
 def _plan_of(client):
     rec = flatten.Recorder()
     listing = _sync(flatten.read_listing(client, rec))
-    plan = _sync(flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec)), listing))
+    plan = _sync(
+        flatten.build_plan(client, rec, _sync(flatten.read_snapshot(client, rec, listing, before_the_cancel=True)), listing)
+    )
     return rec, listing, plan
 
 
@@ -1642,7 +1733,6 @@ def test_a_client_that_resolves_only_cached_instruments_still_runs_the_whole_dry
         positions=[[_Position("SOL/EUR", "LONG", 0.06)]],
         balances=[[_Balance("SOL", 1.0)]],
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "SOL/EUR.KRAKEN": _Book(150.0, 150.1)},
-        resolves_cached_only=True,
     )
     assert _run(client, tmp_path, execute=False) == 0
     assert names(client)[0] == "request_instruments"
@@ -1701,6 +1791,46 @@ def test_a_missing_field_on_a_pre_write_read_exits_three_and_the_cancel_never_go
     assert _run(client, tmp_path, execute=execute) == 3
     assert "cancel_all_orders" not in names(client)
     assert len(list(_exec_dir(tmp_path).glob("flatten-*.json"))) == (1 if execute else 0)
+
+
+def test_a_failed_open_order_read_before_the_cancel_still_sends_the_cancel_and_exits_two(tmp_path):
+    """The pre-write order list decides nothing but the count the operator reads, and the cancel
+    names no pair, so a failed read is named in the plan and the journal and the sweep goes on: the
+    cancel, the close and the sale all go out. The word was typed against a plan whose orders were
+    never read, so the run ends at 2 even though the final read finds the account flat."""
+    _armed(tmp_path)
+    row = [_Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(
+        orders=[[], [], []],
+        positions=[row, row, [], []],
+        balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
+        symbols=("BTC/EUR", "ADA/EUR"),
+        books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
+    )
+    client.raises["request_order_status_reports"] = RuntimeError("OpenOrders: instrument not in cache for pair FOOEUR")
+    lines: list[str] = []
+    assert _run(client, tmp_path, lines=lines) == 2
+    assert "cancel_all_orders" in names(client)
+    assert [sent["instrument_id"] for sent in client.submitted] == ["BTC/EUR.KRAKEN", "ADA/EUR.KRAKEN"]
+    assert any(line.startswith("open orders could not be read") and "FOOEUR" in line for line in lines)
+    assert any("cannot call the account flat" in line for line in lines)
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    assert doc["snapshot_before"]["open_orders"] is None
+    assert [row["reason"] for row in doc["snapshot_before"]["unread"]] == ["orders_unread"]
+    assert doc["residuals"] == [] and doc["exit_code"] == 2
+
+
+def test_a_failed_open_order_read_leaves_the_dry_run_a_plan_that_says_so(tmp_path):
+    """The dry run shows what the pressed button would do, and that is now the cancel and every
+    leg -- an exit 3 here would tell the operator the button cannot run."""
+    client = _flat_client(positions=[[_Position("BTC/EUR", "LONG", 0.5)]])
+    client.raises["request_order_status_reports"] = RuntimeError("OpenOrders: instrument not in cache for pair FOOEUR")
+    lines: list[str] = []
+    assert _run(client, tmp_path, execute=False, lines=lines) == 0
+    assert "cancel_all_orders" not in names(client) and client.submitted == []
+    assert any(line.startswith("open orders could not be read") for line in lines)
+    assert any("BTC/EUR" in line and "SELL" in line for line in lines)
 
 
 def test_an_unrecognised_position_side_never_aborts_the_button_and_exits_two(tmp_path):
@@ -1837,22 +1967,25 @@ def test_a_sub_ordermin_margin_row_is_sent_and_its_rejection_still_exits_two(tmp
 def test_a_margin_row_on_an_unlisted_pair_never_aborts_the_button_and_exits_two(tmp_path):
     """The one pairlessness that could cost everything: aborting before the cancel would leave the
     resting orders resting, every other position open and every balance held, with the engine
-    already stopped. So the row is named, the rest of the sweep runs, and the account reads 2."""
+    already stopped. The adapter cannot resolve the row, so the whole-account read fails on it;
+    the basket is then read pair by pair, the BTC/EUR position beside it is still closed, the ADA
+    still sold, and the failed read is named in the record, so the account reads 2."""
     _armed(tmp_path)
-    stranded = [_Position("GONE/EUR", "LONG", 1.0)]
+    stranded = [_Position("GONE/EUR", "LONG", 1.0), _Position("BTC/EUR", "LONG", 0.5)]
+    after = [_Position("GONE/EUR", "LONG", 1.0)]
     client = _flat_client(
-        positions=[stranded, stranded, stranded, stranded],
+        positions=[stranded, stranded, after, after],
         balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []],
         symbols=("BTC/EUR", "ADA/EUR"),
         books={"BTC/EUR.KRAKEN": _Book(60000.0, 60010.0), "ADA/EUR.KRAKEN": _Book(0.4, 0.41)},
     )
     assert _run(client, tmp_path) == 2
     assert "cancel_all_orders" in names(client)
-    assert [sent["instrument_id"] for sent in client.submitted] == ["ADA/EUR.KRAKEN"]
+    assert [sent["instrument_id"] for sent in client.submitted] == ["BTC/EUR.KRAKEN", "ADA/EUR.KRAKEN"]
     (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
     positions = [row for row in json.loads(path.read_text())["residuals"] if row["kind"] == "position"]
-    assert [row["symbol"] for row in positions] == ["GONE/EUR"]
-    assert positions[0]["reason"] == "pair_not_listed"
+    (whole,) = [row for row in positions if row["reason"] == "positions_unreadable"]
+    assert "GONE/EUR" in whole["error"]
 
 
 def test_a_balance_in_an_asset_with_neither_pair_exits_two_never_zero(tmp_path):
@@ -2357,6 +2490,23 @@ def test_every_client_call_the_red_button_makes_needs_a_running_loop():
             call()
 
 
+def test_the_pair_by_pair_position_read_binds_against_the_real_client():
+    """The retry sends the one keyword the whole-account read never does, with the listing row's
+    own `InstrumentId`. The compiled signature refuses an unknown keyword, or a plain string there,
+    with a TypeError BEFORE its loop check, so reaching `no running event loop` is the proof the
+    call binds."""
+    from nautilus_trader.model import AccountType, InstrumentId
+
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        _real_client().request_position_status_reports(
+            flatten._ACCOUNT,
+            instrument_id=InstrumentId.from_str("BTC/EUR.KRAKEN"),
+            account_type=AccountType.MARGIN,
+            use_spot_position_reports=False,
+            quote_currency=flatten.QUOTE_CURRENCY,
+        )
+
+
 @pytest.mark.skipif(
     os.environ.get(_LIVE_OPT_IN) != "1",
     reason=f"reaches Kraken's public listing endpoint -- set {_LIVE_OPT_IN}=1 to run it",
@@ -2557,9 +2707,9 @@ _FAKE_CLIENT_PLUMBING = frozenset(
         "_next",
         "_orders",
         "_positions",
+        "_position_state",
         "_record",
         "_require_cached",
-        "_resolves_cached_only",
     }
 )
 
