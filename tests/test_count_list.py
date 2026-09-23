@@ -75,8 +75,6 @@ def test_the_probe_verdict_predicate_is_the_scripts_own_wording():
     assert re.search(r'^\s*landed="\$\(git log develop HEAD --reverse ', fn.group(0), re.M), (
         "the anchor reads a different ref from the arms"
     )
-    # The window is the LATER of the clause's landing and the amnesty constant, so a constant set before the
-    # clause cannot widen the count past the rule, and one set after it is the only way to excuse a commit.
     assert re.search(r'^\s*since="\$landed"$', fn.group(0), re.M), "the window no longer starts at the clause's landing"
     assert re.search(
         r'^\s*\[\[ "\$PROBE_VERDICT_RULE_SINCE" > "\$since" \]\] && since="\$PROBE_VERDICT_RULE_SINCE"$', fn.group(0), re.M

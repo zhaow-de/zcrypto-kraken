@@ -91,13 +91,11 @@ READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
 # the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
 # empty set in the morning. `tests/test_count_list.py` refuses any RULE_SINCE that is not an instant.
 PROSE_ONLY_RULE_SINCE="2026-09-13T00:00:00Z"
-# One second past 095f96016 (2026-09-21T17:42:22Z), so this count excludes it and 07aeec2f2 (17:42:01Z) and
-# nothing else. Both are the 00117 spec and plan DOCS commits of PR #584: each says "KILLED with control
-# proven" while summarising verdicts their sibling fix(engine) commits earned and named the script for, so the
-# probes did run through it and only the summary sentence is at fault. Merged and unrewritable, they pinned
-# this count at 2 for good -- and a count that cannot read 0 stops being a detector, since the third violation
-# reads 3 and looks like the baseline. The amnesty is stated here rather than taken silently; the window is
-# the LATER of it and the clause's own landing, so setting it earlier cannot widen the count past the rule.
+# One second past 095f96016 (2026-09-21T17:42:22Z), excusing it and 07aeec2f2 (17:42:01Z) and nothing else: the
+# 00117 spec and plan docs commits of PR #584, merged and unrewritable, whose "KILLED with control proven" sums up
+# verdicts their sibling fix(engine) commits earned through the script. Unexcused they pin this count above 0 for
+# good, and a count that cannot read 0 is not a detector. The window is the LATER of this and the clause's landing,
+# so an earlier value cannot widen the count past the rule.
 PROBE_VERDICT_RULE_SINCE="2026-09-21T17:42:23Z"
 c_merged_prs_without_a_floor_read() {
   local prs floor oldest
