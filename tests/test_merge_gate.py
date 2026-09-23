@@ -228,8 +228,6 @@ def test_the_arm_judges_a_row_commit_above_the_read_by_the_tip_under_it(tmp_path
 
 @pytest.mark.parametrize("shape", list(_SHAPES))
 def test_the_arm_admits_one_commit_above_the_read_that_changes_no_file(tmp_path, shape):
-    """A refine round's closing commit is empty — its delta and watermark trailer are its whole content — so it
-    moves nothing the read graded of the tree, and the arm sets it aside as it does the Step 4 row."""
     read, head = _rebased_repo(tmp_path / shape, empty_above=True, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
 
@@ -249,7 +247,6 @@ def test_the_arm_refuses_a_second_row_above_the_read(tmp_path):
 
 
 def test_the_arm_refuses_a_second_commit_above_the_read_that_changes_no_file(tmp_path):
-    """One is set aside, never a run of them: each carries a message the read line does not cover."""
     read, head = _rebased_repo(tmp_path / "two-empty", two_empty_above=True)
     answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / "two-empty")
     assert isinstance(answer, str) and answer.startswith("the messages from the base"), answer
