@@ -246,6 +246,8 @@ Record the fee from the fill and compare it with `cli/costs/fees.py`'s tier-1 ta
 $RUN --probes 6 --evidence-dir "$EVID"
 ```
 
+Add the `--pair` and the `--known-order <txid>` arguments the pass's earlier invocations carried (§5.1), so that your named orders read `known` and an unnamed order on the pass's pair reads `unclaimed` (below).
+
 Running it as its own invocation is deliberate: the new node's startup reconciliation reads venue truth rather than the previous process's cache. Probe 6 also runs in-process at the end of every run, but a run that submitted anything cannot force a fresh venue read and marks its own row `REVIEW`; the separate invocation is the one to quote.
 
 Expect `open orders 0 (ours 0, known 0, unclaimed 0, other 0), open positions 0`, `PASS`, exit 0. With orders named by `--known-order` (§5.1) resting, expect them under `known` and the same `PASS`.
@@ -335,7 +337,7 @@ The harness exits 3 and prints, between two 78-character `!` rules, every client
 
 1. Kraken → Trade → Open Orders. Cancel each listed order by hand. Do not leave the terminal until they are gone.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.
-3. After both, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)`, then confirm it a second time on Kraken's own Open Orders page, the tie-breaker (§7.1).
+3. After both, re-run probe 6 as §5.4 does, `$RUN --probes 6 --evidence-dir "$EVID"` with the pass's `--pair` and `--known-order <txid>` arguments, and confirm `ours 0` and `unclaimed 0` with verdict `PASS` (orders you named read `known`), then confirm it a second time on Kraken's own Open Orders page, the tie-breaker (§7.1).
 
 Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and cancels it, a silent interaction between two systems in the logs of only one of them. On the five legs where that read is blind ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)) it is not cancelled either; it just keeps working. Both outcomes say the same thing: leave nothing for it to find.
 
