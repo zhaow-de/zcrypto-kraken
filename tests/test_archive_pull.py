@@ -133,11 +133,12 @@ def test_pull_mismatch_exits_one(tmp_path, monkeypatch):
 
 
 def test_pull_transport_failure_exits_two(tmp_path, monkeypatch):
-    from cli.archive import command
-
+    errors, warnings = _logged(monkeypatch, "error"), _logged(monkeypatch, "warning")
     monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(23, frozenset()))
     res = CliRunner().invoke(app, ["archive", "pull", "deploy@h:/src/", str(tmp_path)])
     assert res.exit_code == 2
+    assert errors == [f"archive pull: rsync failed source=deploy@h:/src/ dest={tmp_path} returncode=23"]
+    assert warnings == []
 
 
 def test_pull_missing_ssh_key_exits_two(tmp_path, monkeypatch):
@@ -412,11 +413,25 @@ def _squashed(output: str) -> str:
     return re.sub(r"\s+", "", re.sub(r"\x1b\[[0-9;]*m", "", output))
 
 
-def _pull(args: list[str], monkeypatch, *, transferred: frozenset[str] = frozenset(), now: datetime, lines: list[str]):
-    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(0, transferred))
+def _pull(
+    args: list[str],
+    monkeypatch,
+    *,
+    transferred: frozenset[str] = frozenset(),
+    now: datetime,
+    lines: list[str],
+    returncode: int = 0,
+):
+    monkeypatch.setattr(command, "_run_rsync", lambda source, d: RsyncOutcome(returncode, transferred))
     monkeypatch.setattr(command, "_utc_now", lambda: now)
     monkeypatch.setattr(command.logger, "info", lambda msg, *a: lines.append(msg % a))
     return CliRunner().invoke(app, ["archive", "pull", "src", *args])
+
+
+def _logged(monkeypatch, level: str) -> list[str]:
+    out: list[str] = []
+    monkeypatch.setattr(command.logger, level, lambda msg, *a: out.append(msg % a))
+    return out
 
 
 def test_pull_default_scope_is_full_and_the_line_keeps_the_dead_mans_token(tmp_path: Path, monkeypatch) -> None:
@@ -429,6 +444,54 @@ def test_pull_default_scope_is_full_and_the_line_keeps_the_dead_mans_token(tmp_p
     assert r.exit_code == 0, r.output
     line = next(m for m in lines if m.startswith("pull complete"))
     assert " checked=2 hashed=2 ok=2 failed=0 verify_s=" in line
+
+
+@pytest.mark.parametrize("channel", ["liquidations", None])
+def test_the_verified_line_ends_with_its_channel(tmp_path: Path, monkeypatch, channel: str | None) -> None:
+    """The liquidations, panel and reconciled pulls share one `source=`, so `channel=` is the field that
+    tells their lines apart. It goes last, after `pruned_hours=`, so `failed=` keeps its place."""
+    dest = tmp_path / "dest"
+    _seg(dest, "BTC", "book", "00")
+    extra = ["--textfile", str(tmp_path / "p.prom"), "--channel", channel] if channel else []
+    lines: list[str] = []
+    r = _pull([str(dest), *extra], monkeypatch, now=NOW, lines=lines)
+    assert r.exit_code == 0, r.output
+    line = next(m for m in lines if m.startswith("pull complete"))
+    assert line.endswith(f" pruned_hours=0 channel={channel or '-'}"), line
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_a_vanished_file_pass_hashes_what_it_transferred(tmp_path: Path, monkeypatch, corrupt: bool) -> None:
+    """rsync's 24 is the source moving under the pull, not a transport failure. Exiting 2 before the
+    verify left the pass's transfers unhashed under the incremental scope, since the next pass hashes
+    only its own; the slice here holds neither final, so only the transfer list can hash `01`."""
+    _seg(tmp_path, "BTC", "book", "00")
+    _seg(tmp_path, "BTC", "book", "01", corrupt=corrupt)
+    got = _rel("BTC", "book", "01")
+    off = str(_off_slice(_rel("BTC", "book", "00"), got))
+    warnings, errors, lines = _logged(monkeypatch, "warning"), _logged(monkeypatch, "error"), []
+    r = _pull(
+        [str(tmp_path), "--hash-scope", "incremental", "--slice", off],
+        monkeypatch,
+        transferred=frozenset({got}),
+        now=NOW,
+        lines=lines,
+        returncode=24,
+    )
+    assert r.exit_code == (1 if corrupt else 0), r.output
+    assert warnings == [
+        f"archive pull: rsync reported vanished source files source=src dest={tmp_path} returncode=24; verifying what arrived"
+    ]
+    assert " checked=2 hashed=1 " in next(m for m in lines if m.startswith("pull complete"))
+    assert errors == ([f"archive pull: verify failed path={tmp_path / 'BTC/book/2026/07/12/01.parquet'}"] if corrupt else [])
+
+
+def test_a_vanished_file_pass_under_no_verify_reaches_the_no_verify_line(tmp_path: Path, monkeypatch) -> None:
+    errors, lines = _logged(monkeypatch, "error"), []
+    r = _pull(["--no-verify", str(tmp_path)], monkeypatch, now=NOW, lines=lines, returncode=24)
+    assert r.exit_code == 0, r.output
+    assert lines == [f"archive pull complete (no verify) source=src dest={tmp_path}"]
+    assert errors == []
 
 
 def test_pull_textfile_publishes_three_gauges_labelled_by_channel(tmp_path: Path, monkeypatch) -> None:

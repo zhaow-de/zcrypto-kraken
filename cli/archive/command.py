@@ -80,12 +80,15 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+_RSYNC_VANISHED = 24
+
+
 def _run_rsync(source: str, dest: Path) -> RsyncOutcome:
     ssh_key = os.environ.get("ARCHIVE_SSH_KEY")
     if not ssh_key:
         # No transport identity -> the pull can't even be attempted. Signal a transport-class
-        # failure (pull() maps any non-zero to exit 2), never the bare KeyError that Click would
-        # surface as exit 1 -- the contract reserves exit 1 for a hash mismatch.
+        # failure (pull() maps every non-zero but rsync's 24 to exit 2), never the bare KeyError that
+        # Click would surface as exit 1 -- the contract reserves exit 1 for a hash mismatch.
         logger.error("archive pull: ARCHIVE_SSH_KEY is not set; cannot establish the ssh transport")
         return RsyncOutcome(2, frozenset())
     ssh_port = os.environ.get("ARCHIVE_SSH_PORT") or "10022"  # empty-string-safe (compose may pass "")
@@ -164,15 +167,27 @@ def pull(
     ),
 ) -> None:
     """Pull `source` into `dest` via rsync-over-ssh, then hash-verify every segment against its
-    manifest sidecar, at the requested hash scope. Exits 2 on a transport failure (partial pull, never
-    verified as authoritative) or a bad option combination, 1 on a hash mismatch, 0 when every checked
-    segment verifies."""
+    manifest sidecar, at the requested hash scope. Exits 2 on a transport failure (a partial pull,
+    never verified as authoritative) or a bad option combination, 1 on a hash mismatch, 0 when every
+    checked segment verifies. rsync's 24 (source files vanished between the file list and the
+    transfer) is not a transport failure: the pass goes on as a clean one does, verifying what arrived
+    unless `--no-verify`."""
     if (textfile is None) != (channel is None):
         raise typer.BadParameter("--textfile and --channel go together")
     if hash_scope is HashScope.incremental and slice_ is None:
         raise typer.BadParameter("--hash-scope incremental needs --slice")
     outcome = _run_rsync(source, dest)
-    if outcome.returncode != 0:
+    if outcome.returncode == _RSYNC_VANISHED:
+        # Everything but the vanished files transferred, and `outcome.transferred` lists it: exiting
+        # here would leave those transfers unhashed under the incremental scope until their slice comes
+        # round, because the next pass hashes only its own transfers.
+        logger.warning(
+            "archive pull: rsync reported vanished source files source=%s dest=%s returncode=%s; verifying what arrived",
+            source,
+            dest,
+            outcome.returncode,
+        )
+    elif outcome.returncode != 0:
         logger.error("archive pull: rsync failed source=%s dest=%s returncode=%s", source, dest, outcome.returncode)
         raise typer.Exit(2)
 
@@ -193,8 +208,10 @@ def pull(
     # `failed=%d` keeps its spelling and its place: `NAS · archive-pull stalled (dead-man)` matches
     # `failed=0` on this line (spec 00102 D5). The cost fields are here as well as in the textfile
     # because this line is the only record when the process is killed before it can publish.
+    # `channel=` is what tells the verified channels apart: three of them share one `source=`.
     logger.info(
-        "pull complete source=%s checked=%d hashed=%d ok=%d failed=%d verify_s=%.1f lag_s=%s pruned_parts=%d pruned_hours=%d",
+        "pull complete source=%s checked=%d hashed=%d ok=%d failed=%d verify_s=%.1f lag_s=%s pruned_parts=%d pruned_hours=%d"
+        " channel=%s",
         source,
         result.checked,
         result.hashed,
@@ -204,6 +221,7 @@ def pull(
         lag_s,
         pruned_parts,
         pruned_hours,
+        channel or "-",
     )
     if textfile is not None:
         # The verify cost is best-effort: an unwritable textfile must never preempt the Exit(1)
