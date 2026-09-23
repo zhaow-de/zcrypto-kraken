@@ -197,6 +197,37 @@ def _rebased_repo(
     return read, _git(root, "rev-parse", "HEAD")
 
 
+def _unmoved_repo(root: pathlib.Path, extras: str, *, merge_above: bool = False) -> tuple[str, str]:
+    """The read on a base that has not moved, with `extras` above it in order -- `r` the Step 4 row, `e` an empty
+    commit. `merge_above` tops the head with a merge whose tree adds a file the read never saw: `git log --no-merges`
+    drops it from the message list, so only a tree check can refuse it."""
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "develop")
+    (root / gate.INDEX).parent.mkdir(parents=True, exist_ok=True)
+    (root / gate.INDEX).write_text("| #1 | r |\n")
+    (root / "code.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "update-ref", "refs/remotes/origin/develop", "HEAD")
+    _git(root, "checkout", "-q", "-b", "feat")
+    (root / "code.py").write_text("x = 2\n")
+    _git(root, "commit", "-q", "-am", "feat: code")
+    read = _git(root, "rev-parse", "HEAD")
+    for kind in extras:
+        if kind == "r":
+            (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
+            _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
+        else:
+            _git(root, "commit", "-q", "--allow-empty", "-m", "claude(refine): round 9 closes")
+    if merge_above:
+        (root / "unread.py").write_text("x = 666\n")
+        _git(root, "add", "unread.py")
+        tree = _git(root, "write-tree")
+        merge = _git(root, "commit-tree", tree, "-p", "HEAD", "-p", "refs/remotes/origin/develop", "-m", "Merge develop")
+        _git(root, "reset", "-q", "--hard", merge)
+    return read, _git(root, "rev-parse", "HEAD")
+
+
 _SHAPES = {"rebased": {}, "merged": {"merge_instead": True}}
 _MORE = {
     "changed": ({"change_a_patch": True}, "is not the read's patches on the moved base: code.py differs"),
@@ -237,6 +268,34 @@ def test_the_arm_admits_one_commit_above_the_read_that_changes_no_file(tmp_path,
 def test_the_arm_admits_a_row_and_a_commit_that_changes_no_file_together(tmp_path, shape, empty_first):
     read, head = _rebased_repo(tmp_path / shape, row_above=True, empty_above=True, empty_first=empty_first, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
+
+
+@pytest.mark.parametrize("extras", ["r", "e", "re", "er"])
+def test_the_arm_admits_the_row_and_the_closing_commit_on_a_base_that_has_not_moved(tmp_path, extras):
+    read, head = _unmoved_repo(tmp_path / extras, extras)
+    assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / extras) is True, extras
+
+
+@pytest.mark.parametrize("extras", ["r", "re", "er", "e"])
+def test_the_arm_refuses_a_merge_carrying_a_file_the_read_never_saw_on_a_base_that_has_not_moved(tmp_path, extras):
+    read, head = _unmoved_repo(tmp_path / extras, extras, merge_above=True)
+    answer = gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / extras)
+    assert isinstance(answer, str) and answer.startswith("the head's tree is not the read's"), answer
+
+
+def test_the_arm_refuses_a_read_commit_remade_above_the_row_with_a_file_the_read_never_saw(tmp_path):
+    root = tmp_path / "remade"
+    _unmoved_repo(root, "")
+    _git(root, "commit", "-q", "--allow-empty", "-m", "claude(refine): round 9 closes")
+    read = _git(root, "rev-parse", "HEAD")  # the read ends in its empty closing commit
+    _git(root, "reset", "-q", "--hard", "HEAD~1")
+    (root / gate.INDEX).write_text((root / gate.INDEX).read_text() + "| #5 | r |\n")
+    _git(root, "commit", "-q", "-am", "docs(change-index): row #5")
+    (root / "unread.py").write_text("x = 666\n")
+    _git(root, "add", "unread.py")
+    _git(root, "commit", "-q", "-m", "claude(refine): round 9 closes")  # the read's own message: the list still matches
+    answer = gate.head_is_the_read(read, _git(root, "rev-parse", "HEAD"), "origin/develop", cwd=root)
+    assert isinstance(answer, str) and answer.startswith("the head's tree is not the read's"), answer
 
 
 def test_the_arm_refuses_a_second_row_above_the_read(tmp_path):

@@ -534,14 +534,16 @@ def head_is_the_read(read: str, head: str, base: str, cwd: pathlib.Path | None =
                 "takes `pre-review` over the amended commits and `re-review` over `<read>..<head>`"
             )
         if old_base == new_base:
-            same = subprocess.run(
-                ["git", "diff", "--quiet", read, f"{row}~1" if row else head], capture_output=True, text=True, timeout=120, cwd=cwd
-            )
-            if same.returncode == 0:
-                return True  # re-dated, re-signed or re-created on the same base: the tree and the messages the read graded
-            if same.returncode == 1:
-                return "the head's tree is not the read's"
-            return f"`git diff` exited {same.returncode}: {same.stderr.strip() or 'no stderr'}"
+            # With a row set aside, the tree below it must be the read's and the tree above it the row's: the row's own
+            # file is the one difference allowed, and a merge above it -- which `--no-merges` hides from the message
+            # list -- is not.
+            for a, b in ((read, f"{row}~1"), (row, head)) if row else ((read, head),):
+                same = subprocess.run(["git", "diff", "--quiet", a, b], capture_output=True, text=True, timeout=120, cwd=cwd)
+                if same.returncode == 1:
+                    return "the head's tree is not the read's"
+                if same.returncode != 0:
+                    return f"`git diff` exited {same.returncode}: {same.stderr.strip() or 'no stderr'}"
+            return True  # re-dated, re-signed or re-created on the same base: the tree and the messages the read graded
         merged = subprocess.run(
             ["git", "merge-tree", "--write-tree", f"--merge-base={old_base}", read, new_base],
             capture_output=True,
