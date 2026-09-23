@@ -1907,38 +1907,19 @@ def test_a_clean_sweep_of_a_flat_account_exits_zero(tmp_path):
     assert _run(client, tmp_path) == 0
 
 
-def test_the_blind_legs_are_the_two_way_spelled_basket_legs():
-    """`BLIND_ORDER_READ_LEGS` is frozen text; recomputing it here keeps a basket change from
-    leaving the caveat naming the wrong pairs. The adapter scans its instrument cache by
-    `raw_symbol` -- Kraken's `AssetPairs` KEY, which `PAIR_KEYS` carries -- while an open order is
-    looked up by its own `descr.pair`, the altname `dump_pair_name` derives, so a leg whose two
-    spellings differ is a leg the lookup misses.
-    """
-    from cli.backfill.read import dump_pair_name
-    from cli.engine.store import BASKET, PAIR_KEYS
-
-    two_way = {symbol for symbol in BASKET if dump_pair_name(symbol) != PAIR_KEYS[symbol]}
-    assert two_way == set(flatten.BLIND_ORDER_READ_LEGS)
-    # Not a degenerate fixture: a basket spelled one way throughout would make the set empty and let
-    # the equality above pass against a caveat that named nothing.
-    assert len(BASKET) == 12 and len(two_way) == 5
-
-
-@pytest.mark.parametrize(("orders", "code", "caveats"), [([[], [], []], 0, 1), ([[], [], [object()]], 2, 0)])
-def test_only_the_flat_verdict_carries_the_legs_the_final_read_cannot_see(tmp_path, orders, code, caveats):
-    """Exit 0 is the one answer that ends an incident, and it is derived from a read blind to an
-    order resting on a two-way-spelled leg -- so the caveat rides the zero, or the operator acts on
-    a false all-clear; exit 2 already sends them back to the venue and is left alone. Asserted on
-    what was ECHOED and on the line carrying every leg, since a caveat computed into a constant and
-    never printed is the failure this pins.
+@pytest.mark.parametrize(("orders", "code", "said"), [([[], [], []], 0, 1), ([[], [], [object()]], 2, 0)])
+def test_the_flat_verdict_says_what_made_it_and_names_no_pair_as_unseen(tmp_path, orders, code, said):
+    """Exit 0 is the one answer that ends an incident, and it now rests on reads that resolve both
+    of Kraken's spellings and fail, rather than drop, a row they cannot resolve -- so the line
+    beside the zero says that, and no line names a pair as one the reads cannot see. Exit 2 gets
+    neither. Asserted on what was ECHOED, since a line computed and never printed tells nobody.
     """
     _armed(tmp_path)
     lines: list[str] = []
     assert _run(_flat_client(orders=orders), tmp_path, lines=lines) == code
-    named = [line for line in lines if "cannot see a resting order" in line]
-    assert len(named) == caveats
-    if caveats:
-        assert all(leg in named[0] for leg in flatten.BLIND_ORDER_READ_LEGS)
+    said_lines = [line for line in lines if "every order and position the venue reported was read" in line]
+    assert len(said_lines) == said
+    assert not [line for line in lines if "cannot see" in line or "BTC/EUR, ETH/EUR" in line]
 
 
 def test_a_flat_row_alone_in_the_final_snapshot_exits_zero(tmp_path):

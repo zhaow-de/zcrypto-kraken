@@ -73,11 +73,7 @@ MARGIN_LEVERAGE = 2
 # `request_instruments()` alone answers with ~1600 rows -- around 110 KB at the installed adapter's
 # ~68-char `CurrencyPair.__repr__`. Capped so the incident artifact stays openable mid-incident.
 _ANSWER_REPR_LIMIT = 4000
-# The basket legs Kraken spells two ways, which are exactly the legs `read_open_orders` cannot see
-# an order on -- that function states the mechanism and the consequence. Printed beside the flat
-# verdict because a zero is what an operator acts on. Frozen text rather than a derivation, with
-# `tests/test_engine_flatten.py::test_the_blind_legs_are_the_two_way_spelled_basket_legs`
-# recomputing the set from `cli/engine/store.py`'s BASKET so a basket change cannot leave it stale.
+# Nothing in this module reads it; `infra/scripts/kraken-fixture-mint.py` imports it.
 BLIND_ORDER_READ_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # Real nautilus types reach the client; the journal records their string forms. A plain `str` where
@@ -189,20 +185,15 @@ def _journalled(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
-    """The orders resting at the venue that the adapter can resolve an instrument for. Only the LIST
-    is load-bearing here -- its length decides the exit code -- so no per-row field is required: an
-    unparseable row must not abort a sweep whose whole answer is 'something is still working'.
+    """The orders resting at the venue. Only the LIST is load-bearing here -- its length decides the
+    exit code -- so no per-row field is required.
 
-    Each row resolves through the instrument cache `read_listing` fills before this read. Which of
-    Kraken's two pair spellings resolves is the adapter's: the cache is keyed on the `AssetPairs`
-    KEY (`XXBTZEUR`) while an open order names the ALTNAME (`XBTEUR`), and an adapter without an
-    altname index drops such a row and returns success. `BLIND_ORDER_READ_LEGS` names those legs.
-
-    What that costs is the VERDICT, never the cancel: `sweep`'s `cancel_all_orders` is account-wide,
-    names no pair, and reaches an order on a blind leg -- so exit 0 can be a false all-clear while
-    the sweep itself did its job, and re-running the command is a real mitigation rather than a
-    retry of the same blindness. `run_flatten` prints that caveat beside the flat verdict, and
-    `infra/runbooks/engine-procedures.md`'s flatten procedure carries it for the operator.
+    Each row resolves through the instrument cache `read_listing` fills before this read, under
+    either of Kraken's spellings of its pair: the adapter matches the AssetPairs key (`XXBTZEUR`)
+    first and falls back to the altname index it records with the listing (`XBTEUR`). A row it
+    cannot resolve at all fails the WHOLE read rather than dropping out of it, so a list this
+    returns is every order the venue reported. Before the cancel that failure degrades
+    (`read_snapshot`); after it, it ends the run at exit 2.
     """
     # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
     kwargs: dict[str, Any] = {"open_only": True}
@@ -837,9 +828,9 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
     currency and no grand total is printed -- summing a BTC-quoted leg into a euro figure would
     need an FX rate this command has no mandate to invent.
 
-    The order count is a floor, not a total: it comes from `read_open_orders`, which cannot see an
-    order on the legs that function names. The count line says so rather than the operator reading
-    an understated preview as an inventory."""
+    The order count is the whole list the venue reported, each order named under it: an order
+    `read_open_orders` cannot resolve fails that read, and a failed read prints as one, never as a
+    count."""
     if plan.orders is None:
         failure = "; ".join(row["error"] for row in plan.unread if row["kind"] == "order")
         echo(
@@ -847,7 +838,7 @@ def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
             "the account-wide cancel still goes out, and this run cannot end at exit 0"
         )
     else:
-        echo(f"{len(plan.orders)} resting order(s) seen -- the cancel is account-wide and reaches any this read could not see")
+        echo(f"{len(plan.orders)} resting order(s) seen -- the cancel is account-wide")
         for order in plan.orders:
             echo(_order_line(order))
     for row in plan.unread:
@@ -1433,14 +1424,9 @@ async def run_flatten(
     # Handed to `_finish` rather than echoed here: past the first write the record must be on disk
     # before a single line is attempted, and a display failure may cost neither it nor the code.
     if code == 0:
-        # The caveat rides the ZERO and only the zero: exit 2 already sends the operator back to the
-        # venue, while a bare exit 0 is the one answer that ends the incident on a read that cannot
-        # see an order on the legs `read_open_orders` names.
         lines = [
             "the account reads flat: no resting order, no open position, no sellable balance left",
-            f"  BUT this read cannot see a resting order on {', '.join(BLIND_ORDER_READ_LEGS)}.",
-            "  Confirm open orders on Kraken's own page before you treat this as done -- and if one",
-            "  is there, run this command again: the account-wide cancel does reach it.",
+            "  every order and position the venue reported was read -- one this run could not read ends it at 2, never 0",
         ]
     else:
         lines = ["the account does NOT read flat -- what is left:", *(f"  {row}" for row in residuals)]
