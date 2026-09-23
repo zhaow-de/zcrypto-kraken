@@ -936,6 +936,21 @@ class TestEveryReadFailureIsARefusalNamingTheRead:
         assert f"{what} could not be read" in str(exc.value)
         assert "EGeneral:Temporary lockout" in str(exc.value)
 
+    def test_a_public_listing_error_refuses_and_names_it(self, _creds) -> None:
+        """The floors come from the public AssetPairs fetch, which raises `SnapshotError`, not `Refusal`."""
+        import asyncio
+
+        from cli.snapshot.errors import SnapshotError
+
+        def _fails():
+            raise SnapshotError("transport error fetching AssetPairs: timed out")
+
+        rec = _Recorder()
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), client_factory=lambda _k, _s: rec, listing_factory=_fails))
+        assert "the public AssetPairs listing could not be read" in str(exc.value)
+        assert "timed out" in str(exc.value)
+
     def test_an_uncached_row_is_a_refusal_too(self) -> None:
         """What the wheel raises for an order on a pair the cache lacks."""
         rec = _Recorder(orders=[_Order("ADA/EUR.KRAKEN")])

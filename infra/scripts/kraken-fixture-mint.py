@@ -627,7 +627,11 @@ async def _run(
     print(f"credentials: {API_KEY_VAR} and {API_SECRET_VAR} are present (never printed)")
 
     client = client_factory(key, secret)
-    limits = pair_limits(listing_factory(), args.pair)
+    try:
+        published = listing_factory()
+    except Exception as exc:
+        raise Refusal(f"REFUSING: the public AssetPairs listing could not be read: {exc}") from exc
+    limits = pair_limits(published, args.pair)
     listing = await read_listing(client)
     best_bid = await read_pair(client, args.pair, listing)
     print(
