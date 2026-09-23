@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import subprocess
+import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -130,3 +133,23 @@ def test_the_guard_reads_the_runners_vocabulary_and_not_a_copy_of_it():
     assert is_data_absence("trade archive absent at /srv — data-bearing workstation only")
     assert not is_data_absence("needs a live venue: set ZCRYPTO_LIVE_VENUE_TESTS=1 to run it")
     assert not is_data_absence("develop is not a ref in this checkout")
+
+
+def test_a_mark_outside_the_registry_is_refused_at_collection(tmp_path):
+    """`markers` alone only silences a warning: without `--strict-markers` a typo like `pytest.mark.dta`
+    collects and passes, and the file it marks is simply absent from `-m data` with nothing said. The two
+    cases above hold the marked set to the gated set; neither can see a mark that is not the one they read."""
+    config = ROOT / "pyproject.toml"
+    addopts = tomllib.loads(config.read_text())["tool"]["pytest"]["ini_options"]["addopts"]
+    assert "--strict-markers" in addopts, f"pyproject.toml addopts is {addopts!r}"
+
+    case = tmp_path / "test_typo.py"
+    case.write_text("import pytest\n\npytestmark = pytest.mark.dta\n\n\ndef test_x():\n    pass\n")
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "-c", str(config), "-p", "no:cacheprovider", "--collect-only", "-q", str(case)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "'dta' not found in `markers` configuration" in done.stdout + done.stderr, done.stdout + done.stderr

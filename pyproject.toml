@@ -36,6 +36,9 @@ nautilus-trader = { index = "nautechsystems" }
 # structurally skips it and only a data-bearing workstation runs it. The mark is the MODULE's, and
 # `tests/test_data_gated_marker.py` holds every file carrying such a gate to it.
 markers = ["data: needs a dataset under data/ or a mount CI does not have"]
+# Without this an unregistered mark is a warning, so `pytest.mark.dta` drops its file out of
+# `-m data` silently -- the one selection nothing else can catch, since a typo is still a valid mark.
+addopts = ["--strict-markers"]
 
 [tool.coverage.run]
 source = ["cli"]
