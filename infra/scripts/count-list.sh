@@ -76,16 +76,10 @@ c_ansible_inventory_forms() { git grep -nE 'ansible-inventory( +\S+)* +--(host|l
 
 c_prose_chars() { uv run python infra/scripts/prose-chars.py; }
 
-# This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: three reads found three
-# divergences in the jq that tried to, each in a different direction, and a counter that disagrees with the gate
-# about the same rule measures nothing. So the rule has one implementation and this is a caller of it -- the
-# journal-month exemption, the floor, the Fable paths, the substitution line, the renderer-aware body walk and
-# the change-index-row exception all come from there, and a change to the gate moves this count by construction.
-# A change to the arm moves the window to its own instant only when the changed arm counts a PR merged before it:
-# that PR was judged by the arms of its day and breaks no rule. COUNT_LIST_PRS_SNAPSHOT names a recorded
-# `gh pr list` JSON instead of the network,
-# for the test -- and with it set, the per-PR head-commit fetch the change-index exception needs cannot run,
-# so a row failing ONLY on a sha mismatch is counted rather than excused.
+# This entry CALLS merge-gate.py's `read_line_fails` rather than restating it: a counter that disagrees with the gate
+# about the same rule measures nothing, and a change to the gate moves this count by construction. A gate change
+# moves this window to its own instant only when it counts a PR merged before it: that PR was judged by the gate of
+# its day and breaks no rule.
 READ_LINE_RULE_SINCE="2026-09-20T12:06:05Z"
 # A rule's window is a full INSTANT, never a bare date: `git log --since=2026-09-13` is approxidate and fills
 # the missing time from the run's clock, so a bare date slides the window through the day and reads 0 over an
