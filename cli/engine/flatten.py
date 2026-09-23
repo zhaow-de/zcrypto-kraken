@@ -1255,12 +1255,12 @@ def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
     return residuals
 
 
-def exit_code(result: SweepResult, residuals: list, *, orders_read_before_the_cancel: bool) -> int:
+def exit_code(result: SweepResult, residuals: list, *, read_whole_before_the_cancel: bool) -> int:
     """0 flat, 2 partial. Derived from the final snapshot plus the two write-side failures -- never
-    from what an individual leg answered, which the journal carries instead -- and from the one
-    degraded read before them: the word was typed against a plan whose resting orders were never
-    read, so however the final read comes back, this run does not call the account flat."""
-    if result.post_write_failure is not None or not result.cancel_ok or residuals or not orders_read_before_the_cancel:
+    from what an individual leg answered, which the journal carries instead -- and from the degraded
+    reads before them: the word was typed against a plan that could not see every resting order or
+    every position, so however the final read comes back, this run does not call the account flat."""
+    if result.post_write_failure is not None or not result.cancel_ok or residuals or not read_whole_before_the_cancel:
         return 2
     return 0
 
@@ -1435,7 +1435,7 @@ async def run_flatten(
     # on, and judged against it every position the closers cleared reads as a residual while an
     # order that outlived the cancel goes unnamed.
     residuals = judge_final(result.final, listing, plan.prices) if result.final is not None else []
-    code = exit_code(result, residuals, orders_read_before_the_cancel=plan.orders is not None)
+    code = exit_code(result, residuals, read_whole_before_the_cancel=not plan.unread)
     record["cancel"] = {"ok": result.cancel_ok, "error": result.cancel_error, "orders_after": result.orders_after_cancel}
     record["post_write_failure"] = result.post_write_failure
     record["legs"] = [asdict(outcome) for outcome in result.outcomes]
@@ -1446,7 +1446,8 @@ async def run_flatten(
     if code == 0:
         lines = [
             "the account reads flat: no resting order, no open position, no sellable balance left",
-            "  every order and position the venue reported was read -- one this run could not read ends it at 2, never 0",
+            "  the reads before the cancel and the final reads saw every order and position the venue reported;"
+            " a read that could not ends a run at 2, never 0",
         ]
     else:
         lines = ["the account does NOT read flat -- what is left:", *(f"  {row}" for row in residuals)]
@@ -1454,9 +1455,11 @@ async def run_flatten(
             lines.append(f"  a read after the cancel failed: {result.post_write_failure}")
         if not result.cancel_ok:
             lines.append(f"  the account-wide cancel failed: {result.cancel_error}")
-        for row in plan.unread:
-            if row["kind"] == "order":
-                lines.append(f"  before the cancel, {row['error']} -- so this run cannot call the account flat")
+        if plan.unread:
+            lines.append("  before the cancel, a read could not see everything, so this run cannot call the account flat:")
+            lines.extend(
+                f"    {row['symbol']}: {row['error']}" if "symbol" in row else f"    {row['error']}" for row in plan.unread
+            )
     return _finish(code, *lines)
 
 

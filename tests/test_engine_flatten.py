@@ -1985,7 +1985,7 @@ def test_the_flat_verdict_says_what_made_it_and_names_no_pair_as_unseen(tmp_path
     _armed(tmp_path)
     lines: list[str] = []
     assert _run(_flat_client(orders=orders), tmp_path, lines=lines) == code
-    said_lines = [line for line in lines if "every order and position the venue reported was read" in line]
+    said_lines = [line for line in lines if "saw every order and position the venue reported" in line]
     assert len(said_lines) == said
     assert not [line for line in lines if "cannot see" in line or "BTC/EUR, ETH/EUR" in line]
 
@@ -2082,6 +2082,25 @@ def test_a_margin_row_on_an_unlisted_pair_never_aborts_the_button_and_exits_two(
     positions = [row for row in json.loads(path.read_text())["residuals"] if row["kind"] == "position"]
     (whole,) = [row for row in positions if row["reason"] == "positions_unreadable"]
     assert "GONE/EUR" in whole["error"]
+
+
+def test_a_position_read_that_failed_before_the_cancel_exits_two_even_when_the_final_read_is_whole(tmp_path):
+    """The word was typed against a plan that said the whole-account position read failed, so a final
+    read that comes back whole and empty -- the unresolvable row closed on Kraken's own pages in the
+    meantime -- still cannot make this run's verdict flat."""
+    _armed(tmp_path)
+    stranded = [_Position("GONE/EUR", "LONG", 1.0), _Position("BTC/EUR", "LONG", 0.5)]
+    client = _flat_client(positions=[stranded, [_Position("BTC/EUR", "LONG", 0.5)], [], []])
+    lines: list[str] = []
+    assert _run(client, tmp_path, lines=lines) == 2
+    assert [sent["instrument_id"] for sent in client.submitted] == ["BTC/EUR.KRAKEN"]
+    (path,) = list(_exec_dir(tmp_path).glob("flatten-*.json"))
+    doc = json.loads(path.read_text())
+    assert doc["residuals"] == [] and doc["snapshot_after"]["unread"] == []
+    assert "positions_unreadable" in [row["reason"] for row in doc["snapshot_before"]["unread"]]
+    (at,) = [i for i, line in enumerate(lines) if "cannot call the account flat" in line]
+    assert "GONE/EUR" in lines[at + 1]
+    assert not [line for line in lines if "reads flat" in line]
 
 
 def test_a_balance_in_an_asset_with_neither_pair_exits_two_never_zero(tmp_path):
