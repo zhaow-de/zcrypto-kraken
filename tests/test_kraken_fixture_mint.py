@@ -7,11 +7,12 @@ a notional nobody chose, and leverage reaching a leg meant to be spot is a posit
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import json
 import os
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -1114,6 +1115,20 @@ class TestTheSendLoop:
     def _tty(self, monkeypatch, _creds):
         monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
 
+    @pytest.fixture(autouse=True)
+    def _ticking_clock(self, monkeypatch):
+        """Every `now()` one second after the last, so an id minted again at submit differs from the
+        one the plan printed; on the real clock the whole run fits in one second and the two agree."""
+        ticks = itertools.count()
+        base = datetime(2026, 9, 3, 4, 5, 6, tzinfo=UTC)
+
+        class _Ticking(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return base + timedelta(seconds=next(ticks))
+
+        monkeypatch.setattr(mint, "datetime", _Ticking)
+
     def _run_execute(self, rec, capsys):
         import asyncio
 
@@ -1132,10 +1147,13 @@ class TestTheSendLoop:
         ]
 
     def test_the_plan_prints_the_ids_that_go_out(self, capsys) -> None:
+        """The operator approves the plan's ids; a loop that minted them again at submit would send
+        ids nobody read."""
         rec = _Recorder()
         _, out = self._run_execute(rec, capsys)
-        for kw in rec.submitted:
-            assert f"as {kw['client_order_id']}\n" in out
+        planned = [m[1] for line in out.splitlines() if (m := re.fullmatch(r"  (?:resting|margin|spot) .* as (\S+)", line))]
+        assert len(planned) == 3, out
+        assert planned == [str(kw["client_order_id"]) for kw in rec.submitted]
 
     def test_a_failure_on_the_second_leg_names_what_went_out(self, capsys) -> None:
         class _SecondFails(_Recorder):
