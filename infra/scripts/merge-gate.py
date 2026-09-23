@@ -498,7 +498,7 @@ def _patch_lines(cwd: pathlib.Path | None, base: str, tip: str, path: str) -> li
 
 def _extra_kind(cwd: pathlib.Path | None, sha: str) -> str | None:
     """A commit above the read that cannot move what it graded: `open-pr`'s Step 4 change-index row, or one that
-    changes no file, a refine round's closing commit. The caller admits one of each kind, never two of one."""
+    changes no file, a refine round's closing commit."""
     if len(_git(cwd, "rev-list", "--parents", "-n", "1", sha).split()) != 2:
         return None
     touched = _git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).split()

@@ -118,7 +118,7 @@ def _rebased_repo(
 ) -> tuple[str, str]:
     """A branch of two patches, the second a row in each rendered file, rebased onto — or, `merge_instead`, merged with — a base
     that gained a colliding row in both, or with `collide` off a file of its own; returns (the read's tip, the head). Each other
-    flag makes the head differ from that."""
+    flag varies the head."""
     root.mkdir()
     _git(root, "init", "-q", "-b", "develop")
     for path in gate.RENDERED:
@@ -235,7 +235,6 @@ def test_the_arm_admits_one_commit_above_the_read_that_changes_no_file(tmp_path,
 @pytest.mark.parametrize("empty_first", [False, True], ids=["row-then-empty", "empty-then-row"])
 @pytest.mark.parametrize("shape", list(_SHAPES))
 def test_the_arm_admits_a_row_and_a_commit_that_changes_no_file_together(tmp_path, shape, empty_first):
-    """A keyed refine round puts both above the read: the Step 4 row, and the closing commit."""
     read, head = _rebased_repo(tmp_path / shape, row_above=True, empty_above=True, empty_first=empty_first, **_SHAPES[shape])
     assert gate.head_is_the_read(read, head, "origin/develop", cwd=tmp_path / shape) is True, shape
 
