@@ -125,7 +125,7 @@ One step of the loop failed and the loop continued; the message names the step �
 
 | line | producer | what it means |
 | -- | -- | -- |
-| `archive pull: rsync failed source=… dest=… returncode=N` | `pull` in `cli/archive/command.py` | transport to that source — 255 = ssh itself; 23 = partial transfer (an unreadable file at the source); 12 = protocol/disk |
+| `archive pull: rsync failed source=… dest=… returncode=N` | `pull` in `cli/archive/command.py` | transport to that source — 255 = ssh itself; 23 = partial transfer (an unreadable file at the source); 12 = protocol/disk; 24 = files vanished between the file list and the transfer: at an hour boundary it is the capture segment writer merging that hour's parts into its final, benign when the channel's next pass reads `failed=0` |
 | `archive pull: verify failed path=…` | same | a pulled segment's bytes did not match its `.sha256` sidecar; the wrapper's own ERROR follows |
 | `archive pull: publishing the verify cost failed path=…` | same | the channel's `.prom` under `/textfile` could not be written, so its `zcrypto_archive_pull_*` freeze at their last values; the verdict is unaffected |
 | `archive pull: ARCHIVE_SSH_KEY is not set; cannot establish the ssh transport` | same | the channel's key variable arrived empty — a fault in the rendered `.env`, not a host-key problem |
@@ -151,7 +151,7 @@ A single `verify failed` is not itself a finding: a pull whose copies of the fin
    ```
    (`ssh red` for the secondary's tree) — and only then delete the failing file under `/volume1/ZhaoCrypto/capture-segments…` so the next pass re-fetches it. This deletion is necessary because `rsync -a` skips on matching size and mtime: a file corrupted in place is never re-transferred on its own. If the source no longer holds the hour, **do not delete the mirror copy** — it is the only copy left, corrupt or not; treat it as a reconcile question (`infra/runbooks/ops.md`).
 4. **A Python traceback at ERROR** is a defect, not a transient. Capture it, check `docs/reference/fleet-pins.md` for a NAS re-pin in the window, and hand it back — rolling a pin is an attended action through the rollout skill.
-5. **Verify the next pass is clean**, one pull period later: `sudo /usr/local/bin/docker logs --since 2h zcrypto-archive-pull | grep 'pull complete'` shows `failed=0` for every verified channel (no count command: a per-pass log read; the channels are `infra/nas/pull-entrypoint.sh`'s `--channel` calls). Count the lines you got before calling it clean.
+5. **Verify the next pass is clean**, one pull period later: `sudo /usr/local/bin/docker logs --since 2h zcrypto-archive-pull | grep 'pull complete'` shows `failed=0` for every verified channel (no count command: a per-pass log read; the channels are `infra/nas/pull-entrypoint.sh`'s `--channel` calls). Count the lines you got before calling it clean. A verified channel's `pull complete` line names its `source=` and no `dest=`, while the unverified form carries both, so filter a verified channel by its source: a filter on its destination matches its failures and none of its successes.
 
 ### Retire when
 
