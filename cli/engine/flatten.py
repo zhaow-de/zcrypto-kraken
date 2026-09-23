@@ -58,7 +58,7 @@ CONFIRM_WORD = "FLATTEN"
 # Never collides with the engine's ids, which carry the `-001-000-` infix minted from
 # TraderId("SHADOW-001") plus order-id tag "000" (`cli/engine/node.py`): the executor's own-order
 # routing would otherwise treat an ack of ours as its own.
-CLIENT_ORDER_ID_PREFIX = "FLT-"
+CLIENT_ORDER_ID_PREFIX = "FLT"
 BOOK_DEPTH = 1
 # The venue-alias spelling of the euro on the quote surfaces (546 live instruments carry `ZEUR`,
 # zero carry `EUR` -- docs/reference/adapter-verification/2.0.0rc4.dev20260825.md observation 4).
@@ -980,9 +980,13 @@ class SweepResult:
 
 
 def mint_client_order_id(stamp, index: int) -> str:
-    """`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
-    repo, and structurally distinct from the engine's `-001-000-` infix -- an id the executor could
-    read as its own would route a flatten fill into the engine's ledger.
+    """`FLT<yymmddHHMMSS>-<n>` on the run's UTC stamp: 17 characters through index 9, 18 through 99.
+
+    The length is the venue's: the adapter sends an id of at most 18 characters as it is and
+    rewrites a longer one to `O` plus its last 17, so an id of this length is the one Kraken stores
+    and shows, and the one the journal records. It carries no `-001-000-` infix, which the engine's
+    ids keep even when rewritten -- an id the executor could read as its own would route a flatten
+    fill into the engine's ledger.
 
     `index` runs over the whole run rather than per pass: the venue refuses an id it has already
     seen, so two legs sharing one would be one leg silently unsent. A leg that is NOT sent still
@@ -993,7 +997,7 @@ def mint_client_order_id(stamp, index: int) -> str:
     would mint the same ids. Each needs its own word typed at a terminal, and that is the bound --
     the journal's own collision protection does not extend here.
     """
-    return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%Y%m%dT%H%M%SZ}-{index}"
+    return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%y%m%d%H%M%S}-{index}"
 
 
 # The two sides a `Leg` can carry, and the only two this module can build an order from.
@@ -1001,9 +1005,13 @@ ORDER_SIDES = {"SELL": OrderSide.SELL, "BUY": OrderSide.BUY}
 
 
 async def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any:
-    """One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
+    """One MARKET order. The quantity is minted at the precision the venue's own lot step
     implies, so the floored value is exactly representable and nothing is rounded UP past the
     position the report reported.
+
+    The call is handed IOC, the time in force the signature requires, but the adapter sends no
+    `timeinforce` on a MARKET order -- it maps one for a limit order only -- so the journal records
+    it as not sent rather than as a flag the venue never saw.
 
     Every scoping value is derived ONCE and then both sent and journalled -- `_journalled`'s rule,
     on the one call in this module that moves money. Spelled a second time beside the call, the
@@ -1029,7 +1037,7 @@ async def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: P
         "order_side": str(order_side),
         "order_type": str(order_type),
         "quantity": float(quantity),
-        "time_in_force": str(time_in_force),
+        "time_in_force": "not sent (market order)",
         **_journalled(kwargs),
     }
     return await rec.call(

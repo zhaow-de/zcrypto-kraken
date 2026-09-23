@@ -1599,6 +1599,15 @@ def test_the_client_order_id_cannot_collide_with_the_engine_s_or_the_probe_harne
     assert cid != flatten.mint_client_order_id(_STAMP, 4)
 
 
+def test_every_client_order_id_a_run_can_mint_reaches_the_venue_as_minted():
+    """The adapter sends an id of at most 18 characters as it is and rewrites a longer one to `O`
+    plus its last 17 -- the rewritten id is what Kraken's pages show, and it matches nothing the
+    journal names. Every index through 99 fits, and none carries the engine's infix."""
+    ids = [flatten.mint_client_order_id(_STAMP, index) for index in range(1, 100)]
+    assert [cid for cid in ids if len(cid) > 18 or "-001-000-" in cid] == []
+    assert len(ids[-1]) == 18  # met, not merely approached: index 99 is the longest
+
+
 def test_every_order_in_one_run_carries_its_own_client_order_id_across_all_three_passes():
     """The id counter runs over the WHOLE run, not per pass: Kraken refuses a client order id it has
     already seen, so two legs sharing one is one leg silently unsent. The fixture spans all three
@@ -1638,11 +1647,14 @@ def test_the_journal_records_the_scoping_of_the_order_that_actually_went_out():
     assert [p["account_type"] for p in journalled] == ["MARGIN", "CASH"]
     for params, sent in zip(journalled, client.submitted, strict=True):
         assert params["account_id"] == flatten.ACCOUNT_ID
-        for field in ("instrument_id", "client_order_id", "order_side", "order_type", "quantity", "time_in_force"):
+        for field in ("instrument_id", "client_order_id", "order_side", "order_type", "quantity"):
             assert params[field] == sent[field], field
         assert params["reduce_only"] is sent["reduce_only"]
         assert params["account_type"] == sent["account_type"]
         assert params.get("leverage") == sent.get("leverage")
+        # Handed IOC, which the adapter drops from a MARKET order: the journal names what the venue got.
+        assert sent["time_in_force"] == "IOC"
+        assert params["time_in_force"] == "not sent (market order)"
 
 
 def test_the_submit_call_carries_the_library_s_own_types_and_binds_against_the_real_client():
@@ -2226,7 +2238,7 @@ def test_the_recorded_instrument_id_is_converted_where_the_fake_cannot_show_it()
     )
     leg = flatten.Leg("spot", "BTC", "BTC/EUR", "SELL", 0.5, "CASH", "account_state.balances")
     rec = flatten.Recorder()
-    _sync(flatten.submit_leg(FakeClient(), rec, flatten.size_leg(leg, constraints, 60000.0), constraints, "FLT-20260830T120000Z-1"))
+    _sync(flatten.submit_leg(FakeClient(), rec, flatten.size_leg(leg, constraints, 60000.0), constraints, "FLT260830120000-1"))
     (entry,) = rec.entries
     assert entry["params"]["instrument_id"] == "BTC/EUR.KRAKEN"
     json.dumps(rec.entries)  # no `default=`: what `write_journal` would have to fall back on
@@ -2544,7 +2556,7 @@ def _real_calls(client):
         "submit_order": lambda: client.submit_order(
             account,
             instrument_id,
-            ClientOrderId("FLT-20260830T120000Z-1"),
+            ClientOrderId("FLT260830120000-1"),
             OrderSide.SELL,
             OrderType.MARKET,
             Quantity(1.0, 8),
