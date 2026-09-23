@@ -180,8 +180,8 @@ def test_naming_a_probe_leftover_does_not_wave_it_through():
 
 
 def test_an_unnamed_order_on_the_pair_is_unclaimed_and_one_elsewhere_is_other():
-    """Probe orders only go out on `--pair`, so there an unnamed order may be a leftover whose
-    evidence file was never written; elsewhere it cannot be one of ours."""
+    """This invocation's probe orders only go out on `--pair`, so there an unnamed order may be a
+    leftover whose evidence file was never written; elsewhere it is not this invocation's."""
     split = _classify([_LEFTOVER, _OWNER_SOL])
 
     assert split.unclaimed == [_LEFTOVER]

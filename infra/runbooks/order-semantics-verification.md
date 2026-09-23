@@ -258,7 +258,7 @@ The buckets go by the venue order id (the txid), because that is the id that com
 
 - `ours` non-zero ⇒ verdict FAIL: an order this invocation submitted, or one whose txid an evidence file in `--evidence-dir` records, is still open. Go to §8 now, and expect exit 3 with the cancel-by-hand banner. FAIL and the banner read the same cache at different moments, so an id can move between them while the node still holds its clients open after the stop.
 - `unclaimed` non-zero ⇒ verdict FAIL and exit 3: an open order on `--pair` that neither an evidence file nor `--known-order` names. A probe leftover with no evidence file reads exactly like this. Cancel it at Kraken, or, if it is yours, re-run naming it with `--known-order <txid>`.
-- `other` non-zero ⇒ `REVIEW`: an open order on another pair that nothing names, so not one of the harness's. Adjudicate before signing off, or name it with `--known-order`.
+- `other` non-zero ⇒ `REVIEW`: an open order that nothing names, on a pair other than this invocation's `--pair`. It is a probe leftover when an earlier run on another `--pair` left no evidence file, which is why §5.4 and §8 run with the `--pair` of §5.2–5.3. Adjudicate before signing off, or name it with `--known-order`.
 - `known` counts the orders you named; a named txid that is not open is listed after the counts and makes the row `REVIEW`.
 
 ### 6. Exit codes

@@ -451,9 +451,11 @@ def classify_open_orders(
     known_venue_ids: set[str],
 ) -> OpenOrderSplit:
     """`ours`: submitted by this invocation, or a txid an evidence file records for an earlier one.
-    `known`: a txid the operator named with `--known-order`. The rest split on `pair`: probe orders
-    only ever go out on `--pair`, so an order there that nothing names is `unclaimed` -- it cannot
-    be told from a leftover whose evidence file was never written -- and one elsewhere is `other`.
+    `known`: a txid the operator named with `--known-order`. The rest split on `pair`: this
+    invocation's probe orders only go out on `--pair`, so an order there that nothing names is
+    `unclaimed` -- it cannot be told from a leftover whose evidence file was never written -- and one
+    elsewhere is `other`: not this invocation's, though an earlier run on another `--pair` that left
+    no evidence file reads the same.
     `ours` is tested first, so naming a probe leftover with `--known-order` does not wave it through."""
     split = OpenOrderSplit()
     seen: set[str] = set()
