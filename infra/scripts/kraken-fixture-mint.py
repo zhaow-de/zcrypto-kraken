@@ -375,9 +375,9 @@ def mint_client_order_id(kind: str, now: datetime) -> str:
     letter per leg, and the run's day and time -- 17 characters, uppercase.
 
     At most 18, because the adapter sends a longer free-text id as `O` plus its last 17 characters:
-    that cut drops the tag and the leg letter, and the three legs would reach the venue under one
-    id, while Kraken requires a `cl_ord_id` unique among open orders and the resting leg is open when
-    the next leg goes out.
+    that cuts the tag, and where the legs' ids share their last 17 characters it sends all three
+    under one id, while Kraken requires a `cl_ord_id` unique among open orders and the resting leg is
+    open when the next leg goes out.
     """
     return f"{FIXTURE_ORDER_TAG}-{kind[0].upper()}{now:%d%H%M%S}"
 

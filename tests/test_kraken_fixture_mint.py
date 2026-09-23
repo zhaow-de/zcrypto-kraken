@@ -1064,7 +1064,7 @@ def _upstream_truncate_cl_ord_id(client_order_id: str) -> str:
 class TestTheClientOrderIds:
     """Each leg reaches the venue under its own id, carrying the tag, exactly as printed."""
 
-    # Every field two digits wide, and the widest day and time a month has.
+    # Single-digit fields, zero-padded to two, and the widest day and time a month has.
     _NOWS = (datetime(2026, 9, 3, 4, 5, 6, tzinfo=UTC), datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC))
 
     @pytest.mark.parametrize(
