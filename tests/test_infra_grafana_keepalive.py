@@ -10,6 +10,9 @@ import yaml
 from tests.test_infra_shell_templates_render import ansible_render, role_variables
 
 TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "infra/ansible/roles/ops/templates/grafana-keepalive.sh.j2"
+# A rule's bound is its `for` plus its group's evaluation interval, and that interval is a stack setting at 60 s
+# (infra/runbooks/drills-telemetry.md), not a field of the rule, so it is stated here rather than read.
+EVAL_INTERVAL_S = 60
 
 
 def _run(tmp_path, curl_body, *, token="tok", prom_seed=None, want_stdout=False):
@@ -178,7 +181,9 @@ def test_every_family_carries_its_help_and_type(tmp_path, family):
 
 
 def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
-    """One skipped slot peaks near two periods and must stay quiet; two peak near three, and page only if the threshold plus `for` is below that."""
+    """One skipped slot peaks near two periods and must stay quiet -- the lower bound credits no `for`, so it is the
+    stricter of the two; two peak near three, and page only if the threshold plus `for` and one evaluation tick is
+    below that."""
     root = pathlib.Path(__file__).resolve().parent.parent
     timer = (TEMPLATE.parent / "grafana-keepalive.timer.j2").read_text()
     step = re.search(r"^OnCalendar=\*:\d+/(\d+):00$", timer, re.M)
@@ -194,6 +199,6 @@ def test_the_stale_rule_tolerates_one_skipped_slot_of_the_timer_it_watches():
     assert held, f"`for: {rule['for']}` is not a single-unit duration; read it some other way"
     for_s = int(held.group(1)) * {"s": 1, "m": 60, "h": 3600}[held.group(2)]
     assert 2 * period < threshold, f"threshold {threshold} s is not above one skip's peak, {2 * period} s"
-    assert threshold + for_s < 3 * period, (
-        f"threshold {threshold} s plus `for` {for_s} s is not below two skips' peak, {3 * period} s"
+    assert threshold + for_s + EVAL_INTERVAL_S < 3 * period, (
+        f"threshold {threshold} s plus `for` {for_s} s and a {EVAL_INTERVAL_S} s tick is not below two skips' peak, {3 * period} s"
     )
