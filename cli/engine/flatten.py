@@ -79,8 +79,6 @@ _ANSWER_REPR_LIMIT = 4000
 # whole unit. Unshaved, a sell of the reported figure is refused for insufficient funds on every
 # pass and every re-run.
 _BALANCE_UNIT = Decimal("0.00000001")
-# Nothing in this module reads it; `infra/scripts/kraken-fixture-mint.py` imports it.
-BLIND_ORDER_READ_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # Real nautilus types reach the client; the journal records their string forms. A plain `str` where
 # the compiled signature wants `AccountId`/`AccountType` fails at the venue, not in a test.
