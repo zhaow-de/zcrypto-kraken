@@ -1579,9 +1579,10 @@ def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
 
 
 # --- a socket or path unit on its default dependencies is ordered before sockets.target or paths.target,
-# which basic.target follows. A service it names in After= starts after basic.target, so boot has an ordering
-# cycle that systemd breaks by deleting the unit's start job; one it names in Requires= or BindsTo= stops the
-# unit when stopped, and starting that service again does not bring the unit back.
+# which basic.target follows. Ordered After= a service or a later target, boot has an ordering cycle that
+# systemd breaks by deleting the unit's start job; stop-bound to a service, it is stopped with it and not
+# brought back when the service starts. The named unit's own dependencies are not read here, so every
+# service is refused, and After= may name only the targets sysinit.target follows.
 EARLY_BOOT_UNITS = sorted(
     p
     for pattern in (
@@ -1592,20 +1593,31 @@ EARLY_BOOT_UNITS = sorted(
     )
     for p in ANSIBLE.glob(pattern)
 )
+BEFORE_SYSINIT = {"sysinit.target", "local-fs.target", "local-fs-pre.target", "swap.target"}
+STOP_BINDING = {"Requires", "Requisite", "BindsTo", "PartOf"}
 
 
-def test_no_early_boot_unit_depends_on_a_service():
+def _unit_settings(path: Path) -> list[tuple[str, str]]:
+    # systemd strips the blanks around `=`, so `After = x.service` is an After=
+    lines = [l.strip() for l in path.read_text().splitlines()]
+    return [(k.strip(), v.strip()) for k, _, v in (l.partition("=") for l in lines if "=" in l and not l.startswith(("#", ";")))]
+
+
+def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
     assert {p.name for p in EARLY_BOOT_UNITS} >= {"zaccess-ssh-proxy.socket.j2", "zaccess-nas-proxy.socket.j2"}, EARLY_BOOT_UNITS
     offenders = []
     for path in EARLY_BOOT_UNITS:
-        lines = [l.strip() for l in path.read_text().splitlines()]
-        if "DefaultDependencies=no" in lines:
+        settings = _unit_settings(path)
+        if any(k == "DefaultDependencies" and v.lower() in ("no", "false", "0", "off") for k, v in settings):
             continue
-        for l in lines:
-            key, _, value = l.partition("=")
-            if key in ("After", "Requires", "BindsTo") and any(u.endswith(".service") for u in value.split()):
-                offenders.append(f"{path.relative_to(ANSIBLE)}: {l}")
-    assert not offenders, f"an early-boot unit names a service; the service must carry the dependency instead: {offenders}"
+        for k, v in settings:
+            services = [u for u in v.split() if u.endswith(".service")]
+            late_targets = [u for u in v.split() if u.endswith(".target") and u not in BEFORE_SYSINIT]
+            if (k == "After" and (services or late_targets)) or (k in STOP_BINDING and services):
+                offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
+    assert not offenders, (
+        f"an early-boot unit waits on or binds to a later unit; the service it activates must carry that: {offenders}"
+    )
 
 
 NAS = ANSIBLE / "roles" / "nas" / "tasks" / "main.yml"
