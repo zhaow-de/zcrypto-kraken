@@ -152,7 +152,20 @@ def test_a_below_costmin_result_names_the_floor():
 # DEFINING those names to raise, and matching the bare word would make the seal itself the offender,
 # leaving an allowance as the only way back. `cancel_order` is here because a cancel reaches the
 # venue exactly as a submit does, `cancel_all_orders` because an account-wide cancel is the largest.
-_VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".cancel_all_orders", ".order_factory")
+_VENUE_MUTATING_NAMES = (
+    ".submit_order",
+    ".cancel_order",
+    ".cancel_all_orders",
+    ".cancel_gtd_expiry",
+    ".modify_order",
+    ".close_position",
+    ".close_all_positions",
+    ".market_exit(",
+    ".order_factory",
+)
+# On the library's order surface and not venue-mutating: the exit's completion hook, and the setter
+# for which instruments count as external.
+_ORDER_SURFACE_NOT_MUTATING = frozenset({"post_market_exit", "set_external_order_instrument_ids"})
 # The engine's order machine and the red button, and nothing else. `cli/engine/flatten.py` is a
 # second venue-mutating module BY DESIGN (spec 00106 D7): the button has to work when the machine
 # is what broke, so the two deliberately share no code path, and the price of that is a second
@@ -177,15 +190,26 @@ def test_the_venue_mutating_names_have_exactly_one_module():
     assert offenders == []
 
 
+def test_the_venue_mutating_names_cover_the_library_order_surface():
+    """A method a later wheel adds to `Strategy`'s order surface is a red test here until the pin names it."""
+    from tests.test_engine_node import _order_mutating_surface
+
+    uncovered = sorted(
+        name
+        for name in _order_mutating_surface() - _ORDER_SURFACE_NOT_MUTATING
+        if not any(f".{name}(".startswith(reach) for reach in _VENUE_MUTATING_NAMES)
+    )
+    assert uncovered == []
+
+
 # On the pinned wheel an instrument-named CancelAllOrders sends Kraken's account-wide CancelAll (upstream
 # #5044 scopes it in a later nightly), so a cancel-all written for one pair cancels every pair's orders;
 # the red button keeps its reach because its cancel is account-wide by design. A strategy sends it only
 # with `strategy_only=False`; the probe's strategy runs live from infra/scripts/, hence the trees below.
 # The match refuses the default form too: for a strategy registered under the operator's id it cancels
 # the operator's orders (cli/engine/node.py), so narrowing it to `strategy_only=False` opens that door.
-# `market_exit` issues that default form for every instrument and closes positions at market, so it is
-# refused everywhere, as node.py seals it beside `cancel_all_orders`.
-_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": frozenset({"cli/engine/flatten.py"}), ".market_exit": frozenset()}
+# `market_exit` issues that default form on each instrument the strategy holds orders or positions in.
+_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": frozenset({"cli/engine/flatten.py"}), ".market_exit(": frozenset()}
 _RUNTIME_TREES = ("cli", "infra", ".claude")
 
 
