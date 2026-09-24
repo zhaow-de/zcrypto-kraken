@@ -165,10 +165,6 @@ Draft PR #387 is closed unmerged, on the owner's ruling of 2026-09-23, with a co
 
 ### The window's steps 1 and 2, read 2026-09-24
 
-Before the window:
-
-- **DONE 2026-09-24: the attended six-probe order-semantics pass on this wheel — PASS on all six probes, probes 2 and 6 listing `OTFW3E-R2Z7O-VRCASR` under `known`, recorded in `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md`, and the version is in `cli/engine/order-semantics-verified.json`.**
-
 Step 1 read SAFE at 20:50:02Z and step 2 PASS at 20:51:25Z, on the engine at `3f291f3cee57` (PR #599's merge) with no Kraken margin position open; every reading is in `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md` under *Owed checks* and *The window as run*.
 
 **What the readings decide.** Step 1 SAFE and step 2 PASS resolve both sub-items: the open-order half by upstream #5034 — the adopt pass saw and cancelled the BTC/EUR order Kraken spells `XBTEUR`, the 2026-09-19 reading not reproduced — and the row half by PR #599's keying, whose startup pass reconciled each hand-placed order under its txid, matched it to no row and cancelled it. The repair this topic held in reserve, an account-wide cancel at startup and at trip through the bare client, is not needed, and Rung 1 does not enter contained on its account. A row resolved by its txid (Drill G) and the startup pass's venue read are first read live afterwards, in the `2.0.0rc6.dev20260921` record, and the resolution waits on neither.
