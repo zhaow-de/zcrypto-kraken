@@ -4,6 +4,7 @@ import ast
 import json
 import logging
 import shutil
+import subprocess
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -175,21 +176,21 @@ def test_the_venue_mutating_names_have_exactly_one_module():
 
 # On the pinned wheel an instrument-named CancelAllOrders sends Kraken's account-wide CancelAll (upstream
 # #5044 scopes it in a later nightly), so a cancel-all written for one pair cancels every pair's orders;
-# the red button keeps its reach because its cancel is account-wide by design. A strategy issues that
-# command through its own `cancel_all_orders` and through `market_exit`, which calls it per instrument
-# (`stop` reaches `market_exit` only with `manage_stop`, whose default tests/test_nautilus_interface_pin.py
-# pins), and the probe's strategy runs live from infra/scripts/, so every tracked runtime tree is walked.
-_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": {"cli/engine/flatten.py"}, ".market_exit": set()}
+# the red button keeps its reach because its cancel is account-wide by design. A strategy sends it only
+# with `strategy_only=False`; the probe's strategy runs live from infra/scripts/, hence the trees below.
+_ACCOUNT_WIDE_CANCEL = ".cancel_all_orders"
+_ACCOUNT_WIDE_CANCEL_ALLOWED = frozenset({"cli/engine/flatten.py"})
 _RUNTIME_TREES = ("cli", "infra", ".claude")
 
 
 def test_only_the_red_button_reaches_a_cancel_all():
+    """Tracked files only: `.claude/worktrees/` holds gitignored agent checkouts, copies of cli/
+    included, which are not this tree's code."""
+    tracked = subprocess.run(["git", "ls-files", "--", *_RUNTIME_TREES], capture_output=True, text=True, check=True).stdout.split()
     offenders = [
-        f"{path.as_posix()}: {name}"
-        for tree in _RUNTIME_TREES
-        for path in sorted(Path(tree).rglob("*.py"))
-        for name, allowed in _ACCOUNT_WIDE_CANCELS.items()
-        if name in path.read_text() and path.as_posix() not in allowed
+        path
+        for path in tracked
+        if path.endswith(".py") and path not in _ACCOUNT_WIDE_CANCEL_ALLOWED and _ACCOUNT_WIDE_CANCEL in Path(path).read_text()
     ]
     assert offenders == []
 
