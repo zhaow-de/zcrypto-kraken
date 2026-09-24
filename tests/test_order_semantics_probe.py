@@ -704,6 +704,12 @@ def _strategy(*argv: str):
     return probe.ProbeStrategy(args, state), state
 
 
+def test_the_probe_strategy_arms_none_of_the_librarys_order_management(monkeypatch):
+    from tests.test_engine_node import _management_flags_built_by
+
+    assert _management_flags_built_by(monkeypatch, probe, _strategy) == [(False, False, False)] * 2
+
+
 class _FactoryOrder:
     client_order_id = "O-20260823-120000-901-P6V-1"
 

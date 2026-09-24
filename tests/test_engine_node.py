@@ -648,16 +648,27 @@ def test_the_observer_carries_the_venues_external_order_identity_and_claims_noth
     assert str(observer.config.strategy_id) == "EXTERNAL"
 
 
-def test_no_strategy_arms_the_librarys_order_management(tmp_path):
-    strategies = (
-        ShadowStrategy(_config(tmp_path)),
-        ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
-        node.ExternalOrderObserver(lambda event: None),
-    )
-    for strategy in strategies:
-        assert strategy.config.manage_stop is False
-        assert strategy.config.manage_contingent_orders is False
-        assert strategy.config.manage_gtd_expiry is False
+def _management_flags_built_by(monkeypatch, module, construct) -> list[tuple[bool, bool, bool]]:
+    """The library arms its order management from the config handed to `__new__`, and `.config` reports
+    `__init__`'s, so this reads every config one construction builds through `module`'s own
+    `StrategyConfig`: two, one per constructor, is the count a construction that hides neither has."""
+    built = []
+    real = module.StrategyConfig
+
+    def recording(*args, **kwargs):
+        built.append(real(*args, **kwargs))
+        return built[-1]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "StrategyConfig", recording)
+        construct()
+    assert len(built) == 2, f"the construction built {len(built)} configs through {module.__name__}.StrategyConfig"
+    return [(config.manage_stop, config.manage_contingent_orders, config.manage_gtd_expiry) for config in built]
+
+
+def test_no_strategy_arms_the_librarys_order_management(tmp_path, monkeypatch):
+    for construct in (lambda: ShadowStrategy(_config(tmp_path)), lambda: node.ExternalOrderObserver(lambda event: None)):
+        assert _management_flags_built_by(monkeypatch, node, construct) == [(False, False, False)] * 2
 
 
 def test_the_observer_forwards_every_order_event_to_the_strategys_external_forwarder(tmp_path):
