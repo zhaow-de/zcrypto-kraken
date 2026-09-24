@@ -506,7 +506,7 @@ def test_the_committed_record_is_the_one_the_ansible_backstop_reads(tmp_path):
     lookup = facts["engine_verified_nautilus"]
     assert "lookup('file', playbook_dir ~ '/../../cli/engine/order-semantics-verified.json')" in lookup, lookup
     assert _verified_nautilus_versions() == frozenset(
-        {"1.230.0", "1.231.0", "2.0.0rc4.dev20260825", "2.0.0rc6.dev20260915", "2.0.0rc6.dev20260918"}
+        {"1.230.0", "1.231.0", "2.0.0rc4.dev20260825", "2.0.0rc6.dev20260915", "2.0.0rc6.dev20260918", "2.0.0rc6.dev20260921"}
     ), (
         "the record changed. If an attended order-semantics pass really ran, update this "
         "deliberately alongside the new docs/reference/adapter-verification/ record -- and sweep the other "
