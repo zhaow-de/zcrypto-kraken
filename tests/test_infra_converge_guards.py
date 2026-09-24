@@ -1553,13 +1553,15 @@ def _declared(path: Path, key: str):
 
 
 def _wg_value(path: Path, key: str) -> str:
-    values = [l.split("=", 1)[1].strip() for l in path.read_text().splitlines() if re.match(rf"{key}\s*=", l)]
+    # read as wg reads a line -- the comment cut, every blank dropped, the key in any case -- or a
+    # `listenport = …` beside the real line would set the port unseen
+    lines = [re.sub(r"\s", "", l.split("#", 1)[0]) for l in path.read_text().splitlines()]
+    values = [l.split("=", 1)[1] for l in lines if l.lower().startswith(f"{key.lower()}=")]
     assert len(values) == 1, f"{path.relative_to(ANSIBLE)} carries {len(values)} {key} lines, not one"
     return values[0]
 
 
 def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
-    """The two tunnel templates take the port from their role defaults, and those and the UDP port the access host opens carry one port between them."""
     assert re.fullmatch(r"\{\{\s*access_wg_listen_port\s*\}\}", _wg_value(ACCESS_WG_CONF, "ListenPort"))
     assert re.search(r":\{\{\s*access_ops_wg_listen_port\s*\}\}$", _wg_value(ACCESS_OPS_WG_CONF, "Endpoint"))
     ports = {
