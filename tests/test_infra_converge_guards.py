@@ -1578,8 +1578,10 @@ def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
     )
 
 
-def test_the_zaccess_tunnel_mtu_is_one_explicit_value_at_both_ends():
-    assert _wg_value(ACCESS_WG_CONF, "MTU") == _wg_value(ACCESS_OPS_WG_CONF, "MTU")
+def test_the_zaccess_tunnel_mtu_is_one_value_its_ipv4_path_carries():
+    mtus = {str(conf.relative_to(ANSIBLE)): int(_wg_value(conf, "MTU")) for conf in (ACCESS_WG_CONF, ACCESS_OPS_WG_CONF)}
+    assert all(m <= 1400 for m in mtus.values()), f"above 1400 the tunnel's packets outgrow its 1460-byte IPv4 path: {mtus}"
+    assert len(set(mtus.values())) == 1, f"the two tunnel ends declare different MTUs: {mtus}"
 
 
 # --- a socket or path unit on default dependencies precedes basic.target: After= a later unit is a boot cycle; stop-bound to a service, it is not started again with it.
@@ -1598,8 +1600,8 @@ STOP_BINDING = {"Requires", "Requisite", "BindsTo", "PartOf"}
 
 
 def _unit_settings(path: Path) -> list[tuple[str, str]]:
-    # systemd strips the blanks around `=`, so `After = x.service` is an After=
-    lines = [l.strip() for l in path.read_text().splitlines()]
+    # read as systemd does: a trailing backslash continues the line, and the blanks around `=` are stripped
+    lines = [l.strip() for l in path.read_text().replace("\\\n", " ").splitlines()]
     return [(k.strip(), v.strip()) for k, _, v in (l.partition("=") for l in lines if "=" in l and not l.startswith(("#", ";")))]
 
 
@@ -1608,7 +1610,7 @@ def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
     offenders = []
     for path in EARLY_BOOT_UNITS:
         settings = _unit_settings(path)
-        if any(k == "DefaultDependencies" and v.lower() in ("no", "false", "0", "off") for k, v in settings):
+        if any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings):
             continue
         for k, v in settings:
             services = [u for u in v.split() if u.endswith(".service")]
