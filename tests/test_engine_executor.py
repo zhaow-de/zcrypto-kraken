@@ -149,9 +149,6 @@ def test_a_below_costmin_result_names_the_floor():
 # --- the structural pin -------------------------------------------------------------------------
 
 
-# The dotted ATTRIBUTE REACH, never the bare word: `cli/engine/node.py` seals this surface by
-# DEFINING those names to raise, and matching the bare word would make the seal itself the offender,
-# leaving an allowance as the only way back.
 # On the library's order surface and not venue-mutating: the exit's completion hook, the setter for
 # which instruments count as external, and the GTD cancel, which stops a local timer and nothing else.
 _ORDER_SURFACE_NOT_MUTATING = frozenset({"post_market_exit", "set_external_order_instrument_ids", "cancel_gtd_expiry"})
