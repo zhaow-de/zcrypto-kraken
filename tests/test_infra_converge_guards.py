@@ -897,10 +897,13 @@ def test_arming_backstop_reads_the_real_committed_files():
     pin = _pinned_nautilus_version()
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
 
-    assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
+    # Either literal: the runbook's arm and disarm PRs each flip only the template line.
+    assert re.search(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", template), (
+        "the committed template must render exec_armed as a boolean literal"
+    )
     assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
     task = find_task(load_tasks(ENGINE), ARMING)
-    armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
+    armed = re.sub(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", "exec_armed = true", template)
     base = {
         "engine_config_template_text": armed,
         "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
