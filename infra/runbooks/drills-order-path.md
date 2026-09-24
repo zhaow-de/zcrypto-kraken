@@ -100,7 +100,8 @@ The startup pass compares each preserved row against the quantity the venue repo
 
 ### Preconditions
 
-- A1's preconditions in full, with one difference: the plan is priced marketable, so a fill is expected rather than avoided. That is real money at probe size, and the position it leaves is the input to D and to B.
+- **Recorded `blocked` under the restart rule in the standing rules until the engine runs a nautilus-trader build carrying upstream #5065**: the fill lands while the host is down, so the host's return is an engine start with a margin position open.
+- A1's preconditions in full, with one difference: the plan is priced marketable, so a fill is expected rather than avoided. That is real money at probe size, and it leaves a real position open.
 - **Know before you start that `matched` will read 0 here, and that this is not a finding.** A fill applied during the node's own startup reconciliation is published before the adopt pass has attached a single row, so it counts `unmatched` by design. The by-value `zcrypto_exec_external_events_total{disposition="matched"}` reading that proves a restart re-attaches a row by the Kraken txid it recorded belongs to G, where the cancel ack arrives after the rows are attached.
 
 ### Induce
@@ -111,7 +112,7 @@ The same attended reboot as A1, with the marketable order resting when the host 
 
 A1's set, unchanged: `zcrypto-fleet-daemon-restarted` and nothing else on an ~83 s reboot.
 
-[`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) does not fire on a healthy reboot, even though a position is now open: its scrape node needs 10 unbroken minutes below 1 and a reboot never reaches that. D is the drill where it fires, and A2's end state is D's input.
+[`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) does not fire on a healthy reboot, even though a position is now open: its scrape node needs 10 unbroken minutes below 1 and a reboot never reaches that. D is the drill where it fires.
 
 ### Operator action
 
@@ -141,7 +142,7 @@ Entry `A2`: the venue's figure, the ledgered figure, the delta, that the fill co
 ### Preconditions
 
 - **B's instrument is the host wrapper, not the command.** `zcrypto engine flatten` is in the tree, and `infra/ansible/roles/engine/templates/zcrypto-flatten.sh.j2` renders it to `/usr/local/sbin/zcrypto-flatten` on an engine converge; the procedure is [`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten). Whether the host has it is the engine row of `docs/reference/fleet-pins.md`, read at drill time. Absent, a run booked against B is `blocked` with that reason, "wrapper not deployed", never "not built" and never `fail` (no count command: `tests/test_drill_log.py` reads a heading's status, not the body under it).
-- The subject is a real position and a real balance: A2's end state, or D's, plus a small spot balance. Flattening an already-flat account measures nothing.
+- The subject is a real position and a real balance: D's end state, or a margin position a funded leveraged plan opened for B in this window, plus a small spot balance. Flattening an already-flat account measures nothing.
 - The window open and attended, with the owner present. This is the one drill whose whole point is a human deciding.
 
 ### Induce
@@ -181,7 +182,7 @@ That the one alert nothing else covers actually pages a phone (a non-zero positi
 
 ### Preconditions
 
-- **A2's end state**: a real position open, read by value from the ledger and from venue truth immediately before. A flat account cannot trip this rule (no count command: its `$A > 0 && $B < 1` condition in `infra/grafana/alerts.yaml` holds it) and the run would be `blocked`.
+- **A real margin position open, opened for this drill by a funded leveraged `execute` plan the owner places in the window while the engine runs**, read by value from the ledger and from venue truth immediately before. A2's end state was this input, and A2 is `blocked` under the restart rule in the standing rules. Not the probe window's own open-plan positions: their later steps close them through the engine, and D's restore waits for the position to close. A flat account cannot trip this rule (no count command: its `$A > 0 && $B < 1` condition in `infra/grafana/alerts.yaml` holds it) and the run would be `blocked`.
 - The window attended and the phone in hand; the page arriving is the deliverable, not the rule's internal state.
 - **The telemetry plane read green by value immediately before**, because this rule fires on two routes and only one of them is this drill's (no count command: the rule's `B` node in `infra/grafana/alerts.yaml` carries both; D's *Induce* takes one):
   ```
@@ -337,7 +338,7 @@ The container is bridge-networked with `127.0.0.1:9102:9102` published (`infra/a
 
 - **Nothing at all, on a hold under ~11 minutes, and that is a coverage finding, not a quiet fleet.** Every rule that would notice keys on the exporter or on the log stream, and all of them are slower than the entire behaviour this drill measures (no count command: `infra/grafana/alerts.yaml`'s rules on the engine's series are the set, and no entry reads it).
 - Past ≈11 min, [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) (critical, `metrics`): the disconnect removes the published-port endpoint, so the scrape fails and the cycle gauge goes stale, NoData at ~5 min + `for: 5m` + 60 s.
-- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) stays quiet while the account is flat: its position node reads the largest exposure at last sight, which is 0 on a flat account. If the order filled before the socket went — or a position left open by A2 is still standing, which these *Preconditions* do not forbid — this run has become D on a shorter clock and that page lands at ≈12 min.
+- [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) stays quiet while the account is flat: its position node reads the largest exposure at last sight, which is 0 on a flat account. If the order filled before the socket went — or a position left open by an earlier drill or plan is still standing, which these *Preconditions* do not forbid — this run has become D on a shorter clock and that page lands at ≈12 min.
 - **The engine's CRITICAL line does not reach Loki while the socket is down**, so [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) cannot fire during the hold (no count command: `cli/logging/ship.py`'s `LokiShipHandler` is the engine's one route to Loki). The engine ships its own logs in-process to Grafana Cloud, so with no network the line sits in a bounded in-memory ring and may be evicted before the reconnect. Read it from the host, never from Loki.
 
 ### Operator action
@@ -389,7 +390,7 @@ On the engine host, stop the unit. Engine only, no reboot and no converge:
 sudo systemctl stop zcrypto-engine
 ```
 
-**Read Kraken's open orders in the web UI while the engine is down.** That reading is deliverable 1 and it is unrepeatable: once the engine is back, the adopt pass has already acted on whatever was there. Then start it again:
+**Read Kraken's open orders in the web UI while the engine is down.** That reading is deliverable 1 and it is unrepeatable: once the engine is back, the adopt pass has already acted on whatever was there. Read Kraken's positions page too: the `rest-hold` plan shape carries leverage, so if the order filled while the engine was down a margin position is open, and the start waits for that position to close (the restart rule in the standing rules). Then start it again:
 
 ```
 sudo systemctl start zcrypto-engine
@@ -422,7 +423,7 @@ uv run python infra/scripts/grafana-query.py 'zcrypto_exec_external_events_total
 
 - **2 is the expected value**: the adopt pass's cancel puts the order's `OrderPendingCancel` and then its `OrderCanceled` on the external stream, and each keys back through the row the pass attached — by the Kraken txid the row recorded at acceptance, since Kraken's order reads carry no client order id back and a restart names the order by its txid.
 - **One more per fill racing the cancel**, keyed back the same way. Either reading proves a restart re-attaches a ledgered order by its txid, which is the question this reading exists to answer.
-- **0 is recorded as "0, cause undetermined" until two artefacts have been read**: the `canceling adopted resting order` line above and the row's own `events` and state in the ledger read. A row marked `ambiguous` recorded no txid, so the pass cancelled the order as one it could not match and both events counted `unmatched`. A line with no matching cancel event on a row that did record its txid says the cancel was issued and its acknowledgement did not reach the row (no count command: both artefacts live on the engine host, outside the tree): read Kraken's open orders — an order still resting there is the venue's answer, and one that is gone leaves an engine-side defect on the live trade path rather than a fact about the venue. No line at all says nothing was cancelled: read Kraken's open orders and the row's state before reading a bare "no line" as anything about the venue or the adapter.
+- **0 is recorded as "0, cause undetermined" until two artefacts have been read**: the `canceling adopted resting order` line above and the row's own `events` and state in the ledger read. A row marked `ambiguous` recorded no single txid, so the pass cancelled the order as one it could not match and both events counted `unmatched`. A line with no matching cancel event on a row that did record its txid says the cancel was issued and its acknowledgement did not reach the row (no count command: both artefacts live on the engine host, outside the tree): read Kraken's open orders — an order still resting there is the venue's answer, and one that is gone leaves an engine-side defect on the live trade path rather than a fact about the venue. No line at all says nothing was cancelled: read Kraken's open orders and the row's state before reading a bare "no line" as anything about the venue or the adapter.
 - `(no series)` is a FAIL of the telemetry path and never a zero (no count command: `tests/test_engine_metrics.py::test_external_events_counter_preregisters_both_dispositions` holds it): both dispositions are registered at engine startup, so the family is present on a healthy engine whatever the counts.
 
 ### Retire when
