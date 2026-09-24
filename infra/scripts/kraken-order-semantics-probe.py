@@ -2428,7 +2428,7 @@ def record_unresolved_start(state: RunState, selected: set[int], positions: list
 def print_mass_status_causes() -> None:
     print("!! a start-time venue read failed; nothing was submitted, so there is nothing of this run's to")
     print("!! flatten. The binding drops the cause. In order of likelihood:")
-    print("!!   1. the key lacks a query permission (Query Open Orders & Trades, Query Closed Orders & Trades);")
+    print("!!   1. the key lacks a query permission (Query Funds, Query Open Orders & Trades, Query Closed Orders & Trades);")
     print("!!   2. a WARN above -- `Failed to fetch tokenized asset pairs`, `Failed to parse instrument` --")
     print("!!      left a pair out of the listing;")
     print("!!   3. an open order or position sits on a pair outside the listing: Kraken -> Open Orders, Positions.")
