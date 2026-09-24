@@ -704,10 +704,12 @@ def _strategy(*argv: str):
     return probe.ProbeStrategy(args, state), state
 
 
-def test_the_probe_strategy_arms_none_of_the_librarys_order_management(monkeypatch):
-    from tests.test_engine_node import _management_flags_built_by
+def test_the_probe_strategy_hands_the_library_no_order_management_and_no_claim(monkeypatch):
+    from tests.test_engine_node import _configs_built_by
 
-    assert _management_flags_built_by(monkeypatch, probe, _strategy) == [(False, False, False)] * 2
+    built = _configs_built_by(monkeypatch, probe, _strategy)
+    settings = [(c.manage_stop, c.manage_contingent_orders, c.manage_gtd_expiry, c.external_order_instrument_ids) for c in built]
+    assert settings == [(False, False, False, None)] * 2
 
 
 class _FactoryOrder:

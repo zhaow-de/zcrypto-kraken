@@ -648,10 +648,10 @@ def test_the_observer_carries_the_venues_external_order_identity_and_claims_noth
     assert str(observer.config.strategy_id) == "EXTERNAL"
 
 
-def _management_flags_built_by(monkeypatch, module, construct) -> list[tuple[bool, bool, bool]]:
-    """The library arms its order management from the config handed to `__new__`, and `.config` reports
-    `__init__`'s, so this reads every config one construction builds through `module`'s own
-    `StrategyConfig`: two, one per constructor, is the count a construction that hides neither has."""
+def _configs_built_by(monkeypatch, module, construct) -> list:
+    """The library arms its order management from the config handed to `__new__`, while `.config` reports
+    `__init__`'s, so both are recorded as they are built: two, one per constructor; fewer means one was
+    built past the recording."""
     built = []
     real = module.StrategyConfig
 
@@ -663,12 +663,13 @@ def _management_flags_built_by(monkeypatch, module, construct) -> list[tuple[boo
         patch.setattr(module, "StrategyConfig", recording)
         construct()
     assert len(built) == 2, f"the construction built {len(built)} configs through {module.__name__}.StrategyConfig"
-    return [(config.manage_stop, config.manage_contingent_orders, config.manage_gtd_expiry) for config in built]
+    return built
 
 
 def test_no_strategy_arms_the_librarys_order_management(tmp_path, monkeypatch):
     for construct in (lambda: ShadowStrategy(_config(tmp_path)), lambda: node.ExternalOrderObserver(lambda event: None)):
-        assert _management_flags_built_by(monkeypatch, node, construct) == [(False, False, False)] * 2
+        built = _configs_built_by(monkeypatch, node, construct)
+        assert [(c.manage_stop, c.manage_contingent_orders, c.manage_gtd_expiry) for c in built] == [(False, False, False)] * 2
 
 
 def test_the_observer_forwards_every_order_event_to_the_strategys_external_forwarder(tmp_path):
@@ -811,16 +812,11 @@ def test_probe_executor_factory_shape(tmp_path):
 # --- the own-strategy order stream (the unknown-order kill trip's scoping) -----------------------
 
 
-def test_no_strategy_claims_external_orders(tmp_path):
-    """No strategy this node registers claims external orders, on every construction: `None` there
+def test_no_strategy_claims_external_orders(tmp_path, monkeypatch):
+    """No strategy this node registers claims external orders, at either constructor: `None` there
     IS the empty claim."""
-    strategies = (
-        ShadowStrategy(_config(tmp_path)),
-        ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
-        node.ExternalOrderObserver(lambda event: None),
-    )
-    for strategy in strategies:
-        assert strategy.config.external_order_instrument_ids is None
+    for construct in (lambda: ShadowStrategy(_config(tmp_path)), lambda: node.ExternalOrderObserver(lambda event: None)):
+        assert [c.external_order_instrument_ids for c in _configs_built_by(monkeypatch, node, construct)] == [None, None]
 
 
 # Each banned text mapped to the cli/ paths allowed to carry it and how many times; an entry allowed
