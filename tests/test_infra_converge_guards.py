@@ -1584,7 +1584,9 @@ def test_the_zaccess_tunnel_mtu_is_one_value_its_ipv4_path_carries():
     assert len(set(mtus.values())) == 1, f"the two tunnel ends declare different MTUs: {mtus}"
 
 
-# --- a socket or path unit on default dependencies precedes basic.target: After= a later unit is a boot cycle; stop-bound to a service, it is not started again with it.
+# --- a socket or path unit on default dependencies precedes basic.target: ordered after a later unit it is a boot
+# cycle, and bound to one it is stopped with it and not started again; its After= and binding directives may
+# name only sysinit.target and the targets it follows, and the service it activates carries the rest.
 EARLY_BOOT_UNITS = sorted(
     p
     for pattern in (
@@ -1596,7 +1598,7 @@ EARLY_BOOT_UNITS = sorted(
     for p in ANSIBLE.glob(pattern)
 )
 BEFORE_SYSINIT = {"sysinit.target", "local-fs.target", "local-fs-pre.target", "swap.target"}
-STOP_BINDING = {"Requires", "Requisite", "BindsTo", "PartOf"}
+BINDING = {"Requires", "Requisite", "BindsTo", "PartOf", "RequiresMountsFor"}
 
 
 def _unit_lines(path: Path) -> list[str]:
@@ -1610,18 +1612,18 @@ def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
     for path in EARLY_BOOT_UNITS:
         lines = _unit_lines(path)
         offenders += [
-            f"{path.relative_to(ANSIBLE)}: {l} (continued: write the directive on one line)" for l in lines if l.endswith("\\")
+            f"{path.relative_to(ANSIBLE)}: {l} (ends in a backslash, which this guard does not read)"
+            for l in lines
+            if l.endswith("\\")
         ]
         settings = [(k.strip(), v.strip()) for k, _, v in (l.partition("=") for l in lines if "=" in l)]
-        if any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings):
-            continue
+        # DefaultDependencies=no lifts the ordering before basic.target, not the stop propagation a binding carries
+        unordered = any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings)
         for k, v in settings:
-            services = [u for u in v.split() if u.endswith(".service")]
-            late_targets = [u for u in v.split() if u.endswith(".target") and u not in BEFORE_SYSINIT]
-            if (k == "After" and (services or late_targets)) or (k in STOP_BINDING and services):
+            if (k in BINDING or (k == "After" and not unordered)) and any(u not in BEFORE_SYSINIT for u in v.split()):
                 offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
     assert not offenders, (
-        f"an early-boot unit waits on or binds to a later unit; the service it activates must carry that: {offenders}"
+        f"an early-boot unit waits on or binds to a unit it cannot rely on at boot; the service it activates must carry that: {offenders}"
     )
 
 
