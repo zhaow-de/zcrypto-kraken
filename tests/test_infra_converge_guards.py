@@ -297,8 +297,7 @@ def test_engine_window_guard(since_boundary, override, expected):
 
 
 # The two floors ARE the guard -- 1800 s (the cycle-completion window [B, B+30 min] may still be
-# running) and 900 s (a converge begun inside 15 min of the next boundary risks its end-of-play
-# restart straddling it).
+# running) and 900 s (a play's work above the audit's close, which the test below holds).
 # These fixtures sit ON the comparison boundary, which is the only place a constant is pinned.
 @pytest.mark.parametrize(
     ("since_boundary", "expected"),

@@ -107,8 +107,8 @@
       when: not ansible_check_mode
       tags: [engine]
 
-    # The close is 900 s at the probe, and the engine restarts at the play's end: 600 s of it is the
-    # restart's margin (the deploy-log audit's `_BEFORE_BOUNDARY_SECONDS`), 300 s the play's own work.
+    # The close stands a play's work above the deploy-log audit's `_BEFORE_BOUNDARY_SECONDS`,
+    # which judges the row's `ts`, written at the play's end.
     - name: engine window — refuse a converge outside the inter-cycle gap
       ansible.builtin.assert:
         that: >-
