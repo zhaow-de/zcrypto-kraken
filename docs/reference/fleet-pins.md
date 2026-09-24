@@ -14,9 +14,9 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:11:46 | `7ccd97eb7e3c` |
+| capture | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-24 19:49:47 | `7d4c6066d71e` |
 | capture | zcrypto-red | `3f291f3cee57` — revision `77df6273` | 2026-09-24 15:48:46 | `7d4c6066d71e` |
-| engine | zcrypto | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:25:31 | `ac6172b9ffb2` |
+| engine | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-24 19:50:25 | `7d4c6066d71e` |
 | alloy | zcrypto | `b8ec653c4423` — v1.19.2 | 2026-09-22 10:40:38 | `491b0578c049` — v1.18.0 |
 | alloy | zcrypto-red | `b8ec653c4423` — v1.19.2 | 2026-09-22 10:25:05 | `491b0578c049` — v1.18.0 |
 | alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 09:40:56 | `491b0578c049` — v1.18.0 |
@@ -42,10 +42,8 @@ A constraint lives where it is enforced or executed: the NAS `-compat` rule and 
 
 The current pins and their operands; older digests are in this file's git log.
 
-- `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; capture on the secondary
-- `7d4c6066d71e` = `sha256:7d4c6066d71edad9fa9029c4d725f9bfc354ba22b7e7044be95cd01b1c27a107` — revision `a1a39280`, AVX; capture on the primary, the engine and ops; the secondary's operand
-- `7ccd97eb7e3c` = `sha256:7ccd97eb7e3c134bd51b09caf9182dc64642fbf7c76b795fe1c9d6c79c51679e` — revision `8d00ead9`; the primary capture's operand
-- `ac6172b9ffb2` = `sha256:ac6172b9ffb2c1693fa4b55a2498b1ec93ecbb6d13eb4109c5d81a6e7a0e69dd` — revision `4925e060`; the engine's operand
+- `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; capture on both hosts and the engine
+- `7d4c6066d71e` = `sha256:7d4c6066d71edad9fa9029c4d725f9bfc354ba22b7e7044be95cd01b1c27a107` — revision `a1a39280`, AVX; ops; the capture pair's and the engine's operand
 - `6ece9ceb1c18` = `sha256:6ece9ceb1c181888daf403329d567041ac3481ce7926d03eb32d137d30a7e912` — revision `8f4ac521`, AVX; ops' operand
 - `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, `-compat`; the NAS archive-pull
 - `38fd9d703749` = `sha256:38fd9d70374939d2f82b6eaeac3ab03ee12b80bb299a643e9c01cf93378c1b0b` — revision `28d32463`, `-compat`; the NAS operand
