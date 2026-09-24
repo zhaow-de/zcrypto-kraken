@@ -158,19 +158,23 @@ _VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".cancel_all_orders",
 # is what broke, so the two deliberately share no code path, and the price of that is a second
 # entry here rather than a guard that reuse would have satisfied.
 _VENUE_MUTATING_MODULES = frozenset({"cli/engine/executor.py", "cli/engine/flatten.py"})
+_REPO = Path(__file__).resolve().parents[1]
 
 
 def test_the_venue_mutating_names_have_exactly_one_module():
     """Spec 00090 D4's structural pin, widened by spec 00106 D7: every venue-mutating call lives in
     `cli/engine/executor.py` or `cli/engine/flatten.py`. A text walk, not an import walk -- a
     reference in a comment is still one a refactor can activate."""
+    files = sorted((_REPO / "cli").rglob("*.py"))
+    assert len(files) > 100, f"the walk found {len(files)} files under cli/"
     offenders = []
-    for path in sorted(Path("cli").rglob("*.py")):
-        if path.as_posix() in _VENUE_MUTATING_MODULES:
+    for path in files:
+        rel = path.relative_to(_REPO).as_posix()
+        if rel in _VENUE_MUTATING_MODULES:
             continue
         text = path.read_text()
         if any(name in text for name in _VENUE_MUTATING_NAMES):
-            offenders.append(path.as_posix())
+            offenders.append(rel)
     assert offenders == []
 
 
@@ -183,17 +187,16 @@ def test_the_venue_mutating_names_have_exactly_one_module():
 _ACCOUNT_WIDE_CANCEL = ".cancel_all_orders"
 _ACCOUNT_WIDE_CANCEL_ALLOWED = frozenset({"cli/engine/flatten.py"})
 _RUNTIME_TREES = ("cli", "infra", ".claude")
-_REPO = Path(__file__).resolve().parents[1]
 
 
 def test_only_the_red_button_reaches_a_cancel_all():
     """Tracked files only: `.claude/worktrees/` holds gitignored agent checkouts, copies of cli/
     included, which are not this tree's code. A tracked file deleted from the working tree is skipped."""
     listed = subprocess.run(
-        ["git", "-C", str(_REPO), "ls-files", "--", *_RUNTIME_TREES], capture_output=True, text=True, check=True
-    ).stdout.splitlines()
+        ["git", "-C", str(_REPO), "ls-files", "-z", "--", *_RUNTIME_TREES], capture_output=True, text=True, check=True
+    ).stdout.split("\0")
     tracked = [path for path in listed if path.endswith(".py") and (_REPO / path).is_file()]
-    assert tracked, "git ls-files listed no runtime file: the walk read nothing"
+    assert len(tracked) > 100, f"git ls-files listed {len(tracked)} runtime files"
     offenders = [
         path for path in tracked if path not in _ACCOUNT_WIDE_CANCEL_ALLOWED and _ACCOUNT_WIDE_CANCEL in (_REPO / path).read_text()
     ]
