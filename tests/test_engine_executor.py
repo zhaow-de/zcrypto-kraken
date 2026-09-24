@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
 import shutil
 import subprocess
 import time
@@ -150,22 +151,10 @@ def test_a_below_costmin_result_names_the_floor():
 
 # The dotted ATTRIBUTE REACH, never the bare word: `cli/engine/node.py` seals this surface by
 # DEFINING those names to raise, and matching the bare word would make the seal itself the offender,
-# leaving an allowance as the only way back. `cancel_order` is here because a cancel reaches the
-# venue exactly as a submit does, `cancel_all_orders` because an account-wide cancel is the largest.
-_VENUE_MUTATING_NAMES = (
-    ".submit_order",
-    ".cancel_order",
-    ".cancel_all_orders",
-    ".cancel_gtd_expiry",
-    ".modify_order",
-    ".close_position",
-    ".close_all_positions",
-    ".market_exit(",
-    ".order_factory",
-)
-# On the library's order surface and not venue-mutating: the exit's completion hook, and the setter
-# for which instruments count as external.
-_ORDER_SURFACE_NOT_MUTATING = frozenset({"post_market_exit", "set_external_order_instrument_ids"})
+# leaving an allowance as the only way back.
+# On the library's order surface and not venue-mutating: the exit's completion hook, the setter for
+# which instruments count as external, and the GTD cancel, which stops a local timer and nothing else.
+_ORDER_SURFACE_NOT_MUTATING = frozenset({"post_market_exit", "set_external_order_instrument_ids", "cancel_gtd_expiry"})
 # The engine's order machine and the red button, and nothing else. `cli/engine/flatten.py` is a
 # second venue-mutating module BY DESIGN (spec 00106 D7): the button has to work when the machine
 # is what broke, so the two deliberately share no code path, and the price of that is a second
@@ -174,9 +163,25 @@ _VENUE_MUTATING_MODULES = frozenset({"cli/engine/executor.py", "cli/engine/flatt
 _REPO = Path(__file__).resolve().parents[1]
 
 
+def _reach(name: str) -> re.Pattern:
+    """`.name` as a whole attribute, called or bound, and never a longer name it prefixes."""
+    return re.compile(rf"\.{re.escape(name)}\b")
+
+
+def _venue_mutating_reaches() -> list[re.Pattern]:
+    """The installed wheel's own order surface, so a method a later release adds is refused before
+    anyone names it; `order_factory` mints the orders the rest submit."""
+    from tests.test_engine_node import _order_mutating_surface
+
+    names = (_order_mutating_surface() - _ORDER_SURFACE_NOT_MUTATING) | {"order_factory"}
+    assert len(names) >= 10, f"the derivation found only {sorted(names)}"
+    return [_reach(name) for name in sorted(names)]
+
+
 def test_the_venue_mutating_names_have_exactly_one_module():
     """Spec 00090 D4's structural pin. A text walk, not an import walk -- a reference in a comment is
     still one a refactor can activate."""
+    reaches = _venue_mutating_reaches()
     files = sorted((_REPO / "cli").rglob("*.py"))
     assert len(files) > 100, f"the walk found {len(files)} files under cli/"
     offenders = []
@@ -185,21 +190,9 @@ def test_the_venue_mutating_names_have_exactly_one_module():
         if rel in _VENUE_MUTATING_MODULES:
             continue
         text = path.read_text()
-        if any(name in text for name in _VENUE_MUTATING_NAMES):
+        if any(reach.search(text) for reach in reaches):
             offenders.append(rel)
     assert offenders == []
-
-
-def test_the_venue_mutating_names_cover_the_library_order_surface():
-    """A method a later wheel adds to `Strategy`'s order surface is a red test here until the pin names it."""
-    from tests.test_engine_node import _order_mutating_surface
-
-    uncovered = sorted(
-        name
-        for name in _order_mutating_surface() - _ORDER_SURFACE_NOT_MUTATING
-        if not any(f".{name}(".startswith(reach) for reach in _VENUE_MUTATING_NAMES)
-    )
-    assert uncovered == []
 
 
 # On the pinned wheel an instrument-named CancelAllOrders sends Kraken's account-wide CancelAll (upstream
@@ -209,7 +202,7 @@ def test_the_venue_mutating_names_cover_the_library_order_surface():
 # The match refuses the default form too: for a strategy registered under the operator's id it cancels
 # the operator's orders (cli/engine/node.py), so narrowing it to `strategy_only=False` opens that door.
 # `market_exit` issues that default form on each instrument the strategy holds orders or positions in.
-_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": frozenset({"cli/engine/flatten.py"}), ".market_exit(": frozenset()}
+_ACCOUNT_WIDE_CANCELS = {"cancel_all_orders": frozenset({"cli/engine/flatten.py"}), "market_exit": frozenset()}
 _RUNTIME_TREES = ("cli", "infra", ".claude")
 
 
@@ -225,7 +218,7 @@ def test_only_the_red_button_reaches_a_cancel_all():
         f"{path}: {name}"
         for path in tracked
         for name, allowed in _ACCOUNT_WIDE_CANCELS.items()
-        if path not in allowed and name in (_REPO / path).read_text()
+        if path not in allowed and _reach(name).search((_REPO / path).read_text())
     ]
     assert offenders == []
 
