@@ -61,9 +61,12 @@ name the VARIABLES and never their contents.
 
 Collision safety: the production engine runs `TraderId("SHADOW-001")` with a default-tagged
 strategy, so its client order ids carry the infix `-001-000-`. This harness mints
-`O-<YYYYMMDD>-<HHMMSS>-901-P6V-<n>` -- nautilus's own id SHAPE (proven accepted by Kraken on
-2026-07-10) with tags the engine structurally cannot emit. Each id is asserted distinct from
-the engine's infix before submission.
+`O-<YYYYMMDD>-<HHMMSS>-901-P6V-<n>` -- nautilus's own id SHAPE, with tags the engine structurally
+cannot emit. At 27 characters or more it never reaches Kraken whole: the adapter sends a non-UUID
+id over 18 characters as `O` plus its last 17, so it goes out as `O-<HHMMSS>-901-P6V-<n>` while
+`<n>` is one digit, the infix intact. What Kraken accepted on 2026-07-10 was an 18-character cut
+of nautilus's shape, not a 27-character id. Each id is asserted distinct from the engine's infix
+before submission.
 """
 
 from __future__ import annotations
