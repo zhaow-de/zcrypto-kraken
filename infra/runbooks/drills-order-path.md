@@ -137,7 +137,7 @@ Entry `A2`: the venue's figure, the ledgered figure, the delta, that the fill co
 
 **Decision-to-flat**: how long it takes, in wall-clock minutes, from an operator deciding to close everything to the account actually being flat. That is the number an operator needs before promising anything about a bad afternoon, and nothing in this system has produced it.
 
-**What stops the clock is venue truth.** The command's exit 0 is its own final read, taken the moment its writes finish ([`engine-procedures.md#flat-verdict-reads`](engine-procedures.md#flat-verdict-reads)), so a clock stopped on it measures decision-to-*verdict*, not decision-to-flat. Stop it on Kraken's own pages.
+**What stops the clock is venue truth.** The command's exit 0 is its own final read, taken the moment its writes finish (the `final` read closing `sweep` in `cli/engine/flatten.py`), so a clock stopped on it measures decision-to-*verdict*, not decision-to-flat. Stop it on Kraken's own pages.
 
 ### Preconditions
 
