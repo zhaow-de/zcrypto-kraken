@@ -1578,9 +1578,17 @@ def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
     )
 
 
-def test_the_zaccess_tunnel_mtu_is_one_value_its_ipv4_path_carries():
-    mtus = {str(conf.relative_to(ANSIBLE)): int(_wg_value(conf, "MTU")) for conf in (ACCESS_WG_CONF, ACCESS_OPS_WG_CONF)}
+def _tunnel_mtus() -> dict[str, int]:
+    return {str(conf.relative_to(ANSIBLE)): int(_wg_value(conf, "MTU")) for conf in (ACCESS_WG_CONF, ACCESS_OPS_WG_CONF)}
+
+
+def test_each_zaccess_tunnel_end_fits_its_ipv4_path():
+    mtus = _tunnel_mtus()
     assert all(m <= 1400 for m in mtus.values()), f"above 1400 the tunnel's packets outgrow its 1460-byte IPv4 path: {mtus}"
+
+
+def test_the_zaccess_tunnel_ends_declare_one_mtu():
+    mtus = _tunnel_mtus()
     assert len(set(mtus.values())) == 1, f"the two tunnel ends declare different MTUs: {mtus}"
 
 
