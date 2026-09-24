@@ -129,8 +129,6 @@ Checks 1 through 5 and 7 were re-run on this wheel and returned what the previou
 - **#5028 (`b8978ba952`) adds `submission_recovery_policy` to the exec engine config**, default `RESOLVE_LOCALLY`; upstream's commit says it adds the types without changing runtime recovery behaviour, and `e7fc8b8a4` pins that default in `tests/test_nautilus_interface_pin.py`.
 - **`9b2df89ef3` reaches the executor's `Already mutably borrowed` quote.** Re-measured offline on this wheel for PR #599's row keying: inside the handler, `cache.order()` and `cache.orders_open()` raise it for `OrderInitialized` and `OrderPendingCancel` and read fine for `OrderSubmitted`, `OrderAccepted`, `OrderFilled` and `OrderCanceled`, and the executor's docstring names `OrderPendingCancel`.
 
-**The attended order-semantics pass on this wheel is done**: PASS on all six probes on 2026-09-24, the first item under *Suggested next steps*.
-
 **The checks, as written for every bump:**
 
 - **Bump and lock.** Edit the pin in `pyproject.toml` to the chosen nightly, `uv lock`, `uv sync`. Per `CLAUDE.md` a `uv.lock` / `pyproject.toml` change reaches everything, so this branch takes the **full local suite**, not a reachable subset.
