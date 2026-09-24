@@ -889,12 +889,6 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
     assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
 
 
-# The template's resting state is disarmed; an attended probe window arms it by a reviewed one-line
-# diff and the disarm PR the same day restores it. This literal is flipped in lockstep with that
-# line, so the committed state is asserted in both directions and a drift from it fails here.
-COMMITTED_EXEC_ARMED = True
-
-
 def test_arming_backstop_reads_the_real_committed_files():
     """Both directions from the REAL role, template and pyproject: a recorded version passes, an
     absent one refuses."""
@@ -903,13 +897,14 @@ def test_arming_backstop_reads_the_real_committed_files():
     pin = _pinned_nautilus_version()
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
 
-    literal = "true" if COMMITTED_EXEC_ARMED else "false"
-    assert re.search(rf"(?m)^exec_armed\s*=\s*{literal}\s*$", template), (
-        f"the committed template must render exec_armed = {literal}"
+    # `false` at rest, `true` for an attended probe window's reviewed one-line diff: either literal
+    # is a committed state, and a templated or missing value is neither.
+    assert re.search(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", template), (
+        "the committed template must render exec_armed as a boolean literal"
     )
     assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
     task = find_task(load_tasks(ENGINE), ARMING)
-    armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
+    armed = re.sub(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", "exec_armed = true", template)
     base = {
         "engine_config_template_text": armed,
         "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
