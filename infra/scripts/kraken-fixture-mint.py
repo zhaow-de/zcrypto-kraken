@@ -4,10 +4,10 @@
 its own client did not place, a MARGIN POSITION, and a NON-EUR SPOT BALANCE for the sell path.
 This mints those and stops. It has no cancel path -- not for its own legs, not for anything else
 -- so it cannot unmake a fixture, its own or a hand-placed one.
-EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and on those the
-adapter's order-report read returns success with the row dropped -- so a fixture resting there is
-invisible to the very verdict the attended pass reads, and the pass would report clean against an
-account it cannot see. `BLIND_ORDER_READ_LEGS` is imported rather than restated.
+EVERY LEG IS ON A SAME-KEY PAIR. Kraken spells five basket pairs two ways, and a read scoped to
+one of those pairs sees none of its open orders -- so a fixture resting there is invisible to any
+reader that asks about its pair by name, though an unscoped read sees it.
+`SCOPED_ORDER_READ_BLIND_LEGS` names those pairs and states the mechanism.
 EVERY SIZE COMES FROM THE VENUE'S OWN ROW AT RUN TIME, never from a remembered figure -- which is
 rejected at submit if it has fallen below a floor and silently accepted at a notional nobody chose
 if it has not -- and never from the adapter's instrument object, which is a TRANSLATION of that
@@ -41,7 +41,7 @@ from nautilus_trader.model import (
     TimeInForce,
 )
 
-from cli.engine.flatten import BLIND_ORDER_READ_LEGS, QUOTE_CURRENCY, resolve_base
+from cli.engine.flatten import QUOTE_CURRENCY, resolve_base
 from cli.engine.instruments import (
     INSTRUMENT_IDS,
     BelowMinimum,
@@ -56,6 +56,12 @@ API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 
 DEFAULT_PAIR = "SOL/EUR"
+
+# The basket pairs Kraken spells two ways: an AssetPairs key and a different altname. A read scoped
+# to one instrument keeps only the rows whose pair is that instrument's key, while an open order
+# names the altname (upstream #5067), so a scoped read on these pairs sees none of their orders. An
+# unscoped read resolves both spellings.
+SCOPED_ORDER_READ_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The resting leg sits this far below the run's own best bid. Far enough that it cannot fill while
 # the fixture is wanted; a fraction rather than a price, because a price is a fact about one minute.
@@ -73,19 +79,14 @@ FIXTURE_ORDER_TAG = "FIXMINT"
 # Typed in full, and deliberately not a word a reflex answers.
 CONFIRM_WORD = "MINT"
 
-# The longest client order id this venue is RECORDED as having accepted: the order-semantics probe's
-# `O-<YYYYMMDD>-<HHMMSS>-901-P6V-<seq>` at one-digit seq, whose passing runs the adapter-verification
-# rows carry. It is a measurement, not a limit, which is why it is printed beside this script's own
-# longer ids rather than used to size them.
-_PROVEN_COID_LENGTH = 27
-
 # Flooring can drop a target under a floor it cleared; a few steps is ample and a runaway is a
 # listing that is not what this script assumes, which is a refusal rather than a loop.
 _SIZE_WALK_LIMIT = 8
 
 
 class Refusal(Exception):
-    """A precondition this script will not proceed without. Never caught inside it."""
+    """A precondition this script will not proceed without. Caught inside it only by the send loop,
+    which re-raises it naming the legs already sent."""
 
 
 @dataclass(frozen=True)
@@ -132,50 +133,46 @@ class AccountState:
 
 
 def assert_same_key(pair: str) -> None:
-    """Refuse a pair whose Kraken altname differs from its AssetPairs key.
-
-    The adapter caches instruments under the key and looks an order up by its altname, comparing by
-    raw equality with no miss branch, so a row on one of these legs is dropped and the read returns
-    success. A fixture there is invisible to the verdict it exists to exercise.
-    """
+    """Refuse a pair whose Kraken altname differs from its AssetPairs key: a read scoped to it
+    sees none of its open orders, so a fixture there is invisible to any reader that asks about
+    that pair by name."""
     if pair not in INSTRUMENT_IDS:
         raise Refusal(
             f"REFUSING: {pair} is not one of the basket's instruments, so this guard has no opinion "
             f"about it. Mint on a basket pair; {DEFAULT_PAIR} is the default.",
         )
-    if pair in BLIND_ORDER_READ_LEGS:
+    if pair in SCOPED_ORDER_READ_BLIND_LEGS:
         raise Refusal(
-            f"REFUSING: {pair} is spelled two ways at the venue, so a resting order on it is "
-            f"dropped by the order-report read and the attended pass would read clean against an "
-            f"account it cannot see. Mint on a same-key pair; {DEFAULT_PAIR} is the default.",
+            f"REFUSING: {pair} is spelled two ways at the venue, so a read scoped to {pair} sees "
+            f"none of its open orders and a fixture resting there is invisible to it. Mint on a "
+            f"same-key pair; {DEFAULT_PAIR} is the default.",
         )
 
 
 def assert_row_is_same_key(pair: str, pair_key: str, row: dict) -> None:
     """The same property as `assert_same_key`, measured from the venue's row instead of remembered.
 
-    `assert_same_key` reads a list this repo maintains; this reads the property that list describes,
+    `assert_same_key` reads a list this script keeps; this reads the property that list describes,
     off the row the run has already fetched. Two producers of one fact are the check on each other,
     and each refusal names which fired: a leg the list has not learned about yet is caught here, and
     a disagreement between the two is a finding about the list rather than a duplicate refusal.
 
     It cannot replace the list. It needs the listing, so it fires later than `assert_same_key`,
-    which refuses before anything is read at all -- and the list's identity with `flatten`'s own
-    constant is what keeps this script and the engine talking about the same five legs.
+    which refuses before anything is read at all.
     """
     altname = _row_field(row, "altname", pair)
     if altname == pair_key:
         return
     remembered = (
         "the hardcoded list agrees"
-        if pair in BLIND_ORDER_READ_LEGS
-        else "and BLIND_ORDER_READ_LEGS does NOT carry this leg -- the list in cli/engine/flatten.py "
-        "is behind the venue, which is a finding about the list"
+        if pair in SCOPED_ORDER_READ_BLIND_LEGS
+        else "and SCOPED_ORDER_READ_BLIND_LEGS does NOT carry this leg -- the list in "
+        "infra/scripts/kraken-fixture-mint.py is behind the venue, which is a finding about the list"
     )
     raise Refusal(
         f"REFUSING (measured from the listing, not from the list): {pair} is keyed {pair_key} and "
-        f"spelled {altname}, so an order on it is dropped by the adapter's order-report read and a "
-        f"fixture there is invisible to the verdict it exists to exercise; {remembered}.",
+        f"spelled {altname}, so a read scoped to {pair} sees none of its open orders and a fixture "
+        f"there is invisible to it; {remembered}.",
     )
 
 
@@ -350,7 +347,7 @@ def check_confirmation(typed: str) -> None:
         )
 
 
-def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) -> str:
+def render_plan(legs: list[Leg], existing: AccountState, pair: str, now: datetime) -> str:
     """What the operator reads before deciding. Every leg states what it would spend."""
     lines = [
         f"account already holds -- resting: {existing.resting_pairs or '(none)'} - "
@@ -363,35 +360,44 @@ def render_plan(legs: list[Leg], existing: AccountState, pair: str, stamp: str) 
     for leg in legs:
         price = f"@ {leg.price}" if leg.price is not None else "@ market"
         lev = f" leverage {leg.leverage}" if leg.leverage is not None else ""
-        coid = mint_client_order_id(leg.kind, stamp)
+        coid = mint_client_order_id(leg.kind, now)
         lines.append(
             f"  {leg.kind:<8} {leg.side} {leg.quantity} {leg.pair} {price} "
             f"= EUR {leg.notional_eur:.2f} [{leg.account_type} {leg.time_in_force}]{lev} as {coid}"
         )
     total = sum(leg.notional_eur for leg in legs if leg.order_type == "MARKET")
     lines.append(f"  spends at market: EUR {total:.2f} (the resting leg rests, it does not spend)")
-    # What the repo holds about id length is one measurement and one claim that cannot both be read
-    # as written. The probe's ids were ACCEPTED AT SUBMIT at `_PROVEN_COID_LENGTH`; a comment in that
-    # same probe asserts an 18-character venue truncation. Acceptance at submit does not refute a
-    # truncation in what the venue STORES -- no run has ever read an id back -- so the two are not
-    # strictly contradictory; what is self-inconsistent is the comment, which relies on an infix
-    # sitting past character 18 surviving that very cut. The operator gets the measured number and
-    # the open question, because picking one silently is how a contradiction becomes a fact.
-    longest = max(len(mint_client_order_id(leg.kind, stamp)) for leg in legs)
-    lines.append(
-        f"  longest client order id here: {longest} characters. The only MEASURED acceptance on "
-        f"this adapter is the order-semantics probe's shape, at {_PROVEN_COID_LENGTH}, and that is "
-        f"acceptance AT SUBMIT -- no id has ever been read back from the venue. A comment in that "
-        f"probe also claims an 18-character truncation. Record what the venue does with these ids "
-        f"-- accepted, refused, or echoed back shortened -- in the version's "
-        f"docs/reference/adapter-verification/ row."
-    )
     return "\n".join(lines)
 
 
-def mint_client_order_id(kind: str, stamp: str) -> str:
-    """Identifiable by construction, so a later reader can tell what minted a row."""
-    return f"{FIXTURE_ORDER_TAG}-{kind}-{stamp}"
+def mint_client_order_id(kind: str, now: datetime) -> str:
+    """Identifiable by construction, so a later reader can tell what minted a row: the tag, one
+    letter per leg, and the run's day and time -- 17 characters, uppercase.
+
+    At most 18, because the adapter sends a longer free-text id as `O` plus its last 17 characters:
+    that cuts the tag, and where the legs' ids share their last 17 characters it sends all three
+    under one id, while Kraken requires a `cl_ord_id` unique among open orders and the resting leg is
+    open when the next leg goes out.
+    """
+    return f"{FIXTURE_ORDER_TAG}-{kind[0].upper()}{now:%d%H%M%S}"
+
+
+def partial_mint(legs: list[Leg], sent: list[str], failed: int, exc: Exception) -> str:
+    """What a send loop stopped at leg `failed` leaves behind, leg by leg.
+
+    A `Refusal` from `submit` is raised before that leg's order goes out. Any other exception can
+    come after the venue accepted it, so that leg is stated as unknown rather than as not sent.
+    """
+    leg = legs[failed]
+    outcome = "was not sent" if isinstance(exc, Refusal) else "failed at submit, and whether the venue took it is unknown"
+    untried = ", ".join(later.kind for later in legs[failed + 1 :]) or "(none)"
+    return (
+        f"REFUSING to continue: the {leg.kind} leg {outcome}: {exc}\n"
+        f"  sent: {'; '.join(sent) or '(none)'}\n"
+        f"  not attempted: {untried}\n"
+        f"Re-run without --execute first: the dry run reads what the account now holds and plans only "
+        f"what is missing."
+    )
 
 
 def require_credentials() -> tuple[str, str]:
@@ -415,31 +421,61 @@ def require_credentials() -> tuple[str, str]:
 # --------------------------------------------------------------------------------------------
 
 
-async def read_pair(client, pair: str) -> tuple[float, object]:
-    """The run's own best bid, and the instrument object -- for `cache_instrument` and nothing else.
-    The object is needed because `submit_order` documents `The instrument is not found in cache.`
-    among its errors and the cache's only writer is `cache_instrument`. It is NOT where a size comes
-    from, and the reason is categorical rather than incidental: this adapter never maps `costmin`
-    into `min_notional` at all, so the object answers None for it on every pair. A floor that arrives
-    as None and is read as 0.0 always clears, so `pair_limits` reads the row the venue enforces
-    instead.
+async def _read(what: str, call):
+    """One adapter read, or a refusal naming it: the operator gets a sentence, not a traceback.
+
+    `flatten` refuses a read that answers nothing rather than reading it as a flat account, and so
+    does this: `None` would mean "no resting order / no position / no balance" and re-mint the leg
+    on every run. An empty list is an answer; an absent one is not.
+    """
+    try:
+        answer = await call()
+    except Exception as exc:
+        raise Refusal(f"REFUSING: {what} could not be read: {exc}") from exc
+    if answer is None:
+        raise Refusal(f"REFUSING: {what} could not be read -- the venue answered nothing")
+    return answer
+
+
+async def read_listing(client) -> list:
+    """Every row of the venue's instrument listing, each cached into the client before any other read.
+
+    The adapter answers the book read, and resolves each row of an unscoped order or position read,
+    through that cache alone, and it fails the whole read on a row it cannot resolve -- so an open
+    order or margin position on ANY pair needs its row cached, not only the mint pair's. Every row
+    rather than one per instrument id: some ids carry more than one row, one per venue spelling, and
+    an order names one of them.
+    """
+    rows = list(await _read("the instrument listing", lambda: client.request_instruments(pairs=None)))
+    if not rows:
+        raise Refusal("REFUSING: the instrument listing came back empty -- every read after it would fail")
+    try:
+        for row in rows:
+            client.cache_instrument(row)
+    except Exception as exc:
+        raise Refusal(f"REFUSING: the instrument listing could not be cached: {exc}") from exc
+    return rows
+
+
+async def read_pair(client, pair: str, listing: list) -> float:
+    """The run's own best bid, read after `read_listing` has cached the pair.
+
+    Never a size: the adapter's instrument object never maps `costmin` into `min_notional`, so it
+    answers None for it on every pair, and a floor read as 0.0 always clears -- `pair_limits` reads
+    the row the venue enforces instead.
     """
     from nautilus_trader.model import InstrumentId
 
     instrument_id = InstrumentId.from_str(INSTRUMENT_IDS[pair])
-    rows = await client.request_instruments(pairs=None)
-    match = [row for row in rows if str(getattr(row, "id", "")) == str(instrument_id)]
-    if not match:
+    if not any(str(getattr(row, "id", "")) == str(instrument_id) for row in listing):
         raise Refusal(f"REFUSING: {pair} is not in the venue's listing")
-    row = match[0]
-
-    book = await client.request_book_snapshot(instrument_id, depth=1)
+    book = await _read(f"{pair}'s order book", lambda: client.request_book_snapshot(instrument_id, depth=1))
     # `bids`/`asks` are METHODS on the real `OrderBook`, not sequences -- reading the attribute
     # hands back a bound method, which is truthy and would price the leg off nonsense.
     bids = book.bids()
     if not bids:
         raise Refusal(f"REFUSING: {pair}'s book has no bid to price the resting leg from")
-    return float(bids[0].price), row
+    return float(bids[0].price)
 
 
 async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -> AccountState:
@@ -451,24 +487,21 @@ async def read_account(client, pair: str, limits: PairLimits, best_bid: float) -
     account, and it fails in the expensive direction: a leg minted again on every run.
     """
     account = AccountId(FIXTURE_ACCOUNT_ID)
-    orders = await client.request_order_status_reports(account, open_only=True)
+    orders = await _read("open orders", lambda: client.request_order_status_reports(account, open_only=True))
     # WITHOUT these three the client's own docstring says it "returns an empty vector" -- the CASH
     # default with spot reports off reads no leveraged position at all. This guard would then pass
     # against an account already carrying one and open another 2x position on every `--execute`,
     # while the printed plan says `positions: (none)`.
-    positions = await client.request_position_status_reports(
-        account,
-        account_type=AccountType.MARGIN,
-        use_spot_position_reports=False,
-        quote_currency=QUOTE_CURRENCY,
+    positions = await _read(
+        "positions",
+        lambda: client.request_position_status_reports(
+            account,
+            account_type=AccountType.MARGIN,
+            use_spot_position_reports=False,
+            quote_currency=QUOTE_CURRENCY,
+        ),
     )
-    state = await client.request_account_state(account, account_type=AccountType.CASH)
-    # `flatten` refuses a read that answers nothing rather than reading it as a flat account, and
-    # so does this: `None` here would mean "no resting order / no position / no balance" and re-mint
-    # the leg on every run. An empty list is an answer; an absent one is not.
-    for what, answer in (("open orders", orders), ("positions", positions), ("the account state", state)):
-        if answer is None:
-            raise Refusal(f"REFUSING: {what} could not be read -- the venue answered nothing")
+    state = await _read("the account state", lambda: client.request_account_state(account, account_type=AccountType.CASH))
     base = pair.split("/")[0]
     return AccountState(
         resting_pairs=tuple({str(getattr(o, "instrument_id", "")).split(".")[0] for o in orders or ()}),
@@ -517,11 +550,11 @@ def _held_bases(balances, base: str, limits: PairLimits, best_bid: float) -> tup
     return tuple(sorted(held))
 
 
-async def submit(client, leg: Leg, instrument, client_order_id: str) -> None:
-    """Send one leg. The only write this script makes, and there is no cancel to pair with it."""
+async def submit(client, leg: Leg, client_order_id: str):
+    """Send one leg. The only write this script makes, and there is no cancel to pair with it.
+    `submit_order` refuses an instrument the client has not cached; `read_listing` cached it."""
     from nautilus_trader.model import InstrumentId
 
-    client.cache_instrument(instrument)
     quantity = Quantity.from_str(str(leg.quantity))
     price = Price.from_str(str(leg.price)) if leg.price is not None else None
     # `from_str` parses a repr, and a float whose shortest repr runs past the venue's precision
@@ -534,7 +567,7 @@ async def submit(client, leg: Leg, instrument, client_order_id: str) -> None:
             f"REFUSING: the {leg.kind} leg's numbers changed in translation to the venue's types "
             f"({leg.quantity} -> {quantity}, {leg.price} -> {price}); nothing further was sent.",
         )
-    await client.submit_order(
+    return await client.submit_order(
         account_id=AccountId(FIXTURE_ACCOUNT_ID),
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[leg.pair]),
         client_order_id=ClientOrderId(client_order_id),
@@ -594,13 +627,13 @@ async def _run(
     print(f"credentials: {API_KEY_VAR} and {API_SECRET_VAR} are present (never printed)")
 
     client = client_factory(key, secret)
-    limits = pair_limits(listing_factory(), args.pair)
-    best_bid, instrument = await read_pair(client, args.pair)
-    # Warmed BEFORE the account reads, not just before `submit`. The order-report read resolves
-    # rows through this cache, and the adapter drops a row it cannot resolve while returning
-    # success -- so a cold cache would empty the resting-order guard rather than fail it. Cheap,
-    # and it closes the question from this side rather than leaving it to the live run.
-    client.cache_instrument(instrument)
+    try:
+        published = listing_factory()
+    except Exception as exc:
+        raise Refusal(f"REFUSING: the public AssetPairs listing could not be read: {exc}") from exc
+    limits = pair_limits(published, args.pair)
+    listing = await read_listing(client)
+    best_bid = await read_pair(client, args.pair, listing)
     print(
         f"{args.pair} now: best bid {best_bid}, ordermin {limits.ordermin}, "
         f"costmin {limits.costmin} (read this run, not remembered)"
@@ -609,8 +642,8 @@ async def _run(
     legs = plan_legs(pair=args.pair, limits=limits, best_bid=best_bid, existing=existing)
     # Minted BEFORE the plan is printed and reused at submit, so the ids the operator reads are the
     # ids that go out -- not a second set generated after they approved the first.
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    print(render_plan(legs, existing, args.pair, stamp))
+    now = datetime.now(UTC)
+    print(render_plan(legs, existing, args.pair, now))
 
     if not args.execute:
         print("\nDRY RUN -- nothing was sent. Re-run with --execute to mint.")
@@ -621,10 +654,16 @@ async def _run(
         raise Refusal("REFUSING: --execute needs a terminal for the confirmation")
     check_confirmation(prompt(f"\nType {CONFIRM_WORD} to send the plan above: ").strip())
 
-    for leg in legs:
-        coid = mint_client_order_id(leg.kind, stamp)
-        await submit(client, leg, instrument, coid)
-        print(f"  sent {leg.kind} as {coid}")
+    sent: list[str] = []
+    for index, leg in enumerate(legs):
+        coid = mint_client_order_id(leg.kind, now)
+        try:
+            txid = await submit(client, leg, coid)
+        except Exception as exc:
+            raise Refusal(partial_mint(legs, sent, index, exc)) from exc
+        sent.append(f"{leg.kind} as {coid} -> venue txid {txid}")
+        # Flushed, or a piped log lands these after the refusal that `main` writes to stderr.
+        print(f"  sent {sent[-1]}", flush=True)
     print(f"\nminted {len(legs)} leg(s). Nothing here cancels them.")
     return 0
 

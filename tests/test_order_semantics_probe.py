@@ -6,10 +6,12 @@ loads via `importlib.util.spec_from_file_location` (the precedent `test_grafana_
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import nautilus_trader
 import pytest
@@ -98,6 +100,462 @@ def test_the_classification_never_infers_never_submitted_from_a_status():
 
     assert split.outstanding == []
     assert split.closed == []
+
+
+# ---------------------------------------------------------------------------------------------
+# An open order as the operator reads it
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass
+class _Reconciled:
+    """An order startup reconciliation put in the Cache: named by its txid, priced at the adapter's 0.0."""
+
+    venue_order_id: str = "OWNERB-TCEUR-000001"
+    client_order_id: str = "OWNERB-TCEUR-000001"
+    instrument_id: str = "BTC/EUR.KRAKEN"
+    side: str = "SELL"
+    quantity: str = "0.00010000"
+    price: float = 0.0
+    status: SimpleNamespace = field(default_factory=lambda: SimpleNamespace(name="ACCEPTED"))
+
+
+def test_an_open_order_is_named_by_its_txid_and_not_priced_at_the_adapters_zero():
+    """A resting limit order read back through the adapter carries price 0.0, which matches nothing
+    on Kraken's Open Orders page; the txid is what the operator can look up."""
+    line = probe.describe_open_order(_Reconciled())
+
+    assert line.startswith("txid OWNERB-TCEUR-000001 BTC/EUR.KRAKEN SELL 0.00010000")
+    assert "@" not in line
+
+
+# ---------------------------------------------------------------------------------------------
+# Whose open orders these are
+# ---------------------------------------------------------------------------------------------
+
+_PAIR = "BTC/EUR.KRAKEN"
+# An earlier run's probe order as a fresh node adopts it: the report carries no client order id,
+# so reconciliation names it by its txid, and the probe infix it went out with is gone.
+_LEFTOVER = _Reconciled(venue_order_id="OLEFTO-VERPR-OBE001", client_order_id="OLEFTO-VERPR-OBE001", side="BUY")
+_OWNER_BTC = _Reconciled()
+_OWNER_SOL = _Reconciled(
+    venue_order_id="OWNERS-OLEUR-000002", client_order_id="OWNERS-OLEUR-000002", instrument_id="SOL/EUR.KRAKEN"
+)
+
+
+def _classify(orders, *, submitted=(), ours=(), known=()):
+    return probe.classify_open_orders(
+        orders, pair=_PAIR, submitted=set(submitted), ours_venue_ids=set(ours), known_venue_ids=set(known)
+    )
+
+
+def test_an_earlier_runs_leftover_is_ours_by_the_txid_its_evidence_recorded():
+    """The fresh `--probes 6` read: the leftover carries no probe infix, only its txid."""
+    assert probe.PROBE_ORDER_ID_INFIX not in _LEFTOVER.client_order_id
+
+    split = _classify([_LEFTOVER], ours={"OLEFTO-VERPR-OBE001"})
+
+    assert split.ours == [_LEFTOVER]
+    assert split.counts() == "ours 1, known 0, unclaimed 0, other 0"
+
+
+def test_this_invocations_own_order_is_ours_before_the_venue_has_named_it():
+    own = _Reconciled(venue_order_id=None, client_order_id="O-20260923-120000-901-P6V-1")
+
+    assert _classify([own], submitted={"O-20260923-120000-901-P6V-1"}).ours == [own]
+
+
+def test_an_order_named_with_known_order_is_known():
+    split = _classify([_OWNER_BTC, _OWNER_SOL], known={"OWNERB-TCEUR-000001", "OWNERS-OLEUR-000002"})
+
+    assert split.known == [_OWNER_BTC, _OWNER_SOL]
+    assert split.ours == split.unclaimed == split.other == []
+
+
+def test_naming_a_probe_leftover_does_not_wave_it_through():
+    split = _classify([_LEFTOVER], ours={"OLEFTO-VERPR-OBE001"}, known={"OLEFTO-VERPR-OBE001"})
+
+    assert split.ours == [_LEFTOVER]
+    assert split.known == []
+
+
+def test_an_unnamed_order_on_the_pair_is_unclaimed_and_one_elsewhere_is_other():
+    """This invocation's probe orders only go out on `--pair`, so there an unnamed order may be a
+    leftover whose evidence file was never written; elsewhere it is not this invocation's."""
+    split = _classify([_LEFTOVER, _OWNER_SOL])
+
+    assert split.unclaimed == [_LEFTOVER]
+    assert split.other == [_OWNER_SOL]
+
+
+def test_a_named_order_the_read_does_not_find_is_reported():
+    assert _classify([_OWNER_BTC], known={"OWNERB-TCEUR-000001", "OMISTY-PEDTX-000009"}).known_absent == ["OMISTY-PEDTX-000009"]
+
+
+def test_probe_6_fails_on_an_order_of_ours_or_an_unclaimed_one_even_off_its_anchor():
+    assert probe.verdict_after_run(_classify([_LEFTOVER], ours={"OLEFTO-VERPR-OBE001"}), 0, anchored=True) == "FAIL"
+    assert probe.verdict_after_run(_classify([_LEFTOVER]), 0, anchored=True) == "FAIL"
+    assert probe.verdict_after_run(_classify([_LEFTOVER]), 0, anchored=False) == "FAIL"
+
+
+def test_probe_6_passes_with_only_named_orders_open():
+    """The true positive: the owner's orders, named, rest through the pass without a verdict to adjudicate."""
+    split = _classify([_OWNER_BTC, _OWNER_SOL], known={"OWNERB-TCEUR-000001", "OWNERS-OLEUR-000002"})
+
+    assert probe.verdict_after_run(split, 0, anchored=True) == "PASS"
+
+
+@pytest.mark.parametrize(
+    ("orders", "known", "positions", "anchored"),
+    [
+        ([_OWNER_SOL], (), 0, True),
+        ([], (), 1, True),
+        ([], ("OMISTY-PEDTX-000009",), 0, True),
+        ([], (), 0, False),
+    ],
+    ids=["other-open", "a-position", "named-but-absent", "read-predates-the-run"],
+)
+def test_probe_6_reviews_what_is_not_ours_but_not_clean(orders, known, positions, anchored):
+    assert probe.verdict_after_run(_classify(orders, known=known), positions, anchored=anchored) == "REVIEW"
+
+
+def test_probe_2_passes_on_named_orders_and_reviews_anything_else():
+    named = _classify([_OWNER_BTC], known={"OWNERB-TCEUR-000001"})
+
+    assert probe.verdict_at_start(named, 0) == "PASS"
+    assert probe.verdict_at_start(_classify([]), 0) == "PASS"
+    assert probe.verdict_at_start(_classify([_OWNER_BTC]), 0) == "REVIEW"
+    assert probe.verdict_at_start(named, 1) == "REVIEW"
+    assert probe.verdict_at_start(_classify([], known={"OMISTY-PEDTX-000009"}), 0) == "REVIEW"
+
+
+def test_an_evidence_file_yields_the_txids_of_the_orders_its_run_submitted():
+    evidence = {
+        "submitted_client_order_ids": ["O-1-901-P6V-1", "O-1-901-P6V-2"],
+        "events": [
+            {"client_order_id": "O-1-901-P6V-1", "venue_order_id": "OLEFTO-VERPR-OBE001"},
+            {"client_order_id": "O-1-901-P6V-2", "venue_order_id": None},
+            {"client_order_id": "SOMEONE-ELSE", "venue_order_id": "OOTHER-XXXXX-000003"},
+        ],
+    }
+
+    assert probe.probe_venue_order_ids(evidence) == {"OLEFTO-VERPR-OBE001"}
+
+
+def test_the_evidence_dir_is_read_whole_and_an_unreadable_file_is_named(tmp_path):
+    good = {"submitted_client_order_ids": ["c"], "events": [{"client_order_id": "c", "venue_order_id": "OAAAAA-BBBBB-CCCCC1"}]}
+    (tmp_path / "evidence-20260923-100000.json").write_text(json.dumps(good))
+    (tmp_path / "evidence-20260923-110000.json").write_text("{not json")
+    (tmp_path / "other.json").write_text(json.dumps({**good, "events": [{"client_order_id": "c", "venue_order_id": "OZZZZZ"}]}))
+
+    ids, unreadable = probe.load_probe_venue_order_ids(tmp_path)
+
+    assert ids == {"OAAAAA-BBBBB-CCCCC1"}
+    assert len(unreadable) == 1 and "evidence-20260923-110000.json" in unreadable[0]
+
+
+class _NodeOpen:
+    """A node whose Cache holds a fixed set of open orders, found by their client order id."""
+
+    def __init__(self, open_orders) -> None:
+        self.cache = self
+        self._open = list(open_orders)
+
+    def order(self, coid):
+        return next((o for o in self._open if o.client_order_id == str(coid)), None)
+
+    def orders_open(self, venue=None):
+        return list(self._open)
+
+    def run(self) -> None:
+        pass
+
+    def dispose(self) -> None:
+        pass
+
+
+def test_the_final_read_holds_an_earlier_runs_leftover_and_an_unclaimed_order_for_exit_3():
+    state = probe.RunState(sequence_complete=True, pair=_PAIR, prior_venue_order_ids={"OLEFTO-VERPR-OBE001"})
+    unclaimed = _Reconciled(venue_order_id="OUNCLA-IMEDX-000004", client_order_id="OUNCLA-IMEDX-000004")
+
+    split = probe.final_read(_NodeOpen([_LEFTOVER, unclaimed, _OWNER_SOL]), state)
+
+    assert split.outstanding == ["OLEFTO-VERPR-OBE001"]
+    assert split.unclaimed == ["OUNCLA-IMEDX-000004"]
+
+
+class _DisposingNode(_NodeOpen):
+    """Disposing a node empties its Cache, as a real node's does."""
+
+    def dispose(self) -> None:
+        self._open = []
+
+
+def _main_against(open_orders, tmp_path, monkeypatch, *extra: str) -> int:
+    monkeypatch.setattr(probe, "build_node", lambda args, strategy: _DisposingNode(open_orders))
+    argv = ["--no-exec", "--probes", "6", "--evidence-dir", str(tmp_path), *extra]
+    return probe.main(["--expect-nautilus", nautilus_trader.__version__, *argv])
+
+
+def test_an_unnamed_open_order_on_the_pair_exits_3(tmp_path, monkeypatch, capsys):
+    assert _main_against([_OWNER_BTC], tmp_path, monkeypatch) == 3
+    assert f"OPEN ORDERS ON {_PAIR} THAT NOTHING CLAIMS" in capsys.readouterr().out
+
+
+def test_the_same_order_named_with_known_order_exits_0(tmp_path, monkeypatch):
+    """The true positive for the exit-3 rule: the owner's order, named, leaves the run clean."""
+    assert _main_against([_OWNER_BTC], tmp_path, monkeypatch, "--known-order", "OWNERB-TCEUR-000001") == 0
+
+
+def test_a_leftover_an_earlier_evidence_file_records_exits_3(tmp_path, monkeypatch, capsys):
+    earlier = {
+        "submitted_client_order_ids": ["O-20260923-210010-901-P6V-1"],
+        "events": [{"client_order_id": "O-20260923-210010-901-P6V-1", "venue_order_id": "OLEFTO-VERPR-OBE001"}],
+    }
+    (tmp_path / "evidence-20260923-210010.json").write_text(json.dumps(earlier))
+
+    assert _main_against([_LEFTOVER], tmp_path, monkeypatch, "--known-order", "OLEFTO-VERPR-OBE001") == 3
+    assert "ORDERS THIS HARNESS PLACED ARE STILL OPEN" in capsys.readouterr().out
+
+
+def test_the_cancel_by_hand_banner_names_each_order_from_the_cache_before_it_is_disposed(tmp_path, monkeypatch, capsys):
+    """The banner is what the operator cancels from; an entry reading "no cache record" leaves them
+    to find the order at Kraken with nothing but an id."""
+    earlier = {"submitted_client_order_ids": ["c"], "events": [{"client_order_id": "c", "venue_order_id": "OLEFTO-VERPR-OBE001"}]}
+    (tmp_path / "evidence-20260923-210010.json").write_text(json.dumps(earlier))
+    unclaimed = _Reconciled(venue_order_id="OUNCLA-IMEDX-000004", client_order_id="OUNCLA-IMEDX-000004")
+
+    assert _main_against([_LEFTOVER, unclaimed], tmp_path, monkeypatch) == 3
+
+    out = capsys.readouterr().out
+    assert "client_order_id=OLEFTO-VERPR-OBE001 venue_order_id=OLEFTO-VERPR-OBE001 BTC/EUR.KRAKEN BUY" in out
+    assert "!!   txid OUNCLA-IMEDX-000004 BTC/EUR.KRAKEN SELL 0.00010000" in out
+    assert "no cache record" not in out
+
+
+# ---------------------------------------------------------------------------------------------
+# Probes 2 and 6 as the strategy runs them
+# ---------------------------------------------------------------------------------------------
+
+
+class _Venue:
+    """What a started node's Cache and Portfolio answer: fixed open orders, no position, no account."""
+
+    def __init__(self, open_orders) -> None:
+        self._open = list(open_orders)
+
+    def orders_open(self, venue=None):
+        return list(self._open)
+
+    def positions_open(self, venue=None):
+        return []
+
+    def account(self, venue):
+        return None
+
+
+class _ReadingStrategy(probe.ProbeStrategy):
+    cache = property(lambda s: s._venue)
+    portfolio = property(lambda s: s._venue)
+
+
+def _row(label: str, open_orders, *, prior=(), known=(), submitted=()):
+    """Probe 2's or 6's row as the strategy records it over `open_orders`, with an exec client."""
+    args = probe.build_parser().parse_args([])
+    args.selected_probes = {int(label)}
+    state = probe.RunState(submitted=list(submitted), prior_venue_order_ids=set(prior), known_venue_order_ids=set(known))
+    strategy = _ReadingStrategy(args, state)
+    strategy._venue = _Venue(open_orders)
+    strategy._advance = lambda: None
+    getattr(strategy, f"_probe{label}")()
+    (row,) = state.results
+    return row
+
+
+def test_probe_6s_row_fails_on_an_earlier_runs_leftover_named_or_not():
+    """The row §5.4 reads and the write-up pastes, over the leftover its evidence file records."""
+    assert _row("6", [_LEFTOVER], prior={"OLEFTO-VERPR-OBE001"}).verdict == "FAIL"
+    assert _row("6", [_LEFTOVER], prior={"OLEFTO-VERPR-OBE001"}, known={"OLEFTO-VERPR-OBE001"}).verdict == "FAIL"
+
+
+def test_probe_6s_row_passes_with_only_named_orders_open():
+    row = _row("6", [_OWNER_BTC, _OWNER_SOL], known={"OWNERB-TCEUR-000001", "OWNERS-OLEUR-000002"})
+
+    assert row.verdict == "PASS"
+    assert "(ours 0, known 2, unclaimed 0, other 0)" in row.observed
+
+
+def test_probe_6s_row_reviews_a_read_that_predates_this_runs_orders():
+    row = _row("6", [], submitted=["O-20260923-120000-901-P6V-1"])
+
+    assert row.verdict == "REVIEW"
+    assert "NOT re-read" in row.observed
+
+
+def test_probe_2s_row_reviews_an_unnamed_order_and_passes_a_named_one():
+    assert _row("2", [_OWNER_BTC]).verdict == "REVIEW"
+    assert _row("2", [_OWNER_BTC], known={"OWNERB-TCEUR-000001"}).verdict == "PASS"
+
+
+def test_probe_2_prints_an_open_order_by_its_txid_and_no_price(capsys):
+    _row("2", [_OWNER_BTC])
+
+    out = capsys.readouterr().out
+    assert "pre-existing open order: txid OWNERB-TCEUR-000001 BTC/EUR.KRAKEN SELL" in out
+    assert [line for line in out.splitlines() if "@" in line] == []
+
+
+# ---------------------------------------------------------------------------------------------
+# A node start that fails at startup reconciliation
+# ---------------------------------------------------------------------------------------------
+
+# The refusal as the binding raises it: the node's prefix, then the manager's per-position reasons.
+_REFUSAL = (
+    "Unresolved positions during startup reconciliation for KRAKEN: account=KRAKEN-901, instrument=SOL/EUR.KRAKEN, "
+    "venue_position_id=None, venue_quantity=0.06000000: missing avg_px_open for position recovery"
+)
+
+
+def test_the_start_refusal_is_read_into_each_position_it_could_not_adopt():
+    two = (
+        f"{_REFUSAL}; account=KRAKEN-901, instrument=BTC/EUR.KRAKEN, venue_position_id=None, "
+        "venue_quantity=-0.00100000: missing avg_px_open for position recovery"
+    )
+
+    assert probe.unresolved_positions(two) == [
+        probe.UnresolvedPosition("SOL/EUR.KRAKEN", "0.06000000", "missing avg_px_open for position recovery"),
+        probe.UnresolvedPosition("BTC/EUR.KRAKEN", "-0.00100000", "missing avg_px_open for position recovery"),
+    ]
+
+
+def test_another_start_failure_is_not_read_as_the_position_refusal():
+    assert probe.unresolved_positions("Failed to get mass status from KRAKEN") is None
+
+
+class _RaisingNode(_NodeOpen):
+    """A node whose start fails the way `LiveNode.run` raises it."""
+
+    def __init__(self, exc: BaseException) -> None:
+        super().__init__([])
+        self._exc = exc
+
+    def run(self) -> None:
+        raise self._exc
+
+
+def _main_raising(exc, tmp_path, monkeypatch, probes: str) -> int:
+    monkeypatch.setattr(probe, "build_node", lambda args, strategy: _RaisingNode(exc))
+    argv = ["--no-exec", "--probes", probes, "--evidence-dir", str(tmp_path)]
+    return probe.main(["--expect-nautilus", nautilus_trader.__version__, *argv])
+
+
+def _rows(out: str) -> list[str]:
+    return [line for line in out.splitlines() if line.startswith("| ") and not line.startswith(("| #", "| --"))]
+
+
+def test_a_start_refused_over_an_open_position_fails_each_reconciliation_probe_and_names_it(tmp_path, monkeypatch, capsys):
+    """Not an abnormal stop: that reading sends the operator to flatten a position of the harness's
+    own, and nothing was submitted -- the position is somebody else's, and the row names it."""
+    assert _main_raising(RuntimeError(_REFUSAL), tmp_path, monkeypatch, probes="1,2,6") == 1
+
+    out = capsys.readouterr().out
+    rows = _rows(out)
+    assert [r.split(" | ")[0] for r in rows] == ["| 2", "| 6"]
+    assert all("SOL/EUR.KRAKEN quantity 0.06000000" in r and r.endswith("| FAIL |") for r in rows)
+    assert "stopped abnormally" not in out
+
+
+def test_the_refusal_lands_on_probe_2_when_no_reconciliation_probe_was_selected(tmp_path, monkeypatch, capsys):
+    assert _main_raising(RuntimeError(_REFUSAL), tmp_path, monkeypatch, probes="3") == 1
+
+    assert [r.split(" | ")[0] for r in _rows(capsys.readouterr().out)] == ["| 2"]
+
+
+def test_a_failed_mass_status_stays_exit_2_and_names_its_likely_causes(tmp_path, monkeypatch, capsys):
+    assert _main_raising(RuntimeError("Failed to get mass status from KRAKEN"), tmp_path, monkeypatch, probes="6") == 2
+
+    out = capsys.readouterr().out
+    assert "nothing was submitted" in out
+    assert "the key lacks a query permission" in out
+
+
+def test_any_other_start_failure_is_still_an_abnormal_stop(tmp_path, monkeypatch, capsys):
+    """The true positive for both readings above: an unrecognised failure keeps the generic path."""
+    exc = RuntimeError("readiness timeout while waiting for engine connections")
+
+    assert _main_raising(exc, tmp_path, monkeypatch, probes="6") == 2
+
+    out = capsys.readouterr().out
+    assert "the node stopped abnormally" in out
+    assert "query permission" not in out and _rows(out) == []
+
+
+# ---------------------------------------------------------------------------------------------
+# The run's file log, and what it says about the credentialed listing's fee rates
+# ---------------------------------------------------------------------------------------------
+
+# Lines as the file log writes them.
+_NONCE = (
+    "2026-09-23T21:06:30.627000002Z [DEBUG] P6PROBE-901.nautilus_kraken::http::spot::client: Generated nonce "
+    "1790197590626999753 for /0/private/TradeVolume"
+)
+_FELL_BACK = (
+    "2026-09-23T21:06:30.627754997Z [WARN] P6PROBE-901.nautilus_kraken::http::spot::client: Failed to request Kraken "
+    "account fee rates, falling back to public rates: API error: EGeneral:Permission denied"
+)
+_LOADED = "2026-09-23T21:06:30.629024319Z [DEBUG] P6PROBE-901.nautilus_kraken::execution::spot: Loaded 4 Spot instruments"
+
+
+def test_every_run_logs_at_debug_into_the_evidence_dir_beside_its_evidence():
+    args = probe.build_parser().parse_args(["--evidence-dir", "/evid"])
+
+    config = probe.logger_config(args, "20260923-120000")
+
+    assert config.fileout_level == probe.LogLevel.DEBUG
+    assert (config.file_config.directory, config.file_config.file_name) == ("/evid", "probe-20260923-120000")
+    assert probe.run_log_path("/evid", "20260923-120000") == Path("/evid/probe-20260923-120000.log")
+
+
+def test_a_fallback_warn_reads_as_fell_back_with_its_reason_and_its_call_count():
+    got = probe.tradevolume_fallback("\n".join([_NONCE, _FELL_BACK, _NONCE, _FELL_BACK, _LOADED]))
+
+    assert got["fell_back"] is True
+    assert got["tradevolume_calls"] == 2
+    assert got["warnings"] == [_FELL_BACK[_FELL_BACK.index("Failed to request") :]] * 2
+
+
+def test_a_listing_that_finished_without_the_warn_did_not_fall_back():
+    assert probe.tradevolume_fallback("\n".join([_NONCE, _LOADED]))["fell_back"] is False
+
+
+def test_a_log_that_never_saw_the_listing_finish_cannot_say():
+    """A partial TradeVolume answer fails the exec client's connect outright; no WARN there is not "no fallback"."""
+    assert probe.tradevolume_fallback(_NONCE)["fell_back"] is None
+
+
+def test_without_an_exec_client_or_a_readable_log_the_reading_is_none(tmp_path):
+    missing = tmp_path / "probe-x.log"
+
+    assert probe.read_tradevolume_fallback(missing, exec_client=False)["fell_back"] is None
+    assert probe.read_tradevolume_fallback(missing, exec_client=True)["fell_back"] is None
+
+
+def test_the_evidence_json_records_what_the_runs_log_says(tmp_path, monkeypatch):
+    monkeypatch.setenv(probe.API_KEY_VAR, "k")
+    monkeypatch.setenv(probe.API_SECRET_VAR, "s")
+
+    def node_that_logged(args, strategy):
+        probe.run_log_path(args.evidence_dir, strategy.stamp).write_text("\n".join([_NONCE, _FELL_BACK, _LOADED]))
+        return _NodeOpen([])
+
+    monkeypatch.setattr(probe, "build_node", node_that_logged)
+    argv = ["--expect-nautilus", nautilus_trader.__version__, "--probes", "6", "--evidence-dir", str(tmp_path)]
+
+    assert probe.main(argv) == 0
+
+    (evidence,) = tmp_path.glob("evidence-*.json")
+    recorded = json.loads(evidence.read_text())["tradevolume_fallback"]
+    assert recorded["fell_back"] is True and recorded["log_file"].endswith(".log")
 
 
 # ---------------------------------------------------------------------------------------------

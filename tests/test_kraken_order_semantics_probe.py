@@ -4,8 +4,9 @@ value outside 1-6 or not a number; an installed nautilus-trader other than the e
 `--allow-version-mismatch`; a missing `KRAKEN_SPOT_API_KEY` or `KRAKEN_SPOT_API_SECRET` unless `--no-exec`, naming
 the variable and never a value; `--probe5` without `--apply`; a `--max-notional` above the absolute ceiling; a
 `--notional` above `--max-notional` or under the costmin floor; an `--away` under the protocol floor; a `--leverage`
-under 1. A `Refusal` while the node is built is exit 2 with its message, not a traceback. `build_node` is replaced
-for every case, so a preflight that let a run through stops at the stub instead of connecting. The harness's pure
+under 1; an empty `--known-order`. A `Refusal` while the node is built is exit 2 with its message, not a traceback.
+`build_node` is replaced for every case, so a preflight that let a run through stops at the stub instead of
+connecting. The harness's pure
 core is `tests/test_order_semantics_probe.py`'s."""
 
 from __future__ import annotations
@@ -82,6 +83,7 @@ def test_selftest_passes_without_credentials(capsys):
         (["--no-exec", "--notional", "0.5"], "REFUSING: --notional 0.5 is too small to clear the venue's costmin floor"),
         (["--no-exec", "--away", "0.1"], "REFUSING: --away 0.1 is below the protocol's 0.25"),
         (["--no-exec", "--leverage", "0"], "REFUSING: --leverage 0 is not a leverage"),
+        (["--no-exec", "--known-order", " "], "REFUSING: --known-order was given an empty txid"),
     ],
 )
 def test_preflight_refuses_by_name(argv, message, capsys):
@@ -107,3 +109,12 @@ def test_a_refusal_while_the_node_is_built_is_exit_2_not_a_traceback(capsys):
     out = capsys.readouterr().out
     assert "mode: DRY-RUN -- nothing will be submitted" in out
     assert f"!! REFUSED before the node was built: {_STUB}" in out
+
+
+def test_the_reconcile_blind_legs_are_the_two_way_spelled_basket_legs():
+    """The script restates the list, so a basket change reaches it only through this recompute."""
+    from cli.backfill.read import dump_pair_name
+    from cli.engine.store import BASKET, PAIR_KEYS
+
+    two_way = {symbol for symbol in BASKET if dump_pair_name(symbol) != PAIR_KEYS[symbol]}
+    assert two_way == set(probe.RECONCILE_BLIND_LEGS)

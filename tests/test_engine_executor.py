@@ -4,6 +4,7 @@ import ast
 import json
 import logging
 import shutil
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -31,6 +32,7 @@ from nautilus_trader.model import (
     OrderRejected,
     OrderSide,
     OrderStatus,
+    OrderStatusReport,
     OrderSubmitted,
     OrderType,
     Position,
@@ -61,7 +63,7 @@ from cli.engine.execledger import (
     update_submitted_row,
     write_exec_record,
 )
-from cli.engine.executor import ProbeExecutor, set_executor_hooks, size_probe_order
+from cli.engine.executor import ProbeExecutor, read_venue_orders, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
@@ -69,6 +71,7 @@ from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
+from tests import kraken_loopback
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
@@ -364,6 +367,22 @@ class StubCache:
         wanted = str(client_order_id)
         return next((o for o in [*self._open_orders, *self._closed_orders] if str(o.client_order_id) == wanted), None)
 
+    def client_order_id(self, venue_order_id):
+        """The Cache's venue-order-id index: the client order id it holds an order under, None when
+        it holds none. Typed like the real one, which refuses a str (`'str' object is not an
+        instance of 'VenueOrderId'`)."""
+        if not isinstance(venue_order_id, VenueOrderId):
+            raise TypeError(f"'{type(venue_order_id).__name__}' object is not an instance of 'VenueOrderId'")
+        wanted = str(venue_order_id)
+        return next(
+            (
+                ClientOrderId(str(o.client_order_id))
+                for o in [*self._open_orders, *self._closed_orders]
+                if str(getattr(o, "venue_order_id", None)) == wanted
+            ),
+            None,
+        )
+
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
 
@@ -465,14 +484,28 @@ def _config(tmp_path: Path, **overrides) -> EngineConfig:
     return EngineConfig(**base)
 
 
-def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None) -> ProbeExecutor:
+def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None) -> ProbeExecutor:
     client = client if client is not None else StubClient()
     return ProbeExecutor(
         client=client,
         gate=gate if gate is not None else _gate(tmp_path),
         config=config if config is not None else _config(tmp_path),
         clock=clock if clock is not None else (lambda: NOW),
+        venue_orders=venue_orders,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_production_venue_read(monkeypatch):
+    """The executor's default venue read is a real client on the trade credentials, and a developer's
+    shell may hold them. A test that needs the venue's orders hands the executor its own reader;
+    reaching the default fails the test through every `except Exception` on the way, because
+    `pytest.fail` raises a BaseException."""
+
+    def _refuse(since, **kwargs):
+        pytest.fail(f"a test reached the production venue read (since {since.isoformat()}) -- pass venue_orders")
+
+    monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
 
 
 def _intent(**overrides):
@@ -541,12 +574,14 @@ def _venue_record(tmp_path: Path, *, balances, positions=None, when: datetime = 
     )
 
 
-def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0):
+def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0, venue_order_id=None):
     """A resting order as reconciliation adopts it. `is_reduce_only` is here because the real adopted
     report carries it and the startup pass must be seen NOT to consult it; `filled_qty` and `status`
-    are what `_reconcile_adopted_row` reads instead."""
+    are what `_reconcile_adopted_row` reads instead. On the pinned wheel a reconciled order's
+    `client_order_id` IS its txid, since the adapter's reports carry none -- pass the txid as both."""
     return SimpleNamespace(
         client_order_id=client_order_id,
+        venue_order_id=None if venue_order_id is None else VenueOrderId(venue_order_id),
         is_reduce_only=is_reduce_only,
         filled_qty=filled_qty,
         is_open=True,
@@ -554,12 +589,49 @@ def _open_order(client_order_id, *, is_reduce_only=False, filled_qty=0.0):
     )
 
 
-def _closed_order(client_order_id, status, *, filled_qty=0.0):
+def _report(txid, status, *, filled_qty="0", quantity="0.001"):
+    """A REAL `OrderStatusReport` in the shape the adapter builds from Kraken's order rows -- which
+    carries no client order id, ever: the txid is the only name the venue's answer has."""
+    return OrderStatusReport(
+        account_id=AccountId("KRAKEN-001"),
+        instrument_id=InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]),
+        venue_order_id=VenueOrderId(txid),
+        order_side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        time_in_force=TimeInForce.GTC,
+        order_status=status,
+        quantity=Quantity.from_str(quantity),
+        filled_qty=Quantity.from_str(filled_qty),
+        ts_accepted=0,
+        ts_last=0,
+        ts_init=0,
+        client_order_id=None,
+    )
+
+
+class _VenueOrders:
+    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the
+    `since` of every call -- the read is once per process, and a second call is a finding."""
+
+    def __init__(self, *reports, raises=None):
+        self.reports = list(reports)
+        self.calls: list[datetime] = []
+        self._raises = raises
+
+    def __call__(self, since):
+        self.calls.append(since)
+        if self._raises is not None:
+            raise self._raises
+        return list(self.reports)
+
+
+def _closed_order(client_order_id, status, *, filled_qty=0.0, venue_order_id=None):
     """The order reconciliation leaves behind for one that reached a terminal state while this
     process was down. It is absent from `orders_open` entirely, which is exactly what made it
     invisible to the pass before the wide read."""
     return SimpleNamespace(
         client_order_id=client_order_id,
+        venue_order_id=None if venue_order_id is None else VenueOrderId(venue_order_id),
         is_reduce_only=False,
         filled_qty=filled_qty,
         is_open=False,
@@ -567,9 +639,19 @@ def _closed_order(client_order_id, status, *, filled_qty=0.0):
     )
 
 
-def _submitted_row(tmp_path: Path, client_order_id: str, *, reduce_only: bool, when: datetime = NOW, index: int = 0) -> dict:
+def _submitted_row(
+    tmp_path: Path,
+    client_order_id: str,
+    *,
+    reduce_only: bool,
+    when: datetime = NOW,
+    index: int = 0,
+    venue_order_id: str | None = None,
+) -> dict:
     """A write-ahead row a previous process left behind, through the real `append_submitted_row` --
-    `state` is one of `_OPEN_ORDER_STATES`, so the row is in the re-attach set."""
+    `state` is one of `_OPEN_ORDER_STATES`, so the row is in the re-attach set. With `venue_order_id`
+    it carries the acceptance record `_on_order_event` writes; without one it is a row written before
+    that record existed, or one whose order never got an acceptance."""
     row = {
         "plan_id": "p-before-the-restart",
         "intent_index": index,
@@ -588,7 +670,9 @@ def _submitted_row(tmp_path: Path, client_order_id: str, *, reduce_only: bool, w
         },
         "state": "accepted",
         "filled_qty": 0.0,
-        "events": [],
+        "events": (
+            [] if venue_order_id is None else [{"type": "OrderAccepted", "at": when.isoformat(), "venue_order_id": venue_order_id}]
+        ),
     }
     append_submitted_row(
         tmp_path / "journal",
@@ -617,31 +701,40 @@ def _quote(instrument_id="BTC/EUR.KRAKEN", bid=30000.0, ask=30001.0):
 
 _TRADER_ID = TraderId("TESTER-001")
 _ACCOUNT_ID = AccountId("KRAKEN-001")
-_VENUE_ORDER_ID = VenueOrderId("V-1")
+
+
+def _venue_order_id(client_order_id) -> VenueOrderId:
+    """One venue order id per order, as the venue assigns them. A single shared id would make two
+    different orders' events look like one order's, which the executor's venue-id lookup would then
+    match -- the owner's hand settle included -- on a coincidence the venue never produces."""
+    return VenueOrderId(f"V-{client_order_id}")
+
 
 # What each event kind carries beyond the identity fields every one of them has. These are what the
 # LIBRARY requires, not what a test happens to read: a real event refuses a missing field, so a
-# constructor that grows one fails here loudly instead of leaving a fabricated shape behind.
+# constructor that grows one fails here loudly instead of leaving a fabricated shape behind. The
+# kinds carrying a venue order id get the per-order one `_event` derives.
 _EVENT_DEFAULTS = {
-    OrderAccepted: {"venue_order_id": _VENUE_ORDER_ID, "account_id": _ACCOUNT_ID, "reconciliation": False},
+    OrderAccepted: {"account_id": _ACCOUNT_ID, "reconciliation": False},
     OrderCanceled: {"reconciliation": False},
     OrderExpired: {"reconciliation": False},
     OrderRejected: {"account_id": _ACCOUNT_ID, "reason": "the venue said no", "reconciliation": False},
     OrderCancelRejected: {"reason": "the venue said no", "reconciliation": False},
     OrderFilled: {
-        "venue_order_id": _VENUE_ORDER_ID,
         "account_id": _ACCOUNT_ID,
         "order_side": OrderSide.BUY,
         "order_type": OrderType.LIMIT,
         "reconciliation": False,
     },
 }
+_KINDS_REQUIRING_A_VENUE_ORDER_ID = (OrderAccepted, OrderFilled)
 
 
 def _event(cls, **overrides):
     """One of the library's own order events, with the identity fields every kind carries baked in.
     The class IS the fixture: the executor dispatches on `type(event).__name__`, so nothing here can
     wear a name the library does not define, nor answer an attribute it does not carry."""
+    client_order_id = str(overrides.get("client_order_id", "O-1"))
     kwargs = {
         "trader_id": _TRADER_ID,
         "strategy_id": _STUB_STRATEGY_ID,
@@ -649,10 +742,11 @@ def _event(cls, **overrides):
         "event_id": UUID4(),
         "ts_event": 0,
         "ts_init": 0,
+        **({"venue_order_id": _venue_order_id(client_order_id)} if cls in _KINDS_REQUIRING_A_VENUE_ORDER_ID else {}),
         **_EVENT_DEFAULTS[cls],
         **overrides,
     }
-    kwargs["client_order_id"] = ClientOrderId(str(overrides.get("client_order_id", "O-1")))
+    kwargs["client_order_id"] = ClientOrderId(client_order_id)
     return cls(**kwargs)
 
 
@@ -1605,9 +1699,10 @@ def _cache_reads_at_dispatch() -> dict:
         def on_order_event(self, event):
             name = type(event).__name__
             if name not in ("OrderFilled", "OrderCanceled"):
-                # An event this process's own command generates is dispatched while the Cache is
-                # still mutably borrowed for the write that produced it, and a read there raises
-                # `Already mutably borrowed`. Only the venue's own answers are read here.
+                # The event a command emits itself -- `OrderInitialized` at submit, `OrderPendingCancel`
+                # at cancel -- is dispatched while the Cache is still mutably borrowed for the write
+                # that produced it, and a read there raises `Already mutably borrowed`. Only the
+                # venue's own answers are read here.
                 return
             order = self.cache.order(event.client_order_id)
             readings[name] = {
@@ -1693,6 +1788,42 @@ def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_start
 
     ex.on_timer(NOW + timedelta(seconds=5))
     assert client.subscribed == ["BTC/EUR.KRAKEN", "ETH/EUR.KRAKEN"]
+
+
+# A Kraken txid in the venue's own shape. After a restart the reconciled order carries it as BOTH its
+# client and its venue order id, because the adapter's reports carry no client order id.
+_TXID = "OQCLML-BW3P3-BUCMWZ"
+
+
+def test_the_acceptance_and_each_fill_record_the_venue_order_id_in_the_row(tmp_path):
+    """The only link from a ledger row to its order once this process is gone: the next process's
+    Cache names the order by its txid, never by the id this row is keyed on."""
+    client = StubClient()
+    ex = _executor(tmp_path, client=client)
+    _drop_plan(tmp_path, _plan_dict())
+    ex.on_timer(NOW)
+    ex.on_quote(_quote())
+
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    _deliver_fill(ex, client, "O-1", 0.0004, venue_order_id=VenueOrderId(_TXID))
+
+    events = _record(tmp_path)["submitted"][0]["events"]
+    assert [(e.get("type") or e.get("event"), e["venue_order_id"]) for e in events] == [("OrderAccepted", _TXID), ("fill", _TXID)]
+    assert events[0] == {"type": "OrderAccepted", "at": NOW.isoformat(), "venue_order_id": _TXID}
+
+
+def test_a_superseded_orders_late_acceptance_records_its_venue_order_id_too(tmp_path):
+    """The detached path writes the same record: an acceptance that lands after its order was
+    replaced is still the only place that order's txid reaches the ledger."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    _advance_with_quotes(ex, client, clock, minutes=16, bid=30.0, ask=30.05)
+    ex.on_order_event(_canceled("O-1"))
+    assert client.last_order_id == "O-2"  # O-1 is superseded by the fallback IOC
+
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+
+    row = next(r for r in _record(tmp_path)["submitted"] if r["client_order_id"] == "O-1")
+    assert row["events"][-1] == {"type": "OrderAccepted", "at": clock.now.isoformat(), "venue_order_id": _TXID}
 
 
 # --- the fill metrics -----------------------------------------------------------------------------
@@ -3021,6 +3152,21 @@ def test_a_raising_orders_read_leaves_the_startup_pass_able_to_run_again(tmp_pat
     assert [str(cid) for cid in client.canceled] == ["O-orphan"]
 
 
+def test_no_plan_is_picked_up_before_the_startup_pass_has_run(tmp_path):
+    """Until the pass has run, no row is compared with the venue and its one venue read has not gone
+    out -- a read that must reach the venue before any order of this process does. A plan waiting on
+    disk is picked up on the tick the pass completes, not before."""
+    client = StubClient(_FlakyOrdersCache())
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.FULL))
+    plan_path = _drop_plan(tmp_path, _plan_dict())
+
+    ex.on_timer(NOW)
+    assert plan_path.exists() and not exec_record_path(tmp_path / "journal", _boundary(NOW)).exists()
+
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert not plan_path.exists() and _plan_entry(tmp_path)["disposition"] == "accepted"
+
+
 @pytest.mark.parametrize(
     "level, expected",
     [
@@ -3046,14 +3192,41 @@ def test_a_latched_kill_file_cancels_even_the_ledger_attached_reducer(tmp_path, 
     assert [e["type"] for e in _record(tmp_path, earlier)["submitted"][0]["events"]] == ["OrderCanceled"]
 
 
+@pytest.mark.parametrize(
+    "armed_in_config, control_files, reasons",
+    [
+        # The engine's resting state: disarmed, with the hold every start writes. No kill file exists.
+        (False, (RESTART_HOLD_FILE,), "config_not_armed, arm_file_absent, restart_hold"),
+        (True, (ARM_FILE, KILL_FILE), "kill_switch"),
+    ],
+)
+def test_the_startup_cancel_at_level_none_names_the_gates_own_reasons(tmp_path, armed_in_config, control_files, reasons):
+    """The gate reads `none` for a disarmed engine as surely as for a latched kill file, and the
+    operator reading this line during a restart acts on its cause -- a kill switch named over a
+    disarmed engine sends them looking for a file and a trip that do not exist."""
+    d = exec_dir(tmp_path)
+    d.mkdir(parents=True, exist_ok=True)
+    for name in control_files:
+        (d / name).touch()
+    gate = ExecutionGate(armed_in_config=armed_in_config, state_dir=tmp_path, venue_reader=_venue_reader())
+    assert gate.evaluate(NOW).level == GateLevel.NONE
+    client = StubClient(StubCache(open_orders=[_open_order("O-orphan")]))
+    ex = _executor(tmp_path, client=client, gate=gate)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == ["O-orphan"]
+    assert [r.getMessage() for r in records] == [f"canceling adopted resting order O-orphan -- the gate reads none ({reasons})"]
+
+
 # --- the external topic: an adopted order's own events (spec 00098) ------------------------------
 
 
 @contextmanager
 def _executor_errors(level=logging.ERROR):
-    """The executor logger's own records at `level` and above -- for the tests that must see a
-    swallowed failure LOGGED, and at WARNING for the one that must see NOTHING logged. Not `caplog`,
-    blind here for the reasons `_the_tick_backstop_never_fires` gives."""
+    """The executor logger's own records at `level` and above. Not `caplog`, blind here for the
+    reasons `_the_tick_backstop_never_fires` gives."""
     records: list[logging.LogRecord] = []
 
     class _Collect(logging.Handler):
@@ -3072,19 +3245,22 @@ def _executor_errors(level=logging.ERROR):
         log.setLevel(previous_level)
 
 
-def _resting_limit_order(client_order_id, *, quantity="1.0"):
+def _resting_limit_order(client_order_id, *, quantity="1.0", venue_order_id=None):
     """A REAL `LimitOrder` resting at the venue, driven to ACCEPTED by the library's own events.
 
     Real because the terminal-state write reads `cache.order(...).status`, and only the library's own
     state machine can say what an event does to that status -- including for the stale and replayed
-    acks it REFUSES, which is where reading the order rather than the event's name earns its place."""
+    acks it REFUSES, which is where reading the order rather than the event's name earns its place.
+    `_resting_limit_order(_TXID, venue_order_id=_TXID)` is the shape a restart's reconciliation
+    leaves on the pinned wheel: the order named by its txid on both ids."""
     head = (_TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id))
     order = LimitOrder(
         *head, OrderSide.BUY, Quantity.from_str(quantity), Price.from_str("30000.0"), TimeInForce.GTC,
         False, False, False, UUID4(), 0,
     )  # fmt: skip
     order.apply(OrderSubmitted(*head, _ACCOUNT_ID, UUID4(), 0, 0))
-    order.apply(OrderAccepted(*head, _VENUE_ORDER_ID, _ACCOUNT_ID, UUID4(), 0, 0, False))
+    venue = _venue_order_id(client_order_id) if venue_order_id is None else VenueOrderId(venue_order_id)
+    order.apply(OrderAccepted(*head, venue, _ACCOUNT_ID, UUID4(), 0, 0, False))
     assert order.status == OrderStatus.ACCEPTED  # a fixture that started closed would adopt nothing
     return order
 
@@ -3705,7 +3881,7 @@ def _fill_voided(client_order_id, qty, *, trade_id="T-1"):
     report it came from."""
     return OrderFillVoided(
         _TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id),
-        _VENUE_ORDER_ID, _ACCOUNT_ID, f"reconciliation-R-1-{trade_id}", TradeId(trade_id), _quantity(qty),
+        _venue_order_id(client_order_id), _ACCOUNT_ID, f"reconciliation-R-1-{trade_id}", TradeId(trade_id), _quantity(qty),
         OrderSide.BUY, OrderType.LIMIT, _price(30000.0), Currency.from_str("EUR"), LiquiditySide.MAKER,
         UUID4(), 0, 0, True,
     )  # fmt: skip
@@ -4037,6 +4213,469 @@ def test_a_second_tick_after_the_startup_pass_reconciles_nothing_further(tmp_pat
     assert row["filled_qty"] == 0.0004
 
 
+# --- the row keying: after a restart every order is named by its Kraken txid ----------------------
+#
+# The adapter's order reports carry no client order id, so the startup reconciliation names each
+# order it adopts by its txid, on both ids -- the shape `_resting_limit_order(_TXID,
+# venue_order_id=_TXID)` builds. The ledger keys every row by the id this engine minted, and the row
+# records the txid at acceptance. These tests drive the reconciled shape; every test above names the
+# adopted order by the engine's own id, the shape no restart on the pinned wheel produces.
+
+
+@pytest.mark.parametrize(
+    "recorded, canceled",
+    [
+        (True, []),  # the row recorded its txid: the reducer is found, kept and re-attached
+        (False, [_TXID]),  # a row with no txid names nothing the Cache holds: canceled as unledgered
+    ],
+)
+def test_a_ledgered_reducer_reconciled_under_its_txid_is_left_resting(tmp_path, recorded, canceled):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID if recorded else None)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == canceled
+    assert (_TXID in ex._attached) is recorded
+
+
+def _txid_adopted_executor(tmp_path, *, reduce_only=True):
+    """A previous process's order the ledger recorded under `_TXID`, adopted under that txid and
+    attached to its row four hours back."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=reduce_only, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex.on_timer(NOW)
+    assert _TXID in ex._attached
+    return ex, client, earlier
+
+
+def test_a_post_restart_fill_named_by_the_txid_lands_in_the_row_the_engine_keyed(tmp_path):
+    """The fill arrives on the external topic naming the order by its txid; the ledger holds no row
+    under that id, so the write must name the row by its own."""
+    ex, client, earlier = _txid_adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    _deliver_external_event(ex, client, _fill(_TXID, 0.0004, venue_order_id=VenueOrderId(_TXID)))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["client_order_id"] == "O-reducer"
+    assert [e.get("event") for e in row["events"]][-1] == "fill" and row["filled_qty"] == 0.0004
+    assert metrics.external == ["matched"]
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_a_txid_named_fill_completing_the_ledgered_quantity_closes_the_row(tmp_path):
+    """Nautilus publishes no terminal event after a resting order's final fill, so the completion
+    write is the only thing that closes this row -- and it too must name the row by its own id."""
+    ex, _client, earlier = _txid_adopted_executor(tmp_path)
+
+    ex.on_external_order_event(_fill(_TXID, 0.001, venue_order_id=VenueOrderId(_TXID)))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "filled" and row["filled_qty"] == 0.001
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_the_startup_cancel_of_an_opener_named_by_its_txid_closes_its_row_on_the_ack(tmp_path):
+    """What Drill G reads: the pass cancels the adopted opener, and the venue's ack -- naming the
+    order by its txid -- arrives matched and gives the row its terminal state."""
+    ex, client, earlier = _txid_adopted_executor(tmp_path, reduce_only=False)
+    assert [str(cid) for cid in client.canceled] == [_TXID]
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    _deliver_external_event(ex, client, _canceled(_TXID))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "canceled"
+    assert row["events"][-1] == {"type": "OrderCanceled", "at": NOW.isoformat()}
+    assert metrics.external == ["matched"]
+
+
+def test_an_overfill_named_by_the_txid_trips_and_journals_the_fill_under_the_rows_own_id(tmp_path, kill_trip_expected):
+    ex, client, earlier = _txid_adopted_executor(tmp_path)
+
+    _deliver_external_event(ex, client, _fill(_TXID, 0.002, venue_order_id=VenueOrderId(_TXID)))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e.get("event") for e in row["events"]][-1] == "fill" and row["filled_qty"] == 0.002
+    assert f"order O-reducer (Kraken {_TXID}) has now filled 0.002 of the 0.001" in _kill_file(tmp_path).read_text()
+
+
+def test_an_event_naming_the_order_by_neither_attached_id_is_found_by_its_venue_order_id(tmp_path):
+    """The fallback for an event whose client order id is no key the pass attached -- an adopted
+    order whose events name it some third way. Its venue order id is the order's own, which no other
+    order carries, so the match cannot catch the owner's hand settle: that one's txid is its own."""
+    ex, client, earlier = _txid_adopted_executor(tmp_path)
+
+    ex.on_external_order_event(_fill("O-120000-001-000-1", 0.0004, venue_order_id=VenueOrderId(_TXID)))
+    ex.on_external_order_event(_fill("O-the-owners-own-hand", 0.5, venue_order_id=VenueOrderId("OOWNER-HANDS-ETTLE1")))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["filled_qty"] == 0.0004  # the first landed; the hand settle matched nothing
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_an_open_row_reconciles_against_the_order_the_cache_holds_under_its_txid(tmp_path):
+    """The sweep's own lookup, before any classification: the row's own id misses, and the Cache's
+    venue-order-id index finds the order the row recorded."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    cache = StubCache(open_orders=[_open_order(_TXID, venue_order_id=_TXID, filled_qty=0.0004)])
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [e.get("event") or e.get("type") for e in row["events"]] == ["OrderAccepted", "reconciled"]
+    assert row["filled_qty"] == 0.0004
+
+
+def test_a_finished_row_is_compared_with_the_order_the_cache_holds_under_its_txid(tmp_path, kill_trip_expected):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    cache = StubCache(closed_orders=[_closed_order(_TXID, OrderStatus.FILLED, filled_qty=0.0, venue_order_id=_TXID)])
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["events"][-1]["event"] == "withdrawn"
+    assert f"order O-finished (Kraken {_TXID}) shows 0 filled at the venue" in _kill_file(tmp_path).read_text()
+
+
+# --- the closed-order read: what the venue says about an order the restarted Cache cannot hold ------
+
+
+@pytest.mark.parametrize(
+    "status, venue_filled, state, events",
+    [
+        # The commonest closed-while-down shape: cancelled with no fill, so no delta, only the state.
+        (OrderStatus.CANCELED, "0", "canceled", ["OrderAccepted"]),
+        (OrderStatus.FILLED, "0.001", "filled", ["OrderAccepted", "reconciled"]),
+    ],
+)
+def test_an_order_that_closed_while_down_is_read_at_the_venue_by_its_txid(tmp_path, status, venue_filled, state, events):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    venue = _VenueOrders(_report(_TXID, status, filled_qty=venue_filled))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == state
+    assert [e.get("type") or e.get("event") for e in row["events"]] == events
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+
+
+def test_a_closed_while_down_order_the_ledger_is_ahead_of_trips_the_kill_switch(tmp_path, kill_trip_expected):
+    """The boot divergence latch on a closed order, which only the venue read can reach: the ledger
+    says 0.0006 filled and the venue says the order ended with 0.0002."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0006)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0002"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+    assert (
+        f"adopted order O-reducer (Kraken {_TXID}) shows 0.0002 filled at the venue, less than the 0.0006"
+        in _kill_file(tmp_path).read_text()
+    )
+
+
+def test_a_withdrawn_fill_on_a_finished_row_is_read_at_the_venue_by_its_txid(tmp_path, kill_trip_expected):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["events"][-1] == {"event": "withdrawn", "at": NOW.isoformat(), "qty": -0.001, "venue_filled_qty": 0.0}
+    assert "shows 0 filled at the venue, less than the 0.001" in _kill_file(tmp_path).read_text()
+
+
+def test_the_venue_is_read_once_from_the_earliest_row_that_needs_it_and_only_when_one_does(tmp_path):
+    """No row needing it -- nothing ledgered, a row the Cache answers, a finished row with no fill --
+    means no read and no second client. Rows that need it are answered by ONE read."""
+    early, late = NOW - timedelta(hours=8), NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-cached", reduce_only=True, when=late, venue_order_id="OCACHE-D0000-000001")
+    _submitted_row(tmp_path, "O-unfilled", reduce_only=False, when=early, index=1, venue_order_id="OUNFIL-LED00-000002")
+    update_submitted_row(tmp_path / "journal", _boundary(early), "O-unfilled", state="canceled")
+    cache = StubCache(open_orders=[_open_order("OCACHE-D0000-000001", venue_order_id="OCACHE-D0000-000001")])
+    idle = _VenueOrders()
+    _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=idle).on_timer(NOW)
+    assert idle.calls == []
+
+    _submitted_row(tmp_path, "O-closed", reduce_only=True, when=late, index=2, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=early, index=3, venue_order_id="OFINIS-HED00-000003")
+    update_submitted_row(tmp_path / "journal", _boundary(early), "O-finished", state="filled", add_filled_qty=0.001)
+    needed = _VenueOrders(
+        _report(_TXID, OrderStatus.CANCELED), _report("OFINIS-HED00-000003", OrderStatus.FILLED, filled_qty="0.001")
+    )
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=needed)
+    ex.on_timer(NOW)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert needed.calls == [_boundary(early) - timedelta(hours=1)]
+
+
+def test_a_failed_venue_read_leaves_the_rows_and_refuses_every_plan_for_the_life_of_the_process(tmp_path):
+    """Fail closed without a trip: the rows keep what they say -- the open row the read was for and
+    the finished one with fills alike, neither marked as a row the read has no order for -- the
+    resting reducer the Cache still answers is classified as ever, the read is not repeated, and every
+    plan is refused with the reason until a restart reads again."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-closed", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, index=1, venue_order_id="ORESTI-NG000-000001")
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, index=2, venue_order_id="OFINIS-HED00-000003")
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    before = _record(tmp_path, earlier)["submitted"]
+    client = StubClient(StubCache(open_orders=[_resting_limit_order("ORESTI-NG000-000001", venue_order_id="ORESTI-NG000-000001")]))
+    venue = _VenueOrders(raises=RuntimeError("EAPI:Invalid nonce"))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+        _drop_plan(tmp_path, _plan_dict())
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    reason = (
+        "the startup reconciliation could not read the venue's orders, so 2 ledgered row(s) were never compared "
+        "against venue truth -- restart the engine to retry"
+    )
+    assert [r.getMessage() for r in records] == [
+        "the venue's orders could not be read at startup -- 2 ledgered row(s) were never compared against venue "
+        "truth; every plan is refused until the engine is restarted",
+        f"probe plan p-1 refused: {reason}",
+    ]
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]  # read once, never retried
+    assert client.canceled == [] and "ORESTI-NG000-000001" in ex._attached  # the resting reducer is kept
+    assert _record(tmp_path, earlier)["submitted"] == before
+    entry = _plan_entry(tmp_path)
+    assert (entry["disposition"], entry["reasons"]) == ("refused", [reason])
+    assert client.submitted == [] and not _plan_path(tmp_path).exists()
+
+
+# --- a row no venue order matches is marked ambiguous ---------------------------------------------
+
+_NO_TXID = "no Kraken order id is recorded for it, so a restart cannot match it to a venue order"
+
+
+def test_an_open_row_with_no_recorded_txid_is_marked_ambiguous_once(tmp_path):
+    """A row written before the acceptance recorded a txid, or one whose order never got an
+    acceptance: nothing can match it to the venue's orders, which name themselves by txid alone. It
+    takes the ledger's own word for that, keeps pointing at a possibly-live order, and asks no venue
+    read -- and a second restart does not mark it again."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-legacy", reduce_only=True, when=earlier)
+    venue = _VenueOrders()
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "ambiguous"
+    assert row["events"] == [{"type": "ambiguous", "at": NOW.isoformat(), "what": _NO_TXID}]
+    assert [(r.levelname, r.getMessage()) for r in records] == 2 * [
+        ("WARNING", f"ledgered order O-legacy matches no venue order -- {_NO_TXID}; its row is marked ambiguous")
+    ]
+    assert venue.calls == []
+
+
+def test_a_finished_row_with_fills_and_no_recorded_txid_takes_the_mark_but_keeps_its_state(tmp_path):
+    """Its order ended, so the state `ambiguous` -- "may be resting" -- would be false; what nobody can
+    establish is only whether the venue withdrew a fill since. A finished row with no fill has none
+    to withdraw and is not marked at all."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-filled", reduce_only=False, when=earlier)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-filled", state="filled", add_filled_qty=0.001)
+    _submitted_row(tmp_path, "O-unfilled", reduce_only=False, when=earlier, index=1)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-unfilled", state="canceled")
+
+    for _ in range(2):
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=_VenueOrders()
+        ).on_timer(NOW)
+
+    filled, unfilled = _record(tmp_path, earlier)["submitted"]
+    assert filled["state"] == "filled"
+    assert filled["events"] == [{"type": "ambiguous", "at": NOW.isoformat(), "what": _NO_TXID}]
+    assert (unfilled["state"], unfilled["events"]) == ("canceled", [])
+
+
+def test_a_row_whose_events_record_two_txids_vouches_for_neither_order(tmp_path):
+    """Its acceptance names one Kraken order and a fill another, so the row matches neither: the
+    reducer resting under the acceptance's txid is not kept on its word, no venue read is asked for
+    it, and the mark says what the row records rather than that it records nothing."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-conflict", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    other = "OOTHER-ORDER-000009"
+    fill = {"event": "fill", "at": earlier.isoformat(), "qty": 0.0004, "px": 30000.0, "venue_order_id": other}
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-conflict", event=fill, add_filled_qty=0.0004)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders()
+
+    for _ in range(2):
+        _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue).on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "ambiguous"
+    assert [e for e in row["events"] if e.get("type") == "ambiguous"] == [
+        {
+            "type": "ambiguous",
+            "at": NOW.isoformat(),
+            "what": f"its events record 2 different Kraken order ids ({other}, {_TXID}), so a restart cannot tell "
+            "which venue order is its own",
+        }
+    ]
+    assert [str(cid) for cid in client.canceled] == [_TXID, _TXID]  # canceled as unledgered, by each process
+    assert venue.calls == []
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp_path, finished):
+    """The read skips an order row the adapter cannot parse, so an open row's order may still rest at
+    Kraken beyond every cancel this process can issue, and its line is CRITICAL. A finished row's
+    order ended, and its line stays a WARNING."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-gone", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    if finished:
+        update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-gone", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(_report("OOTHER-ORDER-000009", OrderStatus.CANCELED))
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == ("filled" if finished else "ambiguous")
+    assert row["events"][-1] == {"type": "ambiguous", "at": NOW.isoformat(), "what": f"the venue's order read has no order {_TXID}"}
+    assert [(r.levelname, r.getMessage()) for r in records] == [
+        (
+            "WARNING" if finished else "CRITICAL",
+            f"ledgered order O-gone matches no venue order -- the venue's order read has no order {_TXID}; its row is "
+            "marked ambiguous",
+        )
+    ]
+    assert len(venue.calls) == 1
+
+
+@pytest.mark.parametrize("finished", [False, True])
+@pytest.mark.parametrize(
+    "status, resting",
+    [
+        (OrderStatus.ACCEPTED, True),  # Kraken's `open`
+        (OrderStatus.INITIALIZED, True),  # Kraken's `pending`
+        (OrderStatus.CANCELED, False),
+    ],
+)
+def test_a_venue_report_still_resting_for_an_order_the_cache_lacks_is_logged_critical(tmp_path, finished, status, resting):
+    """The Cache holds no order under the row's ids, yet the venue reports one still resting: startup
+    reconciliation dropped it, and no cancel this process can issue reaches it. A report that ended
+    says nothing of the kind."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-dropped", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    if finished:
+        update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-dropped", state="canceled", add_filled_qty=0.0004)
+    venue = _VenueOrders(_report(_TXID, status, filled_qty="0.0004" if finished else "0"))
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
+
+    assert [r.getMessage() for r in records] == (
+        [
+            f"ledgered order O-dropped (Kraken {_TXID}) rests at Kraken ({status.name}) but this process's Cache does not "
+            "hold it, so neither the startup pass nor a kill trip can cancel it -- cancel it by hand on Kraken's "
+            "open-orders page"
+        ]
+        if resting
+        else []
+    )
+    assert not _kill_file(tmp_path).exists()
+
+
+# --- read_venue_orders against a loopback venue: the wheel's own client, offline ----------------------
+
+
+@pytest.fixture
+def _loopback_credentials(monkeypatch):
+    monkeypatch.setenv("KRAKEN_SPOT_API_KEY", kraken_loopback.API_KEY)
+    monkeypatch.setenv("KRAKEN_SPOT_API_SECRET", kraken_loopback.API_SECRET)
+
+
+def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client_order_id(_loopback_credentials):
+    """The reader's whole contract on the pinned wheel, offline: the listing is cached first, so an
+    order Kraken spells by its altname (`XBTEUR`) resolves; open and closed orders both come back;
+    every report carries `client_order_id` None whatever `cl_ord_id` Kraken stored; and ClosedOrders
+    is asked from `since`."""
+    since = NOW - timedelta(hours=9)
+    btc = {"price": "30000.0", "volume": "0.00100000", "side": "sell"}
+    with kraken_loopback.serve() as venue:
+        venue.open_orders["OOPENA-XBT00-000001"] = kraken_loopback.open_order("XBTEUR", **btc, cl_ord_id="O-120000-001-000-1")
+        venue.closed_orders[_TXID] = kraken_loopback.closed_order(
+            "XBTEUR", **btc, status="closed", vol_exec="0.00100000", cl_ord_id="O-080000-001-000-2"
+        )
+        venue.closed_orders["OCANCL-SOL00-000003"] = kraken_loopback.closed_order(
+            "SOLEUR", price="50.00", volume="0.06000000", side="sell", cl_ord_id="O-080000-001-000-3"
+        )
+        reports = {str(r.venue_order_id): r for r in read_venue_orders(since, base_url=venue.base_url)}
+
+    assert sorted(reports) == sorted(["OOPENA-XBT00-000001", _TXID, "OCANCL-SOL00-000003"])
+    assert {txid: r.client_order_id for txid, r in reports.items()} == dict.fromkeys(reports)
+    assert (reports[_TXID].order_status, float(reports[_TXID].filled_qty)) == (OrderStatus.FILLED, 0.001)
+    assert str(reports[_TXID].instrument_id) == "BTC/EUR.KRAKEN"
+    assert reports["OCANCL-SOL00-000003"].order_status == OrderStatus.CANCELED
+    assert venue.closed_order_forms[0]["start"] == str(int(since.timestamp()))
+
+
+def test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        venue.open_orders["OOPENA-XBT00-000001"] = kraken_loopback.open_order("XBTEUR", price="30000.0", volume="0.00100000")
+        venue.closed_orders[_TXID] = kraken_loopback.closed_order("XBTEUR", price="30000.0", volume="0.00100000")
+        venue.closed_orders["OUNLIS-ETH00-000004"] = kraken_loopback.closed_order("ETHEUR", price="1000.0", volume="0.01000000")
+        txids = sorted(str(r.venue_order_id) for r in read_venue_orders(NOW - timedelta(hours=9), base_url=venue.base_url))
+
+    assert txids == sorted(["OOPENA-XBT00-000001", _TXID])
+
+
+def test_read_venue_orders_raises_past_its_bound(_loopback_credentials, monkeypatch):
+    monkeypatch.setattr(executor_module, "_VENUE_READ_TIMEOUT_SECONDS", 0.5)
+    with kraken_loopback.serve() as venue:
+        venue.stalls["ClosedOrders"] = 3.0
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            read_venue_orders(NOW, base_url=venue.base_url)
+        assert time.monotonic() - started < 2.5
+
+
+def test_read_venue_orders_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        read_venue_orders(NOW, base_url="http://127.0.0.1:9")
+
+
 # --- D11: the first automatic kill trips ----------------------------------------------------------
 
 
@@ -4172,8 +4811,11 @@ def test_a_tripped_kill_switch_refuses_every_later_plan(tmp_path, kill_trip_expe
     ex.on_order_event(_fill("O-unknown", 0.001))
     assert _kill_file(tmp_path).exists()
 
+    # The trip cancelled the resting order, and after the restart the venue says so: the row that
+    # recorded its txid at acceptance is read at the venue, which the restarted Cache cannot answer.
+    canceled = _VenueOrders(_report(str(_venue_order_id(client.last_order_id)), OrderStatus.CANCELED))
     restarted_client = StubClient()
-    restarted = _executor(tmp_path, client=restarted_client, gate=_gate(tmp_path, GateLevel.NONE))
+    restarted = _executor(tmp_path, client=restarted_client, gate=_gate(tmp_path, GateLevel.NONE), venue_orders=canceled)
     later = NOW + timedelta(seconds=5)
     _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=later - timedelta(minutes=1)))
     restarted.on_timer(later)

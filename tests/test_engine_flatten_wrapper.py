@@ -137,6 +137,7 @@ def test_the_default_invocation_writes_no_kill_file_stops_nothing_and_passes_no_
     # The dry run's reads run beside a LIVE engine on the same key. Spec 00106 D1 accepts that cost
     # on condition the wrapper says so, and stdout is the only place it can.
     assert "share the trade key" in result.stdout
+    assert "while the engine is starting" in result.stdout
     assert not (state / "exec" / "kill").exists()
     assert not any(line.startswith("systemctl") for line in _log(log))
     docker_lines = [line for line in _log(log) if "docker" in line]

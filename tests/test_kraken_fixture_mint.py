@@ -1,17 +1,18 @@
 """The fixture minter's pure core — the rails that decide what reaches a live account: a leg minted
-on a two-way-spelled pair rests where the verdict it exists to exercise cannot see it, a size taken
+on a two-way-spelled pair rests where a read scoped to that pair cannot see it, a size taken
 from a remembered figure rather than the venue's own `ordermin` is rejected at submit or accepted at
 a notional nobody chose, and leverage reaching a leg meant to be spot is a position nobody planned.
 """
 
 from __future__ import annotations
 
-import ast
 import importlib.util
+import itertools
 import json
 import os
 import re
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -67,7 +68,7 @@ def _no_unintended_dialling(monkeypatch):
 
 
 class TestTheSameKeyGuard:
-    """A leg on a pair Kraken spells two ways rests where flatten's verdict cannot see it."""
+    """A leg on a pair Kraken spells two ways rests where a read scoped to that pair cannot see it."""
 
     @pytest.mark.parametrize("pair", ["BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC"])
     def test_it_refuses_every_two_way_spelled_leg(self, pair: str) -> None:
@@ -79,28 +80,18 @@ class TestTheSameKeyGuard:
         """The true positive. A guard that refuses everything ships green and proves nothing."""
         mint.assert_same_key("SOL/EUR")
 
-    def test_the_blind_list_is_imported_rather_than_restated(self) -> None:
-        """Two copies of this list already exist on the live trade path. A third would rot apart."""
-        from cli.engine.flatten import BLIND_ORDER_READ_LEGS
+    def test_the_blind_legs_are_the_two_way_spelled_basket_legs(self) -> None:
+        """The list is frozen text; recomputing it keeps a basket change from leaving it stale. A scoped
+        read keeps the rows whose pair is the instrument's `raw_symbol` -- the AssetPairs KEY, which
+        `PAIR_KEYS` carries -- while an open order names the altname `dump_pair_name` derives."""
+        from cli.backfill.read import dump_pair_name
+        from cli.engine.store import BASKET, PAIR_KEYS
 
-        assert mint.BLIND_ORDER_READ_LEGS is BLIND_ORDER_READ_LEGS
-
-    def test_the_probe_and_flatten_agree_on_the_blind_legs(self) -> None:
-        """The list exists twice on the live trade path. This is the guard that keeps them equal.
-
-        `cli/engine/flatten.py` and `infra/scripts/kraken-order-semantics-probe.py` each define it.
-        Neither is edited here; this asserts they have not drifted, which is what makes leaving the
-        pair in place safe and what a third copy would have made unenforceable.
-        """
-        from cli.engine.flatten import BLIND_ORDER_READ_LEGS
-
-        probe_path = _REPO / "infra" / "scripts" / "kraken-order-semantics-probe.py"
-        src = probe_path.read_text()
-        # Read the literal rather than importing: the probe pulls in a live-venue import surface at
-        # module scope, and this assertion needs the constant, not the module.
-        match = re.search(r"^RECONCILE_BLIND_LEGS = (\([^)]*\))", src, re.MULTILINE)
-        assert match, "the probe's blind-leg constant moved or was renamed"
-        assert ast.literal_eval(match.group(1)) == tuple(BLIND_ORDER_READ_LEGS)
+        two_way = {symbol for symbol in BASKET if dump_pair_name(symbol) != PAIR_KEYS[symbol]}
+        assert two_way == set(mint.SCOPED_ORDER_READ_BLIND_LEGS)
+        # Not a degenerate fixture: a basket spelled one way throughout would make the set empty and
+        # let the equality above pass against a guard that refused nothing.
+        assert len(BASKET) == 12 and len(two_way) == 5
 
     def test_the_planner_refuses_before_it_sizes_anything(self) -> None:
         """The guard runs at plan time, so a dry run on a blind leg refuses rather than printing."""
@@ -191,7 +182,7 @@ class TestTheMeasuredSameKeyRefusal:
         with pytest.raises(mint.Refusal) as exc:
             mint.pair_limits(listing, "SOL/EUR")
         assert "is behind the venue" in str(exc.value)
-        assert "SOL/EUR" not in mint.BLIND_ORDER_READ_LEGS
+        assert "SOL/EUR" not in mint.SCOPED_ORDER_READ_BLIND_LEGS
 
     def test_the_healthy_row_passes(self) -> None:
         """The true positive. SOL/EUR's key and altname are the same string, so nothing fires."""
@@ -528,7 +519,7 @@ class _Recorder:
     would let a regression that called it pass unnoticed.
     """
 
-    def __init__(self, *, positions=(), balances=(), orders=()) -> None:
+    def __init__(self, *, positions=(), balances=(), orders=(), instruments=None) -> None:
         self.calls: list[str] = []
         self.submitted: list[dict] = []
         self.cached: list[object] = []
@@ -536,13 +527,23 @@ class _Recorder:
         self._positions = tuple(positions)
         self._balances = tuple(balances)
         self._orders = tuple(orders)
+        self._instruments = list(instruments) if instruments is not None else [_Instrument(), _Instrument("BTC/EUR.KRAKEN")]
+
+    def _require_cached(self, what: str, instrument_ids) -> None:
+        """The wheel answers the book, and resolves every open-order and open-position row, only
+        through instruments cached into the client, and fails the whole read on a miss."""
+        cached = {str(instrument.id) for instrument in self.cached}
+        missing = sorted(str(i) for i in instrument_ids if str(i) not in cached)
+        if missing:
+            raise RuntimeError(f"{what}: instrument not in cache for {missing[0]}")
 
     async def request_instruments(self, pairs=None):
         self.calls.append("request_instruments")
-        return [_Instrument()]
+        return list(self._instruments)
 
     async def request_book_snapshot(self, instrument_id, depth=1):
         self.calls.append("request_book_snapshot")
+        self._require_cached("book", [instrument_id])
         return _Book()
 
     async def request_order_status_reports(self, account, **kw):
@@ -551,11 +552,13 @@ class _Recorder:
         cancelled FIXMINT rows -- and the resting guard would skip its leg on every later run."""
         self.calls.append("request_order_status_reports")
         self.read_kwargs["orders"] = kw
+        rows = list(self._orders)
         if kw.get("open_only") is not True:
             # On the MINT pair, so the leftover can actually produce the skip: a closed row on some
             # other pair fails the kwarg assertion but never reaches the guard it is meant to fool.
-            return [*self._orders, _Order("SOL/EUR.KRAKEN")]
-        return list(self._orders)
+            rows.append(_Order("SOL/EUR.KRAKEN"))
+        self._require_cached("OpenOrders", [row.instrument_id for row in rows])
+        return rows
 
     async def request_position_status_reports(self, account, **kw):
         """Answers what the venue answers, which is NOT the same in every mode.
@@ -569,6 +572,7 @@ class _Recorder:
         self.read_kwargs["positions"] = kw
         if kw.get("account_type") is not AccountType.MARGIN:
             return []
+        self._require_cached("OpenPositions", [row.instrument_id for row in self._positions])
         return list(self._positions)
 
     async def request_account_state(self, account, **kw):
@@ -581,8 +585,10 @@ class _Recorder:
         self.cached.append(instrument)
 
     async def submit_order(self, **kwargs):
+        """Answers the venue order id, as the wheel's `submit_order` does."""
         self.calls.append("submit_order")
         self.submitted.append(kwargs)
+        return f"OTX{len(self.submitted):03d}-AAAAA-BBBBBB"
 
 
 class _Instrument:
@@ -595,11 +601,13 @@ class _Instrument:
     reached back into the object raises on `float(None)` instead of freezing a floor to zero.
     """
 
-    id = "SOL/EUR.KRAKEN"
     min_quantity = None
     min_notional = None
     size_increment = None
     price_increment = None
+
+    def __init__(self, instrument_id: str = "SOL/EUR.KRAKEN") -> None:
+        self.id = instrument_id
 
 
 class _Currency:
@@ -653,6 +661,18 @@ async def _answer_none(*_args, **_kwargs):
 def _factories(rec: object) -> dict:
     """Both live doors, replaced. Neither has a default, so a forgotten one is a TypeError."""
     return {"client_factory": lambda _k, _s: rec, "listing_factory": lambda: _LISTING}
+
+
+def _read_account(rec, pair: str = "SOL/EUR", limits=_LIMITS, best_bid: float = _BEST_BID):
+    """`read_account` as `_run` reaches it: after `read_listing`, since `_Recorder` resolves rows
+    only through what was cached, as the wheel does."""
+    import asyncio
+
+    async def _both():
+        await mint.read_listing(rec)
+        return await mint.read_account(rec, pair, limits, best_bid)
+
+    return asyncio.run(_both())
 
 
 @pytest.fixture
@@ -723,9 +743,7 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     """
 
     def _state(self, rec) -> object:
-        import asyncio
-
-        return asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS, _BEST_BID))
+        return _read_account(rec)
 
     def test_positions_are_requested_in_margin_mode(self) -> None:
         """The client returns an empty vector in the cash default, whatever the account holds."""
@@ -744,7 +762,6 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
         returns the previous pass's cancelled FIXMINT rows, and the plan then silently drops the one
         leg the pass most needs -- indistinguishable, in the printed plan, from a real resting order.
         """
-        import asyncio
 
         # Driven through `read_account`, not by calling the stub: a test that calls the stub proves
         # what the stub does. `_Blind` is the defect itself -- a client that drops `open_only`.
@@ -752,7 +769,7 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
             async def request_order_status_reports(self, account, **kw):
                 return await super().request_order_status_reports(account)
 
-        state = asyncio.run(mint.read_account(_Blind(), "SOL/EUR", _LIMITS, _BEST_BID))
+        state = _read_account(_Blind())
         assert state.resting_pairs == ("SOL/EUR",)
         kinds = [leg.kind for leg in mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=state)]
         assert "resting" not in kinds
@@ -809,20 +826,16 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     def test_a_balance_whose_notional_misses_costmin_does_not_satisfy_it(self) -> None:
         """`flatten` classifies that balance `dust` and does not sell it, so counting it here would
         leave the sell path a balance the command declines to touch. Quantity alone is not enough."""
-        import asyncio
-
         limits = mint.PairLimits(ordermin=1.0, costmin=20.0, lot_step=0.001, price_step=0.0001)
         rec = _Recorder(balances=[_Balance("SOL", 1.5)])
-        state = asyncio.run(mint.read_account(rec, "SOL/EUR", limits, best_bid=2.0))
+        state = _read_account(rec, limits=limits, best_bid=2.0)
         assert 1.5 >= limits.ordermin and 1.5 * 2.0 < limits.costmin
         assert state.non_eur_assets == ()
 
     def test_the_venues_own_spelling_of_an_asset_is_resolved(self) -> None:
         """`XXDG` is how the venue spells DOGE; compared raw it never equals the pair's base."""
-        import asyncio
-
         rec = _Recorder(balances=[_Balance("XXDG", 1000.0)])
-        state = asyncio.run(mint.read_account(rec, "DOGE/EUR", _LIMITS, _BEST_BID))
+        state = _read_account(rec, pair="DOGE/EUR")
         assert state.non_eur_assets == ("DOGE",)
 
     def test_eur_never_counts_as_the_non_eur_balance(self) -> None:
@@ -840,22 +853,130 @@ class TestTheAccountIsReadTheWayFlattenReadsIt:
     def test_a_read_that_answers_nothing_refuses_rather_than_reading_as_flat(self, method: str, what: str) -> None:
         """`None` is not an empty account. Read as one it re-mints the leg on every run, and for the
         margin leg that is another leveraged position each time -- while the plan prints `(none)`."""
-        import asyncio
-
         rec = _Recorder()
         setattr(rec, method, _answer_none)
         with pytest.raises(mint.Refusal) as exc:
-            asyncio.run(mint.read_account(rec, "SOL/EUR", _LIMITS, _BEST_BID))
+            _read_account(rec)
         assert what in str(exc.value)
 
     def test_the_instrument_is_cached_before_the_account_is_read(self, _creds) -> None:
-        """The order-report read resolves rows through the cache and drops what it cannot resolve
-        while returning success, so a cold cache would empty this guard rather than fail it."""
+        """The unscoped order-report read resolves each row through the cache and fails the whole read
+        on a row it cannot resolve."""
         import asyncio
 
         rec = _Recorder()
         asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
         assert rec.calls.index("cache_instrument") < rec.calls.index("request_order_status_reports")
+
+
+class TestTheListingIsCachedBeforeAnyRead:
+    """The wheel answers the book, and resolves every open-order and open-position row, only through
+    instruments cached into the client, and the client starts bare. `_Recorder` enforces that, so
+    every `_run` test in this module also fails on a read made before the cache."""
+
+    def _dry_run(self, rec) -> str:
+        """The dry run's account line: what the operator reads the account as."""
+        import asyncio
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert asyncio.run(mint._run(_args(execute=False), **_factories(rec))) == 0
+        return next(line for line in out.getvalue().splitlines() if line.startswith("account already holds"))
+
+    def test_every_listing_row_is_cached_before_the_book_is_read(self, _creds) -> None:
+        rec = _Recorder()
+        self._dry_run(rec)
+        assert rec.calls.index("request_book_snapshot") > max(i for i, c in enumerate(rec.calls) if c == "cache_instrument")
+        assert rec.cached == rec._instruments
+
+    def test_every_row_is_cached_even_where_rows_share_an_instrument_id(self, _creds) -> None:
+        """Some ids carry one row per venue spelling, and an order names one of them: a cache built
+        from one row per id leaves the other spelling unresolvable."""
+        rows = [_Instrument(), _Instrument("BTC/EUR.KRAKEN"), _Instrument("BTC/EUR.KRAKEN")]
+        rec = _Recorder(instruments=rows)
+        self._dry_run(rec)
+        assert len(rec.cached) == len(rows)
+        assert all(any(cached is row for cached in rec.cached) for row in rows)
+
+    def test_an_order_resting_on_another_pair_is_read_rather_than_failing_the_run(self, _creds) -> None:
+        """The owner's own BTC/EUR order, say: caching the mint pair alone fails the unscoped read."""
+        rec = _Recorder(orders=[_Order("BTC/EUR.KRAKEN")])
+        assert "resting: ('BTC/EUR',)" in self._dry_run(rec)
+
+    def test_a_position_on_another_pair_is_read_rather_than_failing_the_run(self, _creds) -> None:
+        rec = _Recorder(positions=[_Position("BTC/EUR.KRAKEN")])
+        assert "positions: ('BTC/EUR',)" in self._dry_run(rec)
+
+
+class TestEveryReadFailureIsARefusalNamingTheRead:
+    """`main` catches `Refusal` alone, so any other exception reaches the operator as a traceback."""
+
+    @pytest.mark.parametrize(
+        ("method", "what"),
+        [
+            ("request_instruments", "the instrument listing"),
+            ("request_book_snapshot", "SOL/EUR's order book"),
+            ("request_order_status_reports", "open orders"),
+            ("request_position_status_reports", "positions"),
+            ("request_account_state", "the account state"),
+        ],
+    )
+    def test_an_adapter_error_on_a_read_refuses_and_names_it(self, _creds, method: str, what: str) -> None:
+        import asyncio
+
+        async def _fails(*_args, **_kwargs):
+            raise RuntimeError("API error: EGeneral:Temporary lockout")
+
+        rec = _Recorder()
+        setattr(rec, method, _fails)
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert f"{what} could not be read" in str(exc.value)
+        assert "EGeneral:Temporary lockout" in str(exc.value)
+
+    def test_a_public_listing_error_refuses_and_names_it(self, _creds) -> None:
+        """The floors come from the public AssetPairs fetch, which raises `SnapshotError`, not `Refusal`."""
+        import asyncio
+
+        from cli.snapshot.errors import SnapshotError
+
+        def _fails():
+            raise SnapshotError("transport error fetching AssetPairs: timed out")
+
+        rec = _Recorder()
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), client_factory=lambda _k, _s: rec, listing_factory=_fails))
+        assert "the public AssetPairs listing could not be read" in str(exc.value)
+        assert "timed out" in str(exc.value)
+
+    def test_an_uncached_row_is_a_refusal_too(self) -> None:
+        """What the wheel raises for an order on a pair the cache lacks."""
+        rec = _Recorder(orders=[_Order("ADA/EUR.KRAKEN")])
+        with pytest.raises(mint.Refusal) as exc:
+            _read_account(rec)
+        assert "open orders could not be read" in str(exc.value)
+        assert "ADA/EUR.KRAKEN" in str(exc.value)
+
+    def test_a_listing_that_cannot_be_cached_refuses(self, _creds) -> None:
+        import asyncio
+
+        def _fails(_instrument):
+            raise RuntimeError("cache poisoned")
+
+        rec = _Recorder()
+        rec.cache_instrument = _fails
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), **_factories(rec)))
+        assert "could not be cached" in str(exc.value)
+
+    def test_an_empty_listing_refuses(self, _creds) -> None:
+        import asyncio
+
+        with pytest.raises(mint.Refusal) as exc:
+            asyncio.run(mint._run(_args(execute=False), **_factories(_Recorder(instruments=[]))))
+        assert "came back empty" in str(exc.value)
 
 
 class TestWhatIsSentIsWhatWasPlanned:
@@ -939,3 +1060,143 @@ class TestTheExecutePath:
             self._run_execute(rec, typed="yes")
         assert rec.submitted == []
         assert "submit_order" not in rec.calls
+
+
+def _upstream_truncate_cl_ord_id(client_order_id: str) -> str:
+    """A replica of the pinned adapter's `truncate_cl_ord_id`, which every AddOrder's `cl_ord_id`
+    passes through (crates/adapters/kraken/src/common/parse.rs at 70d887545790). Re-read it there on a
+    bump: the vectors below are upstream's own tests, so they pin the replica, not the adapter."""
+    raw = client_order_id.encode()
+    if len(raw) <= 18:
+        return client_order_id
+    if len(raw) == 36 and raw.count(b"-") == 4:
+        return client_order_id
+    if len(raw) == 32 and all(byte in b"0123456789abcdefABCDEF" for byte in raw):
+        return client_order_id
+    return "O" + raw[-17:].decode()
+
+
+class TestTheClientOrderIds:
+    """Each leg reaches the venue under its own id, carrying the tag, exactly as printed."""
+
+    # Single-digit fields, zero-padded to two, and the widest day and time a month has.
+    _NOWS = (datetime(2026, 9, 3, 4, 5, 6, tzinfo=UTC), datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC))
+
+    @pytest.mark.parametrize(
+        ("sent", "wire"),
+        [
+            ("ABCDEFGHIJKLMNOPQR", "ABCDEFGHIJKLMNOPQR"),
+            ("O202602270023210040", "O02602270023210040"),
+            ("O202602270023210040011", "O02270023210040011"),
+            ("0123456789abcdef0123456789abcdeg", "Of0123456789abcdeg"),
+            ("6d47a5f0-6fd4-4b84-b56e-c23f0f689c20", "6d47a5f0-6fd4-4b84-b56e-c23f0f689c20"),
+            ("6D47A5F06FD44B84B56EC23F0F689C20", "6D47A5F06FD44B84B56EC23F0F689C20"),
+        ],
+    )
+    def test_the_replica_matches_upstreams_own_vectors(self, sent: str, wire: str) -> None:
+        assert _upstream_truncate_cl_ord_id(sent) == wire
+
+    def _ids(self, now) -> list[str]:
+        legs = mint.plan_legs(pair="SOL/EUR", limits=_LIMITS, best_bid=_BEST_BID, existing=mint.AccountState())
+        return [mint.mint_client_order_id(leg.kind, now) for leg in legs]
+
+    @pytest.mark.parametrize("now", _NOWS)
+    def test_every_id_reaches_the_venue_unchanged(self, now) -> None:
+        for coid in self._ids(now):
+            assert len(coid) <= 18, coid
+            assert _upstream_truncate_cl_ord_id(coid) == coid
+
+    @pytest.mark.parametrize("now", _NOWS)
+    def test_the_legs_ids_are_distinct(self, now) -> None:
+        """Kraken requires a `cl_ord_id` unique among open orders, and the resting leg is still open
+        when the margin leg goes out."""
+        ids = self._ids(now)
+        assert len(ids) == 3
+        assert len(set(ids)) == len(ids), ids
+
+    @pytest.mark.parametrize("now", _NOWS)
+    def test_every_id_is_tagged_and_uppercase(self, now) -> None:
+        """Uppercase letters, digits and hyphens are the free-text ids the venue has accepted."""
+        for coid in self._ids(now):
+            assert coid.startswith(f"{mint.FIXTURE_ORDER_TAG}-"), coid
+            assert re.fullmatch(r"[A-Z0-9-]+", coid), coid
+
+
+class TestTheSendLoop:
+    """Each leg is reported with the id it went out under and the venue's txid for it, and a failure
+    partway names what was sent and what was not."""
+
+    @pytest.fixture(autouse=True)
+    def _tty(self, monkeypatch, _creds):
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True, raising=False)
+
+    @pytest.fixture(autouse=True)
+    def _ticking_clock(self, monkeypatch):
+        """Every `now()` one second after the last, so an id minted again at submit differs from the
+        one the plan printed; on the real clock the whole run fits in one second and the two agree."""
+        ticks = itertools.count()
+        base = datetime(2026, 9, 3, 4, 5, 6, tzinfo=UTC)
+
+        class _Ticking(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return base + timedelta(seconds=next(ticks))
+
+        monkeypatch.setattr(mint, "datetime", _Ticking)
+
+    def _run_execute(self, rec, capsys):
+        import asyncio
+
+        rc = asyncio.run(mint._run(_args(execute=True), **_factories(rec), prompt=lambda _m: mint.CONFIRM_WORD))
+        return rc, capsys.readouterr().out
+
+    def test_each_sent_line_carries_the_wire_id_and_the_venue_txid(self, capsys) -> None:
+        rec = _Recorder()
+        rc, out = self._run_execute(rec, capsys)
+        assert rc == 0
+        sent = [line.strip() for line in out.splitlines() if line.strip().startswith("sent ")]
+        wire = [str(kw["client_order_id"]) for kw in rec.submitted]
+        assert sent == [
+            f"sent {kind} as {coid} -> venue txid OTX00{n}-AAAAA-BBBBBB"
+            for n, (kind, coid) in enumerate(zip(("resting", "margin", "spot"), wire, strict=True), start=1)
+        ]
+
+    def test_the_plan_prints_the_ids_that_go_out(self, capsys) -> None:
+        """The operator approves the plan's ids; a loop that minted them again at submit would send
+        ids nobody read."""
+        rec = _Recorder()
+        _, out = self._run_execute(rec, capsys)
+        planned = [m[1] for line in out.splitlines() if (m := re.fullmatch(r"  (?:resting|margin|spot) .* as (\S+)", line))]
+        assert len(planned) == 3, out
+        assert planned == [str(kw["client_order_id"]) for kw in rec.submitted]
+
+    def test_a_failure_on_the_second_leg_names_what_went_out(self, capsys) -> None:
+        class _SecondFails(_Recorder):
+            async def submit_order(self, **kwargs):
+                if len(self.submitted) == 1:
+                    self.submitted.append(kwargs)
+                    raise RuntimeError("API error: EOrder:Margin allowance exceeded")
+                return await super().submit_order(**kwargs)
+
+        rec = _SecondFails()
+        with pytest.raises(mint.Refusal) as exc:
+            self._run_execute(rec, capsys)
+        text = str(exc.value)
+        first = rec.submitted[0]["client_order_id"]
+        assert f"sent: resting as {first} -> venue txid OTX001-AAAAA-BBBBBB" in text
+        assert "the margin leg failed at submit, and whether the venue took it is unknown" in text
+        assert "EOrder:Margin allowance exceeded" in text
+        assert "not attempted: spot" in text
+        assert len(rec.submitted) == 2
+
+    def test_a_refusal_before_the_first_send_says_that_leg_was_not_sent(self, capsys, monkeypatch) -> None:
+        async def _refuses(_client, leg, _coid):
+            raise mint.Refusal(f"REFUSING: the {leg.kind} leg's numbers changed in translation")
+
+        monkeypatch.setattr(mint, "submit", _refuses)
+        rec = _Recorder()
+        with pytest.raises(mint.Refusal) as exc:
+            self._run_execute(rec, capsys)
+        assert "the resting leg was not sent" in str(exc.value)
+        assert "sent: (none)" in str(exc.value)
+        assert "not attempted: margin, spot" in str(exc.value)

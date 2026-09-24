@@ -61,9 +61,12 @@ name the VARIABLES and never their contents.
 
 Collision safety: the production engine runs `TraderId("SHADOW-001")` with a default-tagged
 strategy, so its client order ids carry the infix `-001-000-`. This harness mints
-`O-<YYYYMMDD>-<HHMMSS>-901-P6V-<n>` -- nautilus's own id SHAPE (proven accepted by Kraken on
-2026-07-10) with tags the engine structurally cannot emit. Each id is asserted distinct from
-the engine's infix before submission.
+`O-<YYYYMMDD>-<HHMMSS>-901-P6V-<n>` -- nautilus's own id SHAPE, with tags the engine structurally
+cannot emit. At 27 characters or more it never reaches Kraken whole: the adapter sends a non-UUID
+id over 18 characters as `O` plus its last 17, so it goes out as `O-<HHMMSS>-901-P6V-<n>` while
+`<n>` is one digit, the infix intact. What Kraken accepted on 2026-07-10 was an 18-character cut
+of nautilus's shape, not a 27-character id. Each id is asserted distinct from the engine's infix
+before submission.
 """
 
 from __future__ import annotations
@@ -96,7 +99,7 @@ from nautilus_trader.adapters.kraken import (
     KrakenProductType,
 )
 from nautilus_trader.common import Environment, LogLevel
-from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
+from nautilus_trader.config import FileWriterConfig, LiveExecutionEngineConfig, LoggerConfig
 from nautilus_trader.live import LiveNode, LiveNodeBuilder
 from nautilus_trader.model import (
     AccountId,
@@ -142,12 +145,13 @@ EUR_UNIVERSE = (
 )
 BTC_QUOTED_LEGS = ("ETH/BTC", "SOL/BTC")
 
-# The legs Kraken spells two ways -- `AssetPairs` key `XXBTZEUR` against altname `XBTEUR`. The
-# adapter's instrument cache is scanned by the KEY while an open order is looked up by the order's
-# own altname, and the lookup drops an unresolved row with no warning and a successful return, so
-# startup reconciliation cannot see an order resting on one of these -- which is what probe 6 reads.
-# Restated here rather than imported: this script must run when the repo's own code is what changed.
-# `--pair` defaults to one of them, so the default run trades a blind leg.
+# The legs Kraken spells two ways -- `AssetPairs` key `XXBTZEUR` against altname `XBTEUR`. A build
+# without upstream #5034 (2.0.0rc6.dev20260918 and earlier) scanned its instrument cache by the key,
+# looked an open order up by its altname and silently dropped the unresolved row, so its startup
+# reconciliation could not see an order resting on one of these. The build this harness binds to
+# carries #5034; the list stays for the preflight reminder about the production engine, whose running
+# image may still predate it. Restated here rather than imported: this script must run when the
+# repo's own code is what changed.
 RECONCILE_BLIND_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
 
 # The production engine's identity -- the source of the infix our ids must never carry.
@@ -208,8 +212,12 @@ TERMINAL_STATUSES = frozenset(
 # exclude these two explicitly, or the wait resolves on the local echo of our own submission.
 PRE_VENUE_STATUSES = frozenset({OrderStatus.INITIALIZED, OrderStatus.SUBMITTED})
 
+_P2 = "Reconciliation at node start"
+_P2_EXPECTED = "Open orders + positions empty-or-actual, no spurious entries"
 _P4A = "Spot post-only limit, resting"
 _P4B = "Crossing post-only"
+_P6 = "Post-run reconciliation"
+_P6_EXPECTED = "No open orders/positions; balances reflect only probe 5"
 
 
 class Refusal(Exception):
@@ -377,11 +385,14 @@ def is_post_only_rejection(detail: str) -> bool:
 
 @dataclass
 class LeftoverSplit:
-    """What the Cache says about every client order id this harness handed to `submit_order`."""
+    """What the Cache says about every client order id this harness handed to `submit_order`, plus
+    the open orders on `--pair` that nothing claims."""
 
     closed: list[str] = field(default_factory=list)
     resting: list[str] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
+    # Not ours by any record, so never cancelled here -- but not provably somebody else's either.
+    unclaimed: list[str] = field(default_factory=list)
 
     @property
     def outstanding(self) -> list[str]:
@@ -408,6 +419,163 @@ def classify_submitted(submitted: Iterable[str], lookup: Callable[[str], object 
     return split
 
 
+@dataclass
+class OpenOrderSplit:
+    """The Cache's open orders by whose they are.
+
+    By venue order id, because that is the only id that comes back: the adapter sends a non-UUID
+    client order id longer than Kraken's 18 characters as `O` plus its last 17, so the probe infix
+    does survive on the wire, but the spot order read carries `client_order_id=None` and
+    reconciliation names every order it adopts by its txid. A fresh `--probes 6` therefore sees an earlier run's leftover
+    under its txid, and only that run's evidence file can say it was ours."""
+
+    ours: list = field(default_factory=list)
+    known: list = field(default_factory=list)
+    unclaimed: list = field(default_factory=list)
+    other: list = field(default_factory=list)
+    known_absent: list[str] = field(default_factory=list)
+
+    def labelled(self) -> list[tuple[str, object]]:
+        return [(label, o) for label, orders in self._buckets() for o in orders]
+
+    def counts(self) -> str:
+        return ", ".join(f"{label} {len(orders)}" for label, orders in self._buckets())
+
+    def _buckets(self) -> list[tuple[str, list]]:
+        return [("ours", self.ours), ("known", self.known), ("unclaimed", self.unclaimed), ("other", self.other)]
+
+
+def classify_open_orders(
+    orders: Iterable,
+    *,
+    pair: str,
+    submitted: set[str],
+    ours_venue_ids: set[str],
+    known_venue_ids: set[str],
+) -> OpenOrderSplit:
+    """`ours`: submitted by this invocation, or a txid an evidence file records for an earlier one.
+    `known`: a txid the operator named with `--known-order`. The rest split on `pair`: this
+    invocation's probe orders only go out on `--pair`, so an order there that nothing names is
+    `unclaimed` -- it cannot be told from a leftover whose evidence file was never written -- and one
+    elsewhere is `other`: not this invocation's, though an earlier run on another `--pair` that left
+    no evidence file reads the same.
+    `ours` is tested first, so naming a probe leftover with `--known-order` does not wave it through."""
+    split = OpenOrderSplit()
+    seen: set[str] = set()
+    for o in orders:
+        vid = "" if o.venue_order_id is None else str(o.venue_order_id)
+        seen.add(vid)
+        if str(o.client_order_id) in submitted or vid in ours_venue_ids:
+            split.ours.append(o)
+        elif vid in known_venue_ids:
+            split.known.append(o)
+        elif str(o.instrument_id) == pair:
+            split.unclaimed.append(o)
+        else:
+            split.other.append(o)
+    split.known_absent = sorted(known_venue_ids - seen)
+    return split
+
+
+def verdict_at_start(split: OpenOrderSplit, open_positions: int) -> str:
+    """Probe 2. An order the operator named with `--known-order` is adjudicated already; any other
+    open order, a position, or a named order that is not open is state a human reads first."""
+    unnamed = split.ours or split.unclaimed or split.other
+    return VERDICT_REVIEW if unnamed or open_positions or split.known_absent else VERDICT_PASS
+
+
+def verdict_after_run(split: OpenOrderSplit, open_positions: int, anchored: bool) -> str:
+    """Probe 6. An order of ours still open, or one on `--pair` that nothing claims, FAILs -- ahead
+    of the anchor, because the Cache saw it open whether or not it speaks for the venue now."""
+    if split.ours or split.unclaimed:
+        return VERDICT_FAIL
+    if split.other or open_positions or split.known_absent or not anchored:
+        return VERDICT_REVIEW
+    return VERDICT_PASS
+
+
+def run_log_path(evidence_dir: str | Path, stamp: str) -> Path:
+    """The run's DEBUG file log, beside its evidence JSON. The logger appends `.log` to the stem."""
+    return Path(evidence_dir) / f"probe-{stamp}.log"
+
+
+# The adapter's WARN when the credentialed TradeVolume call fails and the listing takes the public
+# fee schedule instead; the exec client makes that call once for the regular pairs and once more
+# when the tokenized listing is not empty. The DEBUG nonce line counts the calls, and the exec
+# client's `Loaded N Spot instruments` says its listing finished, which is what lets an absent WARN
+# mean "no fallback" rather than "never got that far".
+TRADEVOLUME_FALLBACK = "falling back to public rates"
+_TRADEVOLUME_CALL = re.compile(r"Generated nonce \d+ for /0/private/TradeVolume")
+_EXEC_LISTING_LOADED = re.compile(r"nautilus_kraken::execution::spot: Loaded \d+ Spot instruments")
+
+
+def tradevolume_fallback(log_text: str) -> dict:
+    """`fell_back` is True on any fallback WARN, False only once the exec client's listing is seen
+    to finish without one, and None when the log cannot say."""
+    lines = log_text.splitlines()
+    warnings = [
+        line[line.find("Failed to request") :] if "Failed to request" in line else line
+        for line in lines
+        if TRADEVOLUME_FALLBACK in line
+    ]
+    loaded = any(_EXEC_LISTING_LOADED.search(line) for line in lines)
+    return {
+        "fell_back": True if warnings else (False if loaded else None),
+        "tradevolume_calls": sum(1 for line in lines if _TRADEVOLUME_CALL.search(line)),
+        "exec_listing_loaded": loaded,
+        "warnings": warnings,
+    }
+
+
+def read_tradevolume_fallback(log_path: Path, *, exec_client: bool) -> dict:
+    if not exec_client:
+        return {"log_file": str(log_path), "fell_back": None, "why": "no exec client (--no-exec), so no credentialed listing"}
+    try:
+        text = log_path.read_text(errors="replace")
+    except OSError as exc:
+        return {"log_file": str(log_path), "fell_back": None, "why": f"the run's log could not be read: {exc!r}"}
+    return {"log_file": str(log_path), **tradevolume_fallback(text)}
+
+
+def describe_tradevolume_fallback(fallback: dict) -> str:
+    log = f"(log: {fallback['log_file']})"
+    if fallback["fell_back"] is True:
+        return (
+            f"TradeVolume: the credentialed listing FELL BACK to public fee rates on {len(fallback['warnings'])} of "
+            f"{fallback['tradevolume_calls']} call(s) -- {fallback['warnings'][0]} {log}"
+        )
+    if fallback["fell_back"] is False:
+        return f"TradeVolume: the account's fee rates answered all {fallback['tradevolume_calls']} call(s), no fallback {log}"
+    why = fallback.get("why") or "the exec client's listing never finished"
+    return f"TradeVolume: the log cannot say whether the listing fell back -- {why} {log}"
+
+
+EVIDENCE_GLOB = "evidence-*.json"
+
+
+def probe_venue_order_ids(evidence: dict) -> set[str]:
+    """The txids one evidence file records for orders its run handed to `submit_order`."""
+    submitted = set(evidence.get("submitted_client_order_ids") or [])
+    return {
+        str(e["venue_order_id"])
+        for e in evidence.get("events") or []
+        if e.get("venue_order_id") and e.get("client_order_id") in submitted
+    }
+
+
+def load_probe_venue_order_ids(evidence_dir: Path) -> tuple[set[str], list[str]]:
+    """Every txid the evidence files in `evidence_dir` record, and a line per file that could not
+    be read -- an order only that file records reads as unclaimed, so the operator is told."""
+    ids: set[str] = set()
+    unreadable: list[str] = []
+    for path in sorted(evidence_dir.glob(EVIDENCE_GLOB)):
+        try:
+            ids |= probe_venue_order_ids(json.loads(path.read_text()))
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            unreadable.append(f"{path}: {exc!r}")
+    return ids, unreadable
+
+
 def render_table(results: list[ProbeResult]) -> str:
     """The deliverable: a GitHub-flavoured table whose rows paste straight into the memo's
     `## Probe results`. `|` inside a cell is escaped -- an unescaped one silently eats cells."""
@@ -422,6 +590,42 @@ def render_table(results: list[ProbeResult]) -> str:
     for r in results:
         lines.append(f"| {cell(r.label)} | {cell(r.name)} | {cell(r.expected)} | {cell(r.observed)} | {cell(r.verdict)} |")
     return "\n".join(lines)
+
+
+# The two ways a node start fails at startup reconciliation, before any strategy runs, as the
+# binding's RuntimeError spells them (upstream crates/live/src/node/mod.rs).
+UNRESOLVED_POSITIONS = "Unresolved positions during startup reconciliation"
+MASS_STATUS_FAILED = "Failed to get mass status"
+_UNRESOLVED_ENTRY = re.compile(
+    r"instrument=(?P<instrument>[^,]+), venue_position_id=.*?, venue_quantity=(?P<quantity>[^:]+): (?P<reason>[^;]+)"
+)
+
+
+@dataclass
+class UnresolvedPosition:
+    instrument: str
+    quantity: str
+    reason: str
+
+
+def unresolved_positions(message: str) -> list[UnresolvedPosition] | None:
+    """The positions a node refused to start over, or None when `message` is not that refusal.
+
+    The entries are `; `-joined; one whose shape moved upstream is dropped rather than guessed at,
+    and the caller then shows the whole message."""
+    if UNRESOLVED_POSITIONS not in message:
+        return None
+    return [
+        UnresolvedPosition(m["instrument"].strip(), m["quantity"].strip(), m["reason"].strip())
+        for m in _UNRESOLVED_ENTRY.finditer(message)
+    ]
+
+
+def describe_open_order(order) -> str:
+    """An open order the way it is adjudicated at Kraken: by its venue txid. No price -- the adapter
+    reads a reconciled order's price from Kraken's average-price field, so a resting limit order
+    reads 0.0 and would match nothing on the Open Orders page."""
+    return f"txid {order.venue_order_id} {order.instrument_id} {order.side} {order.quantity}"
 
 
 def event_detail(event) -> str:
@@ -579,6 +783,11 @@ class RunState:
     # which is what decides whether a fill left an OPEN POSITION behind. A signal is only one of
     # the ways a run ends early; an exec client that dies takes the node down with no signal at all.
     sequence_complete: bool = False
+    # What `classify_open_orders` reads besides the Cache: `--pair` as an instrument id, the txids
+    # earlier runs' evidence files record, and the txids named with `--known-order`.
+    pair: str = ""
+    prior_venue_order_ids: set[str] = field(default_factory=set)
+    known_venue_order_ids: set[str] = field(default_factory=set)
 
 
 # --------------------------------------------------------------------------------------------
@@ -707,7 +916,7 @@ class ProbeStrategy(Strategy):
         short_name = f"Margin short (leverage {self.args.leverage}), resting"
         catalogue: dict[int, list[tuple[str, str, Callable[[], None]]]] = {
             1: [("1", "Auth + account read", self._probe1)],
-            2: [("2", "Reconciliation at node start", self._probe2)],
+            2: [("2", _P2, self._probe2)],
             3: [("3", "WS market data", self._probe3)],
             4: [
                 ("4a", _P4A, lambda: self._resting("4a", _P4A, "BUY", None)),
@@ -716,7 +925,7 @@ class ProbeStrategy(Strategy):
                 ("4d", short_name, lambda: self._resting("4d", short_name, "SELL", self.args.leverage)),
             ],
             5: [("5", "Real ~EUR 10 fill round-trip", self._probe5)],
-            6: [("6", "Post-run reconciliation", self._probe6)],
+            6: [("6", _P6, self._probe6)],
         }
         steps: list[tuple[str, str, Callable[[], None]]] = []
         for n in sorted(self.args.selected_probes):
@@ -1067,38 +1276,38 @@ class ProbeStrategy(Strategy):
     # -- probe 2 -------------------------------------------------------------------------
 
     def _probe2(self) -> None:
-        label, name = "2", "Reconciliation at node start"
-        expected = "Open orders + positions empty-or-actual, no spurious entries"
+        label, name, expected = "2", _P2, _P2_EXPECTED
         if self.args.no_exec:
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             self._advance()
             return
-        # A FLOOR, never a total -- the same startup-reconciliation cache probe 6 reads, one probe
-        # earlier. That read cannot see an order resting on `RECONCILE_BLIND_LEGS`, and `--pair`
-        # defaults to one of them, so a previous run's leftover on the very pair this run is about to
-        # trade is exactly what this row cannot list. The banner below is unconditional: probe 6
-        # gates its own on the anchor, but nothing has been submitted here yet, so the anchor always
-        # holds -- and a REVIEW naming one order is no evidence about a second on a blind leg.
-        # Section 5.1 of infra/runbooks/order-semantics-verification.md owns the by-eye read.
+        # The same startup-reconciliation cache probe 6 reads, one probe earlier. On a build carrying
+        # upstream #5034 that read is unscoped and resolves both spellings of a pair, and an open
+        # order the listing cannot resolve fails the node's start rather than dropping out of the
+        # list -- so a node that started holds every open order on the account here. Section 5.1 of
+        # infra/runbooks/order-semantics-verification.md owns the by-eye read all the same.
         orders = self.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
-        for o in orders:
-            print(
-                f"      pre-existing open order: {o.client_order_id} {o.instrument_id} {o.side} "
-                f"{o.quantity} @ {getattr(o, 'price', None)}"
-            )
+        split = self._classify(orders)
+        for bucket, o in split.labelled():
+            print(f"      pre-existing open order: {describe_open_order(o)} [{bucket}]")
+        if orders:
+            print("      (no limit price above: the adapter's order read does not carry it -- read it at Kraken by txid)")
         for p in positions:
             print(f"      pre-existing open position: {p.instrument_id} {p.side} {p.quantity}")
-        print(f"      !! this read CANNOT see an order resting on {', '.join(RECONCILE_BLIND_LEGS)},")
-        print("      !! so the list above is a floor. Read Kraken -> Trade -> Open Orders by eye")
-        print("      !! before you place a probe order.")
-        observed = f"open orders {len(orders)}, open positions {len(positions)}"
-        if orders or positions:
+        observed = f"open orders {len(orders)} ({split.counts()}), open positions {len(positions)}"
+        verdict = verdict_at_start(split, len(positions))
+        if split.ours or split.unclaimed or split.other or positions:
             observed += " -- PRE-EXISTING venue state, listed above; adjudicate before ordering"
             self.state.notes.append("probe 2 found pre-existing venue state; see the printed list")
-            self.record(label, name, expected, observed, VERDICT_REVIEW)
-        else:
-            self.record(label, name, expected, observed + " (both empty)", VERDICT_PASS)
+        elif verdict == VERDICT_PASS:
+            observed += " (every open order named with --known-order)" if orders else " (both empty)"
+        if split.known_absent:
+            observed += f"; named with --known-order but not open: {', '.join(split.known_absent)}"
+            self.state.notes.append(
+                f"--known-order {', '.join(split.known_absent)} is not open at the venue -- filled, cancelled or mistyped",
+            )
+        self.record(label, name, expected, observed, verdict)
         self._advance()
 
     # -- probe 3 -------------------------------------------------------------------------
@@ -1452,64 +1661,65 @@ class ProbeStrategy(Strategy):
     # -- probe 6 -------------------------------------------------------------------------
 
     def _probe6(self) -> None:
-        label, name = "6", "Post-run reconciliation"
-        expected = "No open orders/positions; balances reflect only probe 5"
+        label, name, expected = "6", _P6, _P6_EXPECTED
         if self.args.no_exec:
             self.record(label, name, expected, "skipped: --no-exec", VERDICT_SKIP)
             self._advance()
             return
         venue_anchored = self._venue_anchored()
-        # A FLOOR, never a total. This cache is populated by startup reconciliation, whose order read
-        # cannot see a row on `RECONCILE_BLIND_LEGS` -- and `--pair` defaults to one of them, so the
-        # order this probe is most likely to have left resting is exactly the one it cannot count.
-        # A zero therefore cannot be signed off on its own; the banner below says so on the row that
-        # counts, and section 8 of infra/runbooks/order-semantics-verification.md owns the by-hand
-        # read that closes it.
         orders = self.cache.orders_open(venue=KRAKEN_VENUE)
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
-        # Match the probe INFIX, not this process's minted set. A fresh `--probes 6` invocation --
-        # the documented recovery read -- has an empty minted set, so a crashed run's own leftovers
-        # would classify as somebody else's and downgrade a FAIL to a REVIEW. The infix also
-        # survives Kraken's 18-char client-order-id truncation.
-        ours = [o for o in orders if PROBE_ORDER_ID_INFIX in str(o.client_order_id)]
-        foreign = [o for o in orders if PROBE_ORDER_ID_INFIX not in str(o.client_order_id)]
+        split = self._classify(orders)
         account = self.portfolio.account(KRAKEN_VENUE)
         balances = {str(c): str(b.total) for c, b in account.balances().items()} if account else {}
-        for o in orders:
-            print(f"      open order: {o.client_order_id} {o.instrument_id} {o.side} {o.quantity} status={o.status.name}")
+        for bucket, o in split.labelled():
+            print(f"      open order: {describe_open_order(o)} status={o.status.name} [{bucket}]")
         for p in positions:
             print(f"      open position: {p.instrument_id} {p.side} {p.quantity}")
-        if venue_anchored:
-            print(f"      !! this read CANNOT see an order resting on {', '.join(RECONCILE_BLIND_LEGS)},")
-            print("      !! so a zero above is a floor. Read Kraken -> Trade -> Open Orders by eye")
-            print("      !! before signing this probe off.")
         anchor = (
             "startup reconciliation, nothing submitted since"
             if venue_anchored
             else "NOT re-read -- this run submitted after its only venue read"
         )
         observed = (
-            f"venue re-read ({anchor}): open orders {len(orders)} (ours {len(ours)}, other {len(foreign)}), "
+            f"venue re-read ({anchor}): open orders {len(orders)} ({split.counts()}), "
             f"open positions {len(positions)}; balances {balances}"
         )
-        verdict = VERDICT_PASS
+        if split.known_absent:
+            observed += f"; named with --known-order but not open: {', '.join(split.known_absent)}"
+        verdict = verdict_after_run(split, len(positions), venue_anchored)
         if not venue_anchored:
             # The venue was last asked before this run placed anything, so "nothing is open" is
             # this process's cache talking. Never a PASS -- that is "we failed to ask" wearing a
             # clean answer.
-            verdict = VERDICT_REVIEW
             self.state.notes.append(
                 "probe 6: this row reads the cache, whose venue read predates this run's orders -- "
                 "run `--probes 6` as a SEPARATE invocation and read THAT row for the verdict",
             )
-        if ours:
-            verdict = VERDICT_FAIL
-            self.state.notes.append(f"probe 6: {len(ours)} of OUR orders are still open -- cancel them by hand")
-        elif foreign or positions:
-            verdict = VERDICT_REVIEW
+        if split.ours:
+            self.state.notes.append(f"probe 6: {len(split.ours)} of OUR orders are still open -- cancel them by hand")
+        if split.unclaimed:
+            self.state.notes.append(
+                f"probe 6: {len(split.unclaimed)} open order(s) on {self.pair_id} that neither an evidence file nor "
+                f"--known-order names -- cancel at Kraken, or re-run naming yours with --known-order",
+            )
+        if split.other or positions:
             self.state.notes.append("probe 6: venue state that is not ours is open -- adjudicate before signing off")
+        if split.known_absent:
+            self.state.notes.append(
+                f"probe 6: --known-order {', '.join(split.known_absent)} is not open at the venue -- filled, cancelled or mistyped",
+            )
         self.record(label, name, expected, observed, verdict)
         self._advance()
+
+    def _classify(self, orders) -> OpenOrderSplit:
+        return classify_open_orders(
+            orders,
+            pair=str(self.pair_id),
+            submitted=set(self.state.submitted),
+            ours_venue_ids=self.state.prior_venue_order_ids,
+            known_venue_ids=self.state.known_venue_order_ids,
+        )
 
     def _venue_anchored(self) -> bool:
         """Whether probe 6's cache read still stands for VENUE truth.
@@ -1520,10 +1730,6 @@ class ProbeStrategy(Strategy):
         engine -- so an invocation that submitted orders AFTER its start is reading a cache whose
         venue answer predates them. Such a run cannot report a clean venue; a separate `--probes 6`
         invocation, which submits nothing, can.
-
-        True only of the ANCHOR, not of completeness: even a correctly anchored read is missing any
-        row on `RECONCILE_BLIND_LEGS`. This method answers "is this cache still speaking for the
-        venue?", never "is this cache the whole venue" -- probe 6's banner carries the second.
 
         `state.submitted` is the test: it holds exactly the ids handed to `submit_order`, which is
         the conservative set -- an order whose submission raised is still counted as possibly
@@ -1604,6 +1810,16 @@ def exec_client_config() -> KrakenExecutionClientConfig:
     )
 
 
+def logger_config(args, stamp: str) -> LoggerConfig:
+    """The terminal at `--log-level`, and every run's DEBUG log into `--evidence-dir` beside its
+    evidence JSON -- the TradeVolume fallback WARN is read back out of that file, not scrollback."""
+    return LoggerConfig(
+        stdout_level=LogLevel(args.log_level),
+        fileout_level=LogLevel.DEBUG,
+        file_config=FileWriterConfig(directory=str(args.evidence_dir), file_name=run_log_path(args.evidence_dir, stamp).stem),
+    )
+
+
 def build_node(args, strategy: ProbeStrategy) -> LiveNode:
     """The assembled node, with the probe strategy attached.
 
@@ -1615,7 +1831,7 @@ def build_node(args, strategy: ProbeStrategy) -> LiveNode:
     the venue, so it is sized to the same timeout the sequence gives a cancel to confirm."""
     builder: LiveNodeBuilder = (
         LiveNode.builder(name=PROBE_NODE_NAME, trader_id=TraderId(PROBE_TRADER_ID), environment=Environment.LIVE)
-        .with_logging(LoggerConfig(stdout_level=LogLevel(args.log_level)))
+        .with_logging(logger_config(args, strategy.stamp))
         .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=True, filter_unclaimed_external_orders=False))
         .with_timeout_connection(int(args.connect_timeout))
         .with_delay_post_stop_secs(int(max(10.0, args.order_timeout)))
@@ -1982,7 +2198,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--probe5", action="store_true", help="additionally allow probe 5, the only probe that spends money. Requires --apply."
     )
     p.add_argument("--probes", default="all", help="which probes to run, e.g. '1,2,3' or 'all' (default: all)")
-    p.add_argument("--pair", default="BTC/EUR", help="the instrument probes 4-5 trade (default: BTC/EUR)")
+    p.add_argument(
+        "--pair",
+        default="BTC/EUR",
+        help="the instrument probes 4-5 trade (default: BTC/EUR); an open order on it that neither an evidence file in "
+        "--evidence-dir nor --known-order names reads as unclaimed (probe 6 FAIL, exit 3)",
+    )
     p.add_argument(
         "--notional", type=float, default=DEFAULT_NOTIONAL_EUR, help=f"per-order notional in EUR (default: {DEFAULT_NOTIONAL_EUR})"
     )
@@ -2046,7 +2267,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--evidence-dir",
         default=".",
-        help="where the evidence JSON is written (default: cwd -- pass a path outside the repo, or run from one)",
+        help="where the evidence JSON is written (default: cwd -- pass a path outside the repo, or run from one); "
+        "the txids its earlier evidence files record are what probes 2 and 6 count as ours",
+    )
+    p.add_argument(
+        "--known-order",
+        action="append",
+        default=[],
+        metavar="TXID",
+        help="an open order you placed and expect to stay open through the run, by its Kraken txid; repeatable. "
+        "Probes 2 and 6 count it as known instead of adjudicating it",
     )
     p.add_argument("--selftest", action="store_true", help="run the pure-logic rail tests and exit; no network, no credentials")
     return p
@@ -2108,6 +2338,9 @@ def preflight(args) -> None:
         raise SystemExit(f"REFUSING: --away {args.away} is below the protocol's {MIN_AWAY_FRACTION}")
     if args.leverage < 1:
         raise SystemExit(f"REFUSING: --leverage {args.leverage} is not a leverage")
+    args.known_order = [txid.strip() for txid in args.known_order]
+    if not all(args.known_order):
+        raise SystemExit("REFUSING: --known-order was given an empty txid")
 
     print(f"mode: {'APPLY -- orders WILL reach the venue' if args.apply else 'DRY-RUN -- nothing will be submitted'}")
     print(f"probe 5 (spends money): {'ARMED' if args.probe5 else 'gated off'}")
@@ -2118,8 +2351,9 @@ def preflight(args) -> None:
     print("reminder: the production engine reconciles this same account. Our orders reach it as")
     print("          events.order.EXTERNAL with no ledgered row -> its unmatched branch (counts, logs,")
     print("          returns). Anything left RESTING would be cancelled by its adopt pass at a restart --")
-    print(f"          except on {', '.join(RECONCILE_BLIND_LEGS)}, which that pass")
-    print("          cannot see either, so a leftover there keeps working. Cancel it by hand.")
+    print("          except, while the engine runs a build without upstream #5034 (2.0.0rc6.dev20260918")
+    print(f"          or earlier), on {', '.join(RECONCILE_BLIND_LEGS)}, which that")
+    print("          build's pass cannot see, so a leftover there keeps working. Cancel it by hand.")
 
 
 def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
@@ -2146,18 +2380,83 @@ def final_read(node: LiveNode, state: RunState) -> LeftoverSplit:
                 print(f"!!   {coid} filled {qty}")
             print("!! a fill with no closing leg is an OPEN POSITION. Check Kraken -> Trade and flatten by hand.")
             state.notes.append("the run ended mid-sequence after a fill -- check Kraken for an open position and flatten by hand")
-    stray = [
-        o
-        for o in node.cache.orders_open(venue=KRAKEN_VENUE)
-        if PROBE_ORDER_ID_INFIX in str(o.client_order_id) and str(o.client_order_id) not in state.submitted
-    ]
-    for o in stray:
-        # A probe-shaped id this process did not submit: a previous run's leftover the venue still
-        # holds, adopted by this node's startup reconciliation.
-        print(f"\n!! a probe-shaped order this run did not submit is OPEN at the venue: {o.client_order_id}")
-        state.notes.append(f"an earlier run's probe order is still open: {o.client_order_id}")
+    open_split = classify_open_orders(
+        node.cache.orders_open(venue=KRAKEN_VENUE),
+        pair=state.pair,
+        submitted=set(state.submitted),
+        ours_venue_ids=state.prior_venue_order_ids,
+        known_venue_ids=state.known_venue_order_ids,
+    )
+    for o in open_split.ours:
+        if str(o.client_order_id) in state.submitted:
+            continue  # this invocation's own, already in `split`
+        # An earlier run's leftover, adopted by this node's startup reconciliation under its txid.
+        print(f"\n!! an order an earlier run of this harness placed is OPEN at the venue: {describe_open_order(o)}")
+        state.notes.append(f"an earlier run's probe order is still open: txid {o.venue_order_id}")
         split.resting.append(str(o.client_order_id))
+    for o in open_split.unclaimed:
+        print(f"\n!! an open order on {state.pair} that nothing claims: {describe_open_order(o)}")
+        state.notes.append(f"an open order on {state.pair} that nothing claims: txid {o.venue_order_id}")
+        split.unclaimed.append(str(o.client_order_id))
     return split
+
+
+def record_unresolved_start(state: RunState, selected: set[int], positions: list[UnresolvedPosition], message: str) -> None:
+    """A FAIL on the reconciliation probe that was asked for -- 2, 6 or both, and 2 when neither
+    was -- because the start that failed is that probe's read. Not an abnormal stop: nothing was
+    submitted, so there is no position of the harness's own to flatten, and the operator's action
+    is the pre-existing position this names."""
+    held = "; ".join(f"{p.instrument} quantity {p.quantity} ({p.reason})" for p in positions) or message
+    observed = (
+        f"the node refused to start: the venue holds an open position startup reconciliation cannot adopt -- {held}. "
+        f"Nothing was submitted."
+    )
+    print("\n!! the node refused to start over an open position it cannot adopt; nothing was submitted:")
+    for p in positions:
+        print(f"!!   {p.instrument} quantity {p.quantity} -- {p.reason}")
+    if not positions:
+        print(f"!!   {message}")
+    print("!! It is not the harness's to close: find its owner (Kraken -> Positions), and re-run once it is")
+    print("!! closed. Runbook section 6.")
+    rows = {2: (_P2, _P2_EXPECTED), 6: (_P6, _P6_EXPECTED)}
+    for n in [n for n in (2, 6) if n in selected] or [2]:
+        name, expected = rows[n]
+        state.results.append(ProbeResult(str(n), name, expected, observed, VERDICT_FAIL))
+    state.notes.append(f"an open position stopped the node's start: {held} -- close it before re-running")
+
+
+def print_mass_status_causes() -> None:
+    print("!! a start-time venue read failed; nothing was submitted, so there is nothing of this run's to")
+    print("!! flatten. The binding drops the cause. In order of likelihood:")
+    print("!!   1. the key lacks a query permission (Query Funds, Query Open Orders & Trades, Query Closed Orders & Trades);")
+    print("!!   2. a WARN above -- `Failed to fetch tokenized asset pairs`, `Failed to parse instrument` --")
+    print("!!      left a pair out of the listing;")
+    print("!!   3. an open order or position sits on a pair outside the listing: Kraken -> Open Orders, Positions.")
+
+
+def print_leftover_banner(node: LiveNode, state: RunState, leftovers: LeftoverSplit) -> None:
+    print("\n" + "!" * 78)
+    if leftovers.outstanding:
+        print("!! ORDERS THIS HARNESS PLACED ARE STILL OPEN. Cancel them BY HAND at Kraken now:")
+        for coid in leftovers.outstanding:
+            order = node.cache.order(ClientOrderId(coid))
+            if order is None:
+                print(f"!!   client_order_id={coid} (no cache record -- look it up at the venue)")
+            else:
+                print(
+                    f"!!   client_order_id={coid} venue_order_id={order.venue_order_id} "
+                    f"{order.instrument_id} {order.side} {order.quantity} status={order.status.name}"
+                )
+    if leftovers.unclaimed:
+        print(f"!! OPEN ORDERS ON {state.pair} THAT NOTHING CLAIMS -- neither an evidence file in --evidence-dir")
+        print("!! nor --known-order names them, and a probe leftover whose evidence was never written looks")
+        print("!! exactly like this. Cancel each BY HAND at Kraken, or, if it is an order you placed on")
+        print("!! purpose, re-run naming it with --known-order <txid>:")
+        for txid in leftovers.unclaimed:
+            order = node.cache.order(ClientOrderId(txid))
+            print(f"!!   {describe_open_order(order) if order is not None else f'txid {txid}'}")
+    print("!! Kraken -> Trade -> Open Orders. Do NOT leave the terminal until each is accounted for.")
+    print("!" * 78)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2170,8 +2469,16 @@ def main(argv: list[str] | None = None) -> int:
     print("=" * 78)
     preflight(args)
 
-    state = RunState()
+    state = RunState(known_venue_order_ids=set(args.known_order))
+    state.prior_venue_order_ids, unreadable = load_probe_venue_order_ids(Path(args.evidence_dir))
+    print(
+        f"probe orders on record: {len(state.prior_venue_order_ids)} txid(s) in {EVIDENCE_GLOB} under "
+        f"{args.evidence_dir}; named with --known-order: {', '.join(sorted(state.known_venue_order_ids)) or 'none'}"
+    )
+    for line in unreadable:
+        print(f"!! could not read evidence file {line} -- an order only it records reads as not ours")
     strategy = ProbeStrategy(args, state)
+    state.pair = str(strategy.pair_id)
     try:
         node = build_node(args, strategy)
     except Refusal as exc:
@@ -2195,31 +2502,34 @@ def main(argv: list[str] | None = None) -> int:
         # that case, and the raise is the report.
         node.run()
     except BaseException as exc:  # noqa: BLE001 - the table and the leftover read are owed on every path
-        print(f"\n!! the node stopped abnormally: {exc!r}")
-        state.notes.append(f"the node stopped abnormally: {exc!r}")
-        exit_code = 2
+        refused = unresolved_positions(str(exc)) if not state.submitted else None
+        if refused is not None:
+            record_unresolved_start(state, args.selected_probes, refused, str(exc))
+        else:
+            print(f"\n!! the node stopped abnormally: {exc!r}")
+            state.notes.append(f"the node stopped abnormally: {exc!r}")
+            if MASS_STATUS_FAILED in str(exc) and not state.submitted:
+                print_mass_status_causes()
+            exit_code = 2
 
     leftovers = final_read(node, state)
-    node.dispose()
 
     if state.aborted_by and exit_code == 0:
         exit_code = 2
 
-    if leftovers.outstanding:
-        exit_code = 3
-        print("\n" + "!" * 78)
-        print("!! ORDERS THIS HARNESS PLACED ARE STILL OPEN. Cancel them BY HAND at Kraken now:")
-        for coid in leftovers.outstanding:
-            order = node.cache.order(ClientOrderId(coid))
-            if order is None:
-                print(f"!!   client_order_id={coid} (no cache record -- look it up at the venue)")
-            else:
-                print(
-                    f"!!   client_order_id={coid} venue_order_id={order.venue_order_id} "
-                    f"{order.instrument_id} {order.side} {order.quantity} status={order.status.name}"
-                )
-        print("!! Kraken -> Trade -> Open Orders. Do NOT leave the terminal until they are gone.")
-        print("!" * 78)
+    try:
+        if leftovers.outstanding or leftovers.unclaimed:
+            exit_code = 3
+            print_leftover_banner(node, state, leftovers)
+    finally:
+        # Only now: disposing the node empties its Cache, and the banner reads each order from it.
+        node.dispose()
+
+    fallback = read_tradevolume_fallback(run_log_path(args.evidence_dir, strategy.stamp), exec_client=not args.no_exec)
+    fallback_line = describe_tradevolume_fallback(fallback)
+    print(f"\n{fallback_line}")
+    if fallback["fell_back"] is not False and not args.no_exec:
+        state.notes.append(fallback_line)
 
     print("\n" + "=" * 78)
     print(f"PROBE RESULTS -- paste these rows into {VERIFICATION_DOC_DIR}<version>.md")
@@ -2258,6 +2568,7 @@ def main(argv: list[str] | None = None) -> int:
         "events": [asdict(e) for e in state.events],
         "filled_notional_eur": state.filled_notional_eur,
         "notes": state.notes,
+        "tradevolume_fallback": fallback,
         "exit_code": exit_code,
     }
     try:

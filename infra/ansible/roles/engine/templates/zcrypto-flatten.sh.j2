@@ -45,6 +45,7 @@ fi
 if [ "$execute" -eq 0 ]; then
   echo "zcrypto-flatten: reading the account and printing the plan. Nothing is written and no order is sent."
   echo "zcrypto-flatten: these reads share the trade key with the running engine, so one engine order or cancel may be rejected and left unresolved; the engine reconciles that at its next boundary."
+  echo "zcrypto-flatten: not while the engine is starting — its one startup read of the venue's orders is never retried, and a second client on the key can have it refused for its nonce."
 else
   # exec/ is created lazily by the engine's own kill-file writer, and the role's state-directory
   # task creates only the state dir, store/ and journal/ — so on a freshly converged or rebuilt host

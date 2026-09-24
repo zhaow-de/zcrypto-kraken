@@ -18,8 +18,7 @@ running event loop` before any request leaves. They are compiled, so `inspect.is
 is False on all seven and cannot be used to decide anything here -- the shape is measured by
 calling. Hence `Recorder.call` awaits, everything reaching it is async, and the one loop is opened
 at the CLI boundary (`cli/engine/command.py`'s `flatten`). A branch that awaited only when the
-answer happened to be awaitable would let a synchronous fake keep passing, which is the defect that
-kept this module unrunnable through ten green tasks -- there is one path.
+answer happened to be awaitable would let a synchronous fake keep passing -- there is one path.
 `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins it against the real class.
 
 MARKET is used deliberately, overriding spec 00090 D6's rejection of it for the probe machine: in
@@ -31,7 +30,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable
@@ -58,7 +57,7 @@ CONFIRM_WORD = "FLATTEN"
 # Never collides with the engine's ids, which carry the `-001-000-` infix minted from
 # TraderId("SHADOW-001") plus order-id tag "000" (`cli/engine/node.py`): the executor's own-order
 # routing would otherwise treat an ack of ours as its own.
-CLIENT_ORDER_ID_PREFIX = "FLT-"
+CLIENT_ORDER_ID_PREFIX = "FLT"
 BOOK_DEPTH = 1
 # The venue-alias spelling of the euro on the quote surfaces (546 live instruments carry `ZEUR`,
 # zero carry `EUR` -- docs/reference/adapter-verification/2.0.0rc4.dev20260825.md observation 4).
@@ -73,12 +72,12 @@ MARGIN_LEVERAGE = 2
 # `request_instruments()` alone answers with ~1600 rows -- around 110 KB at the installed adapter's
 # ~68-char `CurrencyPair.__repr__`. Capped so the incident artifact stays openable mid-incident.
 _ANSWER_REPR_LIMIT = 4000
-# The basket legs Kraken spells two ways, which are exactly the legs `read_open_orders` cannot see
-# an order on -- that function states the mechanism and the consequence. Printed beside the flat
-# verdict because a zero is what an operator acts on. Frozen text rather than a derivation, with
-# `tests/test_engine_flatten.py::test_the_blind_legs_are_the_two_way_spelled_basket_legs`
-# recomputing the set from `cli/engine/store.py`'s BASKET so a basket change cannot leave it stale.
-BLIND_ORDER_READ_LEGS = ("BTC/EUR", "ETH/EUR", "XRP/EUR", "LTC/EUR", "ETH/BTC")
+# The adapter rounds a balance's total and its held amount to 8 decimals each, half to even, and
+# takes free as their difference, while Kraken keeps SOL and BTC to 10: a reported free balance can
+# exceed the venue's by up to one whole unit, half from each rounding, which is why the shave is a
+# whole unit. Unshaved, a sell of the reported figure is refused for insufficient funds on every
+# pass and every re-run.
+_BALANCE_UNIT = Decimal("0.00000001")
 
 # Real nautilus types reach the client; the journal records their string forms. A plain `str` where
 # the compiled signature wants `AccountId`/`AccountType` fails at the venue, not in a test.
@@ -183,31 +182,21 @@ def _symbol_of(instrument_id: Any) -> str:
 
 def _journalled(kwargs: dict[str, Any]) -> dict[str, Any]:
     """Each read builds ONE kwargs dict and both sends and journals it through here, since a hand-written
-    literal beside the call is a journal that can read MARGIN while CASH went out."""
-    return {key: str(value) if isinstance(value, AccountType) else value for key, value in kwargs.items()}
+    literal beside the call is a journal that can read MARGIN while CASH went out. A library value --
+    the account type, a scoped read's instrument id -- is journalled as its string form."""
+    return {key: value if isinstance(value, (bool, int, float, str)) else str(value) for key, value in kwargs.items()}
 
 
 async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
-    """The orders resting at the venue that the adapter can resolve an instrument for -- NOT every
-    order resting at the venue. Only the LIST is load-bearing here -- its length decides the exit
-    code -- so no per-row field is required: an unparseable row must not abort a sweep whose whole
-    answer is 'something is still working'.
+    """The orders resting at the venue. Only the LIST is load-bearing here -- its length decides the
+    exit code -- so no per-row field is required.
 
-    The gap is spelling-shaped, and it is the adapter's, not this module's. Its instrument cache is
-    scanned by `raw_symbol`, which is Kraken's `AssetPairs` KEY (`XXBTZEUR`), while an open order is
-    looked up by its own `descr.pair`, which is the ALTNAME (`XBTEUR`); the comparison is raw
-    equality with no `else` on a miss, so a row on a leg spelled both ways is dropped and the call
-    returns success. `BLIND_ORDER_READ_LEGS` names those legs.
-
-    What that costs is the VERDICT, never the cancel: `sweep`'s `cancel_all_orders` is account-wide,
-    names no pair, and reaches an order on a blind leg -- so exit 0 can be a false all-clear while
-    the sweep itself did its job, and re-running the command is a real mitigation rather than a
-    retry of the same blindness. `run_flatten` prints that caveat beside the flat verdict, and
-    `infra/runbooks/engine-procedures.md`'s flatten procedure carries it for the operator.
-
-    Not repaired here: repairing it means priming the adapter's instrument cache with both
-    spellings before this read, which is a change to what the button does rather than to what it
-    says. `T0160` carries the registration.
+    Each row resolves through the instrument cache `read_listing` fills before this read, under
+    either of Kraken's spellings of its pair: the adapter matches the AssetPairs key (`XXBTZEUR`)
+    first and falls back to the altname index it records with the listing (`XBTEUR`). A row it
+    cannot resolve at all fails the WHOLE read rather than dropping out of it. A row it resolves
+    but cannot parse is dropped with a `Failed to parse order` warning of the adapter's own and the
+    read still succeeds, so a list this returns is every order the venue reported except those.
     """
     # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
     kwargs: dict[str, Any] = {"open_only": True}
@@ -227,15 +216,18 @@ async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     return list(rows)
 
 
-async def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
+async def _position_reports(client: Any, rec: Recorder, instrument_id: Any = None) -> Any:
+    """The venue's answer, unparsed. Raises only when the request itself did."""
     kwargs: dict[str, Any] = {
         "account_type": AccountType.MARGIN,
         "use_spot_position_reports": False,
         "quote_currency": QUOTE_CURRENCY,
     }
+    if instrument_id is not None:
+        kwargs["instrument_id"] = instrument_id
     params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
-        rows = await rec.call(
+        return await rec.call(
             "request_position_status_reports",
             params,
             lambda: client.request_position_status_reports(_ACCOUNT, **kwargs),
@@ -244,6 +236,67 @@ async def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
         raise
     except Exception as exc:  # noqa: BLE001
         raise FlattenUnreachable(f"margin positions could not be read: {exc}") from exc
+
+
+async def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
+    return _position_rows(await _position_reports(client, rec))
+
+
+async def read_margin_positions(client: Any, rec: Recorder, listing: dict[str, Any]) -> tuple[list[PositionRow], list[dict]]:
+    """Every margin position, and what could not be read -- each entry a named residual.
+
+    The whole-account read fails outright on ONE row the adapter cannot resolve, a pair gone from
+    the listing between the two reads included. Raised, that would cost the operator the whole
+    button over one row, so the read is retried one basket pair at a time: a read scoped to one
+    instrument skips every other pair's row before resolving any. It matches a row only under the
+    pair's AssetPairs key, so a position Kraken spells by its altname is not seen there either.
+    What the retry cannot cover -- anything outside the basket, and a basket pair whose own read
+    failed -- is named, never read as flat, so the run cannot end at exit 0.
+
+    Because a scoped read skips the other pairs' rows first, the FIRST one failing is the venue's
+    failure, not a row's: the original is raised at once, so an outage costs one extra request rather
+    than one per basket pair, each of which can be a timeout.
+
+    A shape this module refuses in the whole-account answer -- no answer at all, a row missing a
+    named field -- still raises here: that is a changed venue, not an unreadable row.
+    """
+    try:
+        answer = await _position_reports(client, rec)
+    except FlattenUnreachable as failure:
+        logger.error("the whole-account position read failed -- reading the basket pair by pair: %s", failure)
+        return await _positions_pair_by_pair(client, rec, listing, failure)
+    return _position_rows(answer), []
+
+
+async def _positions_pair_by_pair(
+    client: Any, rec: Recorder, listing: dict[str, Any], failure: FlattenUnreachable
+) -> tuple[list[PositionRow], list[dict]]:
+    from cli.engine.store import BASKET
+
+    rows: list[PositionRow] = []
+    unread: list[dict] = [{"kind": "position", "reason": "positions_unreadable", "error": str(failure)}]
+    read_any = False
+    for symbol in BASKET:
+        row = listing.get(symbol)
+        if row is None:
+            unread.append(
+                {"kind": "position", "symbol": symbol, "reason": "position_unread", "error": "the listing carries no such pair"}
+            )
+            continue
+        try:
+            rows.extend(_position_rows(await _position_reports(client, rec, instrument_id=row.id)))
+        except FlattenUnreachable as exc:
+            if not read_any:
+                raise failure
+            unread.append({"kind": "position", "symbol": symbol, "reason": "position_unread", "error": str(exc)})
+            continue
+        read_any = True
+    if not read_any:
+        raise failure
+    return rows, unread
+
+
+def _position_rows(rows: Any) -> list[PositionRow]:
     # `None` read as "no positions" is the one shape that CONFIRMS ITSELF: `build_plan` shows no
     # margin leg, the writes run, and `judge_final` re-reads through this same function, finds no
     # residual and reports the account flat at exit 0 with leveraged positions still open. Unlike
@@ -264,6 +317,9 @@ async def read_positions(client: Any, rec: Recorder) -> list[PositionRow]:
 
 
 async def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
+    """The spot balances. The adapter drops, with no log line and without failing the read, a
+    balance entry whose figures it cannot parse or build a balance from, so a list this returns can
+    miss a holding; the exit-0 line says so."""
     kwargs: dict[str, Any] = {"account_type": AccountType.CASH}
     params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
@@ -288,22 +344,38 @@ async def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
 
 
 async def read_listing(client: Any, rec: Recorder) -> dict[str, Any]:
-    """ONE no-argument call for the whole listing. A per-pair request would error on an unknown
-    pair and abort the sweep over an unrelated holding; pairlessness is read from this map."""
+    """ONE no-argument call for the whole listing, read before anything else and cached into the
+    client. The adapter resolves every later read -- open orders, positions, the book -- through
+    that cache alone, so a client never fed one fails them or drops their rows. A per-pair request
+    would error on an unknown pair and abort the sweep over an unrelated holding; pairlessness is
+    read from this map.
+
+    Every row is cached, and the ORDER is load-bearing. The adapter's cache holds one instrument per
+    symbol, the last one cached, and resolves a venue spelling either by that instrument's raw
+    symbol or through the altname index `request_instruments` records, which points an altname at
+    the AssetPairs key it differs from. Kraken lists each tokenized equity under two keys that map
+    to one symbol -- `AAOISPVUSD` with altname `AAOIxUSD`, beside `AAOIxUSD` itself -- and only the
+    first, the key NOT spelled as the symbol without its slash, is reachable under both spellings.
+    So rows spelled as their own symbol are cached first and the other key last, and the map below
+    keeps the row the adapter keeps.
+    """
     try:
         rows = await rec.call("request_instruments", {"pairs": None}, lambda: client.request_instruments())
     except FlattenUnreachable:
         raise
     except Exception as exc:  # noqa: BLE001
         raise FlattenUnreachable(f"the instrument listing could not be read: {exc}") from exc
-    listing = {}
-    for row in list(rows or []):
-        instrument_id = getattr(row, "id", None)
-        if instrument_id is None:
-            continue
-        listing[_symbol_of(instrument_id)] = row
+    rows = [row for row in list(rows or []) if getattr(row, "id", None) is not None]
+    # Stable, so every symbol listed once keeps the venue's own order.
+    rows.sort(key=lambda row: str(getattr(row, "raw_symbol", "")) != _symbol_of(row.id).replace("/", ""))
+    listing = {_symbol_of(row.id): row for row in rows}
     if not listing:
         raise FlattenUnreachable("the instrument listing came back empty -- every pair lookup after it would read as pairless")
+    try:
+        for row in rows:
+            client.cache_instrument(row)
+    except Exception as exc:  # noqa: BLE001
+        raise FlattenUnreachable(f"the instrument listing could not be cached: {exc}") from exc
     return listing
 
 
@@ -418,8 +490,9 @@ def margin_legs(positions: list[PositionRow], listing: dict[str, Any]) -> tuple[
     """One leg per LONG or SHORT row, plus the rows this code cannot build a closer for.
 
     A FLAT row is not a leg. Every other row this code cannot act on -- a side that is none of the
-    three (the installed `PositionSide` carries a fourth member and which ones the adapter emits is
-    unmeasured), a pair the listing does not carry -- is NAMED rather than raised on and never read
+    three (none today: the enum carries FLAT, LONG and SHORT, and a report refuses a `None` side; the
+    arm stands for a member a later wheel adds, which `EXHAUSTIVE_MEMBERS` catches first), a pair
+    the listing does not carry -- is NAMED rather than raised on and never read
     as flat: nothing can be sized for it, and one such row must not abort a button that has not yet
     cancelled an order, closed another position or sold a single balance. `judge_final` reads both
     classes back out of the final snapshot, so neither can leave the run reading 0.
@@ -612,8 +685,15 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     only unsendable case is a quantity that floors to nothing: there is no order to construct.
     A spot leg below any applicable floor is listed and not sent; the venue would reject it, and it
     does not make the account not-flat.
+
+    A spot sell goes out one `_BALANCE_UNIT` short of the floored balance, floored to the lot step
+    again -- a whole step on a pair whose lot is coarser than eight decimals -- whenever that still
+    clears every floor, so a figure the adapter rounded up cannot be refused. Where it would not --
+    a balance exactly at `ordermin` -- the balance goes out as reported and the venue rules on it.
+    Whether the leg is sent at all is still judged on the reported figure (`classify_balance`), so
+    the shave can never turn a sellable balance into dust.
     """
-    from cli.engine.instruments import _floor_to_step
+    from cli.engine.instruments import BelowMinimum, _floor_to_step
 
     quote = constraints.symbol.split("/")[1]
     qty = _floor_to_step(leg.quantity, constraints.lot_step)
@@ -621,25 +701,29 @@ def size_leg(leg: Leg, constraints: PairConstraints, reference_price: float | No
     # quantity at the floored price, so an estimate printed off the raw balance or the raw book
     # price would disagree with the dust boundary this same leg is judged by.
     price = _tick_floored(reference_price, constraints)
-    estimate = qty * price if price is not None else None
-    fee = estimate * TAKER_RATE if estimate is not None else None
-    base = dict(leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee)
-
+    send, reason = True, None
     if leg.kind == "margin":
         if qty <= 0.0:
-            return SizedLeg(**base, send=False, reason="unclosable_below_minimum")
-        return SizedLeg(**base, send=True, reason=None)
-
-    if classify_balance(leg.quantity, constraints, price) == "residual":
-        return SizedLeg(**base, send=True, reason=None)
-    return SizedLeg(**base, send=False, reason="dust_below_venue_minimum")
+            send, reason = False, "unclosable_below_minimum"
+    elif classify_balance(leg.quantity, constraints, price) != "residual":
+        send, reason = False, "dust_below_venue_minimum"
+    else:
+        shaved = _floor_to_step(float(Decimal(str(qty)) - _BALANCE_UNIT), constraints.lot_step)
+        if shaved > 0.0 and not isinstance(_size(shaved, constraints, price), BelowMinimum):
+            qty = shaved
+    estimate = qty * price if price is not None else None
+    fee = estimate * TAKER_RATE if estimate is not None else None
+    return SizedLeg(
+        leg=leg, qty=qty, reference_price=price, quote=quote, estimate=estimate, fee_estimate=fee, send=send, reason=reason
+    )
 
 
 @dataclass(frozen=True)
 class Snapshot:
-    orders: list
+    orders: list | None  # None only before the cancel, where a failed order read degrades
     positions: list
     balances: list
+    unread: list = field(default_factory=list)  # what the reads could not see, each a named residual
 
 
 @dataclass(frozen=True)
@@ -650,16 +734,35 @@ class Plan:
     unclosable: list
     prices: dict
     constraints: dict
-    n_open_orders: int
+    orders: list | None
+    unread: list
 
 
-async def read_snapshot(client: Any, rec: Recorder) -> Snapshot:
+async def read_snapshot(client: Any, rec: Recorder, listing: dict[str, Any], *, before_the_cancel: bool = False) -> Snapshot:
     """Orders, then positions, then balances -- in that order, so an order that fills between two
-    of the reads lands in one that FOLLOWS rather than falling out of both."""
+    of the reads lands in one that FOLLOWS rather than falling out of both.
+
+    Before the cancel a failed order read is named and the snapshot goes on without it: there the
+    list decides nothing but the count the operator reads, and the cancel it would precede names
+    no pair, so aborting would cost the whole account its cancel, closes and sales over one read.
+    The run then cannot end at exit 0 (`exit_code`). After the cancel it still raises -- the final
+    snapshot's order list IS the verdict.
+    """
+    unread: list[dict] = []
+    try:
+        orders = await read_open_orders(client, rec)
+    except FlattenUnreachable as exc:
+        if not before_the_cancel:
+            raise
+        logger.error("the open orders could not be read -- the account-wide cancel still goes out: %s", exc)
+        orders = None
+        unread.append({"kind": "order", "reason": "orders_unread", "error": str(exc)})
+    positions, positions_unread = await read_margin_positions(client, rec, listing)
     return Snapshot(
-        orders=await read_open_orders(client, rec),
-        positions=await read_positions(client, rec),
+        orders=orders,
+        positions=positions,
         balances=await read_balances(client, rec),
+        unread=[*unread, *positions_unread],
     )
 
 
@@ -673,9 +776,11 @@ async def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: di
     included, and equally one whose OWN book read failed -- is sized on the quantity floor alone,
     which is the safe direction: an unpriced balance is sold, never skipped as dust.
 
-    A failing book read is the one pre-write read failure that does not abort (spec D2). Aborting
-    here would return exit 3 with the kill file already latched and the engine already stopped: no
-    order cancelled, no position closed, no balance sold, over one illiquid pair's empty side.
+    A failing book read does not abort (spec D2), and neither does a failed open-order read or a
+    whole-account position read one row can fail (`read_snapshot`, `read_margin_positions`, spec
+    D4). Aborting here would return exit 3 with the kill file already latched and the engine
+    already stopped: no order cancelled, no position closed, no balance sold, over one illiquid
+    pair's empty side.
     """
     margin_raw, unclosable = margin_legs(snapshot.positions, listing)
     spot_raw, unsellable = spot_legs(snapshot.balances, listing)
@@ -696,7 +801,7 @@ async def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: di
         try:
             prices[symbol] = await read_book_price(client, rec, constraints[symbol], side)
         except FlattenUnreachable as exc:
-            # Spec D2's ONE exception to abort-on-a-pre-write-read-failure. A thin pair with an
+            # Spec D2's exception to abort-on-a-pre-write-read-failure. A thin pair with an
             # empty side, or one rate-limited request, must not cost the account its cancel and
             # every other leg its close: the price is never an order price here (every order is
             # MARKET), so the leg is sized on the quantity floor alone and sent.
@@ -709,8 +814,22 @@ async def build_plan(client: Any, rec: Recorder, snapshot: Snapshot, listing: di
         unclosable=unclosable,
         prices=prices,
         constraints=constraints,
-        n_open_orders=len(snapshot.orders),
+        orders=snapshot.orders,
+        unread=snapshot.unread,
     )
+
+
+def _order_line(order: Any) -> str:
+    """One resting order, every field read leniently: before the cancel the list only tells the
+    operator what the cancel will reach, so a field it lacks prints as `?` rather than aborting."""
+
+    def read(name: str) -> str:
+        value = getattr(order, name, None)
+        return "?" if value is None else str(value)
+
+    symbol = read("instrument_id").rsplit(".", 1)[0]
+    side = read("order_side").rsplit(".", 1)[-1].upper()
+    return f"  order {symbol} {side} {read('quantity')} -- venue txid {read('venue_order_id')}"
 
 
 def _leg_line(sized: SizedLeg) -> str:
@@ -725,15 +844,38 @@ def _leg_line(sized: SizedLeg) -> str:
     return f"{head} -- {tail}"
 
 
-def render_plan(plan: Plan, echo: Callable[[str], None]) -> None:
+def render_plan(plan: Plan, echo: Callable[[str], None], *, execute: bool) -> None:
     """What an operator reads before typing the word. Estimates stay in each leg's own quote
     currency and no grand total is printed -- summing a BTC-quoted leg into a euro figure would
     need an FX rate this command has no mandate to invent.
 
-    The order count is a floor, not a total: it comes from `read_open_orders`, which cannot see an
-    order on the legs that function names. The count line says so rather than the operator reading
-    an understated preview as an inventory."""
-    echo(f"{plan.n_open_orders} resting order(s) seen -- the cancel is account-wide and reaches any this read could not see")
+    A failed read's line is worded by `execute`: a dry run ends at 0, so there it speaks of the run
+    `--execute` would make."""
+    if plan.orders is None:
+        # The error already reads "open orders could not be read: <the venue's words>".
+        failure = "; ".join(row["error"] for row in plan.unread if row["kind"] == "order")
+        echo(f"{failure} -- the cancel is account-wide and reaches them unread")
+    else:
+        echo(f"{len(plan.orders)} resting order(s) seen -- the cancel is account-wide")
+        for order in plan.orders:
+            echo(_order_line(order))
+    for row in plan.unread:
+        if row["kind"] != "position":
+            continue
+        if "symbol" in row:
+            echo(f"  {row['symbol']} positions could not be read ({row['error']}): none of them is in this plan")
+        else:
+            echo(
+                f"  the whole-account position read failed ({row['error']}) -- each basket pair was read "
+                "on its own, and a position outside those reads is not in this plan"
+            )
+    if plan.unread and execute:
+        echo("  a read above failed: the cancel and every leg below still go out, and this run cannot end at exit 0")
+    elif plan.unread:
+        echo(
+            "  a read above failed: with --execute the cancel and every leg below would still go out,"
+            " and that run could not end at exit 0"
+        )
     if not plan.margin:
         echo("no margin position to close")
     for sized in plan.margin:
@@ -849,9 +991,13 @@ class SweepResult:
 
 
 def mint_client_order_id(stamp, index: int) -> str:
-    """`FLT-<basic ISO-8601 UTC>-<n>`. Inside the id SHAPE Kraken has already accepted from this
-    repo, and structurally distinct from the engine's `-001-000-` infix -- an id the executor could
-    read as its own would route a flatten fill into the engine's ledger.
+    """`FLT<yymmddHHMMSS>-<n>` on the run's UTC stamp: 17 characters through index 9, 18 through 99.
+
+    The length is the venue's: the adapter sends an id of at most 18 characters as it is and
+    rewrites a longer one to `O` plus its last 17, so an id of this length is the one Kraken stores
+    and shows, and the one the journal records. It carries no `-001-000-` infix, which the engine's
+    ids keep even when rewritten -- an id the executor could read as its own would route a flatten
+    fill into the engine's ledger.
 
     `index` runs over the whole run rather than per pass: the venue refuses an id it has already
     seen, so two legs sharing one would be one leg silently unsent. A leg that is NOT sent still
@@ -862,7 +1008,7 @@ def mint_client_order_id(stamp, index: int) -> str:
     would mint the same ids. Each needs its own word typed at a terminal, and that is the bound --
     the journal's own collision protection does not extend here.
     """
-    return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%Y%m%dT%H%M%SZ}-{index}"
+    return f"{CLIENT_ORDER_ID_PREFIX}{stamp:%y%m%d%H%M%S}-{index}"
 
 
 # The two sides a `Leg` can carry, and the only two this module can build an order from.
@@ -870,9 +1016,13 @@ ORDER_SIDES = {"SELL": OrderSide.SELL, "BUY": OrderSide.BUY}
 
 
 async def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: PairConstraints, client_order_id: str) -> Any:
-    """One MARKET IOC order. The quantity is minted at the precision the venue's own lot step
+    """One MARKET order. The quantity is minted at the precision the venue's own lot step
     implies, so the floored value is exactly representable and nothing is rounded UP past the
     position the report reported.
+
+    The call is handed IOC, the time in force the signature requires, but the adapter sends no
+    `timeinforce` on a MARKET order -- it maps one for a limit order only -- so the journal records
+    it as not sent rather than as a flag the venue never saw.
 
     Every scoping value is derived ONCE and then both sent and journalled -- `_journalled`'s rule,
     on the one call in this module that moves money. Spelled a second time beside the call, the
@@ -898,7 +1048,7 @@ async def submit_leg(client: Any, rec: Recorder, sized: SizedLeg, constraints: P
         "order_side": str(order_side),
         "order_type": str(order_type),
         "quantity": float(quantity),
-        "time_in_force": str(time_in_force),
+        "time_in_force": "not sent (market order)",
         **_journalled(kwargs),
     }
     return await rec.call(
@@ -985,8 +1135,10 @@ async def _read_for_the_record(what: str, read: Callable[[], Any]) -> Any:
     survives either way; only the abort goes away.
 
     Never widened to a read something DOES consume. The post-cancel position read that sizes the
-    closers must still abort -- degraded, it would size them from an empty list and report the
-    account flat.
+    closers never comes through here: read as nothing, it would size them from an empty list and
+    report the account flat. Its one degradation is `read_margin_positions`' per-pair retry, which
+    names what it could not read; a position that read missed gets no closer, and the final
+    snapshot reads the account again and judges it.
     """
     try:
         return await read()
@@ -1022,7 +1174,8 @@ async def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp)
         # no decision -- the exit code judges the FINAL snapshot's orders, never this count.
         rows = await _read_for_the_record("the orders still resting after the cancel", lambda: read_open_orders(client, rec))
         orders_after = len(rows) if rows is not None else None
-        margin_now, _ = margin_legs(await read_positions(client, rec), listing)
+        positions_now, _ = await read_margin_positions(client, rec, listing)
+        margin_now, _ = margin_legs(positions_now, listing)
         for sized, constraints in _sized_with_constraints(margin_now, listing, plan):
             index += 1
             outcomes.append(await _send(client, rec, sized, constraints, stamp, index, "margin"))
@@ -1034,7 +1187,7 @@ async def sweep(client: Any, rec: Recorder, plan: Plan, listing: dict, *, stamp)
                 index += 1
                 outcomes.append(await _send(client, rec, sized, constraints, stamp, index, pass_name))
 
-        final = await read_snapshot(client, rec)
+        final = await read_snapshot(client, rec, listing)
     except FlattenUnreachable as exc:
         post_write_failure = str(exc)
         logger.error("a read after the first write failed: %s", exc)
@@ -1057,9 +1210,10 @@ def _snapshot_payload(snapshot: Snapshot | None) -> dict | None:
     if snapshot is None:
         return None
     return {
-        "open_orders": len(snapshot.orders),
+        "open_orders": None if snapshot.orders is None else len(snapshot.orders),
         "positions": [{"symbol": r.symbol, "side": r.side, "quantity": r.quantity} for r in snapshot.positions],
         "balances": [{"code": r.code, "free": r.free} for r in snapshot.balances],
+        "unread": snapshot.unread,
     }
 
 
@@ -1067,7 +1221,8 @@ def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
     """Everything in the final snapshot that says the account is not flat.
 
     A balance the listing cannot route, and a pair whose constraints cannot be read here, both
-    count as residuals: neither is evidence of flatness, and the safe direction is to say so.
+    count as residuals: neither is evidence of flatness, and the safe direction is to say so. So
+    does every position the final reads could not see (`Snapshot.unread`).
 
     Only FLAT is skipped, never a whitelist of LONG/SHORT: a side this code could not close from is
     exposure it could not act on, and reading it as flat would report the one row nothing was sent
@@ -1091,6 +1246,7 @@ def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
             # different kind of thing rather than as the plain case.
             residual["reason"] = "open_position"
         residuals.append(residual)
+    residuals.extend(final.unread)
     from cli.engine.instruments import EUR_CODES
 
     bases = listed_bases(listing)
@@ -1114,10 +1270,12 @@ def judge_final(final: Snapshot, listing: dict, prices: dict) -> list[dict]:
     return residuals
 
 
-def exit_code(result: SweepResult, residuals: list) -> int:
+def exit_code(result: SweepResult, residuals: list, *, read_whole_before_the_cancel: bool) -> int:
     """0 flat, 2 partial. Derived from the final snapshot plus the two write-side failures -- never
-    from what an individual leg answered, which the journal carries instead."""
-    if result.post_write_failure is not None or not result.cancel_ok or residuals:
+    from what an individual leg answered, which the journal carries instead -- and from the degraded
+    reads before them: the word was typed against a plan that could not see every resting order or
+    every position, so however the final read comes back, this run does not call the account flat."""
+    if result.post_write_failure is not None or not result.cancel_ok or residuals or not read_whole_before_the_cancel:
         return 2
     return 0
 
@@ -1204,8 +1362,9 @@ async def run_flatten(
     """The whole button. Returns the process exit code; raises nothing.
 
     0 flat (or the default dry run completed) · 1 refused with nothing sent · 2 partial:
-    the final snapshot is not flat, or a write-side failure means it cannot be called flat ·
-    3 the venue could not be reached or read BEFORE the first write, which is the cancel.
+    the final snapshot is not flat, a write-side failure means it cannot be called flat, or an
+    order or position read before the cancel failed (`exit_code`) · 3 the venue could not
+    be reached or read BEFORE the first write, which is the cancel.
     """
     stamp = now()
     say = _Echo(echo)
@@ -1254,15 +1413,15 @@ async def run_flatten(
     record["venue_status"] = {"status": status.status, "ok": status.ok}
 
     try:
-        snapshot = await read_snapshot(client, rec)
         listing = await read_listing(client, rec)
+        snapshot = await read_snapshot(client, rec, listing, before_the_cancel=True)
         plan = await build_plan(client, rec, snapshot, listing)
     except FlattenUnreachable as exc:
         record["error"] = str(exc)
         return _finish(3, str(exc)) if execute else _dry_exit(3, str(exc), say)
 
     record["snapshot_before"] = _snapshot_payload(snapshot)
-    render_plan(plan, say)
+    render_plan(plan, say, execute=execute)
     if not say.ok:
         # Pre-write, so aborting is free and correct -- but cleanly: the plan is what the word is
         # typed against, and a dry run's whole product is that plan. Either way nothing was sent.
@@ -1292,7 +1451,7 @@ async def run_flatten(
     # on, and judged against it every position the closers cleared reads as a residual while an
     # order that outlived the cancel goes unnamed.
     residuals = judge_final(result.final, listing, plan.prices) if result.final is not None else []
-    code = exit_code(result, residuals)
+    code = exit_code(result, residuals, read_whole_before_the_cancel=not plan.unread)
     record["cancel"] = {"ok": result.cancel_ok, "error": result.cancel_error, "orders_after": result.orders_after_cancel}
     record["post_write_failure"] = result.post_write_failure
     record["legs"] = [asdict(outcome) for outcome in result.outcomes]
@@ -1301,14 +1460,11 @@ async def run_flatten(
     # Handed to `_finish` rather than echoed here: past the first write the record must be on disk
     # before a single line is attempted, and a display failure may cost neither it nor the code.
     if code == 0:
-        # The caveat rides the ZERO and only the zero: exit 2 already sends the operator back to the
-        # venue, while a bare exit 0 is the one answer that ends the incident on a read that cannot
-        # see an order on the legs `read_open_orders` names.
         lines = [
             "the account reads flat: no resting order, no open position, no sellable balance left",
-            f"  BUT this read cannot see a resting order on {', '.join(BLIND_ORDER_READ_LEGS)}.",
-            "  Confirm open orders on Kraken's own page before you treat this as done -- and if one",
-            "  is there, run this command again: the account-wide cancel does reach it.",
+            "  the order, position and balance reads before the cancel and the final reads each came back whole; an"
+            " open-order or balance row the adapter could not parse drops out of its read without failing it, so"
+            " confirm on Kraken's own pages",
         ]
     else:
         lines = ["the account does NOT read flat -- what is left:", *(f"  {row}" for row in residuals)]
@@ -1316,6 +1472,11 @@ async def run_flatten(
             lines.append(f"  a read after the cancel failed: {result.post_write_failure}")
         if not result.cancel_ok:
             lines.append(f"  the account-wide cancel failed: {result.cancel_error}")
+        if plan.unread:
+            lines.append("  before the cancel, a read could not see everything, so this run cannot call the account flat:")
+            lines.extend(
+                f"    {row['symbol']}: {row['error']}" if "symbol" in row else f"    {row['error']}" for row in plan.unread
+            )
     return _finish(code, *lines)
 
 

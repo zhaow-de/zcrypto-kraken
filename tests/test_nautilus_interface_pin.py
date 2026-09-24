@@ -8,6 +8,7 @@ import importlib
 from pathlib import Path
 
 import pytest
+from nautilus_trader.live import SubmissionRecoveryPolicy
 
 # (module, symbol) for every nautilus name imported anywhere under cli/, at the module path cli/
 # imports it FROM -- pinning the same object through a different path would pass while a dropped
@@ -46,6 +47,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.model", "TimeInForce"),
     ("nautilus_trader.model", "TraderId"),
     ("nautilus_trader.model", "Venue"),
+    ("nautilus_trader.model", "VenueOrderId"),
     ("nautilus_trader.trading", "Strategy"),
     ("nautilus_trader.trading", "StrategyConfig"),
 ]
@@ -217,7 +219,7 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
 
 
 # Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
-# `cli/engine/node.py` states five of these and inherits the other thirty-two, so a default that
+# `cli/engine/node.py` states five of these and inherits the other thirty-three, so a default that
 # moves upstream moves production here silently, with no import to break and no rename to notice.
 # The three that carry a reasoned assertion below say WHY they matter; this map says only what a
 # wheel reported, which is the one claim it can make honestly about fields whose behaviour nothing
@@ -260,6 +262,7 @@ EXEC_ENGINE_DEFAULTS = {
     "snapshot_orders": False,
     "snapshot_positions": False,
     "snapshot_positions_interval_secs": None,
+    "submission_recovery_policy": SubmissionRecoveryPolicy.RESOLVE_LOCALLY,
 }
 
 

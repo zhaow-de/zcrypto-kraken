@@ -1,6 +1,8 @@
 # Adapter verification records
 
-One file per `nautilus_trader` version whose **attended order-semantics pass** actually ran against the live Kraken account, named for the exact version string the interpreter reports.
+One file per `nautilus_trader` version whose **attended order-semantics pass** ran against the live Kraken account, or is owed on a version the repository pins (below), named for the exact version string the interpreter reports.
+
+A record can also open ahead of its pass, as `2.0.0rc6.dev20260921.md` does: it says so in its first paragraph, carries the build evidence and the checks the version owes, and its `## Owed checks not discharged by this pass` section stays open at least until the pass has run. Until the record carries a PASS, the version stays out of `cli/engine/order-semantics-verified.json`, so both arming guards refuse it.
 
 The series is a maintenance obligation rather than a phase's research: every bump owes one, indefinitely, long after the phase that introduced the requirement is history. That is why these live under `reference/` and carry no phase prefix or serial.
 

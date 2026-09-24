@@ -85,6 +85,12 @@ Decide this first; it can predate everything above. Stop bumping the pin, and ke
 
 While the engine is disarmed, bump freely. The freeze starts when the pass is scheduled and ends when the arming window closes. The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
 
+#### 1.7 No margin position is open
+
+On the workstation, `kraken positions -o json` must print no position. Check again immediately before §5.1.
+
+From 2.0.0rc6.dev20260921 a node refuses to start while the account holds a Kraken margin position its startup reconciliation cannot rebuild, and the adapter's margin position report carries no entry price, so an ordinary open position can be enough: the start fails with `Unresolved positions during startup reconciliation ... missing avg_px_open for position recovery`. The harness records that as `FAIL` on probe 2 or 6, naming the instrument and quantity (§6). It is not the harness's position to close: find its owner, and run the pass once it is closed.
+
 ### 2. Environment: the interpreter under test
 
 Run from a tree whose lockfile already carries the version under test, the bump branch itself, so the harness binds the exact interpreter the engine will run:
@@ -185,7 +191,9 @@ Read every `PLAN` line before continuing. For each one confirm:
 - 4c/4d carry `leverage=2`; 4a/4b carry `leverage=None`,
 - `client_order_id` carries the harness's `901`/`P6V` tags (`O-<stamp>-901-P6V-<n>`), never the engine's `-001-000-` (no count command: `tests/test_order_semantics_probe.py::test_selftest_passes_with_no_credentials_and_no_network` runs the `--selftest` that proves the shape).
 
-Also read probe 2's row: it lists any pre-existing open order or position that read can see. Anything there must be explained before you place a probe order; a `REVIEW` verdict on probe 2 is a stop sign, not a footnote. An empty row is a floor, not a clear venue: probe 2 reads the startup-reconciliation cache, which is blind on the five pairs §5.4 names, and `--pair` defaults to BTC/EUR, one of them. A leftover from an earlier run, on the pair you are about to trade, is exactly what this row cannot list. Read Kraken → Trade → Open Orders by eye before §5.2 places anything.
+Also read probe 2's row: it lists the pre-existing open orders and positions startup reconciliation found. Anything there must be explained before you place a probe order; a `REVIEW` verdict on probe 2 is a stop sign, not a footnote. On a build carrying upstream #5034 (2.0.0rc6.dev20260921 and later) that read is unscoped and resolves both spellings of a pair such as BTC/EUR (`XXBTZEUR` and `XBTEUR`), and an open order the listing cannot resolve stops the node's start with `Failed to get mass status from KRAKEN` rather than dropping out of the row, so a node that started lists the whole account. Read Kraken → Trade → Open Orders by eye before §5.2 places anything all the same: the UI is the tie-breaker (§7.1).
+
+An order you placed yourself and mean to leave resting through the pass is named by its Kraken txid (Kraken → Trade → Open Orders, or `kraken open-orders -o json` on the workstation) with `--known-order <txid>`, repeated per order, on this and every later `$RUN` line of the pass. Probes 2 and 6 list each open order with its bucket (`ours`, `known`, `unclaimed`, `other`, defined in §5.4); a named order reads `known` and leaves both verdicts at `PASS`. Unnamed, it makes both `REVIEW`, and if it rests on `--pair` probe 6 reads `FAIL` and the run exits 3. A named txid the read does not find open makes both `REVIEW`: it filled, was cancelled, or is mistyped.
 
 Verdicts you should see: 1 `PASS`, 2 `PASS`, 3 `PASS`, 4a–4d `DRY-RUN`, 5 `GATED`, 6 `PASS`. Probe 5 reads `GATED` rather than `DRY-RUN` because its money gate `--probe5` was not given; it still prints the money order it would place, so read that line here rather than meeting it for the first time in the live run.
 
@@ -238,25 +246,39 @@ Record the fee from the fill and compare it with `cli/costs/fees.py`'s tier-1 ta
 $RUN --probes 6 --evidence-dir "$EVID"
 ```
 
+Add the `--pair` and the `--known-order <txid>` arguments the pass's earlier invocations carried (§5.1), so that your named orders read `known` and an unnamed order on the pass's pair reads `unclaimed` (below).
+
 Running it as its own invocation is deliberate: the new node's startup reconciliation reads venue truth rather than the previous process's cache. Probe 6 also runs in-process at the end of every run, but a run that submitted anything cannot force a fresh venue read and marks its own row `REVIEW`; the separate invocation is the one to quote.
 
-Expect `open orders 0 (ours 0, other 0), open positions 0`, `PASS`, exit 0.
+Expect `open orders 0 (ours 0, known 0, unclaimed 0, other 0), open positions 0`, `PASS`, exit 0. With orders named by `--known-order` (§5.1) resting, expect them under `known` and the same `PASS`.
 
-That zero is a floor, not a total, and this probe is where it matters most. Startup reconciliation's order read cannot see a row on BTC/EUR, ETH/EUR, XRP/EUR, LTC/EUR or ETH/BTC ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)), and `--pair` defaults to BTC/EUR, so the order a run is most likely to have left resting is exactly the one this count cannot include. A PASS here is not on its own evidence the account is clear; §7.1's by-eye read at Kraken is what closes it.
+The counts are totals for the account, for the reason §5.1 gives: the fresh node's startup read resolves both spellings of a pair, and an order it cannot resolve stops the start instead of going uncounted. §7.1's by-eye read at Kraken still closes the pass.
 
-- `ours` non-zero ⇒ verdict FAIL, the open ids printed in probe 6's own rows ⇒ go to §8 now, and expect exit 3 with the cancel-by-hand banner. The final read adopts probe-shaped orders this invocation did not submit, so an earlier run's leftover is counted here, subject to the floor above. FAIL and the banner read the same cache at different moments, so an id can move between them while the node still holds its clients open after the stop.
-- `other` non-zero ⇒ `REVIEW` ⇒ something at the venue is not ours. Adjudicate before signing off.
+The buckets go by the venue order id (the txid), because that is the id that comes back. The adapter sends a probe id over Kraken's 18 characters as `O` plus its last 17, so the `-901-P6V-` infix does reach the venue, but the adapter's order read carries no client order id back, and the fresh node's reconciliation names each order it adopts by its txid. An earlier run's order is therefore recognised by the txid its `evidence-<stamp>.json` in `--evidence-dir` records, and a run whose evidence file was never written (a `kill -9`, or another `--evidence-dir`) leaves an order that nothing names.
+
+- `ours` non-zero ⇒ verdict FAIL: an order this invocation submitted, or one whose txid an evidence file in `--evidence-dir` records, is still open. Go to §8 now, and expect exit 3 with the cancel-by-hand banner. FAIL and the banner read the same cache at different moments, so an id can move between them while the node still holds its clients open after the stop.
+- `unclaimed` non-zero ⇒ verdict FAIL and exit 3: an open order on `--pair` that neither an evidence file nor `--known-order` names. A probe leftover with no evidence file reads exactly like this. Cancel it at Kraken, or, if you placed it on purpose and mean it to rest, re-run naming it with `--known-order <txid>`.
+- `other` non-zero ⇒ `REVIEW`: an open order that nothing names, on a pair other than this invocation's `--pair`. It is a probe leftover when an earlier run on another `--pair` left no evidence file, which is why §5.4 and §8 run with the `--pair` of §5.2–5.3. Adjudicate before signing off, or name it with `--known-order`.
+- `known` counts the orders you named; a named txid that is not open is listed after the counts and makes the row `REVIEW`.
 
 ### 6. Exit codes
 
 | Code | Meaning | Action |
 | -- | -- | -- |
 | 0 | every executed probe passed | proceed to §7 |
-| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers the kickoff design's pre-approved fallback<!-- spec 00039 D1 -->; escalate anything else |
+| 1 | a probe FAILED or errored, **or** a preflight rail refused the run (message begins `REFUSING:`) | a probe 2/4–6 failure triggers the kickoff design's pre-approved fallback<!-- spec 00039 D1 -->, except the start refused over an open position (below); escalate anything else |
 | 2 | a probe was refused, **or** the run stopped before its sequence finished | the two need opposite actions; read the paragraph below the table before deciding which |
-| 3 | **something was left resting** | §8, immediately |
+| 3 | **something was left resting**, or an open order on `--pair` that nothing claims (§5.4) | §8, immediately |
 
-Exit 2 is two different events. A refusal (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that stopped (an interrupt, an exec client that died, any abnormal exit from the node) may have left a real open position that no order read can see: probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so, in the `!!` banner `a fill with no closing leg is an OPEN POSITION` and under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything.
+Exit 2 is two different events. A refusal (`!! REFUSED before the node was built:`, or a probe row whose verdict is `REFUSED`) submitted nothing for that probe: fix the input and re-run it. A run that stopped (an interrupt, an exec client that died, an abnormal exit from the node other than the two start failures below) may have left a real open position that no order read can see: probe 5's buy filled, its closing sell never ran, and the buy is CLOSED. The harness says so, in the `!!` banner `a fill with no closing leg is an OPEN POSITION` and under *notes requiring a human decision*. Flatten by hand per §8 before re-running anything.
+
+Two node-start failures read differently. Both happen inside startup reconciliation, before any probe runs, so nothing was submitted and §8's flatten-by-hand does not apply:
+
+`Unresolved positions during startup reconciliation … missing avg_px_open for position recovery` is exit 1, with probe 2 and/or 6 `FAIL` naming each instrument and quantity. The account holds a margin position the node cannot adopt (§1.7). That is a precondition of the pass, not an adapter result, so the pre-approved fallback does not apply: find the position's owner, have it closed, and re-run.
+
+`Failed to get mass status from KRAKEN` is exit 2, and the harness prints the candidate causes, because the binding drops the adapter's own. In order of likelihood: the key lacks a query permission (Query Open Orders & Trades, Query Closed Orders & Trades); a WARN line earlier in the same run (`Failed to fetch tokenized asset pairs`, `Failed to parse instrument`) left a pair out of the listing; an open order or position sits on a pair outside the listing, which Kraken → Open Orders and Positions show.
+
+The key's permissions, as Kraken names them at Settings → API → `zcrypto-engine`, include one more that the start needs: *Query Funds* (`Funds permissions - Query`). Upstream's Kraken integration guide for 2.0.0rc6.dev20260921 (`docs/integrations/kraken.md` at upstream `70d887545790`) says that a TradeVolume request that fails falls back to the public rates, so a transient or isolated failure does not stop the client connecting, and that a key missing *Funds permissions - Query* altogether still fails later, when the execution client requests account state. So a `falling back to public rates` WARN on a run whose start then fails is a reason to read that permission first.
 
 ### 7. Post-run reconciliation
 
@@ -298,7 +320,7 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 
 #### 7.4 Write it up
 
-The harness prints the table under `PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md` and writes `evidence-<stamp>.json` into `--evidence-dir`. Then sweep the homes of "<version> is unverified" in the same change, or the next reader meets a contradiction:
+The harness prints the table under `PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md` and writes `evidence-<stamp>.json` into `--evidence-dir`, beside `probe-<stamp>.log`, the run's DEBUG log. The evidence's `tradevolume_fallback` is read from that log: `fell_back` is `true` when the credentialed instrument listing took Kraken's public fee schedule because the account's TradeVolume call failed (the adapter's `falling back to public rates` WARN, quoted under `warnings`), `false` when the listing finished without one, and `null` when the log cannot say: no exec client, or a log the harness could not read (its `why` says which), or a listing that never finished. Record it for each credentialed invocation. Then sweep the homes of "<version> is unverified" in the same change, or the next reader meets a contradiction:
 
 1. Add the version to `cli/engine/order-semantics-verified.json`, exactly as the interpreter spells it (§2.1). This is the act that says the re-run happened, and the one that clears both guards. Add a version only when its `docs/reference/adapter-verification/<version>.md` record carries a PASS (set: every entry of `verified_nautilus_versions` in `cli/engine/order-semantics-verified.json`, against its `docs/reference/adapter-verification/<version>.md`; count: `infra/scripts/count-list.sh verified-versions-without-a-pass-record`).
 2. `tests/test_engine_execgate.py` pins the record's exact contents and fails deliberately the moment you do (1); its assertion message points back at this list. Update it to the new set by hand, not by pasting whatever the diff shows.
@@ -313,13 +335,13 @@ The memo must state the exact version the verification now binds to, and every o
 
 ### 8. If something is left resting
 
-The harness exits 3 and prints, between two 78-character `!` rules, every client order id / venue order id it believes is still working.
+The harness exits 3 and prints, between two 78-character `!` rules, every client order id / venue order id it believes is still working, and under a second heading each open order on `--pair` that nothing claims (§5.4's `unclaimed`). An unclaimed order is cancelled by hand like the rest, unless you placed it on purpose and mean it to rest: then re-run naming it with `--known-order <txid>`.
 
 1. Kraken → Trade → Open Orders. Cancel each listed order by hand. Do not leave the terminal until they are gone.
 2. If a probe-5 buy filled and its sell did not, flatten the position by hand in the same place.
-3. After both, re-run `$RUN --probes 6 --evidence-dir "$EVID"` and confirm `open orders 0 (ours 0 …)`, then confirm it a second time on Kraken's own Open Orders page: that count is blind on the five pairs §5.4 names, and a leftover on one of them reads as a clean zero.
+3. After both, re-run probe 6 as §5.4 does, `$RUN --probes 6 --evidence-dir "$EVID"` with the pass's `--pair` and `--known-order <txid>` arguments, and confirm `ours 0` and `unclaimed 0` with verdict `PASS` (orders you named read `known`), then confirm it a second time on Kraken's own Open Orders page, the tie-breaker (§7.1).
 
-Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and cancels it, a silent interaction between two systems in the logs of only one of them. On the five legs where that read is blind ([`engine-procedures.md#flat-verdict-blind-legs`](engine-procedures.md#flat-verdict-blind-legs)) it is not cancelled either; it just keeps working. Both outcomes say the same thing: leave nothing for it to find.
+Why it matters even though the engine is disarmed: at its next restart the engine's adopt pass reads the resting orders reconciliation put in its cache, finds no ledgered row for a probe order, and cancels it, a silent interaction between two systems in the logs of only one of them. A margin position left open does more: until the engine runs a build carrying upstream #5065, its next restart either fails to start or books that position at an entry price of 0, which is why no converge or restart is made while one is open ([`engine-procedures.md#engine-restart-margin-position`](engine-procedures.md#engine-restart-margin-position)). Either way: leave nothing for it to find.
 
 Ctrl-C behaviour: one Ctrl-C is safe. It stops the node, which runs the harness's cancel-everything sweep while the exec client is still connected; the node holds its clients open for `max(10, --order-timeout)` seconds after the stop so those cancels can reach the venue, so raising `--order-timeout` widens that window and the time an interrupt takes to exit. Every later interrupt is swallowed, deliberately, so the sweep always completes. An interrupted run still prints its table and its leftover banner, and exits 2, or 3 if anything survived the sweep. If you must abandon it, `kill -9` the process from another terminal and work this section by hand.
 
