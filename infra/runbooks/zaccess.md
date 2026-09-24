@@ -72,7 +72,7 @@ The relay is `zaccess-ssh-proxy.socket`, listening on `:20022`, and the `zaccess
 
 1. On the bridgehead, stop both: `sudo systemctl stop zaccess-ssh-proxy.socket zaccess-ssh-proxy.service`.
 2. Confirm: `systemctl status zaccess-ssh-proxy.socket` reads `inactive (dead)`, and a connection to `zaccess.zhaow.me:20022` is refused.
-3. A converge that runs the `access` role reopens it, whether `--tags access` or un-tagged, the two procedures above included, and so does a reboot, through `sockets.target`. To reopen: `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
+3. A converge that runs the `access` role reopens it, un-tagged included, the two procedures above too, and so does a reboot, through `sockets.target`. To reopen: `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
 
 ### Retire when
 
