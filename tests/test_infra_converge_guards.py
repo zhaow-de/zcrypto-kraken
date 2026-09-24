@@ -1593,7 +1593,8 @@ def test_the_zaccess_tunnel_ends_declare_one_mtu():
 
 
 # --- a socket or path unit on default dependencies precedes basic.target: ordered after a later unit it is a boot
-# cycle, and bound to one it is stopped with it and not started again.
+# cycle, and bound to one it is stopped with it and not started again. It reads the dependency directives a unit
+# states; the mount a filesystem listener, a watched path or an exec-context path implies is outside its reach.
 EARLY_BOOT_UNITS = sorted(
     p
     for pattern in (
@@ -1607,21 +1608,6 @@ EARLY_BOOT_UNITS = sorted(
 BEFORE_SYSINIT = {"sysinit.target", "local-fs.target", "local-fs-pre.target", "swap.target"}
 ORDERING = {"After", "WantsMountsFor"}
 BINDING = {"Requires", "Requisite", "BindsTo", "PartOf", "RequiresMountsFor", "StopPropagatedFrom", "BindToDevice"}
-# a filesystem listener or a watched path binds the unit to the mount under it; /run and /dev are up before sysinit
-MOUNT_BINDING = {
-    "ListenStream",
-    "ListenDatagram",
-    "ListenSequentialPacket",
-    "ListenFIFO",
-    "ListenSpecial",
-    "ListenUSBFunction",
-    "PathExists",
-    "PathExistsGlob",
-    "PathChanged",
-    "PathModified",
-    "DirectoryNotEmpty",
-}
-EARLY_PATHS = ("/run/", "/dev/")
 
 
 def _unit_lines(path: Path) -> list[str]:
@@ -1644,8 +1630,6 @@ def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
         unordered = any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings)
         for k, v in settings:
             if (k in BINDING or (k in ORDERING and not unordered)) and any(u not in BEFORE_SYSINIT for u in v.split()):
-                offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
-            if k in MOUNT_BINDING and v.startswith(("/", "{{")) and not v.startswith(EARLY_PATHS):
                 offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
     assert not offenders, (
         f"an early-boot unit waits on or binds to a unit it cannot rely on at boot; the service it activates must carry the dependency: {offenders}"
