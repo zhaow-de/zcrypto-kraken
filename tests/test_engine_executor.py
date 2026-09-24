@@ -183,8 +183,9 @@ def test_the_venue_mutating_names_have_exactly_one_module():
 # with `strategy_only=False`; the probe's strategy runs live from infra/scripts/, hence the trees below.
 # The match refuses the default form too: for a strategy registered under the operator's id it cancels
 # the operator's orders (cli/engine/node.py), so narrowing it to `strategy_only=False` opens that door.
-_ACCOUNT_WIDE_CANCEL = ".cancel_all_orders"
-_ACCOUNT_WIDE_CANCEL_ALLOWED = frozenset({"cli/engine/flatten.py"})
+# `market_exit` issues that default form for every instrument and closes positions at market, so it is
+# refused everywhere, as node.py seals it beside `cancel_all_orders`.
+_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": frozenset({"cli/engine/flatten.py"}), ".market_exit": frozenset()}
 _RUNTIME_TREES = ("cli", "infra", ".claude")
 
 
@@ -197,7 +198,10 @@ def test_only_the_red_button_reaches_a_cancel_all():
     tracked = [path for path in listed if path.endswith(".py") and (_REPO / path).is_file()]
     assert len(tracked) > 100, f"the walk found {len(tracked)} runtime .py files"
     offenders = [
-        path for path in tracked if path not in _ACCOUNT_WIDE_CANCEL_ALLOWED and _ACCOUNT_WIDE_CANCEL in (_REPO / path).read_text()
+        f"{path}: {name}"
+        for path in tracked
+        for name, allowed in _ACCOUNT_WIDE_CANCELS.items()
+        if path not in allowed and name in (_REPO / path).read_text()
     ]
     assert offenders == []
 
