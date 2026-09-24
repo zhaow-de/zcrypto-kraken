@@ -4494,8 +4494,8 @@ def test_an_open_row_with_no_recorded_txid_is_marked_ambiguous_once(tmp_path):
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == "ambiguous"
     assert row["events"] == [{"type": "ambiguous", "at": NOW.isoformat(), "what": _NO_TXID}]
-    assert [r.getMessage() for r in records] == 2 * [
-        f"ledgered order O-legacy matches no venue order -- {_NO_TXID}; its row is marked ambiguous"
+    assert [(r.levelname, r.getMessage()) for r in records] == 2 * [
+        ("WARNING", f"ledgered order O-legacy matches no venue order -- {_NO_TXID}; its row is marked ambiguous")
     ]
     assert venue.calls == []
 
@@ -4552,19 +4552,30 @@ def test_a_row_whose_events_record_two_txids_vouches_for_neither_order(tmp_path)
 
 @pytest.mark.parametrize("finished", [False, True])
 def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp_path, finished):
+    """The read skips an order row the adapter cannot parse, so an open row's order may still rest at
+    Kraken beyond every cancel this process can issue, and its line is CRITICAL. A finished row's
+    order ended, and its line stays a WARNING."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-gone", reduce_only=True, when=earlier, venue_order_id=_TXID)
     if finished:
         update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-gone", state="filled", add_filled_qty=0.001)
     venue = _VenueOrders(_report("OOTHER-ORDER-000009", OrderStatus.CANCELED))
 
-    _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue).on_timer(
-        NOW
-    )
+    with _executor_errors(level=logging.WARNING) as records:
+        _executor(
+            tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue
+        ).on_timer(NOW)
 
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == ("filled" if finished else "ambiguous")
     assert row["events"][-1] == {"type": "ambiguous", "at": NOW.isoformat(), "what": f"the venue's order read has no order {_TXID}"}
+    assert [(r.levelname, r.getMessage()) for r in records] == [
+        (
+            "WARNING" if finished else "CRITICAL",
+            f"ledgered order O-gone matches no venue order -- the venue's order read has no order {_TXID}; its row is "
+            "marked ambiguous",
+        )
+    ]
     assert len(venue.calls) == 1
 
 

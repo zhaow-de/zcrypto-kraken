@@ -1021,7 +1021,9 @@ class ProbeExecutor:
                         continue  # the read failed: unread, not unknowable, and every plan is refused
                     report = venue_orders.get(venue_order_id)
                     if report is None:
-                        self._mark_unmatched(boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True)
+                        self._mark_unmatched(
+                            boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True, critical=True
+                        )
                         continue
                     _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
                     self._reconcile_adopted_row(
@@ -1037,7 +1039,7 @@ class ProbeExecutor:
         except Exception:
             logger.critical("the startup reconciliation sweep raised -- classifying resting orders anyway", exc_info=True)
 
-    def _mark_unmatched(self, boundary: datetime, row: dict, what: str, *, open_row: bool) -> None:
+    def _mark_unmatched(self, boundary: datetime, row: dict, what: str, *, open_row: bool, critical: bool = False) -> None:
         """A row this pass cannot match to any venue order, marked in the ledger's own word for an
         outcome this process could not establish: `ambiguous`, with the event `_mark_ambiguous`
         writes.
@@ -1047,12 +1049,20 @@ class ProbeExecutor:
         event only: its order ended, so the state would falsely claim it may be resting, and what is
         unestablished is only whether the venue has since withdrawn a fill.
 
+        The line is a WARNING, except that `critical` makes it CRITICAL, the level
+        `_log_resting_outside_the_cache` logs at. The caller passes it for an open row whose recorded
+        txid the venue read does not return: that read skips an order row the adapter cannot parse
+        (`_cancel_resting`), so the order may still rest at Kraken, where no cancel this process can
+        issue reaches it.
+
         A row already carrying the mark is left alone, so a row that stays unmatched does not gain an
-        event every restart. Nothing is refused and nothing trips: the operator reads the row against
-        Kraken's own open and closed orders. The write is not wrapped: the caller's per-row `try` logs
-        its failure, and no trip stands behind it."""
+        event every restart; its line is logged every restart all the same. Nothing is refused and
+        nothing trips: the operator reads the row against Kraken's own open and closed orders. The
+        write is not wrapped: the caller's per-row `try` logs its failure, and no trip stands behind
+        it."""
         client_order_id = row["client_order_id"]
-        logger.warning("ledgered order %s matches no venue order -- %s; its row is marked ambiguous", client_order_id, what)
+        log = logger.critical if critical else logger.warning
+        log("ledgered order %s matches no venue order -- %s; its row is marked ambiguous", client_order_id, what)
         if open_row:
             marked = row.get("state") == "ambiguous"
         else:
