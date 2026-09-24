@@ -649,7 +649,6 @@ def test_the_observer_carries_the_venues_external_order_identity_and_claims_noth
 
 
 def test_no_strategy_arms_the_librarys_order_management(tmp_path):
-    """No strategy this node registers arms order management inside the library, on every construction."""
     strategies = (
         ShadowStrategy(_config(tmp_path)),
         ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
