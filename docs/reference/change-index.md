@@ -346,4 +346,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #585 | 2026-09-21 | docs(open-topics): T0027 archived, its last requirement carried by T0158 | — | — | T0027, T0158 |
 | #587 | 2026-09-21 | fix(engine): the store's shortfall hint routes by the fetch's reach | — | 00117 | — |
 | #594 | 2026-09-22 | feat(config): iter-170 — repair the release skill before its first cut | iter-170 | — | T0203 |
-| #599 | 2026-09-23 | chore(deps): nautilus-trader dev20260923 — Rung 1 pin, #5034 and #5043 | — | — | T0160 |
+| #599 | 2026-09-23 | fix(engine): nautilus-trader dev20260921 pin, row keying, window fixes | — | — | T0159, T0160, T0163 |
