@@ -3,7 +3,9 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
 import shutil
+import subprocess
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -147,29 +149,92 @@ def test_a_below_costmin_result_names_the_floor():
 # --- the structural pin -------------------------------------------------------------------------
 
 
-# The dotted ATTRIBUTE REACH, never the bare word: `cli/engine/node.py` seals this surface by
-# DEFINING those names to raise, and matching the bare word would make the seal itself the offender,
-# leaving an allowance as the only way back. `cancel_order` is here because a cancel reaches the
-# venue exactly as a submit does, `cancel_all_orders` because an account-wide cancel is the largest.
-_VENUE_MUTATING_NAMES = (".submit_order", ".cancel_order", ".cancel_all_orders", ".order_factory")
+# On the library's order surface and not venue-mutating: the exit's completion hook, the setter for
+# which instruments count as external, and the GTD cancel, which stops a local timer and nothing else.
+_ORDER_SURFACE_NOT_MUTATING = frozenset({"post_market_exit", "set_external_order_instrument_ids", "cancel_gtd_expiry"})
+# On the Kraken HTTP clients and not venue-mutating: the credentials and endpoint they carry, the local
+# instrument cache, and the cancel of this process's own in-flight requests. Every `request_*` and
+# `get_*` is a read.
+_HTTP_CLIENT_NOT_MUTATING = frozenset({"api_key", "api_key_masked", "base_url", "cache_instrument", "cancel_all_requests"})
 # The engine's order machine and the red button, and nothing else. `cli/engine/flatten.py` is a
 # second venue-mutating module BY DESIGN (spec 00106 D7): the button has to work when the machine
 # is what broke, so the two deliberately share no code path, and the price of that is a second
 # entry here rather than a guard that reuse would have satisfied.
 _VENUE_MUTATING_MODULES = frozenset({"cli/engine/executor.py", "cli/engine/flatten.py"})
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def _reach(name: str) -> re.Pattern:
+    """`.name` as a whole attribute, called or bound, and never a longer name it prefixes."""
+    return re.compile(rf"\.{re.escape(name)}\b")
+
+
+def _http_client_order_surface() -> set[str]:
+    import nautilus_trader.adapters.kraken as kraken
+
+    clients = [getattr(kraken, name) for name in dir(kraken) if name.endswith("HttpClient")]
+    assert len(clients) >= 2, f"the adapter exports only {clients}"
+    return {
+        name
+        for client in clients
+        for name in dir(client)
+        if not name.startswith(("_", "request_", "get_")) and name not in _HTTP_CLIENT_NOT_MUTATING
+    }
+
+
+def _venue_mutating_reaches() -> list[re.Pattern]:
+    """The installed wheel's own order surface, a strategy's and the Kraken HTTP clients' (the engine
+    builds the spot one), so a method a later release adds is refused before anyone names it;
+    `order_factory` mints the orders the rest submit."""
+    from tests.test_engine_node import _order_mutating_surface
+
+    names = (_order_mutating_surface() - _ORDER_SURFACE_NOT_MUTATING) | _http_client_order_surface() | {"order_factory"}
+    assert len(names) >= 13, f"the derivation found only {sorted(names)}"
+    return [_reach(name) for name in sorted(names)]
 
 
 def test_the_venue_mutating_names_have_exactly_one_module():
-    """Spec 00090 D4's structural pin, widened by spec 00106 D7: every venue-mutating call lives in
-    `cli/engine/executor.py` or `cli/engine/flatten.py`. A text walk, not an import walk -- a
-    reference in a comment is still one a refactor can activate."""
+    """Spec 00090 D4's structural pin. A text walk, not an import walk -- a reference in a comment is
+    still one a refactor can activate."""
+    reaches = _venue_mutating_reaches()
+    files = sorted((_REPO / "cli").rglob("*.py"))
+    assert len(files) > 100, f"the walk found {len(files)} files under cli/"
     offenders = []
-    for path in sorted(Path("cli").rglob("*.py")):
-        if path.as_posix() in _VENUE_MUTATING_MODULES:
+    for path in files:
+        rel = path.relative_to(_REPO).as_posix()
+        if rel in _VENUE_MUTATING_MODULES:
             continue
         text = path.read_text()
-        if any(name in text for name in _VENUE_MUTATING_NAMES):
-            offenders.append(path.as_posix())
+        if any(reach.search(text) for reach in reaches):
+            offenders.append(rel)
+    assert offenders == []
+
+
+# On the pinned wheel an instrument-named CancelAllOrders sends Kraken's account-wide CancelAll (upstream
+# #5044 scopes it in a later nightly), so a cancel-all written for one pair cancels every pair's orders;
+# the red button keeps its reach because its cancel is account-wide by design. A strategy sends it only
+# with `strategy_only=False`; the probe's strategy runs live from infra/scripts/, hence the trees below.
+# The match refuses the default form too: for a strategy registered under the operator's id it cancels
+# the operator's orders (cli/engine/node.py), so narrowing it to `strategy_only=False` opens that door.
+# `market_exit` issues that default form on each instrument the strategy holds orders or positions in.
+_ACCOUNT_WIDE_CANCELS = {"cancel_all_orders": frozenset({"cli/engine/flatten.py"}), "market_exit": frozenset()}
+_RUNTIME_TREES = ("cli", "infra", ".claude")
+
+
+def test_only_the_red_button_reaches_a_cancel_all():
+    """Tracked files only: `.claude/worktrees/` holds gitignored agent checkouts, copies of cli/
+    included, which are not this tree's code. A tracked file deleted from the working tree is skipped."""
+    listed = subprocess.run(
+        ["git", "-C", str(_REPO), "ls-files", "-z", "--", *_RUNTIME_TREES], capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    tracked = [path for path in listed if path.endswith(".py") and (_REPO / path).is_file()]
+    assert len(tracked) > 100, f"the walk found {len(tracked)} runtime .py files"
+    offenders = [
+        f"{path}: {name}"
+        for path in tracked
+        for name, allowed in _ACCOUNT_WIDE_CANCELS.items()
+        if path not in allowed and _reach(name).search((_REPO / path).read_text())
+    ]
     assert offenders == []
 
 

@@ -704,6 +704,14 @@ def _strategy(*argv: str):
     return probe.ProbeStrategy(args, state), state
 
 
+def test_the_probe_strategy_hands_the_library_no_order_management_and_no_claim(monkeypatch):
+    from tests.test_engine_node import _configs_built_by
+
+    built = _configs_built_by(monkeypatch, probe, _strategy)
+    settings = [(c.manage_stop, c.manage_contingent_orders, c.manage_gtd_expiry, c.external_order_instrument_ids) for c in built]
+    assert settings == [(False, False, False, None)] * 2
+
+
 class _FactoryOrder:
     client_order_id = "O-20260823-120000-901-P6V-1"
 
