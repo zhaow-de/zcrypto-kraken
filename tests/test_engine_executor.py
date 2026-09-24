@@ -162,9 +162,8 @@ _REPO = Path(__file__).resolve().parents[1]
 
 
 def test_the_venue_mutating_names_have_exactly_one_module():
-    """Spec 00090 D4's structural pin, widened by spec 00106 D7: every venue-mutating call lives in
-    `cli/engine/executor.py` or `cli/engine/flatten.py`. A text walk, not an import walk -- a
-    reference in a comment is still one a refactor can activate."""
+    """Spec 00090 D4's structural pin. A text walk, not an import walk -- a reference in a comment is
+    still one a refactor can activate."""
     files = sorted((_REPO / "cli").rglob("*.py"))
     assert len(files) > 100, f"the walk found {len(files)} files under cli/"
     offenders = []
@@ -196,7 +195,7 @@ def test_only_the_red_button_reaches_a_cancel_all():
         ["git", "-C", str(_REPO), "ls-files", "-z", "--", *_RUNTIME_TREES], capture_output=True, text=True, check=True
     ).stdout.split("\0")
     tracked = [path for path in listed if path.endswith(".py") and (_REPO / path).is_file()]
-    assert len(tracked) > 100, f"git ls-files listed {len(tracked)} runtime files"
+    assert len(tracked) > 100, f"the walk found {len(tracked)} runtime .py files"
     offenders = [
         path for path in tracked if path not in _ACCOUNT_WIDE_CANCEL_ALLOWED and _ACCOUNT_WIDE_CANCEL in (_REPO / path).read_text()
     ]
