@@ -152,6 +152,10 @@ def test_a_below_costmin_result_names_the_floor():
 # On the library's order surface and not venue-mutating: the exit's completion hook, the setter for
 # which instruments count as external, and the GTD cancel, which stops a local timer and nothing else.
 _ORDER_SURFACE_NOT_MUTATING = frozenset({"post_market_exit", "set_external_order_instrument_ids", "cancel_gtd_expiry"})
+# On the Kraken HTTP clients and not venue-mutating: the credentials and endpoint they carry, the local
+# instrument cache, and the cancel of this process's own in-flight requests. Every `request_*` and
+# `get_*` is a read.
+_HTTP_CLIENT_NOT_MUTATING = frozenset({"api_key", "api_key_masked", "base_url", "cache_instrument", "cancel_all_requests"})
 # The engine's order machine and the red button, and nothing else. `cli/engine/flatten.py` is a
 # second venue-mutating module BY DESIGN (spec 00106 D7): the button has to work when the machine
 # is what broke, so the two deliberately share no code path, and the price of that is a second
@@ -165,13 +169,27 @@ def _reach(name: str) -> re.Pattern:
     return re.compile(rf"\.{re.escape(name)}\b")
 
 
+def _http_client_order_surface() -> set[str]:
+    import nautilus_trader.adapters.kraken as kraken
+
+    clients = [getattr(kraken, name) for name in dir(kraken) if name.endswith("HttpClient")]
+    assert len(clients) >= 2, f"the adapter exports only {clients}"
+    return {
+        name
+        for client in clients
+        for name in dir(client)
+        if not name.startswith(("_", "request_", "get_")) and name not in _HTTP_CLIENT_NOT_MUTATING
+    }
+
+
 def _venue_mutating_reaches() -> list[re.Pattern]:
-    """The installed wheel's own order surface, so a method a later release adds is refused before
-    anyone names it; `order_factory` mints the orders the rest submit."""
+    """The installed wheel's own order surface, a strategy's and the Kraken HTTP clients' (the engine
+    builds the spot one), so a method a later release adds is refused before anyone names it;
+    `order_factory` mints the orders the rest submit."""
     from tests.test_engine_node import _order_mutating_surface
 
-    names = (_order_mutating_surface() - _ORDER_SURFACE_NOT_MUTATING) | {"order_factory"}
-    assert len(names) >= 10, f"the derivation found only {sorted(names)}"
+    names = (_order_mutating_surface() - _ORDER_SURFACE_NOT_MUTATING) | _http_client_order_surface() | {"order_factory"}
+    assert len(names) >= 13, f"the derivation found only {sorted(names)}"
     return [_reach(name) for name in sorted(names)]
 
 
