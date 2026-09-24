@@ -195,10 +195,12 @@ async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     Each row resolves through the instrument cache `read_listing` fills before this read, under
     either of Kraken's spellings of its pair: the adapter matches the AssetPairs key (`XXBTZEUR`)
     first and falls back to the altname index it records with the listing (`XBTEUR`). A row it
-    cannot resolve at all fails the WHOLE read rather than dropping out of it, so a list this
-    returns is every order the venue reported. Before the cancel that failure degrades
-    (`read_snapshot`); in the final snapshot it ends the run at exit 2; the journal-only read right
-    after the cancel steps over it (`_read_for_the_record`).
+    cannot resolve at all fails the WHOLE read rather than dropping out of it. A row it resolves
+    but cannot parse is dropped with a `Failed to parse order` warning of the adapter's own and the
+    read still succeeds, so a list this returns is every order the venue reported except those.
+    Before the cancel a failed read degrades (`read_snapshot`); in the final snapshot it ends the
+    run at exit 2; the journal-only read right after the cancel steps over it
+    (`_read_for_the_record`).
     """
     # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
     kwargs: dict[str, Any] = {"open_only": True}
@@ -848,10 +850,11 @@ def render_plan(plan: Plan, echo: Callable[[str], None], *, execute: bool) -> No
     currency and no grand total is printed -- summing a BTC-quoted leg into a euro figure would
     need an FX rate this command has no mandate to invent.
 
-    The order count is the whole list the venue reported, each order named under it: an order
-    `read_open_orders` cannot resolve fails that read, and a failed read prints as one, never as a
-    count. What a failed read costs the verdict is worded by `execute`: a dry run ends at 0, so
-    there the line speaks of the run `--execute` would make."""
+    The order count is the whole list `read_open_orders` returned, each order named under it: an
+    order it cannot resolve fails that read, and a failed read prints as one, never as a count; an
+    order the adapter cannot parse is neither counted nor printed as a failure. What a failed read
+    costs the verdict is worded by `execute`: a dry run ends at 0, so there the line speaks of the
+    run `--execute` would make."""
     if plan.orders is None:
         # The error already reads "open orders could not be read: <the venue's words>".
         failure = "; ".join(row["error"] for row in plan.unread if row["kind"] == "order")
@@ -1363,8 +1366,8 @@ async def run_flatten(
     """The whole button. Returns the process exit code; raises nothing.
 
     0 flat (or the default dry run completed) · 1 refused with nothing sent · 2 partial:
-    the final snapshot is not flat, a write-side failure means it cannot be called flat, or a read
-    before the cancel could not see every order or position (`exit_code`) · 3 the venue could not
+    the final snapshot is not flat, a write-side failure means it cannot be called flat, or an
+    order or position read before the cancel failed (`exit_code`) · 3 the venue could not
     be reached or read BEFORE the first write, which is the cancel.
     """
     stamp = now()
@@ -1463,8 +1466,8 @@ async def run_flatten(
     if code == 0:
         lines = [
             "the account reads flat: no resting order, no open position, no sellable balance left",
-            "  the reads before the cancel and the final reads saw every order and position the venue reported;"
-            " a read that could not ends a run at 2, never 0",
+            "  the reads before the cancel and the final reads each came back whole; an open-order row the adapter"
+            " could not parse drops out of a read without failing it, so confirm on Kraken's own pages",
         ]
     else:
         lines = ["the account does NOT read flat -- what is left:", *(f"  {row}" for row in residuals)]

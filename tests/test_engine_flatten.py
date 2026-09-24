@@ -1984,18 +1984,25 @@ def test_a_clean_sweep_of_a_flat_account_exits_zero(tmp_path):
     assert _run(client, tmp_path) == 0
 
 
+_FLAT_READS_LINE = (
+    "  the reads before the cancel and the final reads each came back whole; an open-order row the adapter could not "
+    "parse drops out of a read without failing it, so confirm on Kraken's own pages"
+)
+
+
 @pytest.mark.parametrize(("orders", "code", "said"), [([[], [], []], 0, 1), ([[], [], [object()]], 2, 0)])
 def test_the_flat_verdict_says_what_made_it_and_names_no_pair_as_unseen(tmp_path, orders, code, said):
-    """Exit 0 is the one answer that ends an incident, and it now rests on reads that resolve both
-    of Kraken's spellings and fail, rather than drop, a row they cannot resolve -- so the line
-    beside the zero says that, and no line names a pair as one the reads cannot see. Exit 2 gets
-    neither. Asserted on what was ECHOED, since a line computed and never printed tells nobody.
+    """Exit 0 is the one answer that ends an incident. It rests on reads that came back whole, and
+    the adapter drops an open-order row it resolves but cannot parse without failing the read, so
+    the line beside the zero says both and sends the operator to Kraken's own pages. No line names
+    a pair as one the reads cannot see. Exit 2 gets neither. Asserted on what was ECHOED, since a
+    line computed and never printed tells nobody.
     """
     _armed(tmp_path)
     lines: list[str] = []
     assert _run(_flat_client(orders=orders), tmp_path, lines=lines) == code
-    said_lines = [line for line in lines if "saw every order and position the venue reported" in line]
-    assert len(said_lines) == said
+    assert lines.count(_FLAT_READS_LINE) == said
+    assert not [line for line in lines if "venue reported" in line]
     assert not [line for line in lines if "cannot see" in line or "BTC/EUR, ETH/EUR" in line]
 
 
