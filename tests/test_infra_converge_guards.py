@@ -519,6 +519,8 @@ WINDOW_REASON = "cycle confirmed complete, converging late on purpose"
         (900, WINDOW_REASON, True),  # override accepted over a closed window -> echo the why
         (900, "", False),  # no override -> the assert refused; there is no why to echo
         (1900, WINDOW_REASON, False),  # the window is open -> nothing was overridden
+        (13500, WINDOW_REASON, False),  # until_next == 900: the assert's close, still open -> no why
+        (13501, WINDOW_REASON, True),  # until_next == 899: closed, the override accepted -> echo the why
     ],
 )
 def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary, override, expected):
