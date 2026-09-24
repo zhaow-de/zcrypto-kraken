@@ -167,7 +167,7 @@ _SYMBOL_BY_INSTRUMENT_ID = {instrument_id: symbol for symbol, instrument_id in I
 # Kraken spells one asset three ways across its surfaces; the balance read tries them in order.
 # Every other base gets the plain code plus its `X`-prefixed classic spelling.
 _BTC_BALANCE_ALIASES = ("BTC", "XBT", "XXBT")
-# The startup pass's one read of the venue's orders runs on the node's own thread, so this bound is
+# The startup pass's one read of the venue's orders runs on the node's main thread, so this bound is
 # also the longest the pass can hold that thread. The client's own request timeout is no bound: it
 # retries with backoff underneath it.
 _VENUE_READ_TIMEOUT_SECONDS = 30.0
@@ -430,8 +430,9 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     The listing is cached into the client first because the order read resolves every row through
     that cache and its altname index: an open order it cannot resolve fails the whole read, and a
     closed one it cannot resolve is skipped. `asyncio.run` needs no event loop running on the calling
-    thread, which holds on the node's timer thread; if that ever changes, this raises and the caller
-    fails closed. Anything short of a complete answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
+    thread: the node runs the strategy's timer callbacks on its main thread, with no asyncio loop
+    running there. If that ever changes, this raises and the caller fails closed. Anything short of a
+    complete answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
     from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
 
     # Imported here rather than at the top: node.py imports this module.
