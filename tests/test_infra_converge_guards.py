@@ -533,6 +533,25 @@ def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary,
     assert truthy(when_conditions(task), variables) is expected
 
 
+def test_the_window_echo_negates_the_asserts_own_window_condition():
+    """The value fixtures above drive the echo's close; this holds every clause of its mirror — the
+    fallback floor, the journal branch and its regex included — against the assert's own text."""
+    tasks = load_tasks(SITE)
+    condition = _first_balanced_group(" ".join(assert_that(find_task(tasks, WINDOW))))
+    echo = " ".join(when_conditions(find_task(tasks, WINDOW_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+
+    # a vacuous "" == "" pass is the failure mode of extraction, so pin what the condition must contain
+    assert "engine_cycle_epoch_probe" in condition and "14400" in condition, (
+        f"extraction missed the window condition: {condition!r}"
+    )
+    assert " ".join(negated.split()) == " ".join(condition.split()), (
+        f"the echo records an override on other cases:\n echo:   {negated}\n assert: {condition}"
+    )
+
+
 # --- engine-role guards. Fixture keys carry the `engine_` prefix ansible-lint's
 # var-naming[no-role-prefix] forces on every role-registered var -- the keys ARE the guard's
 # variable names, so they cannot diverge from the committed YAML.
