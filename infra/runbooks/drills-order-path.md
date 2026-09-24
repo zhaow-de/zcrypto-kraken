@@ -72,9 +72,9 @@ The reboot's own verify-by-outcome list in `docs/reference/fleet.md` § Reboots 
    Expect `level=reduce_only` with `restart_hold` among the reasons. The engine writes that hold unconditionally at every start and nothing clears it but a human (no count command: `write_restart_hold` at `cli/engine/execgate.py:220`, called from `command.py:752`; no line under `cli/` removes the file).
 2. **The adopt pass ran and cancelled the opener**:
    ```
-   sudo docker logs --since 30m zcrypto-engine | grep -E 'adopted resting order'
+   sudo docker logs --since 30m zcrypto-engine | grep -E 'adopted resting order|rests at Kraken'
    ```
-   A `canceling adopted resting order …` line names the order; a `… is a ledgered reducer -- left resting and re-attached` line means the row was classified a reducer and kept, which on an opener is a finding. No line at all is a finding only once the pair precondition held (no count command: the adopt pass's two lines, in `cli/engine/executor.py::_adopt_resting_orders`).
+   A `canceling adopted resting order …` line names the order; a `… is a ledgered reducer -- left resting and re-attached` line means the row was classified a reducer and kept, which on an opener is a finding. A CRITICAL `ledgered order <id> (Kraken <txid>) rests at Kraken (<status>) but this process's Cache does not hold it, so neither the startup pass nor a kill trip can cancel it -- cancel it by hand on Kraken's open-orders page` means the node's startup reconciliation dropped the opener and the pass's own venue read found it still resting: cancel it on Kraken's page, and record it as a finding. No line at all is a finding (no count command: the adopt pass's two lines in `cli/engine/executor.py::_adopt_resting_orders`, and the third in `_log_resting_outside_the_cache` beside it).
 3. **The ledger**, with the probe window's ledger read: the order's row carries a terminal `state` and `filled_qty 0.0`, and no `fill` lines at all.
 4. **Kraken's own open-orders view**, by hand. The engine's belief and the venue's are two readings; compare them.
 
@@ -409,6 +409,11 @@ sudo systemctl start zcrypto-engine
    ```
    sudo docker logs --since 30m zcrypto-engine | grep -c 'canceling adopted resting order'
    ```
+   And the line the pass logs instead when the order rests at Kraken outside the Cache:
+   ```
+   sudo docker logs --since 30m zcrypto-engine | grep 'rests at Kraken'
+   ```
+   A CRITICAL `ledgered order <id> (Kraken <txid>) rests at Kraken (<status>) but this process's Cache does not hold it, so neither the startup pass nor a kill trip can cancel it -- cancel it by hand on Kraken's open-orders page` names the drill's order as one the node's startup reconciliation dropped: nothing in the engine cancels it, so cancel it on Kraken's page and record it in the entry.
 4. **The ledger**, with the probe window's ledger read: the row's `events` for the cancel, and, if a fill raced it, a `fill` line beside it in the same row.
 
 ### Record
