@@ -185,10 +185,11 @@ class ShadowStrategy(Strategy):
     stream is `ExternalOrderObserver`, a separate strategy registered under the venue's external
     order identity, and it forwards into `_on_external_order_event` -> the executor's disposition
     filter, which acts only on the rows the adopt pass re-attached plus this session's own
-    submissions -- a SUBSET of what the ledger vouches for, and a strict one on the legs
-    `executor._cancel_resting` names -- and everything else it counts, logs, and drops before any
-    row write, cancel, or trip arithmetic. So the hand settle remains structurally unable to reach
-    the trip: it matches no ledgered row, and no widening of the claim list is what admits it.
+    submissions -- a SUBSET of what the ledger vouches for, and a strict one by the rows
+    `executor._reconcile_adopted_rows` leaves unattached -- and everything else it counts, logs,
+    and drops before any row write, cancel, or trip arithmetic. So the hand settle remains
+    structurally unable to reach the trip: it matches no ledgered row, and no widening of the claim
+    list is what admits it.
     tests/test_engine_node.py pins each of these.
     """
 
@@ -418,7 +419,7 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     resting order, the kill switch's cancel sweep could not reach it either, and the whole
     external-events path would go dark without one ERROR anywhere. Pinned by the config-shape
     test. Necessary and NOT sufficient: what populates the cache with such an order is the
-    reconciliation read -- `executor._cancel_resting` states what that read has missed, and on which legs.
+    reconciliation read -- `executor._cancel_resting` states which resting orders that read drops.
 
     The three in-flight knobs together set how long the engine waits on an unanswered order before
     it mints that order's terminal event itself -- roughly the threshold plus the retries times the
