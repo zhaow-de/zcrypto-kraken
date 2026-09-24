@@ -6,16 +6,11 @@ so the assertions here are about what reached the venue, never only about a retu
 from __future__ import annotations
 
 import asyncio
-import base64
-import contextlib
-import http.server
 import json
 import logging
 import os
 import pty
 import re
-import threading
-import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -2680,86 +2675,9 @@ def test_a_client_call_inside_a_loop_answers_with_an_awaitable_the_module_must_a
     assert isinstance(asyncio.run(_probe()), list)
 
 
+# Rows copied verbatim from Kraken's public listing: its currency half, and the tokenized half the
+# adapter asks for with `aclass_base=tokenized_asset`.
 _TWO_KEYS = json.loads((Path(__file__).parent / "fixtures" / "kraken_assetpairs_two_keys.json").read_text())
-
-
-@contextlib.contextmanager
-def _loopback_kraken(open_orders: dict):
-    """A 127.0.0.1 stand-in for the four REST endpoints a listing read and an order read reach.
-    AssetPairs answers from `kraken_assetpairs_two_keys.json`, rows copied verbatim from Kraken's
-    public listing, and `aclass_base=tokenized_asset` selects the tokenized half as the adapter
-    asks for it. TradeVolume is refused, which the adapter answers with public fees. Nothing
-    leaves the host."""
-
-    class _Handler(http.server.BaseHTTPRequestHandler):
-        def _answer(self, form: dict) -> None:
-            path = urllib.parse.urlparse(self.path)
-            form = {**dict(urllib.parse.parse_qsl(path.query)), **form}
-            name = path.path.rsplit("/", 1)[-1]
-            if name == "AssetPairs":
-                body = {
-                    "error": [],
-                    "result": _TWO_KEYS["tokenized" if form.get("aclass_base") == "tokenized_asset" else "currency"],
-                }
-            elif name == "OpenOrders":
-                body = {"error": [], "result": {"open": open_orders}}
-            else:
-                body = {"error": ["EGeneral:Permission denied"]}
-            raw = json.dumps(body).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
-
-        def do_GET(self):
-            self._answer({})
-
-        def do_POST(self):
-            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
-            self._answer(json.loads(raw) if raw.startswith("{") else dict(urllib.parse.parse_qsl(raw)))
-
-        def log_message(self, *_args):
-            pass
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-def _open_order_on(pair: str) -> dict:
-    """One resting limit BUY in the shape `OpenOrders` answers, spelled `pair`."""
-    return {
-        "refid": None,
-        "userref": 0,
-        "status": "open",
-        "opentm": 1790190000.0,
-        "starttm": 0,
-        "expiretm": 0,
-        "descr": {
-            "pair": pair,
-            "type": "buy",
-            "ordertype": "limit",
-            "price": "1.00",
-            "price2": "0",
-            "leverage": "none",
-            "order": f"buy 1.00000000 {pair} @ limit 1.00",
-            "close": "",
-        },
-        "vol": "1.00000000",
-        "vol_exec": "0.00000000",
-        "cost": "0.00000",
-        "fee": "0.00000",
-        "price": "0.00000",
-        "stopprice": "0.00000",
-        "limitprice": "0.00000",
-        "misc": "",
-        "oflags": "fciq",
-    }
 
 
 @pytest.mark.parametrize("spelling", ["AAOISPVUSD", "AAOIxUSD"])
@@ -2768,10 +2686,13 @@ def test_a_symbol_listed_under_two_keys_resolves_under_either_spelling_once_the_
     instrument per symbol, and Kraken lists the tokenized equity `AAOIx/USD` under `AAOISPVUSD`
     (altname `AAOIxUSD`) and under `AAOIxUSD`. Cached in the venue's order, the second key wins and
     an order spelled `AAOISPVUSD` fails the whole order read before the cancel."""
-    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+    from tests import kraken_loopback
 
-    with _loopback_kraken({"OAAAAA-BBBBB-CCCC01": _open_order_on(spelling)}) as base_url:
-        client = KrakenSpotHttpClient("dummy-key", base64.b64encode(b"\x00" * 64).decode(), base_url=base_url)
+    with kraken_loopback.serve(_TWO_KEYS["currency"]) as venue:
+        venue.tokenized_asset_pairs = _TWO_KEYS["tokenized"]
+        venue.errors["TradeVolume"] = "EGeneral:Permission denied"
+        venue.open_orders["OAAAAA-BBBBB-CCCC01"] = kraken_loopback.open_order(spelling, price="1.00", volume="1.00000000")
+        client = kraken_loopback.client(venue)
 
         async def _read():
             await flatten.read_listing(client, flatten.Recorder())

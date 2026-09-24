@@ -71,6 +71,7 @@ from cli.engine.probeplan import MODES, PLAN_FILENAME, ProbeIntent
 from cli.engine.venue import VenueStatus
 from cli.engine.venueledger import write_venue_record
 from cli.engine.venuestate import ConcordanceVerdict, InstrumentConstraints, VenueState
+from tests import kraken_loopback
 
 NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 
@@ -4617,98 +4618,10 @@ def test_a_venue_report_still_resting_for_an_order_the_cache_lacks_is_logged_cri
 # --- read_venue_orders against a loopback venue: the wheel's own client, offline ----------------------
 
 
-def _asset_pair(altname, wsname, base, *, pair_decimals, tick_size, ordermin):
-    """One AssetPairs row in the full shape the pinned adapter deserialises -- `aclass_base` and the
-    decimals are required fields, which tests/fixtures/kraken_assetpairs.json's trimmed rows lack."""
-    return {
-        "altname": altname, "wsname": wsname, "aclass_base": "currency", "base": base, "aclass_quote": "currency",
-        "quote": "ZEUR", "lot": "unit", "cost_decimals": 5, "pair_decimals": pair_decimals, "lot_decimals": 8,
-        "lot_multiplier": 1, "leverage_buy": [2, 3], "leverage_sell": [2, 3], "fees": [], "fees_maker": [],
-        "fee_volume_currency": "ZUSD", "margin_call": 80, "margin_stop": 40, "ordermin": ordermin, "costmin": "0.45",
-        "tick_size": tick_size, "status": "online", "execution_venue": "international",
-    }  # fmt: skip
-
-
-# Keyed as AssetPairs keys them. BTC/EUR's key is not the `XBTEUR` Kraken's order rows spell it by,
-# which is what the listing's altname index is for.
-_LOOPBACK_ASSET_PAIRS = {
-    "XXBTZEUR": _asset_pair("XBTEUR", "XBT/EUR", "XXBT", pair_decimals=1, tick_size="0.1", ordermin="0.00005"),
-    "SOLEUR": _asset_pair("SOLEUR", "SOL/EUR", "SOL", pair_decimals=2, tick_size="0.01", ordermin="0.06"),
-}
-
-
-class _LoopbackKraken:
-    """Kraken's REST surface on 127.0.0.1, enough for `read_venue_orders`: a two-pair public listing,
-    a TradeVolume refusal (the listing falls back to public fees), and the two order reads, recording
-    each ClosedOrders form. `stall` delays ClosedOrders."""
-
-    def __init__(self, *, open_orders=None, closed_orders=None, stall=0.0):
-        import threading
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-        from urllib.parse import parse_qs
-
-        listing = _LOOPBACK_ASSET_PAIRS
-        self.closed_forms: list[dict] = []
-        venue = self
-
-        class _Handler(BaseHTTPRequestHandler):
-            def _answer(self, result, error=()):
-                body = json.dumps({"error": list(error), "result": result}).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                self._answer({} if "tokenized" in self.path else listing)
-
-            def do_POST(self):
-                form = {k: v[0] for k, v in parse_qs(self.rfile.read(int(self.headers["Content-Length"] or 0)).decode()).items()}
-                name = self.path.rsplit("/", 1)[-1]
-                if name == "TradeVolume":
-                    return self._answer(None, ["EGeneral:Permission denied"])
-                if name == "OpenOrders":
-                    return self._answer({"open": open_orders or {}})
-                if name == "ClosedOrders":
-                    venue.closed_forms.append({k: v for k, v in form.items() if k != "nonce"})
-                    time.sleep(stall)
-                    first_page = form.get("ofs", "0") == "0"
-                    return self._answer({"closed": (closed_orders or {}) if first_page else {}, "count": len(closed_orders or {})})
-                return self._answer({})
-
-            def log_message(self, *args):
-                pass
-
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-        threading.Thread(target=self._server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
-
-    def close(self):
-        self._server.shutdown()
-
-
-def _kraken_order(pair, status, vol_exec, *, cl_ord_id):
-    """One row of Kraken's OpenOrders/ClosedOrders answer, carrying the `cl_ord_id` the venue stores --
-    which the adapter's report drops."""
-    return {
-        "refid": None, "userref": 0, "cl_ord_id": cl_ord_id, "status": status, "opentm": 1758600000.0, "starttm": 0,
-        "expiretm": 0, "closetm": None if status == "open" else 1758601000.0, "reason": None,
-        "descr": {"pair": pair, "type": "sell", "ordertype": "limit", "price": "30000.0", "price2": "0",
-                  "leverage": "none", "order": f"sell 0.00100000 {pair} @ limit 30000.0", "close": ""},
-        "vol": "0.00100000", "vol_exec": vol_exec, "cost": "0", "fee": "0", "price": "0", "stopprice": "0",
-        "limitprice": "0", "misc": "", "oflags": "fciq,post",
-    }  # fmt: skip
-
-
 @pytest.fixture
 def _loopback_credentials(monkeypatch):
-    """Stand-in credentials for the loopback venue only -- not a key any venue has issued."""
-    import base64
-    import os
-
-    monkeypatch.setenv("KRAKEN_SPOT_API_KEY", "loopback-key")
-    monkeypatch.setenv("KRAKEN_SPOT_API_SECRET", base64.b64encode(os.urandom(64)).decode())
+    monkeypatch.setenv("KRAKEN_SPOT_API_KEY", kraken_loopback.API_KEY)
+    monkeypatch.setenv("KRAKEN_SPOT_API_SECRET", kraken_loopback.API_SECRET)
 
 
 def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client_order_id(_loopback_credentials):
@@ -4716,53 +4629,46 @@ def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client
     order Kraken spells by its altname (`XBTEUR`) resolves; open and closed orders both come back;
     every report carries `client_order_id` None whatever `cl_ord_id` Kraken stored; and ClosedOrders
     is asked from `since`."""
-    venue = _LoopbackKraken(
-        open_orders={"OOPENA-XBT00-000001": _kraken_order("XBTEUR", "open", "0.00000000", cl_ord_id="O-120000-001-000-1")},
-        closed_orders={
-            _TXID: _kraken_order("XBTEUR", "closed", "0.00100000", cl_ord_id="O-080000-001-000-2"),
-            "OCANCL-SOL00-000003": _kraken_order("SOLEUR", "canceled", "0.00000000", cl_ord_id="O-080000-001-000-3"),
-        },
-    )
     since = NOW - timedelta(hours=9)
-    try:
-        reports = {str(r.venue_order_id): r for r in read_venue_orders(since, base_url=venue.url)}
-    finally:
-        venue.close()
+    btc = {"price": "30000.0", "volume": "0.00100000", "side": "sell"}
+    with kraken_loopback.serve() as venue:
+        venue.open_orders["OOPENA-XBT00-000001"] = kraken_loopback.open_order("XBTEUR", **btc, cl_ord_id="O-120000-001-000-1")
+        venue.closed_orders[_TXID] = kraken_loopback.closed_order(
+            "XBTEUR", **btc, status="closed", vol_exec="0.00100000", cl_ord_id="O-080000-001-000-2"
+        )
+        venue.closed_orders["OCANCL-SOL00-000003"] = kraken_loopback.closed_order(
+            "SOLEUR", price="50.00", volume="0.06000000", side="sell", cl_ord_id="O-080000-001-000-3"
+        )
+        reports = {str(r.venue_order_id): r for r in read_venue_orders(since, base_url=venue.base_url)}
 
     assert sorted(reports) == sorted(["OOPENA-XBT00-000001", _TXID, "OCANCL-SOL00-000003"])
     assert {txid: r.client_order_id for txid, r in reports.items()} == dict.fromkeys(reports)
     assert (reports[_TXID].order_status, float(reports[_TXID].filled_qty)) == (OrderStatus.FILLED, 0.001)
     assert str(reports[_TXID].instrument_id) == "BTC/EUR.KRAKEN"
     assert reports["OCANCL-SOL00-000003"].order_status == OrderStatus.CANCELED
-    assert venue.closed_forms[0]["start"] == str(int(since.timestamp()))
+    assert venue.closed_order_forms[0]["start"] == str(int(since.timestamp()))
 
 
 def test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks(_loopback_credentials):
     """The wheel skips such a row (`tests/test_kraken_wheel_contract.py` pins it), so it does not turn
     the startup read into a refusal of every plan."""
-    unlisted = {"OUNLIS-ETH00-000004": _kraken_order("ETHEUR", "canceled", "0.00000000", cl_ord_id="O-080000-001-000-4")}
-    venue = _LoopbackKraken(
-        open_orders={"OOPENA-XBT00-000001": _kraken_order("XBTEUR", "open", "0.00000000", cl_ord_id="O-120000-001-000-5")},
-        closed_orders={_TXID: _kraken_order("XBTEUR", "closed", "0.00100000", cl_ord_id="O-080000-001-000-2"), **unlisted},
-    )
-    try:
-        txids = sorted(str(r.venue_order_id) for r in read_venue_orders(NOW - timedelta(hours=9), base_url=venue.url))
-    finally:
-        venue.close()
+    with kraken_loopback.serve() as venue:
+        venue.open_orders["OOPENA-XBT00-000001"] = kraken_loopback.open_order("XBTEUR", price="30000.0", volume="0.00100000")
+        venue.closed_orders[_TXID] = kraken_loopback.closed_order("XBTEUR", price="30000.0", volume="0.00100000")
+        venue.closed_orders["OUNLIS-ETH00-000004"] = kraken_loopback.closed_order("ETHEUR", price="1000.0", volume="0.01000000")
+        txids = sorted(str(r.venue_order_id) for r in read_venue_orders(NOW - timedelta(hours=9), base_url=venue.base_url))
 
     assert txids == sorted(["OOPENA-XBT00-000001", _TXID])
 
 
 def test_read_venue_orders_raises_past_its_bound(_loopback_credentials, monkeypatch):
     monkeypatch.setattr(executor_module, "_VENUE_READ_TIMEOUT_SECONDS", 0.5)
-    venue = _LoopbackKraken(stall=3.0)
-    started = time.monotonic()
-    try:
+    with kraken_loopback.serve() as venue:
+        venue.stalls["ClosedOrders"] = 3.0
+        started = time.monotonic()
         with pytest.raises(TimeoutError):
-            read_venue_orders(NOW, base_url=venue.url)
-    finally:
-        venue.close()
-    assert time.monotonic() - started < 2.5
+            read_venue_orders(NOW, base_url=venue.base_url)
+        assert time.monotonic() - started < 2.5
 
 
 def test_read_venue_orders_refuses_without_credentials_before_building_a_client(monkeypatch):

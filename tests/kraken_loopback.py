@@ -1,10 +1,11 @@
 """A loopback Kraken REST venue for tests that drive the real `KrakenSpotHttpClient`.
 
 It binds 127.0.0.1 only and answers from what a test puts on it, so a test that uses it reaches no
-venue and takes no live-venue gate. It records every private endpoint called and every AddOrder
-body, so a test can assert what went out on the wire -- including that nothing did. A path it does
-not serve answers Kraken's `EGeneral:Unknown method`, so a test that needs a new endpoint adds it
-here rather than reading an empty success.
+venue and takes no live-venue gate. It records every private endpoint called, every AddOrder body
+and every ClosedOrders form, so a test can assert what went out on the wire -- including that
+nothing did. A path it does not serve answers Kraken's `EGeneral:Unknown method`, so a test that
+needs a new endpoint or answer shape adds it here, rather than reading an empty success or serving
+Kraken's answers from a server of its own that a correction to the shape would miss.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 import urllib.parse
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -71,10 +73,20 @@ def open_order(pair: str, *, price: str, volume: str, side: str = "buy", cl_ord_
     return row
 
 
-def closed_order(pair: str, *, price: str, volume: str, side: str = "buy") -> dict[str, Any]:
-    """One ClosedOrders row: a limit order cancelled unfilled."""
-    row = open_order(pair, price=price, volume=volume, side=side)
-    row.update(status="canceled", closetm=1758603600.0, reason="User requested")
+def closed_order(
+    pair: str,
+    *,
+    price: str,
+    volume: str,
+    side: str = "buy",
+    status: str = "canceled",
+    vol_exec: str = "0.00000000",
+    cl_ord_id: str | None = None,
+) -> dict[str, Any]:
+    """One ClosedOrders row: by default a limit order cancelled unfilled; `status="closed"` with
+    `vol_exec` is one that filled."""
+    row = open_order(pair, price=price, volume=volume, side=side, cl_ord_id=cl_ord_id)
+    row.update(status=status, vol_exec=vol_exec, closetm=1758603600.0, reason="User requested" if status == "canceled" else None)
     return row
 
 
@@ -116,6 +128,10 @@ class KrakenLoopback:
     """What the venue holds, and what reached it. A test mutates the holdings between reads."""
 
     asset_pairs: dict[str, Any]
+    # AssetPairs rows answered to `aclass_base=tokenized_asset`, which the adapter asks for beside the
+    # currency listing. TradeVolume here carries no fee for them, which fails the whole listing: a
+    # test serving them refuses TradeVolume through `errors`, and the listing takes public fees.
+    tokenized_asset_pairs: dict[str, Any] = field(default_factory=dict)
     open_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     closed_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     positions: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -126,6 +142,8 @@ class KrakenLoopback:
     balances: dict[str, dict[str, str]] = field(default_factory=dict)
     # Endpoint name -> the Kraken error string it answers with instead of a result.
     errors: dict[str, str] = field(default_factory=dict)
+    # Endpoint name -> seconds its answer waits, for a caller's own bound to fire first.
+    stalls: dict[str, float] = field(default_factory=dict)
     # AssetPairs keys TradeVolume leaves out of an otherwise well-formed answer.
     trade_volume_omits: set[str] = field(default_factory=set)
     # A TradeVolume result served verbatim in place of the well-formed one.
@@ -135,17 +153,19 @@ class KrakenLoopback:
     maker_fee_pct: str = "0.1600"
     private_calls: list[str] = field(default_factory=list)
     add_orders: list[dict[str, str]] = field(default_factory=list)
+    closed_order_forms: list[dict[str, str]] = field(default_factory=list)
     base_url: str = ""
 
     def answer(self, method: str, path: str, query: dict[str, list[str]], form: dict[str, str]) -> tuple[Any, list[str]]:
         name = path.rsplit("/", 1)[-1]
         if path.startswith("/0/private/"):
             self.private_calls.append(name)
+        time.sleep(self.stalls.get(name, 0.0))
         if name in self.errors:
             return None, [self.errors[name]]
         if path == "/0/public/AssetPairs":
             tokenized = "tokenized_asset" in query.get("aclass_base", [])
-            return ({} if tokenized else self.asset_pairs), []
+            return (self.tokenized_asset_pairs if tokenized else self.asset_pairs), []
         if path == "/0/public/Depth":
             pair = query.get("pair", [""])[-1]
             if pair not in self.books:
@@ -158,6 +178,7 @@ class KrakenLoopback:
         if path == "/0/private/OpenOrders":
             return {"open": dict(self.open_orders)}, []
         if path == "/0/private/ClosedOrders":
+            self.closed_order_forms.append(form)
             offset = int(form.get("ofs", "0"))
             page = dict(list(self.closed_orders.items())[offset : offset + _PAGE])
             return {"closed": page, "count": len(self.closed_orders)}, []
