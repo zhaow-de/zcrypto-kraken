@@ -18,8 +18,7 @@ running event loop` before any request leaves. They are compiled, so `inspect.is
 is False on all seven and cannot be used to decide anything here -- the shape is measured by
 calling. Hence `Recorder.call` awaits, everything reaching it is async, and the one loop is opened
 at the CLI boundary (`cli/engine/command.py`'s `flatten`). A branch that awaited only when the
-answer happened to be awaitable would let a synchronous fake keep passing, which is the defect that
-kept this module unrunnable through ten green tasks -- there is one path.
+answer happened to be awaitable would let a synchronous fake keep passing -- there is one path.
 `test_every_client_call_the_red_button_makes_needs_a_running_loop` pins it against the real class.
 
 MARKET is used deliberately, overriding spec 00090 D6's rejection of it for the probe machine: in

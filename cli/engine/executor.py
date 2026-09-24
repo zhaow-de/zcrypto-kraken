@@ -1264,11 +1264,8 @@ class ProbeExecutor:
         This engine never sees the withdrawal as an event: it happens to an order this process may
         never have held, and what shows it is the venue's own `filled_qty` for the order having come
         DOWN while the ledger row still carries the quantity this engine recorded, published and
-        sized against. After a restart the Cache holds no closed order under any name -- the startup
-        reconciliation reads open orders only -- so the figure comes from `venue_orders`, the venue's
-        report found by the txid the row recorded, when the Cache (`_cached_order`) has none. A row
-        neither answers is not compared: `_reconcile_adopted_rows` lists the cases, and
-        `_mark_unmatched` says what a finished row that no venue order matches is given.
+        sized against. The row finds that order, and is marked when it finds none, as an open row
+        does in `_reconcile_adopted_rows`; `_mark_unmatched` says how a finished row's mark differs.
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
@@ -2165,9 +2162,8 @@ class ProbeExecutor:
         library's own, and the node starts without it. The cancel is issued PER ORDER off the list,
         where flatten's is account-wide, so such an order is never requested. No retry of the trip
         reaches one, and neither does a wider Cache query, which reads the same populated set: only a
-        venue-side open-order read at trip time would. The startup pass logs one CRITICAL only when an
-        open ledger row recorded its txid, and an order no row names is seen by nothing in this
-        process.
+        venue-side open-order read at trip time would. The startup pass logs one CRITICAL only when a
+        ledger row recorded its txid, and an order no row names is seen by nothing in this process.
 
         Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
         outcome, the rows keep their open states, and a fill racing a cancel still lands through the
