@@ -178,7 +178,7 @@
 # command-line argument rather than config, `daemon-reload` refreshes only systemd's view of the
 # FILE, and `state: started` is a no-op on a running unit -- so a converge that rewrites this unit
 # reports `changed` and reaches nothing. What DOES restart it is `restart wg-quick@zaccess0`, which
-# both relay halves inherit through `Requires=`, so a tunnel-conf change bounces the relay and the
+# the relay service inherits through `Requires=`, so a tunnel-conf change bounces the relay and the
 # gate then passes.
 #
 # It REPORTS drift and does not prevent it: by the time this can fail, every task above has applied.

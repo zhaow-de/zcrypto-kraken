@@ -1,6 +1,8 @@
 # Rendered by the `access` role at /etc/wireguard/zaccess0.conf — edit the template.
 [Interface]
 Address = 10.99.0.1/24
+# One MTU for both ends; the access_ops template's zaccess0.conf.j2 says why 1380.
+MTU = 1380
 ListenPort = {{ access_wg_listen_port }}
 PrivateKey = {{ zaccess_wg_bridgehead_private_key }}
 
