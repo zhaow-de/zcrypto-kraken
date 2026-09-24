@@ -175,15 +175,19 @@ def test_the_venue_mutating_names_have_exactly_one_module():
 
 # On the pinned wheel an instrument-named CancelAllOrders still sends Kraken's account-wide CancelAll
 # (upstream #5044 scopes it, in a later nightly), so a cancel-all written for one pair would cancel
-# every pair's orders. The order machine cancels one order at a time; only the red button, whose
-# cancel is account-wide by design, reaches `cancel_all_orders`, and the batch form is reached nowhere.
+# every pair's orders. A strategy's own `cancel_all_orders(instrument_id)` issues that same command,
+# and the order-semantics probe's strategy runs on the live account from infra/scripts/, so every
+# tracked runtime tree is walked. The order machine cancels one order at a time; only the red button,
+# whose cancel is account-wide by design, reaches `cancel_all_orders`, and the batch form nowhere.
 _ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": {"cli/engine/flatten.py"}, ".cancel_orders": set()}
+_RUNTIME_TREES = ("cli", "infra", ".claude")
 
 
 def test_only_the_red_button_reaches_a_cancel_all():
     offenders = [
         f"{path.as_posix()}: {name}"
-        for path in sorted(Path("cli").rglob("*.py"))
+        for tree in _RUNTIME_TREES
+        for path in sorted(Path(tree).rglob("*.py"))
         for name, allowed in _ACCOUNT_WIDE_CANCELS.items()
         if name in path.read_text() and path.as_posix() not in allowed
     ]
