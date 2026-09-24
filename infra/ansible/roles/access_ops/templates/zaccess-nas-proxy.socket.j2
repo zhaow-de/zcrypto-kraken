@@ -1,10 +1,11 @@
 # zaccess-nas-proxy.socket — rendered by the `access_ops` role. Tunnel-side half of the NAS relay
 # (spec 00075 D6): systemd-socket-proxyd, no NAT/IP forwarding anywhere. FreeBind=yes so the unit
-# can bind 10.99.0.2 even if it races the tunnel address coming up.
+# binds 10.99.0.2 before the tunnel brings that address up.
 [Unit]
 Description=NAS relay socket on the ops-side tunnel endpoint
-Requires=wg-quick@zaccess0.service
-After=wg-quick@zaccess0.service
+# No tunnel dependency here: the service carries it. A socket keeps its default dependencies, which
+# order it before sockets.target and so before basic.target, and an After= on wg-quick is then a boot
+# ordering cycle systemd breaks by deleting this socket's start job.
 
 [Socket]
 ListenStream=10.99.0.2:5001

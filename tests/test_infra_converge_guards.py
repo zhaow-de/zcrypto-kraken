@@ -1579,6 +1579,36 @@ def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
     )
 
 
+# --- a socket or path unit on its default dependencies is ordered before sockets.target or paths.target,
+# which basic.target follows. A service it names in After= starts after basic.target, so boot has an ordering
+# cycle that systemd breaks by deleting the unit's start job; one it names in Requires= or BindsTo= stops the
+# unit when stopped, and starting that service again does not bring the unit back.
+EARLY_BOOT_UNITS = sorted(
+    p
+    for pattern in (
+        "roles/*/templates/*.socket.j2",
+        "roles/*/templates/*.path.j2",
+        "roles/*/files/*.socket",
+        "roles/*/files/*.path",
+    )
+    for p in ANSIBLE.glob(pattern)
+)
+
+
+def test_no_early_boot_unit_depends_on_a_service():
+    assert {p.name for p in EARLY_BOOT_UNITS} >= {"zaccess-ssh-proxy.socket.j2", "zaccess-nas-proxy.socket.j2"}, EARLY_BOOT_UNITS
+    offenders = []
+    for path in EARLY_BOOT_UNITS:
+        lines = [l.strip() for l in path.read_text().splitlines()]
+        if "DefaultDependencies=no" in lines:
+            continue
+        for l in lines:
+            key, _, value = l.partition("=")
+            if key in ("After", "Requires", "BindsTo") and any(u.endswith(".service") for u in value.split()):
+                offenders.append(f"{path.relative_to(ANSIBLE)}: {l}")
+    assert not offenders, f"an early-boot unit names a service; the service must carry the dependency instead: {offenders}"
+
+
 NAS = ANSIBLE / "roles" / "nas" / "tasks" / "main.yml"
 
 
