@@ -638,14 +638,13 @@ def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unw
 
 
 def test_the_observer_carries_the_venues_external_order_identity():
-    # `strategy_id` at construction; the registered one is measured against the real assembly by
-    # test_the_registered_observers_identity_is_exactly_the_venues_external_order_id below, which is
-    # where it counts. `order_id_tag` unset is the load-bearing half: a tag lands in the id and the
-    # observer would receive nothing at all.
     observer = node.ExternalOrderObserver(lambda event: None)
     assert str(observer.strategy_id) == "EXTERNAL"
     assert observer.config.order_id_tag is None
     assert str(observer.config.strategy_id) == "EXTERNAL"
+
+
+# --- what each strategy hands the library, at both constructors ---------------------------------
 
 
 def _configs_built_by(monkeypatch, module, construct) -> list:
