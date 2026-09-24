@@ -4650,8 +4650,6 @@ def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client
 
 
 def test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks(_loopback_credentials):
-    """The wheel skips such a row (`tests/test_kraken_wheel_contract.py` pins it), so it does not turn
-    the startup read into a refusal of every plan."""
     with kraken_loopback.serve() as venue:
         venue.open_orders["OOPENA-XBT00-000001"] = kraken_loopback.open_order("XBTEUR", price="30000.0", volume="0.00100000")
         venue.closed_orders[_TXID] = kraken_loopback.closed_order("XBTEUR", price="30000.0", volume="0.00100000")

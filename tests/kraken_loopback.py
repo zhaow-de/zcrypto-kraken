@@ -1,11 +1,11 @@
 """A loopback Kraken REST venue for tests that drive the real `KrakenSpotHttpClient`.
 
 It binds 127.0.0.1 only and answers from what a test puts on it, so a test that uses it reaches no
-venue and takes no live-venue gate. It records every private endpoint called, every AddOrder body
-and every ClosedOrders form, so a test can assert what went out on the wire -- including that
-nothing did. A path it does not serve answers Kraken's `EGeneral:Unknown method`, so a test that
-needs a new endpoint or answer shape adds it here, rather than reading an empty success or serving
-Kraken's answers from a server of its own that a correction to the shape would miss.
+venue and takes no live-venue gate. It records what reached it, so a test can assert what went out
+on the wire -- including that nothing did. A path it does not serve answers Kraken's
+`EGeneral:Unknown method`, so a test that needs a new endpoint or answer shape adds it here, rather
+than reading an empty success or serving Kraken's answers from a server of its own that a
+correction to the shape would miss.
 """
 
 from __future__ import annotations
