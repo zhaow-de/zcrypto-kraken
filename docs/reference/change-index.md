@@ -348,3 +348,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #594 | 2026-09-22 | feat(config): iter-170 — repair the release skill before its first cut | iter-170 | — | T0203 |
 | #599 | 2026-09-23 | fix(engine): nautilus-trader dev20260921 pin, row keying, window fixes | — | — | T0159, T0160, T0163 |
 | #606 | 2026-09-24 | fix(access): the relay sockets survive boot and the tunnel MTU fits | — | 00075 | — |
+| #608 | 2026-09-24 | fix(engine): the gap closes 15 min early; the window ran to flat | — | — | T0159, T0160 |

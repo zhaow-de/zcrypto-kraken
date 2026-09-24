@@ -1,10 +1,12 @@
 """Spec 00082: a converge guard's condition is evaluated through Ansible's own templar, fed constructed probe outcomes -- never a re-implementation of the logic."""
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shutil
+import time
 import tomllib
 from pathlib import Path
 
@@ -278,7 +280,7 @@ WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
     [
         (1900, "", True),  # inside the gap
         (900, "", False),  # completion window [B, B+30min] may still be running
-        (13900, "", False),  # within 10 min of the next boundary
+        (13900, "", False),  # within 15 min of the next boundary
         (900, "true", False),  # boolean override refused
         (900, "yes", False),  # I4: every canonical boolean spelling refused
         (900, "short", False),  # I4: sub-9-char fragment refused
@@ -295,15 +297,15 @@ def test_engine_window_guard(since_boundary, override, expected):
 
 
 # The two floors ARE the guard -- 1800 s (the cycle-completion window [B, B+30 min] may still be
-# running) and 600 s (a stop→start begun inside 10 min of the next boundary risks straddling it).
+# running) and 900 s (a play's work above the audit's close, which the test below holds).
 # These fixtures sit ON the comparison boundary, which is the only place a constant is pinned.
 @pytest.mark.parametrize(
     ("since_boundary", "expected"),
     [
         (1799, False),  # one second short of the floor
         (1800, True),  # the floor itself is open: `>= 1800`
-        (13800, True),  # until_next == 600 exactly -- inclusive on that side too: `>= 600`
-        (13801, False),  # until_next == 599
+        (13500, True),  # until_next == 900 exactly -- inclusive on that side too: `>= 900`
+        (13501, False),  # until_next == 899
     ],
 )
 def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary, expected):
@@ -313,6 +315,28 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
         "engine_window_override": "",
     }
     assert truthy(assert_that(task), variables) is expected
+
+
+# The assert reads the clock before the engine role runs and the engine restarts at the play's end, while the
+# deploy-log audit judges the row's `ts`, written once the play has finished: the assert's close must stand a play's
+# work above the audit's, or a converge the assert admits lands a row the audit counts outside the gap.
+PLAY_WORK_ALLOWANCE_SECONDS = 300
+
+
+def test_a_play_the_window_admits_last_still_finishes_inside_the_audits_gap():
+    task = find_task(load_tasks(SITE), WINDOW)
+    closes = re.findall(r"14400 - \(\(engine_epoch_probe\.stdout \| int\) % 14400\) >= (\d+)\)", " ".join(assert_that(task)))
+    assert len(closes) == 1, closes
+    close = int(closes[0])
+    last_admitted_start = 1754265600 + 14400 - close
+    assert truthy(assert_that(task), {"engine_epoch_probe": {"stdout": str(last_admitted_start)}, "engine_window_override": ""})
+
+    spec = importlib.util.spec_from_file_location("deploy_log_audit_window", REPO / "infra" / "scripts" / "deploy-log-audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    assert close - audit._BEFORE_BOUNDARY_SECONDS >= PLAY_WORK_ALLOWANCE_SECONDS
+    finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_admitted_start + PLAY_WORK_ALLOWANCE_SECONDS))
+    assert audit.inside_gap(finished)
 
 
 # --- window floor from the boundary cycle's completion (spec 00083 D6) --------------------------
@@ -495,6 +519,8 @@ WINDOW_REASON = "cycle confirmed complete, converging late on purpose"
         (900, WINDOW_REASON, True),  # override accepted over a closed window -> echo the why
         (900, "", False),  # no override -> the assert refused; there is no why to echo
         (1900, WINDOW_REASON, False),  # the window is open -> nothing was overridden
+        (13500, WINDOW_REASON, False),  # until_next == 900: the assert's close, still open -> no why
+        (13501, WINDOW_REASON, True),  # until_next == 899: closed, the override accepted -> echo the why
     ],
 )
 def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary, override, expected):
@@ -505,6 +531,25 @@ def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary,
         "engine_window_override": override,
     }
     assert truthy(when_conditions(task), variables) is expected
+
+
+def test_the_window_echo_negates_the_asserts_own_window_condition():
+    """The value fixtures above drive the echo's close; this holds every clause of its mirror — the
+    fallback floor, the journal branch and its regex included — against the assert's own text."""
+    tasks = load_tasks(SITE)
+    condition = _first_balanced_group(" ".join(assert_that(find_task(tasks, WINDOW))))
+    echo = " ".join(when_conditions(find_task(tasks, WINDOW_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+
+    # a vacuous "" == "" pass is the failure mode of extraction, so pin what the condition must contain
+    assert "engine_cycle_epoch_probe" in condition and "14400" in condition, (
+        f"extraction missed the window condition: {condition!r}"
+    )
+    assert " ".join(negated.split()) == " ".join(condition.split()), (
+        f"the echo records an override on other cases:\n echo:   {negated}\n assert: {condition}"
+    )
 
 
 # --- engine-role guards. Fixture keys carry the `engine_` prefix ansible-lint's
