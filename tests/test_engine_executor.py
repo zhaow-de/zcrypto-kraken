@@ -173,13 +173,13 @@ def test_the_venue_mutating_names_have_exactly_one_module():
     assert offenders == []
 
 
-# On the pinned wheel an instrument-named CancelAllOrders still sends Kraken's account-wide CancelAll
-# (upstream #5044 scopes it, in a later nightly), so a cancel-all written for one pair would cancel
-# every pair's orders. A strategy's own `cancel_all_orders(instrument_id)` issues that same command,
-# and the order-semantics probe's strategy runs on the live account from infra/scripts/, so every
-# tracked runtime tree is walked. The order machine cancels one order at a time; only the red button,
-# whose cancel is account-wide by design, reaches `cancel_all_orders`, and the batch form nowhere.
-_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": {"cli/engine/flatten.py"}, ".cancel_orders": set()}
+# On the pinned wheel an instrument-named CancelAllOrders sends Kraken's account-wide CancelAll (upstream
+# #5044 scopes it in a later nightly), so a cancel-all written for one pair cancels every pair's orders;
+# the red button keeps its reach because its cancel is account-wide by design. A strategy issues that
+# command through its own `cancel_all_orders` and through `market_exit`, which calls it per instrument
+# (`stop` reaches `market_exit` only with `manage_stop`, whose default tests/test_nautilus_interface_pin.py
+# pins), and the probe's strategy runs live from infra/scripts/, so every tracked runtime tree is walked.
+_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": {"cli/engine/flatten.py"}, ".market_exit": set()}
 _RUNTIME_TREES = ("cli", "infra", ".claude")
 
 
