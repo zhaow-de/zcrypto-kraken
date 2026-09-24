@@ -1631,8 +1631,7 @@ def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
             if (k in BINDING or (k in ORDERING and not unordered)) and any(u not in BEFORE_SYSINIT for u in v.split()):
                 offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
     assert not offenders, (
-        "an early-boot unit waits on or binds to a unit it cannot rely on at boot, or ends a line in a backslash "
-        f"this guard does not read; the service it activates must carry the dependency: {offenders}"
+        f"an early-boot unit waits on or binds to a unit it cannot rely on at boot; the service it activates must carry the dependency: {offenders}"
     )
 
 
