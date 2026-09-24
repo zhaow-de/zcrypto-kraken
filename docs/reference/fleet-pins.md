@@ -22,7 +22,7 @@ Reading rules:
 | alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 09:40:56 | `491b0578c049` — v1.18.0 |
 | alloy | nas | `491b0578c049` — v1.18.0, upstream `grafana/alloy`, no `-compat` variant | 2026-09-01 14:48:03 | `4f6ddc56ffdc` — v1.17.1 |
 | ops (timers + liquidations) | zcrypto-ops | `7d4c6066d71e` — revision `a1a39280` | 2026-09-19 08:40:33 | `6ece9ceb1c18` |
-| archive-pull | nas | `ee5ba1d92b46` — revision `8f4ac521`, the `-compat` build | 2026-09-05 00:03:55 | `38fd9d703749` |
+| archive-pull | nas | `c4135ac75b72` — revision `77df6273`, the `-compat` build | 2026-09-24 20:00:43 | `ee5ba1d92b46` |
 
 **Non-image pins.** `zaccess`'s `caddy` and `alloy` are apt packages the access role installs unversioned, clearing a `dpkg` hold, so they have no row and no rollback operand here; read the installed versions off the host: `dpkg-query -W alloy caddy`.
 
@@ -45,8 +45,8 @@ The current pins and their operands; older digests are in this file's git log.
 - `3f291f3cee57` = `sha256:3f291f3cee57b2a5209ab4860c8e6bdb14b7e3007ec0e87e8dcf4c2309d32c73` — revision `77df6273`, AVX; capture on both hosts and the engine
 - `7d4c6066d71e` = `sha256:7d4c6066d71edad9fa9029c4d725f9bfc354ba22b7e7044be95cd01b1c27a107` — revision `a1a39280`, AVX; ops; the capture pair's and the engine's operand
 - `6ece9ceb1c18` = `sha256:6ece9ceb1c181888daf403329d567041ac3481ce7926d03eb32d137d30a7e912` — revision `8f4ac521`, AVX; ops' operand
-- `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, `-compat`; the NAS archive-pull
-- `38fd9d703749` = `sha256:38fd9d70374939d2f82b6eaeac3ab03ee12b80bb299a643e9c01cf93378c1b0b` — revision `28d32463`, `-compat`; the NAS operand
+- `c4135ac75b72` = `sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164` — revision `77df6273`, the `-compat` build; the NAS archive-pull
+- `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, the `-compat` build; the NAS archive-pull's operand
 - `b8ec653c4423` = `sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839` — Alloy v1.19.2; the ops and capture hosts
 - `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0; the NAS, and those hosts' operand
 - `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1; the NAS's operand
