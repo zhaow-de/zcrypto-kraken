@@ -4737,6 +4737,22 @@ def test_read_venue_orders_returns_open_and_closed_orders_by_txid_with_no_client
     assert venue.closed_forms[0]["start"] == str(int(since.timestamp()))
 
 
+def test_read_venue_orders_answers_past_a_closed_order_on_a_pair_the_listing_lacks(_loopback_credentials):
+    """The wheel skips such a row (`tests/test_kraken_wheel_contract.py` pins it), so it does not turn
+    the startup read into a refusal of every plan."""
+    unlisted = {"OUNLIS-ETH00-000004": _kraken_order("ETHEUR", "canceled", "0.00000000", cl_ord_id="O-080000-001-000-4")}
+    venue = _LoopbackKraken(
+        open_orders={"OOPENA-XBT00-000001": _kraken_order("XBTEUR", "open", "0.00000000", cl_ord_id="O-120000-001-000-5")},
+        closed_orders={_TXID: _kraken_order("XBTEUR", "closed", "0.00100000", cl_ord_id="O-080000-001-000-2"), **unlisted},
+    )
+    try:
+        txids = sorted(str(r.venue_order_id) for r in read_venue_orders(NOW - timedelta(hours=9), base_url=venue.url))
+    finally:
+        venue.close()
+
+    assert txids == sorted(["OOPENA-XBT00-000001", _TXID])
+
+
 def test_read_venue_orders_raises_past_its_bound(_loopback_credentials, monkeypatch):
     monkeypatch.setattr(executor_module, "_VENUE_READ_TIMEOUT_SECONDS", 0.5)
     venue = _LoopbackKraken(stall=3.0)

@@ -92,6 +92,20 @@ def test_an_open_order_on_a_pair_the_listing_lacks_fails_the_whole_read(venue):
         asyncio.run(run())
 
 
+def test_a_closed_order_on_a_pair_the_listing_lacks_drops_out_of_a_read_that_succeeds(venue):
+    """The closed half, which the engine's startup read (`read_venue_orders`) rests on: a wheel that
+    fails this read instead refuses every plan after each restart with such an order in the lookback."""
+    closed_txid, unlisted_txid = "OBTCCL-BBBBB-CCCCC4", "OETHCL-BBBBB-CCCCC5"
+    venue.closed_orders[closed_txid] = kraken_loopback.closed_order("XBTEUR", price="21000.0", volume="0.00010000")
+    venue.closed_orders[unlisted_txid] = kraken_loopback.closed_order("ETHEUR", price="1000.0", volume="0.01000000")
+
+    async def run():
+        client = await _primed(venue)
+        return await client.request_order_status_reports(ACCOUNT, open_only=False)
+
+    assert sorted(str(r.venue_order_id) for r in asyncio.run(run())) == sorted([BTC_TXID, SOL_TXID, closed_txid])
+
+
 @pytest.mark.parametrize("open_only", [True, False])
 def test_after_the_listing_is_cached_an_order_resolves_under_either_spelling(venue, open_only):
     """open_only=True is startup reconciliation's read and flatten's; open_only=False is the engine's
