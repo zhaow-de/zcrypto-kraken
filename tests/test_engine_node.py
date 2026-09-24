@@ -637,7 +637,7 @@ def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unw
 # --- the external order observer (spec 00100 D2) ------------------------------------------------
 
 
-def test_the_observer_carries_the_venues_external_order_identity_and_claims_nothing():
+def test_the_observer_carries_the_venues_external_order_identity():
     # `strategy_id` at construction; the registered one is measured against the real assembly by
     # test_the_registered_observers_identity_is_exactly_the_venues_external_order_id below, which is
     # where it counts. `order_id_tag` unset is the load-bearing half: a tag lands in the id and the
@@ -813,8 +813,7 @@ def test_probe_executor_factory_shape(tmp_path):
 
 
 def test_no_strategy_claims_external_orders(tmp_path, monkeypatch):
-    """No strategy this node registers claims external orders, at either constructor: `None` there
-    IS the empty claim."""
+    """`None` IS the empty claim."""
     for construct in (lambda: ShadowStrategy(_config(tmp_path)), lambda: node.ExternalOrderObserver(lambda event: None)):
         assert [c.external_order_instrument_ids for c in _configs_built_by(monkeypatch, node, construct)] == [None, None]
 
