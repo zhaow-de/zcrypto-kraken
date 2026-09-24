@@ -1797,7 +1797,7 @@ def flatten(
 ) -> None:
     """Close every open position and sell every non-EUR balance at market, account-wide.
 
-    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, 1 refused with nothing sent, 2 something is still open, 3 the venue could not be read before anything was sent. The cancel is account-wide. An order or position a read cannot resolve does not stop the cancel, and the run then ends at 2, never 0."""
+    Without `--execute` it reads the account, prints the plan and stops. With `--execute` it needs the engine's kill file already in place, asks for a typed confirmation on the terminal, then cancels every resting order, closes every margin position reduce-only, and sells every non-EUR balance -- all at market, all journaled. Exit 0 the account reads flat, on order, position and balance reads before the cancel and final reads that each came back whole, which can still leave out an open-order or balance row the adapter could not parse, so confirm on Kraken's own pages; 1 refused with nothing sent; 2 something is still open; 3 the venue could not be read before anything was sent. The cancel is account-wide. An order or position a read cannot resolve does not stop the cancel, and the run then ends at 2, never 0."""
     # Lazy: `cli.engine.flatten` pulls nautilus (~1 s) and `zcrypto --help` must never pay it.
     from cli.engine.flatten import run_flatten
 
