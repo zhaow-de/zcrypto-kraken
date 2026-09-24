@@ -23,7 +23,8 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 DEPLOY_LOG = _REPO / "docs" / "reference" / "deploy-log.jsonl"
 
 # The engine's window: a row must sit at least `_AFTER_BOUNDARY_SECONDS` past a 4-hourly boundary and
-# leave at least `_BEFORE_BOUNDARY_SECONDS` before the next one.
+# leave at least `_BEFORE_BOUNDARY_SECONDS` before the next one. `site.yml`'s assert closes at 900 s, read at the
+# play's start; this 600 s is read at the row's `ts`, the play's end, so a play under 300 s satisfies both.
 _CYCLE_SECONDS = 4 * 60 * 60
 _AFTER_BOUNDARY_SECONDS = 1800
 _BEFORE_BOUNDARY_SECONDS = 600
