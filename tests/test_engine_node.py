@@ -648,13 +648,17 @@ def test_the_observer_carries_the_venues_external_order_identity_and_claims_noth
     assert str(observer.config.strategy_id) == "EXTERNAL"
 
 
-def test_the_observer_arms_none_of_the_librarys_order_management():
-    """`manage_stop` runs `market_exit` inside the library on stop, around every sealed method, and on
-    this identity that cancels the operator's orders and closes the operator's positions at market."""
-    config = node.ExternalOrderObserver(lambda event: None).config
-    assert config.manage_stop is False
-    assert config.manage_contingent_orders is False
-    assert config.manage_gtd_expiry is False
+def test_no_strategy_arms_the_librarys_order_management(tmp_path):
+    """No strategy this node registers arms order management inside the library, on every construction."""
+    strategies = (
+        ShadowStrategy(_config(tmp_path)),
+        ShadowStrategy(_config(tmp_path), executor_factory=lambda s: None),
+        node.ExternalOrderObserver(lambda event: None),
+    )
+    for strategy in strategies:
+        assert strategy.config.manage_stop is False
+        assert strategy.config.manage_contingent_orders is False
+        assert strategy.config.manage_gtd_expiry is False
 
 
 def test_the_observer_forwards_every_order_event_to_the_strategys_external_forwarder(tmp_path):
