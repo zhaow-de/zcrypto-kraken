@@ -1599,27 +1599,20 @@ BEFORE_SYSINIT = {"sysinit.target", "local-fs.target", "local-fs-pre.target", "s
 STOP_BINDING = {"Requires", "Requisite", "BindsTo", "PartOf"}
 
 
-def _unit_settings(path: Path) -> list[tuple[str, str]]:
-    # systemd joins a backslash-ended directive with the next line and strips the blanks around `=`
-    settings, held = [], ""
-    for line in (l.strip() for l in path.read_text().splitlines()):
-        if line.startswith(("#", ";")):
-            continue
-        if line.endswith("\\"):
-            held += line[:-1] + " "
-            continue
-        line, held = held + line, ""
-        if "=" in line:
-            key, _, value = line.partition("=")
-            settings.append((key.strip(), value.strip()))
-    return settings
+def _unit_lines(path: Path) -> list[str]:
+    # comment lines are skipped as systemd skips them; a continued directive is refused below, not parsed
+    return [l.strip() for l in path.read_text().splitlines() if not l.strip().startswith(("#", ";"))]
 
 
 def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
     assert {p.name for p in EARLY_BOOT_UNITS} >= {"zaccess-ssh-proxy.socket.j2", "zaccess-nas-proxy.socket.j2"}, EARLY_BOOT_UNITS
     offenders = []
     for path in EARLY_BOOT_UNITS:
-        settings = _unit_settings(path)
+        lines = _unit_lines(path)
+        offenders += [
+            f"{path.relative_to(ANSIBLE)}: {l} (continued: write the directive on one line)" for l in lines if l.endswith("\\")
+        ]
+        settings = [(k.strip(), v.strip()) for k, _, v in (l.partition("=") for l in lines if "=" in l)]
         if any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings):
             continue
         for k, v in settings:
