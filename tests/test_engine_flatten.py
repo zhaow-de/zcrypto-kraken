@@ -1985,22 +1985,37 @@ def test_a_clean_sweep_of_a_flat_account_exits_zero(tmp_path):
 
 
 _FLAT_READS_LINE = (
-    "  the reads before the cancel and the final reads each came back whole; an open-order row the adapter could not "
-    "parse drops out of a read without failing it, so confirm on Kraken's own pages"
+    "  the order, position and balance reads before the cancel and the final reads each came back whole; an "
+    "open-order or balance row the adapter could not parse drops out of its read without failing it, so confirm on "
+    "Kraken's own pages"
 )
 
 
-@pytest.mark.parametrize(("orders", "code", "said"), [([[], [], []], 0, 1), ([[], [], [object()]], 2, 0)])
-def test_the_flat_verdict_says_what_made_it_and_names_no_pair_as_unseen(tmp_path, orders, code, said):
-    """Exit 0 is the one answer that ends an incident. It rests on reads that came back whole, and
-    the adapter drops an open-order row it resolves but cannot parse without failing the read, so
-    the line beside the zero says both and sends the operator to Kraken's own pages. No line names
-    a pair as one the reads cannot see. Exit 2 gets neither. Asserted on what was ECHOED, since a
-    line computed and never printed tells nobody.
+def _unpriced_ada_client():
+    # No ADA/EUR book, so the book read before the cancel fails and the leg goes out unpriced.
+    return _flat_client(balances=[[_Balance("ADA", 1200.0)], [_Balance("ADA", 1200.0)], [], []], symbols=("BTC/EUR", "ADA/EUR"))
+
+
+@pytest.mark.parametrize(
+    ("client", "code", "said"),
+    [
+        (lambda: _flat_client(orders=[[], [], []]), 0, 1),
+        (_unpriced_ada_client, 0, 1),
+        (lambda: _flat_client(orders=[[], [], [object()]]), 2, 0),
+    ],
+    ids=["flat", "book-unread", "order-left"],
+)
+def test_the_flat_verdict_says_what_made_it_and_names_no_pair_as_unseen(tmp_path, client, code, said):
+    """Exit 0 is the one answer that ends an incident. It rests on the order, position and balance
+    reads coming back whole -- a failed book read before the cancel does not stop it -- and the
+    adapter drops an open-order or balance row it cannot parse without failing the read, so the
+    line beside the zero names those reads and the drop and sends the operator to Kraken's own
+    pages. No line names a pair as one the reads cannot see. Exit 2 gets neither. Asserted on what
+    was ECHOED, since a line computed and never printed tells nobody.
     """
     _armed(tmp_path)
     lines: list[str] = []
-    assert _run(_flat_client(orders=orders), tmp_path, lines=lines) == code
+    assert _run(client(), tmp_path, lines=lines) == code
     assert lines.count(_FLAT_READS_LINE) == said
     assert not [line for line in lines if "venue reported" in line]
     assert not [line for line in lines if "cannot see" in line or "BTC/EUR, ETH/EUR" in line]

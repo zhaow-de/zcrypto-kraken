@@ -321,6 +321,9 @@ def _position_rows(rows: Any) -> list[PositionRow]:
 
 
 async def read_balances(client: Any, rec: Recorder) -> list[BalanceRow]:
+    """The spot balances. The adapter drops, with no log line and without failing the read, a
+    balance entry whose figures it cannot parse or build a balance from, so a list this returns can
+    miss a holding; the exit-0 line says so."""
     kwargs: dict[str, Any] = {"account_type": AccountType.CASH}
     params = {"account_id": ACCOUNT_ID, **_journalled(kwargs)}
     try:
@@ -1466,8 +1469,9 @@ async def run_flatten(
     if code == 0:
         lines = [
             "the account reads flat: no resting order, no open position, no sellable balance left",
-            "  the reads before the cancel and the final reads each came back whole; an open-order row the adapter"
-            " could not parse drops out of a read without failing it, so confirm on Kraken's own pages",
+            "  the order, position and balance reads before the cancel and the final reads each came back whole; an"
+            " open-order or balance row the adapter could not parse drops out of its read without failing it, so"
+            " confirm on Kraken's own pages",
         ]
     else:
         lines = ["the account does NOT read flat -- what is left:", *(f"  {row}" for row in residuals)]
