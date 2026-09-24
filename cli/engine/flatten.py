@@ -198,9 +198,6 @@ async def read_open_orders(client: Any, rec: Recorder) -> list[Any]:
     cannot resolve at all fails the WHOLE read rather than dropping out of it. A row it resolves
     but cannot parse is dropped with a `Failed to parse order` warning of the adapter's own and the
     read still succeeds, so a list this returns is every order the venue reported except those.
-    Before the cancel a failed read degrades (`read_snapshot`); in the final snapshot it ends the
-    run at exit 2; the journal-only read right after the cancel steps over it
-    (`_read_for_the_record`).
     """
     # `account_id` is the constant `_ACCOUNT` is minted from, not a second spelling of it.
     kwargs: dict[str, Any] = {"open_only": True}
@@ -258,8 +255,8 @@ async def read_margin_positions(client: Any, rec: Recorder, listing: dict[str, A
     failed -- is named, never read as flat, so the run cannot end at exit 0.
 
     Because a scoped read skips the other pairs' rows first, the FIRST one failing is the venue's
-    failure, not a row's: the original is raised at once, so an outage costs one extra request and
-    not twelve, each of which can be a timeout. A retry with no basket pair to ask for raises it too.
+    failure, not a row's: the original is raised at once, so an outage costs one extra request rather
+    than one per basket pair, each of which can be a timeout.
 
     A shape this module refuses in the whole-account answer -- no answer at all, a row missing a
     named field -- still raises here: that is a changed venue, not an unreadable row.
@@ -853,11 +850,8 @@ def render_plan(plan: Plan, echo: Callable[[str], None], *, execute: bool) -> No
     currency and no grand total is printed -- summing a BTC-quoted leg into a euro figure would
     need an FX rate this command has no mandate to invent.
 
-    The order count is the whole list `read_open_orders` returned, each order named under it: an
-    order it cannot resolve fails that read, and a failed read prints as one, never as a count; an
-    order the adapter cannot parse is neither counted nor printed as a failure. What a failed read
-    costs the verdict is worded by `execute`: a dry run ends at 0, so there the line speaks of the
-    run `--execute` would make."""
+    A failed read's line is worded by `execute`: a dry run ends at 0, so there it speaks of the run
+    `--execute` would make."""
     if plan.orders is None:
         # The error already reads "open orders could not be read: <the venue's words>".
         failure = "; ".join(row["error"] for row in plan.unread if row["kind"] == "order")

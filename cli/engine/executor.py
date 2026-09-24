@@ -882,10 +882,7 @@ class ProbeExecutor:
         The classification population below is `orders_open`, but the row sweep is NOT: an order that
         filled, was canceled or expired while this process was down is not in the Cache at all -- the
         startup reconciliation reads open orders only -- so the pass cannot return early when nothing
-        is resting: an idle startup can still owe row repairs. Each row finds its order by the id it
-        names, then by the txid it recorded at acceptance, in the Cache first and then in one read of
-        the venue's own orders (`_read_venue_orders`). The same pair matches a resting order to its
-        row below: the Cache names a previous process's order by its txid.
+        is resting: an idle startup can still owe row repairs.
         """
         try:
             resting = list(self._client.cache.orders_open(venue=_VENUE))
@@ -979,13 +976,10 @@ class ProbeExecutor:
         its terminal state and both trips exactly as a resting one does. A report that is still open
         is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL.
 
-        A row neither answers is never given a venue truth nobody read. A row that recorded no txid,
-        or two that disagree, or one whose txid the venue read does not return, cannot be matched to
-        any venue order, and `_mark_unmatched` marks it `ambiguous`. A row that needed the read when the read itself failed
-        is left exactly as it is: its truth is unread rather than unknowable, and `_read_venue_orders`
-        has already turned the failure into a refusal of every plan. The order behind any of these
-        rows is neither attached nor kept by the pass above; `_on_external_event` says what becomes of
-        its later fills.
+        A row neither answers is never given a venue truth nobody read: `_mark_unmatched` marks it
+        `ambiguous` unless the venue read itself failed, which `_read_venue_orders` has already turned
+        into a refusal of every plan. The order behind such a row is neither attached nor kept by the
+        pass above; `_on_external_event` says what becomes of its later fills.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -2171,11 +2165,9 @@ class ProbeExecutor:
         library's own, and the node starts without it. The cancel is issued PER ORDER off the list,
         where flatten's is account-wide, so such an order is never requested. No retry of the trip
         reaches one, and neither does a wider Cache query, which reads the same populated set: only a
-        venue-side open-order read at trip time would. The startup pass's venue read parses the same
-        way, so of the two it can report only the second, and only to a row that recorded its txid:
-        `_log_resting_outside_the_cache` then logs it CRITICAL. A row whose order the adapter could
-        not parse finds nothing in that read and is marked `ambiguous` (`_mark_unmatched`), and an
-        order no row names is seen by nothing in this process.
+        venue-side open-order read at trip time would. The startup pass logs one CRITICAL only when an
+        open ledger row recorded its txid, and an order no row names is seen by nothing in this
+        process.
 
         Best-effort throughout, and never able to stop the trip: a cancel is a request rather than an
         outcome, the rows keep their open states, and a fill racing a cancel still lands through the
@@ -2616,10 +2608,6 @@ class ProbeExecutor:
         order: a row that recorded no single txid names an order the Cache holds only under its
         txid, so it was never attached, and a fill on it lands here -- no row write, no counters, no
         overfill trip -- with nothing in the log line saying the ledger knew the order.
-
-        An event names its order the Cache's way, which after a restart is the txid, while the
-        ledger keys the row by the id this engine minted: `_attached_for` finds the row by either,
-        and every write here names the row by its own id.
         """
         client_order_id = str(getattr(event, "client_order_id", ""))
         attached = self._attached_for(event)
@@ -2789,9 +2777,6 @@ class ProbeExecutor:
         with a row adopted from that window. The boundary is that `_attached` outlives the window:
         a process still running two days past an adopted row's boundary could accept a plan reusing
         its plan_id, and that fill would then be credited to the running intent.
-
-        The row is found by `_attached_for` and written by its own id: an adopted order's event names
-        it by the txid, which is no key the ledger holds.
         """
         attached = self._attached_for(event)
         if attached is None:
