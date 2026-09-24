@@ -1600,7 +1600,7 @@ STOP_BINDING = {"Requires", "Requisite", "BindsTo", "PartOf"}
 
 
 def _unit_lines(path: Path) -> list[str]:
-    # comment lines are skipped as systemd skips them; a continued directive is refused below, not parsed
+    # a continued directive is refused below, not parsed
     return [l.strip() for l in path.read_text().splitlines() if not l.strip().startswith(("#", ";"))]
 
 
