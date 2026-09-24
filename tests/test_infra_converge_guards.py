@@ -1541,6 +1541,8 @@ def test_agentboard_killmode_and_mainpid_stay_coupled():
 ACCESS_DEFAULTS = ANSIBLE / "roles" / "access" / "defaults" / "main.yml"
 ACCESS_OPS_DEFAULTS = ANSIBLE / "roles" / "access_ops" / "defaults" / "main.yml"
 ACCESS_HOST_VARS = ANSIBLE / "group_vars" / "access_host" / "vars.yml"
+ACCESS_WG_CONF = ANSIBLE / "roles" / "access" / "templates" / "zaccess0.conf.j2"
+ACCESS_OPS_WG_CONF = ANSIBLE / "roles" / "access_ops" / "templates" / "zaccess0.conf.j2"
 WG_UDP_PORTS = "firewall_extra_udp_ports"
 
 
@@ -1550,8 +1552,16 @@ def _declared(path: Path, key: str):
     return data[key]
 
 
+def _wg_value(path: Path, key: str) -> str:
+    values = [l.split("=", 1)[1].strip() for l in path.read_text().splitlines() if re.match(rf"{key}\s*=", l)]
+    assert len(values) == 1, f"{path.relative_to(ANSIBLE)} carries {len(values)} {key} lines, not one"
+    return values[0]
+
+
 def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
-    """The two role defaults and the UDP port the access host opens carry one port between them."""
+    """The two tunnel templates take the port from their role defaults, and those and the UDP port the access host opens carry one port between them."""
+    assert re.fullmatch(r"\{\{\s*access_wg_listen_port\s*\}\}", _wg_value(ACCESS_WG_CONF, "ListenPort"))
+    assert re.search(r":\{\{\s*access_ops_wg_listen_port\s*\}\}$", _wg_value(ACCESS_OPS_WG_CONF, "Endpoint"))
     ports = {
         "roles/access/defaults:access_wg_listen_port": _declared(ACCESS_DEFAULTS, "access_wg_listen_port"),
         "roles/access_ops/defaults:access_ops_wg_listen_port": _declared(ACCESS_OPS_DEFAULTS, "access_ops_wg_listen_port"),
