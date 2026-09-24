@@ -1,5 +1,4 @@
-"""Spec 00082: converge guards evaluated through Ansible's own templar -- the guard's REAL condition
-expression fed constructed probe outcomes, never a re-implementation of the logic."""
+"""Spec 00082: a converge guard's condition is evaluated through Ansible's own templar, fed constructed probe outcomes -- never a re-implementation of the logic."""
 
 import hashlib
 import json

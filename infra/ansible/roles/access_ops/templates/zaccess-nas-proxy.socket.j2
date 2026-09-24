@@ -3,9 +3,8 @@
 # binds 10.99.0.2 before the tunnel brings that address up.
 [Unit]
 Description=NAS relay socket on the ops-side tunnel endpoint
-# No tunnel dependency here: the service carries it. A socket keeps its default dependencies, which
-# order it before sockets.target and so before basic.target, and an After= on wg-quick is then a boot
-# ordering cycle systemd breaks by deleting this socket's start job.
+# The tunnel dependency is the service's: an After= on wg-quick here closes a boot ordering cycle
+# through sockets.target and basic.target, which systemd breaks by dropping this socket's start job.
 
 [Socket]
 ListenStream=10.99.0.2:5001
