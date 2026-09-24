@@ -3224,9 +3224,8 @@ def test_the_startup_cancel_at_level_none_names_the_gates_own_reasons(tmp_path, 
 
 @contextmanager
 def _executor_errors(level=logging.ERROR):
-    """The executor logger's own records at `level` and above -- for the tests that must see a
-    swallowed failure LOGGED, and at WARNING for the one that must see NOTHING logged. Not `caplog`,
-    blind here for the reasons `_the_tick_backstop_never_fires` gives."""
+    """The executor logger's own records at `level` and above. Not `caplog`, blind here for the
+    reasons `_the_tick_backstop_never_fires` gives."""
     records: list[logging.LogRecord] = []
 
     class _Collect(logging.Handler):
