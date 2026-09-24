@@ -1593,8 +1593,7 @@ def test_the_zaccess_tunnel_ends_declare_one_mtu():
 
 
 # --- a socket or path unit on default dependencies precedes basic.target: ordered after a later unit it is a boot
-# cycle, and bound to one it is stopped with it and not started again; its After= and binding directives may
-# name only sysinit.target and the targets it follows, and the service it activates carries the rest.
+# cycle, and bound to one it is stopped with it and not started again.
 EARLY_BOOT_UNITS = sorted(
     p
     for pattern in (

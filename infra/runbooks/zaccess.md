@@ -1,6 +1,6 @@
 # Bridgehead runbooks — the internet access host
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to revoke a client certificate, ship its Alloy config or cut the public SSH relay: the three procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to revoke a client certificate, ship its Alloy config or cut the public SSH relay: the procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 Everything here is one Linode VPS, `zaccess`, reached as `ssh -p 10022 zcrypto-deploy@zaccess.zhaow.me`; the other end of its WireGuard tunnel is `zcrypto-ops`, `ssh hp`. It runs no containers — Alloy, Caddy and WireGuard are apt packages under systemd — and holds no capture data: everything on it is re-issuable.
 
@@ -66,13 +66,13 @@ Nothing fired. You mean to close the internet's path into `zcrypto-ops:22` throu
 
 ### What it means
 
-The relay is `zaccess-ssh-proxy.socket`, listening on `:20022`, and the `zaccess-ssh-proxy.service` it activates, which relays each connection to `10.99.0.2:22` over the tunnel. **Stopping `wg-quick@zaccess0` does not cut it.** The socket keeps listening, and the next connection on `:20022` starts the service, whose `Requires=` starts the tunnel again; scanners reach the port within seconds. The socket and the service are what to stop.
+The relay is `zaccess-ssh-proxy.socket`, listening on `:20022`, and the `zaccess-ssh-proxy.service` it activates, which relays each connection to `10.99.0.2:22` over the tunnel. **Stopping `wg-quick@zaccess0` does not cut it.** The socket keeps listening, and the next connection on `:20022` starts the service, whose `Requires=` starts the tunnel again.
 
 ### What to do
 
 1. On the bridgehead, stop both: `sudo systemctl stop zaccess-ssh-proxy.socket zaccess-ssh-proxy.service`.
 2. Confirm: `systemctl status zaccess-ssh-proxy.socket` reads `inactive (dead)`, and a connection to `zaccess.zhaow.me:20022` is refused.
-3. To reopen, converge the bridgehead from the workstation: `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access`. The role's `state: started` brings the socket back, and so does a reboot of the bridgehead, through `sockets.target`.
+3. A `--tags access` converge reopens it, the two procedures above included, and so does a reboot, through `sockets.target`. To reopen: `infra/ansible/scripts/converge.sh site.yml --limit zaccess --tags access` from the workstation.
 
 ### Retire when
 
