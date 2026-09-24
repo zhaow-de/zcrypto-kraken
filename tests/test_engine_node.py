@@ -644,33 +644,6 @@ def test_the_observer_carries_the_venues_external_order_identity():
     assert str(observer.config.strategy_id) == "EXTERNAL"
 
 
-# --- what each strategy hands the library, at both constructors ---------------------------------
-
-
-def _configs_built_by(monkeypatch, module, construct) -> list:
-    """The library arms its order management from the config handed to `__new__`, while `.config` reports
-    `__init__`'s, so both are recorded as they are built: two, one per constructor; fewer means one was
-    built past the recording."""
-    built = []
-    real = module.StrategyConfig
-
-    def recording(*args, **kwargs):
-        built.append(real(*args, **kwargs))
-        return built[-1]
-
-    with monkeypatch.context() as patch:
-        patch.setattr(module, "StrategyConfig", recording)
-        construct()
-    assert len(built) == 2, f"the construction built {len(built)} configs through {module.__name__}.StrategyConfig"
-    return built
-
-
-def test_no_strategy_arms_the_librarys_order_management(tmp_path, monkeypatch):
-    for construct in (lambda: ShadowStrategy(_config(tmp_path)), lambda: node.ExternalOrderObserver(lambda event: None)):
-        built = _configs_built_by(monkeypatch, node, construct)
-        assert [(c.manage_stop, c.manage_contingent_orders, c.manage_gtd_expiry) for c in built] == [(False, False, False)] * 2
-
-
 def test_the_observer_forwards_every_order_event_to_the_strategys_external_forwarder(tmp_path):
     # The delivery leg inside this process: whatever the observer is handed lands on the executor's
     # disposition filter and NOWHERE else -- never on on_order_event, whose unknown-order trip must
@@ -806,6 +779,33 @@ def test_probe_executor_factory_shape(tmp_path):
     assert executor._gate._armed_in_config is True
     assert executor._gate._dir == exec_dir(config.journal_dir.parent)
     assert executor._gate._venue_reader is read_system_status
+
+
+# --- what each strategy hands the library, at both constructors ---------------------------------
+
+
+def _configs_built_by(monkeypatch, module, construct) -> list:
+    """The library arms its order management from the config handed to `__new__`, while `.config` reports
+    `__init__`'s, so both are recorded as they are built: two, one per constructor; fewer means one was
+    built past the recording."""
+    built = []
+    real = module.StrategyConfig
+
+    def recording(*args, **kwargs):
+        built.append(real(*args, **kwargs))
+        return built[-1]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "StrategyConfig", recording)
+        construct()
+    assert len(built) == 2, f"the construction built {len(built)} configs through {module.__name__}.StrategyConfig"
+    return built
+
+
+def test_no_strategy_arms_the_librarys_order_management(tmp_path, monkeypatch):
+    for construct in (lambda: ShadowStrategy(_config(tmp_path)), lambda: node.ExternalOrderObserver(lambda event: None)):
+        built = _configs_built_by(monkeypatch, node, construct)
+        assert [(c.manage_stop, c.manage_contingent_orders, c.manage_gtd_expiry) for c in built] == [(False, False, False)] * 2
 
 
 # --- the own-strategy order stream (the unknown-order kill trip's scoping) -----------------------
