@@ -1579,15 +1579,10 @@ def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
 
 
 def test_the_zaccess_tunnel_mtu_is_one_explicit_value_at_both_ends():
-    # an end without MTU= gets wg-quick's 1420, which the tunnel's IPv4 path cannot carry whole
     assert _wg_value(ACCESS_WG_CONF, "MTU") == _wg_value(ACCESS_OPS_WG_CONF, "MTU")
 
 
-# --- a socket or path unit on its default dependencies is ordered before sockets.target or paths.target,
-# which basic.target follows. Ordered After= a service or a later target, boot has an ordering cycle that
-# systemd breaks by deleting the unit's start job; stop-bound to a service, it is stopped with it and not
-# brought back when the service starts. The named unit's own dependencies are not read here, so every
-# service is refused, and After= may name only the targets sysinit.target follows.
+# --- a socket or path unit on default dependencies precedes basic.target: After= a later unit is a boot cycle; stop-bound to a service, it is not started again with it.
 EARLY_BOOT_UNITS = sorted(
     p
     for pattern in (
