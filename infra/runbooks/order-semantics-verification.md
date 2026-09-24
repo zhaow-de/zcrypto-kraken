@@ -278,6 +278,8 @@ Two node-start failures read differently. Both happen inside startup reconciliat
 
 `Failed to get mass status from KRAKEN` is exit 2, and the harness prints the candidate causes, because the binding drops the adapter's own. In order of likelihood: the key lacks a query permission (Query Open Orders & Trades, Query Closed Orders & Trades); a WARN line earlier in the same run (`Failed to fetch tokenized asset pairs`, `Failed to parse instrument`) left a pair out of the listing; an open order or position sits on a pair outside the listing, which Kraken → Open Orders and Positions show.
 
+The key's permissions, as Kraken names them at Settings → API → `zcrypto-engine`, include one more that the start needs: *Query Funds* (`Funds permissions - Query`). Upstream's Kraken integration guide for 2.0.0rc6.dev20260921 (`docs/integrations/kraken.md` at upstream `70d887545790`) says that a TradeVolume request that fails falls back to the public rates, so a transient or isolated failure does not stop the client connecting, and that a key missing *Funds permissions - Query* altogether still fails later, when the execution client requests account state. So a `falling back to public rates` WARN on a run whose start then fails is a reason to read that permission first.
+
 ### 7. Post-run reconciliation
 
 #### 7.1 At the venue
