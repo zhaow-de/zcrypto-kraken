@@ -1553,8 +1553,7 @@ def _declared(path: Path, key: str):
 
 
 def _wg_value(path: Path, key: str) -> str:
-    # read as wg reads a line -- the comment cut, every blank dropped, the key in any case -- or a
-    # `listenport = …` beside the real line would set the port unseen
+    # parsed as wg parses a line, or a `listenport = …` beside the real line would set the port unseen
     lines = [re.sub(r"\s", "", l.split("#", 1)[0]) for l in path.read_text().splitlines()]
     values = [l.split("=", 1)[1] for l in lines if l.lower().startswith(f"{key.lower()}=")]
     assert len(values) == 1, f"{path.relative_to(ANSIBLE)} carries {len(values)} {key} lines, not one"
