@@ -1,6 +1,9 @@
 # Rendered by the `access_ops` role at /etc/wireguard/zaccess0.conf — edit the template.
 [Interface]
 Address = 10.99.0.2/24
+# The tunnel's IPv4 path from the ops LAN carries at most 1460-byte packets and WireGuard adds 60 over
+# IPv4, so wg-quick's default 1420 is fragmented or dropped; 1380 leaves 20 bytes of margin.
+MTU = 1380
 PrivateKey = {{ zaccess_wg_ops_private_key }}
 
 [Peer]
