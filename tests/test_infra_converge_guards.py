@@ -1600,9 +1600,19 @@ STOP_BINDING = {"Requires", "Requisite", "BindsTo", "PartOf"}
 
 
 def _unit_settings(path: Path) -> list[tuple[str, str]]:
-    # read as systemd does: a trailing backslash continues the line, and the blanks around `=` are stripped
-    lines = [l.strip() for l in path.read_text().replace("\\\n", " ").splitlines()]
-    return [(k.strip(), v.strip()) for k, _, v in (l.partition("=") for l in lines if "=" in l and not l.startswith(("#", ";")))]
+    # systemd joins a backslash-ended directive with the next line and strips the blanks around `=`
+    settings, held = [], ""
+    for line in (l.strip() for l in path.read_text().splitlines()):
+        if line.startswith(("#", ";")):
+            continue
+        if line.endswith("\\"):
+            held += line[:-1] + " "
+            continue
+        line, held = held + line, ""
+        if "=" in line:
+            key, _, value = line.partition("=")
+            settings.append((key.strip(), value.strip()))
+    return settings
 
 
 def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
