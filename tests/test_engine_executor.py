@@ -173,6 +173,23 @@ def test_the_venue_mutating_names_have_exactly_one_module():
     assert offenders == []
 
 
+# On the pinned wheel an instrument-named CancelAllOrders still sends Kraken's account-wide CancelAll
+# (upstream #5044 scopes it, in a later nightly), so a cancel-all written for one pair would cancel
+# every pair's orders. The order machine cancels one order at a time; only the red button, whose
+# cancel is account-wide by design, reaches `cancel_all_orders`, and the batch form is reached nowhere.
+_ACCOUNT_WIDE_CANCELS = {".cancel_all_orders": {"cli/engine/flatten.py"}, ".cancel_orders": set()}
+
+
+def test_only_the_red_button_reaches_a_cancel_all():
+    offenders = [
+        f"{path.as_posix()}: {name}"
+        for path in sorted(Path("cli").rglob("*.py"))
+        for name, allowed in _ACCOUNT_WIDE_CANCELS.items()
+        if name in path.read_text() and path.as_posix() not in allowed
+    ]
+    assert offenders == []
+
+
 # --- the stub harness ---------------------------------------------------------------------------
 
 # The two /BTC legs carry BTC-denominated attributes, deliberately distinct from the /EUR legs'
