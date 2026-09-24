@@ -1605,7 +1605,8 @@ EARLY_BOOT_UNITS = sorted(
     for p in ANSIBLE.glob(pattern)
 )
 BEFORE_SYSINIT = {"sysinit.target", "local-fs.target", "local-fs-pre.target", "swap.target"}
-BINDING = {"Requires", "Requisite", "BindsTo", "PartOf", "RequiresMountsFor"}
+ORDERING = {"After", "WantsMountsFor"}
+BINDING = {"Requires", "Requisite", "BindsTo", "PartOf", "RequiresMountsFor", "StopPropagatedFrom", "BindToDevice"}
 
 
 def _unit_lines(path: Path) -> list[str]:
@@ -1627,10 +1628,11 @@ def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
         # DefaultDependencies=no lifts the ordering before basic.target, not the stop propagation a binding carries
         unordered = any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings)
         for k, v in settings:
-            if (k in BINDING or (k == "After" and not unordered)) and any(u not in BEFORE_SYSINIT for u in v.split()):
+            if (k in BINDING or (k in ORDERING and not unordered)) and any(u not in BEFORE_SYSINIT for u in v.split()):
                 offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
     assert not offenders, (
-        f"an early-boot unit waits on or binds to a unit it cannot rely on at boot; the service it activates must carry that: {offenders}"
+        "an early-boot unit waits on or binds to a unit it cannot rely on at boot, or ends a line in a backslash "
+        f"this guard does not read; the service it activates must carry the dependency: {offenders}"
     )
 
 
