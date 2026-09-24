@@ -1,5 +1,4 @@
-"""Spec 00082: converge guards evaluated through Ansible's own templar -- the guard's REAL condition
-expression fed constructed probe outcomes, never a re-implementation of the logic."""
+"""Spec 00082: a converge guard's condition is evaluated through Ansible's own templar, fed constructed probe outcomes -- never a re-implementation of the logic."""
 
 import hashlib
 import json
@@ -1576,6 +1575,64 @@ def test_the_zaccess_tunnel_port_is_one_value_in_every_declaration():
     ports[f"group_vars/access_host:{WG_UDP_PORTS}"] = opened[0]
     assert len(set(ports.values())) == 1, (
         f"the zaccess tunnel's port declarations disagree, and a tunnel that never handshakes publishes no gauge: {ports}"
+    )
+
+
+def _tunnel_mtus() -> dict[str, int]:
+    return {str(conf.relative_to(ANSIBLE)): int(_wg_value(conf, "MTU")) for conf in (ACCESS_WG_CONF, ACCESS_OPS_WG_CONF)}
+
+
+def test_each_zaccess_tunnel_end_fits_its_ipv4_path():
+    mtus = _tunnel_mtus()
+    assert all(m <= 1400 for m in mtus.values()), f"above 1400 the tunnel's packets outgrow its 1460-byte IPv4 path: {mtus}"
+
+
+def test_the_zaccess_tunnel_ends_declare_one_mtu():
+    mtus = _tunnel_mtus()
+    assert len(set(mtus.values())) == 1, f"the two tunnel ends declare different MTUs: {mtus}"
+
+
+# --- a socket or path unit on default dependencies precedes basic.target: ordered after a later unit it is a boot
+# cycle, and bound to one it is stopped with it and not started again. It reads the dependency directives a unit
+# states; the mount a filesystem listener, a watched path or an exec-context path implies is outside its reach.
+EARLY_BOOT_UNITS = sorted(
+    p
+    for pattern in (
+        "roles/*/templates/*.socket.j2",
+        "roles/*/templates/*.path.j2",
+        "roles/*/files/*.socket",
+        "roles/*/files/*.path",
+    )
+    for p in ANSIBLE.glob(pattern)
+)
+BEFORE_SYSINIT = {"sysinit.target", "local-fs.target", "local-fs-pre.target", "swap.target"}
+ORDERING = {"After", "WantsMountsFor"}
+BINDING = {"Requires", "Requisite", "BindsTo", "PartOf", "RequiresMountsFor", "StopPropagatedFrom", "BindToDevice"}
+
+
+def _unit_lines(path: Path) -> list[str]:
+    # a continued directive is refused below, not parsed
+    return [l.strip() for l in path.read_text().splitlines() if not l.strip().startswith(("#", ";"))]
+
+
+def test_no_early_boot_unit_waits_on_or_binds_to_a_later_unit():
+    assert {p.name for p in EARLY_BOOT_UNITS} >= {"zaccess-ssh-proxy.socket.j2", "zaccess-nas-proxy.socket.j2"}, EARLY_BOOT_UNITS
+    offenders = []
+    for path in EARLY_BOOT_UNITS:
+        lines = _unit_lines(path)
+        offenders += [
+            f"{path.relative_to(ANSIBLE)}: {l} (ends in a backslash, which this guard does not read)"
+            for l in lines
+            if l.endswith("\\")
+        ]
+        settings = [(k.strip(), v.strip()) for k, _, v in (l.partition("=") for l in lines if "=" in l)]
+        # DefaultDependencies=no lifts the ordering before basic.target, not the stop propagation a binding carries
+        unordered = any(k == "DefaultDependencies" and v.lower() in ("0", "no", "n", "false", "f", "off") for k, v in settings)
+        for k, v in settings:
+            if (k in BINDING or (k in ORDERING and not unordered)) and any(u not in BEFORE_SYSINIT for u in v.split()):
+                offenders.append(f"{path.relative_to(ANSIBLE)}: {k}={v}")
+    assert not offenders, (
+        f"an early-boot unit waits on or binds to a unit it cannot rely on at boot; the service it activates must carry the dependency: {offenders}"
     )
 
 

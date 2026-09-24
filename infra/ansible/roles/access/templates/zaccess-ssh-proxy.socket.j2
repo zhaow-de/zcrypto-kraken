@@ -3,8 +3,8 @@
 # and IPv6 clients at the edge.
 [Unit]
 Description=Public SSH relay socket for the access bridgehead
-Requires=wg-quick@zaccess0.service
-After=wg-quick@zaccess0.service
+# The tunnel dependency is the service's: an After= on wg-quick here closes a boot ordering cycle
+# through sockets.target and basic.target, which systemd breaks by dropping this socket's start job.
 
 [Socket]
 ListenStream=0.0.0.0:20022
