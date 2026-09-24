@@ -59,7 +59,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # freeze at their last values, but the re-verification rotation is STOPPED until the pin moves. The
 # reverse order cannot arise from an ordinary converge -- pin and entrypoint live in one tree -- and
 # the CLI refuses `--cache` without `--slice` anyway.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164
 # Was running as an UNPINNED `:latest` that merely happened to resolve to this digest -- the trap
 # the committed pin kills.
 nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
