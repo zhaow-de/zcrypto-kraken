@@ -115,7 +115,7 @@ Checks 1 through 5 and 7 were re-run on this wheel and returned what the previou
 
 | # | Bullet | On `2.0.0rc6.dev20260921` |
 | -- | -- | -- |
-| 1 | Bump and lock, full suite | Bumped and locked in `e7fc8b8a4`, which also takes the exec engine config's new `submission_recovery_policy` into the tripwire map at its default. full suite: see the PR body. |
+| 1 | Bump and lock, full suite | Bumped and locked in `e7fc8b8a4`, which also takes the exec engine config's new `submission_recovery_policy` into the tripwire map at its default. The full suite, run by CI's `Full test suite` on PR #599 at `b734fb391`, read `9110 passed, 41 skipped`. It runs without the datasets, so the data-gated family was run on the checkout that holds them (`uv run pytest -m data`, same tree): `575 passed, 1 skipped`. |
 | 2 | Side enum vs `position_side` | Pinned by `tests/test_nautilus_interface_pin.py`: `62 passed` on this wheel. |
 | 3 | Async surface re-measure | Pinned by `tests/test_engine_flatten.py::test_every_client_call_the_red_button_makes_needs_a_running_loop`, which passes on this wheel. Its other half, a call inside a loop answering an awaitable, is check 5's gated case, and every read of check 5's loopback module awaits the real client inside a loop. |
 | 4 | `OrderBook.bids` / `.asks` kind | Pinned by `tests/test_engine_flatten.py::test_no_stub_in_the_red_button_suite_offers_a_name_its_real_library_type_lacks`, which passes. With check 3's test and check 5's gated case: `2 passed, 1 skipped`. |
