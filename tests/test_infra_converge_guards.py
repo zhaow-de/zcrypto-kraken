@@ -897,8 +897,7 @@ def test_arming_backstop_reads_the_real_committed_files():
     pin = _pinned_nautilus_version()
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
 
-    # `false` at rest, `true` for an attended probe window's reviewed one-line diff: either literal
-    # is a committed state, and a templated or missing value is neither.
+    # Either literal: the runbook's arm and disarm PRs each flip only the template line.
     assert re.search(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", template), (
         "the committed template must render exec_armed as a boolean literal"
     )
