@@ -147,14 +147,19 @@ def selected_hosts(expr: str, family: str) -> frozenset[str] | None:
     Per-occurrence rather than per-expression: `node_load1{host=~"zcrypto|zcrypto-red"} / on(host)
     ... node_cpu_seconds_total{host=~"zcrypto|zcrypto-red", mode="idle"}` scopes two families, and
     an expression-wide read would hand each of them the other's hosts."""
-    occurrence = re.compile(rf"(?<![A-Za-z0-9_:]){re.escape(family)}(?![A-Za-z0-9_:])\s*(\{{[^{{}}]*\}})?")
     hosts: set[str] = set()
-    for match in occurrence.finditer(expr):
-        matcher = _HOST_MATCHER.search(match.group(1) or "")
+    for selector in _selectors(expr, family):
+        matcher = _HOST_MATCHER.search(selector)
         if matcher is None or not _PLAIN_ALTERNATION.match(matcher.group(2)):
             return None
         hosts.update(matcher.group(2).split("|"))
     return frozenset(hosts) or None
+
+
+def _selectors(expr: str, family: str) -> list[str]:
+    """The label selector of each occurrence of `family` in `expr`, "" where it has none."""
+    occurrence = re.compile(rf"(?<![A-Za-z0-9_:]){re.escape(family)}(?![A-Za-z0-9_:])\s*(\{{[^{{}}]*\}})?")
+    return [match.group(1) or "" for match in occurrence.finditer(expr)]
 
 
 # --- Sources -------------------------------------------------------------------------------------
@@ -198,16 +203,73 @@ def _prom_targets(panel: dict) -> list[dict]:
     return [t for t in (panel.get("targets") or []) if not t.get("hide") and (t.get("datasource") or {}).get("type") != "loki"]
 
 
-@cache
-def panel_families() -> dict[str, frozenset[str]]:
-    """family -> the panels drawing it, as `<file> <uid>#<panelId> "<title>"`."""
-    found: dict[str, set[str]] = {}
+def _panel_expressions():
+    """`(dashboard, where, expr)` for every drawn PromQL target, `where` as `<file> <uid>#<panelId> "<title>"`."""
     for filename, dash in dashboards():
         for panel in _walk_panels(dash.get("panels") or []):
             where = f"{filename} {dash.get('uid')}#{panel.get('id')} {panel.get('title')!r}"
             for target in _prom_targets(panel):
-                for family in promql_families(target.get("expr") or ""):
-                    found.setdefault(family, set()).add(where)
+                yield dash, where, target.get("expr") or ""
+
+
+@cache
+def panel_families() -> dict[str, frozenset[str]]:
+    """family -> the panels drawing it."""
+    found: dict[str, set[str]] = {}
+    for _, where, expr in _panel_expressions():
+        for family in promql_families(expr):
+            found.setdefault(family, set()).add(where)
+    return {k: frozenset(v) for k, v in found.items()}
+
+
+# --- Where a reader can select a cache node ---------------------------------------------------------
+CACHE_NODES = frozenset(host for host, path in KEEP_REGEX_FILES.items() if path == KEEP_REGEX_FILES["zcrypto-valkey1"])
+_ANY_HOST_MATCHER = re.compile(r'\bhost\s*(=~|!~|!=|=)\s*"([^"]*)"')
+_VARIABLE = re.compile(r"\$(\w+)|\$\{(\w+)(?::\w+)?\}")
+_LABEL_VALUES_HOST = re.compile(r"\s*label_values\((?:(.*),)?\s*host\s*\)\s*")
+
+
+def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
+    """Each template variable's reach among the cache nodes: a custom one's listed values, and a
+    `label_values(..., host)` query's all of them when its selector names no family or one the cache
+    nodes admit."""
+    reach = {}
+    for variable in (dash.get("templating") or {}).get("list") or []:
+        query = variable.get("query")
+        query = query.get("query", "") if isinstance(query, dict) else str(query or "")
+        if variable.get("type") == "custom":
+            reach[variable["name"]] = CACHE_NODES & {option.split(" : ")[-1].strip() for option in query.split(",")}
+        elif variable.get("type") == "query" and (values := _LABEL_VALUES_HOST.fullmatch(query)):
+            families = promql_families(values.group(1) or "")
+            if not families or any(keep_regexes()["zcrypto-valkey1"].match(family) for family in families):
+                reach[variable["name"]] = CACHE_NODES
+    return reach
+
+
+def _nodes_selected(selector: str, variables: dict[str, frozenset[str]]) -> frozenset[str]:
+    """The cache nodes a label selector's `host` matchers let through. A `$variable` in a positive
+    matcher stands for its reach, an unknown one for no node; one in a negative matcher removes none."""
+    nodes = CACHE_NODES
+    for op, value in _ANY_HOST_MATCHER.findall(selector):
+        if variable := _VARIABLE.fullmatch(value):
+            if op in ("=", "=~"):
+                nodes &= variables.get(variable.group(1) or variable.group(2), frozenset())
+            continue
+        matched = {node for node in nodes if (re.fullmatch(value, node) if "~" in op else node == value)}
+        nodes = frozenset(matched) if op in ("=", "=~") else nodes - matched
+    return nodes
+
+
+@cache
+def cache_node_readers() -> dict[str, frozenset[str]]:
+    """family -> the panels and rules whose selector of it can take a cache node's series."""
+    found: dict[str, set[str]] = {}
+    readers = [(where, expr, _host_variables(dash)) for dash, where, expr in _panel_expressions()]
+    readers += [(rule["uid"], expr, {}) for rule in _rules() for expr in _prom_expressions(rule)]
+    for where, expr, variables in readers:
+        for family in promql_families(expr):
+            if any(_nodes_selected(selector, variables) for selector in _selectors(expr, family)):
+                found.setdefault(family, set()).add(where)
     return {k: frozenset(v) for k, v in found.items()}
 
 
@@ -219,7 +281,7 @@ def panel_families() -> dict[str, frozenset[str]]:
 # Scope is the four namespaces this repo's own producers publish into. `node_*`, `process_*`, `hc_*`
 # and `redis_*` come from node-exporter, prometheus_client, healthchecks.io and Alloy's Redis
 # exporter -- not ours to chart exhaustively, and the alert layer (assertion 1) already pulls in the
-# ones that matter; the cache nodes' keep list is held to what is charted or alerted below.
+# ones that matter; the cache nodes' keep list is held below to what a reader of a cache node reads.
 _APP = r"(?:zcrypto|ops|zaccess|zcache)_[a-z0-9_]*[a-z0-9]"
 # (1) an exposition HELP/TYPE line, wherever it is printed from.
 _HELP_LINE = re.compile(rf"#\s+(?:HELP|TYPE)\s+({_APP})\b")
@@ -521,15 +583,16 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
 
 
 def test_every_family_the_cache_nodes_admit_is_charted_or_alerted():
-    """The cache keep regex is written as the families the Cache board and the rules read, the first
-    third-party families on the fleet (`redis_*`). One admitted and read by neither is series budget
-    spent on nothing, and the per-host lists in test_infra_alloy_series.py cannot see that."""
+    """The cache keep regex is written as the families a panel or rule reads on a cache node. One
+    admitted that no such reader reads is series budget spent on nothing, and the per-host lists in
+    test_infra_alloy_series.py cannot see that. A reader counts only where its `host` matchers can
+    take a node, so a panel behind a `$host` that lists no node reads nothing here."""
     text = KEEP_REGEX_FILES["zcrypto-valkey1"].read_text()
     block = next(b for b in re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL) if '"keep"' in b)
     admitted = set(re.search(r'regex\s*=\s*"([^"]+)"', block).group(1).split("|"))
     assert len(admitted) >= 30, f"only {len(admitted)} families parsed from the cache keep regex -- the parse broke"
-    unread = sorted(admitted - set(panel_families()) - set(alerted_families()))
-    assert not unread, f"the cache nodes admit {unread}, which no panel draws and no rule reads"
+    unread = sorted(admitted - set(cache_node_readers()))
+    assert not unread, f"the cache nodes admit {unread}, which no panel or rule that can select a cache node reads"
 
 
 # A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`
