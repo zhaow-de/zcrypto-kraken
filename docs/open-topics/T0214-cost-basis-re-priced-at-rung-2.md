@@ -16,7 +16,7 @@ Applying the tracking report's proposed rate to the builder default invalidates 
 ## Findings so far
 
 - The venue's fee on a margin open is the spot fee plus a 2 bps margin-opening fee that the fee term does not carry; a re-pricing states which fees the term covers.
-- The engine journal rounds a fill's fee to the cent (rung 1's close and disposal read `fee 0.08` where Kraken's rows carry 0.0795 and 0.0794), so a per-fill bps read from the journal carries up to ±0.3 bps of rounding on a 20 EUR leg; the re-pricing reads the fee from the venue's rows, or from fills large enough that the cent does not move the figure.
+- The engine journal rounds a fill's fee to the cent — up to ±2.5 bps on a 20 EUR leg — so the re-pricing reads the fee from the venue's rows, or from fills large enough that the cent does not move the figure.
 
 ## Suggested next steps
 
