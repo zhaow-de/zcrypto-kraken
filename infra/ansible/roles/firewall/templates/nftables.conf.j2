@@ -35,6 +35,15 @@ table inet filter {
     # additional exposed UDP services (per-group, spec 00075: WireGuard)
     udp dport { {{ firewall_extra_udp_ports | join(', ') }} } accept
 {% endif %}
+{% if firewall_interface_tcp_ports %}
+
+    # TCP services accepted only on a named interface, never on the public side. `iifname`, not
+    # `iif`: nftables loads at boot before wg-quick creates a tunnel, and `iif` refuses a name that
+    # does not exist yet, which would fail the whole ruleset.
+{% for rule in firewall_interface_tcp_ports %}
+    iifname "{{ rule.iface }}" tcp dport { {{ rule.ports | join(', ') }} } accept
+{% endfor %}
+{% endif %}
 
     # ICMPv4 ping
     icmp type echo-request accept
