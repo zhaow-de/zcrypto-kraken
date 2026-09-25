@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: Stage 6b (tiny-live) starts
+status: resolved
 ---
 
 # Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)
@@ -24,8 +23,6 @@ Tax treatment is a **net-return** input, not a nicety: §11/§3 note that a EUR-
 - **Read-only Kraken key exists** (T0000, verified 2026-07-07: Query funds + Query ledger entries + Query closed orders & trades) — the natural read-only feed for Blockpit; no trade-scoped key is or should be involved.
 - Not a dependency of the Phase-2 validation harness (synthetic data) or Phases 3–4 (historical OHLCVT research); it feeds the **after-tax** view and live bookkeeping, so it is deferred without blocking research.
 
-## Suggested next steps
+## Resolution
 
-- **(human)** Create/log into Blockpit; connect the Kraken depot **read-only** (via the T0000 read-only API key or Blockpit's Kraken connector); authorize import.
-- **(human + autonomous write-up)** Re-verify the import scope covers **spot + spot-margin**; inspect historical-trade labeling (esp. §23 holding-period handling and margin-vs-spot classification); capture screenshots/notes.
-- **(autonomous)** Draft the **T1 memo** from the human's findings — import scope, labeling correctness, any gaps to feed the Phase-2 after-tax model — as a `docs/` note.
+Resolved 2026-09-25, in the session that recorded Rung 1's T2 verdict (`[iter-172]` in `docs/research/14.phase6-decisions.md`), on the records branch of that day's disarm. The three steps, in order: the owner connected the Kraken depot through Blockpit's own connector on 2026-07-09 by Kraken's OAuth login, with no scope to choose; the import scope and the labelling were read against Kraken's own ledger and trades statements for 2026-07-06 to 2026-09-25 — spot and spot-margin rows both import and label, the four `Collateral Conversion` rows do not, and the close fee of a PnL-carrying margin close reaches no summed figure; the T1 memo is `docs/reference/blockpit-t1-memo.md`, its import table the description the after-tax model and the monthly bookkeeping read. What the memo found wrong is the T3 fallback's work, [[T0215]], registered in the same session.

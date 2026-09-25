@@ -4,13 +4,13 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 
 ## Open
 
-- [T0005 — Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)](T0005-blockpit-t1-tax-check.md) — ripe when: Stage 6b (tiny-live) starts
 - [T0022 — B1 — intraday trend + time-of-day/day-of-week seasonality (the family topic)](T0022-b1-intraday-seasonality-family.md) — ripe when: a genuinely new B1 hypothesis is pre-registered, or the owner expands or closes the shared B budget
 - [T0119 — The delta formula: `target − actually held`, not `target − previously journaled intent`](T0119-delta-formula-target-minus-held.md) — ripe when: spec `00092`, whose serial is reserved for rung 3 and not yet written, is created, or an executor path sizes an open order as `target − held`
 - [T0187 — The dark-with-exposure page reads no exposure over a position it never observed](T0187-dark-with-exposure-reads-zero-over-an-unmade-observation.md) — ripe when: any one arm: RUNG 2 starts — the memo's `**RUNG 2 — concentrated, time-boxed` entry records a start and not only its `DependsOn`; or an engine restart is planned while a position is open with nobody attending it; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.
 - [T0205 — The primary's clean-close reconnect rate is charted and never alerted](T0205-primary-reconnect-rate-unalerted.md) — ripe when: 2026-10-01 — a second fortnight of reconnects on the board to set the bar against, read as `uv run python infra/scripts/grafana-query.py 'sum by (host) (increase(zcrypto_capture_reconnects_total[13d]))'`
 - [T0212 — The engine-gap counter infers the floor it cannot read](T0212-the-engine-gap-counter-infers-the-floor-it-cannot-read.md) — ripe when: `infra/ansible/scripts/converge.sh` or `infra/scripts/deploy-log-audit.py` is next changed — a session already at the writer or the reader this topic would change, and the arm the daily pass decides; OR `infra/scripts/count-list.sh engine-rows-on-the-completion-floor` reads 3 or more, the band having grown past the single row that made deferring it right.
 - [T0213 — The engine's cache — the engine-side half of spec 00118](T0213-engine-cache-engine-half.md) — ripe when: a milestone: Rung 1 has its verdict, which §6 item 9 of the `engine-probe-window` procedure in `infra/runbooks/engine-procedures.md` records in `docs/research/14.phase6-decisions.md` — after which Rung 2's design point opens the engine-side spec and plan of 00118
+- [T0215 — The Blockpit T3 fallback: a deterministic pre-transform of Kraken's exports into the manual-import CSV](T0215-blockpit-fallback-pre-transform.md) — ripe when: rung 2's first ISO week of fills is in Kraken's ledger — the transform's second fixture, carrying the shapes rung 1 never produced (a margin close at a loss, a taker close); check: Kraken → History → Export → Ledgers over that week lists a `margin` row with a negative amount
 
 ## Partially done
 
@@ -34,6 +34,7 @@ Topics worth follow-up are parked here, one file per topic; the file mechanics a
 - [T0002 — Universe liquidity-floor calibration & quote-currency-aware volume (§3 escalation)](archive/T0002-universe-liquidity-floor-calibration.md)
 - [T0003 — D2 forward-capture pipeline (VPS daemon → NAS archive)](archive/T0003-d2-capture-pipeline.md)
 - [T0004 — Full tick history ingestion + tick-derived bar reconciliation](archive/T0004-tick-history-reconciliation.md)
+- [T0005 — Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)](archive/T0005-blockpit-t1-tax-check.md)
 - [T0006 — Harness numeric-param type guards (raise ValidationError, not TypeError)](archive/T0006-validation-numeric-param-type-guards.md)
 - [T0007 — Dynamic-composition inverse-vol basket (full-history B2 variant)](archive/T0007-dynamic-composition-basket.md)
 - [T0008 — Capture daemon — robust book-desync recovery (retry / ack-correlated resubscribe)](archive/T0008-desync-recovery-robustness.md)
