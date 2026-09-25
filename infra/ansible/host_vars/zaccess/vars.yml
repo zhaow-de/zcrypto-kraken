@@ -1,8 +1,5 @@
 # host_vars/zaccess — the internet bridgehead (spec 00075): Linode 1 GB, 1 vCPU, 25 GB.
 ansible_host: zaccess.zhaow.me
 base_hostname: zaccess
-# 05:25 is off the hour boundary and >=1 h from the 4-hourly engine boundaries (04:00/08:00). The
-# base role's collision assert does not read this host; tests/test_infra_unattended_upgrades.py
-# holds every slot an hour from every other and from a bar boundary.
 base_unattended_upgrades_reboot_time: "05:25"
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zaccess_ed25519.pub') }}"

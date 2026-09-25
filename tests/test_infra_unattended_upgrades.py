@@ -111,15 +111,13 @@ def _slot_minutes(host: str) -> int:
 
 def test_the_cache_group_reboots_itself():
     """The cache nodes keep the role default: a reboot of the node holding the primary is a Sentinel failover with both
-    other copies up, where on a capture host it is an unbackfillable gap. Their slots keep two from rebooting together."""
+    other copies up, where on a capture host it is an unbackfillable gap."""
     assert _group_hosts("cache_host") == CACHE_NODES
     declared = [_yaml(path).get(VAR) for path in (CACHE_GROUP_VARS, *(HOST_VARS / h / "vars.yml" for h in sorted(CACHE_NODES)))]
     assert all(value in (None, "true") for value in declared), declared
 
 
 def test_the_collision_assert_reads_the_cache_group():
-    """Two cache nodes down at once leave one Sentinel, below the quorum of two. The assert reads its hosts from
-    `groups`, so a group absent from this expression is a group whose slots nothing compares."""
     name = "assert the fleet's maintenance windows do not collide"
     task = next(t for t in yaml.safe_load(BASE_TASKS.read_text()) if t.get("name") == name)
     expr = task["vars"]["base_fleet_hosts"]
@@ -128,9 +126,7 @@ def test_the_collision_assert_reads_the_cache_group():
 
 
 def test_every_reboot_slot_is_an_hour_from_every_other_and_from_a_bar_boundary():
-    """The base role's assert compares slots for equality over three groups; this holds the schedule `fleet.md`'s
-    Reboots section states over all four groups whose hosts run the base role, the bridgehead's included: an hour
-    between any two hosts, an hour from each 4 h bar boundary, off the hour."""
+    """The base role's assert compares slots for equality alone; this holds the spacing `fleet.md`'s Reboots schedule states."""
     slots = {host: _slot_minutes(host) for group in SLOT_GROUPS for host in _group_hosts(group)}
     for host, at in slots.items():
         assert at % 60 != 0, f"{host}: {at // 60:02d}:00 is on the hour boundary"

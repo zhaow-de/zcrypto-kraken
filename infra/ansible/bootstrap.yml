@@ -1,4 +1,3 @@
-# A cache node is a public VPS like a capture host: it takes this play's sshd drop-in and both refusals.
 - name: Bootstrap capture and cache hosts — deploy user + SSH lockdown (keep 22 until converge proves 10022)
   hosts: capture_host:cache_host
   gather_facts: false
@@ -21,8 +20,8 @@
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]
 
-    # Generalises the refusal above to the SECONDARY and the cache nodes: bootstrap is first-provision
-    # only, re-running it rewrites the sshd drop-in below, and the deploy user is the evidence that
+    # Generalises the refusal above to this play's other hosts: bootstrap is first-provision only,
+    # re-running it rewrites the sshd drop-in below, and the deploy user is the evidence that
     # provisioning already happened. This play only, deliberately -- the ops and access plays write
     # no drop-in, so the refusal's own message would be false there.
     - name: probe — the zcrypto-deploy user (re-bootstrap refusal)

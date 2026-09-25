@@ -22,10 +22,9 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 # D14) converges one node per run, so `cache_host` is not a host here.
 HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
-# as the repair for a stopped or hand-edited chrony on a capture host; plus spec 00118's: a cache
-# node's first converge names the six base roles (`--tags base,hardening,firewall,fail2ban,chrony,docker`),
-# the mesh converge `firewall,cache-link` on a node or the engine host, and `cache` Valkey, Sentinel
-# and Alloy on a node.
+# as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
+# spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
+# node or the engine host, and `cache` on a node.
 TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:

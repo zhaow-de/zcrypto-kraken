@@ -107,7 +107,7 @@ def _signalled(tmp_path, sig):
         env=_env(tmp_path, ansible, {"PLAYBOOK_SLEEP": str(_PLAY_HOLD_S)}),
         start_new_session=True,
     )
-    time.sleep(2.0)  # past the eight key loads and into the play
+    time.sleep(2.0)  # past the key loads and into the play
     started = time.monotonic()
     os.kill(proc.pid, sig)
     proc.communicate(timeout=30)
@@ -166,7 +166,7 @@ def _inventory_hosts(node: dict) -> set[str]:
 def test_the_ring_is_every_inventory_host_but_the_workstation():
     """A host missing from the ring is offered its key only when `--limit` names it alone: a group run, or another
     host's play reaching it by `delegate_to`, meets it keyless. The private halves are checked for presence, never
-    read; each public half must open `ssh-ed25519 `, so a placeholder in a key's place is refused."""
+    read."""
     ring = next(line for line in SCRIPT.read_text().splitlines() if line.startswith("KEYS=("))
     assert ring.removeprefix("KEYS=(").removesuffix(")").split() == DEFAULT
     children = yaml.safe_load(INVENTORY.read_text())["all"]["children"]
