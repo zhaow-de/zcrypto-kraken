@@ -1440,6 +1440,10 @@ _PROTECTED_OBJECTS = (
     "@sha256:",
 )
 _TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
+# A cache node's Docker daemon carries Valkey and Sentinel, so any other restart there can be a failover: the one
+# object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
+_CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
+_CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1762,4 +1766,6 @@ def _classify_one(command: str, host: str | None, *, resolve, text: str | None =
         lowered = (text or command).lower()
         if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
             operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
+            if host_label(lands_on) in _CACHE_HOSTS and not (operands and _CACHE_AUTONOMOUS_OBJECTS.issuperset(operands)):
+                operands = None
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

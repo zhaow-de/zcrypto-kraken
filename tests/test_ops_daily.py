@@ -2865,7 +2865,7 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
 
 @pytest.mark.parametrize("host", ["zcrypto-valkey1", "db1"])
 def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
-    """A step names a cache node by its Alloy `host` label or by its ssh alias; neither spelling may lose the tier."""
+    """A step's host names a cache node by its Alloy `host` label or by its ssh alias, and an `ssh` step by the alias."""
     step = "sudo docker restart grafana-alloy"
     assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     assert ops_daily.classify_action(f"ssh db1 {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
@@ -2885,10 +2885,29 @@ def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
     ],
 )
 def test_a_cache_daemon_restart_is_never_the_passs_own(step):
-    """A cache node is a telemetry host, whose container restarts the pass may take; restarting, stopping or starting
+    """A cache node is a telemetry host, whose Alloy container the pass may restart; restarting, stopping or starting
     Valkey and Sentinel, by container or through their unit, is a replication event, a failover when the node holds the
     primary, and so is restarting the mesh tunnel replication runs over: each stays the operator's."""
     assert ops_daily.classify_action(step, host="zcrypto-valkey1", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    ("step", "host"),
+    [
+        ("sudo systemctl restart docker", "zcrypto-valkey1"),
+        ("sudo systemctl stop docker.service", "zcrypto-valkey1"),
+        ("ssh db1 sudo systemctl restart docker", None),
+        ("sudo docker restart 3f2a9c1b", "zcrypto-valkey1"),
+        ("sudo systemctl restart tailscaled", "zcrypto-valkey1"),
+        ("sudo docker restart valkey", "zcrypto-valkey1"),
+    ],
+)
+def test_on_a_cache_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+def test_the_cache_allowlist_leaves_a_daemon_restart_on_ops_autonomous():
+    assert ops_daily.classify_action("sudo systemctl restart docker", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------
