@@ -231,8 +231,8 @@ _LABEL_VALUES_HOST = re.compile(r"\s*label_values\((?:(.*),)?\s*host\s*\)\s*")
 
 def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
     """Each template variable's reach among the cache nodes: a custom one's listed values, and a
-    `label_values(..., host)` query's all of them when its selector names no family or one the cache
-    nodes admit."""
+    `label_values(..., host)` query's those its selector's own host matchers let through, when it names
+    no family or one the cache nodes admit."""
     reach = {}
     for variable in (dash.get("templating") or {}).get("list") or []:
         query = variable.get("query")
@@ -242,7 +242,7 @@ def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
         elif variable.get("type") == "query" and (values := _LABEL_VALUES_HOST.fullmatch(query)):
             families = promql_families(values.group(1) or "")
             if not families or any(keep_regexes()["zcrypto-valkey1"].match(family) for family in families):
-                reach[variable["name"]] = CACHE_NODES
+                reach[variable["name"]] = _nodes_selected(values.group(1) or "", {})
     return reach
 
 
@@ -826,3 +826,12 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
         if not any(marks_the_rule(s["value"]) for s in steps):
             bad.append(f"{uid}: panel {panel['id']} refId {ref} bars at {[s['value'] for s in steps]}, rule fires at {evaluator}")
     assert not bad, "a panel's red line disagrees with the rule that points at it:\n  " + "\n  ".join(bad)
+
+
+def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits():
+    def reach(query: str) -> frozenset[str]:
+        return _host_variables({"templating": {"list": [{"name": "h", "type": "query", "query": query}]}})["h"]
+
+    assert reach("label_values(process_resident_memory_bytes, host)") == CACHE_NODES
+    assert reach('label_values(process_resident_memory_bytes{host=~"zcrypto-valkey1|ops"}, host)') == frozenset({"zcrypto-valkey1"})
+    assert reach('label_values(process_resident_memory_bytes{host=~"zcrypto|ops"}, host)') == frozenset()
