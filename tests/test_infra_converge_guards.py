@@ -2536,8 +2536,8 @@ def test_every_cache_secret_render_is_never_logged_or_diffed(name):
 
 
 def test_every_cache_probe_never_fails_changes_or_skips_under_check():
-    probes = [t for t, _ in iter_tasks(load_tasks(CACHE)) if str(t.get("name", "")).startswith("probe")]
-    assert len(probes) >= 3, [t["name"] for t in probes]
+    probes = [t for t, _ in iter_tasks(load_tasks(CACHE)) if re.search(r"\bprobe\b", str(t.get("name", "")))]
+    assert len(probes) >= 4, [t["name"] for t in probes]
     for probe in probes:
         modes = (probe.get("failed_when"), probe.get("changed_when"), probe.get("check_mode"))
         assert modes == (False, False, False), f"{probe['name']!r}: failed_when, changed_when, check_mode = {modes}"
