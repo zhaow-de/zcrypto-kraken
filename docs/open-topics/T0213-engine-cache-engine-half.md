@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'a milestone: Rung 1 has its verdict, which the `engine-probe-window` procedure in `infra/runbooks/engine-procedures.md` records in `docs/research/14.phase6-decisions.md` at its §6 item 9 — after which Rung 2''s design point opens the engine-side spec and plan of 00118'
+ripe_when: 'a milestone: Rung 1 has its verdict, which §6 item 9 of the `engine-probe-window` procedure in `infra/runbooks/engine-procedures.md` records in `docs/research/14.phase6-decisions.md` — after which Rung 2''s design point opens the engine-side spec and plan of 00118'
 ---
 
 # The engine's cache — the engine-side half of spec 00118
@@ -15,11 +15,10 @@ The operating rule of 2026-09-23 — no engine converge or restart while a Krake
 
 ## Findings so far
 
-- The plan's *Resolution* lists which of spec `00118`'s decisions, and which parts of them, are the engine half's, and names this topic as the half's home; the plan's Global Constraints keep every task off `cli/`.
 - The library fact that shapes the half: nautilus's Redis backing connects to one fixed `host:port` with no Sentinel lookup (measured in the stub and the binary, 2026-09-24), so the proxy is the engine's only view of the set.
-- The trigger is the verdict entry the `engine-probe-window` procedure writes into `docs/research/14.phase6-decisions.md` at its §6 item 9, read from the entry itself, since the procedure writes no tag a grep could key on.
+- The procedure writes no tag a grep could key on, so the trigger is read from the verdict entry itself.
 
 ## Suggested next steps
 
-- **(design, after the trigger)** Write the engine-side spec and plan under `00118`'s decisions: read the infrastructure plan's *Resolution* and, in `docs/specs/00118-engine-cache-design.md`, each decision it lists as the engine half's, then brainstorm the second pair with the owner — the proxy's compose service, caps and health checks; the library's `RedisCacheConfig` fields against the proxy's address; the startup pass; the harness and its CI service; the live proof's window under the operating rule — and take it through `zcrypto-plan-review` before Task 1.
+- **(design, after the trigger)** Write the engine-side spec and plan under `00118`'s decisions: read the infrastructure plan's *Resolution* and, in `docs/specs/00118-engine-cache-design.md`, each decision it lists as the engine half's, then brainstorm the second pair with the owner and take it through `zcrypto-plan-review` before Task 1.
 - **(read, at the trigger)** Read Rung 1's verdict entry and its `unmatched` and reconciliation readings in `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md`: what a restart with a position open must recover is what the engine half's D11 startup pass is designed against.
