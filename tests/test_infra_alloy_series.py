@@ -264,6 +264,9 @@ CAPTURE_REQUIRED = [
     "node_cpu_seconds_total",
     "node_filesystem_avail_bytes",
     "node_filesystem_size_bytes",
+    # The zcache mesh probe (roles/cache_link) on the engine host: its end of each link is watched from its own
+    # side too. zcrypto-red shares this keep list and runs no cache_link, so it admits a family it never publishes.
+    "zcache_wireguard_handshake_age_seconds",
     # The clock-skew pair (spec 00103 D4) is deliberately absent from this hand-maintained list: the
     # source-derived guard at the bottom of this file covers every zcrypto_* name automatically. A
     # node_* name would have needed an entry here.

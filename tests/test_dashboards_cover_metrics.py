@@ -67,6 +67,8 @@ PUBLISHER_HOSTS = (
     # The engine runs on the capture primary only; its textfiles are admitted by the shared capture
     # keep-regex, so both capture hosts satisfy the requirement either way.
     ("infra/ansible/roles/engine/", ("zcrypto",)),
+    # The zcache mesh probe runs on the engine host and the three cache nodes, never on zcrypto-red.
+    ("infra/ansible/roles/cache_link/", ("zcrypto", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3")),
     ("infra/nas/", ("nas",)),
 )
 
@@ -214,10 +216,11 @@ def panel_families() -> dict[str, frozenset[str]]:
 # canaries in `test_the_publisher_scan_still_finds_each_source_kind` -- one per discovery path,
 # not one per mechanism (see that test's own comment).
 #
-# Scope is the three namespaces this repo's own producers publish into. `node_*`, `process_*` and
-# `hc_*` come from node-exporter, prometheus_client and healthchecks.io -- not ours to chart
-# exhaustively, and the alert layer (assertion 1) already pulls in the ones that matter.
-_APP = r"(?:zcrypto|ops|zaccess)_[a-z0-9_]*[a-z0-9]"
+# Scope is the four namespaces this repo's own producers publish into. `node_*`, `process_*`, `hc_*`
+# and `redis_*` come from node-exporter, prometheus_client, healthchecks.io and Alloy's Redis
+# exporter -- not ours to chart exhaustively, and the alert layer (assertion 1) already pulls in the
+# ones that matter; the cache nodes' keep list is held to what is charted or alerted below.
+_APP = r"(?:zcrypto|ops|zaccess|zcache)_[a-z0-9_]*[a-z0-9]"
 # (1) an exposition HELP/TYPE line, wherever it is printed from.
 _HELP_LINE = re.compile(rf"#\s+(?:HELP|TYPE)\s+({_APP})\b")
 # (2) a sample line: the family name OPENS a quoted literal and is terminated by a label brace or
@@ -506,6 +509,7 @@ def test_the_extractors_have_not_gone_blind():
         "zcrypto_trade_backfill_exit_code",  # a bare sample line with no HELP line
         "zaccess_tls_not_after_seconds",  # a sample line carrying labels
         "zcrypto_engine_journal_prune_kept_days",  # an echo in a plain .sh
+        "zcache_wireguard_handshake_age_seconds",  # an echoed HELP line in a plain .sh, the fourth namespace
     ],
 )
 def test_the_publisher_scan_still_finds_each_source_kind(family):
@@ -514,6 +518,18 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
         f" renamed (update this canary) or a discovery path broke -- in which case every family that"
         f" path used to find is now silently exempt from coverage."
     )
+
+
+def test_every_family_the_cache_nodes_admit_is_charted_or_alerted():
+    """The cache keep regex is written as the families the Cache board and the rules read, the first
+    third-party families on the fleet (`redis_*`). One admitted and read by neither is series budget
+    spent on nothing, and the per-host lists in test_infra_alloy_series.py cannot see that."""
+    text = KEEP_REGEX_FILES["zcrypto-valkey1"].read_text()
+    block = next(b for b in re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL) if '"keep"' in b)
+    admitted = set(re.search(r'regex\s*=\s*"([^"]+)"', block).group(1).split("|"))
+    assert len(admitted) >= 30, f"only {len(admitted)} families parsed from the cache keep regex -- the parse broke"
+    unread = sorted(admitted - set(panel_families()) - set(alerted_families()))
+    assert not unread, f"the cache nodes admit {unread}, which no panel draws and no rule reads"
 
 
 # A table's frame mixes string label columns with the numeric value, and `fieldConfig.defaults`

@@ -70,6 +70,9 @@ _UID_HOST = {
     "zcrypto-alloy-dark-zaccess": "zaccess",
     "zcrypto-alloy-dark-capture-primary": "zcrypto",
     "zcrypto-alloy-dark-capture-secondary": "zcrypto-red",
+    "zcrypto-alloy-dark-cache-1": "zcrypto-valkey1",
+    "zcrypto-alloy-dark-cache-2": "zcrypto-valkey2",
+    "zcrypto-alloy-dark-cache-3": "zcrypto-valkey3",
 }
 
 

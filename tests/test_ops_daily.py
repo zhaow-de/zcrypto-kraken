@@ -343,6 +343,9 @@ def test_an_unreachable_grafana_is_reported_never_read_as_nothing_firing():
         ("zcrypto-alloy-dark-nas", "nas"),
         ("zcrypto-alloy-dark-capture-primary", "zcrypto"),
         ("zcrypto-alloy-dark-capture-secondary", "zcrypto-red"),
+        ("zcrypto-alloy-dark-cache-1", "zcrypto-valkey1"),
+        ("zcrypto-alloy-dark-cache-2", "zcrypto-valkey2"),
+        ("zcrypto-alloy-dark-cache-3", "zcrypto-valkey3"),
     ],
 )
 def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid, expected):
