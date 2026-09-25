@@ -775,6 +775,7 @@ PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
 TRIPLE_EQUALS_VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.230.0",\n]\n'
 TRIPLE_EQUALS_UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.231.0",\n]\n'
 MARKER_PIN = "dependencies = [\n    \"nautilus-trader===1.230.0 ; python_version >= '3.14'\",\n]\n"
+UNSPACED_MARKER_PIN = "dependencies = [\n    \"nautilus-trader===1.230.0;python_version>='3.14'\",\n]\n"
 RECORD = ["1.230.0"]
 _UNSET = object()  # so a test can pass record=None and mean it
 
@@ -787,7 +788,8 @@ def _pinned_nautilus_version() -> str:
     assert len(entries) == 1, f"expected exactly one nautilus-trader dependency, found {entries}"
     version = re.sub(r"^nautilus-trader\s*={2,3}\s*", "", entries[0])
     assert version != entries[0], f"the nautilus-trader dependency must pin by equality: {entries[0]!r}"
-    return version
+    # A PEP 508 marker follows the version after `;`, and the guard reads the version alone.
+    return version.split(";")[0].strip()
 
 
 MALFORMED_RECORDS = [
@@ -872,8 +874,8 @@ def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSE
         # which is in no record, so it would refuse this row.
         (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, True, "armed on a verified version pinned with ==="),
         (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, False, "armed on an unverified version pinned with ==="),
-        # The version ends at the marker's space, so a legitimately marked pin is read as recorded.
         (ARMED_TEMPLATE, MARKER_PIN, True, "armed on a verified version pinned with an environment marker"),
+        (ARMED_TEMPLATE, UNSPACED_MARKER_PIN, True, "armed on a verified version pinned with an unspaced marker"),
     ],
 )
 def test_arming_backstop_semantics(template, pyproject, expected, why):
