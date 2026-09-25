@@ -881,6 +881,8 @@ def test_arming_backstop_override_demands_a_reason(override, expected):
         (ARMED_TEMPLATE, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
         (ARMED_TEMPLATE, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
         (DISARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, False),  # disarmed -> nothing was overridden
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, ARMING_REASON, False),  # === read as the assert reads it
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, ARMING_REASON, True),
     ],
 )
 def test_arming_override_echo_fires_only_on_an_accepted_override(template, pyproject, override, expected):
@@ -890,8 +892,6 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
 
 @pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
 def test_arming_override_echo_fires_on_a_malformed_record(record, why):
-    """A malformed record is what the assert cannot vouch on, so the override is what passed it,
-    and the echo's own copy of the shape check must read it the same way."""
     task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
     variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=ARMING_REASON, record=record)
     assert truthy(when_conditions(task), variables), why
