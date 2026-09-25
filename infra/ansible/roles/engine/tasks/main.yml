@@ -311,7 +311,7 @@
       {{ (engine_verified_nautilus if (engine_verified_nautilus is sequence
           and engine_verified_nautilus is not string
           and engine_verified_nautilus is not mapping
-          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []) | join(', ') | default('(the record is not a list -- nothing is verified)', true) }}).
+          and (engine_verified_nautilus | reject('string') | list | length == 0)) else []) | join(', ') | default('(the record is not a list of versions -- nothing is verified)', true) }}).
       The adapter's margin/short/post-only and reconciliation behaviour is native and no test here
       places an order, so this version's order path is unmeasured. Run the probes, write
       docs/reference/adapter-verification/<version>.md, add <version> to the .json — or pass

@@ -780,24 +780,24 @@ def _pinned_nautilus_version() -> str:
     return version
 
 
-@pytest.mark.parametrize(
-    ("record", "why"),
-    [
-        # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
-        # comma-joined string VOUCHES for a version it never verified.
-        ("1.230.0, 1.231.0", "a comma-joined string"),
-        # ...and KEY containment on a mapping, which vouches the same way.
-        ({"1.231.0": "note"}, "a mapping keyed by version"),
-        (None, "null"),
-        (42, "a scalar that is not even a sequence"),
-        # A MIXED list passes every structural test -- proper sequence, not a string, not a mapping
-        # -- so without an element-type check the Jinja half vouches for the real version in it while
-        # cli.engine.execgate collapses the same record to the empty set. The pin must be IN the list:
-        # beside a non-string, an unguarded ternary vouches and a guarded one refuses.
-        ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
-        ("", "an empty string"),
-    ],
-)
+MALFORMED_RECORDS = [
+    # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
+    # comma-joined string VOUCHES for a version it never verified.
+    ("1.230.0, 1.231.0", "a comma-joined string"),
+    # ...and KEY containment on a mapping, which vouches the same way.
+    ({"1.231.0": "note"}, "a mapping keyed by version"),
+    (None, "null"),
+    (42, "a scalar that is not even a sequence"),
+    # A MIXED list passes every structural test -- proper sequence, not a string, not a mapping
+    # -- so without an element-type check the Jinja half vouches for the real version in it while
+    # cli.engine.execgate collapses the same record to the empty set. The pin must be IN the list:
+    # beside a non-string, an unguarded ternary vouches and a guarded one refuses.
+    ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
+    ("", "an empty string"),
+]
+
+
+@pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
 def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(record, why):
     """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse."""
     task = find_task(load_tasks(ENGINE), ARMING)
@@ -888,17 +888,26 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
     assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
 
 
+@pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
+def test_arming_override_echo_fires_on_a_malformed_record(record, why):
+    """A malformed record is what the assert cannot vouch on, so the override is what passed it,
+    and the echo's own copy of the shape check must read it the same way."""
+    task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
+    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=ARMING_REASON, record=record)
+    assert truthy(when_conditions(task), variables), why
+
+
 @pytest.mark.parametrize(
     ("pyproject", "record", "names"),
     [
         (UNVERIFIED_PIN, RECORD, [UNVERIFIED_PIN_VERSION, "1.230.0"]),
         (NO_PIN, RECORD, ["(unparseable pin)"]),
-        (UNVERIFIED_PIN, None, ["(the record is not a list -- nothing is verified)"]),
-        (UNVERIFIED_PIN, 42, ["(the record is not a list -- nothing is verified)"]),
-        (UNVERIFIED_PIN, "", ["(the record is not a list -- nothing is verified)"]),
-        (UNVERIFIED_PIN, "1.230.0, 1.231.0", ["(the record is not a list -- nothing is verified)"]),
-        (UNVERIFIED_PIN, {"1.231.0": "note"}, ["(the record is not a list -- nothing is verified)"]),
-        (UNVERIFIED_PIN, [UNVERIFIED_PIN_VERSION, 1231], ["(the record is not a list -- nothing is verified)"]),
+        (UNVERIFIED_PIN, None, ["(the record is not a list of versions -- nothing is verified)"]),
+        (UNVERIFIED_PIN, 42, ["(the record is not a list of versions -- nothing is verified)"]),
+        (UNVERIFIED_PIN, "", ["(the record is not a list of versions -- nothing is verified)"]),
+        (UNVERIFIED_PIN, "1.230.0, 1.231.0", ["(the record is not a list of versions -- nothing is verified)"]),
+        (UNVERIFIED_PIN, {"1.231.0": "note"}, ["(the record is not a list of versions -- nothing is verified)"]),
+        (UNVERIFIED_PIN, [UNVERIFIED_PIN_VERSION, 1231], ["(the record is not a list of versions -- nothing is verified)"]),
     ],
 )
 def test_arming_backstop_fail_msg_renders_the_diagnostic(pyproject, record, names):
