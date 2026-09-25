@@ -109,7 +109,7 @@ def write_snapshot(path: str, maintenances: list[dict]) -> None:
 
 # Hosts whose converge touches nothing that speaks to the venue; re-judged by
 # `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds`.
-NO_VENUE_EXPOSURE = frozenset({"nas", "zaccess"})
+NO_VENUE_EXPOSURE = frozenset({"nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 
 
 def run_maintenance(rows: list[dict], windows: list[dict], *, venue_facing_only: bool = False) -> int:

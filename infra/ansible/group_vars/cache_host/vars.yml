@@ -1,0 +1,6 @@
+# bootstrap.yml's capture play connects as root on 22 at play scope, since a new node has no
+# zcrypto-deploy yet; every converge after it connects as below.
+ansible_user: zcrypto-deploy
+ansible_port: 10022
+# ssh_hardening AllowUsers: no zcrypto-data here, since no NAS pull channel reaches these nodes.
+hardening_ssh_allow_users: zcrypto-deploy root

@@ -9,10 +9,12 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 SCRIPT = Path(__file__).resolve().parent.parent / "infra" / "ansible" / "scripts" / "run.sh"
-HOSTS = ("zcrypto", "zcrypto-red", "zcrypto-ops", "nas", "zaccess")
+HOSTS = ("zcrypto", "zcrypto-red", "zcrypto-ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3")
 DEFAULT = [f"files/deploy_{h}_ed25519" for h in HOSTS]
+INVENTORY = SCRIPT.parent.parent / "inventory" / "hosts.yml"
 
 # `uv run ansible-vault view … <key>` prints the key's path so ssh-add's stdin names what was loaded, in order;
 # `uv run ansible-playbook …` records its argv and the ssh extra-args it was handed.
@@ -105,7 +107,7 @@ def _signalled(tmp_path, sig):
         env=_env(tmp_path, ansible, {"PLAYBOOK_SLEEP": str(_PLAY_HOLD_S)}),
         start_new_session=True,
     )
-    time.sleep(1.2)  # past the five key loads and into the play
+    time.sleep(2.0)  # past the eight key loads and into the play
     started = time.monotonic()
     os.kill(proc.pid, sig)
     proc.communicate(timeout=30)
@@ -122,7 +124,7 @@ def run(tmp_path, args, extra_env=None, expect_rc=0):
 
 def test_a_single_host_limit_loads_every_key_with_that_hosts_first(tmp_path):
     added, argv, sshargs = run(tmp_path, ["site.yml", "--limit", "zaccess", "--tags", "access"])
-    assert added == ["files/deploy_zaccess_ed25519", *DEFAULT[:4]]
+    assert added == ["files/deploy_zaccess_ed25519", *DEFAULT[:4], *DEFAULT[5:]]
     assert sorted(added) == sorted(DEFAULT)  # the other hosts' keys stay: a play's ssh reaches more than its --limit host
     assert sshargs == ""
     assert argv == "run ansible-playbook site.yml --limit zaccess --tags access"
@@ -147,6 +149,32 @@ def test_a_group_or_list_limit_has_no_key_and_keeps_the_listed_order(tmp_path):
 def test_a_host_without_a_key_file_keeps_the_listed_order(tmp_path):
     added, _, _ = run(tmp_path, ["site.yml", "--limit", "localhost"])
     assert added == DEFAULT
+
+
+def test_a_cache_node_limit_offers_its_key_first(tmp_path):
+    added, _, _ = run(tmp_path, ["site.yml", "--limit", "zcrypto-valkey2", "--tags", "cache"])
+    assert added == ["files/deploy_zcrypto-valkey2_ed25519", *[k for k in DEFAULT if "valkey2" not in k]]
+
+
+def _inventory_hosts(node: dict) -> set[str]:
+    found = set((node or {}).get("hosts") or {})
+    for child in ((node or {}).get("children") or {}).values():
+        found |= _inventory_hosts(child)
+    return found
+
+
+def test_the_ring_is_every_inventory_host_but_the_workstation():
+    """A host missing from the ring is offered its key only when `--limit` names it alone: a group run, or another
+    host's play reaching it by `delegate_to`, meets it keyless. The private halves are checked for presence, never
+    read; each public half must open `ssh-ed25519 `, so a placeholder in a key's place is refused."""
+    ring = next(line for line in SCRIPT.read_text().splitlines() if line.startswith("KEYS=("))
+    assert ring.removeprefix("KEYS=(").removesuffix(")").split() == DEFAULT
+    children = yaml.safe_load(INVENTORY.read_text())["all"]["children"]
+    assert _inventory_hosts({"children": {g: n for g, n in children.items() if g != "workstation"}}) == set(HOSTS)
+    ansible = SCRIPT.parent.parent
+    assert all((ansible / key).is_file() for key in DEFAULT)
+    not_keys = [key for key in DEFAULT if not (ansible / f"{key}.pub").read_text().startswith("ssh-ed25519 ")]
+    assert not not_keys, f"these public halves are not ed25519 public keys: {not_keys}"
 
 
 def test_the_operators_ssh_extra_args_pass_through_untouched(tmp_path):

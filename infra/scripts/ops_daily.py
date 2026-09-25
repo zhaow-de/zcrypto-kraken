@@ -582,9 +582,17 @@ REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
 # The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
-# print and the ssh destination -- and `zcrypto-red` two; `zaccess` has no bare-name destination.
-_SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red"}
-_HOST_LABELS = {"hp": "ops", "zcrypto-ops": "ops", "red": "zcrypto-red"}
+# print and the ssh destination -- and `zcrypto-red` and each cache node two; `zaccess` has no
+# bare-name destination.
+_SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red", "zcrypto-valkey1": "db1", "zcrypto-valkey2": "db2", "zcrypto-valkey3": "db3"}
+_HOST_LABELS = {
+    "hp": "ops",
+    "zcrypto-ops": "ops",
+    "red": "zcrypto-red",
+    "db1": "zcrypto-valkey1",
+    "db2": "zcrypto-valkey2",
+    "db3": "zcrypto-valkey3",
+}
 
 
 def host_label(host: str) -> str:
@@ -1424,7 +1432,7 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess"})
+_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer

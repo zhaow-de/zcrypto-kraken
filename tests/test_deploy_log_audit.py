@@ -118,7 +118,7 @@ def test_the_venue_facing_derivation_still_holds():
     assert stack["services"]["archive-pull"]["entrypoint"] == ["/opt/pull-entrypoint.sh"]
 
 
-@pytest.mark.parametrize("host", ["nas", "zaccess"])
+@pytest.mark.parametrize("host", ["nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"])
 def test_venue_facing_drops_a_host_a_window_cannot_harm(tmp_path, capsys, host):
     """The unnarrowed arm still reports the row, so the flag narrows the count and hides nothing."""
     log = _log(tmp_path, [_row("2026-08-28T23:40:17Z", limit=host), _row("2026-08-20T01:00:00Z")])

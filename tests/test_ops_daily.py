@@ -2850,13 +2850,22 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     changes -- `zaccess` has none and is unmapped -- and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
-    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z-]+)` \|", table, re.M))
-    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"}, rows
+    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
+    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
+    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
     assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
     alloy = (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()
     assert any(line.strip().startswith('host = "ops"') for line in alloy.splitlines())
+
+
+@pytest.mark.parametrize("host", ["zcrypto-valkey1", "db1"])
+def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
+    """A step names a cache node by its Alloy `host` label or by its ssh alias; neither spelling may lose the tier."""
+    step = "sudo docker restart grafana-alloy"
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f"ssh db1 {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------

@@ -1,0 +1,7 @@
+# A cache node: Linode 1 GB, Debian 13, in a region apart from the engine host's.
+ansible_host: zcrypto-valkey3.zhaow.me
+# The base role defaults to "zcrypto"; without this the node would converge to the primary's hostname.
+base_hostname: zcrypto-valkey3
+# The slot's derivation is in host_vars/zcrypto-valkey1/vars.yml.
+base_unattended_upgrades_reboot_time: "17:25"
+deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-valkey3_ed25519.pub') }}"

@@ -115,6 +115,8 @@ def test_a_log_that_is_not_jsonl_exits_2_rather_than_counting_zero(tmp_path):
 def test_the_inventory_expands_a_group_to_its_hosts_at_any_depth():
     groups = pins.inventory_groups(pathlib.Path(__file__).resolve().parents[1])
     assert groups["capture_host"] == {"zcrypto", "zcrypto-red"} and "nas" in groups["observed"]
+    assert groups["cache_host"] == {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
+    assert groups["cache_host"] <= groups["observed"]
 
 
 def test_the_real_pair_reads_zero():
