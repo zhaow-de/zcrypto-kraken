@@ -1,0 +1,15 @@
+# Installed by the `cache` Ansible role at /etc/systemd/system/zcrypto-reboot-check.timer, a copy of
+# the capture role's timer; edit this file and re-converge instead of editing the host's copy.
+[Unit]
+Description=Publish the pending-reboot flag as a node-exporter textfile
+
+[Timer]
+# Interval, not OnCalendar: a stat plus a three-line write. Every 15 min bounds how long a kernel flag
+# sits unseen; OnBootSec republishes promptly after a reboot so the gauge returns to 0.
+OnBootSec=2min
+OnUnitActiveSec=15min
+# Deliberately no Persistent=true: this reports current state.
+Unit=zcrypto-reboot-check.service
+
+[Install]
+WantedBy=timers.target

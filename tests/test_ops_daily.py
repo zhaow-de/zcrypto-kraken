@@ -343,6 +343,9 @@ def test_an_unreachable_grafana_is_reported_never_read_as_nothing_firing():
         ("zcrypto-alloy-dark-nas", "nas"),
         ("zcrypto-alloy-dark-capture-primary", "zcrypto"),
         ("zcrypto-alloy-dark-capture-secondary", "zcrypto-red"),
+        ("zcrypto-alloy-dark-cache-1", "zcrypto-valkey1"),
+        ("zcrypto-alloy-dark-cache-2", "zcrypto-valkey2"),
+        ("zcrypto-alloy-dark-cache-3", "zcrypto-valkey3"),
     ],
 )
 def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid, expected):
@@ -2850,13 +2853,96 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     changes -- `zaccess` has none and is unmapped -- and the ops role's Alloy sets the `ops` label."""
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
-    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z-]+)` \|", table, re.M))
-    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"}, rows
+    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
+    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
+    assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
     assert set(ops_daily._SSH_ALIASES) == {ops_daily.host_label(h) for h in rows if ops_daily.ssh_alias(h) != h}
     alloy = (repo / "infra/ansible/roles/ops/files/config.alloy").read_text()
     assert any(line.strip().startswith('host = "ops"') for line in alloy.splitlines())
+
+
+def _published_ssh_stanzas(repo: Path) -> dict[str, dict[str, str]]:
+    doc = (repo / "infra/external-systems.md").read_text()
+    block = re.search(r"^\*\*SSH config\*\*$.*?^```\n(.*?)^```$", doc, re.M | re.S)
+    assert block, "infra/external-systems.md carries no fenced block under **SSH config**"
+    stanzas: dict[str, dict[str, str]] = {}
+    current: dict[str, str] | None = None
+    for line in block.group(1).splitlines():
+        if line.startswith("Host "):
+            current = stanzas.setdefault(line.split(None, 1)[1], {})
+        elif line.strip():
+            assert current is not None and line.startswith(" "), line
+            key, value = line.split(None, 1)
+            assert key not in current, (line, current)
+            current[key] = value
+    return stanzas
+
+
+def test_every_published_ssh_destination_has_a_stanza_and_the_cache_nodes_match_the_inventory():
+    repo = Path(__file__).resolve().parents[1]
+    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", (repo / "docs/reference/fleet.md").read_text(), re.M))
+    stanzas = _published_ssh_stanzas(repo)
+    for fleet_host, destination in rows.items():
+        assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
+    ansible = repo / "infra/ansible"
+    group = yaml.safe_load((ansible / "group_vars/cache_host/vars.yml").read_text())
+    for node in ("zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"):
+        stanza = stanzas[rows[node]]
+        host_vars = yaml.safe_load((ansible / f"host_vars/{node}/vars.yml").read_text())
+        assert stanza["HostName"] == host_vars["ansible_host"], (node, stanza)
+        assert stanza["Port"] == str(group["ansible_port"]), (node, stanza)
+        assert stanza["User"] == group["ansible_user"], (node, stanza)
+        assert stanza.get("IdentitiesOnly") == "yes", (node, stanza)
+        key_file = re.search(r"files/(deploy_[a-z0-9-]+_ed25519)\.pub", host_vars["deploy_authorized_key"]).group(1)
+        assert stanza["IdentityFile"] == f"~/.ssh/{key_file}", (node, stanza)
+
+
+@pytest.mark.parametrize("host", ["zcrypto-valkey1", "db1"])
+def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
+    step = "sudo docker restart grafana-alloy"
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f"ssh db1 {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        "sudo docker restart zcrypto-valkey",
+        "sudo docker stop zcrypto-sentinel",
+        "ssh db2 sudo docker restart zcrypto-valkey",
+        "sudo systemctl restart zcrypto-cache.service",
+        "sudo systemctl stop zcrypto-cache.service",
+        "sudo systemctl start zcrypto-cache",
+        "ssh db2 sudo systemctl restart zcrypto-cache.service",
+        "sudo systemctl restart wg-quick@zcache0",
+    ],
+)
+def test_a_cache_daemon_restart_is_never_the_passs_own(step):
+    """Restarting, stopping or starting Valkey and Sentinel, by container or through their unit, is a replication event, a
+    failover when the node holds the primary, and so is restarting the mesh tunnel replication runs over: each stays the
+    operator's."""
+    assert ops_daily.classify_action(step, host="zcrypto-valkey1", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize(
+    ("step", "host"),
+    [
+        ("sudo systemctl restart docker", "zcrypto-valkey1"),
+        ("sudo systemctl stop docker.service", "zcrypto-valkey1"),
+        ("ssh db1 sudo systemctl restart docker", None),
+        ("sudo docker restart 3f2a9c1b", "zcrypto-valkey1"),
+        ("sudo systemctl restart tailscaled", "zcrypto-valkey1"),
+        ("sudo docker restart valkey", "zcrypto-valkey1"),
+    ],
+)
+def test_on_a_cache_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+def test_the_cache_allowlist_leaves_a_daemon_restart_on_ops_autonomous():
+    assert ops_daily.classify_action("sudo systemctl restart docker", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------

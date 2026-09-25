@@ -67,9 +67,9 @@ df -h
 
 Append the following lines to `~/.ssh/config` for some shortcuts to ease the remote connection. Assumptions:
 
-- Each node has its own deploy SSH key: locally `~/.ssh/zcrypto-deploy-{zcrypto,red,ops,nas}_ed25519`, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`zcrypto-deploy`)
+- Each node has its own deploy SSH key: locally `~/.ssh/zcrypto-deploy-{zcrypto,red,ops,nas}_ed25519` and, for the three cache nodes, `~/.ssh/deploy_zcrypto-valkey{1,2,3}_ed25519`, pubkeys recorded in `infra/ansible/files/` (see its `README.md`) — for the deployment user (`zcrypto-deploy`)
 - Except for NAS, the `zcrypto-deploy` user is provisioned by the Ansible play
-- User `zcrypto-deploy` on all the 4x nodes are passwordless sudo enabled
+- User `zcrypto-deploy` on every node is passwordless sudo enabled
 
 ```
 Host zcrypto
@@ -104,6 +104,33 @@ Host nas
   Port 22
   User zcrypto-deploy
   IdentityFile ~/.ssh/zcrypto-deploy-nas_ed25519
+  PreferredAuthentications publickey
+  IdentitiesOnly yes
+  UpdateHostKeys yes
+
+Host db1
+  HostName zcrypto-valkey1.zhaow.me
+  Port 10022
+  User zcrypto-deploy
+  IdentityFile ~/.ssh/deploy_zcrypto-valkey1_ed25519
+  PreferredAuthentications publickey
+  IdentitiesOnly yes
+  UpdateHostKeys yes
+
+Host db2
+  HostName zcrypto-valkey2.zhaow.me
+  Port 10022
+  User zcrypto-deploy
+  IdentityFile ~/.ssh/deploy_zcrypto-valkey2_ed25519
+  PreferredAuthentications publickey
+  IdentitiesOnly yes
+  UpdateHostKeys yes
+
+Host db3
+  HostName zcrypto-valkey3.zhaow.me
+  Port 10022
+  User zcrypto-deploy
+  IdentityFile ~/.ssh/deploy_zcrypto-valkey3_ed25519
   PreferredAuthentications publickey
   IdentitiesOnly yes
   UpdateHostKeys yes

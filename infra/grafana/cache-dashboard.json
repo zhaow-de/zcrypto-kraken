@@ -1,0 +1,1085 @@
+{
+  "id": null,
+  "uid": "zcrypto-cache",
+  "title": "Cache",
+  "description": "Is the engine's cache set healthy? The three Valkey nodes, their Sentinels and the mesh between them, and the engine's own lines about the cache. Every panel that serves an alert plots that alert's own expression and carries its own threshold line.",
+  "tags": [],
+  "schemaVersion": 39,
+  "version": 0,
+  "editable": true,
+  "graphTooltip": 1,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "links": [],
+  "refresh": "1m",
+  "timezone": "",
+  "weekStart": "",
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "custom",
+        "query": "Cache 1 : zcrypto-valkey1, Cache 2 : zcrypto-valkey2, Cache 3 : zcrypto-valkey3",
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Which cache nodes the panels below select. All expands to the three pinned nodes joined into one matcher. The Alloy tiles and the alert panels name their nodes literally and ignore this picker.",
+        "current": {"selected": true, "text": ["All"], "value": ["$__all"]},
+        "options": [
+          {"selected": true, "text": "All", "value": "$__all"},
+          {"selected": false, "text": "Cache 1", "value": "zcrypto-valkey1"},
+          {"selected": false, "text": "Cache 2", "value": "zcrypto-valkey2"},
+          {"selected": false, "text": "Cache 3", "value": "zcrypto-valkey3"}
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Hosts",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "Alloy up \u2014 per node",
+      "description": "Is each cache node's telemetry agent shipping anything at all? One target per node, written out literally rather than driven by the Host picker: a regex selector cannot render a node whose series have vanished, which is the condition this panel exists to catch. A tile reads DARK when the node has shipped nothing; the alert fires after `for: 10m` of that. While a tile is DARK every other panel on this board is blind for that node. Runbook: infra/runbooks/cache.md#zcrypto-alloy-dark-cache-1",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "count(up{host=\"zcrypto-valkey1\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "Cache 1",
+          "instant": true
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "count(up{host=\"zcrypto-valkey2\"}) or on() vector(0)",
+          "refId": "B",
+          "legendFormat": "Cache 2",
+          "instant": true
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "count(up{host=\"zcrypto-valkey3\"}) or on() vector(0)",
+          "refId": "C",
+          "legendFormat": "Cache 3",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [{"type": "value", "options": {"0": {"text": "DARK", "color": "red", "index": 0}}}],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          },
+          "noValue": "DARK"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 102,
+      "type": "timeseries",
+      "title": "Load per core",
+      "description": "The one-minute load divided by the node's core count. The nodes are one-core machines running Valkey, Sentinel and the telemetry agent, so a sustained reading above 1 is the node itself short of CPU, which shows up first as replication lag.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 6, "w": 9, "x": 6, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "node_load1{host=~\"$host\"} / on(host) group_left() count by (host) (node_cpu_seconds_total{host=~\"$host\", mode=\"idle\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 103,
+      "type": "timeseries",
+      "title": "Memory available",
+      "description": "Available memory as a share of the node's total. Valkey, Sentinel and the telemetry agent each run under a container memory cap on a 1 GB node, and this reads what the kernel, the Docker daemon and the page cache are left with; Valkey's own use against its limit is the Memory against maxmemory panel below.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 6, "w": 9, "x": 15, "y": 1},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "node_memory_MemAvailable_bytes{host=~\"$host\"} / node_memory_MemTotal_bytes{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {"thresholdsStyle": {"mode": "off"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 104,
+      "type": "timeseries",
+      "title": "Root filesystem free",
+      "description": "Free space on the root filesystem, where Valkey's append-only file and snapshots live. The append-only file grows between rewrites, so a falling line that recovers is a rewrite completing; one that only falls is a rewrite failing, which the AOF panel below shows. Below the green line is the alert's condition, after `for: 30m`: on a full disk Valkey stops on the write it cannot make durable, or stays up refusing writes when a snapshot meets the full disk first. Runbook: infra/runbooks/cache.md#zcrypto-cache-disk-low",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 7},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "node_filesystem_avail_bytes{host=~\"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=~\"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\", mountpoint=\"/\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {"thresholdsStyle": {"mode": "line"}},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.15}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 105,
+      "type": "timeseries",
+      "title": "Mesh handshake age per peer",
+      "description": "Seconds since each mesh member last completed a WireGuard handshake with each of its peers, the engine host's own view under host zcrypto and each node's under its name; the peer is named by its mesh address: 10.98.0.1 is the engine host, 10.98.0.11 to 10.98.0.13 are Cache 1 to Cache 3. The line is the recorded age plus the age of the file it was read from, so a probe that stopped writing climbs here too. A healthy peer re-handshakes about every two minutes; the red line is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-wg-handshake-stale",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 7},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "max by (host, peer) (zcache_wireguard_handshake_age_seconds{host=~\"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\"}) + on(host) group_left() (time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\", file=~\".*/zcache.prom\"}))",
+          "refId": "A",
+          "legendFormat": "{{host}} to {{peer}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {"thresholdsStyle": {"mode": "line"}},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 180}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 106,
+      "type": "timeseries",
+      "title": "Reboot pending and probe freshness",
+      "description": "The pending-reboot flag each node's reboot check publishes (1 means an unattended upgrade is waiting for the node's reboot slot), the age of the mesh probe's file, and whether the collector could parse the directory. A file age climbing past a few minutes is the probe timer stopped, and the handshake panel beside this one climbs with it.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 7},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "node_reboot_required{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} reboot pending"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"$host\", file=~\".*/zcache.prom\"})",
+          "refId": "B",
+          "legendFormat": "{{host}} probe file age (s)"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "max by (host) (node_textfile_scrape_error{host=~\"$host\"})",
+          "refId": "C",
+          "legendFormat": "{{host}} textfile parse error"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 107,
+      "type": "timeseries",
+      "title": "Alloy memory against its 256 MiB cap",
+      "description": "The telemetry agent's resident memory as a share of its container cap. The red line is the fleet's Alloy headroom bar, the agent's Go soft limit; that rule is shared with the other hosts and its notification links the Fleet health board, so this is where a cache node's reading is. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 14},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "process_resident_memory_bytes{host=~\"$host\", job=\"integrations/self\"} / 268435456",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {"thresholdsStyle": {"mode": "line"}},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.9}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 108,
+      "type": "timeseries",
+      "title": "Network traffic",
+      "description": "Bytes per second in and out of each interface but loopback. zcache0 is the mesh, carrying replication and the engine's cache traffic; eth0 carries the mesh's own encrypted packets and the telemetry.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "rate(node_network_receive_bytes_total{host=~\"$host\", device!=\"lo\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{host}} {{device}} in"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "rate(node_network_transmit_bytes_total{host=~\"$host\", device!=\"lo\"}[5m])",
+          "refId": "B",
+          "legendFormat": "{{host}} {{device}} out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {"thresholdsStyle": {"mode": "off"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Valkey",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 21}
+    },
+    {
+      "id": 201,
+      "type": "stat",
+      "title": "Role per node",
+      "description": "What each node's Valkey says it is. Exactly one node reads master and the other two slave; the Which node is primary panel shows the same over time.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 22},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "max by (host, role) (redis_instance_info{job=\"valkey\", host=~\"$host\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}: {{role}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "name",
+        "colorMode": "none",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 202,
+      "type": "stat",
+      "title": "Valkey answering the exporter",
+      "description": "Whether the node's exporter could log in to its Valkey and read INFO. DOWN with the node's Alloy up is Valkey stopped, or the exporter user refused.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 22},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_up{job=\"valkey\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 203,
+      "type": "stat",
+      "title": "Valkey uptime",
+      "description": "Seconds since each Valkey process started. A reset that no converge explains is a crash and a restart.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 22},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_uptime_in_seconds{job=\"valkey\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 204,
+      "type": "timeseries",
+      "title": "Primary count \u2014 the page's value",
+      "description": "How far the number of addresses at least two Sentinels name a healthy primary is from one: 0 is healthy, 1 is no primary the Sentinels agree on. It reads nothing while fewer than two nodes' Sentinel telemetry ships, which the Alloy-dark alerts own. The red line is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-primary-count",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 27},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "abs((count(count by (master_address) (redis_sentinel_master_status{job=\"sentinel\"} == 1) >= 2) or on() vector(0)) - 1) and on() (count(up{job=\"sentinel\"}) > 1)",
+          "refId": "A",
+          "legendFormat": "distance from one primary"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "line"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.5}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 205,
+      "type": "timeseries",
+      "title": "Which node is primary",
+      "description": "One line per node that reports role master, over time. A failover is the line moving from one node to another; two lines at once is two primaries.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 27},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "count by (host) (redis_instance_info{job=\"valkey\", host=~\"$host\", role=\"master\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} is primary"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 206,
+      "type": "timeseries",
+      "title": "Replicas connected to the primary",
+      "description": "How many replicas the primary has connected. Two is the healthy set; one leaves the primary writable with one copy; zero makes it refuse writes, since it takes writes only with at least one replica within 10 seconds of lag. Below the green line is the alert's condition, after `for: 5m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-replicas-short",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 27},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_connected_slaves{job=\"valkey\"} and on(host) redis_instance_info{job=\"valkey\", role=\"master\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} (primary)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "line"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 2}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 207,
+      "type": "timeseries",
+      "title": "Replication lag \u2014 bytes behind the primary",
+      "description": "The primary's replication offset minus each replica's acknowledged offset, as the primary reports it, the replica named by its mesh address. Near zero is healthy; a line that climbs and stays is a replica that stopped applying.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 34},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "scalar(max(redis_master_repl_offset{job=\"valkey\"} and on(host) redis_instance_info{job=\"valkey\", role=\"master\"})) - redis_connected_slave_offset_bytes{job=\"valkey\"}",
+          "refId": "A",
+          "legendFormat": "replica {{slave_ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {"thresholdsStyle": {"mode": "off"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 208,
+      "type": "stat",
+      "title": "Replica link to the primary",
+      "description": "Whether each replica's link to its primary is up, as the replica reports it. The primary itself shows no tile.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 34},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_master_link_up{job=\"valkey\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 209,
+      "type": "timeseries",
+      "title": "Memory against maxmemory",
+      "description": "Valkey's used memory as a share of its maxmemory. The eviction policy is noeviction, so at the limit writes are refused rather than keys dropped; nothing trims the keys, so growth is the signal. The red line is where the alert fires, after `for: 15m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-memory-70pct",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 41},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_memory_used_bytes{job=\"valkey\"} / redis_memory_max_bytes{job=\"valkey\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {"thresholdsStyle": {"mode": "line"}},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.7}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 214,
+      "type": "timeseries",
+      "title": "Valkey resident memory against its 256 MiB cap",
+      "description": "Valkey's resident memory as a share of its 256 MiB container cap. Above its used memory is fragmentation or the append-only-file rewrite's copy-on-write pages, which the maxmemory panel beside it does not see; at the cap the container is OOM-killed and restarted, which on the primary's node is a failover. The red line is where the alert fires, after `for: 5m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-valkey-rss-headroom",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 6, "x": 6, "y": 41},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_memory_used_rss_bytes{host=~\"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\", job=\"valkey\"} / 268435456",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {"thresholdsStyle": {"mode": "line"}},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.7}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 210,
+      "type": "timeseries",
+      "title": "Commands per second",
+      "description": "Commands each Valkey processes per second, replication and the exporter's own reads included, so the replicas are never at zero.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 6, "x": 12, "y": 41},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "rate(redis_commands_processed_total{job=\"valkey\", host=~\"$host\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {"thresholdsStyle": {"mode": "off"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 211,
+      "type": "timeseries",
+      "title": "Connected clients",
+      "description": "Client connections on each Valkey: the exporter, the Sentinels, the replicas on the primary, and the engine through its proxy once it is wired.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 6, "x": 18, "y": 41},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_connected_clients{job=\"valkey\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 212,
+      "type": "timeseries",
+      "title": "AOF \u2014 the page's value",
+      "description": "1 when the append-only file is enabled and its last write and last rewrite both succeeded, 0 when any of the three is not so. A failed write never reaches the write's arm: under `appendfsync always` it stops Valkey instead, which the disk alert on the Root filesystem free panel above warns of first. Below the green line is the alert's condition, after `for: 5m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-aof-not-ok",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 48},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "min by (host) (redis_aof_enabled{job=\"valkey\"} * redis_aof_last_write_status{job=\"valkey\"} * redis_aof_last_bgrewrite_status{job=\"valkey\"})",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "line"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 213,
+      "type": "timeseries",
+      "title": "RDB last background save",
+      "description": "1 when each node's last background snapshot succeeded. The snapshots serve a replica's full resync; a failing one is read beside the AOF panel and the free space above.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 48},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_rdb_last_bgsave_status{job=\"valkey\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Sentinel",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 55}
+    },
+    {
+      "id": 301,
+      "type": "stat",
+      "title": "Sentinel answering the exporter",
+      "description": "Whether each node's exporter could authenticate to its Sentinel and read INFO. Two of three are needed to agree on a failover.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 56},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_up{job=\"sentinel\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 302,
+      "type": "stat",
+      "title": "The primary as each Sentinel names it",
+      "description": "The address each Sentinel names as the primary, and whether it reads that primary as ok. All three should name the same mesh address, the one the Role per node panel shows as master.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 10, "x": 6, "y": 56},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "max by (host, master_address) (redis_sentinel_master_status{job=\"sentinel\", host=~\"$host\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} names {{master_address}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "not ok", "color": "red", "index": 0},
+                "1": {"text": "ok", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 303,
+      "type": "stat",
+      "title": "Masters each Sentinel monitors",
+      "description": "How many primaries each Sentinel monitors; 1 is the zcache set. 0 is a Sentinel whose configuration lost the monitor line.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 56},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_sentinel_masters{job=\"sentinel\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 304,
+      "type": "timeseries",
+      "title": "Sentinels each Sentinel knows",
+      "description": "The Sentinels each one knows for the set, itself included, and how many of them it reads as healthy. The quorum is 2, so fewer than two healthy leaves the set unable to fail over.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 61},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_sentinel_master_sentinels{job=\"sentinel\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}} known"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_sentinel_master_ok_sentinels{job=\"sentinel\", host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} healthy"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 305,
+      "type": "timeseries",
+      "title": "Replicas each Sentinel knows",
+      "description": "The replicas each Sentinel knows for the set. Two is the healthy set; a Sentinel reading fewer than the others has lost sight of a node.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 61},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_sentinel_master_slaves{job=\"sentinel\", host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 306,
+      "type": "stat",
+      "title": "Valkey and Sentinel answering the exporter, the lowest per node and daemon",
+      "description": "The page's value: 1 when the daemon answers the exporter, 0 when it does not, for each node's Valkey and Sentinel. DOWN with the node's Alloy up is the daemon stopped, or the exporter's login refused; red, below 1, is the alert's condition, after `for: 10m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 68},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "min by (host, job) (redis_up{job=~\"valkey|sentinel\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} {{job}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Logs",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 73}
+    },
+    {
+      "id": 401,
+      "type": "logs",
+      "title": "Engine lines naming the cache",
+      "description": "The engine's own log lines that mention the cache, newest first: the counts it restored at each boot, and a refusal to start against a cache that is unreachable or lost its data. The library's own cache errors are written by its native side and never reach this log store.",
+      "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 74},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
+          "refId": "A",
+          "queryType": "range",
+          "expr": "{host=\"zcrypto\", container=\"engine\"} |~ \"(?i)cache\" | json | drop __error__, __error_details__ | line_format \"{{ if .message }}{{ .message }}{{ if .exception }}\\n{{ .exception }}{{ end }}{{ else }}{{ __line__ }}{{ end }}\""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 402,
+      "type": "logs",
+      "title": "Valkey and Sentinel lines",
+      "description": "Each node's Valkey and Sentinel log, newest first. A failover reads here as the Sentinels' +sdown, +odown and +switch-master events; a replica's resync as its MASTER <-> REPLICA sync lines.",
+      "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 84},
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
+          "refId": "A",
+          "queryType": "range",
+          "expr": "{host=~\"$host\", container=~\"valkey|sentinel\"}"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

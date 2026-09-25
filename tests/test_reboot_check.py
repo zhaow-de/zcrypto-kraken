@@ -182,7 +182,6 @@ def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
 
 
 def test_only_the_timer_is_enabled_not_the_oneshot():
-    """Enabling the oneshot as well would probe on every boot."""
     import yaml
 
     tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
@@ -192,7 +191,7 @@ def test_only_the_timer_is_enabled_not_the_oneshot():
         if "ansible.builtin.systemd_service" in t and t["ansible.builtin.systemd_service"].get("enabled")
     ]
     assert "zcrypto-reboot-check.timer" in enabled, f"the timer is not enabled: {enabled}"
-    assert "zcrypto-reboot-check.service" not in enabled, f"the oneshot must not be enabled — it would run on every boot: {enabled}"
+    assert "zcrypto-reboot-check.service" not in enabled, f"the oneshot must not be enabled — the timer runs it: {enabled}"
 
 
 def _flatten(tasks):
@@ -217,3 +216,44 @@ def test_the_timer_actually_repeats():
         "without a boot trigger the gauge is stale until the first interval"
     )
     assert any(l.strip() == "Unit=zcrypto-reboot-check.service" for l in timer.splitlines())
+
+
+# --- the cache role's copy ------------------------------------------------------------------------
+# The cache nodes publish the same flag from a copy of this role's script, timer and unit, so the fleet's reboot-pending
+# series covers them. The copies' comments are their own, naming the role that installs them; what a shell or systemd
+# reads must be this role's, the unit's one variable renamed.
+CACHE_ROLE = REPO / "infra/ansible/roles/cache"
+REBOOT_CHECK_FILES = (
+    "files/zcrypto-reboot-check.sh",
+    "files/zcrypto-reboot-check.timer",
+    "templates/zcrypto-reboot-check.service.j2",
+)
+
+
+def _program(path: Path) -> list[str]:
+    return [line for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+@pytest.mark.parametrize("relative", REBOOT_CHECK_FILES)
+def test_the_cache_roles_reboot_check_is_the_capture_roles_program(relative):
+    copy = [line.replace("cache_textfile_dir", "capture_textfile_dir") for line in _program(CACHE_ROLE / relative)]
+    assert copy == _program(ROLE / relative), f"the cache role's {relative} drifted from the capture role's"
+
+
+def test_the_cache_role_installs_what_its_unit_runs_and_enables_the_timer_alone():
+    import yaml
+
+    textfile_dir = yaml.safe_load((CACHE_ROLE / "defaults/main.yml").read_text())["cache_textfile_dir"]
+    assert textfile_dir == "/var/lib/zcrypto-node-textfile", textfile_dir
+    unit = (CACHE_ROLE / "templates/zcrypto-reboot-check.service.j2").read_text()
+    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    binary = exec_start.removeprefix("ExecStart=").split()[0]
+    cache_tasks_yaml = (CACHE_ROLE / "tasks/main.yml").read_text()
+    assert binary in _installed_dests(cache_tasks_yaml), f"the unit runs {binary}, which the cache role does not install"
+    enabled = [
+        t["ansible.builtin.systemd_service"]["name"]
+        for t in _flatten(yaml.safe_load(cache_tasks_yaml))
+        if "ansible.builtin.systemd_service" in t and t["ansible.builtin.systemd_service"].get("enabled")
+    ]
+    assert "zcrypto-reboot-check.timer" in enabled, f"the timer is not enabled: {enabled}"
+    assert "zcrypto-reboot-check.service" not in enabled, f"the oneshot must not be enabled: {enabled}"

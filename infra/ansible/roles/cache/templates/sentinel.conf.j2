@@ -1,0 +1,15 @@
+# Rendered by the `cache` Ansible role when absent or under -e cache_config_reset=true, and owned by
+# Sentinel after its first start: it writes the replicas, the other Sentinels and its epoch into this
+# file. The role reports a template that no longer matches this render and never applies it on its own.
+bind 127.0.0.1 {{ cache_bind_address }}
+port 26379
+dir /tmp
+requirepass {{ cache_sentinel_requirepass }}
+sentinel resolve-hostnames no
+sentinel announce-ip {{ cache_bind_address }}
+sentinel monitor {{ cache_master_name }} {{ cache_first_primary }} 6379 2
+sentinel down-after-milliseconds {{ cache_master_name }} {{ cache_down_after_ms }}
+sentinel failover-timeout {{ cache_master_name }} {{ cache_failover_timeout_ms }}
+sentinel parallel-syncs {{ cache_master_name }} 1
+sentinel auth-user {{ cache_master_name }} sentinel
+sentinel auth-pass {{ cache_master_name }} {{ cache_sentinel_password }}

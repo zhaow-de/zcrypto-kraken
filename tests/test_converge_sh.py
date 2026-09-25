@@ -341,6 +341,74 @@ PUBLISHED = [
         "ops",
         {"ops_grafana_watchdog_probe_url": "https://grafana-watchdog-drill.invalid/api/health"},
     ),
+    (
+        ["--limit", "zcrypto-valkey1", "--tags", "base,hardening,firewall,fail2ban,chrony,docker", "-e", "daemon_json_ack=true"],
+        "zcrypto-valkey1",
+        "base,hardening,firewall,fail2ban,chrony,docker",
+        {"daemon_json_ack": "true"},
+    ),
+    (["--limit", "zcrypto-valkey2", "--tags", "firewall,cache-link"], "zcrypto-valkey2", "firewall,cache-link", {}),
+    (
+        ["--limit", "zcrypto", "--tags", "firewall,cache-link", "-e", "converge_primary=true"],
+        "zcrypto",
+        "firewall,cache-link",
+        {"converge_primary": "true"},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey3",
+            "--tags",
+            "cache",
+            "-e",
+            f"cache_image_digest={DIGEST}",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+        ],
+        "zcrypto-valkey3",
+        "cache",
+        {"cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey1",
+            "--tags",
+            "cache",
+            "-e",
+            "cache_config_reset=true",
+            "-e",
+            f"cache_image_digest={DIGEST}",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+        ],
+        "zcrypto-valkey1",
+        "cache",
+        {"cache_config_reset": "true", "cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto-valkey2", "--tags", "cache", "-e", f"cache_alloy_digest={DIGEST}"],
+        "zcrypto-valkey2",
+        "cache",
+        {"cache_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto-valkey1",
+            "--tags",
+            "cache",
+            "-e",
+            f"cache_image_digest={DIGEST}",
+            "-e",
+            f"cache_alloy_digest={DIGEST}",
+            "-e",
+            json.dumps({"pins_override": "a first pin, recorded after this run"}),
+        ],
+        "zcrypto-valkey1",
+        "cache",
+        {"cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST, "pins_override": "a first pin, recorded after this run"},
+    ),
 ]
 
 
@@ -387,7 +455,7 @@ OUTSIDE = [
         "two variables in one operand, which the row would book as one",
         "carries whitespace",
     ),
-    (["--limit", "zcrypto", "--tags", "fail2ban"], "a role tag this fleet has never converged", "unknown tag"),
+    (["--limit", "zcrypto", "--tags", "bootstrap"], "a tag no play in site.yml carries", "unknown tag"),
     (["--limit", "zcrypto", "--skip-tags", "capture"], "--skip-tags with any value but engine", "takes only engine"),
     (
         ["--limit", "zcrypto", "--skip-tags", "capture", "--skip-tags", "engine"],
@@ -415,6 +483,7 @@ OUTSIDE = [
     (["-t", "engine"], "the short tags", "outside the grammar"),
     (["--extra-vars", "converge_primary=true"], "the long extra-vars spelling", "outside the grammar"),
     (["--limit"], "a flag with no value", "--limit with no value"),
+    (["--limit", "cache_host"], "the cache group, whose nodes converge one per run", "unknown host"),
 ]
 
 

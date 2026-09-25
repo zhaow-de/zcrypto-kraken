@@ -1,5 +1,5 @@
-- name: Bootstrap capture host — deploy user + SSH lockdown (keep 22 until converge proves 10022)
-  hosts: capture_host
+- name: Bootstrap capture and cache hosts — deploy user + SSH lockdown (keep 22 until converge proves 10022)
+  hosts: capture_host:cache_host
   gather_facts: false
   vars:
     ansible_user: root
@@ -20,10 +20,10 @@
       when: inventory_hostname in groups['engine_host'] | default([])
       tags: [always]
 
-    # Generalises the refusal above to the SECONDARY: bootstrap is first-provision only, re-running
-    # it rewrites the sshd drop-in below, and the deploy user is the evidence that provisioning
-    # already happened. Capture play only, deliberately -- the ops and access plays are LAN-side and
-    # write no drop-in, so the refusal's own message would be false there.
+    # Generalises the refusal above to this play's other hosts: bootstrap is first-provision only,
+    # re-running it rewrites the sshd drop-in below, and the deploy user is the evidence that
+    # provisioning already happened. This play only, deliberately -- the ops and access plays write
+    # no drop-in, so the refusal's own message would be false there.
     - name: probe — the zcrypto-deploy user (re-bootstrap refusal)
       ansible.builtin.command: getent passwd zcrypto-deploy
       register: bootstrap_deploy_user_probe

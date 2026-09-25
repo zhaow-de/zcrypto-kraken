@@ -1,0 +1,22 @@
+# Rendered by the `cache` Ansible role at /etc/systemd/system/zcrypto-cache.service; edit
+# infra/ansible/roles/cache/templates/zcrypto-cache.service.j2 and re-converge instead.
+[Unit]
+Description=zcrypto cache: Valkey and Sentinel (Docker Compose)
+Requires=docker.service
+# Wanted, not required: both daemons bind the zcache0 address, and a tunnel restart must not stop them.
+After=docker.service network-online.target wg-quick@zcache0.service
+Wants=network-online.target wg-quick@zcache0.service
+
+[Service]
+Type=simple
+WorkingDirectory={{ cache_compose_dir }}
+# `-`: the converge's preflight refuses an unpulled digest, so a registry outage at boot must not
+# keep the cache down.
+ExecStartPre=-/usr/bin/docker compose -f {{ cache_compose_dir }}/compose.yaml pull
+ExecStart=/usr/bin/docker compose -f {{ cache_compose_dir }}/compose.yaml up
+ExecStop=/usr/bin/docker compose -f {{ cache_compose_dir }}/compose.yaml down
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

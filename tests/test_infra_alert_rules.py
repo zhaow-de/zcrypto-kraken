@@ -1198,6 +1198,21 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     assert rule["for"] == "5m" and rule["noDataState"] == "OK"
 
 
+_CACHE_RSS_HEADROOM = "zcrypto-cache-valkey-rss-headroom"
+
+
+def test_the_cache_rss_headroom_rule_encodes_the_cap_ansible_deploys():
+    rule = _rule(_CACHE_RSS_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"]).strip()
+    leg = re.fullmatch(r'redis_memory_used_rss_bytes\{host=~"([^"]+)", job="valkey"\}\s*/\s*(\d+)', expr)
+    assert leg, f"one leg, Valkey's resident memory over a literal cap: {expr!r}"
+    cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/cache/defaults/main.yml", "cache_valkey_memory_limit")
+    assert int(leg.group(2)) == cap, f"the rule divides by {leg.group(2)}, ansible deploys {cap}"
+    assert sorted(leg.group(1).split("|")) == ["zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"], leg.group(1)
+    assert rule["data"][-1]["model"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [0.7]}
+    assert rule["for"] == "5m" and rule["noDataState"] == "OK"
+
+
 def test_the_leak_rule_reads_hourly_floors_a_day_apart():
     """Read the FLOOR not a sample (the rotation sawtooth spans MiB), compare across a 24 h band
     (steps arrive as ramps and repeat at the same clock offset), and gate the comparison OFF for a
@@ -1268,8 +1283,21 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
         ("zcrypto-red", "integrations/self"),
     ),
     "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2": (("ops", "integrations/self"),),
+    "infra/ansible/roles/cache/templates/alloy-compose.yaml.j2": (
+        ("zcrypto-valkey1", "integrations/self"),
+        ("zcrypto-valkey2", "integrations/self"),
+        ("zcrypto-valkey3", "integrations/self"),
+    ),
     "infra/nas/compose.yaml": (("nas", "integrations/self"),),
     "infra/docker/compose.yaml": (),
+    "infra/ansible/roles/cache/templates/compose.yaml.j2": (
+        ("zcrypto-valkey1", "valkey"),
+        ("zcrypto-valkey1", "sentinel"),
+        ("zcrypto-valkey2", "valkey"),
+        ("zcrypto-valkey2", "sentinel"),
+        ("zcrypto-valkey3", "valkey"),
+        ("zcrypto-valkey3", "sentinel"),
+    ),
 }
 # A cap is a cap wherever it is written. Compose `memory:` is not the only shape: a systemd unit can
 # carry `MemoryMax=`, and the first one in this tree -- agentboard's -- was invisible here while the
@@ -1277,6 +1305,7 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
 _LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
 }
+_CACHE_SENTINEL_UNLEGGED = "Sentinel's `INFO` carries no memory section, so its exporter publishes no memory family to divide"
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (
@@ -1286,7 +1315,10 @@ _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
         "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service` "
         "(`AGENTBOARD_PROPERTIES` in infra/scripts/ops_daily.py), off the host rather than off a series."
-    )
+    ),
+    ("zcrypto-valkey1", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
+    ("zcrypto-valkey2", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
+    ("zcrypto-valkey3", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
 }
 
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
@@ -1294,7 +1326,7 @@ _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
 
 def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
     """A compose service with a `memory:` limit is a container the OOM-killer can take; every
-    (host, job) it renders to divides by a limit in one of the two headroom rules, or is named in
+    (host, job) it renders to divides by a limit in one of the headroom rules, or is named in
     `_HEADROOM_DELIBERATELY_ABSENT` with its reason."""
     # config-selector-ok: presence of any `memory:` line is the question, not a value to parse
     limited = sorted(str(p.relative_to(REPO)) for p in REPO.glob("infra/**/*compose*.y*ml*") if "memory:" in p.read_text())
@@ -1328,10 +1360,12 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
     )
     assert capped_units == sorted(_LIMITED_UNITS), f"the memory-capped unit templates changed: {capped_units} -- update the map"
     exprs = " ".join(
-        str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]
+        str(n.get("model", {}).get("expr", ""))
+        for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM, _CACHE_RSS_HEADROOM)
+        for n in _rule(uid)["data"]
     )
-    legs = re.findall(r"process_resident_memory_bytes\{([^}]*)\}\s*/\s*\d+", exprs)
-    assert len(legs) >= 4, f"the two headroom rules carry only {len(legs)} legs -- the parse is broken"
+    legs = re.findall(r"(?:process_resident_memory_bytes|redis_memory_used_rss_bytes)\{([^}]*)\}\s*/\s*\d+", exprs)
+    assert len(legs) >= 5, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
 
     def covered(host: str, job: str) -> bool:
         for leg in legs:
@@ -1376,6 +1410,11 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
         f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
     )
+    # The cache nodes' own cap, half the shared one on a 1 GB node, read back from its compose literal.
+    cache_cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+    assert re.search(
+        rf'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"\}}\s*/\s*{cache_cap}\b', expr
+    ), f"the cache leg must divide by the cache compose literal ({cache_cap}); found: {expr!r}"
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
@@ -1441,6 +1480,9 @@ def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
         ("zcrypto", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
         ("zcrypto-red", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
         ("nas", REPO / "infra/nas/compose.yaml"),
+        ("zcrypto-valkey1", ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2"),
+        ("zcrypto-valkey2", ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2"),
+        ("zcrypto-valkey3", ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2"),
     ):
         ratios[host] = _compose_alloy_gomemlimit_bytes(compose_path) / _compose_alloy_limit_bytes(compose_path)
     for host, ratio in ratios.items():
@@ -1465,6 +1507,48 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
             assert token in expr, f"{uid} does not cover {token}: {expr!r}"
     assert not re.search(r'job="engine_app"[^}]*host=~"zcrypto\|zcrypto-red"', expr), "engine_app must not select zcrypto-red"
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"
+
+
+_CACHE_DAEMON_DOWN = "zcrypto-cache-daemon-down"
+
+
+def test_the_cache_daemon_down_rule_pages_on_a_zero_and_leaves_an_absence_to_the_alloy_dark_rules():
+    rule = _rule(_CACHE_DAEMON_DOWN)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"]).strip()
+    assert rule["ruleGroup"] == "zcrypto-cache"
+    assert expr == 'min by (host, job) (redis_up{job=~"valkey|sentinel"})', (
+        f"both daemons, kept apart by host and job so the notification names which one: {expr!r}"
+    )
+    assert rule["data"][-1]["model"]["conditions"][0]["evaluator"] == {"type": "lt", "params": [1]}
+    assert rule["noDataState"] == "OK", (
+        "a node whose Alloy is dark produces no series, which zcrypto-alloy-dark-cache-N pages; Alerting here pages it twice"
+    )
+
+
+_ALLOY_DARK_CACHE = ("zcrypto-alloy-dark-cache-1", "zcrypto-alloy-dark-cache-2", "zcrypto-alloy-dark-cache-3")
+FLEET_PINS = REPO / "docs/reference/fleet-pins.md"
+
+
+def _pinned_hosts() -> set[str]:
+    rows = [line.strip().strip("|").split("|") for line in FLEET_PINS.read_text().splitlines() if line.startswith("|")]
+    return {host.strip() for cells in rows if len(cells) > 1 for host in cells[1].split(",")}
+
+
+def test_the_alloy_dark_cache_rules_are_paused_exactly_while_no_cache_node_has_converged():
+    """A node's pin row is the record its converge leaves, and it lands in the commit that un-pauses
+    these rules. Before it, each rule pages critical on a node that has never run Alloy; after it, a
+    paused rule is a dark node nobody is told about."""
+    rules = [_rule(uid) for uid in _ALLOY_DARK_CACHE]
+    nodes = {re.search(r'host="([^"]+)"', rule["data"][0]["model"]["expr"]).group(1) for rule in rules}
+    pinned = _pinned_hosts()
+    assert len(nodes) == 3 and "zcrypto" in pinned, f"the parse broke: nodes {nodes}, pinned hosts {pinned}"
+    paused = {rule["uid"] for rule in rules if rule.get("isPaused") is True}
+    if nodes & pinned:
+        assert not paused, f"{sorted(nodes & pinned)} have pin rows, so a dark node must page: un-pause {sorted(paused)}"
+    else:
+        assert paused == set(_ALLOY_DARK_CACHE), (
+            f"no cache node has a pin row, so each rule would page on its first push: pause {sorted(set(_ALLOY_DARK_CACHE) - paused)}"
+        )
 
 
 _CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")

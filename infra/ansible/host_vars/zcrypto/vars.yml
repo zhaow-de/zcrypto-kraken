@@ -9,3 +9,12 @@ deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto_
 
 # No ansible_user here on purpose: zcrypto-deploy is the group default (group_vars/capture_host;
 # docker_deploy_user in the docker role).
+
+# The engine host's end of the zcache mesh (spec 00118 D6): the tunnel's UDP port. It listens for
+# the nodes' handshakes and serves no database port. A Cloud Firewall attached to this Linode opens
+# it by hand as well.
+firewall_extra_udp_ports: [51821]
+
+# This host's end of the zcache mesh (roles/cache_link).
+cache_link_address: 10.98.0.1
+cache_link_private_key: "{{ cache_wg_zcrypto_private_key }}"

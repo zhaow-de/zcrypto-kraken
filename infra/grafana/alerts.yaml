@@ -4227,6 +4227,8 @@ rules:
       # `max_over_time(process_resident_memory_bytes{host="nas", job="integrations/self"}[24h]) / 536870912`
       # before reading a higher value as staleness rather than growth. The
       # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
+      # The three cache nodes are 1 GB machines, so their Alloy is capped at 256m with GOMEMLIMIT at
+      # the same 0.9 of it.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4235,6 +4237,7 @@ rules:
           expr: >-
             (process_resident_memory_bytes{host="ops", job="integrations/self"} / 1073741824)
             or (process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|nas", job="integrations/self"} / 536870912)
+            or (process_resident_memory_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} / 268435456)
           instant: true
           refId: A
       - refId: C
@@ -4258,7 +4261,7 @@ rules:
     annotations:
       summary: >-
         Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on Ops, 512 MiB on the Capture
-        primary, the Capture secondary and the NAS. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
+        primary, the Capture secondary and the NAS, 256 MiB on Cache 1, Cache 2 and Cache 3. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
         label says which machine. If it is OOM-killed that host's telemetry goes dark, which `Fleet · Alloy dark` reports separately;
         this is the warning before that.
         Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom
@@ -4807,6 +4810,472 @@ rules:
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "702"
       unit: "seconds until that certificate expires"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  # ---- zcrypto-cache: the engine's cache nodes ------------------------------------------------------
+  # Each node's own Alloy-dark rule, in the `count(up{...}) or on() vector(0)` shape of
+  # `zcrypto-alloy-dark-nas`, and so its noDataState: Alerting. Every other rule in this group reads OK
+  # on no data, which a dark node and a stopped Valkey both produce.
+  - uid: zcrypto-alloy-dark-cache-1
+    title: "Fleet · Alloy dark — Cache 1"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    # Paused while no cache node has a pin row in docs/reference/fleet-pins.md: each would otherwise
+    # page critical before any node runs Alloy. tests/test_infra_alert_rules.py refuses the pause once
+    # one has.
+    isPaused: true
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            count(up{host="zcrypto-valkey1"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "Cache 1's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out that node's host, Valkey, Sentinel and mesh signals. Every other rule reading this node is blind until this clears, and the cache set itself may be healthy. First checks: `sudo docker ps` on the node, then `sudo docker logs grafana-alloy`; a restart is the usual fix. Runbook: infra/runbooks/cache.md#zcrypto-alloy-dark-cache-1"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "101"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-alloy-dark-cache-2
+    title: "Fleet · Alloy dark — Cache 2"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    isPaused: true
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            count(up{host="zcrypto-valkey2"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "Cache 2's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out that node's host, Valkey, Sentinel and mesh signals. Every other rule reading this node is blind until this clears, and the cache set itself may be healthy. First checks: `sudo docker ps` on the node, then `sudo docker logs grafana-alloy`; a restart is the usual fix. Runbook: infra/runbooks/cache.md#zcrypto-alloy-dark-cache-2"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "101"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-alloy-dark-cache-3
+    title: "Fleet · Alloy dark — Cache 3"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    isPaused: true
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            count(up{host="zcrypto-valkey3"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "Cache 3's Alloy has shipped no metrics for >10m — its telemetry plane is dark, taking out that node's host, Valkey, Sentinel and mesh signals. Every other rule reading this node is blind until this clears, and the cache set itself may be healthy. First checks: `sudo docker ps` on the node, then `sudo docker logs grafana-alloy`; a restart is the usual fix. Runbook: infra/runbooks/cache.md#zcrypto-alloy-dark-cache-3"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "101"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-primary-count
+    title: "Cache · not exactly one primary"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The primary the Sentinels agree on: the addresses at least two of the three Sentinels name a
+          # healthy master, counted, and that count's distance from one, so 0 is healthy and 1 is no
+          # agreed primary. Each node's own `role` is not counted: a dark primary would count none, and a
+          # dead one's last sample outlives it by the query lookback beside its successor's. The `and
+          # on()` arm empties the result while fewer than two nodes' Sentinel telemetry ships, which the
+          # Alloy-dark rules own; with Alloy up and the Sentinels down, `up{job="sentinel"}` stays (the
+          # exporter answers) and this fires.
+          expr: >-
+            abs((count(count by (master_address) (redis_sentinel_master_status{job="sentinel"} == 1) >= 2) or on() vector(0)) - 1) and on() (count(up{job="sentinel"}) > 1)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    # A Sentinel failover takes about 5 s to detect and seconds more to promote; 2m clears it and a
+    # deliberate `SENTINEL failover` with room to spare.
+    for: 2m
+    annotations:
+      summary: "For 2+ minutes no node has been named a healthy primary by at least two of the three Sentinels, so the cache set has no primary its quorum agrees on and cache writes have nowhere to land. One node's telemetry going dark does not fire this; two Sentinels down does. Read each Sentinel's view and the Cache board's primary panels before acting. Runbook: infra/runbooks/cache.md#zcrypto-cache-primary-count"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "204"
+      unit: "distance from exactly one primary"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-replicas-short
+    title: "Cache · primary has fewer than two replicas"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            redis_connected_slaves{job="valkey"} and on(host) redis_instance_info{job="valkey", role="master"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [2]}
+    noDataState: OK
+    execErrState: Alerting
+    # A replica restarted by a converge reconnects and resyncs in seconds; 5m clears one roll.
+    for: 5m
+    annotations:
+      summary: "The cache primary has had fewer than two replicas connected for 5+ minutes. With one, the set holds two copies and survives no further loss; with none, the primary refuses writes, since it accepts them only with at least one replica within 10 seconds of lag. The node this notification names is the primary, or a node still reporting itself primary after the Sentinels moved the primary elsewhere, which the runbook rejoins; the missing replica is the node absent from the primary's replicas list. Runbook: infra/runbooks/cache.md#zcrypto-cache-replicas-short"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "206"
+      unit: "replicas connected"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-memory-70pct
+    title: "Cache · Valkey memory past 70% of maxmemory"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            redis_memory_used_bytes{job="valkey"} / redis_memory_max_bytes{job="valkey"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.7]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "Valkey on a cache node has used more than 70% of its maxmemory for 15+ minutes. The eviction policy is noeviction, so at the limit the set refuses writes instead of dropping keys, and nothing trims the keys, so this does not clear by itself. Runbook: infra/runbooks/cache.md#zcrypto-cache-memory-70pct"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "209"
+      unit: "fraction of maxmemory"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-aof-not-ok
+    title: "Cache · append-only file off or failing"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            min by (host) (redis_aof_enabled{job="valkey"} * redis_aof_last_write_status{job="valkey"} * redis_aof_last_bgrewrite_status{job="valkey"})
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "A cache node's append-only file has been disabled, or the status of its last write or rewrite has not been ok, for 5+ minutes. Disabled, the node's copy survives its own restart only as far as its last snapshot; a failed rewrite leaves the file growing on its disk. A failed write itself does not show here: under appendfsync always it stops Valkey, and zcrypto-cache-disk-low warns of the full disk first. Runbook: infra/runbooks/cache.md#zcrypto-cache-aof-not-ok"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "212"
+      unit: "1 when the AOF is on and its last write and rewrite succeeded"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-disk-low
+    title: "Cache · root filesystem low"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The threshold and the duration are zaccess-disk-high's.
+          expr: >-
+            node_filesystem_avail_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", mountpoint="/"} / node_filesystem_size_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.15]}  # < 15% free
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A cache node's root filesystem has been below 15% free for 30+ minutes. Valkey's append-only file and snapshots live on it: on a full disk Valkey stops on the write it cannot make durable, or stays up refusing writes when a snapshot meets the full disk first. Runbook: infra/runbooks/cache.md#zcrypto-cache-disk-low"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "104"
+      unit: "of the root filesystem still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-wg-handshake-stale
+    title: "Cache · mesh peer handshake stale"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The recorded age plus the age of the file it came from is the age now, so a probe timer
+          # that stopped writing climbs past the bar instead of freezing below it. A peer with no
+          # handshake is published as +Inf.
+          expr: >-
+            max by (host, peer) (zcache_wireguard_handshake_age_seconds{host=~"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"}) + on(host) group_left() (time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", file=~".*/zcache.prom"}))
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # PersistentKeepalive 25 keeps traffic flowing, so WireGuard re-handshakes about every
+            # 120 s plus one keepalive; 180 s is a missed handshake, not the normal cycle.
+            - evaluator: {type: gt, params: [180]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 2m
+    annotations:
+      summary: "A zcache mesh member, the engine host or a cache node, has not completed a WireGuard handshake with one of its peers for more than three minutes. The host this notification names is the end that reports it, and the `peer` label is the other end's mesh address: 10.98.0.1 is the engine host, 10.98.0.11 to 10.98.0.13 are Cache 1 to Cache 3. Replication or the engine's cache traffic over that link is down. Runbook: infra/runbooks/cache.md#zcrypto-cache-wg-handshake-stale"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "105"
+      unit: "seconds since the last handshake with that peer"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-daemon-down
+    title: "Cache · a node's Valkey or Sentinel is down"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            min by (host, job) (redis_up{job=~"valkey|sentinel"})
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: OK
+    execErrState: Alerting
+    # A daemon restarted by a converge or a reboot slot is back in seconds; 10m clears the node's own reboot slot.
+    for: 10m
+    annotations:
+      summary: "A cache node's `{{ $labels.job }}` daemon has read down for 10+ minutes while the node's Alloy is up: the daemon is stopped, or the exporter cannot log in to it. With one Sentinel down, the set is one further node loss from losing the quorum that fails the primary over. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "306"
+      unit: "1 when the daemon answers the exporter, 0 when it does not"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-valkey-rss-headroom
+    title: "Cache · Valkey resident memory above 70% of its container cap"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # No metric carries the container limit, so the denominator is literal bytes;
+          # tests/test_infra_alert_rules.py pins it to cache_valkey_memory_limit.
+          expr: >-
+            redis_memory_used_rss_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="valkey"} / 268435456
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.7]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "Valkey on a cache node has held more than 70% of its 256 MiB container memory cap resident for 5+ minutes. Resident memory runs above used memory by fragmentation or by the append-only-file rewrite's copy-on-write pages, which the maxmemory rule does not see; at the cap the container is OOM-killed and restarted, which on the primary's node is a failover. Runbook: infra/runbooks/cache.md#zcrypto-cache-valkey-rss-headroom"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "214"
+      unit: "fraction of Valkey's container memory limit"
     labels:
       severity: warning
     notification_settings:

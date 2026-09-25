@@ -1,0 +1,12 @@
+---
+- name: restart zcache0
+  # A restart, not the unit's reload (wg syncconf), which applies no Address or MTU change; it drops
+  # the mesh's traffic while the interface is down. The enable task's first-run dry-run case is
+  # skipped here too.
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ cache_link_interface }}"
+    state: restarted
+  when: not (ansible_check_mode and cache_link_wireguard_install is changed)
+
+- name: reload systemd
+  ansible.builtin.systemd: {daemon_reload: true}
