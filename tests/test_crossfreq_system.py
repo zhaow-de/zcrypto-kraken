@@ -71,7 +71,9 @@ def test_invalid_config(kwargs, builder):
     d_prices, d_ts, h_prices, h_ts = synthetic_grids(3)
     cfg = CrossfreqSystemConfig(**{"assets": ("AAA", "BTC"), **kwargs})
     field = next(iter(kwargs))
-    with pytest.raises(PortfolioError, match=r"a2_arms|lookbacks?|target_vol" if field == "a2_arms" else field):
+    with pytest.raises(
+        PortfolioError, match=r"^(a2_arms|each a2 arm|a2 arm|lookback|target_vol)" if field == "a2_arms" else rf"^{field}"
+    ):
         builder(d_prices, d_ts, h_prices, h_ts, config=cfg)
 
 
