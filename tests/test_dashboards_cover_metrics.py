@@ -230,9 +230,7 @@ _LABEL_VALUES_HOST = re.compile(r"\s*label_values\((?:(.*),)?\s*host\s*\)\s*")
 
 
 def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
-    """Each template variable's reach among the cache nodes: a custom one's listed values, and a
-    `label_values(..., host)` query's those its selector's own host matchers let through, when it names
-    no family or one the cache nodes admit."""
+    """Each template variable's reach among the cache nodes."""
     reach = {}
     for variable in (dash.get("templating") or {}).get("list") or []:
         query = variable.get("query")
@@ -243,6 +241,8 @@ def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
             families = promql_families(values.group(1) or "")
             if not families or any(keep_regexes()["zcrypto-valkey1"].match(family) for family in families):
                 reach[variable["name"]] = _nodes_selected(values.group(1) or "", {})
+        if (name := variable.get("name")) in reach and (regex := str(variable.get("regex") or "").strip("/")):
+            reach[name] = frozenset(node for node in reach[name] if re.search(regex, node))
     return reach
 
 
@@ -835,3 +835,13 @@ def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits
     assert reach("label_values(process_resident_memory_bytes, host)") == CACHE_NODES
     assert reach('label_values(process_resident_memory_bytes{host=~"zcrypto-valkey1|ops"}, host)') == frozenset({"zcrypto-valkey1"})
     assert reach('label_values(process_resident_memory_bytes{host=~"zcrypto|ops"}, host)') == frozenset()
+    variable = {
+        "name": "h",
+        "type": "query",
+        "query": "label_values(process_resident_memory_bytes, host)",
+        "regex": "/^(zcrypto|ops)$/",
+    }
+    assert _host_variables({"templating": {"list": [variable]}})["h"] == frozenset()
+    assert _host_variables({"templating": {"list": [{**variable, "regex": "/valkey[12]/"}]}})["h"] == CACHE_NODES - {
+        "zcrypto-valkey3"
+    }

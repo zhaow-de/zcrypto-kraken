@@ -350,7 +350,6 @@ CACHE_REQUIRED = [
     "node_textfile_scrape_error",
     "zcache_wireguard_handshake_age_seconds",
     "process_resident_memory_bytes",
-    "process_virtual_memory_bytes",
     *CACHE_REDIS_SERIES,
 ]
 
