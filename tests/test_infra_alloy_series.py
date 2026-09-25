@@ -319,6 +319,7 @@ CACHE_REDIS_SERIES = [
     "redis_master_link_up",
     "redis_memory_used_bytes",
     "redis_memory_max_bytes",
+    "redis_memory_used_rss_bytes",
     "redis_commands_processed_total",
     "redis_connected_clients",
     "redis_aof_enabled",

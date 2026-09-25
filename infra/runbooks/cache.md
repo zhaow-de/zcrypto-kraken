@@ -325,3 +325,29 @@ Two causes read the same. The daemon's process is down inside `zcrypto-cache.ser
 ### Retire when
 
 `zcrypto-cache-daemon-down` is absent from `infra/grafana/alerts.yaml`, or `redis_up` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+
+______________________________________________________________________
+
+<a name="zcrypto-cache-valkey-rss-headroom"></a>
+
+## zcrypto-cache-valkey-rss-headroom — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, `Cache · Valkey resident memory above 70% of its container cap`: for five minutes a node's Valkey has held more than 70% of its 256 MiB container cap resident. The Cache board's *Valkey resident memory against its 256 MiB cap* panel (214) draws the three nodes against the red line at 0.7, beside *Memory against maxmemory* (209).
+
+### What it means
+
+Valkey's resident memory runs above its used memory by fragmentation, or by the pages the append-only-file rewrite's child copies on write while it runs; `zcrypto-cache-memory-70pct` reads used memory against `maxmemory` and sees neither. The cap is the compose `memory:` limit on the Valkey container: at it the kernel OOM-kills the container, which restarts, and on the primary's node that is a failover, the engine's reconnect then coming on the Sentinels' detection timer rather than when you choose.
+
+### What to do
+
+1. **Read the memory**, on the node, `db<N>`: `vk INFO memory`, its `used_memory_rss` and `mem_fragmentation_ratio` lines.
+2. **Is a rewrite running?** `vk INFO persistence`, its `aof_rewrite_in_progress` line. `1` is a rewrite whose copy-on-write ends with it: read step 1 again once it reads `0`.
+3. **Fragmentation that stays**, a `mem_fragmentation_ratio` well above 1 with no rewrite running: `vk MEMORY PURGE` on the node, then step 1 again.
+4. **Resident memory still up after the purge:** restart the node's daemons, `sudo systemctl restart zcrypto-cache.service`, one node at a time and replicas first; on the primary's node, run `cache-manual-failover` above first so the primary moves on your schedule, not by a bare container restart there.
+5. **Confirm by value:** the Cache board's panel 214 reads under 0.7 for the node, and the rule is back to **Normal** in Grafana's alert rules.
+
+### Retire when
+
+`zcrypto-cache-valkey-rss-headroom` is absent from `infra/grafana/alerts.yaml`, or `redis_memory_used_rss_bytes` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.

@@ -1198,6 +1198,21 @@ def test_the_headroom_rule_encodes_the_limits_ansible_actually_deploys():
     assert rule["for"] == "5m" and rule["noDataState"] == "OK"
 
 
+_CACHE_RSS_HEADROOM = "zcrypto-cache-valkey-rss-headroom"
+
+
+def test_the_cache_rss_headroom_rule_encodes_the_cap_ansible_deploys():
+    rule = _rule(_CACHE_RSS_HEADROOM)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"]).strip()
+    leg = re.fullmatch(r'redis_memory_used_rss_bytes\{host=~"([^"]+)", job="valkey"\}\s*/\s*(\d+)', expr)
+    assert leg, f"one leg, Valkey's resident memory over a literal cap: {expr!r}"
+    cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/cache/defaults/main.yml", "cache_valkey_memory_limit")
+    assert int(leg.group(2)) == cap, f"the rule divides by {leg.group(2)}, ansible deploys {cap}"
+    assert sorted(leg.group(1).split("|")) == ["zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"], leg.group(1)
+    assert rule["data"][-1]["model"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [0.7]}
+    assert rule["for"] == "5m" and rule["noDataState"] == "OK"
+
+
 def test_the_leak_rule_reads_hourly_floors_a_day_apart():
     """Read the FLOOR not a sample (the rotation sawtooth spans MiB), compare across a 24 h band
     (steps arrive as ramps and repeat at the same clock offset), and gate the comparison OFF for a
@@ -1290,9 +1305,9 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
 _LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
 }
-_CACHE_DAEMONS_UNLEGGED = (
-    "Valkey exposes redis_memory_used_rss_bytes rather than the process family the fleet rule parses, and the cache "
-    "group's zcrypto-cache-memory-70pct rule guards it against maxmemory; Sentinel exposes no memory family"
+_CACHE_SENTINEL_UNLEGGED = (
+    "Sentinel's `INFO` carries no memory section, so its exporter publishes no memory family to divide, and its 64m "
+    "cap is watched by nothing before an OOM kill, which `zcrypto-cache-daemon-down` then reads"
 )
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
@@ -1304,12 +1319,9 @@ _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
         "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service` "
         "(`AGENTBOARD_PROPERTIES` in infra/scripts/ops_daily.py), off the host rather than off a series."
     ),
-    ("zcrypto-valkey1", "valkey"): _CACHE_DAEMONS_UNLEGGED,
-    ("zcrypto-valkey1", "sentinel"): _CACHE_DAEMONS_UNLEGGED,
-    ("zcrypto-valkey2", "valkey"): _CACHE_DAEMONS_UNLEGGED,
-    ("zcrypto-valkey2", "sentinel"): _CACHE_DAEMONS_UNLEGGED,
-    ("zcrypto-valkey3", "valkey"): _CACHE_DAEMONS_UNLEGGED,
-    ("zcrypto-valkey3", "sentinel"): _CACHE_DAEMONS_UNLEGGED,
+    ("zcrypto-valkey1", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
+    ("zcrypto-valkey2", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
+    ("zcrypto-valkey3", "sentinel"): _CACHE_SENTINEL_UNLEGGED,
 }
 
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
@@ -1317,7 +1329,7 @@ _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"
 
 def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
     """A compose service with a `memory:` limit is a container the OOM-killer can take; every
-    (host, job) it renders to divides by a limit in one of the two headroom rules, or is named in
+    (host, job) it renders to divides by a limit in one of the headroom rules, or is named in
     `_HEADROOM_DELIBERATELY_ABSENT` with its reason."""
     # config-selector-ok: presence of any `memory:` line is the question, not a value to parse
     limited = sorted(str(p.relative_to(REPO)) for p in REPO.glob("infra/**/*compose*.y*ml*") if "memory:" in p.read_text())
@@ -1351,10 +1363,12 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
     )
     assert capped_units == sorted(_LIMITED_UNITS), f"the memory-capped unit templates changed: {capped_units} -- update the map"
     exprs = " ".join(
-        str(n.get("model", {}).get("expr", "")) for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM) for n in _rule(uid)["data"]
+        str(n.get("model", {}).get("expr", ""))
+        for uid in (_MEM_HEADROOM, _ALLOY_HEADROOM, _CACHE_RSS_HEADROOM)
+        for n in _rule(uid)["data"]
     )
-    legs = re.findall(r"process_resident_memory_bytes\{([^}]*)\}\s*/\s*\d+", exprs)
-    assert len(legs) >= 4, f"the two headroom rules carry only {len(legs)} legs -- the parse is broken"
+    legs = re.findall(r"(?:process_resident_memory_bytes|redis_memory_used_rss_bytes)\{([^}]*)\}\s*/\s*\d+", exprs)
+    assert len(legs) >= 5, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
 
     def covered(host: str, job: str) -> bool:
         for leg in legs:

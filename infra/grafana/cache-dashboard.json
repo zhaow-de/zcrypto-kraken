@@ -616,11 +616,42 @@
       "title": "Memory against maxmemory",
       "description": "Valkey's used memory as a share of its maxmemory. The eviction policy is noeviction, so at the limit writes are refused rather than keys dropped; nothing trims the keys, so growth is the signal. The red line is where the alert fires, after `for: 15m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-memory-70pct",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 41},
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 41},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
           "expr": "redis_memory_used_bytes{job=\"valkey\"} / redis_memory_max_bytes{job=\"valkey\"}",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {"thresholdsStyle": {"mode": "line"}},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.7}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 214,
+      "type": "timeseries",
+      "title": "Valkey resident memory against its 256 MiB cap",
+      "description": "Valkey's resident memory as a share of its 256 MiB container cap. Above its used memory is fragmentation or the append-only-file rewrite's copy-on-write pages, which the maxmemory panel beside it does not see; at the cap the container is OOM-killed and restarted, which on the primary's node is a failover. The red line is where the alert fires, after `for: 5m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-valkey-rss-headroom",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 6, "x": 6, "y": 41},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "redis_memory_used_rss_bytes{host=~\"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\", job=\"valkey\"} / 268435456",
           "refId": "A",
           "legendFormat": "{{host}}"
         }
@@ -647,7 +678,7 @@
       "title": "Commands per second",
       "description": "Commands each Valkey processes per second, replication and the exporter's own reads included, so the replicas are never at zero.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 41},
+      "gridPos": {"h": 7, "w": 6, "x": 12, "y": 41},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
@@ -675,7 +706,7 @@
       "title": "Connected clients",
       "description": "Client connections on each Valkey: the exporter, the Sentinels, the replicas on the primary, and the engine through its proxy once it is wired.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 41},
+      "gridPos": {"h": 7, "w": 6, "x": 18, "y": 41},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},

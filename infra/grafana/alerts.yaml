@@ -5232,3 +5232,48 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  - uid: zcrypto-cache-valkey-rss-headroom
+    title: "Cache · Valkey resident memory above 70% of its container cap"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # RSS as a fraction of the CONTAINER limit, which the OOM kill reads; zcrypto-cache-memory-70pct
+          # reads used memory against maxmemory and does not see fragmentation or the AOF-rewrite child's
+          # copy-on-write. No metric carries the limit, so the denominator is literal bytes;
+          # tests/test_infra_alert_rules.py pins it to cache_valkey_memory_limit, so a limit moved in
+          # ansible fails the test rather than silently re-scaling this ratio.
+          expr: >-
+            redis_memory_used_rss_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="valkey"} / 268435456
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.7]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "Valkey on a cache node has held more than 70% of its 256 MiB container memory cap resident for 5+ minutes. Resident memory runs above used memory by fragmentation or by the append-only-file rewrite's copy-on-write pages, which the maxmemory rule does not see; at the cap the container is OOM-killed and restarted, which on the primary's node is a failover. Runbook: infra/runbooks/cache.md#zcrypto-cache-valkey-rss-headroom"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "214"
+      unit: "fraction of Valkey's container memory limit"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
