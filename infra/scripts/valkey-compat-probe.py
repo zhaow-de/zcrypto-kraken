@@ -78,8 +78,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     for word in argv:
         flag = word.split("=", 1)[0]
         if flag in PASSWORD_FLAGS or (flag.startswith("--pass") and flag != "--password-env"):
+            # A `--pass...` word can be the flag with the password run into it, so only a fixed spelling is named.
+            named = flag if flag in PASSWORD_FLAGS else "a --pass... flag"
             raise Refusal(
-                f"{flag} would put the password on the command line; put it in the environment and name the variable "
+                f"{named} would put the password on the command line; put it in the environment and name the variable "
                 "with --password-env"
             )
     parser = _Parser(prog="valkey-compat-probe", allow_abbrev=False)
@@ -92,11 +94,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def read_password(variable: str) -> str:
+    # The name came from the command line, where the password itself may have been typed in its place: name the flag.
     password = os.environ.get(variable, "")
     if not password:
-        raise Refusal(f"{variable} is not set in the environment")
+        raise Refusal("the variable --password-env names is not set in the environment")
     if len(password) < MIN_PASSWORD_CHARS:
-        raise Refusal(f"{variable} is shorter than {MIN_PASSWORD_CHARS} characters, which the library logs unredacted")
+        raise Refusal(
+            f"the variable --password-env names is shorter than {MIN_PASSWORD_CHARS} characters, which the library logs unredacted"
+        )
     return password
 
 
@@ -106,7 +111,8 @@ def require_library(expected: str) -> str:
     except metadata.PackageNotFoundError as exc:
         raise Refusal("no nautilus-trader in this interpreter") from exc
     if found != expected:
-        raise Refusal(f"this interpreter carries nautilus-trader {found}, not {expected}")
+        # `expected` came from the command line, which may carry the password; only the installed version is printed.
+        raise Refusal(f"this interpreter carries nautilus-trader {found}, not the version --expect-nautilus names")
     return found
 
 

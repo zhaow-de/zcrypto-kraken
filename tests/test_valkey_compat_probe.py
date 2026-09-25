@@ -6,8 +6,10 @@ the RESP read runs over a fake socket and the node halves are stand-ins."""
 
 import importlib.util
 import io
+import json
+import subprocess
 import sys
-import time
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -121,6 +123,7 @@ def test_the_server_passes_at_the_librarys_version_floor(redis_version, passes):
         ["--pass", SECRET],
         ["-a", SECRET],
         [f"--auth={SECRET}"],
+        [f"--pass{SECRET}"],
     ],
 )
 def test_the_parser_refuses_a_password_argument_without_echoing_it(monkeypatch, capsys, extra):
@@ -133,9 +136,10 @@ def test_the_parser_refuses_a_password_argument_without_echoing_it(monkeypatch, 
     assert SECRET not in out.out + out.err
 
 
-@pytest.mark.parametrize("extra", [[SECRET], ["--port", SECRET]])
+@pytest.mark.parametrize("extra", [[SECRET], ["--port", SECRET], ["--password-env", SECRET], ["--expect-nautilus", SECRET]])
 def test_a_rejected_argument_is_not_echoed(monkeypatch, capsys, extra):
-    """A stray positional, or a password typed into another flag's value: argparse would print either word."""
+    """A stray positional, or a password typed into another flag's value, which argparse or the probe's own refusal
+    would otherwise print."""
     monkeypatch.setenv("PROBE_PW", "a-long-enough-password")
 
     assert probe.main(_args(*extra)) == 2
@@ -145,7 +149,13 @@ def test_a_rejected_argument_is_not_echoed(monkeypatch, capsys, extra):
     assert SECRET not in out.out + out.err
 
 
-@pytest.mark.parametrize("value,why", [(None, "PROBE_PW is not set in the environment"), ("abcd", "shorter than 5")])
+@pytest.mark.parametrize(
+    "value,why",
+    [
+        (None, "the variable --password-env names is not set in the environment"),
+        ("abcd", "the variable --password-env names is shorter than 5"),
+    ],
+)
 def test_the_password_comes_from_the_named_variable(monkeypatch, capsys, value, why):
     if value is None:
         monkeypatch.delenv("PROBE_PW", raising=False)
@@ -156,6 +166,7 @@ def test_the_password_comes_from_the_named_variable(monkeypatch, capsys, value, 
 
     out = capsys.readouterr().out
     assert why in out
+    assert "PROBE_PW" not in out
     assert value is None or value not in out
 
 
@@ -164,7 +175,8 @@ def test_another_library_version_is_refused(monkeypatch, capsys):
 
     assert probe.main([*REQUIRED, "--expect-nautilus", "0.0.0"]) == 2
 
-    assert ", not 0.0.0" in capsys.readouterr().out
+    found = probe.metadata.version("nautilus-trader")
+    assert f"carries nautilus-trader {found}, not the version --expect-nautilus names" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -240,34 +252,72 @@ def test_a_server_that_refuses_the_login_fails_the_probe_without_the_password(mo
     assert SECRET not in out
 
 
-def test_a_half_runs_in_a_child_and_its_output_is_redacted(capsys):
-    def half():
-        print(f"connecting to redis://engine:{SECRET}@127.0.0.1:6390")
-        return ["O-1"]
+def _in_fresh_interpreter(snippet: str) -> tuple[object, str]:
+    """Runs `snippet` in a new interpreter with the script loaded by path as `probe`, and returns the JSON its last
+    line prints and its whole stdout. `in_child` forks, and this pytest process carries the threads `conftest.py`'s
+    imports start, which a fork copies into a child that can deadlock; the new interpreter is single-threaded, as the
+    operator's `python -` is, and `-W default` prints the fork warning, which the empty-stderr assertion then fails."""
+    prelude = (
+        "import importlib.util, json, sys, time\n"
+        f"spec = importlib.util.spec_from_file_location('probe', {str(SCRIPT)!r})\n"
+        "probe = importlib.util.module_from_spec(spec)\n"
+        "sys.modules[spec.name] = probe\n"
+        "spec.loader.exec_module(probe)\n"
+        f"SECRET = {SECRET!r}\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-W", "default", "-c", prelude + textwrap.dedent(snippet)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert (proc.returncode, proc.stderr) == (0, "")
+    return json.loads(proc.stdout.splitlines()[-1]), proc.stdout
 
-    assert probe.in_child(half, SECRET, 30) == (["O-1"], "ok")
 
-    out = capsys.readouterr().out
+def test_a_half_runs_in_a_child_and_its_output_is_redacted():
+    result, out = _in_fresh_interpreter(
+        """
+        def half():
+            print(f"connecting to redis://engine:{SECRET}@127.0.0.1:6390")
+            return ["O-1"]
+
+        print(json.dumps(probe.in_child(half, SECRET, 30)))
+        """
+    )
+
+    assert result == [["O-1"], "ok"]
     assert "  | connecting to redis://engine:<redacted>@127.0.0.1:6390" in out
     assert SECRET not in out
 
 
-def test_a_half_that_raises_reports_its_error_redacted(capsys):
-    def half():
-        raise RuntimeError(f"could not reach redis://engine:{SECRET}@127.0.0.1:6390")
+def test_a_half_that_raises_reports_its_error_redacted():
+    (ids, why), _ = _in_fresh_interpreter(
+        """
+        def half():
+            raise RuntimeError(f"could not reach redis://engine:{SECRET}@127.0.0.1:6390")
 
-    ids, why = probe.in_child(half, SECRET, 30)
+        print(json.dumps(probe.in_child(half, SECRET, 30)))
+        """
+    )
 
     assert ids is None
     assert why == "RuntimeError: could not reach redis://engine:<redacted>@127.0.0.1:6390"
 
 
 def test_a_half_that_hangs_is_killed_at_the_deadline():
-    started = time.monotonic()
+    (result, elapsed), _ = _in_fresh_interpreter(
+        """
+        started = time.monotonic()
+        result = probe.in_child(lambda: time.sleep(30), SECRET, 0.5)
+        print(json.dumps([result, time.monotonic() - started]))
+        """
+    )
 
-    assert probe.in_child(lambda: time.sleep(30), SECRET, 0.5) == (None, "did not finish in 0.5 s")
+    assert result == [None, "did not finish in 0.5 s"]
 
-    assert time.monotonic() - started < 10
+    assert elapsed < 10
 
 
 def test_the_library_accepts_the_cache_settings_the_probe_passes():
