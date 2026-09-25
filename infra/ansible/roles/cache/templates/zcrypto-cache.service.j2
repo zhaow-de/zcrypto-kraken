@@ -10,7 +10,7 @@ Wants=network-online.target wg-quick@zcache0.service
 [Service]
 Type=simple
 WorkingDirectory={{ cache_compose_dir }}
-# `-`: the digest is pre-staged by the converge's preflight, so a registry outage at boot must not
+# `-`: the converge's preflight refuses an unpulled digest, so a registry outage at boot must not
 # keep the cache down.
 ExecStartPre=-/usr/bin/docker compose -f {{ cache_compose_dir }}/compose.yaml pull
 ExecStart=/usr/bin/docker compose -f {{ cache_compose_dir }}/compose.yaml up

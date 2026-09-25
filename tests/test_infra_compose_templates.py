@@ -148,8 +148,7 @@ def test_engine_logship_guard_moves_environment_and_entrypoint_together():
     ],
 )
 def test_cache_valkey_and_sentinel_run_one_pinned_image_on_the_host_network(service, command, limit):
-    """Sentinel announces and discovers its peers by address, which a published port rewrites; both daemons log to
-    the journal, where the node's Alloy reads them."""
+    """Both daemons log to the journal, where the node's Alloy reads them."""
     spec = _render(CACHE_TEMPLATE, CACHE_CONTEXT)["services"][service]
     assert spec["image"] == f"{CACHE_DEFAULTS['cache_image']}@{CACHE_CONTEXT['cache_image_digest']}"
     assert spec["network_mode"] == "host" and "ports" not in spec
@@ -157,7 +156,6 @@ def test_cache_valkey_and_sentinel_run_one_pinned_image_on_the_host_network(serv
     assert spec["user"] == "996:996"
     assert spec["logging"] == {"driver": "journald"}
     assert spec["deploy"]["resources"]["limits"]["memory"] == CACHE_DEFAULTS[limit]
-    # the directory, never the file: both daemons replace their config by renaming a file beside it
     assert f"{CACHE_DEFAULTS['cache_state_dir']}/conf:/etc/valkey" in spec["volumes"]
 
 

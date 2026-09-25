@@ -2353,8 +2353,7 @@ def test_the_zcache_ports_are_one_value_in_every_declaration():
     assert [rule["iface"] for rule in scoped] == [defaults["cache_link_interface"]], scoped
 
 
-# --- the cache role: the capture role's digest and pins guards over Valkey and Sentinel, the password-shape refusal,
-# and the daemon-owned configs rendered only when absent, their drift reported and never applied.
+# --- the cache role ---
 CACHE = ANSIBLE / "roles" / "cache" / "tasks" / "main.yml"
 CACHE_HANDLERS = ANSIBLE / "roles" / "cache" / "handlers" / "main.yml"
 CACHE_DEFAULTS = ANSIBLE / "roles" / "cache" / "defaults" / "main.yml"
@@ -2391,9 +2390,6 @@ def test_cache_digest_failfast_refuses_an_empty_digest():
 
 
 def test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest():
-    """A converge without the digest, the mesh's or an Alloy-only one, skips every task that reads it: the digest has
-    no role default, so the gate is the ops role's `is defined`, and the fail-fast opens the block. The reset refusal
-    before the block tests the digest with `is defined` alone."""
     tasks = load_tasks(CACHE)
     block = find_task(tasks, CACHE_BLOCK)
     assert when_conditions(block) == ["cache_image_digest is defined"]
@@ -2414,8 +2410,6 @@ def test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_diges
     ids=["reset-without-digest", "reset-with-digest", "no-reset"],
 )
 def test_cache_config_reset_without_the_digest_is_refused_before_the_gate(variables, expected):
-    """The reset re-renders inside the digest-gated block, so without the digest it would skip every render and exit
-    0; the refusal sits before the block, where a converge without the digest still runs it."""
     tasks = load_tasks(CACHE)
     assert task_index(tasks, CACHE_RESET_NEEDS_DIGEST) < task_index(tasks, CACHE_BLOCK)
     assert truthy(assert_that(find_task(tasks, CACHE_RESET_NEEDS_DIGEST)), variables) is expected

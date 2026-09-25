@@ -232,7 +232,6 @@ REBOOT_CHECK_FILES = (
 
 
 def _program(path: Path) -> list[str]:
-    """The lines a shell or systemd reads: every line but a blank or a whole-line comment."""
     return [line for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 

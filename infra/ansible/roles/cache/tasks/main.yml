@@ -1,8 +1,7 @@
 ---
-# Deploys Valkey and its Sentinel on a cache node as one compose project. The unit's own
-# ExecStartPre/ExecStart/ExecStop pull and run it, which is also what resumes it on boot; Ansible
-# starts, enables and restarts it. Roll the set one node per converge, replicas first, and move the
-# primary with `SENTINEL failover` before converging it (infra/runbooks/cache.md).
+# Deploys Valkey and its Sentinel on a cache node as one compose project. Roll the set one node per
+# converge, replicas first, and move the primary with `SENTINEL failover` before converging it
+# (infra/runbooks/cache.md).
 # Outside the block below: the reset re-renders inside it, so a reset converge without the digest
 # would skip every render and exit 0 with nothing applied.
 - name: refuse a config reset without the pinned image digest
@@ -12,10 +11,6 @@
       -e cache_config_reset=true re-renders this node's configs only on a converge that also carries
       -e cache_image_digest=sha256:<...>, the digest docs/reference/fleet-pins.md records for this node.
 
-# Every task below reads or serves cache_image_digest, which has no role default and is passed per
-# run, so the block is gated on it, the ops role's convention: a converge without the digest (the
-# mesh's, or an Alloy-only one) skips all of it, and one with it asserts it non-empty, pre-staged
-# and recorded in fleet-pins.md before anything is rendered.
 - name: install Valkey and Sentinel (needs the pinned image digest)
   when: cache_image_digest is defined
   block:
@@ -27,9 +22,9 @@
           -e cache_image_digest=sha256:<...> (read it with `docker buildx imagetools inspect valkey/valkey:9.1.2`),
           pre-staged on this node.
 
-    # Letters and digits alone: a password lands unquoted in valkey.conf, sentinel.conf and the proxy's
-    # health-check lines, where a space or a quote splits it. Five characters is the floor below which
-    # the engine's library logs the password unredacted at DEBUG.
+    # Letters and digits alone: a password lands unquoted in valkey.conf and sentinel.conf, where a
+    # space or a quote splits it. Five characters is the floor below which the engine's library logs
+    # the password unredacted at DEBUG.
     - name: refuse a cache password shorter than five characters or outside letters and digits
       ansible.builtin.assert:
         that: >-
@@ -40,8 +35,7 @@
           in group_vars/cache_host/vault.yml must be five or more letters and digits. Re-generate it with
           `openssl rand -hex 24 | tr -d '\n' | uv run ansible-vault encrypt_string --stdin-name <key>` and replace its entry.
 
-    # Probe idiom: probes never fail or change and run under --check; the assert after each refuses
-    # with the fix in its message. Tests: tests/test_infra_converge_guards.py.
+    # Tests: tests/test_infra_converge_guards.py.
     - name: probe — is the pinned digest already on this host
       ansible.builtin.command: docker image inspect "{{ cache_image }}@{{ cache_image_digest }}"
       register: cache_digest_probe
@@ -129,8 +123,6 @@
         - "{{ cache_compose_dir }}"
         - "{{ cache_state_dir }}"
 
-    # conf/ is writable by the daemons: Valkey's CONFIG REWRITE and Sentinel's state updates replace their
-    # files through a temporary file beside them.
     - name: ensure the data and config directories exist, owned by zcrypto-cache
       ansible.builtin.file:
         path: "{{ item }}"
@@ -147,7 +139,6 @@
         cache_template_sha: "{{ cache_template_sha | default({}) | combine({item: lookup('ansible.builtin.template', item ~ '.j2') | hash('sha256')}) }}"
       loop: "{{ cache_daemon_files }}"
 
-    # force follows cache_config_reset: a routine converge leaves a present file as the daemon wrote it.
     - name: render the daemon-owned configs when absent, or under cache_config_reset
       ansible.builtin.template:
         src: "{{ item }}.j2"
@@ -187,9 +178,8 @@
       ansible.builtin.set_fact:
         cache_recorded_sha: "{{ (cache_rendered_record.content | b64decode | from_yaml | default({}, true)) if cache_rendered_record.content is defined else {} }}"
 
-    # Reported, never fatal and never applied: the file on the host is the daemon's, and applying the
-    # template is a replication reset, which is a procedure's in infra/runbooks/cache.md to make. The
-    # play recap counts a report as `ignored`.
+    # Never fatal and never applied: applying the template is a replication reset, a procedure's in
+    # infra/runbooks/cache.md to make.
     - name: drift — report a daemon-owned config whose template no longer renders what this node was given
       ansible.builtin.assert:
         that: cache_recorded_sha[item] | default(cache_template_sha[item]) == cache_template_sha[item]
@@ -248,8 +238,7 @@
       # A first-install preview never wrote the unit, so systemd cannot find it.
       when: not (ansible_check_mode and cache_unit_install is changed)
 
-# The pending-reboot flag, outside the digest gate: it publishes whatever a converge carries. A copy of
-# the capture role's reboot check; tests/test_reboot_check.py holds the two programs equal.
+# Outside the digest gate, so a converge without the digest still installs the reboot check.
 - name: ensure the node-exporter textfile directory exists
   ansible.builtin.file:
     path: "{{ cache_textfile_dir }}"
@@ -283,8 +272,7 @@
     mode: "0644"
   register: cache_reboot_timer_install
 
-# Only the timer is enabled: enabling the oneshot too would probe on every boot. A first-install
-# preview never wrote the timer, so systemd cannot find it there.
+# A first-install preview never wrote the timer, so systemd cannot find it there.
 - name: enable + start the reboot-check timer
   ansible.builtin.systemd_service:
     name: zcrypto-reboot-check.timer
