@@ -1,0 +1,18 @@
+# Rendered by the `cache_link` role at /etc/wireguard/zcache0.conf — edit the template.
+[Interface]
+Address = {{ cache_link_address }}/{{ cache_link_network | split('/') | last }}
+# The fleet's one tunnel MTU (the access_ops template's zaccess0.conf.j2 says why 1380). No path of
+# this mesh has been measured and one of them crosses regions: 1380 fits any path of 1440 bytes or
+# more, and costs 40 bytes a packet against wg-quick's default 1420.
+MTU = 1380
+ListenPort = {{ cache_link_listen_port }}
+PrivateKey = {{ cache_link_private_key }}
+{% for peer in cache_link_peers if peer.name != inventory_hostname %}
+
+[Peer]
+# {{ peer.name }}
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.address }}/32
+Endpoint = {{ peer.endpoint }}:{{ cache_link_listen_port }}
+PersistentKeepalive = 25
+{% endfor %}

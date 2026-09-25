@@ -1,0 +1,21 @@
+---
+# Defaults for the `cache_link` role (spec 00118 D5): the zcache WireGuard mesh between the engine
+# host and the three cache nodes. Each member sets its own `cache_link_address` and wires
+# `cache_link_private_key` from its vault var in its host_vars; the role's first task refuses a
+# member missing either.
+cache_link_interface: zcache0
+# The one member of firewall_extra_udp_ports in group_vars/cache_host/vars.yml and in
+# host_vars/zcrypto/vars.yml; tests/test_infra_converge_guards.py holds the three to one value.
+cache_link_listen_port: 51821
+cache_link_network: 10.98.0.0/24
+# The whole mesh, this host included: the conf renders every member but the one named
+# inventory_hostname. Each endpoint is an IPv4 literal because each name also carries an AAAA
+# record, and the Linode Cloud Firewall rules are written per IPv4 address; a re-IP edits it here.
+cache_link_peers:
+  - {name: zcrypto, address: 10.98.0.1, endpoint: 172.105.64.43, public_key: "{{ cache_wg_zcrypto_public_key }}"}
+  - {name: zcrypto-valkey1, address: 10.98.0.11, endpoint: 172.104.159.221, public_key: "{{ cache_wg_zcrypto_valkey1_public_key }}"}
+  - {name: zcrypto-valkey2, address: 10.98.0.12, endpoint: 139.162.163.39, public_key: "{{ cache_wg_zcrypto_valkey2_public_key }}"}
+  - {name: zcrypto-valkey3, address: 10.98.0.13, endpoint: 172.233.51.246, public_key: "{{ cache_wg_zcrypto_valkey3_public_key }}"}
+# The directory the host's Alloy textfile collector reads: the capture role's `capture_textfile_dir`
+# on the engine host, and the same path on the nodes so their Alloy config reads it unchanged.
+cache_link_textfile_dir: /var/lib/zcrypto-node-textfile

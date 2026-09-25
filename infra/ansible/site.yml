@@ -151,6 +151,12 @@
         and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
       tags: [engine]
   roles:
+    # The engine host's end of the zcache mesh, under its own tag: it restarts no container, so it
+    # takes no engine window. It is still a converge of the primary: the capture play's always-tagged
+    # guard above has already failed this host without -e converge_primary=true, and a host that
+    # fails leaves every later play. `--skip-tags engine` runs it too, idempotently.
+    - role: cache_link
+      tags: [cache-link]
     - role: engine
       tags: [engine]
 
@@ -225,3 +231,32 @@
       tags: [chrony]
     - role: access
       tags: [access]
+
+# spec 00118.
+- name: converge the cache nodes — the engine's Valkey replica set
+  hosts: cache_host
+  become: true
+  pre_tasks:
+    - name: note — the cache nodes' charter
+      ansible.builtin.debug:
+        msg: >-
+          The engine's cache: Valkey and Sentinel on three nodes, one node per converge. No trade
+          key and no capture data; the engine's ledger and the venue stay the truth, so a lost
+          node is re-provisioned and re-synced from its peers. This play targets
+          zcrypto-deploy@{{ ansible_port }} and assumes bootstrap.yml already ran.
+      tags: [always]
+  roles:
+    - role: base
+      tags: [base]
+    - role: hardening
+      tags: [hardening]
+    - role: firewall
+      tags: [firewall]
+    - role: fail2ban
+      tags: [fail2ban]
+    - role: chrony
+      tags: [chrony]
+    - role: docker
+      tags: [docker]
+    - role: cache_link
+      tags: [cache-link]

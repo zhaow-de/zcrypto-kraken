@@ -1,0 +1,90 @@
+# The cache_link role (spec 00118 D5): the zcache WireGuard mesh, one conf per member naming the
+# other three, and a probe publishing each peer's handshake age.
+
+# First, so a member missing its address or key fails here by name rather than inside the conf
+# task, whose no_log would hide which variable was undefined. The template appends /32 to every
+# peer address, so an address that is not a bare host address inside the mesh network is what an
+# AllowedIPs wider than one host would come from; and a second entry carrying this host's name,
+# address or key would render this host as its own peer.
+- name: refuse a mesh whose peers are not one host address each, or that lists this host as its own peer
+  ansible.builtin.assert:
+    that:
+      - cache_link_address is defined
+      - cache_link_private_key is defined and (cache_link_private_key | length) == 44
+      - (cache_link_peers | map(attribute='name') | unique | list | length) == (cache_link_peers | length)
+      - (cache_link_peers | map(attribute='address') | unique | list | length) == (cache_link_peers | length)
+      - (cache_link_peers | map(attribute='public_key') | unique | list | length) == (cache_link_peers | length)
+      - (cache_link_peers | map(attribute='public_key') | map('length') | unique | list) == [44]
+      - (cache_link_peers | map(attribute='address') | map('regex_replace', '[.][0-9]{1,3}$', '.0/24') | unique | list) == [cache_link_network]
+      - (cache_link_peers | selectattr('name', 'equalto', inventory_hostname) | map(attribute='address') | list) == [cache_link_address]
+    fail_msg: >-
+      REFUSING the zcache mesh on {{ inventory_hostname }}. Every member of cache_link_peers needs its
+      own name, address and 44-character public key, every address a bare host address inside
+      {{ cache_link_network }} (the conf adds the /32), and this host exactly one entry, whose address
+      is its own cache_link_address ({{ cache_link_address | default('undefined') }}); the host_vars
+      also wire cache_link_private_key from its vault var, a 44-character WireGuard key. Members as
+      read: {{ cache_link_peers | map(attribute='name') | list }} at
+      {{ cache_link_peers | map(attribute='address') | list }}.
+
+- name: wireguard tools (wg, wg-quick and the wg-quick@ unit)
+  ansible.builtin.apt:
+    name: [wireguard-tools]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: cache_link_wireguard_install
+
+- name: zcache mesh conf (this host's end and a peer per other member)
+  ansible.builtin.template:
+    src: zcache0.conf.j2
+    dest: "/etc/wireguard/{{ cache_link_interface }}.conf"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true # renders the WireGuard private key -- keep it out of --diff output
+  diff: false
+  notify: restart zcache0
+
+# A first-run dry run never installed wireguard-tools, so systemd cannot find wg-quick@ and the
+# module fails even in check mode, and converge.sh aborts on a failed preview. Skip exactly that
+# case; every real converge still runs this.
+- name: zcache mesh enabled + started
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ cache_link_interface }}"
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and cache_link_wireguard_install is changed)
+
+- name: textfile directory for the mesh probe
+  ansible.builtin.file:
+    path: "{{ cache_link_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+- name: mesh probe script
+  ansible.builtin.copy:
+    src: zcache-probe.sh
+    dest: /usr/local/sbin/zcache-probe
+    owner: root
+    group: root
+    mode: "0755"
+# The unit passes the rendered conf and the textfile directory to the script, so both follow the defaults.
+- name: mesh probe service + timer
+  ansible.builtin.template:
+    src: "zcache-probe.{{ item }}.j2"
+    dest: "/etc/systemd/system/zcache-probe.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: cache_link_probe_units
+  notify: reload systemd
+# The same first-run dry-run case as the tunnel above: the unit files were never written.
+- name: mesh probe timer enabled
+  ansible.builtin.systemd:
+    name: zcache-probe.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not (ansible_check_mode and cache_link_probe_units is changed)

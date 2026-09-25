@@ -1,0 +1,16 @@
+# Rendered by the `cache_link` Ansible role at /etc/systemd/system/zcache-probe.timer — do not
+# hand-edit on the host, edit infra/ansible/roles/cache_link/templates/zcache-probe.timer.j2 instead.
+[Unit]
+Description=zcache mesh probe cadence — every minute
+
+[Timer]
+OnCalendar=*:*:23
+# AccuracySec defaults to one minute, which lets each run slide by a whole period against the
+# three-minute staleness the handshake-age rule reads.
+AccuracySec=1s
+# Deliberately NO Persistent=true, as for the zaccess probe timers: this reports CURRENT state, and a
+# run missed while the host was down is meaningless to catch up on.
+Unit=zcache-probe.service
+
+[Install]
+WantedBy=timers.target

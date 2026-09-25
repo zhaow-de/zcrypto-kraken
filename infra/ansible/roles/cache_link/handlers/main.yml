@@ -1,0 +1,12 @@
+---
+- name: restart zcache0
+  # wg-quick has no reload -- a restart is the only way to apply a changed conf, and it drops every
+  # connection through the mesh for as long as the interface is down. The first-run dry-run case of
+  # the enable task in tasks/main.yml is skipped here too.
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ cache_link_interface }}"
+    state: restarted
+  when: not (ansible_check_mode and cache_link_wireguard_install is changed)
+
+- name: reload systemd
+  ansible.builtin.systemd: {daemon_reload: true}

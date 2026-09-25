@@ -2071,3 +2071,187 @@ def test_the_copied_role_alone_reds_nothing(tmp_path, monkeypatch):
     """The true positive beside the two above: the copy passes until one of them plants something."""
     monkeypatch.setitem(globals(), "OPS_ROLE", _ops_role_copy(tmp_path))
     test_no_ops_role_asset_is_a_broken_link()
+
+
+# --- the zcache mesh: each member's conf names the other three, one /32 each, and the role refuses
+# a peer list that would render otherwise. The guard's conditions are fed constructed peer lists
+# through Ansible's templar, and the conf is rendered through it for each member as committed.
+CACHE_LINK = ANSIBLE / "roles" / "cache_link"
+CACHE_LINK_TASKS = CACHE_LINK / "tasks" / "main.yml"
+CACHE_LINK_DEFAULTS = CACHE_LINK / "defaults" / "main.yml"
+CACHE_LINK_WG_CONF = CACHE_LINK / "templates" / "zcache0.conf.j2"
+CACHE_HOST_VARS = ANSIBLE / "group_vars" / "cache_host" / "vars.yml"
+ENGINE_HOST_VARS = ANSIBLE / "host_vars" / "zcrypto" / "vars.yml"
+MESH_GUARD = "refuse a mesh whose peers are not one host address each, or that lists this host as its own peer"
+MESH_MEMBERS = ("zcrypto", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3")
+# The shape of a WireGuard key, and distinct per member, so no fixture key collides with another.
+FAKE_KEY = {name: f"{i}" * 43 + "=" for i, name in enumerate(MESH_MEMBERS, 1)}
+
+
+class _VaultKeptLoader(yaml.SafeLoader):
+    """A host_vars file may carry an inline `!vault` value; its ciphertext is kept, never decrypted."""
+
+
+_VaultKeptLoader.add_constructor("!vault", lambda loader, node: node.value)
+
+
+def _mesh_vars(host: str) -> dict:
+    """The committed mesh as `host` sees it at converge time, its keys replaced by fixtures."""
+    defaults = yaml.safe_load(CACHE_LINK_DEFAULTS.read_text())
+    host_vars = yaml.load((ANSIBLE / "host_vars" / host / "vars.yml").read_text(), Loader=_VaultKeptLoader)
+    return {
+        "inventory_hostname": host,
+        "cache_link_peers": [{**p, "public_key": FAKE_KEY[p["name"]]} for p in defaults["cache_link_peers"]],
+        "cache_link_network": defaults["cache_link_network"],
+        "cache_link_listen_port": defaults["cache_link_listen_port"],
+        "cache_link_address": host_vars["cache_link_address"],
+        "cache_link_private_key": "P" * 43 + "=",
+    }
+
+
+@pytest.mark.parametrize("host", MESH_MEMBERS)
+def test_the_committed_mesh_passes_its_guard_on_each_member(host):
+    assert truthy(assert_that(find_task(load_tasks(CACHE_LINK_TASKS), MESH_GUARD)), _mesh_vars(host))
+
+
+def _peer(v: dict, name: str) -> dict:
+    return next(p for p in v["cache_link_peers"] if p["name"] == name)
+
+
+def _prefixed(v):
+    _peer(v, "zcrypto-valkey2")["address"] = "10.98.0.12/24"
+
+
+def _outside(v):
+    _peer(v, "zcrypto-valkey2")["address"] = "10.99.0.12"
+
+
+def _self_absent(v):
+    v["cache_link_peers"] = [p for p in v["cache_link_peers"] if p["name"] != "zcrypto-valkey1"]
+
+
+def _other_twice(v):
+    v["cache_link_peers"].append({**_peer(v, "zcrypto-valkey2"), "address": "10.98.0.14", "public_key": "9" * 43 + "="})
+
+
+def _own_address_elsewhere(v):
+    _peer(v, "zcrypto-valkey2")["address"] = _peer(v, "zcrypto-valkey1")["address"]
+
+
+def _own_key_elsewhere(v):
+    _peer(v, "zcrypto-valkey2")["public_key"] = _peer(v, "zcrypto-valkey1")["public_key"]
+
+
+def _peer_key_short(v):
+    _peer(v, "zcrypto-valkey2")["public_key"] = "3" * 43
+
+
+def _address_disagrees(v):
+    v["cache_link_address"] = "10.98.0.14"
+
+
+def _address_unset(v):
+    del v["cache_link_address"]
+
+
+def _key_unset(v):
+    del v["cache_link_private_key"]
+
+
+def _key_short(v):
+    v["cache_link_private_key"] = "P" * 43
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        _prefixed,
+        _outside,
+        _self_absent,
+        _other_twice,
+        _own_address_elsewhere,
+        _own_key_elsewhere,
+        _peer_key_short,
+        _address_disagrees,
+        _address_unset,
+        _key_unset,
+        _key_short,
+    ],
+    ids=lambda f: f.__name__.lstrip("_"),
+)
+def test_the_mesh_guard_refuses_a_peer_list_that_would_render_wrong(spoil):
+    variables = _mesh_vars("zcrypto-valkey1")
+    spoil(variables)
+    assert not truthy(assert_that(find_task(load_tasks(CACHE_LINK_TASKS), MESH_GUARD)), variables)
+
+
+def _render_conf(host: str) -> dict[str, list[dict[str, str]]]:
+    """The rendered conf as wg reads it: section name -> one {key: value} per section occurrence."""
+    from ansible.template import trust_as_template
+
+    rendered = Templar(loader=DataLoader(), variables=_mesh_vars(host)).template(trust_as_template(CACHE_LINK_WG_CONF.read_text()))
+    sections: dict[str, list[dict[str, str]]] = {}
+    for raw in rendered.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line.startswith("[") and line.endswith("]"):
+            sections.setdefault(line, []).append({})
+        elif "=" in line:
+            key, _, value = line.partition("=")
+            current = list(sections.values())[-1][-1] if sections else None
+            assert current is not None, f"{line!r} precedes every section"
+            assert key.strip() not in current, f"{key.strip()} repeats inside one section"
+            current[key.strip()] = value.strip()
+    return sections
+
+
+@pytest.mark.parametrize("host", MESH_MEMBERS)
+def test_the_zcache_conf_names_each_other_member_once_as_one_host(host):
+    v = _mesh_vars(host)
+    conf = _render_conf(host)
+    assert set(conf) == {"[Interface]", "[Peer]"}, conf
+    (interface,) = conf["[Interface]"]
+    assert interface["Address"] == f"{v['cache_link_address']}/24"
+    assert interface["ListenPort"] == str(v["cache_link_listen_port"])
+    others = [p for p in v["cache_link_peers"] if p["name"] != host]
+    assert sorted(p["AllowedIPs"] for p in conf["[Peer]"]) == sorted(f"{p['address']}/32" for p in others)
+    assert sorted(p["PublicKey"] for p in conf["[Peer]"]) == sorted(p["public_key"] for p in others)
+    assert {p["Endpoint"] for p in conf["[Peer]"]} == {f"{p['endpoint']}:{v['cache_link_listen_port']}" for p in others}
+    assert {p["PersistentKeepalive"] for p in conf["[Peer]"]} == {"25"}
+
+
+def test_each_zcache_peer_key_is_one_variable_every_member_renders():
+    """A rotated key is one edit: each member's public half is read from its own `cache_wg_<member>_public_key`, set in
+    group_vars/all/vars.yml and in no member's host_vars, and every other member's conf renders it, so no host holds a
+    copy that can fall behind."""
+    defaults = yaml.safe_load(CACHE_LINK_DEFAULTS.read_text())
+    wired = {p["name"]: p["public_key"] for p in defaults["cache_link_peers"]}
+    assert wired == {name: "{{ cache_wg_" + name.replace("-", "_") + "_public_key }}" for name in MESH_MEMBERS}, wired
+    assert _wg_value(CACHE_LINK_WG_CONF, "PublicKey") == "{{peer.public_key}}"
+    for host in MESH_MEMBERS:
+        host_vars = yaml.load((ANSIBLE / "host_vars" / host / "vars.yml").read_text(), Loader=_VaultKeptLoader)
+        assert not [key for key in host_vars if key.startswith("cache_wg_")], f"{host}'s host_vars set a mesh key"
+
+
+def test_the_zcache_mesh_runs_the_fleets_one_tunnel_mtu():
+    mtus = {**_tunnel_mtus(), str(CACHE_LINK_WG_CONF.relative_to(ANSIBLE)): int(_wg_value(CACHE_LINK_WG_CONF, "MTU"))}
+    assert len(set(mtus.values())) == 1, f"the fleet's tunnels declare different MTUs: {mtus}"
+
+
+def test_the_zcache_ports_are_one_value_in_every_declaration():
+    """The listen port is also every peer's Endpoint port and the one port each member's firewall opens
+    for the mesh; a drift among them is a tunnel that never handshakes."""
+    assert re.fullmatch(r"\{\{\s*cache_link_listen_port\s*\}\}", _wg_value(CACHE_LINK_WG_CONF, "ListenPort"))
+    assert re.search(r":\{\{\s*cache_link_listen_port\s*\}\}$", _wg_value(CACHE_LINK_WG_CONF, "Endpoint"))
+    defaults = yaml.safe_load(CACHE_LINK_DEFAULTS.read_text())
+    assert all(":" not in p["endpoint"] for p in defaults["cache_link_peers"]), "an endpoint carries its own port"
+    ports = {"roles/cache_link/defaults:cache_link_listen_port": defaults["cache_link_listen_port"]}
+    for path in (CACHE_HOST_VARS, ENGINE_HOST_VARS):
+        opened = _declared(path, WG_UDP_PORTS)
+        assert isinstance(opened, list) and len(opened) == 1, (
+            f"{path.relative_to(ANSIBLE)}:{WG_UDP_PORTS} is {opened!r}, not the single tunnel port this selection can read"
+        )
+        ports[f"{path.relative_to(ANSIBLE)}:{WG_UDP_PORTS}"] = opened[0]
+    assert len(set(ports.values())) == 1, f"the zcache mesh's port declarations disagree: {ports}"
+    # the interface the database ports are scoped to is the mesh's own
+    scoped = _declared(CACHE_HOST_VARS, "firewall_interface_tcp_ports")
+    assert [rule["iface"] for rule in scoped] == [defaults["cache_link_interface"]], scoped

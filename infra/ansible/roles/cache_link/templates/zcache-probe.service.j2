@@ -1,0 +1,14 @@
+# Rendered by the `cache_link` Ansible role at /etc/systemd/system/zcache-probe.service; edit
+# infra/ansible/roles/cache_link/templates/zcache-probe.service.j2 and re-converge.
+[Unit]
+Description=zcache mesh probe writing each peer's WireGuard handshake age
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcache-probe /etc/wireguard/{{ cache_link_interface }}.conf {{ cache_link_textfile_dir }}/zcache.prom
+# Root, for `wg show` and the 0600 WireGuard config; the one path it may write is the textfile directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ cache_link_textfile_dir }}
