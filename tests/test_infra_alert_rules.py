@@ -1525,6 +1525,32 @@ def test_the_cache_daemon_down_rule_pages_on_a_zero_and_leaves_an_absence_to_the
     )
 
 
+_ALLOY_DARK_CACHE = ("zcrypto-alloy-dark-cache-1", "zcrypto-alloy-dark-cache-2", "zcrypto-alloy-dark-cache-3")
+FLEET_PINS = REPO / "docs/reference/fleet-pins.md"
+
+
+def _pinned_hosts() -> set[str]:
+    rows = [line.strip().strip("|").split("|") for line in FLEET_PINS.read_text().splitlines() if line.startswith("|")]
+    return {host.strip() for cells in rows if len(cells) > 1 for host in cells[1].split(",")}
+
+
+def test_the_alloy_dark_cache_rules_are_paused_exactly_while_no_cache_node_has_converged():
+    """A node's pin row is the record its converge leaves, and it lands in the commit that un-pauses
+    these rules. Before it, each rule pages critical on a node that has never run Alloy; after it, a
+    paused rule is a dark node nobody is told about."""
+    rules = [_rule(uid) for uid in _ALLOY_DARK_CACHE]
+    nodes = {re.search(r'host="([^"]+)"', rule["data"][0]["model"]["expr"]).group(1) for rule in rules}
+    pinned = _pinned_hosts()
+    assert len(nodes) == 3 and "zcrypto" in pinned, f"the parse broke: nodes {nodes}, pinned hosts {pinned}"
+    paused = {rule["uid"] for rule in rules if rule.get("isPaused") is True}
+    if nodes & pinned:
+        assert not paused, f"{sorted(nodes & pinned)} have pin rows, so a dark node must page: un-pause {sorted(paused)}"
+    else:
+        assert paused == set(_ALLOY_DARK_CACHE), (
+            f"no cache node has a pin row, so each rule would page on its first push: pause {sorted(set(_ALLOY_DARK_CACHE) - paused)}"
+        )
+
+
 _CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 
 

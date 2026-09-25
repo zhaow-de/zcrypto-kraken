@@ -130,6 +130,8 @@ ______________________________________________________________________
 
 A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1` / `— Cache 2` / `— Cache 3`. The named node's `up` series has been absent from Grafana Cloud for over 10 minutes: `count(up{host="zcrypto-valkey<N>"}) or on() vector(0)` fell below 1.
 
+The three rules are paused until the nodes' records land — the rollout's records step, which writes the nodes' rows in `docs/reference/fleet-pins.md`, un-pauses them — so a quiet rule before then is the pause, not a healthy node.
+
 ### What it means
 
 **Telemetry-only.** Valkey and Sentinel keep running; what stops is your view of that node. Every other rule in the `zcrypto-cache` group reads that node's series and reads no data while this fires, which they take as healthy — read no green as reassurance until `up` is back. The set itself is watched from the other two nodes: a primary that is truly gone still moves, and the other nodes' Sentinels and replica counts show it.

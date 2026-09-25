@@ -4825,6 +4825,11 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
+    # Paused while no cache node has a pin row, since each would otherwise page critical on the first
+    # push, before any node runs Alloy. The rollout's records commit (step R9 of
+    # docs/plans/00118-engine-cache-infra.md), which writes the nodes' pin rows, deletes all three
+    # isPaused lines; tests/test_infra_alert_rules.py holds the pause to fleet-pins.md.
+    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -4864,6 +4869,7 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
+    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -4903,6 +4909,7 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
+    isPaused: true
     data:
       - refId: A
         queryType: ""
