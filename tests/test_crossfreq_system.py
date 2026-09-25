@@ -51,7 +51,7 @@ def synthetic_grids(n_days: int, *, n_extra_h4: int = 0):
         {"fee_per_side": 0.0},
         {"fee_per_side": float("nan")},
         {"fee_per_side": True},  # bool is not a fee
-        {"spread_per_side": 0.0},
+        {"spread_per_side": -0.0001},  # a negative spread; zero is a maker fill at mid and builds
         {"spread_per_side": float("nan")},
         {"spread_per_side": True},  # bool is not a spread
         {"long_cap": -0.2},
@@ -72,6 +72,14 @@ def test_invalid_config(kwargs, builder):
     cfg = CrossfreqSystemConfig(**{"assets": ("AAA", "BTC"), **kwargs})
     with pytest.raises(PortfolioError):
         builder(d_prices, d_ts, h_prices, h_ts, config=cfg)
+
+
+@pytest.mark.parametrize("builder", [build_crossfreq_system, build_crossfreq_system_fast])
+def test_a_zero_spread_builds_and_costs_the_fee_alone(builder):
+    d_prices, d_ts, h_prices, h_ts = synthetic_grids(220)
+    cfg = CrossfreqSystemConfig(assets=("AAA", "BTC"), spread_per_side=0.0)
+    assert cfg.cost_per_side == cfg.fee_per_side
+    builder(d_prices, d_ts, h_prices, h_ts, config=cfg)
 
 
 def test_degenerate_inputs():
