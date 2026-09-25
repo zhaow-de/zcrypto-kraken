@@ -172,6 +172,7 @@ def test_cache_data_is_mounted_into_valkey_alone():
 ALLOY_COMPOSE_FILES = (
     REPO / "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2",
     REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2",
+    REPO / "infra/ansible/roles/cache/templates/alloy-compose.yaml.j2",
     REPO / "infra/nas/compose.yaml",
 )
 

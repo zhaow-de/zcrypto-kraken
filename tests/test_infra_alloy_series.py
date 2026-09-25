@@ -14,6 +14,8 @@ NAS_ALLOY = REPO / "infra/nas/config.alloy"
 OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
+CACHE_ALLOY = REPO / "infra/ansible/roles/cache/files/config.alloy"
+CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
 
 # Named constants only so the retired-pair exclusion test below can reference them.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
@@ -303,6 +305,54 @@ ACCESS_REQUIRED = [
     *ACCESS_APP_SERIES,
 ]
 
+# The cache nodes' Valkey and Sentinel families, through Alloy's embedded Redis exporter; the Cache
+# board and the zcrypto-cache rules read each of them.
+CACHE_REDIS_SERIES = [
+    "redis_up",
+    "redis_instance_info",
+    "redis_uptime_in_seconds",
+    "redis_connected_slaves",
+    "redis_master_repl_offset",
+    "redis_connected_slave_offset_bytes",
+    "redis_master_link_up",
+    "redis_memory_used_bytes",
+    "redis_memory_max_bytes",
+    "redis_commands_processed_total",
+    "redis_connected_clients",
+    "redis_aof_enabled",
+    "redis_aof_last_write_status",
+    "redis_aof_last_bgrewrite_status",
+    "redis_rdb_last_bgsave_status",
+    "redis_sentinel_masters",
+    "redis_sentinel_master_status",
+    "redis_sentinel_master_sentinels",
+    "redis_sentinel_master_ok_sentinels",
+    "redis_sentinel_master_slaves",
+]
+
+# Exact, not a floor: the cache keep regex admits these and nothing else (the equality test below).
+# The node families are the Cache board's and the fleet's host-unscoped rules' (`node_scrape_collector_
+# success`, `node_filesystem_*`); the textfile three are the reboot check's flag, and the freshness and
+# parse state of the directory the reboot check and the mesh probe write.
+CACHE_REQUIRED = [
+    "up",
+    "node_load1",
+    "node_cpu_seconds_total",
+    "node_memory_MemAvailable_bytes",
+    "node_memory_MemTotal_bytes",
+    "node_filesystem_avail_bytes",
+    "node_filesystem_size_bytes",
+    "node_network_receive_bytes_total",
+    "node_network_transmit_bytes_total",
+    "node_scrape_collector_success",
+    "node_reboot_required",
+    "node_textfile_mtime_seconds",
+    "node_textfile_scrape_error",
+    "zcache_wireguard_handshake_age_seconds",
+    *PROCESS_FAMILIES,
+    *CACHE_REDIS_SERIES,
+]
+
 
 def _keep_regex(path: Path) -> re.Pattern:
     """Extract the `keep` write_relabel_config's regex from an Alloy config."""
@@ -335,8 +385,9 @@ def _drop_regex(path: Path) -> re.Pattern:
         (OPS_ALLOY, OPS_REQUIRED),
         (CAPTURE_ALLOY, CAPTURE_REQUIRED),
         (ACCESS_ALLOY, ACCESS_REQUIRED),
+        (CACHE_ALLOY, CACHE_REQUIRED),
     ],
-    ids=["nas", "ops", "capture", "access"],
+    ids=["nas", "ops", "capture", "access", "cache"],
 )
 def test_keep_regex_admits_every_published_series(path, required):
     keep = _keep_regex(path)
@@ -351,8 +402,9 @@ def test_keep_regex_admits_every_published_series(path, required):
         (OPS_ALLOY, OPS_REQUIRED),
         (CAPTURE_ALLOY, CAPTURE_REQUIRED),
         (ACCESS_ALLOY, ACCESS_REQUIRED),
+        (CACHE_ALLOY, CACHE_REQUIRED),
     ],
-    ids=["nas", "ops", "capture", "access"],
+    ids=["nas", "ops", "capture", "access", "cache"],
 )
 def test_drop_regex_does_not_shadow_the_keep_list(path, required):
     """The drop stage runs before the keep stage, so a required series the drop rule eats never
@@ -374,8 +426,10 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
         # No app daemon runs on the bridgehead, and (D11) no `exporter.self "alloy"` component
         # either -- none of the app/logship/process families exist there.
         (ACCESS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES, *PROCESS_FAMILIES]),
+        # Valkey, Sentinel and the probe are all that run on a cache node.
+        (CACHE_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
     ],
-    ids=["nas", "ops", "capture", "access"],
+    ids=["nas", "ops", "capture", "access", "cache"],
 )
 def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded):
     """The keep-regex admits nothing this host does not publish -- an admitted family is silent
@@ -385,7 +439,9 @@ def test_keep_regex_excludes_families_not_published_on_this_host(path, excluded)
     assert not admitted, f"{path}: keep-regex admits {admitted}, which nothing on this host publishes"
 
 
-@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY], ids=["nas", "ops", "capture", "access"])
+@pytest.mark.parametrize(
+    "path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["nas", "ops", "capture", "access", "cache"]
+)
 def test_keep_regex_excludes_the_retired_sd_pair(path):
     """discovery.docker is gone fleet-wide (00068 D6/D8), so no host's keep-regex may admit its
     series."""
@@ -393,7 +449,9 @@ def test_keep_regex_excludes_the_retired_sd_pair(path):
     assert not keep.match(_SD_SERIES) and not keep.match(_SD_FAILURES)
 
 
-@pytest.mark.parametrize("path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY], ids=["nas", "ops", "capture", "access"])
+@pytest.mark.parametrize(
+    "path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["nas", "ops", "capture", "access", "cache"]
+)
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     text = path.read_text()
     drop_at = text.find('"drop"')
@@ -479,7 +537,7 @@ def test_the_not_a_published_metric_list_has_not_gone_stale():
 
 @pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
 def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
-    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY)]
+    keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY)]
     assert any(k.match(metric) for k in keeps), (
         f"{metric} is published by this repo but matches no keep-regex on any host, so it is "
         f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "
@@ -595,3 +653,58 @@ def test_the_journal_keep_regex_names_no_unit_the_role_does_not_install():
     """A name kept in the regex after its unit goes reads as coverage of something that cannot log."""
     extra = sorted(_journal_units_kept() - _installed_units())
     assert not extra, f"the keep-regex names {extra}, which the role does not install"
+
+
+# --- the cache nodes' config ---------------------------------------------------------------------
+def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
+    """Both directions, where the per-host admission test reads one: a family the regex admits that the
+    list lacks fails here as well as a listed one the regex drops. Whether each is read by a panel or a
+    rule is test_dashboards_cover_metrics.py's."""
+    admitted = _keep_regex(CACHE_ALLOY).pattern.removeprefix(r"\A(?:").removesuffix(r")\Z").split("|")
+    assert sorted(admitted) == sorted(CACHE_REQUIRED), (
+        f"the cache keep regex and CACHE_REQUIRED differ: admitted only {sorted(set(admitted) - set(CACHE_REQUIRED))}, "
+        f"listed only {sorted(set(CACHE_REQUIRED) - set(admitted))}"
+    )
+
+
+def test_the_cache_secrets_template_renders_every_name_the_config_reads():
+    """A name the config reads that the env file lacks is an empty string at runtime: remote_write or the
+    exporter's AUTH fails with nothing in the tree to say why."""
+    read = set(re.findall(r'sys\.env\("([A-Z_]+)"\)', CACHE_ALLOY.read_text()))
+    rendered = set(re.findall(r"^([A-Z_]+)=", CACHE_SECRETS.read_text(), re.M))
+    assert {"CACHE_EXPORTER_PASSWORD", "CACHE_SENTINEL_REQUIREPASS"} <= read, f"the config reads {sorted(read)}"
+    assert read == rendered, f"config reads {sorted(read - rendered)} unrendered; template renders {sorted(rendered - read)} unread"
+
+
+def test_the_redis_exporters_ship_under_the_jobs_the_rules_select():
+    """Both exporters' targets carry the same built-in `job`, which wins over a scrape's `job_name`; the
+    relabel is what makes `job="valkey"` and `job="sentinel"` exist at all."""
+    cache_config = CACHE_ALLOY.read_text()
+    targets = [line.split("=", 1)[1].strip() for line in cache_config.splitlines() if line.strip().startswith("targets ")]
+    for job in ("valkey", "sentinel"):
+        relabel = re.search(rf'discovery\.relabel "{job}" \{{(.*?)\n\}}', cache_config, re.S)
+        assert relabel, f"no discovery.relabel for {job}"
+        assert f"targets = prometheus.exporter.redis.{job}.targets" in relabel.group(1)
+        assert 'target_label = "job"' in relabel.group(1) and f'replacement  = "{job}"' in relabel.group(1)
+        assert f"discovery.relabel.{job}.output" in targets, f"the {job} scrape does not read its relabelled targets"
+
+
+def test_the_cache_journal_keep_rule_keys_the_containers_by_name():
+    """Keyed by container name: the journald-driver streams carry `docker.service` as their unit, so a unit
+    arm cannot select them, and keying the unit that runs the compose project too would ship each line
+    twice."""
+    rule = _journal_keep_block(CACHE_ALLOY)
+    regex = re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1)
+    assert 'separator     = ";"' in rule and '["__journal__systemd_unit", "__journal_container_name"]' in rule
+    assert regex == "zcache-probe\\\\.service;.*|.*;(zcrypto-valkey|zcrypto-sentinel|grafana-alloy)", regex
+
+
+def test_the_cache_textfile_collector_reads_where_the_mesh_probe_writes():
+    """The mesh probe of `roles/cache_link` writes zcache.prom into `cache_link_textfile_dir` and the cache role's
+    reboot check writes reboot.prom into `cache_textfile_dir`; the node's Alloy reads that one directory through its
+    `/:/host/root:ro` mount, so each path differs from the collector's by that prefix alone."""
+    directory = re.search(r'textfile \{\s*directory = "([^"]+)"', CACHE_ALLOY.read_text())
+    assert directory, "no textfile directory in the cache config"
+    for role, var in (("cache_link", "cache_link_textfile_dir"), ("cache", "cache_textfile_dir")):
+        written = re.search(rf"^{var}: (\S+)$", (REPO / f"infra/ansible/roles/{role}/defaults/main.yml").read_text(), re.M)
+        assert written and directory.group(1) == "/host/root" + written.group(1), (role, written, directory.group(1))

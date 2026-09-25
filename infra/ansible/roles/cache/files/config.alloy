@@ -1,0 +1,221 @@
+// Grafana Alloy config for a cache node (zcrypto-valkey1/2/3). Installed by the `cache` role with
+// `ansible.builtin.copy` at cache_alloy_dir/conf/config.alloy, so edit this file, never the host's copy.
+// files/, not templates/: `copy:` searches only a role's files/ dir, and the `{{ }}` in the log stages
+// below would be read by Jinja2. The `host` label is `constants.hostname`, which under `network_mode:
+// host` is the node's own name, so this one static file labels all three nodes. Credentials arrive as
+// environment variables from alloy-secrets.env (0600, rendered by the role), read with `sys.env(...)`.
+//
+// EDITING NOTE -- test suites pull assignments out of this file by PREFIX (`line.strip().startswith(<key>)`).
+// Keep every config key the first non-space token on exactly one line.
+
+// ---- Host metrics -------------------------------------------------------------------------------
+// The textfile directory is where the cache_link role's mesh probe (zcache-probe) writes zcache.prom,
+// each mesh peer's handshake age, and the cache role's reboot check reboot.prom, the pending-reboot
+// flag. It sits inside the `/:/host/root:ro` mount.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  textfile {
+    directory = "/host/root/var/lib/zcrypto-node-textfile"
+  }
+}
+
+// Alloy's own process_* families, for the fleet's Alloy memory-headroom rule (job="integrations/self").
+prometheus.exporter.self "alloy" {}
+
+// No `job_name` here: exporter targets carry their own `job` label (integrations/unix, integrations/self),
+// which wins over a scrape's job_name, and the headroom rule selects job="integrations/self".
+prometheus.scrape "cache_host" {
+  targets         = array.concat(prometheus.exporter.unix.host.targets, prometheus.exporter.self.alloy.targets)
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+// ---- Valkey and Sentinel ------------------------------------------------------------------------
+// The exporter detects Sentinel from the `# Sentinel` section of the server's INFO and publishes the
+// redis_sentinel_* families from it; no argument selects that mode. The Sentinel has no ACL user, only
+// its requirepass.
+prometheus.exporter.redis "valkey" {
+  redis_addr     = "127.0.0.1:6379"
+  redis_user     = "exporter"
+  redis_password = sys.env("CACHE_EXPORTER_PASSWORD")
+}
+
+prometheus.exporter.redis "sentinel" {
+  redis_addr     = "127.0.0.1:26379"
+  redis_password = sys.env("CACHE_SENTINEL_REQUIREPASS")
+}
+
+// Both exporters' targets carry the same built-in `job`, so each is relabelled to its own: every
+// dashboard panel and alert rule selects job="valkey" or job="sentinel".
+discovery.relabel "valkey" {
+  targets = prometheus.exporter.redis.valkey.targets
+
+  rule {
+    target_label = "job"
+    replacement  = "valkey"
+  }
+}
+
+discovery.relabel "sentinel" {
+  targets = prometheus.exporter.redis.sentinel.targets
+
+  rule {
+    target_label = "job"
+    replacement  = "sentinel"
+  }
+}
+
+prometheus.scrape "valkey" {
+  targets         = discovery.relabel.valkey.output
+  job_name        = "valkey"
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.scrape "sentinel" {
+  targets         = discovery.relabel.sentinel.output
+  job_name        = "sentinel"
+  forward_to      = [prometheus.remote_write.grafana.receiver]
+  scrape_interval = "60s"
+}
+
+// ---- remote_write -------------------------------------------------------------------------------
+prometheus.remote_write "grafana" {
+  external_labels = {
+    host = constants.hostname,
+  }
+
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USERNAME")
+      password = sys.env("GRAFANA_PROM_PASSWORD")
+    }
+
+    // Alloy's own internals first, then keep-only: a series the keep regex does not list does not
+    // exist in Grafana. The list is the families the Cache board and the rules read, `up`, the fleet's
+    // unscoped node rules' families, and the six process_* names; tests/test_infra_alloy_series.py
+    // holds it to CACHE_REQUIRED exactly.
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "go_.*|alloy_.*"
+      action        = "drop"
+    }
+
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "up|node_load1|node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_scrape_collector_success|node_reboot_required|node_textfile_mtime_seconds|node_textfile_scrape_error|zcache_wireguard_handshake_age_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|redis_up|redis_instance_info|redis_uptime_in_seconds|redis_connected_slaves|redis_master_repl_offset|redis_connected_slave_offset_bytes|redis_master_link_up|redis_memory_used_bytes|redis_memory_max_bytes|redis_commands_processed_total|redis_connected_clients|redis_aof_enabled|redis_aof_last_write_status|redis_aof_last_bgrewrite_status|redis_rdb_last_bgsave_status|redis_sentinel_masters|redis_sentinel_master_status|redis_sentinel_master_sentinels|redis_sentinel_master_ok_sentinels|redis_sentinel_master_slaves"
+      action        = "keep"
+    }
+  }
+}
+
+// ---- Logs: the host journal ---------------------------------------------------------------------
+// Valkey, Sentinel and Alloy log through the journald driver, so their lines are keyed by container
+// name, never by the unit that starts them: a compose project run attached under a unit copies the same
+// lines into that unit's journal, and keying both would ship each line twice. The mesh probe's unit is
+// kept for its failures.
+loki.relabel "journal_units" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit", "__journal_container_name"]
+    separator     = ";"
+    regex         = "zcache-probe\\.service;.*|.*;(zcrypto-valkey|zcrypto-sentinel|grafana-alloy)"
+    action        = "keep"
+  }
+
+  // Unit name minus ".service" -> `container`; the container-name rules below overwrite it for the
+  // journald-driver streams, whose unit is docker.service. The order is load-bearing.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)\\.service"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__journal_container_name"]
+    regex         = "zcrypto-(valkey|sentinel)"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__journal_container_name"]
+    regex         = "grafana-alloy"
+    target_label  = "container"
+    replacement   = "alloy"
+  }
+
+  rule {
+    target_label = "host"
+    replacement  = constants.hostname
+  }
+}
+
+loki.source.journal "cache_units" {
+  path          = "/host/journal"
+  relabel_rules = loki.relabel.journal_units.rules
+  forward_to    = [loki.process.parse.receiver]
+  // Unset, an outage longer than 7h skips the journal between the cursor and now-7h for good.
+  max_age       = "48h"
+}
+
+loki.process "parse" {
+  forward_to = [loki.write.grafana.receiver]
+
+  stage.match {
+    selector = "{container=\"alloy\"}"
+
+    stage.logfmt {
+      mapping = { "level" = "" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+  }
+
+  // Valkey's and Sentinel's line is `<pid>:<role> <dd Mon yyyy hh:mm:ss.mmm> <mark> <message>`, the
+  // mark `#` for a warning, `*` for a notice, `-` verbose and `.` debug. A line of another shape
+  // renders an empty level, which the labels stage drops, so it ships with no `level` label.
+  stage.match {
+    selector = "{container=~\"valkey|sentinel\"}"
+
+    stage.regex {
+      expression = "^\\d+:[XCSM] \\d{2} \\w{3} \\d{4} [\\d:.]+ (?P<mark>[.*#-]) "
+    }
+
+    stage.template {
+      source   = "mark"
+      template = "{{ if eq .Value \"#\" }}WARNING{{ else if eq .Value \".\" }}DEBUG{{ else if .Value }}INFO{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "mark" }
+    }
+  }
+}
+
+loki.write "grafana" {
+  endpoint {
+    url = sys.env("GRAFANA_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_LOKI_USERNAME")
+      password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}

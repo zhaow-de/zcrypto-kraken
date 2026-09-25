@@ -1268,6 +1268,11 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
         ("zcrypto-red", "integrations/self"),
     ),
     "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2": (("ops", "integrations/self"),),
+    "infra/ansible/roles/cache/templates/alloy-compose.yaml.j2": (
+        ("zcrypto-valkey1", "integrations/self"),
+        ("zcrypto-valkey2", "integrations/self"),
+        ("zcrypto-valkey3", "integrations/self"),
+    ),
     "infra/nas/compose.yaml": (("nas", "integrations/self"),),
     "infra/docker/compose.yaml": (),
     "infra/ansible/roles/cache/templates/compose.yaml.j2": (
@@ -1394,6 +1399,11 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
         f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
     )
+    # The cache nodes' own cap, half the shared one on a 1 GB node, read back from its compose literal.
+    cache_cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+    assert re.search(
+        rf'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"\}}\s*/\s*{cache_cap}\b', expr
+    ), f"the cache leg must divide by the cache compose literal ({cache_cap}); found: {expr!r}"
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
@@ -1459,6 +1469,9 @@ def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
         ("zcrypto", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
         ("zcrypto-red", ANSIBLE / "roles/capture/templates/alloy-compose.yaml.j2"),
         ("nas", REPO / "infra/nas/compose.yaml"),
+        ("zcrypto-valkey1", ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2"),
+        ("zcrypto-valkey2", ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2"),
+        ("zcrypto-valkey3", ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2"),
     ):
         ratios[host] = _compose_alloy_gomemlimit_bytes(compose_path) / _compose_alloy_limit_bytes(compose_path)
     for host, ratio in ratios.items():

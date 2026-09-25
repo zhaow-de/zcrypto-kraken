@@ -4227,6 +4227,8 @@ rules:
       # `max_over_time(process_resident_memory_bytes{host="nas", job="integrations/self"}[24h]) / 536870912`
       # before reading a higher value as staleness rather than growth. The
       # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
+      # The three cache nodes are 1 GB machines, so their Alloy is capped at 256m with GOMEMLIMIT at
+      # the same 0.9 of it.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4235,6 +4237,7 @@ rules:
           expr: >-
             (process_resident_memory_bytes{host="ops", job="integrations/self"} / 1073741824)
             or (process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|nas", job="integrations/self"} / 536870912)
+            or (process_resident_memory_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} / 268435456)
           instant: true
           refId: A
       - refId: C
@@ -4258,7 +4261,7 @@ rules:
     annotations:
       summary: >-
         Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on Ops, 512 MiB on the Capture
-        primary, the Capture secondary and the NAS. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
+        primary, the Capture secondary and the NAS, 256 MiB on Cache 1, Cache 2 and Cache 3. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
         label says which machine. If it is OOM-killed that host's telemetry goes dark, which `Fleet · Alloy dark` reports separately;
         this is the warning before that.
         Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom

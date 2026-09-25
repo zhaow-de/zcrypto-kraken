@@ -38,3 +38,9 @@ cache_daemon_files:
   - valkey.conf
   - sentinel.conf
   - users.acl
+
+# The node's own Grafana Cloud shipper. `cache_alloy_digest` has no default and is passed per run: a
+# converge without it skips the Alloy block rather than rendering a compose file pointing at a broken
+# image reference. The secrets file has no var because alloy-compose.yaml.j2 names it relatively.
+cache_alloy_dir: /opt/zcrypto-cache/alloy
+cache_alloy_image: grafana/alloy

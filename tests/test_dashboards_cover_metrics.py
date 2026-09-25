@@ -45,6 +45,9 @@ KEEP_REGEX_FILES = {
     "zcrypto": REPO / "infra/ansible/roles/capture/files/config.alloy",
     "zcrypto-red": REPO / "infra/ansible/roles/capture/files/config.alloy",
     "zaccess": REPO / "infra/ansible/roles/access/files/config.alloy",
+    "zcrypto-valkey1": REPO / "infra/ansible/roles/cache/files/config.alloy",
+    "zcrypto-valkey2": REPO / "infra/ansible/roles/cache/files/config.alloy",
+    "zcrypto-valkey3": REPO / "infra/ansible/roles/cache/files/config.alloy",
 }
 
 # Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still

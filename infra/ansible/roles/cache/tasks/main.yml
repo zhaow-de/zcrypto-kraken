@@ -292,3 +292,179 @@
     enabled: true
     state: started
   when: not (ansible_check_mode and cache_reboot_timer_install is changed)
+
+# ---- The node's telemetry ---------------------------------------------------------------------------
+# Alloy reads the mesh probe's zcache.prom from the directory the cache_link role creates and writes.
+# Outside the gate on purpose: a converge that omits the digest skips the config copy and exits 0, so a
+# host could serve a stale keep regex indefinitely. It asserts only when a config is already deployed.
+- name: read the deployed alloy config's checksum (drift check, never gated on the digest)
+  ansible.builtin.stat:
+    path: "{{ cache_alloy_dir }}/conf/config.alloy"
+    checksum_algorithm: sha256
+    get_checksum: true
+  register: cache_deployed_alloy_config
+
+# On the controller, with stat rather than lookup+hash: the file lookup strips the trailing newline, so
+# its hash never equals the file's and the assert below would fail on every host.
+- name: read the repo's alloy config checksum (controller-side, same algorithm)
+  ansible.builtin.stat:
+    path: "{{ role_path }}/files/config.alloy"
+    checksum_algorithm: sha256
+    get_checksum: true
+  register: cache_repo_alloy_config
+  delegate_to: localhost
+  become: false
+  changed_when: false
+
+- name: assert the deployed alloy config matches the repo
+  ansible.builtin.assert:
+    that: "cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"
+    fail_msg: >-
+      The Alloy config on this node does not match the repo. A converge that omits
+      `cache_alloy_digest` skips the config copy and still exits 0, so the node can serve a stale
+      keep regex while every other check passes. Re-run this converge with
+      `-e cache_alloy_digest=<currently-running>`: that run copies the file and its handler reloads a
+      running Alloy; if the container is down, its next start reads the new file.
+    success_msg: "deployed Alloy config matches the repo"
+  # A run carrying the digest is about to copy the file, so asserting first would fail the host before
+  # the copy that repairs it.
+  when:
+    - cache_alloy_digest is not defined
+    - cache_deployed_alloy_config.stat.exists
+
+- name: install the cache telemetry stack — Grafana Alloy (needs the pinned Alloy digest)
+  when: cache_alloy_digest is defined
+  block:
+    # An empty `-e cache_alloy_digest=` counts as defined and would render `grafana/alloy@`.
+    - name: refuse an Alloy digest that is not a full sha256
+      ansible.builtin.assert:
+        that: cache_alloy_digest is match('^sha256:[0-9a-f]{64}$')
+        fail_msg: >-
+          cache_alloy_digest is not sha256:<64 hex>, so the compose file would name an image docker
+          cannot pull. Pass the multi-arch index digest, e.g. -e cache_alloy_digest=sha256:<64 hex>.
+
+    - name: alloy pins recording — probe the Alloy digest this converge would replace
+      ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' grafana-alloy
+      register: cache_alloy_running_digest_probe
+      failed_when: false
+      changed_when: false
+      check_mode: false
+
+    - name: alloy pins recording — read fleet-pins.md from the controller tree
+      ansible.builtin.set_fact:
+        cache_alloy_fleet_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
+      when: cache_alloy_running_digest_probe.rc == 0
+
+    # A tag-started image ref makes regex_search yield None, which replace() turns into the needle
+    # 'None', which no pins row carries: that ref fails closed.
+    - name: alloy pins recording — refuse to replace an Alloy digest fleet-pins.md does not record
+      ansible.builtin.assert:
+        that: >-
+          ((cache_alloy_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in cache_alloy_fleet_pins_text)
+          or ((pins_override | default('') | string | length > 8)
+              and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+        fail_msg: >-
+          The Alloy digest this converge replaces ({{ cache_alloy_running_digest_probe.stdout }}) is not
+          recorded in docs/reference/fleet-pins.md, and an unrecorded pin is one image prune from an
+          unrecoverable rollback. Record the running digest there first, or pass
+          -e '{"pins_override": "<reason>"}' and record it immediately after.
+      when: cache_alloy_running_digest_probe.rc == 0 and cache_alloy_fleet_pins_text is defined
+
+    - name: alloy pins recording — the accepted override's reason, on the record
+      ansible.builtin.debug:
+        msg: "pins_override accepted: {{ pins_override }}"
+      when: >-
+        cache_alloy_running_digest_probe.rc == 0 and cache_alloy_fleet_pins_text is defined
+        and not ((cache_alloy_running_digest_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in cache_alloy_fleet_pins_text)
+        and (pins_override | default('') | string | length > 8)
+        and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
+    - name: create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)
+      ansible.builtin.user:
+        name: zcrypto-alloy
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+        state: present
+
+    - name: look up the zcrypto-alloy account
+      ansible.builtin.getent:
+        database: passwd
+        key: zcrypto-alloy
+      register: cache_alloy_getent
+      # A node's first converge previews under --check before the account exists, so the lookup
+      # comes up empty there alone; the cache role's own account lookup does the same.
+      failed_when: cache_alloy_getent is failed and not ansible_check_mode
+
+    - name: derive the zcrypto-alloy uid/gid for the container user mapping
+      ansible.builtin.set_fact:
+        cache_alloy_uid: "{{ cache_alloy_passwd['zcrypto-alloy'][1] if cache_alloy_known else 'first-run-check-mode' }}"
+        cache_alloy_gid: "{{ cache_alloy_passwd['zcrypto-alloy'][2] if cache_alloy_known else 'first-run-check-mode' }}"
+      vars:
+        cache_alloy_passwd: "{{ ansible_facts['getent_passwd'] | default({}) }}"
+        cache_alloy_known: "{{ (cache_alloy_passwd['zcrypto-alloy'] | default(none)) is not none }}"
+
+    - name: look up the systemd-journal group (Alloy's journal-read group_add needs its numeric gid)
+      ansible.builtin.getent:
+        database: group
+        key: systemd-journal
+
+    - name: derive the systemd-journal group's numeric gid for the alloy container's group_add
+      ansible.builtin.set_fact:
+        cache_journal_gid: "{{ ansible_facts['getent_group']['systemd-journal'][1] }}"
+
+    - name: ensure the alloy project directory exists
+      ansible.builtin.file:
+        path: "{{ cache_alloy_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # Owned by the Alloy user, which writes the remote_write WAL and the journal cursor here.
+    - name: ensure the alloy data directory exists, owned by the dedicated Alloy user
+      ansible.builtin.file:
+        path: "{{ cache_alloy_dir }}/alloy-data"
+        state: directory
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0755"
+
+    # Its own directory, which the compose file mounts: the project directory also holds
+    # alloy-secrets.env, which must not appear inside the container at a second path.
+    - name: ensure the alloy config directory exists
+      ansible.builtin.file:
+        path: "{{ cache_alloy_dir }}/conf"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: install the alloy pipeline config
+      ansible.builtin.copy:
+        src: config.alloy
+        dest: "{{ cache_alloy_dir }}/conf/config.alloy"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: reload alloy
+
+    # no_log with diff false: without both, a converge prints the Grafana Cloud credentials and the two
+    # cache passwords. Owned by the Alloy user so it can read a 0600 file.
+    - name: render the alloy secrets env file
+      ansible.builtin.template:
+        src: alloy-secrets.env.j2
+        dest: "{{ cache_alloy_dir }}/alloy-secrets.env"
+        owner: zcrypto-alloy
+        group: zcrypto-alloy
+        mode: "0600"
+      no_log: true
+      diff: false
+
+    - name: render the alloy compose file
+      ansible.builtin.template:
+        src: alloy-compose.yaml.j2
+        dest: "{{ cache_alloy_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0644"

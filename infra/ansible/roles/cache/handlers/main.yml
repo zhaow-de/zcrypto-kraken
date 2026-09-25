@@ -6,3 +6,14 @@
     state: restarted
   # A first-install preview never wrote the unit, so systemd cannot find it.
   when: not (ansible_check_mode and cache_unit_install is changed)
+
+- name: reload alloy
+  # A reload, never a recreate: the directory mount lands the new file in place, and this role never
+  # owns the stack's lifecycle. `-1` is the connection failure of an Alloy that is not running, which
+  # passes; a 4xx or 5xx from a running one fails, or the copy reports `ok` and nothing re-notifies.
+  ansible.builtin.uri:
+    url: http://127.0.0.1:12345/-/reload
+    method: POST
+    status_code: [200, -1]
+  register: cache_alloy_reload
+  changed_when: cache_alloy_reload.status | default(0) == 200

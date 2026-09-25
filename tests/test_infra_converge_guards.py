@@ -2461,3 +2461,82 @@ def test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview(c
     handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
     variables = {"ansible_check_mode": check_mode, "cache_unit_install": {"changed": unit_changed}}
     assert truthy(when_conditions(handler), variables) is expected
+
+
+# --- the cache nodes' Alloy: the digest shape, the pins refusal, and the drift assert ---------------
+# `CACHE`, the cache role's tasks file, is defined above with the Valkey and Sentinel block's cases.
+CACHE_ALLOY_DIGEST_SHAPE = "refuse an Alloy digest that is not a full sha256"
+CACHE_ALLOY_PINS = "alloy pins recording — refuse to replace an Alloy digest fleet-pins.md does not record"
+CACHE_ALLOY_PINS_ECHO = "alloy pins recording — the accepted override's reason, on the record"
+CACHE_ALLOY_DRIFT = "assert the deployed alloy config matches the repo"
+CACHE_ALLOY_RUNNING = {"cache_alloy_running_digest_probe": {"rc": 0, "stdout": "grafana/alloy@sha256:" + "a" * 64}}
+CACHE_ALLOY_PINS_WITH = "| alloy | zcrypto-valkey1 | `" + "a" * 12 + "` — v1.19.2 | 2026-09-25 10:00:00 | prior |"
+CACHE_ALLOY_PINS_WITHOUT = "| alloy | zcrypto-valkey1 | `" + "b" * 12 + "` — v1.19.2 | 2026-09-25 10:00:00 | prior |"
+
+
+@pytest.mark.parametrize(
+    ("digest", "expected"),
+    [("sha256:" + "c" * 64, True), ("", False), ("sha256:" + "c" * 12, False), ("c" * 64, False)],
+)
+def test_cache_alloy_digest_must_be_a_full_sha256(digest, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_DIGEST_SHAPE)
+    assert truthy(assert_that(task), {"cache_alloy_digest": digest}) is expected
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (CACHE_ALLOY_PINS_WITH, "", True),
+        (CACHE_ALLOY_PINS_WITHOUT, "", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "true", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "short", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "recorded in pins right after the emergency roll", True),
+    ],
+)
+def test_cache_alloy_pins_recording_semantics(pins_text, override, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_PINS)
+    variables = {**CACHE_ALLOY_RUNNING, "cache_alloy_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+
+
+def test_cache_alloy_pins_refusal_stands_down_when_no_alloy_runs():
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_PINS)
+    assert not truthy(when_conditions(task), {"cache_alloy_running_digest_probe": {"rc": 1, "stdout": ""}})
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (CACHE_ALLOY_PINS_WITH, "a reason long enough", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "a reason long enough", True),
+        (CACHE_ALLOY_PINS_WITHOUT, "short", False),
+    ],
+)
+def test_cache_alloy_pins_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_PINS_ECHO)
+    variables = {**CACHE_ALLOY_RUNNING, "cache_alloy_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+def test_the_cache_alloy_guards_run_only_on_a_converge_carrying_the_digest():
+    block = next(t for t in load_tasks(CACHE) if t.get("name", "").startswith("install the cache telemetry stack"))
+    assert block["when"] == "cache_alloy_digest is defined"
+    names = [t["name"] for t in block["block"]]
+    assert names.index(CACHE_ALLOY_DIGEST_SHAPE) == 0
+    assert names.index(CACHE_ALLOY_PINS) < names.index("install the alloy pipeline config")
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        ({"cache_deployed_alloy_config": {"stat": {"exists": True}}}, True),
+        ({"cache_deployed_alloy_config": {"stat": {"exists": False}}}, False),
+        ({"cache_deployed_alloy_config": {"stat": {"exists": True}}, "cache_alloy_digest": "sha256:" + "c" * 64}, False),
+    ],
+)
+def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variables, expected):
+    """A converge carrying the digest is about to copy the file; asserting first would fail the host
+    before the copy that repairs it."""
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_DRIFT)
+    assert truthy(when_conditions(task), variables) is expected
+    assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]

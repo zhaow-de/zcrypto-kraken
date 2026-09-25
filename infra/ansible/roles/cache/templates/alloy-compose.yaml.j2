@@ -1,0 +1,49 @@
+# Grafana Alloy compose file for a cache node, rendered by the `cache` role at
+# {{ cache_alloy_dir }}/compose.yaml; edit infra/ansible/roles/cache/templates/alloy-compose.yaml.j2.
+# Its own compose project, apart from Valkey's and Sentinel's, so an Alloy redeploy never restarts
+# either. The role renders it and never starts it: `sudo docker compose up -d` in this directory is
+# the operator's step.
+services:
+  alloy:
+    image: "{{ cache_alloy_image }}@{{ cache_alloy_digest }}"
+    container_name: grafana-alloy
+    restart: unless-stopped
+    # The dedicated non-login `zcrypto-alloy` user: /:/host/root is mounted below, and a key-owning
+    # user would read its own ~/.ssh straight through it.
+    user: "{{ cache_alloy_uid }}:{{ cache_alloy_gid }}"
+    group_add:
+      # The host's systemd-journal gid, numeric and looked up at converge time: the journal files are
+      # root:systemd-journal 0640.
+      - "{{ cache_journal_gid }}"
+    network_mode: host
+    environment:
+      # 0.9 of the memory cap below, the fleet's ratio (tests/test_infra_alert_rules.py holds it).
+      GOMEMLIMIT: 230MiB
+    env_file:
+      # The six Grafana Cloud names and the two cache passwords config.alloy reads, 0600, owned by
+      # `zcrypto-alloy`, rendered with no_log and diff false.
+      - ./alloy-secrets.env
+    command:
+      - run
+      - --storage.path=/var/lib/alloy
+      - --server.http.listen-addr=127.0.0.1:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      # The directory, not the file: a single-file bind mount binds the inode, which Ansible's atomic
+      # write replaces, and the container would keep reading the old file.
+      - ./conf:/etc/alloy:ro
+      # The remote_write WAL and the journal cursor survive a container replacement here.
+      - ./alloy-data:/var/lib/alloy
+      - /var/log/journal:/host/journal:ro
+      # The journal reader resolves the current boot's files through the machine id.
+      - /etc/machine-id:/etc/machine-id:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+    logging:
+      driver: journald
