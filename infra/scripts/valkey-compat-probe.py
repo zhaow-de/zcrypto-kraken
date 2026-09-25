@@ -2,8 +2,6 @@
 """The pinned nautilus-trader cache client against one Valkey server: the version line it parses, and an order
 written by one node and restored by the next.
 
-  --host H --port P --username U --password-env VAR --expect-nautilus VERSION
-
 1. A raw RESP read, the standard library only: AUTH, INFO server, DBSIZE. It prints the `redis_version:` line the
    library's version check parses and the `valkey_version:` line, and passes when `redis_version` is present and at
    or above 6.2.0, the floor below which the library logs an error and carries on.
@@ -16,15 +14,12 @@ It writes under `trader-PROBE-001:` in database 0 and deletes nothing, so it ref
 any key: run it against a throwaway server, never the engine's set.
 
 Exit: 0 both halves pass; 1 a half failed, the server unreachable or the login refused among them; 2 refused before
-anything was written (usage, a password on the command line, the variable unset or shorter than five characters, a
-nautilus-trader other than the expected one, a non-empty database 0).
+anything was written.
 
 Run it inside the app image on the server's host, the script on stdin, the password in a root-only env file:
     ssh <host> sudo docker run --rm -i --network host --memory 512m --env-file <env file> \
       --entrypoint python ghcr.io/zhaow-de/zcrypto-capture@sha256:<digest> - --host 127.0.0.1 --port <port> \
       --username <user> --password-env <VAR> --expect-nautilus <version> < infra/scripts/valkey-compat-probe.py
-The password is read from the environment and never printed: the library's own log lines pass through a filter that
-replaces it, and an argument that could carry it is refused without being echoed.
 """
 
 from __future__ import annotations
@@ -50,7 +45,7 @@ MIN_PASSWORD_CHARS = 5
 SOCKET_TIMEOUT_SECS = 5.0
 # Three retries of five-second timeouts bound a node that cannot reach the server well inside this.
 NODE_DEADLINE_SECS = 120.0
-# valkey-cli's password flags: the habit an operator brings to a Valkey command line.
+# The password flags an operator brings to a Valkey command line.
 PASSWORD_FLAGS = ("-a", "--auth", "--askpass")
 REDACTED = "<redacted>"
 _QUOTED = re.compile(r"'[^']*'")
@@ -58,7 +53,7 @@ _ELIDED = "'...'"
 
 
 class Refusal(RuntimeError):
-    """Raised before anything connects. Names flags and variables, never values."""
+    """Raised before anything connects. Names flags, never values."""
 
 
 class RespError(RuntimeError):

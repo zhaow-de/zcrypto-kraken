@@ -1,8 +1,5 @@
-"""Guard: `infra/scripts/valkey-compat-probe.py` settles whether the pinned library's cache client works against
-Valkey, run once by hand on a cache node with a password in its environment, so it must speak RESP correctly with no
-client library, refuse a password it would otherwise take on the command line without echoing it, keep the
-password out of what it prints, and exit 0 only when both halves pass. Nothing here opens a socket to a server:
-the RESP read runs over a fake socket and the node halves are stand-ins."""
+"""Guard: `infra/scripts/valkey-compat-probe.py`, run once by hand on a cache node with a password in its environment.
+Nothing here opens a socket to a server: the RESP read runs over a fake socket and the node halves are stand-ins."""
 
 import importlib.util
 import io
@@ -254,9 +251,9 @@ def test_a_server_that_refuses_the_login_fails_the_probe_without_the_password(mo
 
 def _in_fresh_interpreter(snippet: str) -> tuple[object, str]:
     """Runs `snippet` in a new interpreter with the script loaded by path as `probe`, and returns the JSON its last
-    line prints and its whole stdout. `in_child` forks, and this pytest process carries the threads `conftest.py`'s
-    imports start, which a fork copies into a child that can deadlock; the new interpreter is single-threaded, as the
-    operator's `python -` is, and `-W default` prints the fork warning, which the empty-stderr assertion then fails."""
+    line prints and its whole stdout. Not in this process: `in_child` forks, and a lock one of the threads
+    `conftest.py`'s imports start holds at the fork stays held in the child; `-W default` prints the fork warning,
+    which the empty-stderr assertion then fails."""
     prelude = (
         "import importlib.util, json, sys, time\n"
         f"spec = importlib.util.spec_from_file_location('probe', {str(SCRIPT)!r})\n"
