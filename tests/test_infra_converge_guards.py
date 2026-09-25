@@ -47,7 +47,10 @@ def truthy(expr, variables: dict) -> bool:
     t = Templar(loader=DataLoader(), variables=variables)
     if isinstance(expr, list):
         return all(truthy(e, variables) for e in expr)
-    return bool(t.template(trust_as_template("{{ (" + expr + ") | bool }}")))
+    # `that:` and `when:` are conditionals: ansible evaluates them as expressions, not as `{{ }}`
+    # templates, and the two paths read a string literal's escapes differently -- a backstop that
+    # passed here as a template refused a live converge as a conditional.
+    return bool(t.evaluate_conditional(trust_as_template(expr)))
 
 
 def assert_that(task: dict) -> list[str]:
