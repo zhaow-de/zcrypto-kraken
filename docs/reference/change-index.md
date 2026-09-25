@@ -350,4 +350,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #606 | 2026-09-24 | fix(access): the relay sockets survive boot and the tunnel MTU fits | — | 00075 | — |
 | #607 | 2026-09-24 | feat(cache): 00118 the engine's cache, the infrastructure half | — | 00118 | — |
 | #608 | 2026-09-24 | fix(engine): the gap closes 15 min early; the window ran to flat | — | — | T0159, T0160 |
-| #613 | 2026-09-25 | feat(portfolio): T0090 resolved on the measured blend, T0214 registered | — | — | T0090 |
+| #613 | 2026-09-25 | feat(portfolio): iter-171 — the cost basis measured at rung 1 | iter-171 | — | T0090 |
