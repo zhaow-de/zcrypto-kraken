@@ -903,12 +903,10 @@ def test_arming_override_echo_fires_on_a_malformed_record(record, why):
         (UNVERIFIED_PIN, RECORD, [UNVERIFIED_PIN_VERSION, "1.230.0"]),
         (NO_PIN, RECORD, ["(unparseable pin)"]),
         (TRIPLE_EQUALS_UNVERIFIED_PIN, RECORD, ["nautilus-trader 1.231.0,"]),
-        (UNVERIFIED_PIN, None, ["(the record is not a list of versions -- nothing is verified)"]),
-        (UNVERIFIED_PIN, 42, ["(the record is not a list of versions -- nothing is verified)"]),
-        (UNVERIFIED_PIN, "", ["(the record is not a list of versions -- nothing is verified)"]),
-        (UNVERIFIED_PIN, "1.230.0, 1.231.0", ["(the record is not a list of versions -- nothing is verified)"]),
-        (UNVERIFIED_PIN, {"1.231.0": "note"}, ["(the record is not a list of versions -- nothing is verified)"]),
-        (UNVERIFIED_PIN, [UNVERIFIED_PIN_VERSION, 1231], ["(the record is not a list of versions -- nothing is verified)"]),
+        *[
+            (UNVERIFIED_PIN, record, ["(the record is not a list of versions -- nothing is verified)"])
+            for record, _ in MALFORMED_RECORDS
+        ],
     ],
 )
 def test_arming_backstop_fail_msg_renders_the_diagnostic(pyproject, record, names):
