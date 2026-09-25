@@ -979,12 +979,55 @@
       }
     },
     {
+      "id": 306,
+      "type": "stat",
+      "title": "Valkey and Sentinel answering the exporter, the lowest per node and daemon",
+      "description": "The page's value: 1 when the daemon answers the exporter, 0 when it does not, for each node's Valkey and Sentinel. DOWN with the node's Alloy up is the daemon stopped, or the exporter's login refused; red, below 1, is the alert's condition, after `for: 10m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 68},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "min by (host, job) (redis_up{job=~\"valkey|sentinel\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} {{job}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
       "id": 400,
       "type": "row",
       "title": "Logs",
       "collapsed": false,
       "panels": [],
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 68}
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 73}
     },
     {
       "id": 401,
@@ -992,7 +1035,7 @@
       "title": "Engine lines naming the cache",
       "description": "The engine's own log lines that mention the cache, newest first: the counts it restored at each boot, and a refusal to start against a cache that is unreachable or lost its data. The library's own cache errors are written by its native side and never reach this log store.",
       "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 69},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 74},
       "targets": [
         {
           "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
@@ -1018,7 +1061,7 @@
       "title": "Valkey and Sentinel lines",
       "description": "Each node's Valkey and Sentinel log, newest first. A failover reads here as the Sentinels' +sdown, +odown and +switch-master events; a replica's resync as its MASTER <-> REPLICA sync lines.",
       "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 79},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 84},
       "targets": [
         {
           "datasource": {"type": "loki", "uid": "grafanacloud-logs"},

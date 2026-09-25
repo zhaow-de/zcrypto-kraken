@@ -5226,8 +5226,8 @@ rules:
     annotations:
       summary: "A cache node's `{{ $labels.job }}` daemon has read down for 10+ minutes while the node's Alloy is up: the daemon is stopped, or the exporter cannot log in to it. With one Sentinel down, the set is one further node loss from losing the quorum that fails the primary over. The node this notification names is the one to read. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down"
       __dashboardUid__: "zcrypto-cache"
-      __panelId__: "202"
-      unit: "up"
+      __panelId__: "306"
+      unit: "1 when the daemon answers the exporter, 0 when it does not"
     labels:
       severity: warning
     notification_settings:

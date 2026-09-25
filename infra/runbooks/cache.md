@@ -308,7 +308,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, `Cache · a node's Valkey or Sentinel is down`: for ten minutes a node's exporter has read `redis_up` 0 for its Valkey or its Sentinel while the node's Alloy ships. The notification names the node and the `job`, `valkey` or `sentinel`; the Cache board's *Valkey answering the exporter* panel (202) and *Sentinel answering the exporter* panel (301) show each node's two daemons.
+A **warning** Grafana alert, `Cache · a node's Valkey or Sentinel is down`: for ten minutes a node's exporter has read `redis_up` 0 for its Valkey or its Sentinel while the node's Alloy ships. The notification names the node and the `job`, `valkey` or `sentinel`; the Cache board's *Valkey and Sentinel answering the exporter, the lowest per node and daemon* panel (306) shows each node's two daemons, the rule's own value.
 
 ### What it means
 
@@ -320,7 +320,7 @@ Two causes read the same. The daemon's process is down inside `zcrypto-cache.ser
 2. **Does it take a login?** On the node, with the two functions above: `vk PING` for Valkey, `sn PING` for Sentinel. `NOAUTH` or `WRONGPASS` is the node's files and the passwords disagreeing, which `cache-password-rotation` above resolves.
 3. **Read the exporter's own error:** `sudo docker logs --since 10m grafana-alloy 2>&1 | grep -i redis` on the node. `NOAUTH` or `WRONGPASS` there while `vk PING` and `sn PING` answer `PONG` is Alloy holding a password the daemons no longer take: `cache-password-rotation` above, step 5, re-renders its secrets and recreates it.
 4. **Restart the daemons when the process is down:** `sudo systemctl restart zcrypto-cache.service` on the node, failing the primary over first with `cache-manual-failover` above when `sn SENTINEL get-master-addr-by-name zcache` on another node names this node's mesh address.
-5. **Confirm by value:** the Cache board's panel 202 or 301 reads `UP` for the node, and the rule is back to **Normal** in Grafana's alert rules; a quiet channel is not the clear.
+5. **Confirm by value:** the Cache board's panel 306 reads `UP` for the node and daemon, and the rule is back to **Normal** in Grafana's alert rules; a quiet channel is not the clear.
 
 ### Retire when
 

@@ -715,7 +715,7 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     # Pairing is string equality once the ops scope is dropped, so reformatting one expression drops
     # that rule from coverage with no failure anywhere. The floor makes a collapse visible. Lower it
     # only when a rule or panel is deliberately retired.
-    assert len(pairs) >= 63, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
+    assert len(pairs) >= 64, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
     bad = []
     for uid, panel, target, evaluator, condition in pairs:
         if uid in known:
