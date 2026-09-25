@@ -1,14 +1,17 @@
 # group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY. Read the next paragraph before editing:
-# four of these DO render onto managed hosts, so this is not a workstation-only file.
+# eight of these DO render onto managed hosts, so this is not a workstation-only file.
 #
-# MIXED CUSTODY — do not read this file as workstation-only. Four of the nine values ARE
-# rendered onto managed hosts through inventory. Three are WireGuard secrets:
+# MIXED CUSTODY — do not read this file as workstation-only. Eight of the thirteen values ARE
+# rendered onto managed hosts through inventory. Seven are WireGuard secrets, three of them the zaccess tunnel's:
 # `zaccess_wg_bridgehead_private_key` and `zaccess_wg_preshared_key` by `roles/access`,
 # `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`, both templating
 # `/etc/wireguard/zaccess0.conf`. **Editing any of those three needs a converge of BOTH ends** —
 # `--limit zaccess` and `--limit zcrypto-ops` (the host is `zcrypto-ops`; there is no host or group
 # called `ops`) — or an end keeps the old key. Both, because each peer block carries the other end's
-# public key. The fourth is `grafana_ro_token`, rendered onto `zcrypto-ops` alone by `roles/ops`'s
+# public key. The four `cache_wg_<member>_private_key` render each onto its own member of the zcache
+# mesh by `roles/cache_link`, templating `/etc/wireguard/zcache0.conf`; rotating one needs a converge
+# of all four members, since every other member's peer block carries its public key. The eighth is
+# `grafana_ro_token`, rendered onto `zcrypto-ops` alone by `roles/ops`'s
 # `render the grafana keep-alive secrets env file`; editing it needs `--limit zcrypto-ops` only.
 #
 # The other five never reach a host. Four are read from the WORKSTATION BY FILE PATH:
@@ -245,3 +248,36 @@ healthchecks_readonly_api_key: !vault |
           3334363261643561300a303633336636656237313264643230646133383136373264353962613761
           64666439656637323463613964653039626337623738353761336532326333623634633666316631
           3263383535333862656362633361326235613430366234643762
+
+cache_wg_zcrypto_private_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          64653230343437303335303333346662653563333765646138303337636164373663353435633936
+          3734303364346366376430333634313232323133646131370a306562323766366232386665366239
+          35653539666664343663333036363464616165633932303932643632333465333031383036363763
+          6665343635373835360a643238316236633635326132373935343263346262343561636432333337
+          34323636343730386334393761323464336333333037356233313430656330623661303135396331
+          3765633365303934306630323137663434626338643436343531
+cache_wg_zcrypto_valkey1_private_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          35653633343339323534313338336430373835646632303136363235376664353835346532313734
+          6166303365336463376266383234333837633636343838340a366336393530346533333463663162
+          62336238643130383562653865636262653531356535366432623163343066366638356366623531
+          3063636463306333390a366364356162373965623464633435333235646133356433623263383638
+          37656638623632363630333335373235363464636639393534313830623239393535366561653630
+          6361336231663461303364636537306233303235373433383861
+cache_wg_zcrypto_valkey2_private_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65353863333636353530663563333431366335306565323564333831636364383931343263633361
+          6464316237376638396634373566336264343537343166380a393539383161323837316232313737
+          34653531306335366563373963633931623836343835306136336564633532623037376435393265
+          6236373531653436620a333865326530336430656630396434303632626365343131326631343538
+          63333963363464636632663933356133616237633563636531663537333339643932393035383165
+          6534353237633466363031636165363963353832306638386133
+cache_wg_zcrypto_valkey3_private_key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          39373837313233346363626238636634336534303330633634646665396663626465396635353630
+          3863623534363266303165656538636262633638366564390a646532653663333331376566386163
+          65393566656564633363383032393035313638623761643361643031353465366561303733616464
+          6266633533613864350a353163333039333431386637323364383062333134336563356132616535
+          32623666313633306430626335306463663065643930373664396631633639623038396637623538
+          6137636436613032323165353164613165353032623464333435
