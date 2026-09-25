@@ -2528,9 +2528,17 @@ def test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendere
     assert truthy(when_conditions(task), {"item": "sentinel.conf", "cache_conf_render": RENDERED})
 
 
-@pytest.mark.parametrize("name", [CACHE_RENDER, CACHE_CLI_ENV])
-def test_every_cache_secret_render_is_never_logged_or_diffed(name):
-    task = find_task(load_tasks(CACHE), name)
+CACHE_ALLOY_SECRETS = "render the alloy secrets env file"
+CACHE_LINK_CONF = "zcache mesh conf (this host's end and a peer per other member)"
+
+
+@pytest.mark.parametrize(
+    ("tasks", "name"),
+    [(CACHE, CACHE_RENDER), (CACHE, CACHE_CLI_ENV), (CACHE, CACHE_ALLOY_SECRETS), (CACHE_LINK_TASKS, CACHE_LINK_CONF)],
+    ids=["daemon-configs", "cli-env", "alloy-secrets", "wireguard-conf"],
+)
+def test_every_cache_secret_render_is_never_logged_or_diffed(tasks, name):
+    task = find_task(load_tasks(tasks), name)
     assert task.get("no_log") is True and task.get("diff") is False, name
     assert task["ansible.builtin.template"]["mode"] == "0600", name
 
