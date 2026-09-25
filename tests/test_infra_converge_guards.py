@@ -39,17 +39,13 @@ def find_task(tasks: list[dict], name: str) -> dict:
 
 
 def truthy(expr, variables: dict) -> bool:
-    # ansible-core 2.19+ Data-Tagging: a plain str is UNTRUSTED and comes back unrendered -- bool()
-    # of the unrendered template string would be True for every fixture, making every test vacuous,
-    # so trust_as_template is mandatory.
     from ansible.template import trust_as_template
 
     t = Templar(loader=DataLoader(), variables=variables)
     if isinstance(expr, list):
         return all(truthy(e, variables) for e in expr)
     # `that:` and `when:` are conditionals: ansible evaluates them as expressions, not as `{{ }}`
-    # templates, and the two paths read a string literal's escapes differently -- a backstop that
-    # passed here as a template refused a live converge as a conditional.
+    # templates, and the two paths read a string literal's escapes differently.
     return bool(t.evaluate_conditional(trust_as_template(expr)))
 
 
@@ -901,12 +897,12 @@ def test_arming_backstop_reads_the_real_committed_files():
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
 
     # Either literal: the runbook's arm and disarm PRs each flip only the template line.
-    assert re.search(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", template), (
+    assert re.search(r"(?m)^exec_armed *= *(true|false) *$", template), (
         "the committed template must render exec_armed as a boolean literal"
     )
     assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
     task = find_task(load_tasks(ENGINE), ARMING)
-    armed = re.sub(r"(?m)^exec_armed\s*=\s*(true|false)\s*$", "exec_armed = true", template)
+    armed = re.sub(r"(?m)^exec_armed *= *(true|false) *$", "exec_armed = true", template)
     base = {
         "engine_config_template_text": armed,
         "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
