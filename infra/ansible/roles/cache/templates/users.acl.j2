@@ -1,0 +1,6 @@
+{# Valkey's ACL file takes `user` lines and blank lines only: a `#` comment here fails the load. #}
+user default off
+user engine on #{{ cache_engine_password | hash('sha256') }} ~* &* +@all -@dangerous +keys +info
+user replica on #{{ cache_replica_password | hash('sha256') }} +psync +replconf +ping
+user sentinel on #{{ cache_sentinel_password | hash('sha256') }} &* +multi +slaveof +replicaof +ping +exec +subscribe +config|rewrite +role +publish +info +client|setname +client|kill +script|kill
+user exporter on #{{ cache_exporter_password | hash('sha256') }} -@all +@connection +memory -readonly +strlen +config|get +xinfo +pfcount -quit +zcard +type +xlen -readwrite -command +client -wait +scard +llen +hlen +get +eval +slowlog +cluster|info -hello -echo +info +latency +scan -reset -auth -asking

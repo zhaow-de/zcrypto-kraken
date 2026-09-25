@@ -1,0 +1,22 @@
+# Rendered by the `cache` Ansible role when absent or under -e cache_config_reset=true, and owned by
+# Valkey after its first start: Sentinel's reconfiguration rewrites `replicaof` into this file. The
+# role reports a template that no longer matches this render and never applies it on its own.
+bind 127.0.0.1 {{ cache_bind_address }}
+port 6379
+protected-mode yes
+dir /data
+aclfile /etc/valkey/users.acl
+appendonly yes
+appendfsync always
+save 3600 1 300 100 60 10000
+maxmemory {{ cache_maxmemory }}
+maxmemory-policy noeviction
+min-replicas-to-write 1
+min-replicas-max-lag 10
+replica-priority {{ cache_replica_priority }}
+replica-announce-ip {{ cache_bind_address }}
+masteruser replica
+masterauth {{ cache_replica_password }}
+{% if cache_bind_address != cache_first_primary %}
+replicaof {{ cache_first_primary }} 6379
+{% endif %}

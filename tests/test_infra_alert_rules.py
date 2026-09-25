@@ -1270,6 +1270,14 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2": (("ops", "integrations/self"),),
     "infra/nas/compose.yaml": (("nas", "integrations/self"),),
     "infra/docker/compose.yaml": (),
+    "infra/ansible/roles/cache/templates/compose.yaml.j2": (
+        ("zcrypto-valkey1", "valkey"),
+        ("zcrypto-valkey1", "sentinel"),
+        ("zcrypto-valkey2", "valkey"),
+        ("zcrypto-valkey2", "sentinel"),
+        ("zcrypto-valkey3", "valkey"),
+        ("zcrypto-valkey3", "sentinel"),
+    ),
 }
 # A cap is a cap wherever it is written. Compose `memory:` is not the only shape: a systemd unit can
 # carry `MemoryMax=`, and the first one in this tree -- agentboard's -- was invisible here while the
@@ -1277,6 +1285,10 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
 _LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
 }
+_CACHE_DAEMONS_UNLEGGED = (
+    "Valkey exposes redis_memory_used_rss_bytes rather than the process family the fleet rule parses, and the cache "
+    "group's zcrypto-cache-memory-70pct rule guards it against maxmemory; Sentinel exposes no memory family"
+)
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (
@@ -1286,7 +1298,13 @@ _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
         "instead is the daily pass's own read of `systemctl show zaccess-agentboard.service` "
         "(`AGENTBOARD_PROPERTIES` in infra/scripts/ops_daily.py), off the host rather than off a series."
-    )
+    ),
+    ("zcrypto-valkey1", "valkey"): _CACHE_DAEMONS_UNLEGGED,
+    ("zcrypto-valkey1", "sentinel"): _CACHE_DAEMONS_UNLEGGED,
+    ("zcrypto-valkey2", "valkey"): _CACHE_DAEMONS_UNLEGGED,
+    ("zcrypto-valkey2", "sentinel"): _CACHE_DAEMONS_UNLEGGED,
+    ("zcrypto-valkey3", "valkey"): _CACHE_DAEMONS_UNLEGGED,
+    ("zcrypto-valkey3", "sentinel"): _CACHE_DAEMONS_UNLEGGED,
 }
 
 _ALLOY_HEADROOM = "zcrypto-fleet-alloy-memory-headroom"

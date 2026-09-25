@@ -2868,6 +2868,26 @@ def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
     assert ops_daily.classify_action(f"ssh db1 {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
 
 
+@pytest.mark.parametrize(
+    "step",
+    [
+        "sudo docker restart zcrypto-valkey",
+        "sudo docker stop zcrypto-sentinel",
+        "ssh db2 sudo docker restart zcrypto-valkey",
+        "sudo systemctl restart zcrypto-cache.service",
+        "sudo systemctl stop zcrypto-cache.service",
+        "sudo systemctl start zcrypto-cache",
+        "ssh db2 sudo systemctl restart zcrypto-cache.service",
+        "sudo systemctl restart wg-quick@zcache0",
+    ],
+)
+def test_a_cache_daemon_restart_is_never_the_passs_own(step):
+    """A cache node is a telemetry host, whose container restarts the pass may take; restarting, stopping or starting
+    Valkey and Sentinel, by container or through their unit, is a replication event, a failover when the node holds the
+    primary, and so is restarting the mesh tunnel replication runs over: each stays the operator's."""
+    assert ops_daily.classify_action(step, host="zcrypto-valkey1", resolve=_identity) is ops_daily.Tier.PREPARED
+
+
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------
 
 _ENGINE_READS = [

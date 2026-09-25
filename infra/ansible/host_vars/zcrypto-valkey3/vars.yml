@@ -10,3 +10,6 @@ deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-
 # wired from the vault var in group_vars/all/vault.yml.
 cache_link_address: 10.98.0.13
 cache_link_private_key: "{{ cache_wg_zcrypto_valkey3_private_key }}"
+
+# Sentinel promotes the lowest non-zero priority: the engine region's two nodes before the remote copy.
+cache_replica_priority: 250

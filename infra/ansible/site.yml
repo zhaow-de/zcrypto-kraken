@@ -260,3 +260,5 @@
       tags: [docker]
     - role: cache_link
       tags: [cache-link]
+    - role: cache
+      tags: [cache]
