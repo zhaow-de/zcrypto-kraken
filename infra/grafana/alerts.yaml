@@ -5224,7 +5224,7 @@ rules:
     # A daemon restarted by a converge or a reboot slot is back in seconds; 10m clears the node's own reboot slot.
     for: 10m
     annotations:
-      summary: "A cache node's `{{ $labels.job }}` daemon has read down for 10+ minutes while the node's Alloy is up: the daemon is stopped, or the exporter cannot log in to it. With one Sentinel down, the set is one further node loss from losing the quorum that fails the primary over. The node this notification names is the one to read. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down"
+      summary: "A cache node's `{{ $labels.job }}` daemon has read down for 10+ minutes while the node's Alloy is up: the daemon is stopped, or the exporter cannot log in to it. With one Sentinel down, the set is one further node loss from losing the quorum that fails the primary over. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down"
       __dashboardUid__: "zcrypto-cache"
       __panelId__: "306"
       unit: "1 when the daemon answers the exporter, 0 when it does not"
@@ -5245,11 +5245,8 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # RSS as a fraction of the CONTAINER limit, which the OOM kill reads; zcrypto-cache-memory-70pct
-          # reads used memory against maxmemory and does not see fragmentation or the AOF-rewrite child's
-          # copy-on-write. No metric carries the limit, so the denominator is literal bytes;
-          # tests/test_infra_alert_rules.py pins it to cache_valkey_memory_limit, so a limit moved in
-          # ansible fails the test rather than silently re-scaling this ratio.
+          # No metric carries the container limit, so the denominator is literal bytes;
+          # tests/test_infra_alert_rules.py pins it to cache_valkey_memory_limit.
           expr: >-
             redis_memory_used_rss_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="valkey"} / 268435456
           instant: true

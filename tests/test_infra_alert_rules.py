@@ -1305,10 +1305,7 @@ _LIMITED_JOBS: dict[str, tuple[tuple[str, str], ...]] = {
 _LIMITED_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
     "infra/ansible/roles/access_ops/templates/zaccess-agentboard.service.j2": (("ops", "zaccess-agentboard"),),
 }
-_CACHE_SENTINEL_UNLEGGED = (
-    "Sentinel's `INFO` carries no memory section, so its exporter publishes no memory family to divide, and its 64m "
-    "cap is watched by nothing before an OOM kill, which `zcrypto-cache-daemon-down` then reads"
-)
+_CACHE_SENTINEL_UNLEGGED = "Sentinel's `INFO` carries no memory section, so its exporter publishes no memory family to divide"
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (

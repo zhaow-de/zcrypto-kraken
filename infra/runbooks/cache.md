@@ -318,7 +318,7 @@ Two causes read the same. The daemon's process is down inside `zcrypto-cache.ser
 
 1. **Is the daemon running?** On the node, `db<N>`: `sudo systemctl status zcrypto-cache.service` and `sudo docker ps --filter name=zcrypto-`. A container missing or restarting is the process cause.
 2. **Does it take a login?** On the node, with the two functions above: `vk PING` for Valkey, `sn PING` for Sentinel. `NOAUTH` or `WRONGPASS` is the node's files and the passwords disagreeing, which `cache-password-rotation` above resolves.
-3. **Read the exporter's own error:** `sudo docker logs --since 10m grafana-alloy 2>&1 | grep -i redis` on the node. `NOAUTH` or `WRONGPASS` there while `vk PING` and `sn PING` answer `PONG` is Alloy holding a password the daemons no longer take: `cache-password-rotation` above, step 5, re-renders its secrets and recreates it.
+3. **Read the exporter's own error:** `sudo docker logs --since 10m grafana-alloy 2>&1 | grep -i redis` on the node. `NOAUTH` or `WRONGPASS` there while `vk PING` and `sn PING` answer `PONG` is Alloy holding a stale password: `cache-password-rotation` step 5's command without `-e cache_config_reset=true`, then its Alloy recreate.
 4. **Restart the daemons when the process is down:** `sudo systemctl restart zcrypto-cache.service` on the node, failing the primary over first with `cache-manual-failover` above when `sn SENTINEL get-master-addr-by-name zcache` on another node names this node's mesh address.
 5. **Confirm by value:** the Cache board's panel 306 reads `UP` for the node and daemon, and the rule is back to **Normal** in Grafana's alert rules; a quiet channel is not the clear.
 
@@ -338,14 +338,14 @@ A **warning** Grafana alert, `Cache · Valkey resident memory above 70% of its c
 
 ### What it means
 
-Valkey's resident memory runs above its used memory by fragmentation, or by the pages the append-only-file rewrite's child copies on write while it runs; `zcrypto-cache-memory-70pct` reads used memory against `maxmemory` and sees neither. The cap is the compose `memory:` limit on the Valkey container: at it the kernel OOM-kills the container, which restarts, and on the primary's node that is a failover, the engine's reconnect then coming on the Sentinels' detection timer rather than when you choose.
+Valkey's resident memory runs above its used memory by fragmentation, or by the pages the append-only-file rewrite's child copies on write while it runs; `zcrypto-cache-memory-70pct` reads used memory against `maxmemory` and sees neither. The cap is the compose `memory:` limit on the Valkey container: at it the kernel OOM-kills the container, which restarts, and on the primary's node that is a failover.
 
 ### What to do
 
 1. **Read the memory**, on the node, `db<N>`: `vk INFO memory`, its `used_memory_rss` and `mem_fragmentation_ratio` lines.
 2. **Is a rewrite running?** `vk INFO persistence`, its `aof_rewrite_in_progress` line. `1` is a rewrite whose copy-on-write ends with it: read step 1 again once it reads `0`.
 3. **Fragmentation that stays**, a `mem_fragmentation_ratio` well above 1 with no rewrite running: `vk MEMORY PURGE` on the node, then step 1 again.
-4. **Resident memory still up after the purge:** restart the node's daemons, `sudo systemctl restart zcrypto-cache.service`, one node at a time and replicas first; on the primary's node, run `cache-manual-failover` above first so the primary moves on your schedule, not by a bare container restart there.
+4. **Resident memory still up after the purge:** restart the node's daemons, `sudo systemctl restart zcrypto-cache.service`, one node at a time and replicas first; on the primary's node, run `cache-manual-failover` above first so the primary moves on your schedule.
 5. **Confirm by value:** the Cache board's panel 214 reads under 0.7 for the node, and the rule is back to **Normal** in Grafana's alert rules.
 
 ### Retire when
