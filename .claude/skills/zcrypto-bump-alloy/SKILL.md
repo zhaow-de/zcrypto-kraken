@@ -103,6 +103,7 @@ ssh red 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'   # role re
 
 # primary — converge_primary is required; --skip-tags engine satisfies site.yml's un-tagged-run refusal.
 # Never answer that refusal with -e engine_image_digest: it restarts the LIVE trade engine.
+# It also converges cache_link (site.yml's engine play, tag cache-link): a changed zcache0.conf restarts the primary's wg-quick@zcache0, which nothing there uses until the engine half wires it.
 ./scripts/converge.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true \
   -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh zcrypto 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'
