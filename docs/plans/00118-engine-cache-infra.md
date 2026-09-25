@@ -8073,9 +8073,19 @@ H$ (each) cat /var/lib/zcrypto-node-textfile/zcache.prom
 
 On each member three peers, each `latest handshake` under three minutes and `transfer` non-zero both ways; `zcache.prom` carries three `zcache_wireguard_handshake_age_seconds{peer="10.98.0.<n>"}` samples, one per other member's mesh address, each finite and under 180, none `+Inf`.
 
-**R4. The compatibility probe on `zcrypto-valkey1`, before the cache role** (Task 6). A throwaway Valkey at the 9.1.2 digest, a plain `docker run --rm -d --network host` on the node's loopback port `6390`, no config file, one ACL user `engine` holding the grant Task 4's `users.acl.j2` renders for it and a password minted on the host; the script on stdin inside the app image. The ACL file holds the password's SHA-256 alone; the env file holding the password is root's, mode `0600`.
+**R4. The compatibility probe on `zcrypto-valkey1`, before the cache role** (Task 6). A throwaway Valkey at the 9.1.2 digest, a plain `docker run --rm -d --network host` on the node's loopback port `6390`, no config file, the four ACL users Task 4's `users.acl.j2` renders with the probe's password hash in each user's place — so an ACL token Valkey 9.1.2 does not know aborts this throwaway's start here, never valkey1's at R5 — and a password minted on the host; the script on stdin inside the app image. The workstation renders the template with one placeholder password for every user, and the host substitutes the placeholder's hash with the minted password's; the ACL file holds hashes alone, and the env file holding the password is root's, mode `0600`.
 
 ```
+W$ uv run python - > "$CAP/r4-users.acl" <<'PY'
+import pathlib
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
+src = pathlib.Path("infra/ansible/roles/cache/templates/users.acl.j2").read_text()
+v = {k: "probe-placeholder" for k in ("cache_engine_password", "cache_replica_password", "cache_sentinel_password", "cache_exporter_password")}
+print(Templar(loader=DataLoader(), variables=v).template(trust_as_template(src)), end="")
+PY
+W$ grep -c '^user ' "$CAP/r4-users.acl"
+W$ scp "$CAP/r4-users.acl" db1:/tmp/r4-users.acl
 W$ ssh db1 sudo bash -s <<'EOF'
 set -euo pipefail
 umask 077
@@ -8084,7 +8094,10 @@ install -d -m 0755 /root/valkey-probe/acl
 pw=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
 printf 'VALKEY_PROBE_PASSWORD=%s\n' "$pw" > /root/valkey-probe/probe.env
 hash=$(printf %s "$pw" | sha256sum | cut -d' ' -f1)
-printf 'user default off\nuser engine on #%s ~* &* +@all -@dangerous +keys +info\n' "$hash" > /root/valkey-probe/acl/users.acl
+ph=$(printf %s probe-placeholder | sha256sum | cut -d' ' -f1)
+sed "s/$ph/$hash/g" /tmp/r4-users.acl > /root/valkey-probe/acl/users.acl
+rm /tmp/r4-users.acl
+grep -c "#$hash " /root/valkey-probe/acl/users.acl
 chmod 0644 /root/valkey-probe/acl/users.acl
 EOF
 W$ ssh db1 sudo docker pull "valkey/valkey@$VK"
@@ -8100,7 +8113,7 @@ W$ ssh db1 sudo docker image rm "ghcr.io/zhaow-de/zcrypto-capture@$APP"
 W$ ssh db1 sudo docker image ls -q ghcr.io/zhaow-de/zcrypto-capture | wc -l
 ```
 
-The `--version` read prints `v=9.1.2`. The probe passes when `rc=0` and the capture reads, in order: `nautilus-trader` followed by `NT`; a `redis_version:` line at or above 6.2.0 (Valkey reports its Redis-compatibility version there); `valkey_version: 9.1.2`; `server: PASS`; the library's own `Connected to redis v...` line in the first child's output; `write: ['O-...']` and `restore:` the same one id; `PASS`. Any other outcome stops the rollout here: no cache role lands, the capture goes to the owner, and the finding is the spec's library-side unknown answered in the negative; `rc=2` with `this interpreter carries nautilus-trader ...` is R0's image read, which goes to the owner the same way. `docker stop` removes the throwaway container (`--rm`), and the `docker image rm` line removes the app image, which R9's pruner would leave, since it manages only a repo whose image a pins row names on the host; the last line reads `0`, no image of that repo left on the node.
+The render's `grep -c` prints `5` (the `default` line and the four users) and the host's prints `4` (the four hashes substituted). The `--version` read prints `v=9.1.2`. The `Ready to accept connections` read is the load of every ACL line the role will render: an unknown token fails the start before it (`Error loading ACL file` in the logs), which stops the rollout here as the spec's Valkey-side unknown answered in the negative, never at R5. The probe passes when `rc=0` and the capture reads, in order: `nautilus-trader` followed by `NT`; a `redis_version:` line at or above 6.2.0 (Valkey reports its Redis-compatibility version there); `valkey_version: 9.1.2`; `server: PASS`; the library's own `Connected to redis v...` line in the first child's output; `write: ['O-...']` and `restore:` the same one id; `PASS`. Any other outcome stops the rollout here: no cache role lands, the capture goes to the owner, and the finding is the spec's library-side unknown answered in the negative; `rc=2` with `this interpreter carries nautilus-trader ...` is R0's image read, which goes to the owner the same way. `docker stop` removes the throwaway container (`--rm`), and the `docker image rm` line removes the app image, which R9's pruner would leave, since it manages only a repo whose image a pins row names on the host; the last line reads `0`, no image of that repo left on the node.
 
 **R5. Valkey, Sentinel and Alloy: valkey1, then valkey2, then valkey3** (Tasks 4 and 5). One converge per node carries both digests, `--tags cache -e cache_image_digest=$VK -e cache_alloy_digest=$AL`, each image pre-staged first; the role renders Alloy's project and never starts it, so the operator starts it. For each `N`:
 
