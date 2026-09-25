@@ -207,14 +207,32 @@ class Target:
     password: str
 
 
+def cache_configs(target: Target) -> tuple[object, object]:
+    from nautilus_trader.common import CacheConfig
+    from nautilus_trader.infrastructure import RedisCacheConfig
+
+    return (
+        CacheConfig(use_instance_id=False, flush_on_start=False),
+        RedisCacheConfig(
+            host=target.host,
+            port=target.port,
+            username=target.username,
+            password=target.password,
+            ssl=False,
+            connection_timeout=5,
+            response_timeout=5,
+            number_of_retries=3,
+        ),
+    )
+
+
 def run_node(target: Target, mint: bool) -> list[str]:
     """One LiveNode with no data or execution client and reconciliation off; returns the client order ids its cache
     holds at start, after minting and submitting one limit order first when `mint` is set."""
     import threading
 
-    from nautilus_trader.common import CacheConfig, Environment, LogLevel
+    from nautilus_trader.common import Environment, LogLevel
     from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
-    from nautilus_trader.infrastructure import RedisCacheConfig
     from nautilus_trader.live import LiveNode
     from nautilus_trader.model import InstrumentId, OrderSide, Price, Quantity, StrategyId, TraderId
     from nautilus_trader.trading import Strategy, StrategyConfig
@@ -242,22 +260,12 @@ def run_node(target: Target, mint: bool) -> list[str]:
                 threading.Timer(1.5, lambda: self._box[0].stop()).start()
 
     box = [None]
+    cache, database = cache_configs(target)
     node = (
         LiveNode.builder(name="valkey-probe", trader_id=TraderId(TRADER_ID), environment=Environment.LIVE)
         .with_logging(LoggerConfig(stdout_level=LogLevel.INFO))
-        .with_cache_config(CacheConfig(use_instance_id=False, flush_on_start=False))
-        .with_cache_database_factory(
-            RedisCacheConfig(
-                host=target.host,
-                port=target.port,
-                username=target.username,
-                password=target.password,
-                ssl=False,
-                connection_timeout=5,
-                response_timeout=5,
-                number_of_retries=3,
-            )
-        )
+        .with_cache_config(cache)
+        .with_cache_database_factory(database)
         .with_exec_engine_config(LiveExecutionEngineConfig(reconciliation=False))
         .build()
     )

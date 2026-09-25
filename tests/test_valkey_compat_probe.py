@@ -319,18 +319,10 @@ def test_a_half_that_hangs_is_killed_at_the_deadline():
 
 def test_the_library_accepts_the_cache_settings_the_probe_passes():
     """The probe's two configs, built with no server: a renamed keyword on a bump fails here, not on the node."""
-    from nautilus_trader.common import CacheConfig
-    from nautilus_trader.infrastructure import RedisCacheConfig
+    target = probe.Target(host="127.0.0.1", port=6390, username="engine", password=SECRET)
 
-    cache = CacheConfig(use_instance_id=False, flush_on_start=False)
-    RedisCacheConfig(
-        host="127.0.0.1",
-        port=6390,
-        username="engine",
-        password=SECRET,
-        ssl=False,
-        connection_timeout=5,
-        response_timeout=5,
-        number_of_retries=3,
-    )
+    cache, database = probe.cache_configs(target)
+
     assert (cache.use_instance_id, cache.flush_on_start) == (False, False)
+    assert (database.host, database.port, database.username, database.password) == ("127.0.0.1", 6390, "engine", SECRET)
+    assert database.number_of_retries == 3
