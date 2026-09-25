@@ -881,7 +881,7 @@ def test_arming_backstop_override_demands_a_reason(override, expected):
         (ARMED_TEMPLATE, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
         (ARMED_TEMPLATE, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
         (DISARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, False),  # disarmed -> nothing was overridden
-        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, ARMING_REASON, False),  # === read as the assert reads it
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, ARMING_REASON, False),
         (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, ARMING_REASON, True),
     ],
 )
@@ -902,6 +902,7 @@ def test_arming_override_echo_fires_on_a_malformed_record(record, why):
     [
         (UNVERIFIED_PIN, RECORD, [UNVERIFIED_PIN_VERSION, "1.230.0"]),
         (NO_PIN, RECORD, ["(unparseable pin)"]),
+        (TRIPLE_EQUALS_UNVERIFIED_PIN, RECORD, ["nautilus-trader 1.231.0,"]),
         (UNVERIFIED_PIN, None, ["(the record is not a list of versions -- nothing is verified)"]),
         (UNVERIFIED_PIN, 42, ["(the record is not a list of versions -- nothing is verified)"]),
         (UNVERIFIED_PIN, "", ["(the record is not a list of versions -- nothing is verified)"]),
