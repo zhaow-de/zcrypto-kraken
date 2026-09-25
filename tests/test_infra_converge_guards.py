@@ -60,6 +60,14 @@ def when_conditions(task: dict) -> list[str]:
     return when if isinstance(when, list) else [when]
 
 
+def set_facts(task: dict, variables: dict) -> dict:
+    # set_fact renders on the template path, where a bare `{{ }}` keeps its native type.
+    from ansible.template import trust_as_template
+
+    t = Templar(loader=DataLoader(), variables=variables)
+    return {k: t.template(trust_as_template(v)) for k, v in task["ansible.builtin.set_fact"].items()}
+
+
 def task_index(tasks: list[dict], name: str) -> int:
     # Positional, top-level only -- ORDER is the property under test, and find_task's recursion into
     # block/pre_tasks would return a task whose index says nothing about the role's own sequence.
@@ -745,6 +753,7 @@ def test_engine_parity_when_references_the_correct_probe_register_name():
 # refuses a converge that would render the engine ARMED on a nautilus version whose attended
 # order-semantics pass has not run.
 ARMING = "arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run"
+DERIVE = "arming backstop — derive the pinned version and the list the record vouches for"
 ARMING_REASON = "venue incident replay, re-run booked for the same day"
 
 DISARMED_TEMPLATE = "exec_enabled = true\nexec_armed = false\nshadow_nav_eur = 1000\n"
@@ -765,6 +774,7 @@ PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
 # money guard routed around at exactly the moment it is supposed to hold.
 TRIPLE_EQUALS_VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.230.0",\n]\n'
 TRIPLE_EQUALS_UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.231.0",\n]\n'
+MARKER_PIN = "dependencies = [\n    \"nautilus-trader===1.230.0 ; python_version >= '3.14'\",\n]\n"
 RECORD = ["1.230.0"]
 _UNSET = object()  # so a test can pass record=None and mean it
 
@@ -824,13 +834,19 @@ def test_a_malformed_record_still_leaves_a_disarmed_converge_alone():
     assert truthy(assert_that(task), variables)
 
 
+def _arming_derived(variables: dict) -> dict:
+    return {**variables, **set_facts(find_task(load_tasks(ENGINE), DERIVE), variables)}
+
+
 def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSET) -> dict:
-    return {
-        "engine_config_template_text": template,
-        "engine_pyproject_text": pyproject,
-        "engine_verified_nautilus": RECORD if record is _UNSET else record,
-        "arming_override": override,
-    }
+    return _arming_derived(
+        {
+            "engine_config_template_text": template,
+            "engine_pyproject_text": pyproject,
+            "engine_verified_nautilus": RECORD if record is _UNSET else record,
+            "arming_override": override,
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -856,6 +872,8 @@ def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSE
         # which is in no record, so it would refuse this row.
         (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, True, "armed on a verified version pinned with ==="),
         (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, False, "armed on an unverified version pinned with ==="),
+        # The version ends at the marker's space, so a legitimately marked pin is read as recorded.
+        (ARMED_TEMPLATE, MARKER_PIN, True, "armed on a verified version pinned with an environment marker"),
     ],
 )
 def test_arming_backstop_semantics(template, pyproject, expected, why):
@@ -942,11 +960,11 @@ def test_arming_backstop_reads_the_real_committed_files():
     }
     # TRUE POSITIVE: a recorded version must NOT be refused. Fed `versions + [pin]` rather than
     # `versions` so this half holds in the interim where the bump has landed and its pass has not.
-    assert truthy(assert_that(task), {**base, "engine_verified_nautilus": [*versions, pin]}), (
+    assert truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [*versions, pin]})), (
         "the guard refuses an armed converge on a version the record lists as verified"
     )
     # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
-    assert not truthy(assert_that(task), {**base, "engine_verified_nautilus": [v for v in versions if v != pin]})
+    assert not truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [v for v in versions if v != pin]}))
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
