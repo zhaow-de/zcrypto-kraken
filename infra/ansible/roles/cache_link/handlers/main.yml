@@ -1,8 +1,8 @@
 ---
 - name: restart zcache0
-  # wg-quick has no reload -- a restart is the only way to apply a changed conf, and it drops every
-  # connection through the mesh for as long as the interface is down. The first-run dry-run case of
-  # the enable task in tasks/main.yml is skipped here too.
+  # A restart, not the unit's reload (wg syncconf), which applies no Address or MTU change; it drops
+  # the mesh's traffic while the interface is down. The enable task's first-run dry-run case is
+  # skipped here too.
   ansible.builtin.systemd:
     name: "wg-quick@{{ cache_link_interface }}"
     state: restarted

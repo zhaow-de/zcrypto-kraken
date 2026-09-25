@@ -15,7 +15,6 @@ deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto_
 # it by hand as well.
 firewall_extra_udp_ports: [51821]
 
-# This host's member of the zcache mesh (roles/cache_link): its tunnel address, and its private key
-# wired from the vault var in group_vars/all/vault.yml.
+# This host's end of the zcache mesh (roles/cache_link).
 cache_link_address: 10.98.0.1
 cache_link_private_key: "{{ cache_wg_zcrypto_private_key }}"

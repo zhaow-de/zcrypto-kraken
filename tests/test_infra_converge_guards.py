@@ -2172,9 +2172,7 @@ def test_the_copied_role_alone_reds_nothing(tmp_path, monkeypatch):
     test_no_ops_role_asset_is_a_broken_link()
 
 
-# --- the zcache mesh: each member's conf names the other three, one /32 each, and the role refuses
-# a peer list that would render otherwise. The guard's conditions are fed constructed peer lists
-# through Ansible's templar, and the conf is rendered through it for each member as committed.
+# --- the zcache mesh (roles/cache_link).
 CACHE_LINK = ANSIBLE / "roles" / "cache_link"
 CACHE_LINK_TASKS = CACHE_LINK / "tasks" / "main.yml"
 CACHE_LINK_DEFAULTS = CACHE_LINK / "defaults" / "main.yml"
@@ -2351,7 +2349,6 @@ def test_the_zcache_ports_are_one_value_in_every_declaration():
         )
         ports[f"{path.relative_to(ANSIBLE)}:{WG_UDP_PORTS}"] = opened[0]
     assert len(set(ports.values())) == 1, f"the zcache mesh's port declarations disagree: {ports}"
-    # the interface the database ports are scoped to is the mesh's own
     scoped = _declared(CACHE_HOST_VARS, "firewall_interface_tcp_ports")
     assert [rule["iface"] for rule in scoped] == [defaults["cache_link_interface"]], scoped
 

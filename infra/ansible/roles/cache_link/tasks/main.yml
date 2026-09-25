@@ -1,11 +1,5 @@
-# The cache_link role (spec 00118 D5): the zcache WireGuard mesh, one conf per member naming the
-# other three, and a probe publishing each peer's handshake age.
-
 # First, so a member missing its address or key fails here by name rather than inside the conf
-# task, whose no_log would hide which variable was undefined. The template appends /32 to every
-# peer address, so an address that is not a bare host address inside the mesh network is what an
-# AllowedIPs wider than one host would come from; and a second entry carrying this host's name,
-# address or key would render this host as its own peer.
+# task, whose no_log would hide which variable was undefined.
 - name: refuse a mesh whose peers are not one host address each, or that lists this host as its own peer
   ansible.builtin.assert:
     that:
@@ -69,7 +63,6 @@
     owner: root
     group: root
     mode: "0755"
-# The unit passes the rendered conf and the textfile directory to the script, so both follow the defaults.
 - name: mesh probe service + timer
   ansible.builtin.template:
     src: "zcache-probe.{{ item }}.j2"
@@ -80,7 +73,7 @@
   loop: [service, timer]
   register: cache_link_probe_units
   notify: reload systemd
-# The same first-run dry-run case as the tunnel above: the unit files were never written.
+# Skipped in a dry run that would write either unit file, as on a first run.
 - name: mesh probe timer enabled
   ansible.builtin.systemd:
     name: zcache-probe.timer

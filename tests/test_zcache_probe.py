@@ -1,6 +1,5 @@
-"""The zcache mesh probe: the shell script the `cache_link` role installs on the engine host and the three cache
-nodes, driven with `bash` over a fixture WireGuard config and a stub `wg` on PATH. The handshake-stale rule reads what
-it writes, so a peer it leaves out is a link nothing watches."""
+"""The zcache mesh probe the `cache_link` role installs, driven over a fixture conf and a stub `wg`. The
+handshake-stale rule reads what it writes, so a peer it leaves out is a link nothing watches."""
 
 from __future__ import annotations
 
@@ -106,8 +105,6 @@ def test_a_config_naming_no_peer_fails_and_publishes_nothing(tmp_path):
 
 
 def test_the_unit_runs_the_probe_over_the_rendered_conf_into_the_textfile_directory():
-    """The unit hands the script the conf the role renders and the directory the host's Alloy reads, and lets it write
-    nowhere else."""
     textfile_dir = yaml.safe_load((ROLE / "defaults/main.yml").read_text())["cache_link_textfile_dir"]
     assert textfile_dir == "/var/lib/zcrypto-node-textfile"
     lines = [line.strip() for line in UNIT.read_text().splitlines()]

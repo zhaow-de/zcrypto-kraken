@@ -6,7 +6,7 @@ Description=zcache mesh probe writing each peer's WireGuard handshake age
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/zcache-probe /etc/wireguard/{{ cache_link_interface }}.conf {{ cache_link_textfile_dir }}/zcache.prom
-# Root, for `wg show` and the 0600 WireGuard config; the one path it may write is the textfile directory.
+# Root, for `wg show` and the 0600 WireGuard config.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
