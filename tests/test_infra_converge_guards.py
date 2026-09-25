@@ -1,10 +1,12 @@
 """Spec 00082: a converge guard's condition is evaluated through Ansible's own templar, fed constructed probe outcomes -- never a re-implementation of the logic."""
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import shutil
+import time
 import tomllib
 from pathlib import Path
 
@@ -37,15 +39,14 @@ def find_task(tasks: list[dict], name: str) -> dict:
 
 
 def truthy(expr, variables: dict) -> bool:
-    # ansible-core 2.19+ Data-Tagging: a plain str is UNTRUSTED and comes back unrendered -- bool()
-    # of the unrendered template string would be True for every fixture, making every test vacuous,
-    # so trust_as_template is mandatory.
     from ansible.template import trust_as_template
 
     t = Templar(loader=DataLoader(), variables=variables)
     if isinstance(expr, list):
         return all(truthy(e, variables) for e in expr)
-    return bool(t.template(trust_as_template("{{ (" + expr + ") | bool }}")))
+    # `that:` and `when:` are conditionals: ansible evaluates them as expressions, not as `{{ }}`
+    # templates, and the two paths read a string literal's escapes differently.
+    return bool(t.evaluate_conditional(trust_as_template(expr)))
 
 
 def assert_that(task: dict) -> list[str]:
@@ -57,6 +58,14 @@ def when_conditions(task: dict) -> list[str]:
     # a `when:` list is ANDed by Ansible, which is exactly what truthy() does with a list.
     when = task.get("when", [])
     return when if isinstance(when, list) else [when]
+
+
+def set_facts(task: dict, variables: dict) -> dict:
+    # set_fact renders on the template path, where a bare `{{ }}` keeps its native type.
+    from ansible.template import trust_as_template
+
+    t = Templar(loader=DataLoader(), variables=variables)
+    return {k: t.template(trust_as_template(v)) for k, v in task["ansible.builtin.set_fact"].items()}
 
 
 def task_index(tasks: list[dict], name: str) -> int:
@@ -278,7 +287,7 @@ WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
     [
         (1900, "", True),  # inside the gap
         (900, "", False),  # completion window [B, B+30min] may still be running
-        (13900, "", False),  # within 10 min of the next boundary
+        (13900, "", False),  # within 15 min of the next boundary
         (900, "true", False),  # boolean override refused
         (900, "yes", False),  # I4: every canonical boolean spelling refused
         (900, "short", False),  # I4: sub-9-char fragment refused
@@ -295,15 +304,15 @@ def test_engine_window_guard(since_boundary, override, expected):
 
 
 # The two floors ARE the guard -- 1800 s (the cycle-completion window [B, B+30 min] may still be
-# running) and 600 s (a stop→start begun inside 10 min of the next boundary risks straddling it).
+# running) and 900 s (a play's work above the audit's close, which the test below holds).
 # These fixtures sit ON the comparison boundary, which is the only place a constant is pinned.
 @pytest.mark.parametrize(
     ("since_boundary", "expected"),
     [
         (1799, False),  # one second short of the floor
         (1800, True),  # the floor itself is open: `>= 1800`
-        (13800, True),  # until_next == 600 exactly -- inclusive on that side too: `>= 600`
-        (13801, False),  # until_next == 599
+        (13500, True),  # until_next == 900 exactly -- inclusive on that side too: `>= 900`
+        (13501, False),  # until_next == 899
     ],
 )
 def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary, expected):
@@ -313,6 +322,28 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
         "engine_window_override": "",
     }
     assert truthy(assert_that(task), variables) is expected
+
+
+# The assert reads the clock before the engine role runs and the engine restarts at the play's end, while the
+# deploy-log audit judges the row's `ts`, written once the play has finished: the assert's close must stand a play's
+# work above the audit's, or a converge the assert admits lands a row the audit counts outside the gap.
+PLAY_WORK_ALLOWANCE_SECONDS = 300
+
+
+def test_a_play_the_window_admits_last_still_finishes_inside_the_audits_gap():
+    task = find_task(load_tasks(SITE), WINDOW)
+    closes = re.findall(r"14400 - \(\(engine_epoch_probe\.stdout \| int\) % 14400\) >= (\d+)\)", " ".join(assert_that(task)))
+    assert len(closes) == 1, closes
+    close = int(closes[0])
+    last_admitted_start = 1754265600 + 14400 - close
+    assert truthy(assert_that(task), {"engine_epoch_probe": {"stdout": str(last_admitted_start)}, "engine_window_override": ""})
+
+    spec = importlib.util.spec_from_file_location("deploy_log_audit_window", REPO / "infra" / "scripts" / "deploy-log-audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    assert close - audit._BEFORE_BOUNDARY_SECONDS >= PLAY_WORK_ALLOWANCE_SECONDS
+    finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_admitted_start + PLAY_WORK_ALLOWANCE_SECONDS))
+    assert audit.inside_gap(finished)
 
 
 # --- window floor from the boundary cycle's completion (spec 00083 D6) --------------------------
@@ -495,6 +526,8 @@ WINDOW_REASON = "cycle confirmed complete, converging late on purpose"
         (900, WINDOW_REASON, True),  # override accepted over a closed window -> echo the why
         (900, "", False),  # no override -> the assert refused; there is no why to echo
         (1900, WINDOW_REASON, False),  # the window is open -> nothing was overridden
+        (13500, WINDOW_REASON, False),  # until_next == 900: the assert's close, still open -> no why
+        (13501, WINDOW_REASON, True),  # until_next == 899: closed, the override accepted -> echo the why
     ],
 )
 def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary, override, expected):
@@ -505,6 +538,25 @@ def test_window_override_echo_fires_only_on_an_accepted_override(since_boundary,
         "engine_window_override": override,
     }
     assert truthy(when_conditions(task), variables) is expected
+
+
+def test_the_window_echo_negates_the_asserts_own_window_condition():
+    """The value fixtures above drive the echo's close; this holds every clause of its mirror — the
+    fallback floor, the journal branch and its regex included — against the assert's own text."""
+    tasks = load_tasks(SITE)
+    condition = _first_balanced_group(" ".join(assert_that(find_task(tasks, WINDOW))))
+    echo = " ".join(when_conditions(find_task(tasks, WINDOW_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+
+    # a vacuous "" == "" pass is the failure mode of extraction, so pin what the condition must contain
+    assert "engine_cycle_epoch_probe" in condition and "14400" in condition, (
+        f"extraction missed the window condition: {condition!r}"
+    )
+    assert " ".join(negated.split()) == " ".join(condition.split()), (
+        f"the echo records an override on other cases:\n echo:   {negated}\n assert: {condition}"
+    )
 
 
 # --- engine-role guards. Fixture keys carry the `engine_` prefix ansible-lint's
@@ -701,6 +753,7 @@ def test_engine_parity_when_references_the_correct_probe_register_name():
 # refuses a converge that would render the engine ARMED on a nautilus version whose attended
 # order-semantics pass has not run.
 ARMING = "arming backstop — refuse an ARMED converge on a nautilus version whose order-semantics pass has not run"
+DERIVE = "arming backstop — derive the pinned version and the list the record vouches for"
 ARMING_REASON = "venue incident replay, re-run booked for the same day"
 
 DISARMED_TEMPLATE = "exec_enabled = true\nexec_armed = false\nshadow_nav_eur = 1000\n"
@@ -721,6 +774,8 @@ PREFIX_PIN = 'dependencies = [\n    "nautilus-trader==1.230",\n]\n'
 # money guard routed around at exactly the moment it is supposed to hold.
 TRIPLE_EQUALS_VERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.230.0",\n]\n'
 TRIPLE_EQUALS_UNVERIFIED_PIN = 'dependencies = [\n    "nautilus-trader===1.231.0",\n]\n'
+MARKER_PIN = "dependencies = [\n    \"nautilus-trader===1.230.0 ; python_version >= '3.14'\",\n]\n"
+UNSPACED_MARKER_PIN = "dependencies = [\n    \"nautilus-trader===1.230.0;python_version>='3.14'\",\n]\n"
 RECORD = ["1.230.0"]
 _UNSET = object()  # so a test can pass record=None and mean it
 
@@ -733,27 +788,28 @@ def _pinned_nautilus_version() -> str:
     assert len(entries) == 1, f"expected exactly one nautilus-trader dependency, found {entries}"
     version = re.sub(r"^nautilus-trader\s*={2,3}\s*", "", entries[0])
     assert version != entries[0], f"the nautilus-trader dependency must pin by equality: {entries[0]!r}"
-    return version
+    # A PEP 508 marker follows the version after `;`, and the guard reads the version alone.
+    return version.split(";")[0].strip()
 
 
-@pytest.mark.parametrize(
-    ("record", "why"),
-    [
-        # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
-        # comma-joined string VOUCHES for a version it never verified.
-        ("1.230.0, 1.231.0", "a comma-joined string"),
-        # ...and KEY containment on a mapping, which vouches the same way.
-        ({"1.231.0": "note"}, "a mapping keyed by version"),
-        (None, "null"),
-        (42, "a scalar that is not even a sequence"),
-        # A MIXED list passes every structural test -- proper sequence, not a string, not a mapping
-        # -- so without an element-type check the Jinja half vouches for the real version in it while
-        # cli.engine.execgate collapses the same record to the empty set. The pin must be IN the list:
-        # beside a non-string, an unguarded ternary vouches and a guarded one refuses.
-        ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
-        ("", "an empty string"),
-    ],
-)
+MALFORMED_RECORDS = [
+    # Jinja's `in` is SUBSTRING containment on a string, so a record whose list degraded to a
+    # comma-joined string VOUCHES for a version it never verified.
+    ("1.230.0, 1.231.0", "a comma-joined string"),
+    # ...and KEY containment on a mapping, which vouches the same way.
+    ({"1.231.0": "note"}, "a mapping keyed by version"),
+    (None, "null"),
+    (42, "a scalar that is not even a sequence"),
+    # A MIXED list passes every structural test -- proper sequence, not a string, not a mapping
+    # -- so without an element-type check the Jinja half vouches for the real version in it while
+    # cli.engine.execgate collapses the same record to the empty set. The pin must be IN the list:
+    # beside a non-string, an unguarded ternary vouches and a guarded one refuses.
+    ([UNVERIFIED_PIN_VERSION, 1231], "a list whose elements are not all strings"),
+    ("", "an empty string"),
+]
+
+
+@pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
 def test_arming_backstop_refuses_a_record_that_is_not_a_proper_list(record, why):
     """A malformed record is a CANNOT-VOUCH, and this guard's contract is cannot-vouch => refuse."""
     task = find_task(load_tasks(ENGINE), ARMING)
@@ -780,13 +836,19 @@ def test_a_malformed_record_still_leaves_a_disarmed_converge_alone():
     assert truthy(assert_that(task), variables)
 
 
+def _arming_derived(variables: dict) -> dict:
+    return {**variables, **set_facts(find_task(load_tasks(ENGINE), DERIVE), variables)}
+
+
 def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSET) -> dict:
-    return {
-        "engine_config_template_text": template,
-        "engine_pyproject_text": pyproject,
-        "engine_verified_nautilus": RECORD if record is _UNSET else record,
-        "arming_override": override,
-    }
+    return _arming_derived(
+        {
+            "engine_config_template_text": template,
+            "engine_pyproject_text": pyproject,
+            "engine_verified_nautilus": RECORD if record is _UNSET else record,
+            "arming_override": override,
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -812,6 +874,8 @@ def _arming_vars(template: str, pyproject: str, override: str = "", record=_UNSE
         # which is in no record, so it would refuse this row.
         (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, True, "armed on a verified version pinned with ==="),
         (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, False, "armed on an unverified version pinned with ==="),
+        (ARMED_TEMPLATE, MARKER_PIN, True, "armed on a verified version pinned with an environment marker"),
+        (ARMED_TEMPLATE, UNSPACED_MARKER_PIN, True, "armed on a verified version pinned with an unspaced marker"),
     ],
 )
 def test_arming_backstop_semantics(template, pyproject, expected, why):
@@ -837,11 +901,43 @@ def test_arming_backstop_override_demands_a_reason(override, expected):
         (ARMED_TEMPLATE, UNVERIFIED_PIN, "", False),  # refused; there is no why to echo
         (ARMED_TEMPLATE, VERIFIED_PIN, ARMING_REASON, False),  # verified -> nothing was overridden
         (DISARMED_TEMPLATE, UNVERIFIED_PIN, ARMING_REASON, False),  # disarmed -> nothing was overridden
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_VERIFIED_PIN, ARMING_REASON, False),
+        (ARMED_TEMPLATE, TRIPLE_EQUALS_UNVERIFIED_PIN, ARMING_REASON, True),
     ],
 )
 def test_arming_override_echo_fires_only_on_an_accepted_override(template, pyproject, override, expected):
     task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
     assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
+
+
+@pytest.mark.parametrize(("record", "why"), MALFORMED_RECORDS)
+def test_arming_override_echo_fires_on_a_malformed_record(record, why):
+    task = find_task(load_tasks(ENGINE), "arming override accepted — the reason, on the record")
+    variables = _arming_vars(ARMED_TEMPLATE, UNVERIFIED_PIN, override=ARMING_REASON, record=record)
+    assert truthy(when_conditions(task), variables), why
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "record", "names"),
+    [
+        (UNVERIFIED_PIN, RECORD, [UNVERIFIED_PIN_VERSION, "1.230.0"]),
+        (NO_PIN, RECORD, ["(unparseable pin)"]),
+        (TRIPLE_EQUALS_UNVERIFIED_PIN, RECORD, ["nautilus-trader 1.231.0,"]),
+        *[
+            (UNVERIFIED_PIN, record, ["(the record is not a list of versions -- nothing is verified)"])
+            for record, _ in MALFORMED_RECORDS
+        ],
+    ],
+)
+def test_arming_backstop_fail_msg_renders_the_diagnostic(pyproject, record, names):
+    from ansible.template import trust_as_template
+
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, pyproject, record=record)
+    fail_msg = task["ansible.builtin.assert"]["fail_msg"]
+    rendered = str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(fail_msg)))
+    for name in names:
+        assert name in rendered, rendered
 
 
 def test_arming_backstop_reads_the_real_committed_files():
@@ -852,10 +948,13 @@ def test_arming_backstop_reads_the_real_committed_files():
     pin = _pinned_nautilus_version()
     template = (ANSIBLE / "roles" / "engine" / "templates" / "zcrypto.toml.j2").read_text()
 
-    assert re.search(r"(?m)^exec_armed\s*=\s*false\s*$", template), "the committed template must render disarmed"
+    # Either literal: the runbook's arm and disarm PRs each flip only the template line.
+    assert re.search(r"(?m)^exec_armed *= *(true|false) *$", template), (
+        "the committed template must render exec_armed as a boolean literal"
+    )
     assert "1.230.0" in versions, "the version whose attended pass actually ran must be recorded"
     task = find_task(load_tasks(ENGINE), ARMING)
-    armed = re.sub(r"(?m)^exec_armed\s*=\s*false\s*$", "exec_armed = true", template)
+    armed = re.sub(r"(?m)^exec_armed *= *(true|false) *$", "exec_armed = true", template)
     base = {
         "engine_config_template_text": armed,
         "engine_pyproject_text": (REPO / "pyproject.toml").read_text(),
@@ -863,11 +962,11 @@ def test_arming_backstop_reads_the_real_committed_files():
     }
     # TRUE POSITIVE: a recorded version must NOT be refused. Fed `versions + [pin]` rather than
     # `versions` so this half holds in the interim where the bump has landed and its pass has not.
-    assert truthy(assert_that(task), {**base, "engine_verified_nautilus": [*versions, pin]}), (
+    assert truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [*versions, pin]})), (
         "the guard refuses an armed converge on a version the record lists as verified"
     )
     # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
-    assert not truthy(assert_that(task), {**base, "engine_verified_nautilus": [v for v in versions if v != pin]})
+    assert not truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [v for v in versions if v != pin]}))
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.

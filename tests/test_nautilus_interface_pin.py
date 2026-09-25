@@ -135,9 +135,6 @@ EXHAUSTIVE_MEMBERS = {"PositionSide"}
 
 
 def test_the_exhaustive_member_walk_is_not_vacuous():
-    """Parametrising over an empty set collects one SKIP and summarises green, so pruning the literal
-    below to `set()` would take the only member-set guard out of the suite with no red run -- while
-    `docs/open-topics/T0159-engine-flatten-the-red-button.md` still leans on it in prose."""
     assert EXHAUSTIVE_MEMBERS, "EXHAUSTIVE_MEMBERS is empty -- the walk below would skip, not fail"
 
 
