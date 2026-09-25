@@ -4818,7 +4818,7 @@ rules:
   # ---- zcrypto-cache: the engine's cache nodes ------------------------------------------------------
   # Each node's own Alloy-dark rule, in the `count(up{...}) or on() vector(0)` shape of
   # `zcrypto-alloy-dark-nas`, and so its noDataState: Alerting. Every other rule in this group reads OK
-  # on no data, which a dark node and a stopped Valkey or Sentinel both produce.
+  # on no data, which a dark node and a stopped Valkey both produce.
   - uid: zcrypto-alloy-dark-cache-1
     title: "Fleet · Alloy dark — Cache 1"
     ruleGroup: zcrypto-cache

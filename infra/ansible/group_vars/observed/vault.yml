@@ -9,18 +9,9 @@
 # ops node is deliberately in THIS group and NOT in engine_host: it ships telemetry, and it must
 # never hold the trade key (spec 00051 D10).
 #
-# Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16). They had been mis-scoped since
-# spec 00043: no capture host runs Alloy yet (T0020 is still open — the NAS is the only Alloy
-# today), so they sat in a group that did not use them, while the one host that now needs them could
-# not see them. The ciphertext is UNCHANGED — same vault password, so the blocks moved verbatim and
-# were never decrypted.
-#
 # Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable so anyone can see
 # what this group needs, while every value stays `!vault`-encrypted at rest. Read/write mechanics:
 # see the header of group_vars/capture_host/vault.yml.
-#
-# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
-# password, so both silently print every value below in cleartext.
 
 grafana_prom_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
