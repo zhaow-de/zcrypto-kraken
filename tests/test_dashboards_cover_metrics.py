@@ -247,8 +247,7 @@ def _host_variables(dash: dict) -> dict[str, frozenset[str]]:
 
 
 def _nodes_selected(selector: str, variables: dict[str, frozenset[str]]) -> frozenset[str]:
-    """The cache nodes a label selector's `host` matchers let through. A `$variable` in a positive
-    matcher stands for its reach, an unknown one for no node; one in a negative matcher removes none."""
+    """The cache nodes a label selector's `host` matchers let through."""
     nodes = CACHE_NODES
     for op, value in _ANY_HOST_MATCHER.findall(selector):
         if variable := _VARIABLE.fullmatch(value):
@@ -585,8 +584,7 @@ def test_the_publisher_scan_still_finds_each_source_kind(family):
 def test_every_family_the_cache_nodes_admit_is_charted_or_alerted():
     """The cache keep regex is written as the families a panel or rule reads on a cache node. One
     admitted that no such reader reads is series budget spent on nothing, and the per-host lists in
-    test_infra_alloy_series.py cannot see that. A reader counts only where its `host` matchers can
-    take a node, so a panel behind a `$host` that lists no node reads nothing here."""
+    test_infra_alloy_series.py cannot see that."""
     text = KEEP_REGEX_FILES["zcrypto-valkey1"].read_text()
     block = next(b for b in re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL) if '"keep"' in b)
     admitted = set(re.search(r'regex\s*=\s*"([^"]+)"', block).group(1).split("|"))

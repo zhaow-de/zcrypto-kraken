@@ -349,7 +349,6 @@ CACHE_REQUIRED = [
     "node_textfile_mtime_seconds",
     "node_textfile_scrape_error",
     "zcache_wireguard_handshake_age_seconds",
-    # Two of PROCESS_FAMILIES: no panel or rule that can select a cache node reads the other four.
     "process_resident_memory_bytes",
     "process_virtual_memory_bytes",
     *CACHE_REDIS_SERIES,

@@ -155,9 +155,8 @@
   roles:
     # The engine host's end of the zcache mesh, under its own tag. It restarts no container, and a
     # changed zcache0.conf restarts wg-quick@zcache0, which carries no engine traffic until the engine
-    # half routes the cache through it, so it takes no engine window yet; that half re-gates this role
-    # behind the window. The capture play's converge_primary guard still gates it, and
-    # `--skip-tags engine` runs it too.
+    # half routes the cache through it, so it takes no engine window yet. The capture play's
+    # converge_primary guard still gates it, and `--skip-tags engine` runs it too.
     - role: cache_link
       tags: [cache-link]
     - role: engine
