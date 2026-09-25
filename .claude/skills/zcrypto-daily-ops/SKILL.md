@@ -43,7 +43,7 @@ Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action a
 
 **Done is an outcome, never a merge.** A fix whose effect needs a converge is not done when it merges: the entry names it as owed to an attended converge.
 
-**Autonomous** — everything read-only, wherever it runs; telemetry-only actions on **ops, the NAS, zaccess or a cache node (`zcrypto-valkey1`, `zcrypto-valkey2`, `zcrypto-valkey3`) only** (restart Alloy, re-arm a timer); and a code fix taken the normal way — fix branch, tests, subagent review, PR, merged on CI green — **when the fix is off the protected paths**.
+**Autonomous** — everything read-only, wherever it runs; telemetry-only actions on **ops, the NAS, zaccess or a cache node (`zcrypto-valkey1`, `zcrypto-valkey2`, `zcrypto-valkey3`) only** (restart Alloy, re-arm a timer — on a cache node Alloy's container alone, a timer there being the operator's); and a code fix taken the normal way — fix branch, tests, subagent review, PR, merged on CI green — **when the fix is off the protected paths**.
 
 **Prepared, then the user's word** — any restart or converge of a capture daemon or the engine; anything touching the venue account (the arm file, the kill file, orders); deleting data; running `grafana-push.sh` after a merged rule fix, since it changes what pages; and a fix landing on the capture write path, the live trade path, canonical data, or anything a host converges. **Deploying any fix to a host is a converge — always attended.**
 
