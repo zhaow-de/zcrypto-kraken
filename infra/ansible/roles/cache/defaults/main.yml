@@ -1,0 +1,46 @@
+---
+# The index digest of valkey/valkey 9.1.2 deliberately has no default: it is passed per run and
+# pre-staged on the node first, and a converge without it skips the Valkey and Sentinel block:
+#   -e cache_image_digest=sha256:<...>   (read it with `docker buildx imagetools inspect valkey/valkey:9.1.2`)
+# Valkey and Sentinel both run from it, so one re-pin moves both.
+cache_image: valkey/valkey
+
+cache_compose_dir: /opt/zcrypto-cache
+cache_state_dir: /var/lib/zcrypto-cache
+
+# Valkey and Sentinel listen on loopback and this node's zcache0 address, never a public one.
+cache_bind_address: "{{ cache_link_address }}"
+
+cache_master_name: zcache
+# Seeds a first render or a reset alone: once the daemons run, Sentinel decides which node is primary and writes
+# `replicaof` into each node's own valkey.conf.
+cache_first_primary: 10.98.0.11
+
+# The gap between maxmemory and the Valkey cap is the AOF-rewrite child's copy-on-write.
+cache_maxmemory: 128mb
+cache_valkey_memory_limit: 256m
+cache_sentinel_memory_limit: 64m
+
+cache_down_after_ms: 5000
+cache_failover_timeout_ms: 60000
+
+# true re-renders the daemon-owned configs over what Valkey and Sentinel wrote into them, which resets this node's
+# replication state: the converge of the reset and rotation procedures in infra/runbooks/cache.md,
+# never a routine one.
+cache_config_reset: false
+
+# The node-exporter textfile directory the node's Alloy reads; the reboot check publishes reboot.prom
+# into it, and the cache_link role's mesh probe its zcache.prom.
+cache_textfile_dir: /var/lib/zcrypto-node-textfile
+
+# The configs the daemons read, rendered only when absent or under cache_config_reset.
+cache_daemon_files:
+  - valkey.conf
+  - sentinel.conf
+  - users.acl
+
+# The node's own Grafana Cloud shipper. `cache_alloy_digest` has no default and is passed per run: a
+# converge without it skips the Alloy block rather than rendering a compose file pointing at a broken
+# image reference. The secrets file has no var because alloy-compose.yaml.j2 names it relatively.
+cache_alloy_dir: /opt/zcrypto-cache/alloy
+cache_alloy_image: grafana/alloy

@@ -1,0 +1,11 @@
+# bootstrap.yml's capture play connects as root on 22 at play scope, since a new node has no
+# zcrypto-deploy yet; every converge after it connects as below.
+ansible_user: zcrypto-deploy
+ansible_port: 10022
+# ssh_hardening AllowUsers: no zcrypto-data here, since no NAS pull channel reaches these nodes.
+hardening_ssh_allow_users: zcrypto-deploy root
+# The zcache mesh (spec 00118 D6): the tunnel's UDP port on the public side, and the Valkey and
+# Sentinel ports on the tunnel alone. Open a public port in the Linode Cloud Firewall by hand too.
+firewall_extra_udp_ports: [51821]
+firewall_interface_tcp_ports:
+  - {iface: zcache0, ports: [6379, 26379]}

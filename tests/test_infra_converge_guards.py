@@ -1249,7 +1249,7 @@ def capture_play_tasks() -> list[dict]:
     # load_tasks on bootstrap.yml returns a PLAY list, and task_index is top-level-flat by design, so
     # the ordering assertion has to index inside one play's own task list. Selecting the play by
     # `hosts` also pins the guard's deliberate narrow -- it belongs to the capture play, not ops/access.
-    play = next(p for p in load_tasks(BOOTSTRAP) if p["hosts"] == "capture_host")
+    play = next(p for p in load_tasks(BOOTSTRAP) if p["hosts"].split(":")[0] == "capture_host")
     return play["tasks"]
 
 
@@ -1276,6 +1276,18 @@ def test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe():
     assert primary < probe  # the narrower primary refusal still speaks first
     assert probe < refusal  # nothing to assert on until the probe has registered
     assert refusal < task_index(tasks, "zcrypto-deploy sudo user")
+
+
+def test_the_cache_nodes_bootstrap_under_the_capture_plays_guards():
+    """A cache node is a public VPS like a capture host, so it takes this play's sshd drop-in and, with it, the
+    re-bootstrap refusal, unnarrowed; the primary refusal stays keyed on `engine_host`, which no cache node joins."""
+    plays = load_tasks(BOOTSTRAP)
+    play = next(p for p in plays if p["hosts"].split(":")[0] == "capture_host")
+    assert play["hosts"].split(":") == ["capture_host", "cache_host"]
+    assert "when" not in find_task(play["tasks"], REBOOTSTRAP)
+    primary = find_task(play["tasks"], PRIMARY_REFUSAL)
+    assert when_conditions(primary) == ["inventory_hostname in groups['engine_host'] | default([])"]
+    assert [p["hosts"] for p in plays if "cache_host" in p["hosts"].split(":")] == [play["hosts"]]
 
 
 # --- the ops role's new-timer check-mode guard ------------------------------------------------
@@ -2158,3 +2170,468 @@ def test_the_copied_role_alone_reds_nothing(tmp_path, monkeypatch):
     """The true positive beside the two above: the copy passes until one of them plants something."""
     monkeypatch.setitem(globals(), "OPS_ROLE", _ops_role_copy(tmp_path))
     test_no_ops_role_asset_is_a_broken_link()
+
+
+# --- the zcache mesh (roles/cache_link).
+CACHE_LINK = ANSIBLE / "roles" / "cache_link"
+CACHE_LINK_TASKS = CACHE_LINK / "tasks" / "main.yml"
+CACHE_LINK_DEFAULTS = CACHE_LINK / "defaults" / "main.yml"
+CACHE_LINK_WG_CONF = CACHE_LINK / "templates" / "zcache0.conf.j2"
+CACHE_HOST_VARS = ANSIBLE / "group_vars" / "cache_host" / "vars.yml"
+ENGINE_HOST_VARS = ANSIBLE / "host_vars" / "zcrypto" / "vars.yml"
+MESH_GUARD = "refuse a mesh whose peers are not one host address each, or that lists this host as its own peer"
+MESH_MEMBERS = ("zcrypto", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3")
+# The shape of a WireGuard key, and distinct per member, so no fixture key collides with another.
+FAKE_KEY = {name: f"{i}" * 43 + "=" for i, name in enumerate(MESH_MEMBERS, 1)}
+
+
+class _VaultKeptLoader(yaml.SafeLoader):
+    """A host_vars file may carry an inline `!vault` value; its ciphertext is kept, never decrypted."""
+
+
+_VaultKeptLoader.add_constructor("!vault", lambda loader, node: node.value)
+
+
+def _mesh_vars(host: str) -> dict:
+    """The committed mesh as `host` sees it at converge time, its keys replaced by fixtures."""
+    defaults = yaml.safe_load(CACHE_LINK_DEFAULTS.read_text())
+    host_vars = yaml.load((ANSIBLE / "host_vars" / host / "vars.yml").read_text(), Loader=_VaultKeptLoader)
+    return {
+        "inventory_hostname": host,
+        "cache_link_peers": [{**p, "public_key": FAKE_KEY[p["name"]]} for p in defaults["cache_link_peers"]],
+        "cache_link_network": defaults["cache_link_network"],
+        "cache_link_listen_port": defaults["cache_link_listen_port"],
+        "cache_link_address": host_vars["cache_link_address"],
+        "cache_link_private_key": "P" * 43 + "=",
+    }
+
+
+@pytest.mark.parametrize("host", MESH_MEMBERS)
+def test_the_committed_mesh_passes_its_guard_on_each_member(host):
+    assert truthy(assert_that(find_task(load_tasks(CACHE_LINK_TASKS), MESH_GUARD)), _mesh_vars(host))
+
+
+def _peer(v: dict, name: str) -> dict:
+    return next(p for p in v["cache_link_peers"] if p["name"] == name)
+
+
+def _prefixed(v):
+    _peer(v, "zcrypto-valkey2")["address"] = "10.98.0.12/24"
+
+
+def _outside(v):
+    _peer(v, "zcrypto-valkey2")["address"] = "10.99.0.12"
+
+
+def _self_absent(v):
+    v["cache_link_peers"] = [p for p in v["cache_link_peers"] if p["name"] != "zcrypto-valkey1"]
+
+
+def _other_twice(v):
+    v["cache_link_peers"].append({**_peer(v, "zcrypto-valkey2"), "address": "10.98.0.14", "public_key": "9" * 43 + "="})
+
+
+def _own_address_elsewhere(v):
+    _peer(v, "zcrypto-valkey2")["address"] = _peer(v, "zcrypto-valkey1")["address"]
+
+
+def _own_key_elsewhere(v):
+    _peer(v, "zcrypto-valkey2")["public_key"] = _peer(v, "zcrypto-valkey1")["public_key"]
+
+
+def _peer_key_short(v):
+    _peer(v, "zcrypto-valkey2")["public_key"] = "3" * 43
+
+
+def _address_disagrees(v):
+    v["cache_link_address"] = "10.98.0.14"
+
+
+def _address_unset(v):
+    del v["cache_link_address"]
+
+
+def _key_unset(v):
+    del v["cache_link_private_key"]
+
+
+def _key_short(v):
+    v["cache_link_private_key"] = "P" * 43
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [
+        _prefixed,
+        _outside,
+        _self_absent,
+        _other_twice,
+        _own_address_elsewhere,
+        _own_key_elsewhere,
+        _peer_key_short,
+        _address_disagrees,
+        _address_unset,
+        _key_unset,
+        _key_short,
+    ],
+    ids=lambda f: f.__name__.lstrip("_"),
+)
+def test_the_mesh_guard_refuses_a_peer_list_that_would_render_wrong(spoil):
+    variables = _mesh_vars("zcrypto-valkey1")
+    spoil(variables)
+    assert not truthy(assert_that(find_task(load_tasks(CACHE_LINK_TASKS), MESH_GUARD)), variables)
+
+
+def _render_conf(host: str) -> dict[str, list[dict[str, str]]]:
+    """The rendered conf as wg reads it: section name -> one {key: value} per section occurrence."""
+    from ansible.template import trust_as_template
+
+    rendered = Templar(loader=DataLoader(), variables=_mesh_vars(host)).template(trust_as_template(CACHE_LINK_WG_CONF.read_text()))
+    sections: dict[str, list[dict[str, str]]] = {}
+    for raw in rendered.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line.startswith("[") and line.endswith("]"):
+            sections.setdefault(line, []).append({})
+        elif "=" in line:
+            key, _, value = line.partition("=")
+            current = list(sections.values())[-1][-1] if sections else None
+            assert current is not None, f"{line!r} precedes every section"
+            assert key.strip() not in current, f"{key.strip()} repeats inside one section"
+            current[key.strip()] = value.strip()
+    return sections
+
+
+@pytest.mark.parametrize("host", MESH_MEMBERS)
+def test_the_zcache_conf_names_each_other_member_once_as_one_host(host):
+    v = _mesh_vars(host)
+    conf = _render_conf(host)
+    assert set(conf) == {"[Interface]", "[Peer]"}, conf
+    (interface,) = conf["[Interface]"]
+    assert interface["Address"] == f"{v['cache_link_address']}/24"
+    assert interface["ListenPort"] == str(v["cache_link_listen_port"])
+    others = [p for p in v["cache_link_peers"] if p["name"] != host]
+    assert sorted(p["AllowedIPs"] for p in conf["[Peer]"]) == sorted(f"{p['address']}/32" for p in others)
+    assert sorted(p["PublicKey"] for p in conf["[Peer]"]) == sorted(p["public_key"] for p in others)
+    assert {p["Endpoint"] for p in conf["[Peer]"]} == {f"{p['endpoint']}:{v['cache_link_listen_port']}" for p in others}
+    assert {p["PersistentKeepalive"] for p in conf["[Peer]"]} == {"25"}
+
+
+def test_each_zcache_peer_key_is_one_variable_every_member_renders():
+    """A rotated key is one edit: each member's public half is read from its own `cache_wg_<member>_public_key`, set in
+    group_vars/all/vars.yml and in no member's host_vars, and every other member's conf renders it, so no host holds a
+    copy that can fall behind."""
+    defaults = yaml.safe_load(CACHE_LINK_DEFAULTS.read_text())
+    wired = {p["name"]: p["public_key"] for p in defaults["cache_link_peers"]}
+    assert wired == {name: "{{ cache_wg_" + name.replace("-", "_") + "_public_key }}" for name in MESH_MEMBERS}, wired
+    assert _wg_value(CACHE_LINK_WG_CONF, "PublicKey") == "{{peer.public_key}}"
+    for host in MESH_MEMBERS:
+        host_vars = yaml.load((ANSIBLE / "host_vars" / host / "vars.yml").read_text(), Loader=_VaultKeptLoader)
+        assert not [key for key in host_vars if key.startswith("cache_wg_")], f"{host}'s host_vars set a mesh key"
+
+
+def test_the_zcache_mesh_runs_the_fleets_one_tunnel_mtu():
+    mtus = {**_tunnel_mtus(), str(CACHE_LINK_WG_CONF.relative_to(ANSIBLE)): int(_wg_value(CACHE_LINK_WG_CONF, "MTU"))}
+    assert len(set(mtus.values())) == 1, f"the fleet's tunnels declare different MTUs: {mtus}"
+
+
+def test_the_zcache_ports_are_one_value_in_every_declaration():
+    """The listen port is also every peer's Endpoint port and the one port each member's firewall opens
+    for the mesh; a drift among them is a tunnel that never handshakes."""
+    assert re.fullmatch(r"\{\{\s*cache_link_listen_port\s*\}\}", _wg_value(CACHE_LINK_WG_CONF, "ListenPort"))
+    assert re.search(r":\{\{\s*cache_link_listen_port\s*\}\}$", _wg_value(CACHE_LINK_WG_CONF, "Endpoint"))
+    defaults = yaml.safe_load(CACHE_LINK_DEFAULTS.read_text())
+    assert all(":" not in p["endpoint"] for p in defaults["cache_link_peers"]), "an endpoint carries its own port"
+    ports = {"roles/cache_link/defaults:cache_link_listen_port": defaults["cache_link_listen_port"]}
+    for path in (CACHE_HOST_VARS, ENGINE_HOST_VARS):
+        opened = _declared(path, WG_UDP_PORTS)
+        assert isinstance(opened, list) and len(opened) == 1, (
+            f"{path.relative_to(ANSIBLE)}:{WG_UDP_PORTS} is {opened!r}, not the single tunnel port this selection can read"
+        )
+        ports[f"{path.relative_to(ANSIBLE)}:{WG_UDP_PORTS}"] = opened[0]
+    assert len(set(ports.values())) == 1, f"the zcache mesh's port declarations disagree: {ports}"
+    scoped = _declared(CACHE_HOST_VARS, "firewall_interface_tcp_ports")
+    assert [rule["iface"] for rule in scoped] == [defaults["cache_link_interface"]], scoped
+
+
+# --- the cache role ---
+CACHE = ANSIBLE / "roles" / "cache" / "tasks" / "main.yml"
+CACHE_HANDLERS = ANSIBLE / "roles" / "cache" / "handlers" / "main.yml"
+CACHE_DEFAULTS = ANSIBLE / "roles" / "cache" / "defaults" / "main.yml"
+CACHE_BLOCK = "install Valkey and Sentinel (needs the pinned image digest)"
+CACHE_FAILFAST = "fail fast if the pinned cache image digest was not supplied"
+CACHE_PREFLIGHT = "preflight — refuse a digest the host has not pulled"
+CACHE_PINS = "pins recording — refuse to replace a digest fleet-pins.md does not record"
+CACHE_PINS_ECHO = "pins override accepted — the reason, on the record"
+CACHE_PASSWORDS = "refuse a cache password shorter than five characters or outside letters and digits"
+CACHE_RENDER = "render the daemon-owned configs when absent, or under cache_config_reset"
+CACHE_DRIFT = "drift — report a daemon-owned config whose template no longer renders what this node was given"
+CACHE_CLI_ENV = "render the root-only valkey-cli credential files"
+CACHE_RESET_NEEDS_DIGEST = "refuse a config reset without the pinned image digest"
+CACHE_PASSWORD_NAMES = (
+    "cache_engine_password",
+    "cache_replica_password",
+    "cache_sentinel_password",
+    "cache_sentinel_requirepass",
+    "cache_exporter_password",
+)
+CACHE_GOOD_PASSWORDS = {name: "a1B2c3D4e5" for name in CACHE_PASSWORD_NAMES}
+
+
+def _template(expr: str, variables: dict):
+    from ansible.template import trust_as_template
+
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(expr))
+
+
+def test_cache_digest_failfast_refuses_an_empty_digest():
+    task = find_task(load_tasks(CACHE), CACHE_FAILFAST)
+    assert not truthy(assert_that(task), {"cache_image_digest": ""})
+    assert truthy(assert_that(task), {"cache_image_digest": "sha256:" + "d" * 64})
+
+
+def test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest():
+    tasks = load_tasks(CACHE)
+    block = find_task(tasks, CACHE_BLOCK)
+    assert when_conditions(block) == ["cache_image_digest is defined"]
+    assert "cache_image_digest" not in yaml.safe_load(CACHE_DEFAULTS.read_text())
+    assert block["block"][0]["name"] == CACHE_FAILFAST
+    exempt = (CACHE_BLOCK, CACHE_RESET_NEEDS_DIGEST)
+    outside = [t.get("name") for t in tasks if t.get("name") not in exempt and "cache_image_digest" in yaml.safe_dump(t)]
+    assert outside == [], f"tasks outside the gated block read the digest: {outside}"
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        ({"cache_config_reset": "true"}, False),
+        ({"cache_config_reset": "true", "cache_image_digest": "sha256:" + "d" * 64}, True),
+        ({"cache_config_reset": False}, True),
+    ],
+    ids=["reset-without-digest", "reset-with-digest", "no-reset"],
+)
+def test_cache_config_reset_without_the_digest_is_refused_before_the_gate(variables, expected):
+    tasks = load_tasks(CACHE)
+    assert task_index(tasks, CACHE_RESET_NEEDS_DIGEST) < task_index(tasks, CACHE_BLOCK)
+    assert truthy(assert_that(find_task(tasks, CACHE_RESET_NEEDS_DIGEST)), variables) is expected
+
+
+def test_cache_empty_digest_failfast_precedes_residency_preflight():
+    tasks = find_task(load_tasks(CACHE), CACHE_BLOCK)["block"]
+    assert task_index(tasks, CACHE_FAILFAST) < task_index(tasks, CACHE_PREFLIGHT)
+
+
+def test_cache_digest_preflight_refuses_an_unpulled_digest():
+    task = find_task(load_tasks(CACHE), CACHE_PREFLIGHT)
+    assert not truthy(assert_that(task), {"cache_digest_probe": {"rc": 1}})
+    assert truthy(assert_that(task), {"cache_digest_probe": {"rc": 0}})
+
+
+CACHE_PINS_BASE = {"cache_running_digest_probe": {"rc": 0, "stdout": "valkey/valkey@sha256:" + "d" * 64}}
+CACHE_PINS_WITH = "| valkey + sentinel | zcrypto-valkey1 | `" + "d" * 12 + "` |"
+CACHE_PINS_WITHOUT = "| valkey + sentinel | zcrypto-valkey1 | `" + "e" * 12 + "` |"
+CACHE_PINS_REASON = "first pin recorded right after this converge"
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (CACHE_PINS_WITH, "", True),
+        (CACHE_PINS_WITHOUT, "", False),
+        (CACHE_PINS_WITHOUT, "true", False),
+        (CACHE_PINS_WITHOUT, "short", False),
+        (CACHE_PINS_WITHOUT, CACHE_PINS_REASON, True),
+    ],
+)
+def test_cache_pins_recording_semantics(pins_text, override, expected):
+    task = find_task(load_tasks(CACHE), CACHE_PINS)
+    variables = {**CACHE_PINS_BASE, "cache_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (CACHE_PINS_WITHOUT, CACHE_PINS_REASON, True),
+        (CACHE_PINS_WITHOUT, "", False),
+        (CACHE_PINS_WITHOUT, "short", False),
+        (CACHE_PINS_WITH, CACHE_PINS_REASON, False),
+    ],
+)
+def test_cache_pins_override_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(CACHE), CACHE_PINS_ECHO)
+    variables = {**CACHE_PINS_BASE, "cache_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+@pytest.mark.parametrize("name", CACHE_PASSWORD_NAMES)
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("abcd", False),
+        ("abcde", True),
+        ("", False),
+        ("abc de", False),
+        ("abc'de", False),
+        ("abcde\n", False),
+        ("a1B2c3D4e5", True),
+        # a valid run after a refused character: only the refusal's start anchor turns it away
+        ("abc de12345", False),
+    ],
+)
+def test_cache_password_refusal(name, value, expected):
+    task = find_task(load_tasks(CACHE), CACHE_PASSWORDS)
+    assert truthy(assert_that(task), {**CACHE_GOOD_PASSWORDS, name: value}) is expected
+
+
+def test_cache_password_refusal_names_the_key_and_never_the_value():
+    task = find_task(load_tasks(CACHE), CACHE_PASSWORDS)
+    variables = {**CACHE_GOOD_PASSWORDS, "cache_sentinel_requirepass": "ab c", "cache_exporter_password": "xyz"}
+    message = _template(task["ansible.builtin.assert"]["fail_msg"], variables)
+    assert message.startswith("cache_sentinel_requirepass, cache_exporter_password in group_vars/cache_host/vault.yml"), message
+    assert "ab c" not in message and "xyz" not in message
+
+
+@pytest.mark.parametrize(("reset", "expected"), [(False, False), ("false", False), (True, True), ("true", True)])
+def test_cache_configs_render_only_when_absent_unless_reset(reset, expected):
+    """`-e cache_config_reset=true` arrives as the string "true", so the string arms are the ones a converge passes."""
+    task = find_task(load_tasks(CACHE), CACHE_RENDER)
+    assert _template(task["ansible.builtin.template"]["force"], {"cache_config_reset": reset}) is expected
+
+
+def test_cache_render_covers_the_daemon_files_and_each_has_a_template():
+    task = find_task(load_tasks(CACHE), CACHE_RENDER)
+    files = yaml.safe_load(CACHE_DEFAULTS.read_text())["cache_daemon_files"]
+    assert task["loop"] == "{{ cache_daemon_files }}"
+    assert files == ["valkey.conf", "sentinel.conf", "users.acl"], files
+    assert all((CACHE.parents[1] / "templates" / f"{f}.j2").is_file() for f in files)
+
+
+RENDERED = {"results": [{"item": "valkey.conf", "changed": True}, {"item": "sentinel.conf", "changed": False}]}
+
+
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [({"sentinel.conf": "b" * 64}, True), ({"sentinel.conf": "a" * 64}, False), ({}, True)],
+    ids=["recorded-and-matching", "recorded-and-drifted", "never-recorded"],
+)
+def test_cache_drift_reports_a_config_whose_template_moved(recorded, expected):
+    task = find_task(load_tasks(CACHE), CACHE_DRIFT)
+    variables = {"item": "sentinel.conf", "cache_recorded_sha": recorded, "cache_template_sha": {"sentinel.conf": "b" * 64}}
+    assert truthy(assert_that(task), variables) is expected
+
+
+def test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered():
+    task = find_task(load_tasks(CACHE), CACHE_DRIFT)
+    assert task.get("ignore_errors") is True, "a drift report that fails the play blocks every converge of the node until a reset"
+    assert task.get("register"), "ansible-lint's ignore-errors rule admits an ignored failure only when its result is registered"
+    assert not truthy(when_conditions(task), {"item": "valkey.conf", "cache_conf_render": RENDERED})
+    assert truthy(when_conditions(task), {"item": "sentinel.conf", "cache_conf_render": RENDERED})
+
+
+CACHE_ALLOY_SECRETS = "render the alloy secrets env file"
+CACHE_LINK_CONF = "zcache mesh conf (this host's end and a peer per other member)"
+
+
+@pytest.mark.parametrize(
+    ("tasks", "name"),
+    [(CACHE, CACHE_RENDER), (CACHE, CACHE_CLI_ENV), (CACHE, CACHE_ALLOY_SECRETS), (CACHE_LINK_TASKS, CACHE_LINK_CONF)],
+    ids=["daemon-configs", "cli-env", "alloy-secrets", "wireguard-conf"],
+)
+def test_every_cache_secret_render_is_never_logged_or_diffed(tasks, name):
+    task = find_task(load_tasks(tasks), name)
+    assert task.get("no_log") is True and task.get("diff") is False, name
+    assert task["ansible.builtin.template"]["mode"] == "0600", name
+
+
+def test_every_cache_probe_never_fails_changes_or_skips_under_check():
+    probes = [t for t, _ in iter_tasks(load_tasks(CACHE)) if re.search(r"\bprobe\b", str(t.get("name", "")))]
+    assert len(probes) >= 4, [t["name"] for t in probes]
+    for probe in probes:
+        modes = (probe.get("failed_when"), probe.get("changed_when"), probe.get("check_mode"))
+        assert modes == (False, False, False), f"{probe['name']!r}: failed_when, changed_when, check_mode = {modes}"
+
+
+@pytest.mark.parametrize(
+    ("check_mode", "unit_changed", "expected"),
+    [(True, True, False), (True, False, True), (False, True, True), (False, False, True)],
+)
+def test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview(check_mode, unit_changed, expected):
+    handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
+    variables = {"ansible_check_mode": check_mode, "cache_unit_install": {"changed": unit_changed}}
+    assert truthy(when_conditions(handler), variables) is expected
+
+
+# --- the cache nodes' Alloy: the digest shape, the pins refusal, and the drift assert ---------------
+CACHE_ALLOY_DIGEST_SHAPE = "refuse an Alloy digest that is not a full sha256"
+CACHE_ALLOY_PINS = "alloy pins recording — refuse to replace an Alloy digest fleet-pins.md does not record"
+CACHE_ALLOY_PINS_ECHO = "alloy pins recording — the accepted override's reason, on the record"
+CACHE_ALLOY_DRIFT = "assert the deployed alloy config matches the repo"
+CACHE_ALLOY_RUNNING = {"cache_alloy_running_digest_probe": {"rc": 0, "stdout": "grafana/alloy@sha256:" + "a" * 64}}
+CACHE_ALLOY_PINS_WITH = "| alloy | zcrypto-valkey1 | `" + "a" * 12 + "` — v1.19.2 | 2026-09-25 10:00:00 | prior |"
+CACHE_ALLOY_PINS_WITHOUT = "| alloy | zcrypto-valkey1 | `" + "b" * 12 + "` — v1.19.2 | 2026-09-25 10:00:00 | prior |"
+
+
+@pytest.mark.parametrize(
+    ("digest", "expected"),
+    [("sha256:" + "c" * 64, True), ("", False), ("sha256:" + "c" * 12, False), ("c" * 64, False)],
+)
+def test_cache_alloy_digest_must_be_a_full_sha256(digest, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_DIGEST_SHAPE)
+    assert truthy(assert_that(task), {"cache_alloy_digest": digest}) is expected
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (CACHE_ALLOY_PINS_WITH, "", True),
+        (CACHE_ALLOY_PINS_WITHOUT, "", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "true", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "short", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "recorded in pins right after the emergency roll", True),
+    ],
+)
+def test_cache_alloy_pins_recording_semantics(pins_text, override, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_PINS)
+    variables = {**CACHE_ALLOY_RUNNING, "cache_alloy_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+
+
+def test_cache_alloy_pins_refusal_stands_down_when_no_alloy_runs():
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_PINS)
+    assert not truthy(when_conditions(task), {"cache_alloy_running_digest_probe": {"rc": 1, "stdout": ""}})
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (CACHE_ALLOY_PINS_WITH, "a reason long enough", False),
+        (CACHE_ALLOY_PINS_WITHOUT, "a reason long enough", True),
+        (CACHE_ALLOY_PINS_WITHOUT, "short", False),
+    ],
+)
+def test_cache_alloy_pins_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_PINS_ECHO)
+    variables = {**CACHE_ALLOY_RUNNING, "cache_alloy_fleet_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+def test_the_cache_alloy_guards_run_only_on_a_converge_carrying_the_digest():
+    block = next(t for t in load_tasks(CACHE) if t.get("name", "").startswith("install the cache telemetry stack"))
+    assert block["when"] == "cache_alloy_digest is defined"
+    names = [t["name"] for t in block["block"]]
+    assert names.index(CACHE_ALLOY_DIGEST_SHAPE) == 0
+    assert names.index(CACHE_ALLOY_PINS) < names.index("install the alloy pipeline config")
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        ({"cache_deployed_alloy_config": {"stat": {"exists": True}}}, True),
+        ({"cache_deployed_alloy_config": {"stat": {"exists": False}}}, False),
+        ({"cache_deployed_alloy_config": {"stat": {"exists": True}}, "cache_alloy_digest": "sha256:" + "c" * 64}, False),
+    ],
+)
+def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variables, expected):
+    task = find_task(load_tasks(CACHE), CACHE_ALLOY_DRIFT)
+    assert truthy(when_conditions(task), variables) is expected
+    assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]

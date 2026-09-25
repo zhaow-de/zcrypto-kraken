@@ -1,0 +1,38 @@
+# Rendered by the `cache` Ansible role at {{ cache_compose_dir }}/compose.yaml; edit
+# infra/ansible/roles/cache/templates/compose.yaml.j2 and re-converge instead of editing it on the node.
+# Host networking because Sentinel announces and discovers peers by address, which Docker's port
+# mapping rewrites; both daemons bind loopback and the zcache0 address alone (valkey.conf, sentinel.conf).
+services:
+  valkey:
+    image: "{{ cache_image }}@{{ cache_image_digest }}"
+    container_name: zcrypto-valkey
+    restart: unless-stopped
+    user: "{{ cache_uid }}:{{ cache_gid }}"
+    network_mode: host
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    volumes:
+      # The directory, read-write: both daemons replace their config by renaming a temporary file beside
+      # it, which a single-file mount refuses.
+      - "{{ cache_state_dir }}/conf:/etc/valkey"
+      - "{{ cache_state_dir }}/data:/data"
+    deploy:
+      resources:
+        limits:
+          memory: "{{ cache_valkey_memory_limit }}"
+    logging:
+      driver: journald
+  sentinel:
+    image: "{{ cache_image }}@{{ cache_image_digest }}"
+    container_name: zcrypto-sentinel
+    restart: unless-stopped
+    user: "{{ cache_uid }}:{{ cache_gid }}"
+    network_mode: host
+    command: ["valkey-sentinel", "/etc/valkey/sentinel.conf"]
+    volumes:
+      - "{{ cache_state_dir }}/conf:/etc/valkey"
+    deploy:
+      resources:
+        limits:
+          memory: "{{ cache_sentinel_memory_limit }}"
+    logging:
+      driver: journald

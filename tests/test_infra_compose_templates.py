@@ -13,6 +13,8 @@ CAPTURE_TEMPLATE = REPO / "infra/ansible/roles/capture/templates/compose.yaml.j2
 ENGINE_TEMPLATE = REPO / "infra/ansible/roles/engine/templates/compose.yaml.j2"
 OPS_TEMPLATE = REPO / "infra/ansible/roles/ops/templates/compose.yaml.j2"
 OPS_DEFAULTS = REPO / "infra/ansible/roles/ops/defaults/main.yml"
+CACHE_TEMPLATE = REPO / "infra/ansible/roles/cache/templates/compose.yaml.j2"
+CACHE_DEFAULTS = yaml.safe_load((REPO / "infra/ansible/roles/cache/defaults/main.yml").read_text())
 
 # StrictUndefined is the load-bearing setting: a variable the role sets and a test omits raises here instead of rendering empty into a pin
 _ENV = jinja2.Environment(trim_blocks=True, lstrip_blocks=False, undefined=jinja2.StrictUndefined)
@@ -63,12 +65,24 @@ OPS_CONTEXT = {
     "ops_compose_dir": "/etc/zcrypto-ops",
 }
 
+# The paths and caps come from the role's defaults, so the render below reads the values a converge deploys.
+CACHE_CONTEXT = {
+    **{
+        k: CACHE_DEFAULTS[k]
+        for k in ("cache_image", "cache_compose_dir", "cache_state_dir", "cache_valkey_memory_limit", "cache_sentinel_memory_limit")
+    },
+    "cache_image_digest": "sha256:" + "d" * 64,
+    "cache_uid": 996,
+    "cache_gid": 996,
+}
+
 _CASES = [
     (CAPTURE_TEMPLATE, CAPTURE_CONTEXT),
     (ENGINE_TEMPLATE, ENGINE_CONTEXT),
     (OPS_TEMPLATE, OPS_CONTEXT),
+    (CACHE_TEMPLATE, CACHE_CONTEXT),
 ]
-_IDS = ["capture", "engine", "ops"]
+_IDS = ["capture", "engine", "ops", "cache"]
 
 
 def _render(template_path: Path, context: dict) -> dict:
@@ -126,11 +140,37 @@ def test_engine_logship_guard_moves_environment_and_entrypoint_together():
     assert with_token["entrypoint"] == ["zcrypto", "--ship-logs", "engine", "run"]
 
 
+@pytest.mark.parametrize(
+    ("service", "command", "limit"),
+    [
+        ("valkey", ["valkey-server", "/etc/valkey/valkey.conf"], "cache_valkey_memory_limit"),
+        ("sentinel", ["valkey-sentinel", "/etc/valkey/sentinel.conf"], "cache_sentinel_memory_limit"),
+    ],
+)
+def test_cache_valkey_and_sentinel_run_one_pinned_image_on_the_host_network(service, command, limit):
+    """Both daemons log to the journal, where the node's Alloy reads them."""
+    spec = _render(CACHE_TEMPLATE, CACHE_CONTEXT)["services"][service]
+    assert spec["image"] == f"{CACHE_DEFAULTS['cache_image']}@{CACHE_CONTEXT['cache_image_digest']}"
+    assert spec["network_mode"] == "host" and "ports" not in spec
+    assert spec["command"] == command
+    assert spec["user"] == "996:996"
+    assert spec["logging"] == {"driver": "journald"}
+    assert spec["deploy"]["resources"]["limits"]["memory"] == CACHE_DEFAULTS[limit]
+    assert f"{CACHE_DEFAULTS['cache_state_dir']}/conf:/etc/valkey" in spec["volumes"]
+
+
+def test_cache_data_is_mounted_into_valkey_alone():
+    services = _render(CACHE_TEMPLATE, CACHE_CONTEXT)["services"]
+    data = f"{CACHE_DEFAULTS['cache_state_dir']}/data:/data"
+    assert data in services["valkey"]["volumes"] and data not in services["sentinel"]["volumes"]
+
+
 # infra/nas/compose.yaml is not Ansible-rendered, but shares the single-file bind-mount pattern the
 # assertion below refuses, so it is included anyway.
 ALLOY_COMPOSE_FILES = (
     REPO / "infra/ansible/roles/capture/templates/alloy-compose.yaml.j2",
     REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2",
+    REPO / "infra/ansible/roles/cache/templates/alloy-compose.yaml.j2",
     REPO / "infra/nas/compose.yaml",
 )
 

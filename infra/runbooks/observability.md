@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, because **a guard in the code pointed you here**, or because Grafana Cloud itself is dark and you opened [`#grafana-cloud-dark`](observability.md#grafana-cloud-dark) deliberately. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-These sections cover the instruments, not the things they measure: the four `grafana-alloy` containers that ship every metric and every journal line to Grafana Cloud, the node-exporter collectors inside them, and the direct-ship path (`cli/logging/ship.py`) by which the capture daemon, the engine and the liquidations poller push their own logs to Loki without touching Alloy at all. A rule here firing means a *signal* is missing or dishonest — read every other rule's silence as meaningless until it clears. The healthchecks.io dead-man checks are a separate, independent failure domain and are **not** part of this stack; the map of which check watches which daemon is in [`#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog).
+These sections cover the instruments, not the things they measure: the `grafana-alloy` containers that ship every metric and every journal line to Grafana Cloud, the node-exporter collectors inside them, and the direct-ship path (`cli/logging/ship.py`) by which the capture daemon, the engine and the liquidations poller push their own logs to Loki without touching Alloy at all. A rule here firing means a *signal* is missing or dishonest — read every other rule's silence as meaningless until it clears. The healthchecks.io dead-man checks are a separate, independent failure domain and are **not** part of this stack; the map of which check watches which daemon is in [`#zcrypto-hcio-watchdog`](observability.md#zcrypto-hcio-watchdog).
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -21,7 +21,7 @@ A **critical** Grafana alert, one of four — `Fleet · Alloy dark — NAS` / `�
 
 Severity is identical on all four deliberately — the responder's first moves are the same on every host. `noDataState` and `execErrState` are both `Alerting`, so a Grafana-side failure to evaluate this rule also pages rather than reading green.
 
-(The fifth sibling, `zcrypto-alloy-dark-zaccess`, covers the bridgehead, whose Alloy is a native apt install with a different procedure — it has its own section at `zaccess.md#zaccess-bridgehead-dark`.)
+(The fifth sibling, `zcrypto-alloy-dark-zaccess`, covers the bridgehead, whose Alloy is a native apt install with a different procedure — it has its own section at `zaccess.md#zaccess-bridgehead-dark`. The three cache nodes' siblings, `zcrypto-alloy-dark-cache-1` to `-3`, have theirs at `cache.md#zcrypto-alloy-dark-cache-1`, since their set is watched from the other two nodes while one is dark.)
 
 ### What it means
 
@@ -76,7 +76,7 @@ A **warning** Grafana alert (`Node · a node-exporter collector is failing`): `m
 
 **The page names the host and not the collector** — `min by (host)` aggregates the `collector` label away. Finding which one is the first step below, and it is not optional.
 
-The rule carries no host selector, so it covers every host whose keep-regex admits the series: both capture hosts, ops, the NAS and the bridgehead. All five run the same six collectors — `cpu`, `loadavg`, `meminfo`, `filesystem`, `netdev`, `textfile` (`set_collectors` in each `config.alloy`). Baseline is 1 everywhere.
+The rule carries no host selector, so it covers every host whose keep-regex admits the series: both capture hosts, ops, the NAS, the bridgehead and the three cache nodes. All eight run the same six collectors — `cpu`, `loadavg`, `meminfo`, `filesystem`, `netdev`, `textfile` (`set_collectors` in each `config.alloy`). Baseline is 1 everywhere.
 
 ### What it means
 
@@ -86,13 +86,14 @@ From `infra/grafana/alerts.yaml`, the dependents per collector, and which of the
 
 | failed collector | rules keyed on its families | of those, the ones that page instead |
 | -- | -- | -- |
-| `filesystem` | `zcrypto-capture-disk-low`, `zcrypto-nas-disk-low`, `zaccess-disk-high` — the disk alarms | `zcrypto-nas-disk-low` |
+| `filesystem` | `zcrypto-capture-disk-low`, `zcrypto-nas-disk-low`, `zaccess-disk-high`, `zcrypto-cache-disk-low` — the disk alarms | `zcrypto-nas-disk-low` |
 | `loadavg` | `zcrypto-capture-load-high`, `zcrypto-ops-load-high`, `zcrypto-nas-load-high` | `zcrypto-nas-load-high` |
 | `cpu` | `zcrypto-capture-load-high` again — `cpu` supplies its per-core denominator | none |
-| `textfile`, on a capture host | `zcrypto-capture-textfile-unreadable`, `zcrypto-reboot-probe-stale`, `zcrypto-capture-clock-exporter-stale`, `zcrypto-oneoff-textfile-stale`, `zcrypto-capture-reboot-pending`, `zcrypto-capture-clock-skew`, and on the primary `zcrypto-engine-journal-prune-dead` | `zcrypto-engine-journal-prune-dead` |
+| `textfile`, on a capture host | `zcrypto-capture-textfile-unreadable`, `zcrypto-reboot-probe-stale`, `zcrypto-capture-clock-exporter-stale`, `zcrypto-oneoff-textfile-stale`, `zcrypto-capture-reboot-pending`, `zcrypto-capture-clock-skew`, and on the primary `zcrypto-engine-journal-prune-dead` and the engine host's rows of `zcrypto-cache-wg-handshake-stale` | `zcrypto-engine-journal-prune-dead` |
 | `textfile`, on ops | the 21 rules reading `ops_*`, `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*`, `zcrypto_tapebars_*` and `zcrypto_grafana_keepalive_*` (the command below lists them), and the ops-side rows of `zaccess-tunnel-stale` and `zaccess-cert-expiring` | `zcrypto-reconcile-exporter-stale`, `zcrypto-trade-backfill-stale`, `zcrypto-ops-archive-pull-stalled`, `zcrypto-ops-verify-replay-stale`, `zcrypto-ops-verified-replay-stale`, `zcrypto-ops-grafana-keepalive-stale` |
 | `textfile`, on the NAS | the whole `zcrypto_gate_*` family and its five gate rules: `zcrypto-gate-streak-reset`, `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag`, `zcrypto-gate-exporter-stale`, `zcrypto-gate-cache-reverify-stalled` | `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag`, `zcrypto-gate-exporter-stale` |
 | `textfile`, on the bridgehead | `zaccess-tunnel-stale`, `zaccess-cert-expiring` | none |
+| `textfile`, on a cache node | that node's rows of `zcrypto-cache-wg-handshake-stale` | none |
 | `meminfo`, `netdev` | no alert rule reads them today; the panels go blank | none |
 
 The ops row's 21 rules are the uids this prints: `awk '/^ +- uid: /{u=$3} /expr: .*(ops_(archive_pull|panel|verify_replay|verified_replay)|zcrypto_(reconcile|trade_backfill|tapebars|grafana_keepalive))_/{print u}' infra/grafana/alerts.yaml | sort -u`.

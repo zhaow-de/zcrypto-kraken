@@ -2,3 +2,8 @@
 # Privates are the !vault scalars in vault.yml beside this file.
 zaccess_wg_bridgehead_public_key: "T9AsG2+UrxLsPsNFXIbhNbzKn9QTYcrjZEPXG5FK12E="
 zaccess_wg_ops_public_key: "sieZr8/nUjZ1et+/YeWjZxejw+p65UJ7QcAtx+Sbdkk="
+
+cache_wg_zcrypto_public_key: "J6ssFRUfR15brSK/8IfIvU6heJcGwo6kqHtiy7qej20="
+cache_wg_zcrypto_valkey1_public_key: "gyEVP+jLMD+iQGKUdZWDsq4UGoXgJTY/cTX9lc7dQhY="
+cache_wg_zcrypto_valkey2_public_key: "f9G5mu7nDtbX9qV0QSD1mjMlCC8snqobNYDkNrnDNQ4="
+cache_wg_zcrypto_valkey3_public_key: "8uyYbIwUqh7qolaUtSIfj69U4iVwM/KVvRnimlso7BM="

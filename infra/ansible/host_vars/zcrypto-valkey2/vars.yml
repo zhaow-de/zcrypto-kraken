@@ -1,0 +1,14 @@
+# A cache node: Linode 1 GB, Debian 13, in the engine host's region.
+ansible_host: zcrypto-valkey2.zhaow.me
+# The base role defaults to "zcrypto"; without this the node would converge to the primary's hostname.
+base_hostname: zcrypto-valkey2
+# The slot's derivation is in host_vars/zcrypto-valkey1/vars.yml.
+base_unattended_upgrades_reboot_time: "13:25"
+deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-valkey2_ed25519.pub') }}"
+
+# This host's end of the zcache mesh (roles/cache_link).
+cache_link_address: 10.98.0.12
+cache_link_private_key: "{{ cache_wg_zcrypto_valkey2_private_key }}"
+
+# Sentinel promotes the lowest non-zero priority: the engine region's two nodes before the remote copy.
+cache_replica_priority: 100

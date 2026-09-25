@@ -1,0 +1,15 @@
+# Rendered by the `cache` Ansible role at /etc/systemd/system/zcrypto-reboot-check.service; edit
+# infra/ansible/roles/cache/templates/zcrypto-reboot-check.service.j2 and re-converge. A copy of the
+# capture role's unit.
+[Unit]
+Description=Publish the pending-reboot flag as a node-exporter textfile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-reboot-check /run/reboot-required {{ cache_textfile_dir }}/reboot.prom
+# This unit only ever writes one .prom, which ProtectSystem=strict makes structural.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ cache_textfile_dir }}

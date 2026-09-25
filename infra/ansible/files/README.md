@@ -11,6 +11,9 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `deploy_zcrypto-ops_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-ops` |
 | `deploy_nas_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`. `ssh nas` uses the operator's local copy — rotate **both** halves together or the next converge loads a stale key. |
 | `deploy_zaccess_ed25519{,.pub}` | vaulted here | `run.sh` (offered **first** when `--limit zaccess` names the host — its sshd allows two tries; `run.sh`'s comment); `host_vars/zaccess` |
+| `deploy_zcrypto-valkey1_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey1`; the workstation's `db1` alias |
+| `deploy_zcrypto-valkey2_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey2`; the workstation's `db2` alias |
+| `deploy_zcrypto-valkey3_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey3`; the workstation's `db3` alias |
 | `zaccess_ca.crt`, `zaccess_ca.key.vault` | the `.key` vaulted here | the mTLS CA: `infra/scripts/zaccess-client-cert.sh` signs leaves; the access role installs the `.crt` at `/etc/caddy/` |
 | `sync_ed25519.pub` | NAS (`/volume1/docker/zcrypto-archive/keys/`) + vaulted here | engine-journal pull channel (`group_vars/capture_host`) |
 | `sync_capture_ed25519.pub` | NAS + vaulted here | primary capture pull channel |
