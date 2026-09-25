@@ -888,6 +888,28 @@ def test_arming_override_echo_fires_only_on_an_accepted_override(template, pypro
     assert truthy(when_conditions(task), _arming_vars(template, pyproject, override=override)) is expected
 
 
+@pytest.mark.parametrize(
+    ("pyproject", "record", "names"),
+    [
+        (UNVERIFIED_PIN, RECORD, [UNVERIFIED_PIN_VERSION, "1.230.0"]),
+        (NO_PIN, RECORD, ["(unparseable pin)"]),
+        (UNVERIFIED_PIN, None, ["(the record is not a list -- nothing is verified)"]),
+        (UNVERIFIED_PIN, "1.230.0, 1.231.0", ["(the record is not a list -- nothing is verified)"]),
+    ],
+)
+def test_arming_backstop_fail_msg_renders_the_diagnostic(pyproject, record, names):
+    """The refusal's message renders on every input the assert refuses: a filter error in its place
+    is a refusal that carries no reason."""
+    from ansible.template import trust_as_template
+
+    task = find_task(load_tasks(ENGINE), ARMING)
+    variables = _arming_vars(ARMED_TEMPLATE, pyproject, record=record)
+    fail_msg = task["ansible.builtin.assert"]["fail_msg"]
+    rendered = str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(fail_msg)))
+    for name in names:
+        assert name in rendered, rendered
+
+
 def test_arming_backstop_reads_the_real_committed_files():
     """Both directions from the REAL role, template and pyproject: a recorded version passes, an
     absent one refuses."""
