@@ -137,7 +137,7 @@ def _validate_config(c: CrossfreqSystemConfig) -> None:
     ):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise PortfolioError(f"{name} must be a finite number > 0, got {value!r}")
-    # A zero spread is a maker fill at mid, legitimate on the split cost model; only a negative one is refused.
+    # A zero spread is a maker fill at mid, legitimate on the split cost model.
     s = c.spread_per_side
     if isinstance(s, bool) or not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0:
         raise PortfolioError(f"spread_per_side must be a finite number >= 0, got {s!r}")

@@ -51,7 +51,7 @@ def synthetic_grids(n_days: int, *, n_extra_h4: int = 0):
         {"fee_per_side": 0.0},
         {"fee_per_side": float("nan")},
         {"fee_per_side": True},  # bool is not a fee
-        {"spread_per_side": -0.0001},  # a negative spread; zero is a maker fill at mid and builds
+        {"spread_per_side": -0.0001},
         {"spread_per_side": float("nan")},
         {"spread_per_side": True},  # bool is not a spread
         {"long_cap": -0.2},
