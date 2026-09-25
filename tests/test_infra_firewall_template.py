@@ -48,9 +48,8 @@ def test_interface_ports_render_only_as_iifname_rules():
     assert naming == ['iifname "zcache0" tcp dport { 6379, 26379 } accept'], naming
 
 
-# The pre-seam template is this one with the interface block cut out, so rendering both under a
-# context whose interface list is empty proves the block adds nothing there, for the contexts the
-# golden above does not pin.
+# The pre-seam template is this one with the interface block cut out; the golden above pins only the
+# no-ports context.
 _INTERFACE_BLOCK = re.compile(r"\{% if firewall_interface_tcp_ports %\}\n.*?\{% endif %\}\n", re.DOTALL)
 
 
@@ -72,14 +71,10 @@ def test_an_empty_interface_list_renders_the_pre_seam_ruleset(extra):
     assert _render(ctx) == env.from_string(pre_seam).render(ctx)
 
 
-# --- what makes BASE the capture secondary's context rather than a literal: the role's own
-# defaults, and the three opener files being the only var files that override any of them.
 ANSIBLE = REPO / "infra/ansible"
 FIREWALL_DEFAULTS = ANSIBLE / "roles/firewall/defaults/main.yml"
 VAR_ROOTS = (ANSIBLE / "group_vars", ANSIBLE / "host_vars")
 EXTRA_PORT_VARS = ("firewall_extra_tcp_ports", "firewall_extra_udp_ports", "firewall_interface_tcp_ports")
-# The bridgehead's edge; the zcache mesh's nodes (the tunnel port, and the database ports on the
-# tunnel alone); the engine host's end of that mesh.
 OPENERS = {
     "group_vars/access_host/vars.yml": ["firewall_extra_tcp_ports", "firewall_extra_udp_ports"],
     "group_vars/cache_host/vars.yml": ["firewall_extra_udp_ports", "firewall_interface_tcp_ports"],

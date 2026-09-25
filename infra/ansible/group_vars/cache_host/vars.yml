@@ -5,8 +5,7 @@ ansible_port: 10022
 # ssh_hardening AllowUsers: no zcrypto-data here, since no NAS pull channel reaches these nodes.
 hardening_ssh_allow_users: zcrypto-deploy root
 # The zcache mesh (spec 00118 D6): the tunnel's UDP port on the public side, and the Valkey and
-# Sentinel ports on the tunnel alone. The Linode Cloud Firewall mirrors the UDP port and not the TCP
-# ones — a future addition to either list opens BOTH layers where it is public.
+# Sentinel ports on the tunnel alone. A public port added here opens the Linode Cloud Firewall too.
 firewall_extra_udp_ports: [51821]
 firewall_interface_tcp_ports:
   - {iface: zcache0, ports: [6379, 26379]}

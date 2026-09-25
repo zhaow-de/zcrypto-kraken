@@ -1,4 +1,4 @@
 firewall_ssh_port: "10022"
 firewall_extra_tcp_ports: []  # additional TCP ports to expose (zaccess bridgehead)
-firewall_extra_udp_ports: []  # additional UDP ports to expose (the WireGuard listeners: the bridgehead, the zcache mesh)
+firewall_extra_udp_ports: []  # additional UDP ports to expose
 firewall_interface_tcp_ports: []  # TCP ports accepted only on a named interface: a list of {iface, ports}
