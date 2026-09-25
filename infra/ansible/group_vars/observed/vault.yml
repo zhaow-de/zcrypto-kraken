@@ -1,7 +1,7 @@
 # group_vars/observed — SECRETS shared by every host that ships telemetry.
 #
-# The `observed` group (inventory/hosts.yml) is every host that runs Alloy. These six
-# values are the Grafana Cloud endpoints + credentials Alloy needs; they are NOT host-specific, so
+# The `observed` group (inventory/hosts.yml) is every host that runs Alloy. The telemetry
+# endpoints + credentials below are NOT host-specific, so
 # scoping them to a group states exactly who may read them — the same reasoning that now keeps the
 # live trade key in group_vars/engine_host/ rather than capture_host (T0061, resolved 2026-07-17:
 # until that move the capture-only zcrypto-red RESOLVED the live trading credential, and only the

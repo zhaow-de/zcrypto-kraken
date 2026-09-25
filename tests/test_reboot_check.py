@@ -182,7 +182,6 @@ def test_protectsystem_strict_still_permits_writing_the_textfile_dir():
 
 
 def test_only_the_timer_is_enabled_not_the_oneshot():
-    """The timer runs the oneshot; the service has no [Install] section, so the role enables the timer alone."""
     import yaml
 
     tasks = yaml.safe_load((ROLE / "tasks/main.yml").read_text())
@@ -192,9 +191,7 @@ def test_only_the_timer_is_enabled_not_the_oneshot():
         if "ansible.builtin.systemd_service" in t and t["ansible.builtin.systemd_service"].get("enabled")
     ]
     assert "zcrypto-reboot-check.timer" in enabled, f"the timer is not enabled: {enabled}"
-    assert "zcrypto-reboot-check.service" not in enabled, (
-        f"the oneshot must not be enabled — it has no [Install] section and the timer runs it: {enabled}"
-    )
+    assert "zcrypto-reboot-check.service" not in enabled, f"the oneshot must not be enabled — the timer runs it: {enabled}"
 
 
 def _flatten(tasks):
