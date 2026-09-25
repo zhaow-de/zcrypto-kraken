@@ -133,7 +133,7 @@ In Cloud, per host (the positive traces the alert stack itself keys on):
 
 - `count(up{host="<host>"}) >= 1` and the host's `Fleet · Alloy dark` rule back to **Normal** — the canonical proof.
 - A **fresh** Loki line for the host — proves the whole journald → `loki.source.journal` → parse → write path end-to-end. (verify end-to-end, not at endpoints: a metric on `:12345` plus a keep-list admitting it does not mean the path between them exists.) **Do not filter on `container="alloy"` in a short window**: Alloy logs at startup and then goes quiet, so `{host=…, container="alloy"}` over 15 m reads empty on a perfectly healthy host that was bumped 30 min ago. Query `{host="<host>", level=~".+"}` (any container) for the liveness proof, and widen to 60 m if you specifically want Alloy's own startup lines.
-- The six `process_*` families present for the host (the keep-lists admit exactly six; `tests/test_infra_alloy_series.py` is the authoritative per-host series checklist — read `NAS_REQUIRED` / `OPS_REQUIRED` / `CAPTURE_REQUIRED` there rather than trusting any list copied here).
+- The `process_*` families present for the host (the capture, ops and NAS keep-lists admit six, a cache node's two; `tests/test_infra_alloy_series.py` is the authoritative per-host series checklist — read `NAS_REQUIRED` / `OPS_REQUIRED` / `CAPTURE_REQUIRED` there rather than trusting any list copied here).
 
 Host-specific additions:
 
