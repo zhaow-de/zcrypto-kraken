@@ -1498,6 +1498,22 @@ def test_the_memory_routine_rules_cover_both_capture_hosts_and_the_engine(uid):
     assert not re.search(r'host=~"zcrypto\|zcrypto-red"[^}]*job="engine_app"', expr), "engine_app must not select zcrypto-red"
 
 
+_CACHE_DAEMON_DOWN = "zcrypto-cache-daemon-down"
+
+
+def test_the_cache_daemon_down_rule_pages_on_a_zero_and_leaves_an_absence_to_the_alloy_dark_rules():
+    rule = _rule(_CACHE_DAEMON_DOWN)
+    expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"]).strip()
+    assert rule["ruleGroup"] == "zcrypto-cache"
+    assert expr == 'min by (host, job) (redis_up{job=~"valkey|sentinel"})', (
+        f"both daemons, kept apart by host and job so the notification names which one: {expr!r}"
+    )
+    assert rule["data"][-1]["model"]["conditions"][0]["evaluator"] == {"type": "lt", "params": [1]}
+    assert rule["noDataState"] == "OK", (
+        "a node whose Alloy is dark produces no series, which zcrypto-alloy-dark-cache-N pages; Alerting here pages it twice"
+    )
+
+
 _CROSS_REF = re.compile(r"\b([A-Za-z0-9._-]+\.md)#([A-Za-z0-9_-]+)")
 
 

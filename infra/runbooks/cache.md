@@ -139,7 +139,7 @@ A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1`
 1. **Is the node up at all?** Log in with its alias, `db<N>`. No answer is a node incident, not an Alloy one: read `sn SENTINEL get-master-addr-by-name zcache` on the other two nodes to learn whether the set failed over, and the Linode console for the node.
 2. **Is the container running?** `sudo docker ps --filter name=grafana-alloy` on the node.
 3. **Read the container's state through named fields** — its environment holds the Grafana Cloud push credentials and the two cache passwords, so read these fields by name and not `.Config` whole, `.Config.Env`, `docker exec … env` or `docker compose config`: `sudo docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}} oom={{.State.OOMKilled}}'`. `oom=true` means it hit its 256 MiB cap; `fleet.md#zcrypto-fleet-alloy-memory-headroom` is the warning that precedes it.
-4. **Read its logs:** `sudo docker logs grafana-alloy --since 1h 2>&1 | tail -100`. A config parse error names the line; a remote_write auth failure names the credential; a Redis exporter error naming `NOAUTH` or `WRONGPASS` is the exporter password and the node's ACL disagreeing, which leaves `up` present and is not this alert.
+4. **Read its logs:** `sudo docker logs grafana-alloy --since 1h 2>&1 | tail -100`. A config parse error names the line; a remote_write auth failure names the credential; a Redis exporter error naming `NOAUTH` or `WRONGPASS` is the exporter password and the node's ACL disagreeing, which leaves `up` present and is `zcrypto-cache-daemon-down` below, not this alert.
 5. **Restart it, the usual fix:** `sudo docker restart grafana-alloy`. The `alloy-data` volume keeps the remote_write WAL and the journal cursor.
 6. **A recreate is needed when the container is absent or its env or cap changed:** `cd /opt/zcrypto-cache/alloy && sudo docker compose up -d`. `sudo` is needed because `alloy-secrets.env` is 0600 and owned by `zcrypto-alloy`.
 7. **A config fault is a converge, not a host edit:** compare `sha256sum /opt/zcrypto-cache/alloy/conf/config.alloy` on the node with `sha256sum infra/ansible/roles/cache/files/config.alloy`, then converge the node with its running Alloy digest, `-e cache_alloy_digest=sha256:<running>`, read with `sudo docker inspect grafana-alloy --format '{{.Config.Image}}'`.
@@ -299,3 +299,29 @@ A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member
 ### Retire when
 
 `zcrypto-cache-wg-handshake-stale` is absent from `infra/grafana/alerts.yaml`, or `zcache_wireguard_handshake_age_seconds` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+
+______________________________________________________________________
+
+<a name="zcrypto-cache-daemon-down"></a>
+
+## zcrypto-cache-daemon-down — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, `Cache · a node's Valkey or Sentinel is down`: for ten minutes a node's exporter has read `redis_up` 0 for its Valkey or its Sentinel while the node's Alloy ships. The notification names the node and the `job`, `valkey` or `sentinel`; the Cache board's *Valkey answering the exporter* panel (202) and *Sentinel answering the exporter* panel (301) show each node's two daemons.
+
+### What it means
+
+Two causes read the same. The daemon's process is down inside `zcrypto-cache.service`, its container stopped or restarting. Or the daemon runs and the exporter's login is refused, a `NOAUTH` or `WRONGPASS` on the `exporter` user after a password change, which `cache-password-rotation` above applies to the three nodes in one stop. A Sentinel down matters beyond its node: the quorum is two of three, so with one Sentinel down, losing another node leaves one Sentinel, below the quorum, and the set can no longer move its primary. A Valkey down on a replica leaves the primary one replica short, which `zcrypto-cache-replicas-short` above pages; a Valkey down on the primary is failed over by the Sentinels within seconds, and this alert then names the old primary's node. A node whose Alloy is dark ships no `redis_up` at all, which the Alloy-dark alerts above own.
+
+### What to do
+
+1. **Is the daemon running?** On the node, `db<N>`: `sudo systemctl status zcrypto-cache.service` and `sudo docker ps --filter name=zcrypto-`. A container missing or restarting is the process cause.
+2. **Does it take a login?** On the node, with the two functions above: `vk PING` for Valkey, `sn PING` for Sentinel. `NOAUTH` or `WRONGPASS` is the node's files and the passwords disagreeing, which `cache-password-rotation` above resolves.
+3. **Read the exporter's own error:** `sudo docker logs --since 10m grafana-alloy 2>&1 | grep -i redis` on the node. `NOAUTH` or `WRONGPASS` there while `vk PING` and `sn PING` answer `PONG` is Alloy holding a password the daemons no longer take: `cache-password-rotation` above, step 5, re-renders its secrets and recreates it.
+4. **Restart the daemons when the process is down:** `sudo systemctl restart zcrypto-cache.service` on the node, failing the primary over first with `cache-manual-failover` above when `sn SENTINEL get-master-addr-by-name zcache` on another node names this node's mesh address.
+5. **Confirm by value:** the Cache board's panel 202 or 301 reads `UP` for the node, and the rule is back to **Normal** in Grafana's alert rules; a quiet channel is not the clear.
+
+### Retire when
+
+`zcrypto-cache-daemon-down` is absent from `infra/grafana/alerts.yaml`, or `redis_up` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.

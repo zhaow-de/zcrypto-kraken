@@ -5191,3 +5191,44 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  - uid: zcrypto-cache-daemon-down
+    title: "Cache · a node's Valkey or Sentinel is down"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            min by (host, job) (redis_up{job=~"valkey|sentinel"})
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: OK
+    execErrState: Alerting
+    # A daemon restarted by a converge or a reboot slot is back in seconds; 10m clears the node's own reboot slot.
+    for: 10m
+    annotations:
+      summary: "A cache node's `{{ $labels.job }}` daemon has read down for 10+ minutes while the node's Alloy is up: the daemon is stopped, or the exporter cannot log in to it. With one Sentinel down, the set is one further node loss from losing the quorum that fails the primary over. The node this notification names is the one to read. Runbook: infra/runbooks/cache.md#zcrypto-cache-daemon-down"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "202"
+      unit: "up"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
