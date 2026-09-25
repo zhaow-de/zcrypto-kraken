@@ -2885,8 +2885,7 @@ def test_every_published_ssh_destination_has_a_stanza_and_the_cache_nodes_match_
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", (repo / "docs/reference/fleet.md").read_text(), re.M))
     stanzas = _published_ssh_stanzas(repo)
     for fleet_host, destination in rows.items():
-        if destination != fleet_host:
-            assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
+        assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
     ansible = repo / "infra/ansible"
     group = yaml.safe_load((ansible / "group_vars/cache_host/vars.yml").read_text())
     for node in ("zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"):
@@ -2896,11 +2895,12 @@ def test_every_published_ssh_destination_has_a_stanza_and_the_cache_nodes_match_
         assert stanza["Port"] == str(group["ansible_port"]), (node, stanza)
         assert stanza["User"] == group["ansible_user"], (node, stanza)
         assert stanza.get("IdentitiesOnly") == "yes", (node, stanza)
+        key_file = re.search(r"files/(deploy_[a-z0-9-]+_ed25519)\.pub", host_vars["deploy_authorized_key"]).group(1)
+        assert stanza["IdentityFile"] == f"~/.ssh/{key_file}", (node, stanza)
 
 
 @pytest.mark.parametrize("host", ["zcrypto-valkey1", "db1"])
 def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
-    """A step's host names a cache node by its Alloy `host` label or by its ssh alias, and an `ssh` step by the alias."""
     step = "sudo docker restart grafana-alloy"
     assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     assert ops_daily.classify_action(f"ssh db1 {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
@@ -2920,9 +2920,9 @@ def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
     ],
 )
 def test_a_cache_daemon_restart_is_never_the_passs_own(step):
-    """A cache node is a telemetry host, whose Alloy container the pass may restart; restarting, stopping or starting
-    Valkey and Sentinel, by container or through their unit, is a replication event, a failover when the node holds the
-    primary, and so is restarting the mesh tunnel replication runs over: each stays the operator's."""
+    """Restarting, stopping or starting Valkey and Sentinel, by container or through their unit, is a replication event, a
+    failover when the node holds the primary, and so is restarting the mesh tunnel replication runs over: each stays the
+    operator's."""
     assert ops_daily.classify_action(step, host="zcrypto-valkey1", resolve=_identity) is ops_daily.Tier.PREPARED
 
 
