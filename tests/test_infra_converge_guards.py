@@ -2554,7 +2554,6 @@ def test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview(c
 
 
 # --- the cache nodes' Alloy: the digest shape, the pins refusal, and the drift assert ---------------
-# `CACHE`, the cache role's tasks file, is defined above with the Valkey and Sentinel block's cases.
 CACHE_ALLOY_DIGEST_SHAPE = "refuse an Alloy digest that is not a full sha256"
 CACHE_ALLOY_PINS = "alloy pins recording — refuse to replace an Alloy digest fleet-pins.md does not record"
 CACHE_ALLOY_PINS_ECHO = "alloy pins recording — the accepted override's reason, on the record"
@@ -2625,8 +2624,6 @@ def test_the_cache_alloy_guards_run_only_on_a_converge_carrying_the_digest():
     ],
 )
 def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variables, expected):
-    """A converge carrying the digest is about to copy the file; asserting first would fail the host
-    before the copy that repairs it."""
     task = find_task(load_tasks(CACHE), CACHE_ALLOY_DRIFT)
     assert truthy(when_conditions(task), variables) is expected
     assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]

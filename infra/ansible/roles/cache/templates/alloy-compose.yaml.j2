@@ -20,8 +20,6 @@ services:
       # 0.9 of the memory cap below, the fleet's ratio (tests/test_infra_alert_rules.py holds it).
       GOMEMLIMIT: 230MiB
     env_file:
-      # The six Grafana Cloud names and the two cache passwords config.alloy reads, 0600, owned by
-      # `zcrypto-alloy`, rendered with no_log and diff false.
       - ./alloy-secrets.env
     command:
       - run

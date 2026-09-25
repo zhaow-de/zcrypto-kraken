@@ -99,9 +99,7 @@ prometheus.remote_write "grafana" {
     }
 
     // Alloy's own internals first, then keep-only: a series the keep regex does not list does not
-    // exist in Grafana. The list is the families the Cache board and the rules read, `up`, the fleet's
-    // unscoped node rules' families, and the six process_* names; tests/test_infra_alloy_series.py
-    // holds it to CACHE_REQUIRED exactly.
+    // exist in Grafana; tests/test_infra_alloy_series.py holds it to CACHE_REQUIRED exactly.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"

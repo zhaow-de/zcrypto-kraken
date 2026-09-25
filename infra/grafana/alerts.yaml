@@ -4818,7 +4818,7 @@ rules:
   # ---- zcrypto-cache: the engine's cache nodes ------------------------------------------------------
   # Each node's own Alloy-dark rule, in the `count(up{...}) or on() vector(0)` shape of
   # `zcrypto-alloy-dark-nas`, and so its noDataState: Alerting. Every other rule in this group reads OK
-  # on no data: its series stop only when a node's telemetry does, which these three own.
+  # on no data, which a dark node and a stopped Valkey or Sentinel both produce.
   - uid: zcrypto-alloy-dark-cache-1
     title: "Fleet · Alloy dark — Cache 1"
     ruleGroup: zcrypto-cache
@@ -5052,8 +5052,6 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # The library never deletes a key and the policy is noeviction, so growth is paged, not
-            # trimmed: at 100% writes are refused.
             - evaluator: {type: gt, params: [0.7]}
     noDataState: OK
     execErrState: Alerting
@@ -5080,9 +5078,6 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # 1 only when all three hold: the AOF enabled, its last write ok, its last rewrite ok. Under
-          # `appendfsync always` a failed write exits Valkey rather than setting its status, so it never
-          # reaches the write arm; zcrypto-cache-disk-low is the page ahead of that exit.
           expr: >-
             min by (host) (redis_aof_enabled{job="valkey"} * redis_aof_last_write_status{job="valkey"} * redis_aof_last_bgrewrite_status{job="valkey"})
           instant: true
@@ -5123,9 +5118,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # Valkey's append-only file and snapshots live on the root filesystem, and under `appendfsync
-          # always` the write that finds it full exits Valkey, so this is the page ahead of that exit;
-          # the threshold and the duration are zaccess-disk-high's.
+          # The threshold and the duration are zaccess-disk-high's.
           expr: >-
             node_filesystem_avail_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", mountpoint="/"} / node_filesystem_size_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", mountpoint="/"}
           instant: true

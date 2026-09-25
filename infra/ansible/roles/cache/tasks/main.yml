@@ -282,9 +282,6 @@
   when: not (ansible_check_mode and cache_reboot_timer_install is changed)
 
 # ---- The node's telemetry ---------------------------------------------------------------------------
-# Alloy reads the mesh probe's zcache.prom from the directory the cache_link role creates and writes.
-# Outside the gate on purpose: a converge that omits the digest skips the config copy and exits 0, so a
-# host could serve a stale keep regex indefinitely. It asserts only when a config is already deployed.
 - name: read the deployed alloy config's checksum (drift check, never gated on the digest)
   ansible.builtin.stat:
     path: "{{ cache_alloy_dir }}/conf/config.alloy"
@@ -381,7 +378,7 @@
         key: zcrypto-alloy
       register: cache_alloy_getent
       # A node's first converge previews under --check before the account exists, so the lookup
-      # comes up empty there alone; the cache role's own account lookup does the same.
+      # comes up empty there alone.
       failed_when: cache_alloy_getent is failed and not ansible_check_mode
 
     - name: derive the zcrypto-alloy uid/gid for the container user mapping

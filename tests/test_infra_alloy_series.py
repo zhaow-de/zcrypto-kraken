@@ -308,8 +308,7 @@ ACCESS_REQUIRED = [
     *ACCESS_APP_SERIES,
 ]
 
-# The cache nodes' Valkey and Sentinel families, through Alloy's embedded Redis exporter; the Cache
-# board and the zcrypto-cache rules read each of them.
+# The cache nodes' Valkey and Sentinel families, through Alloy's embedded Redis exporter.
 CACHE_REDIS_SERIES = [
     "redis_up",
     "redis_instance_info",
@@ -334,9 +333,6 @@ CACHE_REDIS_SERIES = [
 ]
 
 # Exact, not a floor: the cache keep regex admits these and nothing else (the equality test below).
-# The node families are the Cache board's and the fleet's host-unscoped rules' (`node_scrape_collector_
-# success`, `node_filesystem_*`); the textfile three are the reboot check's flag, and the freshness and
-# parse state of the directory the reboot check and the mesh probe write.
 CACHE_REQUIRED = [
     "up",
     "node_load1",
@@ -429,7 +425,6 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
         # No app daemon runs on the bridgehead, and (D11) no `exporter.self "alloy"` component
         # either -- none of the app/logship/process families exist there.
         (ACCESS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES, *PROCESS_FAMILIES]),
-        # Valkey, Sentinel and the probe are all that run on a cache node.
         (CACHE_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
     ],
     ids=["nas", "ops", "capture", "access", "cache"],
