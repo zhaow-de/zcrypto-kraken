@@ -19,10 +19,10 @@
 - Replication: `replica-priority` 100 on valkey1 and valkey2, 250 on valkey3; `min-replicas-to-write 1`, `min-replicas-max-lag 10`; Sentinel `monitor zcache <first primary> 6379 2`, `down-after-milliseconds 5000`, `failover-timeout 60000`, `parallel-syncs 1`, `resolve-hostnames no` (spec D3).
 - Durability and memory: `appendonly yes`, `appendfsync always`, RDB snapshots kept; `maxmemory 128mb`, `maxmemory-policy noeviction`; container caps Valkey 256m, Sentinel 64m, Alloy 256m with `GOMEMLIMIT 230MiB`; each Alloy cap takes a leg under `zcrypto-fleet-alloy-memory-headroom` in the commit that adds its compose file, and the Valkey and Sentinel caps are recorded in `_HEADROOM_DELIBERATELY_ABSENT` in theirs, guarded by `zcrypto-cache-memory-70pct` against `maxmemory` (spec D7, amended: `## Spec amendments`).
 - ACL users `engine`, `replica`, `sentinel`, `exporter`, the `default` user off; Sentinel `requirepass`; the five secrets in `group_vars/cache_host/vault.yml`; `users.acl` mode 0600 owned by the container's uid; a password shorter than five characters is refused by the role (spec D8). No secret appears in a command line, a log, a diff or a plan step.
-- `valkey.conf` and `sentinel.conf` are rendered only when absent; `-e cache_config_reset=true` is the one way to re-render them; drift between the recorded template hash and the current template is reported, never applied (spec D9).
+- `valkey.conf` and `sentinel.conf` are rendered only when absent; `-e cache_config_reset=true`, on a converge that also carries the node's `cache_image_digest`, is the one way to re-render them, and the role refuses the flag without the digest; drift between the recorded template hash and the current template is reported, never applied (spec D9).
 - No role delegates a task between cache nodes: run.sh offers the --limit host's key first and MaxAuthTries is 2, so a delegate_to a peer node exhausts the tries before the peer's key is offered.
 - One node per converge, `converge.sh` refusing a group; the first converge goes valkey1, then valkey2, then valkey3; a later re-pin goes replicas first, a deliberate `SENTINEL failover zcache`, then the old primary, each node's `master_link_status:up` before the next (spec D14).
-- The converges are tagged: a node's first `--tags base,hardening,firewall,fail2ban,chrony,docker`, the mesh `--tags firewall,cache-link`, Valkey, Sentinel and Alloy `--tags cache` with both `-e cache_image_digest=...` and `-e cache_alloy_digest=...` in one run. The engine host's mesh converge, `--limit zcrypto --tags firewall,cache-link -e converge_primary=true`, restarts no container, and it is a converge of the primary: inside an inter-cycle gap, after a whole read of Kraken's maintenance feed, per `.claude/rules/fleet-deploys.md`.
+- The converges are tagged: a node's first `--tags base,hardening,firewall,fail2ban,chrony,docker -e daemon_json_ack=true` (the docker role refuses to write the `daemon.json` a fresh node lacks until that ack is passed), the mesh `--tags firewall,cache-link`, Valkey, Sentinel and Alloy `--tags cache` with both `-e cache_image_digest=...` and `-e cache_alloy_digest=...` in one run. The engine host's mesh converge, `--limit zcrypto --tags firewall,cache-link -e converge_primary=true`, restarts no container, and it is a converge of the primary: inside an inter-cycle gap, after a whole read of Kraken's maintenance feed, per `.claude/rules/fleet-deploys.md`.
 - No task in this plan touches `cli/`; the engine's compose project, `cli/engine/node.py`, `cli/config.py` and the engine role's templates are the second plan's (spec D4, D10, D11, D15).
 - No executor step reaches a host, a venue, Grafana Cloud or Docker Hub; every such step is an operator step, marked attended, with `W$` the workstation and `H$` the host.
 - A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend with the tree clean.
@@ -43,7 +43,7 @@ Claude-Session: https://claude.ai/code/session_01HrTEbjo2WydKL5eVoteiSC
 - `infra/ansible/host_vars/zcrypto-valkey{1,2,3}/vars.yml`: hostname, reboot slot, `ansible_host`, the deploy key lookup, the mesh address, the replica priority (Tasks 1, 3, 4); `host_vars/zcrypto/vars.yml`: the engine host's `51821/udp` and its mesh address (Tasks 2, 3).
 - `infra/ansible/files/deploy_zcrypto-valkey{1,2,3}_ed25519{,.pub}`, `files/README.md`: the deploy keys (Task 1).
 - `infra/ansible/scripts/run.sh`, `scripts/converge.sh`, `bootstrap.yml`, `roles/base/tasks/main.yml`: the hand-enumerated hosts, tags and extra-var keys; the bootstrap play's hosts; the reboot-slot assert (Task 1).
-- `infra/scripts/deploy-log-audit.py`, `ops_daily.py` and their tests: the host lists (Task 1); `ops_daily.py`'s protected objects (Task 4). `infra/scripts/prune-host-images.py` and its test gain the nodes in the Rollout's records commit, with their first pins rows, not in a task.
+- `infra/scripts/deploy-log-audit.py`, `ops_daily.py` and their tests: the host lists (Task 1); `ops_daily.py`'s protected objects (Task 4) and its `_UID_HOST` entries for the three Alloy-dark rules (Task 5). `infra/scripts/prune-host-images.py` and its test gain the nodes in the Rollout's records commit, with their first pins rows, not in a task.
 - `docs/reference/fleet.md`: Hosts, Reboots, Telemetry labels (Task 1); Services and instruments, Storage topology, Telemetry labels (Task 5).
 - `infra/ansible/roles/firewall/`: the interface-scoped port list; `tests/test_infra_firewall_template.py` (Task 2).
 - `infra/ansible/roles/cache_link/`: defaults, tasks, handlers, `templates/zcache0.conf.j2`, the handshake-age probe `files/zcache-probe.sh` and its units; `group_vars/all/vars.yml` (public keys) and `vault.yml` (private keys); `site.yml` (the `cache_host` play, the engine host's `cache-link` tag) (Task 3); `tests/test_zcache_probe.py` (Task 3).
@@ -82,7 +82,7 @@ Claude-Session: https://claude.ai/code/session_01HrTEbjo2WydKL5eVoteiSC
 - Modify: `docs/reference/fleet.md` (three Hosts rows after line 13; one Reboots bullet after line 53; the Telemetry labels bullets, lines 66 and 68)
 - Test: `tests/test_run_sh.py` (imports; `HOSTS`, line 14; the `_signalled` sleep, line 108; `test_a_single_host_limit_loads_every_key_with_that_hosts_first`, line 125; two cases appended)
 - Test: `tests/test_converge_sh.py` (five `PUBLISHED` entries before its closing `]`, line 344; the `fail2ban` entry of `OUTSIDE`, line 390, and one `OUTSIDE` entry before its closing `]`, line 418)
-- Test: `tests/test_infra_converge_guards.py` (`capture_play_tasks`, line 1154; one case after `test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe`)
+- Test: `tests/test_infra_converge_guards.py` (`capture_play_tasks`, line 1153; one case after `test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe`)
 - Test: `tests/test_infra_unattended_upgrades.py` (imports; five constants after `VAR`; two helpers and four cases appended)
 - Test: `tests/test_pins_converged.py` (`test_the_inventory_expands_a_group_to_its_hosts_at_any_depth`, lines 115-117)
 - Test: `tests/test_deploy_log_audit.py` (the `parametrize` of `test_venue_facing_drops_a_host_a_window_cannot_harm`, line 121)
@@ -95,10 +95,10 @@ Claude-Session: https://claude.ai/code/session_01HrTEbjo2WydKL5eVoteiSC
 **What this task decides, where the spec leaves it open:**
 - Reboot slots `09:25` (valkey1), `13:25` (valkey2), `17:25` (valkey3): each is 85 min past a 4 h bar boundary (08:00, 12:00, 16:00) and 155 min before the next, four hours from each other, and at least three hours from 21:25, 22:25, 02:25 and 05:25. The nodes keep the base role's automatic reboot (`"true"`, the spec's "unattended-reboot slot"): a reboot of the node holding the primary is a Sentinel failover with both other copies up, where two nodes down together would leave one Sentinel, below the quorum of two, which is what the slots keep apart.
 - The collision assert widens to `cache_host` alone, as D13 says. The bridgehead stays outside it; `tests/test_infra_unattended_upgrades.py` gains a case that holds all seven slots (capture, ops, access and cache groups) an hour apart, off the hour and an hour from a bar boundary, so the bridgehead's slot is machine-checked for the first time, and its host_vars comment says so.
-- `group_vars/cache_host/vars.yml` carries no firewall declaration in this task. `tests/test_infra_firewall_template.py::test_only_the_bridgehead_group_opens_extra_ports` admits extra-port lists in the access group's vars alone, so `firewall_extra_udp_ports: [51821]` and D6's interface-scoped list land with the task that widens the firewall role and that test together. The Linode Cloud Firewall's `51821/udp` rule is that task's operator step for the same two-layer reason; this task opens `22` and `10022` only.
+- `group_vars/cache_host/vars.yml` carries no firewall declaration in this task. `tests/test_infra_firewall_template.py::test_only_the_bridgehead_group_opens_extra_ports` admits extra-port lists in the access group's vars alone, so `firewall_extra_udp_ports: [51821]` and D6's interface-scoped list land with the task that widens the firewall role and that test together. The Linode Cloud Firewall's `51821/udp` rule is Task 3's operator step O2, for the same two-layer reason; this task opens `22` and `10022` only.
 - `infra/scripts/prune-host-images.py`'s `HOSTS` is NOT edited here. `tests/test_prune_host_images.py::test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet_runs` asserts `HOSTS` equals the set of hosts the pins file names, and no cache node has a pins row until its first converge; the three entries, `HostAccess(ssh="db1", docker=("docker",))` and its siblings, land in the commit that writes the nodes' first pins rows, which edits that same test's pair set.
-- `converge.sh`'s `TAGNAMES` becomes `base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link`. A node's first converge runs the six base roles by their own tags, `--tags base,hardening,firewall,fail2ban,chrony,docker`, which keeps the `cache_link` and `cache` roles off the node until the Rollout's mesh and probe steps; the mesh converge is `--tags firewall,cache-link`, on a node and on the engine host; the Valkey converge is `--tags cache` with both digests. `cache-proxy` joins with the second plan's proxy, when a procedure first publishes its converge, per the script's rule that a tag enters when it is first used. `tests/test_converge_sh.py`'s `OUTSIDE` example of a role tag the fleet never converged, `fail2ban`, is admitted from here on, so that entry moves to `bootstrap`, which no play in `site.yml` carries.
-- `ops_daily.py` gains the two alias maps' entries beside `_TELEMETRY_HOSTS`, because `classify_action` resolves a step's `ssh db1 …` through `host_label` before it reads the telemetry set; without them the set would name hosts no step's spelling reaches. `_UID_HOST` gains its alloy-dark uids with D12's rules, whose uids this task does not know.
+- `converge.sh`'s `TAGNAMES` becomes `base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link`. A node's first converge runs the six base roles by their own tags, `--tags base,hardening,firewall,fail2ban,chrony,docker`, with `-e daemon_json_ack=true`, since the docker role diffs its rendered `daemon.json` against the `/etc/docker/daemon.json` a fresh node lacks and refuses that change unacknowledged; the tags keep the `cache_link` and `cache` roles off the node until the Rollout's mesh and probe steps; the mesh converge is `--tags firewall,cache-link`, on a node and on the engine host; the Valkey converge is `--tags cache` with both digests. `cache-proxy` joins with the second plan's proxy, when a procedure first publishes its converge, per the script's rule that a tag enters when it is first used. `tests/test_converge_sh.py`'s `OUTSIDE` example of a role tag the fleet never converged, `fail2ban`, is admitted from here on, so that entry moves to `bootstrap`, which no play in `site.yml` carries.
+- `ops_daily.py` gains the two alias maps' entries beside `_TELEMETRY_HOSTS`, because `classify_action` resolves a step's `ssh db1 …` through `host_label` before it reads the telemetry set; without them the set would name hosts no step's spelling reaches. `_UID_HOST` gains the three Alloy-dark uids in Task 5's commit B, beside the rules that mint them: their expression aggregates the `host` label away, so without the map a firing Cache node's Alloy-dark alert reaches the daily pass with no host to classify its restart against.
 - A cache node's `host_vars` carries a plaintext `ansible_host`, as the bridgehead's does: the inventory name is not a resolvable name, and the workstation alias `db1` is not what Ansible dials.
 - No file under `infra/ansible/group_vars/cache_host/` or `infra/ansible/host_vars/zcrypto-valkey*/` carries the word the venue's name spells: `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds` walks the vars of every `NO_VENUE_EXPOSURE` host, and the roles directory whole, so the `cache` and `cache_link` roles later tasks write must not carry it either, or that test names them.
 
@@ -200,10 +200,10 @@ def test_the_ring_is_every_inventory_host_but_the_workstation():
 
 ```python
     (
-        ["--limit", "zcrypto-valkey1", "--tags", "base,hardening,firewall,fail2ban,chrony,docker"],
+        ["--limit", "zcrypto-valkey1", "--tags", "base,hardening,firewall,fail2ban,chrony,docker", "-e", "daemon_json_ack=true"],
         "zcrypto-valkey1",
         "base,hardening,firewall,fail2ban,chrony,docker",
-        {},
+        {"daemon_json_ack": "true"},
     ),
     (["--limit", "zcrypto-valkey2", "--tags", "firewall,cache-link"], "zcrypto-valkey2", "firewall,cache-link", {}),
     (
@@ -228,10 +228,10 @@ def test_the_ring_is_every_inventory_host_but_the_workstation():
         {"cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST},
     ),
     (
-        ["--limit", "zcrypto-valkey1", "--tags", "cache", "-e", "cache_config_reset=true"],
+        ["--limit", "zcrypto-valkey1", "--tags", "cache", "-e", "cache_config_reset=true", "-e", f"cache_image_digest={DIGEST}"],
         "zcrypto-valkey1",
         "cache",
-        {"cache_config_reset": "true"},
+        {"cache_config_reset": "true", "cache_image_digest": DIGEST},
     ),
 ```
 
@@ -788,9 +788,9 @@ page carries their Hosts rows, their reboot slots and their telemetry `host` lab
 to the hosts the pins file names.
 
 Cases: the ring against the inventory and the key files on disk, each public half an ed25519 key;
-a cache node's `--limit` offering its key first; five cache converges recorded (a node's first under the six base tags,
-`firewall,cache-link` on a node and on the engine host, `cache` with both digests, `cache` with the
-config reset), `cache_host` refused as a limit and `bootstrap` as a tag; the bootstrap play's hosts and its two guards; the collision assert's three groups; the
+a cache node's `--limit` offering its key first; five cache converges recorded (a node's first under the six base tags
+with the docker role's ack, `firewall,cache-link` on a node and on the engine host, `cache` with both digests, `cache`
+with the config reset and its digest), `cache_host` refused as a limit and `bootstrap` as a tag; the bootstrap play's hosts and its two guards; the collision assert's three groups; the
 seven slots an hour apart, off the hour and an hour from a bar boundary, the bridgehead's checked
 for the first time; the cache group's automatic reboot; the cache group under `observed`; the three
 nodes dropped by `--venue-facing`; a cache node's telemetry tier under either name.
@@ -922,7 +922,7 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 
 These are the workstation-side items `## Rollout (attended)` calls on, in its order: O0, above Step 1, at P1; O1 at R1, O2 to O4 at R2. The host-reaching steps, the bootstrap, a node's first converge and the removal of port 22, are R2's, run from merged `develop`, and R9 commits the deploy-log rows they append. `W$` is the workstation, `H$` a node's own shell (Linode LISH).
 
-O1. Linode Cloud Firewall, by hand in the Cloud Manager (Firewalls → Create Firewall, or edit the one attached if a node already carries one): label `zcrypto-cache`; inbound policy Drop, outbound policy Accept; inbound rules Accept TCP `22` (IPv4 and IPv6, all sources), Accept TCP `10022` (IPv4 and IPv6, all sources), Accept ICMP (IPv4 and IPv6); attach `zcrypto-valkey1`, `zcrypto-valkey2`, `zcrypto-valkey3`. This is the provider layer of the two-layer rule; the host layer is the firewall role's nftables (`10022/tcp` and ICMP by default), which the node receives at its first converge in R2. `51821/udp` is opened in both layers by Task 3's operator step O2, at R3.
+O1. Linode Cloud Firewall, by hand in the Cloud Manager (Firewalls → Create Firewall, or edit the one attached if a node already carries one): label `zcrypto-cache`; inbound policy Drop, outbound policy Accept; inbound rules Accept TCP `22` (IPv4 and IPv6, all sources), Accept TCP `10022` (IPv4 and IPv6, all sources), Accept ICMP (IPv4 and IPv6); attach `zcrypto-valkey1`, `zcrypto-valkey2`, `zcrypto-valkey3`. This is the provider layer of the two-layer rule; the host layer is the firewall role's nftables (`10022/tcp` and ICMP by default), which the node receives at its first converge in R2. `51821/udp` opens in nftables at that same first converge, from the vars Task 2 commits, and in the Cloud Firewall by Task 3's operator step O2, at R3.
 
 ```
 W$ for h in zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3; do for p in 22 10022; do timeout 5 bash -c "</dev/tcp/$h.zhaow.me/$p" 2>/dev/null && echo "$h $p open" || echo "$h $p closed"; done; done
@@ -2138,7 +2138,7 @@ Co-Authored-By: Claude <model> <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01HrTEbjo2WydKL5eVoteiSC"
 ```
 
-O2. The Cloud Firewall, by hand; nftables opens the same port in the role, and the two layers are maintained separately. In Linode Cloud Manager, Firewalls, open `zcrypto-cache` (the firewall Task 1's operator steps attach to the three nodes) and add an inbound rule: label `zcache-mesh`, protocol UDP, port `51821`, sources the four members' IPv4 addresses as `/32` (`172.105.64.43/32`, `172.104.159.221/32`, `139.162.163.39/32`, `172.233.51.246/32`; a node's own address among them admits nothing it does not already send itself), action Accept. For `zcrypto`, open Linodes, `zcrypto`, Network, Firewalls: when a firewall is attached, add the same rule with the three nodes' addresses as sources; when none is attached, nftables is that host's only inbound layer, as it is today. No TCP rule for 6379 or 26379 is added on either layer: those ports are accepted on `zcache0` alone.
+O2. The Cloud Firewall, by hand; nftables opens the same port in the role, and the two layers are maintained separately. In Linode Cloud Manager, Firewalls, open `zcrypto-cache` (the firewall Task 1's operator steps attach to the three nodes) and add an inbound rule: label `zcache-mesh`, protocol UDP, port `51821`, sources the four members' IPv4 addresses as `/32` (`172.105.64.43/32`, `172.104.159.221/32`, `139.162.163.39/32`, `172.233.51.246/32`; a node's own address among them admits nothing it does not already send itself), action Accept. For `zcrypto`, open Linodes, `zcrypto`, Network, Firewalls: when a firewall is attached, add the same rule with the three nodes' addresses as sources; when none is attached, nftables is that host's only inbound layer. No TCP rule for 6379 or 26379 is added on either layer: those ports are accepted on `zcache0` alone.
 
 O3. The mesh converges, the nodes' `--tags firewall,cache-link` one per run and then the engine host's `--limit zcrypto --tags firewall,cache-link -e converge_primary=true` inside an inter-cycle gap after a whole read of Kraken's maintenance feed, and their reads on all four members, are `## Rollout (attended)` step R3.
 
@@ -2151,21 +2151,22 @@ O3. The mesh converges, the nodes' `--tags firewall,cache-link` one per run and 
 This task builds `roles/cache` (spec D2, D3, D7, D8, D9, D14) and its tests. It converges nothing: the attended rollout is `## Rollout (attended)`, whose steps R5, R6 and R9 run this role's converges, reads and records after the branch merges; this task's **Operator steps (attended)** are the two that land on the branch first. The decisions below are the ones the spec leaves to the plan; each is taken here and the code follows it.
 
 - The Valkey and Sentinel tasks are one block gated `when: cache_image_digest is defined`, the ops role's convention, and `cache_image_digest` has no role default: a converge without the digest, the mesh's or an Alloy-only one, skips the block; one with it asserts the digest non-empty, pre-staged on the node and, when a container already runs, recorded in `docs/reference/fleet-pins.md`, before anything is rendered.
+- `cache_config_reset` is read by the render inside that block alone, so a reset converge without the digest would skip every render and exit 0 with nothing applied. A refusal before the block, `refuse a config reset without the pinned image digest`, turns that converge away, and every published reset form carries the digest: the Global Constraints, Task 1's recorded converge, the drift report's remedy, and the runbook's `cache-config-reset` and `cache-password-rotation`, which read the digest the node runs before its containers stop.
 
 - The containers run as a dedicated host account, `zcrypto-cache` (system, nologin), whose uid/gid the role reads with `getent`, the engine role's idiom, and not as the image's uid 999: a Debian host can hand uid 999 to a system user of its own, and the files the daemons write (AOF, RDB, rewritten configs) are then owned by a name. The official image's entrypoint skips its `chown`/`setpriv` step when the container is not started as root, so nothing in the image needs uid 999.
 - The daemon-owned configs live in `{{ cache_state_dir }}/conf/` (`/var/lib/zcrypto-cache/conf`), owned by `zcrypto-cache` at 0700, bind-mounted read-write as a directory at `/etc/valkey` into both containers: Valkey's `CONFIG REWRITE` and Sentinel's state writes replace their file by renaming a temporary file beside it, which a single-file mount refuses. Valkey's data is `{{ cache_state_dir }}/data` at `/data`, the image's workdir, mounted into Valkey alone.
-- `users.acl` joins `valkey.conf` and `sentinel.conf` as rendered only when absent or under `-e cache_config_reset=true`. Rendered on every converge, a rotated replica password would reach `users.acl` and restart the node while every node's `masterauth` in its daemon-owned `valkey.conf` still carried the old one, breaking replication on a routine converge; with all three coupled, a password rotation is a reset and the drift report names it first.
+- `users.acl` joins `valkey.conf` and `sentinel.conf` as rendered only when absent or under `-e cache_config_reset=true`. Rendered on every converge, a rotated replica password would reach `users.acl` and restart the node while every node's `masterauth` in its daemon-owned `valkey.conf` still carried the old one, breaking replication on a routine converge. With all three coupled, a routine converge applies no changed password and the drift report names each file one moves; the change itself is `cache-password-rotation` in `infra/runbooks/cache.md` (Task 5), the three nodes' files replaced in one stop, since the nodes authenticate to each other and a node reset alone to a new password fails against the two still holding the old one. `cache-config-reset`, one node per converge, is for a template change.
 - `users.acl` carries each password as `#<sha256>`, never in the clear. `valkey.conf` (`masterauth`) and `sentinel.conf` (`requirepass`, `sentinel auth-pass`) carry theirs in the clear, which Valkey requires; all three are 0600 `zcrypto-cache`, rendered `no_log: true` and `diff: false`.
 - The render record is `{{ cache_compose_dir }}/rendered-sha256.yml`, a YAML map `<file>: '<sha256>'` (root 0600), one line per file maintained by `lineinfile`, rather than a `sha256sum`-format file: the role reads it back with `from_yaml`. The hash is of the template's render on the controller (`lookup('ansible.builtin.template', ...) | hash('sha256')`) both when recording and when comparing, so the two sides hash the same bytes.
-- Drift is an `assert` looped over the three files with `ignore_errors: true` and a `register`, so a converge whose template moved prints a red `...ignoring` with the remedy and counts `ignored=1` in the recap without failing the node: a fatal drift check would block every re-pin of the node until a reset, and a reset is a replication change the rejoin procedure owns (D9: "visible without being applied"). A file rendered in the same run is skipped, and an unrecorded file reads as no drift.
+- Drift is an `assert` looped over the three files with `ignore_errors: true` and a `register`, so a converge whose template moved prints a red `...ignoring` with the remedy and counts `ignored=1` in the recap without failing the node: a fatal drift check would block every re-pin of the node until a reset, and a reset is a replication change the runbook's `cache-config-reset` and `cache-password-rotation` procedures own (D9: "visible without being applied"). A file rendered in the same run is skipped, and an unrecorded file reads as no drift.
 - The password refusal is five or more characters from `[A-Za-z0-9]`, over all five keys: five is spec D8's floor, and letters and digits because each password lands unquoted in `valkey.conf`, `sentinel.conf` and the proxy's `tcp-check` lines, where a space or a quote splits it. The message names the failing keys and never a value. The operator recipe generates 48 hex characters.
-- Sentinel authenticates clients by `requirepass` alone (spec D8): the Sentinel exporter and the proxy's checks present it, so no ACL user is defined on the Sentinel port. The data node's ACL users are four: `engine` (`~* &* +@all -@dangerous +keys +info`: every key, and nothing from `@dangerous` but `KEYS`, with which the library's Redis backing lists its keys, and `INFO`, whose `redis_version` line the library's version check parses; `FLUSHDB`, `FLUSHALL`, `CONFIG`, `DEBUG`, `SHUTDOWN`, `REPLICAOF` and `CLIENT KILL` stay refused, so a `flush_on_start=True` misconfiguration fails loudly instead of emptying the cache; `&*` is kept because pub/sub carries no data here and the spec gives the engine every key), `replica` (`+psync +replconf +ping`, valkey.io's replication ACL), `sentinel` (valkey.io's documented Sentinel grant `&* +multi +slaveof +ping +exec +subscribe +config|rewrite +role +publish +info +client|setname +client|kill +script|kill`, plus `+replicaof`, the command's current name, so the grant holds whichever name the pinned Sentinel sends), and `exporter` (the redis_exporter README's read-only ACL line, which operator step O2 re-reads at the redis_exporter version the pinned Alloy embeds before the branch merges, since a token Valkey 9.1.2 refuses stops it from starting). `default` is `off`.
+- Sentinel authenticates clients by `requirepass` alone (spec D8): the Sentinel exporter and the proxy's checks present it, so no ACL user is defined on the Sentinel port. The data node's ACL users are four: `engine` (`~* &* +@all -@dangerous +keys +info`: every key, and nothing from `@dangerous` but `KEYS`, with which the library's Redis backing lists its keys, and `INFO`, whose `redis_version` line the library's version check parses; `FLUSHDB`, `FLUSHALL`, `CONFIG`, `DEBUG`, `SHUTDOWN`, `REPLICAOF` and `CLIENT KILL` stay refused, so a `flush_on_start=True` misconfiguration cannot empty the cache, and the library logs the refusal on its native side alone, which reaches no log store; `&*` is kept because pub/sub carries no data here and the spec gives the engine every key), `replica` (`+psync +replconf +ping`, valkey.io's replication ACL), `sentinel` (valkey.io's documented Sentinel grant `&* +multi +slaveof +ping +exec +subscribe +config|rewrite +role +publish +info +client|setname +client|kill +script|kill`, plus `+replicaof`, the command's current name, so the grant holds whichever name the pinned Sentinel sends), and `exporter` (the read-only ACL line of the redis_exporter v1.86.0 README, the version Alloy v1.19.2 embeds, less three of its tokens: `+arcount`, a command Valkey 9.1.2 does not know, so an `aclfile` naming it aborts Valkey's start, and `+cluster|slots` and `+cluster|nodes`, which serve a cluster-mode server this set does not run; operator step O2 re-reads the README at the embedded version before the branch merges). `default` is `off`.
 - `valkey-cli` reads on a node take their password from two root-only env files the role renders, `{{ cache_compose_dir }}/cli-exporter.env` and `cli-sentinel.env` (`VALKEYCLI_AUTH`, and `REDISCLI_AUTH`, the name valkey-cli still honours), through `docker exec --env-file`, so no password is ever an argument on a command line or in a shell history.
 - The unit is a template (`zcrypto-cache.service.j2`) so its paths follow `cache_compose_dir`; its `ExecStartPre` pull carries systemd's `-` prefix because the converge's preflight has already pre-staged the digest, and a Docker Hub outage at boot must not hold the cache down. It orders after `wg-quick@zcache0.service` and wants it, without requiring it, so a tunnel restart does not stop the daemons.
 - `cache_replica_priority` has no role default: each node's `host_vars` carries it (100, 100, 250), so a node missing it fails the render loudly instead of joining at a default priority.
 - The headroom map (`tests/test_infra_alert_rules.py`) gains the compose file with six (host, job) pairs, the jobs `valkey` and `sentinel` that Task 5's exporters ship under, and records all six in `_HEADROOM_DELIBERATELY_ABSENT` for good (ruling R9): the headroom rules parse `process_resident_memory_bytes`, which neither daemon publishes; Valkey's memory is `zcrypto-cache-memory-70pct`'s against `maxmemory` (Task 5), and Sentinel has no memory family. Task 5 leaves the six entries as they are; `## Spec amendments` records the departure from spec D7's every-cap-a-leg.
 - The nodes publish `node_reboot_required` from a copy of the capture role's reboot check, `zcrypto-reboot-check` (the script, the 15-minute timer and the `ProtectSystem=strict` oneshot), writing `reboot.prom` into `cache_textfile_dir`, `/var/lib/zcrypto-node-textfile`, the directory the node's Alloy reads and Task 3's mesh probe writes. Its tasks sit outside the digest gate, since the flag publishes whatever a converge carries, and the timer's enable skips the first-install preview as the unit's does. The copies differ from the capture role's in their comments alone, which `tests/test_reboot_check.py` holds, and carry no word the venue's name spells, since the deploy-log audit walks the roles directory.
-- `infra/scripts/ops_daily.py`'s `_PROTECTED_OBJECTS` gains `zcrypto-valkey` and `zcrypto-sentinel`: Task 1 made the cache nodes telemetry hosts, whose `docker restart` the daily pass may take on its own, and restarting Valkey or Sentinel is a replication event, a failover when the node holds the primary, which stays the operator's. Alloy's restart there stays the pass's.
+- `infra/scripts/ops_daily.py`'s `_PROTECTED_OBJECTS` gains `zcrypto-valkey`, `zcrypto-sentinel`, `zcrypto-cache` and `zcache0`: Task 1 made the cache nodes telemetry hosts, whose `docker` and `systemctl` restarts, stops and starts the daily pass may take on its own, and restarting Valkey or Sentinel is a replication event, a failover when the node holds the primary, which stays the operator's. The veto is a substring test over the step, so each spelling a runbook step uses is an entry: the two containers, the unit `zcrypto-cache.service` that starts and stops both (the runbook's steps restart, stop and start a node through it, and `zcrypto-cache` covers it with or without its suffix), and the tunnel `wg-quick@zcache0`, whose restart drops the node's replication links for its seconds. The veto reads the mutation shapes alone, so reads naming the same objects keep their tier. Alloy's restart there stays the pass's.
 
 **Files:**
 - Create: `infra/ansible/roles/cache/defaults/main.yml`
@@ -2192,7 +2193,7 @@ This task builds `roles/cache` (spec D2, D3, D7, D8, D9, D14) and its tests. It 
 
 **Interfaces:**
 - Consumes: the inventory group `cache_host` holding `zcrypto-valkey1`, `zcrypto-valkey2`, `zcrypto-valkey3`, each with `infra/ansible/host_vars/<host>/vars.yml` (Task 1); `cache_link_address` in each node's `host_vars` file, the node's `zcache0` address `10.98.0.11`/`.12`/`.13` (Task 3); the `cache_host` play in `site.yml` running base, hardening, firewall, fail2ban, chrony, docker and `cache_link` (Task 3); the firewall's interface-scoped accept of 6379 and 26379 on `zcache0` (Task 2); `converge.sh`'s whitelists admitting the three hosts, the tag `cache` and the keys `cache_image_digest`, `cache_alloy_digest` and `cache_config_reset` (Task 1); `ops_daily.py`'s telemetry hosts holding the three nodes (Task 1); in the tests, `load_tasks`, `find_task`, `truthy`, `assert_that`, `when_conditions`, `task_index`, `iter_tasks`, `Templar`, `DataLoader`, `yaml`, `pytest` in `tests/test_infra_converge_guards.py`, and `_render`, `_CASES`, `_IDS`, `yaml`, `pytest` in `tests/test_infra_compose_templates.py`, all existing.
-- Produces: the role `cache` under the tag `cache`, its Valkey and Sentinel block gated on `cache_image_digest is defined`; the unit `zcrypto-cache.service`; the compose directory `/opt/zcrypto-cache` and the state directory `/var/lib/zcrypto-cache`; the containers `zcrypto-valkey` (port 6379) and `zcrypto-sentinel` (port 26379) on loopback and the node's `zcache0` address; the master name `zcache`; the ACL users `engine`, `replica`, `sentinel`, `exporter` and Sentinel's `requirepass`; the five vault keys `cache_engine_password`, `cache_replica_password`, `cache_sentinel_password` (the Valkey-side `sentinel` user's), `cache_sentinel_requirepass` (Sentinel's own), `cache_exporter_password` in `group_vars/cache_host/vault.yml` (the second plan's proxy reads `cache_sentinel_requirepass` and its engine wiring `cache_engine_password`; Task 5 reads `cache_exporter_password` and `cache_sentinel_requirepass`); the read forms `/opt/zcrypto-cache/cli-exporter.env` and `/opt/zcrypto-cache/cli-sentinel.env` for Task 5's runbook; the extra var `cache_config_reset` and the drift report whose message points at the rejoin procedure in `infra/runbooks/cache.md` (Task 5 writes it); the six `_HEADROOM_DELIBERATELY_ABSENT` entries over the jobs `valkey` and `sentinel`, which stay; the two protected container names in `ops_daily.py`; `cache_textfile_dir` and the `zcrypto-reboot-check` timer publishing `node_reboot_required` into its `reboot.prom`, which Task 5 admits and charts.
+- Produces: the role `cache` under the tag `cache`, its Valkey and Sentinel block gated on `cache_image_digest is defined`; the unit `zcrypto-cache.service`; the compose directory `/opt/zcrypto-cache` and the state directory `/var/lib/zcrypto-cache`; the containers `zcrypto-valkey` (port 6379) and `zcrypto-sentinel` (port 26379) on loopback and the node's `zcache0` address; the master name `zcache`; the ACL users `engine`, `replica`, `sentinel`, `exporter` and Sentinel's `requirepass`; the five vault keys `cache_engine_password`, `cache_replica_password`, `cache_sentinel_password` (the Valkey-side `sentinel` user's), `cache_sentinel_requirepass` (Sentinel's own), `cache_exporter_password` in `group_vars/cache_host/vault.yml` (the second plan's proxy reads `cache_sentinel_requirepass` and its engine wiring `cache_engine_password`; Task 5 reads `cache_exporter_password` and `cache_sentinel_requirepass`); the read forms `/opt/zcrypto-cache/cli-exporter.env` and `/opt/zcrypto-cache/cli-sentinel.env` for Task 5's runbook; the extra var `cache_config_reset`, refused without `cache_image_digest`, and the drift report whose message points at the `cache-config-reset` and `cache-password-rotation` procedures in `infra/runbooks/cache.md` (Task 5 writes them); the six `_HEADROOM_DELIBERATELY_ABSENT` entries over the jobs `valkey` and `sentinel`, which stay; the four protected objects in `ops_daily.py`, the two container names, the unit's and the tunnel's; `cache_textfile_dir` and the `zcrypto-reboot-check` timer publishing `node_reboot_required` into its `reboot.prom`, which Task 5 admits and charts.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2229,10 +2230,10 @@ def _host_vars(host: str) -> dict:
 
 
 def _render(name: str, host: str) -> str:
-    node = _host_vars(host)
-    # the role's bind default is a template over the tunnel's own var; a plain YAML load leaves it unrendered, so the
-    # node's value is supplied the way the play resolves it
-    variables = {**DEFAULTS, **node, **PASSWORDS, "cache_bind_address": node["cache_link_address"]}
+    # A default that templates another var is trusted, so it resolves over the node's vars the way the play resolves
+    # it, and a changed default changes the render.
+    defaults = {k: trust_as_template(v) if isinstance(v, str) and "{{" in v else v for k, v in DEFAULTS.items()}
+    variables = {**defaults, **_host_vars(host), **PASSWORDS}
     text = (ROLE / "templates" / name).read_text()
     return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(text))
 
@@ -2274,6 +2275,7 @@ def test_promotion_prefers_the_engine_region_over_the_remote_copy():
     [
         "appendonly yes",
         "appendfsync always",
+        "save 3600 1 300 100 60 10000",
         "maxmemory 128mb",
         "maxmemory-policy noeviction",
         "min-replicas-to-write 1",
@@ -2301,10 +2303,6 @@ def test_sentinel_monitors_the_first_primary_at_quorum_two():
         f"requirepass {PASSWORDS['cache_sentinel_requirepass']}",
     ):
         assert expected in lines, expected
-    # a per-master option read before its `monitor` line names a master Sentinel does not know yet
-    assert lines.index("sentinel monitor zcache 10.98.0.11 6379 2") < min(
-        i for i, line in enumerate(lines) if line.startswith("sentinel ") and " zcache " in line and "monitor" not in line
-    )
 
 
 def _acl() -> dict[str, list[str]]:
@@ -2450,6 +2448,7 @@ CACHE_PASSWORDS = "refuse a cache password shorter than five characters or outsi
 CACHE_RENDER = "render the daemon-owned configs when absent, or under cache_config_reset"
 CACHE_DRIFT = "drift — report a daemon-owned config whose template no longer renders what this node was given"
 CACHE_CLI_ENV = "render the root-only valkey-cli credential files"
+CACHE_RESET_NEEDS_DIGEST = "refuse a config reset without the pinned image digest"
 CACHE_PASSWORD_NAMES = (
     "cache_engine_password",
     "cache_replica_password",
@@ -2474,14 +2473,33 @@ def test_cache_digest_failfast_refuses_an_empty_digest():
 
 def test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest():
     """A converge without the digest, the mesh's or an Alloy-only one, skips every task that reads it: the digest has
-    no role default, so the gate is the ops role's `is defined`, and the fail-fast opens the block."""
+    no role default, so the gate is the ops role's `is defined`, and the fail-fast opens the block. The reset refusal
+    before the block tests the digest with `is defined` alone."""
     tasks = load_tasks(CACHE)
     block = find_task(tasks, CACHE_BLOCK)
     assert when_conditions(block) == ["cache_image_digest is defined"]
     assert "cache_image_digest" not in yaml.safe_load(CACHE_DEFAULTS.read_text())
     assert block["block"][0]["name"] == CACHE_FAILFAST
-    outside = [t.get("name") for t in tasks if t.get("name") != CACHE_BLOCK and "cache_image_digest" in yaml.safe_dump(t)]
+    exempt = (CACHE_BLOCK, CACHE_RESET_NEEDS_DIGEST)
+    outside = [t.get("name") for t in tasks if t.get("name") not in exempt and "cache_image_digest" in yaml.safe_dump(t)]
     assert outside == [], f"tasks outside the gated block read the digest: {outside}"
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        ({"cache_config_reset": "true"}, False),
+        ({"cache_config_reset": "true", "cache_image_digest": "sha256:" + "d" * 64}, True),
+        ({"cache_config_reset": False}, True),
+    ],
+    ids=["reset-without-digest", "reset-with-digest", "no-reset"],
+)
+def test_cache_config_reset_without_the_digest_is_refused_before_the_gate(variables, expected):
+    """The reset re-renders inside the digest-gated block, so without the digest it would skip every render and exit
+    0; the refusal sits before the block, where a converge without the digest still runs it."""
+    tasks = load_tasks(CACHE)
+    assert task_index(tasks, CACHE_RESET_NEEDS_DIGEST) < task_index(tasks, CACHE_BLOCK)
+    assert truthy(assert_that(find_task(tasks, CACHE_RESET_NEEDS_DIGEST)), variables) is expected
 
 
 def test_cache_empty_digest_failfast_precedes_residency_preflight():
@@ -2674,11 +2692,21 @@ In `tests/test_ops_daily.py`, insert after Task 1's `test_a_cache_node_is_a_tele
 ```python
 @pytest.mark.parametrize(
     "step",
-    ["sudo docker restart zcrypto-valkey", "sudo docker stop zcrypto-sentinel", "ssh db2 sudo docker restart zcrypto-valkey"],
+    [
+        "sudo docker restart zcrypto-valkey",
+        "sudo docker stop zcrypto-sentinel",
+        "ssh db2 sudo docker restart zcrypto-valkey",
+        "sudo systemctl restart zcrypto-cache.service",
+        "sudo systemctl stop zcrypto-cache.service",
+        "sudo systemctl start zcrypto-cache",
+        "ssh db2 sudo systemctl restart zcrypto-cache.service",
+        "sudo systemctl restart wg-quick@zcache0",
+    ],
 )
 def test_a_cache_daemon_restart_is_never_the_passs_own(step):
-    """A cache node is a telemetry host, whose container restarts the pass may take; restarting Valkey or Sentinel is a
-    replication event, a failover when the node holds the primary, and stays the operator's."""
+    """A cache node is a telemetry host, whose container restarts the pass may take; restarting, stopping or starting
+    Valkey and Sentinel, by container or through their unit, is a replication event, a failover when the node holds the
+    primary, and so is restarting the mesh tunnel replication runs over: each stays the operator's."""
     assert ops_daily.classify_action(step, host="zcrypto-valkey1", resolve=_identity) is ops_daily.Tier.PREPARED
 ```
 
@@ -2735,14 +2763,14 @@ Expected: `1 error` at collection, `FileNotFoundError: [Errno 2] No such file or
 Run: `uv run pytest tests/test_infra_compose_templates.py -q -p no:cacheprovider`
 Expected: `1 error` at collection, the same `FileNotFoundError` from `CACHE_DEFAULTS`.
 
-Run: `uv run pytest tests/test_infra_converge_guards.py::test_cache_digest_failfast_refuses_an_empty_digest tests/test_infra_converge_guards.py::test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest tests/test_infra_converge_guards.py::test_cache_empty_digest_failfast_precedes_residency_preflight tests/test_infra_converge_guards.py::test_cache_digest_preflight_refuses_an_unpulled_digest tests/test_infra_converge_guards.py::test_cache_pins_recording_semantics tests/test_infra_converge_guards.py::test_cache_pins_override_echo_fires_only_on_an_accepted_override tests/test_infra_converge_guards.py::test_cache_password_refusal tests/test_infra_converge_guards.py::test_cache_password_refusal_names_the_key_and_never_the_value tests/test_infra_converge_guards.py::test_cache_configs_render_only_when_absent_unless_reset tests/test_infra_converge_guards.py::test_cache_render_covers_the_daemon_files_and_each_has_a_template tests/test_infra_converge_guards.py::test_cache_drift_reports_a_config_whose_template_moved tests/test_infra_converge_guards.py::test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered tests/test_infra_converge_guards.py::test_every_cache_secret_render_is_never_logged_or_diffed tests/test_infra_converge_guards.py::test_every_cache_probe_never_fails_changes_or_skips_under_check tests/test_infra_converge_guards.py::test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview -q -p no:cacheprovider`
-Expected: `64 failed`, each on `FileNotFoundError` for `infra/ansible/roles/cache/tasks/main.yml`, `.../defaults/main.yml` or `.../handlers/main.yml`.
+Run: `uv run pytest tests/test_infra_converge_guards.py::test_cache_digest_failfast_refuses_an_empty_digest tests/test_infra_converge_guards.py::test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest tests/test_infra_converge_guards.py::test_cache_config_reset_without_the_digest_is_refused_before_the_gate tests/test_infra_converge_guards.py::test_cache_empty_digest_failfast_precedes_residency_preflight tests/test_infra_converge_guards.py::test_cache_digest_preflight_refuses_an_unpulled_digest tests/test_infra_converge_guards.py::test_cache_pins_recording_semantics tests/test_infra_converge_guards.py::test_cache_pins_override_echo_fires_only_on_an_accepted_override tests/test_infra_converge_guards.py::test_cache_password_refusal tests/test_infra_converge_guards.py::test_cache_password_refusal_names_the_key_and_never_the_value tests/test_infra_converge_guards.py::test_cache_configs_render_only_when_absent_unless_reset tests/test_infra_converge_guards.py::test_cache_render_covers_the_daemon_files_and_each_has_a_template tests/test_infra_converge_guards.py::test_cache_drift_reports_a_config_whose_template_moved tests/test_infra_converge_guards.py::test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered tests/test_infra_converge_guards.py::test_every_cache_secret_render_is_never_logged_or_diffed tests/test_infra_converge_guards.py::test_every_cache_probe_never_fails_changes_or_skips_under_check tests/test_infra_converge_guards.py::test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview -q -p no:cacheprovider`
+Expected: `67 failed`, each on `FileNotFoundError` for `infra/ansible/roles/cache/tasks/main.yml`, `.../defaults/main.yml` or `.../handlers/main.yml`.
 
 Run: `uv run pytest tests/test_infra_alert_rules.py::test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence -q -p no:cacheprovider`
 Expected: `1 failed`, `the memory-limited compose sources changed: [...] -- update the map`: the map names a compose file that does not exist yet.
 
 Run: `uv run pytest tests/test_ops_daily.py::test_a_cache_daemon_restart_is_never_the_passs_own -q -p no:cacheprovider`
-Expected: `3 failed`, each `Tier.AUTONOMOUS`: the node is a telemetry host and nothing yet protects the two containers.
+Expected: `8 failed`, each `Tier.AUTONOMOUS`: the node is a telemetry host and nothing yet protects the two containers, their unit or the tunnel.
 
 Run: `uv run pytest tests/test_reboot_check.py -q -p no:cacheprovider -k cache`
 Expected: `4 failed`, each on `FileNotFoundError` for a file under `infra/ansible/roles/cache/`.
@@ -2779,7 +2807,8 @@ cache_down_after_ms: 5000
 cache_failover_timeout_ms: 60000
 
 # true re-renders the daemon-owned configs over what Valkey and Sentinel wrote into them, which resets this node's
-# replication state: the rejoin procedure's converge, never a routine one.
+# replication state: the converge of the reset and rotation procedures in infra/runbooks/cache.md,
+# never a routine one.
 cache_config_reset: false
 
 # The node-exporter textfile directory the node's Alloy reads; the reboot check publishes reboot.prom
@@ -2816,6 +2845,15 @@ Create `infra/ansible/roles/cache/tasks/main.yml`:
 # ExecStartPre/ExecStart/ExecStop pull and run it, which is also what resumes it on boot; Ansible
 # starts, enables and restarts it. Roll the set one node per converge, replicas first, and move the
 # primary with `SENTINEL failover` before converging it (infra/runbooks/cache.md).
+# Outside the block below: the reset re-renders inside it, so a reset converge without the digest
+# would skip every render and exit 0 with nothing applied.
+- name: refuse a config reset without the pinned image digest
+  ansible.builtin.assert:
+    that: not (cache_config_reset | bool) or cache_image_digest is defined
+    fail_msg: >-
+      -e cache_config_reset=true re-renders this node's configs only on a converge that also carries
+      -e cache_image_digest=sha256:<...>, the digest docs/reference/fleet-pins.md records for this node.
+
 # Every task below reads or serves cache_image_digest, which has no role default and is passed per
 # run, so the block is gated on it, the ops role's convention: a converge without the digest (the
 # mesh's, or an Alloy-only one) skips all of it, and one with it asserts it non-empty, pre-staged
@@ -2992,15 +3030,17 @@ Create `infra/ansible/roles/cache/tasks/main.yml`:
         cache_recorded_sha: "{{ (cache_rendered_record.content | b64decode | from_yaml | default({}, true)) if cache_rendered_record.content is defined else {} }}"
 
     # Reported, never fatal and never applied: the file on the host is the daemon's, and applying the
-    # template is a replication reset, which is the rejoin procedure's to make. The play recap counts a
-    # report as `ignored`.
+    # template is a replication reset, which is a procedure's in infra/runbooks/cache.md to make. The
+    # play recap counts a report as `ignored`.
     - name: drift — report a daemon-owned config whose template no longer renders what this node was given
       ansible.builtin.assert:
         that: cache_recorded_sha[item] | default(cache_template_sha[item]) == cache_template_sha[item]
         fail_msg: >-
           {{ item }}'s template no longer renders what {{ inventory_hostname }} was given. The file on the
-          node is the daemon's and this converge left it as it is. Apply the template by the rejoin procedure
-          in infra/runbooks/cache.md, whose converge carries -e cache_config_reset=true.
+          node is the daemon's and this converge left it as it is. Apply a template change by the
+          cache-config-reset procedure in infra/runbooks/cache.md, and a password changed in
+          group_vars/cache_host/vault.yml by its cache-password-rotation procedure, which resets the three
+          nodes together.
       loop: "{{ cache_daemon_files }}"
       when: item not in (cache_conf_render.results | selectattr('changed') | map(attribute='item') | list)
       register: cache_config_drift
@@ -3350,18 +3390,20 @@ In `infra/scripts/ops_daily.py`, in `_PROTECTED_OBJECTS`, replace the line `    
     "zcrypto-red",
     "zcrypto-valkey",
     "zcrypto-sentinel",
+    "zcrypto-cache",
+    "zcache0",
 ```
 
 - [ ] **Step 7: Run the new tests**
 
-Run: `uv run pytest tests/test_infra_cache_templates.py tests/test_infra_compose_templates.py tests/test_infra_converge_guards.py::test_cache_digest_failfast_refuses_an_empty_digest tests/test_infra_converge_guards.py::test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest tests/test_infra_converge_guards.py::test_cache_empty_digest_failfast_precedes_residency_preflight tests/test_infra_converge_guards.py::test_cache_digest_preflight_refuses_an_unpulled_digest tests/test_infra_converge_guards.py::test_cache_pins_recording_semantics tests/test_infra_converge_guards.py::test_cache_pins_override_echo_fires_only_on_an_accepted_override tests/test_infra_converge_guards.py::test_cache_password_refusal tests/test_infra_converge_guards.py::test_cache_password_refusal_names_the_key_and_never_the_value tests/test_infra_converge_guards.py::test_cache_configs_render_only_when_absent_unless_reset tests/test_infra_converge_guards.py::test_cache_render_covers_the_daemon_files_and_each_has_a_template tests/test_infra_converge_guards.py::test_cache_drift_reports_a_config_whose_template_moved tests/test_infra_converge_guards.py::test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered tests/test_infra_converge_guards.py::test_every_cache_secret_render_is_never_logged_or_diffed tests/test_infra_converge_guards.py::test_every_cache_probe_never_fails_changes_or_skips_under_check tests/test_infra_converge_guards.py::test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview tests/test_infra_alert_rules.py::test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence tests/test_ops_daily.py::test_a_cache_daemon_restart_is_never_the_passs_own tests/test_reboot_check.py -q -p no:cacheprovider`
-Expected: `127 passed`: the new module's 24, the compose module's 18 (five of them this task's), the 64 guard cases, the headroom case, the three protected-object cases and `tests/test_reboot_check.py`'s 17 (the four copy cases among them this task's); the cases this task adds are 101.
+Run: `uv run pytest tests/test_infra_cache_templates.py tests/test_infra_compose_templates.py tests/test_infra_converge_guards.py::test_cache_digest_failfast_refuses_an_empty_digest tests/test_infra_converge_guards.py::test_the_valkey_and_sentinel_tasks_run_only_on_a_converge_carrying_the_digest tests/test_infra_converge_guards.py::test_cache_config_reset_without_the_digest_is_refused_before_the_gate tests/test_infra_converge_guards.py::test_cache_empty_digest_failfast_precedes_residency_preflight tests/test_infra_converge_guards.py::test_cache_digest_preflight_refuses_an_unpulled_digest tests/test_infra_converge_guards.py::test_cache_pins_recording_semantics tests/test_infra_converge_guards.py::test_cache_pins_override_echo_fires_only_on_an_accepted_override tests/test_infra_converge_guards.py::test_cache_password_refusal tests/test_infra_converge_guards.py::test_cache_password_refusal_names_the_key_and_never_the_value tests/test_infra_converge_guards.py::test_cache_configs_render_only_when_absent_unless_reset tests/test_infra_converge_guards.py::test_cache_render_covers_the_daemon_files_and_each_has_a_template tests/test_infra_converge_guards.py::test_cache_drift_reports_a_config_whose_template_moved tests/test_infra_converge_guards.py::test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered tests/test_infra_converge_guards.py::test_every_cache_secret_render_is_never_logged_or_diffed tests/test_infra_converge_guards.py::test_every_cache_probe_never_fails_changes_or_skips_under_check tests/test_infra_converge_guards.py::test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview tests/test_infra_alert_rules.py::test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence tests/test_ops_daily.py::test_a_cache_daemon_restart_is_never_the_passs_own tests/test_reboot_check.py -q -p no:cacheprovider`
+Expected: `136 passed`: the new module's 25, the compose module's 18 (five of them this task's), the 67 guard cases, the headroom case, the eight protected-object cases and `tests/test_reboot_check.py`'s 17 (the four copy cases among them this task's); the cases this task adds are 109.
 
 - [ ] **Step 8: The consumers**
 
-The modules that read what this task changes: the four above; the walkers of every role file (`tests/test_internal_terms_not_operator_visible.py`, `tests/test_infra_shell_templates_render.py`); the readers of `host_vars` and `site.yml`, the whole of what `grep -lE 'host_vars|site\.yml' tests/*.py` lists; `tests/test_dashboards_cover_metrics.py`, whose admission rule is why the headroom entries are absences; and `tests/test_config_selectors_are_parsed.py`, which reads every test module for substring selectors over a config file, the reboot-check copy cases among them.
+The modules that read what this task changes: the four above; the walkers of every role file (`tests/test_internal_terms_not_operator_visible.py`, `tests/test_infra_shell_templates_render.py`); the readers of `host_vars` and `site.yml`, the whole of what `grep -lE 'host_vars|site\.yml' tests/*.py` lists; the readers of `infra/scripts/ops_daily.py`, `tests/test_ops_daily_soak.py` and `tests/test_engine_soak.py` beside `tests/test_ops_daily.py`, the whole of what `grep -rlE ops_daily tests/test_*.py` lists; `tests/test_dashboards_cover_metrics.py`, whose admission rule is why the headroom entries are absences; and `tests/test_config_selectors_are_parsed.py`, which reads every test module for substring selectors over a config file, the reboot-check copy cases among them.
 
-Run: `uv run pytest tests/test_infra_cache_templates.py tests/test_infra_compose_templates.py tests/test_infra_converge_guards.py tests/test_infra_alert_rules.py tests/test_internal_terms_not_operator_visible.py tests/test_infra_shell_templates_render.py tests/test_converge_sh.py tests/test_deploy_log_audit.py tests/test_fleet_contracts.py tests/test_infra_firewall_template.py tests/test_run_sh.py tests/test_ops_daily.py tests/test_dashboards_cover_metrics.py tests/test_reboot_check.py tests/test_deploy_log_audit.py tests/test_infra_unattended_upgrades.py tests/test_config_selectors_are_parsed.py -q -p no:cacheprovider`
+Run: `uv run pytest tests/test_infra_cache_templates.py tests/test_infra_compose_templates.py tests/test_infra_converge_guards.py tests/test_infra_alert_rules.py tests/test_internal_terms_not_operator_visible.py tests/test_infra_shell_templates_render.py tests/test_converge_sh.py tests/test_deploy_log_audit.py tests/test_fleet_contracts.py tests/test_infra_firewall_template.py tests/test_run_sh.py tests/test_ops_daily.py tests/test_ops_daily_soak.py tests/test_engine_soak.py tests/test_dashboards_cover_metrics.py tests/test_reboot_check.py tests/test_deploy_log_audit.py tests/test_infra_unattended_upgrades.py tests/test_config_selectors_are_parsed.py -q -p no:cacheprovider`
 Expected: every test passed or skipped by a data gate, none failed; `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds` passing is the check that the unit copy carries no venue name. `tests/test_internal_terms_not_operator_visible.py` walks the new task names, `fail_msg`s and the unit's `Description=`, none of which carries a spec, decision or topic token.
 
 - [ ] **Step 9: The commit gate**
@@ -3388,19 +3430,23 @@ naming the key and never the value.
 
 valkey.conf, sentinel.conf and users.acl are rendered when absent or under
 -e cache_config_reset=true, since Sentinel writes replicaof, its peers and its epoch into the files
-the daemons started from. Each render records its template hash in rendered-sha256.yml, and a
+the daemons started from. The reset renders inside the gated block, so a refusal before the block
+turns away a reset converge that carries no digest, which would otherwise apply nothing and exit 0.
+Each render records its template hash in rendered-sha256.yml, and a
 converge whose template no longer renders that hash reports the file as ignored drift and leaves it
 as it is. The first primary renders no replicaof and the other two replicate from it;
 replica-priority is 100, 100 and 250; min-replicas-to-write 1, appendfsync always, noeviction at
 128mb; quorum 2. users.acl carries sha256 hashes: default off; engine every key, with KEYS and INFO
-past -@dangerous; replica and sentinel on valkey.io's grants; exporter on redis_exporter's. Two
+past -@dangerous; replica and sentinel on valkey.io's grants; exporter on redis_exporter v1.86.0's,
+less +arcount, which Valkey 9.1.2 refuses, and the two cluster tokens a standalone set does not use. Two
 root-only env files carry the exporter's and Sentinel's passwords for docker exec --env-file reads.
 
 The headroom map names the new compose file's six (host, job) pairs and records them absent: the
 headroom rules parse process_resident_memory_bytes, which neither daemon publishes, Valkey's memory
 is the cache group's 70%-of-maxmemory rule's, and Sentinel has none. The daily pass's protected
-objects gain zcrypto-valkey and zcrypto-sentinel, since the nodes are telemetry hosts whose container
-restarts the pass may otherwise take on its own. The nodes publish node_reboot_required from a copy of
+objects gain zcrypto-valkey, zcrypto-sentinel, their unit's zcrypto-cache and the tunnel's zcache0,
+since the nodes are telemetry hosts whose container and unit restarts the pass may otherwise take on
+its own. The nodes publish node_reboot_required from a copy of
 the capture role's reboot check, its script, timer and unit held equal to the capture role's but for
 their comments, the timer enabled outside the digest gate.
 
@@ -3415,9 +3461,9 @@ Claude-Session: https://claude.ai/code/session_01HrTEbjo2WydKL5eVoteiSC"
 Run: `git status --porcelain`
 Expected: empty.
 
-- [ ] **Step 12: Prove the guards with thirty-three probes, then record their verdicts by a message-only amend**
+- [ ] **Step 12: Prove the guards with thirty-eight probes, then record their verdicts by a message-only amend**
 
-Each probe runs on the committed tree, never while a pytest run is in flight in the same checkout. A task-level control renames the task its test looks up, so the test's `find_task` fails; a template-level control changes a line the test asserts; each mutation is the defect the guard exists to catch. The role's tasks sit inside the digest-gated block, so a task's own keys are indented six spaces and a folded `when:` continuation eight, which the anchored expressions below match.
+Each probe runs on the committed tree, never while a pytest run is in flight in the same checkout. A task-level control renames the task its test looks up, so the test's `find_task` fails; a template-level control changes a line the test asserts; each mutation is the defect the guard exists to catch. The role's tasks sit inside the digest-gated block, so a task's own keys are indented six spaces and a folded `when:` continuation eight, which the anchored expressions below match. Each control and each mutation changes one line of its file, so a verdict names the one site its test isolated: where a pattern recurs in the file, a sed line range scopes it to its own task or service (`/<task name>/,/<its last key>/`), which probes 3 and 4 (the pins refusal's `that:`, which its echo's `when:` repeats), 6 and 7 (the password refusal's `that:`, which its `fail_msg` repeats), 12 (the valkey-cli render's `no_log`, beside the daemon-owned render's), 13 (the digest probe's `check_mode`, one of three probes') and 24 to 26 (Valkey's service, whose lines Sentinel's repeats) take.
 
 ```bash
 T=infra/ansible/roles/cache/tasks/main.yml
@@ -3438,11 +3484,11 @@ infra/scripts/mutate-probe.sh --file $T \
 # 3-5: the pins refusal (an unrecorded digest admitted; a short override admitted) and its echo (fired with nothing overridden)
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: pins recording — refuse to replace a digest fleet-pins.md does not record/name: pins renamed/' \
-  --mutation 's/in cache_fleet_pins_text)$/in cache_fleet_pins_text) or true/' \
+  --mutation '/name: pins recording — refuse to replace/,/fail_msg:/s/in cache_fleet_pins_text)$/in cache_fleet_pins_text) or true/' \
   -- uv run pytest $G::test_cache_pins_recording_semantics -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: pins recording — refuse to replace a digest fleet-pins.md does not record/name: pins renamed/' \
-  --mutation 's/string | length > 8)/string | length > 0)/' \
+  --mutation '/name: pins recording — refuse to replace/,/fail_msg:/s/string | length > 8)/string | length > 0)/' \
   -- uv run pytest $G::test_cache_pins_recording_semantics -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: pins override accepted — the reason, on the record/name: pins echo renamed/' \
@@ -3451,11 +3497,11 @@ infra/scripts/mutate-probe.sh --file $T \
 # 6-7: the password refusal (a four-character floor; any non-space character admitted)
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: refuse a cache password shorter than five characters or outside letters and digits/name: password renamed/' \
-  --mutation 's/{5,}\\Z/{4,}\\Z/' \
+  --mutation '/name: refuse a cache password/,/fail_msg:/s/{5,}\\Z/{4,}\\Z/' \
   -- uv run pytest $G::test_cache_password_refusal -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: refuse a cache password shorter than five characters or outside letters and digits/name: password renamed/' \
-  --mutation 's/\[A-Za-z0-9\]{5,}\\Z/[^ ]{5,}\\Z/' \
+  --mutation '/name: refuse a cache password/,/fail_msg:/s/\[A-Za-z0-9\]{5,}\\Z/[^ ]{5,}\\Z/' \
   -- uv run pytest $G::test_cache_password_refusal -q -p no:cacheprovider
 # 8: render-if-absent
 infra/scripts/mutate-probe.sh --file $T \
@@ -3475,14 +3521,14 @@ infra/scripts/mutate-probe.sh --file $T \
   --control "s/$DR/name: drift renamed/" \
   --mutation 's/when: item not in (cache_conf_render.results/when: item in (cache_conf_render.results/' \
   -- uv run pytest $G::test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered -q -p no:cacheprovider
-# 12-13: the secret renders logged, and the probes run as changes
+# 12-13: the credential render logged, and the digest probe run as a change
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: render the root-only valkey-cli credential files/name: cli renamed/' \
-  --mutation 's/^      no_log: true$/      no_log: false/' \
+  --mutation '/name: render the root-only valkey-cli credential files/,/diff: false/s/^      no_log: true$/      no_log: false/' \
   -- uv run pytest $G::test_every_cache_secret_render_is_never_logged_or_diffed -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file $T \
   --control 's/name: probe — is the pinned digest already on this host/name: renamed digest probe/' \
-  --mutation 's/^      check_mode: false$/      check_mode: true/' \
+  --mutation '/name: probe — is the pinned digest already on this host/,/check_mode:/s/^      check_mode: false$/      check_mode: true/' \
   -- uv run pytest $G::test_every_cache_probe_never_fails_changes_or_skips_under_check -q -p no:cacheprovider
 # 14: the restart handler standing down on every preview
 infra/scripts/mutate-probe.sh --file $H \
@@ -3528,18 +3574,18 @@ infra/scripts/mutate-probe.sh --file $TP/users.acl.j2 \
   --control 's/cache_replica_password | hash/cache_engine_password | hash/' \
   --mutation 's/#{{ cache_engine_password | hash(.sha256.) }}/>{{ cache_engine_password }}/' \
   -- uv run pytest $C::test_the_acl_file_carries_password_hashes_and_never_a_password -q -p no:cacheprovider
-# 24-26: the compose file (bridge networking, json-file logging, a single-file config mount)
+# 24-26: Valkey's service in the compose file (bridge networking, json-file logging, a single-file config mount)
 infra/scripts/mutate-probe.sh --file $TP/compose.yaml.j2 \
   --control 's/command: \["valkey-server", /command: ["valkey-server2", /' \
-  --mutation 's/network_mode: host/network_mode: bridge/' \
+  --mutation '/container_name: zcrypto-valkey$/,/driver: journald/s/network_mode: host/network_mode: bridge/' \
   -- uv run pytest tests/test_infra_compose_templates.py::test_cache_valkey_and_sentinel_run_one_pinned_image_on_the_host_network -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file $TP/compose.yaml.j2 \
   --control 's/command: \["valkey-server", /command: ["valkey-server2", /' \
-  --mutation 's/driver: journald/driver: json-file/' \
+  --mutation '/container_name: zcrypto-valkey$/,/driver: journald/s/driver: journald/driver: json-file/' \
   -- uv run pytest tests/test_infra_compose_templates.py::test_cache_valkey_and_sentinel_run_one_pinned_image_on_the_host_network -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file $TP/compose.yaml.j2 \
   --control 's/command: \["valkey-server", /command: ["valkey-server2", /' \
-  --mutation 's#{{ cache_state_dir }}/conf:/etc/valkey"#{{ cache_state_dir }}/conf/valkey.conf:/etc/valkey/valkey.conf"#' \
+  --mutation '/container_name: zcrypto-valkey$/,/driver: journald/s#{{ cache_state_dir }}/conf:/etc/valkey"#{{ cache_state_dir }}/conf/valkey.conf:/etc/valkey/valkey.conf"#' \
   -- uv run pytest tests/test_infra_compose_templates.py::test_cache_valkey_and_sentinel_run_one_pinned_image_on_the_host_network -q -p no:cacheprovider
 # 27: the headroom map's per-pair coverage of the new compose file
 infra/scripts/mutate-probe.sh --file tests/test_infra_alert_rules.py \
@@ -3556,50 +3602,69 @@ infra/scripts/mutate-probe.sh --file $TP/users.acl.j2 \
   --control 's/^user engine on /user engine off /' \
   --mutation 's/ -@dangerous +keys +info$/ -@dangerous +keys +info -@write/' \
   -- uv run pytest $C::test_the_default_user_is_off_and_the_engine_keeps_keys_and_info_past_dangerous -q -p no:cacheprovider
-# 30-31: the daily pass's protected cache daemons
-for M in '/^    "zcrypto-valkey",$/d' '/^    "zcrypto-sentinel",$/d'; do
+# 30-33: the daily pass's protected cache daemons, their unit and the mesh tunnel
+for M in '/^    "zcrypto-valkey",$/d' '/^    "zcrypto-sentinel",$/d' '/^    "zcrypto-cache",$/d' '/^    "zcache0",$/d'; do
   infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
     --control 's/if not any(obj in lowered for obj in _PROTECTED_OBJECTS):/if True:/' --mutation "$M" \
     -- uv run pytest tests/test_ops_daily.py::test_a_cache_daemon_restart_is_never_the_passs_own -q -p no:cacheprovider
 done
-# 32: the reboot check's copy drifting from the capture role's
+# 34: the reboot check's copy drifting from the capture role's
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/cache/files/zcrypto-reboot-check.sh \
   --control 's/^set -euo pipefail$/set -eu/' \
   --mutation 's/^pending=0$/pending=1/' \
   -- uv run pytest tests/test_reboot_check.py -q -p no:cacheprovider -k cache_roles_reboot_check
-# 33: the oneshot enabled in the timer's place
+# 35: the oneshot enabled in the timer's place
 infra/scripts/mutate-probe.sh --file $T \
   --control 's#^    dest: /usr/local/sbin/zcrypto-reboot-check$#    dest: /usr/local/sbin/zcrypto-reboot-checkx#' \
   --mutation 's/^    name: zcrypto-reboot-check.timer$/    name: zcrypto-reboot-check.service/' \
   -- uv run pytest tests/test_reboot_check.py::test_the_cache_role_installs_what_its_unit_runs_and_enables_the_timer_alone -q -p no:cacheprovider
+# 36: valkey.conf's RDB snapshots dropped
+infra/scripts/mutate-probe.sh --file $TP/valkey.conf.j2 \
+  --control 's/^appendfsync always$/appendfsync everysec/' \
+  --mutation '/^save 3600 1 300 100 60 10000$/d' \
+  -- uv run pytest $C::test_valkey_refuses_writes_without_a_replica_and_never_evicts -q -p no:cacheprovider
+# 37: the bind default pointed at the node's public address
+infra/scripts/mutate-probe.sh --file infra/ansible/roles/cache/defaults/main.yml \
+  --control 's/^cache_bind_address: "{{ cache_link_address }}"$/cache_bind_address: 127.0.0.2/' \
+  --mutation 's/^cache_bind_address: "{{ cache_link_address }}"$/cache_bind_address: "{{ ansible_host }}"/' \
+  -- uv run pytest $C::test_valkey_and_sentinel_bind_loopback_and_the_mesh_address_alone -q -p no:cacheprovider
+# 38: a config reset without the digest admitted
+infra/scripts/mutate-probe.sh --file $T \
+  --control 's/name: refuse a config reset without the pinned image digest/name: reset refusal renamed/' \
+  --mutation 's/that: not (cache_config_reset | bool) or cache_image_digest is defined/that: true/' \
+  -- uv run pytest $G::test_cache_config_reset_without_the_digest_is_refused_before_the_gate -q -p no:cacheprovider
 ```
 
 Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend` with the whole message of Step 10 re-supplied and nothing else changed, with:
 
 ```
-Probe: `infra/scripts/mutate-probe.sh`, thirty-three runs, each KILLED, control proven. Over
-infra/ansible/roles/cache/tasks/main.yml, each control renaming the task its test looks up: the
-digest fail-fast admitting an empty digest; the preflight admitting an unpulled one; the pins
-refusal admitting an unrecorded digest, and a four-character override; the pins echo firing with
-nothing overridden; the password refusal at a four-character floor, and admitting any non-space
-character; the daemon-owned renders forced on every converge; the drift comparison replaced by
-true, made fatal, and run over a file this converge rendered; the credential renders logged; the
-probes run under check mode. Over handlers/main.yml, control the handler renamed: the restart
-standing down on every preview. Over templates/valkey.conf.j2: replicaof rendered on the first
-primary, control the replicas' port moved; a public bind, control the loopback address moved;
-min-replicas-to-write 0 and allkeys-lru, control appendfsync moved. Over templates/sentinel.conf.j2:
-a public bind, control the loopback address moved; quorum 1, control parallel-syncs moved. Over
-templates/users.acl.j2: the engine's KEYS and INFO moved before -@dangerous and the default user on,
-control the engine user off; the engine's password in the clear, control the replica's hash taken
-from the engine's password. Over templates/compose.yaml.j2, control valkey's command renamed:
-bridge networking, json-file logging, a single-file config mount. Over
-tests/test_infra_alert_rules.py, control the map's key renamed: one of the six recorded absences
-deleted. Over tasks/main.yml, control the block renamed: the digest gate replaced by true. Over
-templates/users.acl.j2, control the engine user off: -@write appended to the engine's grants. Over
-infra/scripts/ops_daily.py, control the protected-objects veto disabled: zcrypto-valkey dropped
-from the protected objects, and zcrypto-sentinel. Over files/zcrypto-reboot-check.sh, control its
-strict mode loosened: the flag published as pending by default. Over tasks/main.yml, control the
-reboot-check script's destination moved: the oneshot enabled in the timer's place.
+Probe: `infra/scripts/mutate-probe.sh`, thirty-eight runs, each KILLED, control proven, each
+mutation changing one line. Over infra/ansible/roles/cache/tasks/main.yml, each control renaming
+the task its test looks up: the digest fail-fast admitting an empty digest; the preflight admitting
+an unpulled one; the pins refusal admitting an unrecorded digest, and a four-character override; the
+pins echo firing with nothing overridden; the password refusal at a four-character floor, and
+admitting any non-space character; the daemon-owned renders forced on every converge; the drift
+comparison replaced by true, made fatal, and run over a file this converge rendered; the valkey-cli
+credential render logged; the digest probe run under check mode. Over handlers/main.yml, control the
+handler renamed: the restart standing down on every preview. Over templates/valkey.conf.j2: replicaof
+rendered on the first primary, control the replicas' port moved; a public bind, control the loopback
+address moved; min-replicas-to-write 0 and allkeys-lru, control appendfsync moved. Over
+templates/sentinel.conf.j2: a public bind, control the loopback address moved; quorum 1, control
+parallel-syncs moved. Over templates/users.acl.j2: the engine's KEYS and INFO moved before
+-@dangerous and the default user on, control the engine user off; the engine's password in the
+clear, control the replica's hash taken from the engine's password. Over templates/compose.yaml.j2,
+control valkey's command renamed: Valkey's service on bridge networking, on json-file logging, on a
+single-file config mount. Over tests/test_infra_alert_rules.py, control the map's key renamed: one of
+the six recorded absences deleted. Over tasks/main.yml, control the block renamed: the digest gate
+replaced by true. Over templates/users.acl.j2, control the engine user off: -@write appended to the
+engine's grants. Over infra/scripts/ops_daily.py, control the protected-objects veto disabled:
+zcrypto-valkey dropped from the protected objects, zcrypto-sentinel, zcrypto-cache and zcache0. Over
+files/zcrypto-reboot-check.sh, control its strict mode loosened: the flag published as pending by
+default. Over tasks/main.yml, control the reboot-check script's destination moved: the oneshot
+enabled in the timer's place. Over templates/valkey.conf.j2, control appendfsync moved: the RDB
+snapshot line dropped. Over defaults/main.yml, control the bind default moved to another loopback
+address: the bind default pointed at the node's public address. Over tasks/main.yml, control the
+refusal renamed: a config reset without the digest admitted.
 ```
 
 Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
@@ -3649,7 +3714,7 @@ curl -fsSL "https://raw.githubusercontent.com/oliver006/redis_exporter/<version>
 grep -F 'user exporter ' infra/ansible/roles/cache/templates/users.acl.j2
 ```
 
-`<version>` is the one the first command prints on its `require` line, or the target of a `replace` line when it prints one, in which case the README is read from that fork at that version. Expected: the README's ACL line and the template's `exporter` line carry the same tokens after the password, in any order. When they differ, the README's tokens replace the template's on this branch, `uv run pytest tests/test_infra_cache_templates.py -q -p no:cacheprovider` passes, and the change is committed alone as `fix(cache): the exporter's ACL line is the redis_exporter <version> README's`, with the two trailers of `## Global Constraints`.
+`<version>` is the one the first command prints on its `require` line, or the target of a `replace` line when it prints one, in which case the README is read from that fork at that version. Expected: the first command prints `github.com/oliver006/redis_exporter v1.86.0` and no `replace` line, and the README's data-node ACL line (the one whose tokens include `+memory`) carries the template's `exporter` tokens, in any order, plus three the template leaves out on purpose: `+arcount`, a command Valkey 9.1.2 does not know, so an `aclfile` naming it aborts Valkey's start; and `+cluster|slots` and `+cluster|nodes`, which serve a cluster-mode server this set does not run. At v1.86.0 the exporter scrapes a primary, a replica and a Sentinel with no error under the template's line. A README token is never copied into the template to make the two agree: any other version, or any difference beyond those three tokens, goes to the owner before the branch merges, since the file is re-rendered only under a reset and a token Valkey refuses keeps the node from starting.
 
 ---
 
@@ -3664,10 +3729,10 @@ Decisions this section takes, where the spec leaves them open:
 - **The probe is Task 3's** (ruling R7). `roles/cache_link`'s `zcache-probe` runs each minute on all four mesh members and writes `zcache_wireguard_handshake_age_seconds{peer="<mesh address>"}` for every `/32` `AllowedIPs` line of the rendered `zcache0.conf` into `/var/lib/zcrypto-node-textfile/zcache.prom`, `+Inf` for a peer with no handshake or an interface that is down: the directory the capture Alloy on `zcrypto` already reads and the nodes' Alloy reads through its `/:/host/root:ro` mount. This task admits the family on both keep lists, the nodes' `config.alloy` and the capture role's with `CAPTURE_REQUIRED` beside it (the capture list is shared with `zcrypto-red`, which runs no `cache_link` and publishes none), maps `infra/ansible/roles/cache_link/` to `zcrypto` and the three nodes in `PUBLISHER_HOSTS`, widens `_APP` to the `zcache` namespace, charts the family and writes the >180 s rule over all four members, so each link is watched from both ends. The `peer` label is the mesh address; the runbook and the rule summary map the four addresses. `node_reboot_required` comes from Task 4's copy of the capture role's reboot check, which writes `reboot.prom` into the same directory; this task admits it and panel 106 draws it.
 - **The handshake-stale rule reads the age now, not the age at the last write:** the recorded age plus `time() - node_textfile_mtime_seconds` of `zcache.prom`, so a stopped timer climbs past the bar instead of freezing below it, and the timer's own cadence cannot fire it. It selects `host=~"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"`, the engine host's end included; the capture keep list already admits `node_textfile_mtime_seconds`.
 - **The job labels.** The host scrape carries no `job_name`: an exporter target's own `job` label (`integrations/unix`, `integrations/self`) wins over a scrape's `job_name`, the way the capture config's `host` scrape ships `job="integrations/self"` with none set, and the Alloy headroom rule selects `job="integrations/self"`. The spec's `cache_host` job name would therefore be ignored; it is not written. The two Redis exporters' targets carry one built-in `job` between them, so each passes through a `discovery.relabel` that sets `job` to `valkey` or `sentinel`, and every rule and panel selects those. This reading, an exporter target's own `job` winning over the scrape's `job_name`, is a claim the plan review reads (ruling R14); `## Rollout (attended)` step R7 reads `count by (job) (up{host="zcrypto-valkey1"})` before anything is pushed, and a job that arrives otherwise is corrected there.
-- **Sentinel mode is not an argument.** Alloy's `prometheus.exporter.redis` takes `redis_addr`, `redis_user` and `redis_password` (the spec's measured basis); the exporter detects a Sentinel from its `INFO` (`redis_mode:sentinel`) and publishes the `redis_sentinel_*` families from it. The Sentinel exporter carries no `redis_user`: Sentinel authenticates `requirepass` as its default user. `## Rollout (attended)` step R7 reads both exporters' output on db1 before anything is pushed.
+- **Sentinel mode is not an argument.** Alloy's `prometheus.exporter.redis` takes `redis_addr`, `redis_user` and `redis_password` (the spec's measured basis); the exporter detects a Sentinel from the `# Sentinel` section of its `INFO` (redis_exporter v1.86.0's `exporter.go`; Valkey's Sentinel prints no `redis_mode:` line) and publishes the `redis_sentinel_*` families from it. The Sentinel exporter carries no `redis_user`: Sentinel authenticates `requirepass` as its default user. `## Rollout (attended)` step R7 reads both exporters' output on db1 before anything is pushed.
 - **Logs are keyed by container name**, `zcrypto-valkey`, `zcrypto-sentinel` and `grafana-alloy`, relabelled to `container` `valkey`, `sentinel` and `alloy`, plus Task 3's mesh probe unit `zcache-probe.service`, relabelled `zcache-probe`, kept for its failures. A journald-driver stream carries `docker.service` as its unit, so a unit arm cannot select it, and keying `zcrypto-cache.service` as well would ship each line twice when that unit runs the compose project attached. Valkey's and Sentinel's `#` marks become `level="WARNING"`, `.` `DEBUG`, the rest `INFO`.
 - **The Alloy block copies the capture role's**: gated on `cache_alloy_digest is defined`, render-only (the operator starts it with `sudo docker compose up -d`), the drift assert outside the gate, the `reload alloy` handler. It adds two guards the capture block lacks: a refusal of a digest that is not `sha256:<64 hex>`, since an empty `-e cache_alloy_digest=` counts as defined, and the pins refusal the capture role runs for its own container, here over the running `grafana-alloy`. The capture block's stale-layout cleanup is not copied: a node never had that layout.
-- **Rules:** the three Alloy-dark rules take the family's title, `Fleet · Alloy dark — Cache N`, in the `zcrypto-cache` group, `critical`, `noDataState: Alerting`; `zcrypto-cache-primary-count` is `critical` (no primary means nowhere to write, two means a later failover discards one side); the replica, memory, AOF and handshake rules are `warning`. Every rule but the Alloy-dark three reads `noDataState: OK`, since its series stop when a node's telemetry does, which the Alloy-dark three own. `zcrypto-cache-primary-count` is written `abs((count(master) or on() vector(0)) - 1) and on() count(up{job="valkey"})` because the threshold node takes `gt`/`lt` alone (`tests/test_infra_alert_rules.py::_fires_on_absence` refuses `==`/`!=`), and the `and on()` arm empties the value when no node's Alloy ships. The AOF rule multiplies `redis_aof_enabled` into the two statuses, so a node whose AOF is off fires too (spec D7 requires it on).
+- **Rules:** the three Alloy-dark rules take the family's title, `Fleet · Alloy dark — Cache N`, in the `zcrypto-cache` group, `critical`, `noDataState: Alerting`; `zcrypto-cache-primary-count` is `critical` (no primary means nowhere to write); the replica, memory, AOF and handshake rules are `warning`. Every rule but the Alloy-dark three reads `noDataState: OK`, since its series stop when a node's telemetry does, which the Alloy-dark three own. `zcrypto-cache-primary-count` counts the primary the Sentinels agree on, `abs((count(count by (master_address) (redis_sentinel_master_status{job="sentinel"} == 1) >= 2) or on() vector(0)) - 1) and on() (count(up{job="sentinel"}) > 1)`: the addresses at least two of the three Sentinels name a healthy master, the quorum's view. A count of each node's own `role="master"` pages falsely twice over: when the primary's node alone goes dark, its role leaves the query while the other nodes' `up` keeps the rule armed, and after a primary's node dies, its last `role="master"` sample outlives it by the query lookback beside its successor's; one node's dark Sentinel costs a single vote of three. With three Sentinels at most one address holds two votes, so spec D12's "primary count not exactly one" reads as no agreed primary, and a node still calling itself master after a failover is `cache-rejoin-node`'s. The distance from one is written because the threshold node takes `gt`/`lt` alone (`tests/test_infra_alert_rules.py::_fires_on_absence` refuses `==`/`!=`), and the `and on()` arm empties the value while fewer than two nodes' Sentinel telemetry ships. The AOF rule multiplies `redis_aof_enabled` into the two statuses, so a node whose AOF is off fires too (spec D7 requires it on).
 - **The runbook's Alloy-dark anchors live in `cache.md`, not `observability.md`**: that page's four stacked anchors share one procedure for the capture pair, ops and the NAS, and the cache nodes' procedure differs (their paths, their aliases, and the set watched from the other two nodes while one is dark). An anchor is defined in one file (`tests/test_infra_alert_rules.py::test_every_runbook_anchor_is_defined_in_exactly_one_file`), so `observability.md` gains one sentence pointing at `cache.md`, as it does for the bridgehead. The runbook's `valkey-cli` reads take their passwords from Task 4's root-only `/opt/zcrypto-cache/cli-exporter.env` and `cli-sentinel.env` through `docker exec --env-file`, never from Alloy's secrets file. The Alloy headroom leg's section in `infra/runbooks/fleet.md` names the cache caps and the Cache board panel, since the Fleet health board's panel 601 selects no cache node.
 - **The metric names.** None was read from a live endpoint or re-read upstream for this plan. Held from the exporter's INFO-field map and the Alloy component documentation: `redis_up`, `redis_instance_info` and its `role` label, `redis_uptime_in_seconds`, `redis_connected_slaves`, `redis_master_repl_offset`, `redis_memory_used_bytes`, `redis_memory_max_bytes`, `redis_commands_processed_total`, `redis_connected_clients`, `redis_aof_enabled`, `redis_aof_last_write_status`, `redis_aof_last_bgrewrite_status`, `redis_rdb_last_bgsave_status`. Assumed: `redis_connected_slave_offset_bytes` and its `slave_ip` label, `redis_master_link_up`, `redis_sentinel_masters`, `redis_sentinel_master_status` and its `master_address` label, `redis_sentinel_master_sentinels`, `redis_sentinel_master_ok_sentinels`, `redis_sentinel_master_slaves` (the spec's measured basis lists the Sentinel names as unmeasured), and the built-in `job` label the relabel overrides. `## Rollout (attended)` step R7 reads every one of them on db1 before the push, and corrects the tree through a branch when one differs.
 
@@ -3678,7 +3743,7 @@ Interfaces this task takes from the tasks before it, by name; a mismatch is an o
 - Task 1's `infra/ansible/scripts/converge.sh` carries `zcrypto-valkey1`–`3` in `HOSTS`, `cache` in `TAGNAMES` and `cache_alloy_digest` in `EVKEYS`; the `cache_host` group is a child of `observed`, so the six Grafana Cloud vault keys resolve on the nodes.
 - Task 4 records its Valkey and Sentinel caps in `_HEADROOM_DELIBERATELY_ABSENT` for good (ruling R9) and owns the `_LIMITED_JOBS` entry for `infra/ansible/roles/cache/templates/compose.yaml.j2`; this task adds the Alloy entry beside it, with its legs, and touches neither. Task 4 also defines `CACHE` in `tests/test_infra_converge_guards.py`, which this task's cases reuse.
 
-Every Python runs through `uv run`; every commit's consumers are the tests that read a file the commit changes, as `grep -rl` reads them over `tests/test_*.py` when this plan was written: `uv run pytest tests/test_bash_guard.py tests/test_clock_offset.py tests/test_code_prose_citations.py tests/test_config_selectors_are_parsed.py tests/test_count_list.py tests/test_dashboards_cover_metrics.py tests/test_engine_execgate.py tests/test_engine_journal_prune.py tests/test_engine_metrics.py tests/test_error_paths_are_logged.py tests/test_fleet_contracts.py tests/test_grafana_push_sh.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_infra_alloy_series.py tests/test_infra_compose_templates.py tests/test_infra_converge_guards.py tests/test_infra_grafana_keepalive.py tests/test_internal_terms_not_operator_visible.py tests/test_merge_gate.py tests/test_message_citations.py tests/test_ops_daily.py tests/test_ops_postverify.py tests/test_prose_chars.py tests/test_reboot_check.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py -q -p no:cacheprovider` (the consumer command below; `tests/test_config_selectors_are_parsed.py` is in it because it reads every test module for substring selectors over a config file, this task's cases among them). No executor step reaches a host; the attended ones are `## Rollout (attended)`'s. The commit trailers name the executing model: the executor writes its own model name where the fences below say `<model>`.
+Every Python runs through `uv run`; every commit's consumers are the tests that read a file the commit changes, as `grep -rl` reads them over `tests/test_*.py` when this plan was written: `uv run pytest tests/test_bash_guard.py tests/test_clock_offset.py tests/test_code_prose_citations.py tests/test_config_selectors_are_parsed.py tests/test_count_list.py tests/test_dashboards_cover_metrics.py tests/test_engine_execgate.py tests/test_engine_journal_prune.py tests/test_engine_metrics.py tests/test_error_paths_are_logged.py tests/test_fleet_contracts.py tests/test_grafana_push_sh.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_infra_alloy_series.py tests/test_infra_compose_templates.py tests/test_infra_converge_guards.py tests/test_infra_grafana_keepalive.py tests/test_internal_terms_not_operator_visible.py tests/test_merge_gate.py tests/test_message_citations.py tests/test_ops_daily.py tests/test_ops_postverify.py tests/test_prose_chars.py tests/test_reboot_check.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_ops_daily_soak.py tests/test_engine_soak.py -q -p no:cacheprovider` (the consumer command below; `tests/test_config_selectors_are_parsed.py` is in it because it reads every test module for substring selectors over a config file, this task's cases among them, and the two soak modules because commit B changes `infra/scripts/ops_daily.py`, which they read). No executor step reaches a host; the attended ones are `## Rollout (attended)`'s. The commit trailers name the executing model: the executor writes its own model name where the fences below say `<model>`.
 
 **Files:**
 - Create: `infra/ansible/roles/cache/files/config.alloy` (Task 5 commit A)
@@ -3694,17 +3759,19 @@ Every Python runs through `uv run`; every commit's consumers are the tests that 
 - Create: `infra/grafana/cache-dashboard.json` (commit B)
 - Create: `infra/runbooks/cache.md` (commit B)
 - Modify: `infra/grafana/zcrypto-logs-dashboard.json` (L982, L988, L1024–1029, commit B)
-- Modify: `infra/runbooks/observability.md` (L5, L24, commit B)
+- Modify: `infra/runbooks/observability.md` (L5, L24, and the `zcrypto-node-collector-failed` section's host list and dependents table, L79, L92, L95, commit B)
 - Modify: `docs/reference/fleet.md` (the `grafana-alloy` row and three rows after the `access probe timers` row of Services and instruments, one Storage topology bullet, one Telemetry labels bullet after the one Task 1 rewrote, commit B)
 - Test: `tests/test_infra_alloy_series.py` (L16, L303–307, L337–339, L353–355, L376–378, L388, L396, L482, appended after L597, commit A; `CAPTURE_REQUIRED`, commit B)
 - Test: `tests/test_infra_converge_guards.py` (appended after its last line, commit A)
 - Test: `tests/test_infra_alert_rules.py` (L1270, L1375–1377, L1443, commit A)
 - Test: `tests/test_infra_compose_templates.py` (L131–135, commit A)
 - Test: `tests/test_dashboards_cover_metrics.py` (L42–48, commit A; L66–67, L214–217, L505–507, before L516, commit B)
+- Modify: `infra/scripts/ops_daily.py` (`_UID_HOST`, the line `    "zcrypto-alloy-dark-capture-secondary": "zcrypto-red",`, commit B)
+- Test: `tests/test_ops_daily.py` (the parametrization of `test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away`, commit B)
 
 **Interfaces:**
 - Consumes: the names in the interface list above; `_compose_alloy_limit_bytes`, `_compose_alloy_gomemlimit_bytes`, `_rule`, `ANSIBLE`, `REPO` in `tests/test_infra_alert_rules.py`; `find_task`, `load_tasks`, `truthy`, `assert_that`, `when_conditions`, `ANSIBLE` in `tests/test_infra_converge_guards.py`; `_keep_regex`, `_drop_regex`, `_journal_keep_block`, `PROCESS_FAMILIES` in `tests/test_infra_alloy_series.py`; `panel_families`, `alerted_families`, `KEEP_REGEX_FILES` in `tests/test_dashboards_cover_metrics.py`.
-- Produces: the metric families in `CACHE_REQUIRED` under `host="zcrypto-valkey1"`–`"zcrypto-valkey3"`, with `job="valkey"` and `job="sentinel"` on the Redis families, and `zcache_wireguard_handshake_age_seconds` under `host="zcrypto"` as well; Loki streams `{host="zcrypto-valkeyN", container=~"valkey|sentinel|alloy|zcache-probe"}`; the board `zcrypto-cache` with panel ids 101–108, 201–213, 301–305, 401–402 and the rows 100, 200, 300, 400; the eight rule uids in group `zcrypto-cache`; the runbook anchors `cache-manual-failover`, `cache-rejoin-node`, `cache-config-reset` and one per uid. The later proxy task adds its row, its two rules and their anchors to these three files.
+- Produces: the metric families in `CACHE_REQUIRED` under `host="zcrypto-valkey1"`–`"zcrypto-valkey3"`, with `job="valkey"` and `job="sentinel"` on the Redis families, and `zcache_wireguard_handshake_age_seconds` under `host="zcrypto"` as well; Loki streams `{host="zcrypto-valkeyN", container=~"valkey|sentinel|alloy|zcache-probe"}`; the board `zcrypto-cache` with panel ids 101–108, 201–213, 301–305, 401–402 and the rows 100, 200, 300, 400; the eight rule uids in group `zcrypto-cache`; the runbook anchors `cache-manual-failover`, `cache-rejoin-node`, `cache-config-reset`, `cache-password-rotation` and one per uid; `_UID_HOST` entries in `infra/scripts/ops_daily.py` for the three Alloy-dark uids. The later proxy task adds its row, its two rules and their anchors to these three files.
 
 - [ ] **Step 1: Write the failing tests for the node's telemetry**
 
@@ -4071,7 +4138,7 @@ prometheus.scrape "cache_host" {
 }
 
 // ---- Valkey and Sentinel ------------------------------------------------------------------------
-// The exporter detects Sentinel from the server's INFO (`redis_mode:sentinel`) and publishes the
+// The exporter detects Sentinel from the `# Sentinel` section of the server's INFO and publishes the
 // redis_sentinel_* families from it; no argument selects that mode. The Sentinel has no ACL user, only
 // its requirepass.
 prometheus.exporter.redis "valkey" {
@@ -4791,10 +4858,22 @@ def test_every_family_the_cache_nodes_admit_is_charted_or_alerted():
 
 ```
 
+In `tests/test_ops_daily.py`, in the parametrization of `test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away`, replace the line `        ("zcrypto-alloy-dark-capture-secondary", "zcrypto-red"),` with:
+
+```python
+        ("zcrypto-alloy-dark-capture-secondary", "zcrypto-red"),
+        ("zcrypto-alloy-dark-cache-1", "zcrypto-valkey1"),
+        ("zcrypto-alloy-dark-cache-2", "zcrypto-valkey2"),
+        ("zcrypto-alloy-dark-cache-3", "zcrypto-valkey3"),
+```
+
 - [ ] **Step 11: Run them and read the failure**
 
 Run: `uv run pytest tests/test_dashboards_cover_metrics.py -q -p no:cacheprovider`
 Expected: `2 failed, 19 passed`: `test_every_published_app_family_is_charted` names `zcache_wireguard_handshake_age_seconds`, published at `infra/ansible/roles/cache_link/files/zcache-probe.sh`, and `test_every_family_the_cache_nodes_admit_is_charted_or_alerted` names the twenty `redis_*` families and `zcache_wireguard_handshake_age_seconds`, which no panel draws and no rule reads yet.
+
+Run: `uv run pytest tests/test_ops_daily.py::test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away -q -p no:cacheprovider`
+Expected: `3 failed, 4 passed`: the three cache uids read no host, since `_UID_HOST` has no entry for them yet.
 
 - [ ] **Step 12: The Cache board**
 
@@ -5253,13 +5332,13 @@ Create `infra/grafana/cache-dashboard.json`:
       "id": 204,
       "type": "timeseries",
       "title": "Primary count \u2014 the page's value",
-      "description": "How far the number of nodes reporting role master is from one: 0 is healthy, 1 is no primary or two. It reads nothing while every node's telemetry is dark, which the Alloy-dark alerts own. The red line is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-primary-count",
+      "description": "How far the number of addresses at least two Sentinels name a healthy primary is from one: 0 is healthy, 1 is no primary the Sentinels agree on. It reads nothing while fewer than two nodes' Sentinel telemetry ships, which the Alloy-dark alerts own. The red line is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-primary-count",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 8, "x": 0, "y": 27},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-          "expr": "abs((count(redis_instance_info{job=\"valkey\", role=\"master\"}) or on() vector(0)) - 1) and on() count(up{job=\"valkey\"})",
+          "expr": "abs((count(count by (master_address) (redis_sentinel_master_status{job=\"sentinel\"} == 1) >= 2) or on() vector(0)) - 1) and on() (count(up{job=\"sentinel\"}) > 1)",
           "refId": "A",
           "legendFormat": "distance from one primary"
         }
@@ -5949,12 +6028,15 @@ Append to `infra/grafana/alerts.yaml`, after its last line (`      receiver: met
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # The distance of the master count from one, so 0 is healthy and both faults, none and two,
-          # read 1. The `and on() count(up{job="valkey"})` arm empties the result when no node's Alloy
-          # ships, which is the Alloy-dark rules' fault, not this one's; with Alloy up and every Valkey
-          # down, `up{job="valkey"}` stays 1 (the exporter answers) and this fires.
+          # The primary the Sentinels agree on: the addresses at least two of the three Sentinels name a
+          # healthy master, counted, and that count's distance from one, so 0 is healthy and 1 is no
+          # agreed primary. Each node's own `role` is not counted: a dark primary would count none, and a
+          # dead one's last sample outlives it by the query lookback beside its successor's. The `and
+          # on()` arm empties the result while fewer than two nodes' Sentinel telemetry ships, which the
+          # Alloy-dark rules own; with Alloy up and the Sentinels down, `up{job="sentinel"}` stays (the
+          # exporter answers) and this fires.
           expr: >-
-            abs((count(redis_instance_info{job="valkey", role="master"}) or on() vector(0)) - 1) and on() count(up{job="valkey"})
+            abs((count(count by (master_address) (redis_sentinel_master_status{job="sentinel"} == 1) >= 2) or on() vector(0)) - 1) and on() (count(up{job="sentinel"}) > 1)
           instant: true
           refId: A
       - refId: C
@@ -5974,7 +6056,7 @@ Append to `infra/grafana/alerts.yaml`, after its last line (`      receiver: met
     # deliberate `SENTINEL failover` with room to spare.
     for: 2m
     annotations:
-      summary: "The cache set has had no primary, or more than one, for 2+ minutes: the number of Valkey nodes reporting role master is not one. With none, cache writes have nowhere to land; with two, writes can split between them and a later failover discards one side. Read the Cache board's primary panels and the Sentinels' view before acting. Runbook: infra/runbooks/cache.md#zcrypto-cache-primary-count"
+      summary: "For 2+ minutes no node has been named a healthy primary by at least two of the three Sentinels, so the cache set has no primary its quorum agrees on and cache writes have nowhere to land. One node's telemetry going dark does not fire this; two Sentinels down does. Read each Sentinel's view and the Cache board's primary panels before acting. Runbook: infra/runbooks/cache.md#zcrypto-cache-primary-count"
       __dashboardUid__: "zcrypto-cache"
       __panelId__: "204"
       unit: "distance from exactly one primary"
@@ -6153,7 +6235,7 @@ Append to `infra/grafana/alerts.yaml`, after its last line (`      receiver: met
       receiver: metrics
 ```
 
-Beside that rule, the engine host's end of the mesh reaches Grafana: its capture Alloy ships the probe's family from this commit on, not from commit A, since `tests/test_infra_alert_rules.py::test_every_fault_signal_metric_is_watched_by_a_rule` holds each family the capture keep list admits, save those `NOT_A_FAULT_SIGNAL` excuses, to a rule that reads it. In `tests/test_infra_alloy_series.py`, in `CAPTURE_REQUIRED`, the list opening `CAPTURE_REQUIRED = [` (the same two lines stand in `ACCESS_REQUIRED` and in Step 1's `CACHE_REQUIRED`, and stay as they are), replace the two lines
+Beside that rule, the capture keep list admits the probe's family, so the engine host's end of the mesh reaches Grafana once the Rollout's capture-host converge at R7 deploys the edited `config.alloy`; the edit lands in this commit, not commit A, since `tests/test_infra_alert_rules.py::test_every_fault_signal_metric_is_watched_by_a_rule` holds each family the capture keep list admits, save those `NOT_A_FAULT_SIGNAL` excuses, to a rule that reads it. In `tests/test_infra_alloy_series.py`, in `CAPTURE_REQUIRED`, the list opening `CAPTURE_REQUIRED = [` (the same two lines stand in `ACCESS_REQUIRED` and in Step 1's `CACHE_REQUIRED`, and stay as they are), replace the two lines
 
 ```python
     "node_filesystem_avail_bytes",
@@ -6170,7 +6252,16 @@ with:
     "zcache_wireguard_handshake_age_seconds",
 ```
 
-In `infra/ansible/roles/capture/files/config.alloy`, in the keep regex, replace `|node_textfile_mtime_seconds|` (once, inside the `regex = "up|node_load1|...` line) with `|node_textfile_mtime_seconds|zcache_wireguard_handshake_age_seconds|`: the engine host runs the mesh probe and its capture Alloy ships the family; `CAPTURE_REQUIRED` holds it there.
+In `infra/ansible/roles/capture/files/config.alloy`, in the keep regex, replace `|node_textfile_mtime_seconds|` (once, inside the `regex = "up|node_load1|...` line) with `|node_textfile_mtime_seconds|zcache_wireguard_handshake_age_seconds|`: the engine host runs the mesh probe, and its capture Alloy ships the family from R7's capture converge on, since the capture role copies `config.alloy` only on a converge carrying `capture_alloy_digest`; `CAPTURE_REQUIRED` holds it there.
+
+In `infra/scripts/ops_daily.py`, in `_UID_HOST`, replace the line `    "zcrypto-alloy-dark-capture-secondary": "zcrypto-red",` with the four lines below: the three Alloy-dark rules' expression aggregates the `host` label away, so the daily pass reads a firing one's host from its uid.
+
+```python
+    "zcrypto-alloy-dark-capture-secondary": "zcrypto-red",
+    "zcrypto-alloy-dark-cache-1": "zcrypto-valkey1",
+    "zcrypto-alloy-dark-cache-2": "zcrypto-valkey2",
+    "zcrypto-alloy-dark-cache-3": "zcrypto-valkey3",
+```
 
 - [ ] **Step 14: The cache runbook**
 
@@ -6179,7 +6270,7 @@ Create `infra/runbooks/cache.md`:
 ````markdown
 # Cache runbooks — the engine's Valkey set
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to move the primary, rejoin a node or apply a configuration change: the three procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to move the primary, rejoin a node, apply a configuration change or apply a changed password: the four procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 The set is three Linode nodes, `zcrypto-valkey1`, `zcrypto-valkey2` and `zcrypto-valkey3` (the workstation's ssh aliases `db1`, `db2` and `db3`; `Cache 1` to `Cache 3` in Slack and on the Cache board), each running Valkey on `6379`, a Sentinel on `26379` and a Grafana Alloy, in containers named `zcrypto-valkey`, `zcrypto-sentinel` and `grafana-alloy`. One node is the primary and two are replicas; the three Sentinels, quorum 2, pick the primary under the name `zcache`. The nodes and the engine host talk over the WireGuard mesh `zcache0`: the engine host is `10.98.0.1`, the nodes are `10.98.0.11` to `10.98.0.13` in order, and Valkey and Sentinel listen on loopback and the mesh address alone. Promotion prefers valkey1 and valkey2 (`replica-priority` 100) over valkey3 (250), which sits in another region as the copy that survives a regional outage.
 
@@ -6225,7 +6316,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired, or `zcrypto-cache-replicas-short` sent you here: a node is not replicating from the primary — its `INFO replication` reads `master_link_status:down`, or its data directory was lost or replaced — and it is to rejoin as a replica.
+Nothing fired, or `zcrypto-cache-replicas-short` sent you here: a node is not replicating from the primary — its `INFO replication` reads `master_link_status:down`, it still reads `role:master` while the Sentinels name another node, or its data directory was lost or replaced — and it is to rejoin as a replica.
 
 ### What it means
 
@@ -6234,8 +6325,8 @@ A replica that reconnects to the primary resyncs on its own: a partial resync wh
 ### What to do
 
 1. **Is the node the primary?** On one node: `sn SENTINEL get-master-addr-by-name zcache`. If it names this node's mesh address, run `cache-manual-failover` above first.
-2. **Restart the node's cache containers:** `sudo systemctl restart zcrypto-cache.service` on the node. Valkey reloads its AOF and reconnects to the primary its config names; the Sentinels correct that to the current primary if it differs, within seconds.
-3. **Confirm by value on the node:** `vk INFO replication` reads `role:slave`, `master_link_status:up`, and a `master_host` that is the address step 1 printed. On the primary, `vk INFO replication` lists the node as `state=online`.
+2. **Restart the node's cache containers:** `sudo systemctl restart zcrypto-cache.service` on the node. Valkey reloads its AOF and reconnects to the primary its config names. When the node missed a failover while it was down, that address is a replica now: the node replicates from it, chained, until the Sentinels repoint it, which they do once `failover-timeout` (60 s) has passed, so the chain can last about a minute and a half.
+3. **Confirm by value on the node, a minute and a half after step 2:** `vk INFO replication` reads `role:slave` and `master_link_status:up`, then a `master_host` that is the address step 1 printed; another address before then is step 2's chain, not a fault. On the primary, `vk INFO replication` lists the node as `state=online`.
 4. **Confirm the Sentinels see it**, on each node: `sn SENTINEL replicas zcache` lists the node's mesh address with `flags` reading `slave` and without `s_down`.
 5. **Still not linked after two minutes** — the node's `vk INFO replication` reads `master_link_status:down` — means its files are the fault: run `cache-config-reset` below on this node.
 
@@ -6251,24 +6342,52 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired. You changed the cache role's Valkey or Sentinel template and mean a node to run it, or `cache-rejoin-node` sent you here because a node's own files are broken.
+Nothing fired. You changed the cache role's Valkey or Sentinel template and mean a node to run it, or `cache-rejoin-node` sent you here because a node's own files are broken. A password changed in `group_vars/cache_host/vault.yml` is `cache-password-rotation` below, not this procedure: a node reset alone to a new password fails to authenticate to, and from, the nodes still holding the old one.
 
 ### What it means
 
-The role renders `valkey.conf` and `sentinel.conf` when they are absent and leaves them alone after: Valkey rewrites its `replicaof` into its file and Sentinel its known replicas, Sentinels and epoch into its own, and re-rendering them on a routine converge would reset the node's replication state. The role compares the rendered templates' hashes against a recorded copy, so a template change the nodes have not taken shows on the converge without being applied. `-e cache_config_reset=true` replaces both files on the node it converges. A replaced `valkey.conf` names the first primary, valkey1, and a replaced `sentinel.conf` monitors it at epoch 0; the other two Sentinels correct both within seconds, since a Sentinel adopts the configuration carrying the higher epoch. One node per converge, replicas first and the primary last after `cache-manual-failover`.
+The role renders `valkey.conf` and `sentinel.conf` when they are absent and leaves them alone after: Valkey rewrites its `replicaof` into its file and Sentinel its known replicas, Sentinels and epoch into its own, and re-rendering them on a routine converge would reset the node's replication state. The role compares the rendered templates' hashes against a recorded copy, so a template change the nodes have not taken shows on the converge without being applied. `-e cache_config_reset=true` replaces both files on the node it converges, and the role refuses it on a converge without the node's image digest, since it renders them inside the digest's block. A replaced `sentinel.conf` monitors the first primary, valkey1, at epoch 0, and the other two Sentinels correct it within seconds, since a Sentinel adopts the configuration carrying the higher epoch. A replaced `valkey.conf` names valkey1 too: when valkey1 is not the primary, the node replicates from it, a replica itself, until the Sentinels repoint the node once `failover-timeout` (60 s) has passed, about a minute and a half. One node per converge, replicas first and the primary last after `cache-manual-failover`.
 
 ### What to do
 
 1. **Fail the primary over if this node holds it** — `cache-manual-failover` above — so the node is a replica before its files go.
-2. **Stop the node's cache containers:** `sudo systemctl stop zcrypto-cache.service` on the node.
-3. **Read the node's last successful converge** from the workstation, to re-pass its operands unchanged: `jq -c 'select(.limit == "zcrypto-valkey<N>" and .rc == 0) | .extra_vars' docs/reference/deploy-log.jsonl | tail -1`.
-4. **Converge with the reset**, from `infra/ansible`: `./scripts/converge.sh site.yml --limit zcrypto-valkey<N> --tags cache -e cache_config_reset=true` plus each `-e key=value` step 3 printed.
+2. **Read the image digest the node runs**, on the node, before its containers go: `sudo docker inspect zcrypto-valkey --format '{{.Config.Image}}'` prints `valkey/valkey@sha256:<64 hex>`.
+3. **Stop the node's cache containers:** `sudo systemctl stop zcrypto-cache.service` on the node.
+4. **Converge with the reset and that digest**, from `infra/ansible`: `./scripts/converge.sh site.yml --limit zcrypto-valkey<N> --tags cache -e cache_config_reset=true -e cache_image_digest=sha256:<the 64 hex step 2 printed>`.
 5. **Start the containers:** `sudo systemctl start zcrypto-cache.service` on the node.
-6. **Confirm by value**, as `cache-rejoin-node` steps 3 and 4 do; and on this node `sn SENTINEL get-master-addr-by-name zcache` names the current primary, which on a node that was not valkey1's replica takes up to a minute while the Sentinels' announcements reach it.
+6. **Confirm by value**, as `cache-rejoin-node` steps 3 and 4 do, a minute and a half after step 5; on this node `sn SENTINEL get-master-addr-by-name zcache` names the current primary within seconds.
 
 ### Retire when
 
 The tasks in `infra/ansible/roles/cache/tasks/main.yml` that render `valkey.conf` and `sentinel.conf` lose their absent-file condition, which makes the reset flag meaningless.
+
+______________________________________________________________________
+
+<a name="cache-password-rotation"></a>
+
+## cache-password-rotation — PROCEDURE: applying a changed cache password
+
+### What you are seeing
+
+Nothing fired. You mean to change a password in `group_vars/cache_host/vault.yml`, or a converge's drift report named `valkey.conf`, `sentinel.conf` or `users.acl` after one changed there, since their renders carry the passwords.
+
+### What it means
+
+The nodes authenticate to each other: a replica to its primary with the `replica` password, each Sentinel to each Valkey with the `sentinel` password and to the other Sentinels with Sentinel's `requirepass`. A node reset alone to a new password fails to authenticate to, and from, a node still holding the old one, so the three nodes' files are replaced in one stop, the set down for the minutes it takes; once the engine is wired to the set, that is inside an engine inter-cycle gap. The rendered files name valkey1 as the first primary, so valkey1 holds the primary before the stop and starts first, and no write the set took is lost. `vk` and `sn` read their passwords from files a converge carrying the node's image digest re-renders, and Alloy reads the exporter password and `requirepass` from a secrets file the same converge re-renders and the container reads when it is recreated.
+
+### What to do
+
+1. **Put the primary on valkey1 while the nodes still run the old passwords:** `cache-manual-failover` above, repeated until `sn SENTINEL get-master-addr-by-name zcache` names `10.98.0.11`. When a converge already carried the change, `vk` or `sn` answers `WRONGPASS` or `NOAUTH`: put the old value back in `vault.yml`, converge each node with the image digest it runs, read as step 3 reads it, and begin here again.
+2. **Change the password** in `group_vars/cache_host/vault.yml` by the recipe in that file's header, merged to `develop`, which the converges below run from.
+3. **Read each node's running digests**, on each node: `sudo docker inspect zcrypto-valkey grafana-alloy --format '{{.Config.Image}}'` prints Valkey's, then Alloy's.
+4. **Stop the three nodes, valkey3 and valkey2 before valkey1:** `sudo systemctl stop zcrypto-cache.service` on each.
+5. **Converge each node with the reset, valkey1 first**, from `infra/ansible`: `./scripts/converge.sh site.yml --limit zcrypto-valkey<N> --tags cache -e cache_config_reset=true -e cache_image_digest=sha256:<its Valkey digest> -e cache_alloy_digest=sha256:<its Alloy digest>`. The converge renders the node's files and starts its daemons.
+6. **Recreate each node's Alloy** so it reads the new secrets: `cd /opt/zcrypto-cache/alloy && sudo docker compose up -d` on each node.
+7. **Confirm by value:** on valkey2 and valkey3, `cache-rejoin-node` steps 3 and 4; on each node, `sn SENTINEL ckquorum zcache` answers `OK 3 usable Sentinels`; from the workstation, `uv run python infra/scripts/grafana-query.py 'redis_up{host=~"zcrypto-valkey[123]"}'` reads 1 on six series, a node's `valkey` and `sentinel` each.
+
+### Retire when
+
+`infra/ansible/roles/cache/templates/users.acl.j2` renders no password, or `infra/ansible/roles/cache/` no longer exists.
 
 ______________________________________________________________________
 
@@ -6296,7 +6415,7 @@ A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1`
 6. **A recreate is needed when the container is absent or its env or cap changed:** `cd /opt/zcrypto-cache/alloy && sudo docker compose up -d`. `sudo` is needed because `alloy-secrets.env` is 0600 and owned by `zcrypto-alloy`.
 7. **A config fault is a converge, not a host edit:** compare `sha256sum /opt/zcrypto-cache/alloy/conf/config.alloy` on the node with `sha256sum infra/ansible/roles/cache/files/config.alloy`, then converge the node with its running Alloy digest, `-e cache_alloy_digest=sha256:<running>`, read with `sudo docker inspect grafana-alloy --format '{{.Config.Image}}'`.
 
-**Verify by value:** `uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto-valkey<N>"})'` reads 4 — the host scrape's two targets and the two Redis exporters — with the rule back to **Normal**; `(no series)` is a fail, not a zero. Expect `zcrypto-fleet-daemon-restarted` once for `job="integrations/self"` after a restart; it clears within 15 minutes.
+**Verify by value:** `uv run python infra/scripts/grafana-query.py 'count(up{host="zcrypto-valkey<N>"})'` reads 4 — the host scrape's two targets and the two Redis exporters — with the rule back to **Normal**; `(no series)` is a fail, not a zero.
 
 ### Retire when
 
@@ -6310,19 +6429,19 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **critical** Grafana alert, `Cache · not exactly one primary`: for two minutes the number of Valkey nodes reporting `role:master` has not been one. The value is the distance from one, so it reads 1 for both faults; the Cache board's *Which node is primary* panel (205) tells them apart.
+A **critical** Grafana alert, `Cache · not exactly one primary`: for two minutes no node has been named a healthy primary by at least two of the three Sentinels. The value is the distance of that count from one, 1 when no primary is agreed; the Cache board's *Which node is primary* panel (205) shows each node's own role beside it.
 
 ### What it means
 
-**No primary**: a failover did not complete — fewer than two Sentinels agree the old primary is down, or no replica is eligible — and cache writes have nowhere to land; the engine, once wired, logs its failed writes on its native side, which reaches no log store. **Two primaries**: a node that was primary came back after a failover and has not yet been turned into a replica, or the Sentinels disagree; writes can land on both and the next reconfiguration discards one side. The rule stays quiet while every node's telemetry is dark, which the Alloy-dark alerts own.
+**No agreed primary**: a failover did not complete — fewer than two Sentinels agree the old primary is down, or no replica is eligible — or two of the three Sentinels are down, and cache writes have nowhere to land; the engine, once wired, logs its failed writes on its native side, which reaches no log store. One node's telemetry going dark does not fire it: the other two Sentinels still name the primary. The rule stays quiet while fewer than two nodes' telemetry ships, which the Alloy-dark alerts own. A node that still reads `role:master` after the Sentinels moved the primary is not counted here; `cache-rejoin-node` turns it back into a replica.
 
 ### What to do
 
 1. **Read what each Sentinel names**, on each node: `sn SENTINEL get-master-addr-by-name zcache`. Three agreeing on one address is the set's view; the node at that address is the primary the set means.
 2. **Read each node's role**, on each node: `vk INFO replication`, its `role:` line.
-3. **No primary and the Sentinels agree on a dead address:** read `sn SENTINEL ckquorum zcache` on a live node; a quorum shortfall names how many Sentinels it reaches. Bring the dead node back (`sudo systemctl start zcrypto-cache.service` on it) or, with two Sentinels reachable, `sn SENTINEL failover zcache` promotes a live replica.
-4. **Two primaries:** the one the Sentinels do not name is the stale one. Restart its containers — `sudo systemctl restart zcrypto-cache.service` on that node — and the Sentinels reconfigure it as a replica; then confirm by `cache-rejoin-node` steps 3 and 4.
-5. **Confirm by value:** `uv run python infra/scripts/grafana-query.py 'count(redis_instance_info{job="valkey", role="master"})'` reads 1, and the rule is back to **Normal**.
+3. **The Sentinels agree on a dead address, or fewer than two answer:** read `sn SENTINEL ckquorum zcache` on a live node; a quorum shortfall names how many Sentinels it reaches. Bring the dead node back (`sudo systemctl start zcrypto-cache.service` on it) or, with two Sentinels reachable, `sn SENTINEL failover zcache` promotes a live replica.
+4. **A node that reads `role:master` while the Sentinels name another** is not this alert's fault: rejoin it with `cache-rejoin-node` above.
+5. **Confirm by value:** `uv run python infra/scripts/grafana-query.py 'count by (master_address) (redis_sentinel_master_status{job="sentinel"} == 1)'` names one address, counted 3, and the rule is back to **Normal**.
 
 ### Retire when
 
@@ -6497,6 +6616,12 @@ with
 (The fifth sibling, `zcrypto-alloy-dark-zaccess`, covers the bridgehead, whose Alloy is a native apt install with a different procedure — it has its own section at `zaccess.md#zaccess-bridgehead-dark`. The three cache nodes' siblings, `zcrypto-alloy-dark-cache-1` to `-3`, have theirs at `cache.md#zcrypto-alloy-dark-cache-1`, since their set is watched from the other two nodes while one is dark.)
 ```
 
+In the same page's `zcrypto-node-collector-failed` section, whose rule has no host selector and so reads the cache nodes too (their keep list admits `node_scrape_collector_success`), make three replacements. `both capture hosts, ops, the NAS and the bridgehead. All five run the same six collectors` becomes `both capture hosts, ops, the NAS, the bridgehead and the three cache nodes. All eight run the same six collectors` (the cache config's `set_collectors` is the same six). In the table row beginning `` | `textfile`, on a capture host | ``, `` and on the primary `zcrypto-engine-journal-prune-dead` | `` becomes `` and on the primary `zcrypto-engine-journal-prune-dead` and the engine host's rows of `zcrypto-cache-wg-handshake-stale` | ``. After the row `` | `textfile`, on the bridgehead | `zaccess-tunnel-stale`, `zaccess-cert-expiring` | none | ``, insert the row
+
+```markdown
+| `textfile`, on a cache node | that node's rows of `zcrypto-cache-wg-handshake-stale` | none |
+```
+
 In `docs/reference/fleet.md`, section `Telemetry labels`, after the Loki bullet Task 1 rewrote (the line beginning `- Loki labels: `container`, `host`, `job`, `level`, `service_name`; `host ∈ {nas, ops, zcrypto, zcrypto-red, zcrypto-valkey1,`), insert the bullet
 
 ```markdown
@@ -6535,7 +6660,7 @@ Expected: every hook Passed; mdformat may renumber or re-space `infra/runbooks/c
 - [ ] **Step 19: Commit B**
 
 ```bash
-git add infra/grafana/cache-dashboard.json infra/grafana/alerts.yaml infra/runbooks/cache.md infra/grafana/zcrypto-logs-dashboard.json infra/runbooks/observability.md docs/reference/fleet.md infra/ansible/roles/capture/files/config.alloy tests/test_dashboards_cover_metrics.py tests/test_infra_alloy_series.py
+git add infra/grafana/cache-dashboard.json infra/grafana/alerts.yaml infra/runbooks/cache.md infra/grafana/zcrypto-logs-dashboard.json infra/runbooks/observability.md docs/reference/fleet.md infra/ansible/roles/capture/files/config.alloy infra/scripts/ops_daily.py tests/test_dashboards_cover_metrics.py tests/test_infra_alloy_series.py tests/test_ops_daily.py
 git commit -m "feat(grafana): the Cache board, the zcrypto-cache rule group and the cache runbook
 
 \`infra/grafana/cache-dashboard.json\`, uid \`zcrypto-cache\`, draws the three nodes in four rows:
@@ -6547,17 +6672,22 @@ the replica link, memory against maxmemory, commands, clients, the AOF and RDB s
 the logs (the engine's lines naming the cache, the nodes' Valkey and Sentinel lines). A panel an
 alert points at plots that rule's own expression under that rule's bar.
 
-The \`zcrypto-cache\` group: Alloy dark per node, not exactly one primary, fewer than two replicas
-on the primary, memory past 70% of maxmemory, the AOF off or failing, and a mesh handshake older
+The \`zcrypto-cache\` group: Alloy dark per node, not exactly one primary as the Sentinels agree on
+it (an address at least two of the three name healthy, so one node's dark telemetry cannot fire
+it), fewer than two replicas on the primary, memory past 70% of maxmemory, the AOF off or failing, and a mesh handshake older
 than three minutes on any of the four members, read as the recorded age plus the probe file's own
 age so a stopped timer fires it too. Beside that rule the capture keep list admits the mesh probe's
 family, since the engine host runs the probe; \`CAPTURE_REQUIRED\` in
 \`tests/test_infra_alloy_series.py\` holds it there. \`infra/runbooks/cache.md\` carries a section per rule and the
-three procedures the rules lean on: moving the primary, rejoining a node, resetting a node's
-config; its valkey-cli reads take their passwords from the cache role's root-only env files. The
+four procedures the rules and the role's drift report lean on: moving the primary, rejoining a node, resetting a node's
+config, and applying a changed password to the three nodes in one stop; its valkey-cli reads take
+their passwords from the cache role's root-only env files. \`_UID_HOST\` in
+\`infra/scripts/ops_daily.py\` names each Alloy-dark rule's node, which the rule's expression
+aggregates away. The
 Logs board gains the three hosts; \`docs/reference/fleet.md\` gains their telemetry labels, the
 Valkey, mesh and mesh-probe rows of its services table and the cache nodes' storage; the
-observability page points the Alloy-dark family at the cache section. The daily pass's autonomy
+observability page points the Alloy-dark family at the cache section and names the cache nodes in
+its collector-failure section. The daily pass's autonomy
 floor over the runbook corpus reads <the ratio Step 15 printed> with the cache runbook in it.
 
 \`_APP\` in \`tests/test_dashboards_cover_metrics.py\` gains the \`zcache\` namespace with its canary,
@@ -6609,12 +6739,16 @@ infra/scripts/mutate-probe.sh --file $M --control 's/"zcrypto_capture_book_desyn
 infra/scripts/mutate-probe.sh --file infra/ansible/roles/capture/files/config.alloy --control 's/"up|node_load1|/"up|/' \
   --mutation 's/|zcache_wireguard_handshake_age_seconds|/|/' \
   -- uv run pytest "tests/test_infra_alloy_series.py::test_keep_regex_admits_every_published_series[capture]" -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file infra/scripts/ops_daily.py \
+  --control 's/ or _UID_HOST.get(uid) for instance in instances)/ for instance in instances)/' \
+  --mutation '/^    "zcrypto-alloy-dark-cache-2": "zcrypto-valkey2",$/d' \
+  -- uv run pytest tests/test_ops_daily.py::test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away -q -p no:cacheprovider
 ```
 
 Expected: each run ends `KILLED` with `control proven`. Then replace the `PROBE_VERDICT` line, by `git commit --amend` with the whole message re-supplied, with:
 
 ```
-Probe: `infra/scripts/mutate-probe.sh`, nine runs, seven of them through the seven board and runbook
+Probe: `infra/scripts/mutate-probe.sh`, ten runs, seven of them through the seven board and runbook
 cases of `tests/test_infra_alert_rules.py` and `tests/test_dashboards_cover_metrics.py`. Over
 `infra/grafana/alerts.yaml`, control the AOF rule's runbook anchor broken: the primary-count
 pointer moved to a panel that does not exist, KILLED, control proven; the handshake bar moved off
@@ -6628,14 +6762,16 @@ through `test_the_publisher_scan_still_finds_each_source_kind`: the `zcache` nam
 from `_APP`, KILLED, control proven. Over `infra/ansible/roles/capture/files/config.alloy`, control
 `node_load1` dropped from the keep regex, through the capture case of
 `test_keep_regex_admits_every_published_series`: the mesh probe's family dropped, KILLED, control
-proven.
+proven. Over `infra/scripts/ops_daily.py`, control the uid fallback removed from `_hosts_of`, through
+`test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away`: Cache 2's uid dropped
+from `_UID_HOST`, KILLED, control proven.
 ```
 
 Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
 
 **Operator steps (attended)**
 
-None of this task's attended steps runs on the branch: Alloy's converge and start on each node, the read of every metric name and job before the push, the correction when one differs, the push from merged `develop`, each rule's first sample by value, a fresh Loki line per node and the Alloy pins rows are `## Rollout (attended)` steps R5, R7, R8 and R9. Alloy opens no port, so neither firewall layer changes: its one listener is `127.0.0.1:12345`, and it reaches Grafana Cloud outbound.
+None of this task's attended steps runs on the branch: Alloy's converge and start on each node, the capture hosts' converge that deploys commit B's keep-regex edit to their Alloy, the read of every metric name and job before the push, the correction when one differs, the push from merged `develop`, each rule's first sample by value, a fresh Loki line per node and the Alloy pins rows are `## Rollout (attended)` steps R5, R7, R8 and R9. Alloy opens no port, so neither firewall layer changes: its one listener is `127.0.0.1:12345`, and it reaches Grafana Cloud outbound.
 
 ---
 
@@ -7466,7 +7602,7 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 
 **P3. The five cache passwords** (Task 4 operator step O1), committed on the branch.
 
-**P4. The exporter's ACL line against its README** (Task 4 operator step O2), before any converge; a correction is its own commit on the branch.
+**P4. The exporter's ACL line against its README** (Task 4 operator step O2), before any converge; a difference beyond the three tokens O2 names goes to the owner.
 
 Then the pull request opens through the `open-pr` skill, a different agent reads the branch, and `merge-pr` merges it. Everything below runs from merged `develop`.
 
@@ -7492,13 +7628,13 @@ W$ APP=$(grep -F -- "- \`$E12\` = " docs/reference/fleet-pins.md | grep -oE 'sha
 ```
 W$ (cd infra/ansible && uv run ansible-playbook bootstrap.yml --limit zcrypto-valkeyN -e ansible_user=root -e ansible_port=22)
 W$ ssh dbN 'printf "%s " "$(hostname)"; sudo -n true && echo sudo-ok'
-W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-valkeyN --tags base,hardening,firewall,fail2ban,chrony,docker
+W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-valkeyN --tags base,hardening,firewall,fail2ban,chrony,docker -e daemon_json_ack=true
 W$ ssh dbN hostname
 W$ ssh dbN 'sudo nft list ruleset | grep -E "10022|51821|6379|26379"'
 W$ ssh dbN sudo docker version --format '{{.Server.Version}}'
 ```
 
-The bootstrap's recap reads `failed=0 unreachable=0`, its primary refusal `skipping` (no cache node is in `engine_host`) and its re-bootstrap probe finding no `zcrypto-deploy`; the re-bootstrap refusal firing means the node was provisioned before: stop and read it, never pass `-e rebootstrap=true` on a node this plan has not first rebuilt. The first `ssh dbN` prints the fingerprint O2 read, then the provider-assigned hostname and `sudo-ok`. After the converge, `hostname` prints `zcrypto-valkeyN`; the ruleset accepts `10022` and `51821` on the public side and `6379`, `26379` only under `iifname "zcache0"`; the Docker server answers. The tag list keeps the `cache_link` and `cache` roles off the node, so R4 runs the probe on a node with Docker and no Valkey of the role's. Once all three nodes are converged, Task 1 O1's port probe reads `22 closed` and `10022 open` on each (the hardening role removed the bootstrap drop-in); then remove the TCP `22` rule from `zcrypto-cache` in the Cloud Manager and re-run the probe: the same reading, and `W$ for a in db1 db2 db3; do ssh "$a" hostname; done` prints the three names.
+The bootstrap's recap reads `failed=0 unreachable=0`, its primary refusal `skipping` (no cache node is in `engine_host`) and its re-bootstrap probe finding no `zcrypto-deploy`; the re-bootstrap refusal firing means the node was provisioned before: stop and read it, never pass `-e rebootstrap=true` on a node this plan has not first rebuilt. The first `ssh dbN` prints the fingerprint O2 read, then the provider-assigned hostname and `sudo-ok`. The converge's preview prints the docker role's `daemon.json` diff against a file the node does not have yet, the change `-e daemon_json_ack=true` acknowledges; no container runs on the node to restart. After the converge, `hostname` prints `zcrypto-valkeyN`; the ruleset accepts `10022` and `51821` on the public side and `6379`, `26379` only under `iifname "zcache0"`; the Docker server answers. The tag list keeps the `cache_link` and `cache` roles off the node, so R4 runs the probe on a node with Docker and no Valkey of the role's. Once all three nodes are converged, Task 1 O1's port probe reads `22 closed` and `10022 open` on each (the hardening role removed the bootstrap drop-in); then remove the TCP `22` rule from `zcrypto-cache` in the Cloud Manager and re-run the probe: the same reading, and `W$ for a in db1 db2 db3; do ssh "$a" hostname; done` prints the three names.
 
 **R3. The mesh: the nodes, then the engine host** (Task 3). First Task 3 operator step O2, the Cloud Firewall's `51821/udp` rule on `zcrypto-cache` and, when a firewall is attached to `zcrypto`, on that one. Then for `N` in `1`, `2`, `3`:
 
@@ -7590,7 +7726,7 @@ H$ sudo docker exec --env-file /opt/zcrypto-cache/cli-sentinel.env zcrypto-senti
 H$ sudo journalctl CONTAINER_NAME=zcrypto-sentinel -n 50 --no-pager | grep -F '+monitor'
 ```
 
-After valkey1: `active`; `zcrypto-valkey` and `zcrypto-sentinel` at `valkey/valkey@<VK>` and `grafana-alloy` at `grafana/alloy@<AL>`, each `running 0`; four listeners, `127.0.0.1` and `10.98.0.11` on each of 6379 and 26379, and no other address; `role:master`, `connected_slaves:0`; the two `INFO server` lines, recorded verbatim for R9's message (the library's version check parses `redis_version`); Sentinel names `10.98.0.11` and `6379`; a `+monitor master zcache 10.98.0.11 6379 quorum 2` line. A container that restarts in a loop with an ACL error in `sudo journalctl CONTAINER_NAME=zcrypto-valkey -n 50 --no-pager` names the `users.acl` token Valkey 9.1.2 refuses: stop, fix the template on a branch, and re-converge the node with `-e cache_config_reset=true` once it merges, since the file is re-rendered only under a reset. After valkey2 and after valkey3: on the new node `role:slave`, `master_host:10.98.0.11`, `master_link_status:up`; on `db1` the same `INFO replication` read shows `connected_slaves` one higher, each `slaveK:` line `state=online` with `lag=0` or `lag=1`, and `master_repl_offset` equal to the new node's `slave_repl_offset` (the set is idle, so the two agree within seconds); `ckquorum` answers `OK 2 usable Sentinels. Quorum and failover authorization can be reached` after valkey2 and `OK 3 usable Sentinels. ...` on each node after valkey3. Then the public side, from the workstation:
+After valkey1: `active`; `zcrypto-valkey` and `zcrypto-sentinel` at `valkey/valkey@<VK>` and `grafana-alloy` at `grafana/alloy@<AL>`, each `running 0`; four listeners, `127.0.0.1` and `10.98.0.11` on each of 6379 and 26379, and no other address; `role:master`, `connected_slaves:0`; the two `INFO server` lines, recorded verbatim for R9's message (the library's version check parses `redis_version`); Sentinel names `10.98.0.11` and `6379`; a `+monitor master zcache 10.98.0.11 6379 quorum 2` line. A container that restarts in a loop with an ACL error in `sudo journalctl CONTAINER_NAME=zcrypto-valkey -n 50 --no-pager` names the `users.acl` token Valkey 9.1.2 refuses: stop, fix the template on a branch, and re-converge the node with `-e cache_config_reset=true` beside R5's two digests and R6's `pins_override` operand once it merges, since the file is re-rendered only under a reset, and the role refuses a reset without `cache_image_digest`. After valkey2 and after valkey3: on the new node `role:slave`, `master_host:10.98.0.11`, `master_link_status:up`; on `db1` the same `INFO replication` read shows `connected_slaves` one higher, each `slaveK:` line `state=online` with `lag=0` or `lag=1`, and `master_repl_offset` equal to the new node's `slave_repl_offset` (the set is idle, so the two agree within seconds); `ckquorum` answers `OK 2 usable Sentinels. Quorum and failover authorization can be reached` after valkey2 and `OK 3 usable Sentinels. ...` on each node after valkey3. Then the public side, from the workstation:
 
 ```
 W$ for h in zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3; do for p in 6379 26379; do timeout 5 bash -c "</dev/tcp/$h.zhaow.me/$p" 2>/dev/null && echo "$h:$p OPEN" || echo "$h:$p closed"; done; done
@@ -7606,7 +7742,19 @@ H$ sudo docker exec --env-file /opt/zcrypto-cache/cli-sentinel.env zcrypto-senti
 
 `OK`. Within fifteen seconds each node's `SENTINEL get-master-addr-by-name zcache` names `10.98.0.12` (valkey2's priority 100 beats valkey3's 250); on `db1` `INFO replication` reads `role:slave`, `master_host:10.98.0.12`, `master_link_status:up`, and `sudo grep -E '^replicaof' /var/lib/zcrypto-cache/conf/valkey.conf` names `10.98.0.12 6379`, the daemon's own rewrite. Then the render-if-absent proof on a live node, R5's converge again for `zcrypto-valkey1` with the same two digests plus `-e '{"pins_override": "first pins of the cache nodes, recorded by this rollout at R9"}'`, since the pins rows land at R9 and both pins refusals now see a running container: the real pass's recap reads `changed=0 failed=0 ignored=0`, the `grep` still names `10.98.0.12`, and R5's `docker inspect` still reads `RestartCount` 0. Two minutes after the first failover (twice `failover-timeout`), on `db2`, the same `SENTINEL failover zcache`: `OK`; within fifteen seconds all three Sentinels name `10.98.0.11` (valkey1's 100 beats valkey3's 250), `db1` reads `role:master` with `connected_slaves:2`, and `db2` and `db3` read `master_host:10.98.0.11`, `master_link_status:up`. The daemons have now rewritten `valkey.conf` and `sentinel.conf` on every node (spec D9); later converges leave them as they are.
 
-**R7. Every metric name, label and job, read before anything is pushed** (Task 5). The exporters' own output as Alloy serves it on loopback, against the list the tests hold, then what reached Grafana Cloud:
+**R7. Every metric name, label and job, read before anything is pushed** (Task 5). First the capture hosts' Alloy config: Task 5's commit B added `zcache_wireguard_handshake_age_seconds` to the keep regex of `infra/ansible/roles/capture/files/config.alloy`, which the capture role copies onto a host only on a converge carrying `capture_alloy_digest`, and until one does, that role's drift assert refuses each capture-tagged converge of either capture host that omits the digest. The shape is `.claude/skills/zcrypto-rollout-image/SKILL.md`'s for a `config.alloy` edit: `zcrypto-red` first, then `zcrypto` at least an hour later (`infra/scripts/count-list.sh capture-hosts-converged-within-an-hour` books a closer pair), each with the digests its containers run, read from the containers; the primary's run takes `-e converge_primary=true`, after Kraken's maintenance feed read whole at planning time and again immediately before, R3's command:
+
+```
+W$ ssh red sudo docker inspect --format '{{.Name}} {{.Config.Image}} {{.RestartCount}} {{.State.StartedAt}}' zcrypto-capture grafana-alloy
+W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-red --tags capture -e capture_image_digest=sha256:<zcrypto-capture's> -e capture_alloy_digest=sha256:<grafana-alloy's>
+W$ ssh red sudo docker inspect --format '{{.Name}} {{.Config.Image}} {{.RestartCount}} {{.State.StartedAt}}' zcrypto-capture grafana-alloy
+W$ ssh zcrypto sudo docker inspect --format '{{.Name}} {{.Config.Image}} {{.RestartCount}} {{.State.StartedAt}}' zcrypto-capture zcrypto-engine grafana-alloy
+W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto --tags capture -e converge_primary=true -e capture_image_digest=sha256:<zcrypto-capture's> -e capture_alloy_digest=sha256:<grafana-alloy's>
+W$ ssh zcrypto sudo docker inspect --format '{{.Name}} {{.Config.Image}} {{.RestartCount}} {{.State.StartedAt}}' zcrypto-capture zcrypto-engine grafana-alloy
+W$ uv run python infra/scripts/grafana-query.py 'zcache_wireguard_handshake_age_seconds{host="zcrypto"}'
+```
+
+Each preview's diff is the keep-regex line of `config.alloy`; any other diff stops the run until it is read. Each pair of marker reads prints the same lines: the digests are the running ones, so no compose file changes, and the config's `reload alloy` handler reloads Alloy in place. The last read, at the next scrape after the primary's converge, is three series, one per node's mesh address, each under 180; `(no series)` is a fail. Then the exporters' own output as Alloy serves it on loopback, against the list the tests hold, then what reached Grafana Cloud:
 
 ```
 W$ uv run python -c 'import sys; sys.path.insert(0, "tests"); import test_infra_alloy_series as t; print("\n".join(sorted(t.CACHE_REDIS_SERIES)))'
@@ -7618,9 +7766,10 @@ W$ uv run python infra/scripts/grafana-query.py 'count by (job) (up{host="zcrypt
 W$ uv run python infra/scripts/grafana-query.py 'count by (__name__) ({host="zcrypto-valkey1", __name__=~"redis_.*|zcache_.*|node_reboot_required"})'
 W$ uv run python infra/scripts/grafana-query.py 'count by (host) (zcache_wireguard_handshake_age_seconds)'
 W$ uv run python infra/scripts/grafana-query.py 'count by (host) (up{host=~"zcrypto-valkey[123]"})' 'max by (host) (redis_up{host=~"zcrypto-valkey[123]"})'
+W$ uv run python infra/scripts/grafana-query.py 'max_over_time(process_resident_memory_bytes{host=~"zcrypto-valkey[123]", job="integrations/self"}[1h]) / 268435456'
 ```
 
-Every name of the first list appears in the node's output, the ones read from a replica on `db2`; `redis_instance_info` carries `role`, `redis_sentinel_master_status` carries `master_address`, `redis_connected_slave_offset_bytes` on the primary carries `slave_ip`, and `redis_master_link_up` reads 1 on `db2`. Cloud's first read names `integrations/unix`, `integrations/self`, `valkey` and `sentinel`, 1 each, which settles Task 5's job-label reading; the second lists the `CACHE_REDIS_SERIES` names `db1`'s role publishes plus `zcache_wireguard_handshake_age_seconds` and `node_reboot_required`; the third names `zcrypto` and the three nodes, 3 each; each node answers in the fourth, `redis_up` at 1. `(no series)` is a fail, never a zero. When a name, a label or a job differs, the tree is corrected before R8: on a branch cut from `develop`, `git grep -lw '<assumed>' -- infra/ansible/roles/cache/files/config.alloy tests/test_infra_alloy_series.py infra/grafana/cache-dashboard.json infra/grafana/alerts.yaml infra/runbooks/cache.md | xargs sed -i 's/\b<assumed>\b/<live>/g'` for each name, `<assumed>` the plan's spelling and `<live>` the endpoint's; a differing label edited in the board's `legendFormat` and `by (...)` and, for `role`, in the rules and the runbook; a family the exporter does not publish removed from the keep regex, `CACHE_REDIS_SERIES` and its panel together; Task 5's Step 6 and Step 17 test runs and `uv run pre-commit run -a`; one commit, `fix(cache): the <family> names what the exporter publishes, read on db1`, with the two trailers of `## Global Constraints`, through `open-pr` and `merge-pr`; then R5's converge per node from `develop` with R6's `pins_override` operand, which copies the config and reloads Alloy, and R7 again.
+Every name of the first list appears in the node's output, the ones read from a replica on `db2`; `redis_instance_info` carries `role`, `redis_sentinel_master_status` carries `master_address`, `redis_connected_slave_offset_bytes` on the primary carries `slave_ip`, and `redis_master_link_up` reads 1 on `db2`. Cloud's first read names `integrations/unix`, `integrations/self`, `valkey` and `sentinel`, 1 each, which settles Task 5's job-label reading; the second lists the `CACHE_REDIS_SERIES` names `db1`'s role publishes plus `zcache_wireguard_handshake_age_seconds` and `node_reboot_required`; the third names `zcrypto` and the three nodes, 3 each; each node answers in the fourth, `redis_up` at 1; the fifth is three series, each under 0.8, each node's Alloy against its 256 MiB cap before R8 pushes the headroom leg that fires above 0.9: spec D7 set that cap without a reading of Alloy under this config, and the fleet's v1.19.2 Alloys read 141 to 291 MiB on their own configs. A node at or above 0.8 stops the rollout before R8, and the owner sets the cap, a change to D7's budget; the reading goes into R9's message. `(no series)` is a fail, never a zero. When a name, a label or a job differs, the tree is corrected before R8: on a branch cut from `develop`, `git grep -lw '<assumed>' -- infra/ansible/roles/cache/files/config.alloy tests/test_infra_alloy_series.py infra/grafana/cache-dashboard.json infra/grafana/alerts.yaml infra/runbooks/cache.md | xargs sed -i 's/\b<assumed>\b/<live>/g'` for each name, `<assumed>` the plan's spelling and `<live>` the endpoint's; a differing label edited in the board's `legendFormat` and `by (...)` and, for `role` or `master_address`, in the rules and the runbook; a family the exporter does not publish removed from the keep regex, `CACHE_REDIS_SERIES` and its panel together; Task 5's Step 6 and Step 17 test runs and `uv run pre-commit run -a`; one commit, `fix(cache): the <family> names what the exporter publishes, read on db1`, with the two trailers of `## Global Constraints`; the commit changes guards, so Task 5's Step 9 and Step 20 probe blocks run again over it, the tree clean, a sed whose target the correction renamed re-anchored on the new name (a no-op sed is refused, rc 6), and their verdicts go into its message by a message-only amend naming `infra/scripts/mutate-probe.sh`; then through `open-pr` and `merge-pr`; then R5's converge per node from `develop` with R6's `pins_override` operand, which copies the config and reloads Alloy, and R7's reads again.
 
 **R8. The board and the rules, then each rule's first sample by value** (Task 5). From merged `develop`, which is what `grafana-push.sh` requires; the plan carries no rule over the proxy's series, so nothing here pages before the proxy exists.
 
@@ -7633,11 +7782,11 @@ W$ python3 -c 'import json; d = json.load(open("infra/grafana/cache-dashboard.js
 W$ while read -r id; do printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- -o "$CAP/r8-cache-panel-$id.png" "https://zcrypto2026.grafana.net/render/d-solo/zcrypto-cache/x?panelId=$id&width=1100&height=420&from=now-6h&to=now"; done < "$CAP/r8-panel-ids.txt"
 ```
 
-The push names `cache-dashboard.json` among the dashboards, upserts the eight new uids and the changed `zcrypto-fleet-alloy-memory-headroom`, reads every rule's datasource back and reports no orphan; the group reads `interval` 60 and `rules` 8; every rendered panel shows data, no `NaN` and no `No data` (read each PNG). Then each rule's own expression, read from Cloud the same minute:
+The push names `cache-dashboard.json` among the dashboards, upserts the eight new uids and the changed `zcrypto-fleet-alloy-memory-headroom`, reads every rule's datasource back and reports no orphan; the group reads `interval` 60 and `rules` 8; every rendered panel but 401 shows data, no `NaN` and no `No data` (read each PNG). Panel 401 draws the engine's lines naming the cache, which the second plan's wiring writes, so `No data` there is its expected reading until then. Then each rule's own expression, read from Cloud the same minute:
 
 ```
 W$ for n in 1 2 3; do uv run python infra/scripts/grafana-query.py "count(up{host=\"zcrypto-valkey$n\"}) or on() vector(0)"; done
-W$ uv run python infra/scripts/grafana-query.py 'abs((count(redis_instance_info{job="valkey", role="master"}) or on() vector(0)) - 1) and on() count(up{job="valkey"})'
+W$ uv run python infra/scripts/grafana-query.py 'abs((count(count by (master_address) (redis_sentinel_master_status{job="sentinel"} == 1) >= 2) or on() vector(0)) - 1) and on() (count(up{job="sentinel"}) > 1)'
 W$ uv run python infra/scripts/grafana-query.py 'redis_connected_slaves{job="valkey"} and on(host) redis_instance_info{job="valkey", role="master"}'
 W$ uv run python infra/scripts/grafana-query.py 'redis_memory_used_bytes{job="valkey"} / redis_memory_max_bytes{job="valkey"}'
 W$ uv run python infra/scripts/grafana-query.py 'min by (host) (redis_aof_enabled{job="valkey"} * redis_aof_last_write_status{job="valkey"} * redis_aof_last_bgrewrite_status{job="valkey"})'
@@ -7668,7 +7817,13 @@ W$ uv run pre-commit run -a
 W$ git add docs/reference/fleet-pins.md docs/reference/deploy-log.jsonl docs/reference/fleet.md infra/scripts/prune-host-images.py tests/test_prune_host_images.py
 ```
 
-The dry run lists the app image R4 pulled and nothing pinned; `--apply` removes it. `count-list.sh` prints `0` for `pins-not-yet-converged`: each of the six (pin, host) pairs has a successful deploy-log line on its host carrying the digest as `cache_image_digest` or `cache_alloy_digest`. The tests pass. The commit is `chore(fleet): the three cache nodes run Valkey 9.1.2 under Sentinel and Alloy v1.19.2, meshed with the engine host`, its message carrying the evidence the pins file asks of a converge (R3's unchanged markers, R4's verdict lines, R5's and R6's replication and Sentinel reads and the two `INFO server` lines, R8's values), with the two trailers of `## Global Constraints`.
+The dry run lists the app image R4 pulled and nothing pinned; `--apply` removes it. `count-list.sh` prints `0` for `pins-not-yet-converged`: each of the six (pin, host) pairs has a successful deploy-log line on its host carrying the digest as `cache_image_digest` or `cache_alloy_digest`. The tests pass. The commit is `chore(fleet): the three cache nodes run Valkey 9.1.2 under Sentinel and Alloy v1.19.2, meshed with the engine host`, its message carrying the evidence the pins file asks of a converge (R3's unchanged markers, R4's verdict lines, R5's and R6's replication and Sentinel reads and the two `INFO server` lines, R7's capture-host markers and Alloy memory reading, R8's values), with the two trailers of `## Global Constraints`. The commit changes a guard, `tests/test_prune_host_images.py`'s pair set and operand line, so its verdict is earned on the committed tree, clean, and recorded by a message-only amend naming the script, before the pull request opens:
+
+```
+W$ infra/scripts/mutate-probe.sh --file docs/reference/fleet-pins.md --control '/^| valkey + sentinel | zcrypto-valkey3 |/d' --mutation '/^| archive-pull | nas |/s/| `[0-9a-f]\{12\}` |$/| first pin |/' -- uv run pytest tests/test_prune_host_images.py::test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet_runs -q -p no:cacheprovider
+```
+
+Expected: `KILLED`, control proven: the relaxed operand line still refuses a first-pin marker on a host outside the three nodes, and the pair set misses a deleted cache row. The mutation's anchor is the `archive-pull | nas` row's last cell as the pins file reads today; a row that reads otherwise then is re-anchored on its own text, since a no-op sed is refused (rc 6).
 
 ## Resolution
 
@@ -7676,17 +7831,19 @@ The branch delivers the infrastructure half of spec 00118, steps 1 to 4 of D15's
 
 It does not deliver the engine side, held to Rung 2's design point on the owner's word as a second plan under spec 00118: the `cache_proxy` HAProxy service in the engine's compose project, its `cache-proxy` tag in `converge.sh`, the engine host's scrape of its `:9104`, the Cache board's proxy row and D12's two proxy rules, the proxy with no UP backend and the engine holding no session through the proxy (D4, D12); the `[zcrypto.engine.cache]` config and the node wiring (D10); the executor's startup pass (D11); the offline two-process restart harness with its CI Valkey service (D15's second item); and the live proof of D1 (D15 steps 5 and 6). The owner's operating rule stands unchanged on every page that carries it — `infra/runbooks/engine-procedures.md`, `infra/runbooks/engine.md`, `infra/runbooks/drills-order-path.md`, `infra/runbooks/order-semantics-verification.md` and `docs/reference/fleet.md`'s Reboots section: an engine converge or restart with a Kraken margin position open still closes positions first, until the second plan's live proof reads clean.
 
-One guidance change is left to its own branch: the Alloy bump skill's host map, `.claude/skills/zcrypto-bump-alloy/SKILL.md`, names four hosts, and it gains the three cache nodes in a change the owner commissions once the nodes run Alloy (Rollout R5), through `zcrypto-refine-rules`, not on this branch. The memo's `ENGINE CACHE` entry is updated by `zcrypto-marco`, its owner, when this branch merges: the infrastructure half landed, R4's probe verdict, the second plan held to Rung 2. `docs/reference/fleet.md` is re-trued twice: by Tasks 1 and 5 on this branch (Hosts, Reboots, Telemetry labels, Services and instruments, Storage topology, as designed), and by R9's records pull request where the converges read differently.
+Three guidance changes this branch makes due are left to their own branch, a change the owner commissions once the nodes run Alloy (Rollout R5), through `zcrypto-refine-rules`: the Alloy bump skill's host map, `.claude/skills/zcrypto-bump-alloy/SKILL.md`, names four hosts and gains the three cache nodes; the daily-ops skill's autonomy line, `.claude/skills/zcrypto-daily-ops/SKILL.md`, grants telemetry-only actions on ops, the NAS and zaccess alone, where Task 1's `_TELEMETRY_HOSTS` also holds the cache nodes, so the skill stays the narrower of the two until it names them; and no skill carries spec D14's Valkey re-pin order (replicas, then `SENTINEL failover`, then the old primary), where `.claude/rules/fleet-deploys.md` sends an app-image re-pin and an Alloy re-pin each to its own skill. No topic carries the three yet; registering one is the owner's word. The memo's `ENGINE CACHE` entry is updated by `zcrypto-marco`, its owner, when this branch merges: the infrastructure half landed, R4's probe verdict, the second plan held to Rung 2. `docs/reference/fleet.md` is re-trued twice: by Tasks 1 and 5 on this branch (Hosts, Reboots, Telemetry labels, Services and instruments, Storage topology, as designed), and by R9's records pull request where the converges read differently.
 
 ## Spec amendments
 
-- D7, "Every new cap takes a leg under the fleet's memory-headroom rule": amended (ruling R9). The three Alloy caps take legs under `zcrypto-fleet-alloy-memory-headroom` at 268435456 (Task 5). The Valkey and Sentinel caps take none: the headroom rules parse `process_resident_memory_bytes`, which Valkey does not publish (its exporter reports `redis_memory_used_rss_bytes`) and Sentinel has no memory family at all; Valkey's memory is guarded by the cache group's `zcrypto-cache-memory-70pct` against `maxmemory`, and the six (host, job) pairs are recorded in `_HEADROOM_DELIBERATELY_ABSENT` with that reason (Task 4).
-- D12, "a textfile probe publishes each mesh peer's WireGuard handshake age": delivered on all four mesh members, the engine host included, by the `cache_link` role (ruling R7), so each link is watched from both ends; the capture keep list admits the family for the engine host. This widens the spec's reach without changing its text.
+- D7, "Every new cap takes a leg under the fleet's memory-headroom rule": amended (ruling R9), in the spec's own text and its `## Spec amendments`, with D12's "headroom legs for every new capped container" beside it. The three Alloy caps take legs under `zcrypto-fleet-alloy-memory-headroom` at 268435456 (Task 5). The Valkey and Sentinel caps take none: the headroom rules parse `process_resident_memory_bytes`, which Valkey does not publish (its exporter reports `redis_memory_used_rss_bytes`) and Sentinel has no memory family at all; Valkey's memory is guarded by the cache group's `zcrypto-cache-memory-70pct` against `maxmemory`, and the six (host, job) pairs are recorded in `_HEADROOM_DELIBERATELY_ABSENT` with that reason (Task 4).
+- D12, "a textfile probe publishes each mesh peer's WireGuard handshake age": delivered on all four mesh members, the engine host included, by the `cache_link` role (ruling R7), so each link is watched from both ends; the capture keep list admits the family for the engine host. The spec's D12 text now says so, recorded in its `## Spec amendments`.
+- D9, "whose effect the runbook's rejoin procedure states": amended in the spec's text and its `## Spec amendments`. The reset is the runbook's `cache-config-reset` procedure, the rejoin procedure being a restart that renders nothing; and a changed password is `cache-password-rotation`'s, the three nodes' files replaced in one stop, since a node reset alone to a new password fails against the two still holding the old one (Tasks 4 and 5).
 - D13 and D15 are not amended. D13's bootstrap sentence runs `site.yml --limit <host>` through `converge.sh` whole; the Rollout runs the base roles under their six tags at R2, the mesh at R3 and the rest at R5, which is D15's own sequence — "(1) bootstrap and base-converge the three nodes", then the mesh, then the probe D15 places "once it runs Docker", then Valkey — so the two sentences describe one rollout at two grains. The six base tags join `converge.sh`'s `TAGNAMES` beside D13's `cache` and `cache-link` for that reason, and D13's `cache-proxy` is the second plan's; `prune-host-images.py` gains the nodes at R9, with their first pins rows, rather than in Task 1.
 
 ## Self-review
 
-- Spec coverage, per decision: D1 is the second plan's, and the Resolution keeps the operating rule standing on every page that carries it; D2 is Task 1 (the three nodes) and Task 4 (one `valkey/valkey` digest for both containers, refused unless pre-staged and recorded), read at R0 and rolled at R5; D3 is Task 4's `valkey.conf.j2`, `sentinel.conf.j2`, host networking and the per-node `replica-priority`, proven at R5 and R6; D4 is the second plan's; D5 is Task 3's mesh (addresses, `/32` peers, keepalive, MTU 1380, the four keypairs of its O1) and Task 2's `51821/udp` declarations, rolled at R3; D6 is Task 2's `firewall_interface_tcp_ports` and the widened `tests/test_infra_firewall_template.py`, with the Cloud Firewall in Task 1's O1 and Task 3's O2; D7 is Task 4's durability and memory lines and caps and Task 5's Alloy cap and legs, amended for the Valkey and Sentinel legs; D8 is Task 4's ACL users, password refusal and `users.acl` hashes with the five secrets of its O1; D9 is Task 4's render-when-absent, `cache_config_reset` and drift report, the runbook's `cache-config-reset` and R6's live proof; D10 and D11 are the second plan's; D12 is Task 5 (Alloy, `config.alloy`, the board, the rule group, the runbook, the Logs board, the Slack names, the fleet page's labels) with Task 3's probe and Task 4's copy of the capture role's reboot check for the hosts row's reboot flag, its proxy parts the second plan's; D13 is Task 1 (inventory, vars, bootstrap play, keys, the hand-kept lists, the fleet page), Task 3's `cache_host` play and Task 4's `cache` role in it, with `prune-host-images.py` at R9 and `cache-proxy` the second plan's; D14 is the one-node-per-converge constraint, R5's order, R6 and the runbook's `cache-manual-failover`; D15's steps 1 to 4 are R2 to R8, its first verification item Task 6 run at R4, its harness and steps 5 and 6 the second plan's. Found and fixed: no draft wrote the Services and instruments or the Storage topology rows D13 names for `docs/reference/fleet.md`, so Task 5 Step 16 writes them.
-- Placeholder scan: no `TBD`, `TODO`, "similar to" or "add appropriate" remains. The tokens left are named where they stand: `PROBE_VERDICT`, replaced by each commit's probe step and checked gone; `<model>`, the executing model's name; the operator's own values `<D>`/`<VK...>`, `<AL>`, `<version>`, `<assumed>`/`<live>`, `<since>`, `<the ratio Step 15 printed>` and the Rollout's hand-written `N`. Found and fixed: Task 3's operator block pointed at "the open questions" that R1 settles, Task 4's site-play step carried a branch on whether Task 1 had listed the role, and the draft Rollout's list of names "to be matched" is gone, each name now matched.
-- Name and type consistency across tasks: the ruling's names hold everywhere, a whole-file search finding `zcrypto-cache-valkey`, `zcrypto-cache-sentinel`, `/etc/zcrypto-cache`, `/var/lib/zcrypto-textfiles`, `zcrypto-cache-probe`, `zcache-nodes`, the jobs `cache_valkey` and `cache_sentinel`, and the draft Rollout's `vcli`, nowhere but in this sentence and, for the old textfile path, the Task 5 probe mutation that plants it; `cache_textfile_dir` is Task 4's, `/var/lib/zcrypto-node-textfile`, the directory the mesh probe writes too. Found and fixed: the containers renamed in Task 4; the Alloy project under `/opt/zcrypto-cache/alloy` and the runbook's reads moved onto Task 4's `cli-*.env` files in Task 5; the draft Rollout's Sentinel reads, which presented `cache_sentinel_password` where Sentinel takes `cache_sentinel_requirepass`, now go through `cli-sentinel.env`; the Cloud Firewall is `zcrypto-cache` throughout; the headroom pairs' jobs are `valkey` and `sentinel`, the jobs Task 5 ships; "Task 2's `cache_link`" and the descriptive task names read as task numbers; Task 5's second definition of `CACHE` is gone; the head's file structure names `zcrypto-cache.service.j2`, the two `cli-*.env.j2` templates, `tests/test_zcache_probe.py` and the test modules each task touches; Task 1 and Task 5 both rewrote the fleet page's Loki bullet, so Task 5 inserts only its second bullet; a first pins row's operand is `first pin`, the parser's own marker, and R9 relaxes `tests/test_prune_host_images.py`'s 12-hex operand assertion for the three nodes; Task 5's Alloy account lookup would fail the first converge's `--check` preview before the account exists, so it takes Task 4's `failed_when` and fallback, and Task 4's reboot-check timer enable skips that preview the same way; Task 4's reboot-check copies are held to the capture role's programs, and their comments carry no venue name, since the deploy-log audit walks the roles directory; R6's re-converge of a running node passes a `pins_override`, since the pins rows land at R9. No code fence destined for `tests/` or `infra/` names a plan task number (`tests/test_code_prose_citations.py`). The `Expected:` counts this assembly changed, Task 3's `26` and `22`, Task 4's `64 failed`, `4 failed` and `101` added cases, are sums of the named cases' parametrizations, not a run; Task 5 Step 15's `219/312 = 0.7019` was read on the branch by that step's own command.
+- Spec coverage, per decision: D1 is the second plan's, and the Resolution keeps the operating rule standing on every page that carries it; D2 is Task 1 (the three nodes) and Task 4 (one `valkey/valkey` digest for both containers, refused unless pre-staged and recorded), read at R0 and rolled at R5; D3 is Task 4's `valkey.conf.j2`, `sentinel.conf.j2`, host networking and the per-node `replica-priority`, proven at R5 and R6; D4 is the second plan's; D5 is Task 3's mesh (addresses, `/32` peers, keepalive, MTU 1380, the four keypairs of its O1) and Task 2's `51821/udp` declarations, rolled at R3; D6 is Task 2's `firewall_interface_tcp_ports` and the widened `tests/test_infra_firewall_template.py`, with the Cloud Firewall in Task 1's O1 and Task 3's O2; D7 is Task 4's durability and memory lines and caps and Task 5's Alloy cap and legs, amended for the Valkey and Sentinel legs; D8 is Task 4's ACL users, password refusal and `users.acl` hashes with the five secrets of its O1; D9 is Task 4's render-when-absent, `cache_config_reset` with its refusal without the digest, and drift report, the runbook's `cache-config-reset` and `cache-password-rotation`, and R6's live proof; D10 and D11 are the second plan's; D12 is Task 5 (Alloy, `config.alloy`, the board, the rule group, the runbook, the Logs board, the Slack names, the fleet page's labels) with Task 3's probe and Task 4's copy of the capture role's reboot check for the hosts row's reboot flag, its proxy parts the second plan's; D13 is Task 1 (inventory, vars, bootstrap play, keys, the hand-kept lists, the fleet page), Task 3's `cache_host` play and Task 4's `cache` role in it, with `prune-host-images.py` at R9 and `cache-proxy` the second plan's; D14 is the one-node-per-converge constraint, R5's order, R6 and the runbook's `cache-manual-failover`; D15's steps 1 to 4 are R2 to R8, its first verification item Task 6 run at R4, its harness and steps 5 and 6 the second plan's. Found and fixed: no draft wrote the Services and instruments or the Storage topology rows D13 names for `docs/reference/fleet.md`, so Task 5 Step 16 writes them.
+- Placeholder scan: no `TBD`, `TODO`, "similar to" or "add appropriate" remains. The tokens left are named where they stand: `PROBE_VERDICT`, replaced by each commit's probe step and checked gone; `<model>`, the executing model's name; the operator's own values `<D>`/`<VK...>`, `<AL>`, `<version>`, `<assumed>`/`<live>`, `<since>`, `<the ratio Step 15 printed>`, R7's `<zcrypto-capture's>`/`<grafana-alloy's>` (the digests the capture hosts' containers run) and the Rollout's hand-written `N`; the runbook's `<N>` and digest placeholders are the paged operator's to fill. Found and fixed: Task 3's operator block pointed at "the open questions" that R1 settles, Task 4's site-play step carried a branch on whether Task 1 had listed the role, and the draft Rollout's list of names "to be matched" is gone, each name now matched.
+- Name and type consistency across tasks: the ruling's names hold everywhere, a whole-file search finding `zcrypto-cache-valkey`, `zcrypto-cache-sentinel`, `/etc/zcrypto-cache`, `/var/lib/zcrypto-textfiles`, `zcrypto-cache-probe`, `zcache-nodes`, the jobs `cache_valkey` and `cache_sentinel`, and the draft Rollout's `vcli`, nowhere but in this sentence and, for the old textfile path, the Task 5 probe mutation that plants it; `cache_textfile_dir` is Task 4's, `/var/lib/zcrypto-node-textfile`, the directory the mesh probe writes too. Found and fixed: the containers renamed in Task 4; the Alloy project under `/opt/zcrypto-cache/alloy` and the runbook's reads moved onto Task 4's `cli-*.env` files in Task 5; the draft Rollout's Sentinel reads, which presented `cache_sentinel_password` where Sentinel takes `cache_sentinel_requirepass`, now go through `cli-sentinel.env`; the Cloud Firewall is `zcrypto-cache` throughout; the headroom pairs' jobs are `valkey` and `sentinel`, the jobs Task 5 ships; "Task 2's `cache_link`" and the descriptive task names read as task numbers; Task 5's second definition of `CACHE` is gone; the head's file structure names `zcrypto-cache.service.j2`, the two `cli-*.env.j2` templates, `tests/test_zcache_probe.py` and the test modules each task touches; Task 1 and Task 5 both rewrote the fleet page's Loki bullet, so Task 5 inserts only its second bullet; a first pins row's operand is `first pin`, the parser's own marker, and R9 relaxes `tests/test_prune_host_images.py`'s 12-hex operand assertion for the three nodes; Task 5's Alloy account lookup would fail the first converge's `--check` preview before the account exists, so it takes Task 4's `failed_when` and fallback, and Task 4's reboot-check timer enable skips that preview the same way; Task 4's reboot-check copies are held to the capture role's programs, and their comments carry no venue name, since the deploy-log audit walks the roles directory; R6's re-converge of a running node passes a `pins_override`, since the pins rows land at R9. No code fence destined for `tests/` or `infra/` names a plan task number (`tests/test_code_prose_citations.py`). The `Expected:` counts this assembly changed: Task 3's `26` and `22` are sums of the named cases' parametrizations, not a run; Task 4's `67 failed`, `8 failed`, `4 failed`, `136 passed` and `109` added cases, and Task 5 Step 11's `3 failed, 4 passed`, were read by collect-only and a run over the fence tree carrying these edits; Task 5 Step 15's `219/312 = 0.7019` was read on the branch by that step's own command.
+- Probe scope: each control and mutation of the plan's seven probe blocks changes exactly one line of its file at the commit it runs on, read by applying each sed to the fence tree's files at that commit; Task 4's probes 3, 4, 6, 7, 12, 13 and 24 to 26 matched two or three sites and take a sed line range.
 - Review Focus coverage: each of the five lines names tests its task defines — Task 1 `test_every_reboot_slot_is_an_hour_from_every_other_and_from_a_bar_boundary` and `test_the_collision_assert_reads_the_cache_group`; Task 3 `test_each_zcache_peer_key_is_one_variable_every_member_renders`, added for it, and `test_the_zcache_conf_names_each_other_member_once_as_one_host`; Task 4 `test_the_acl_file_carries_password_hashes_and_never_a_password`, `test_cache_password_refusal` and `test_cache_password_refusal_names_the_key_and_never_the_value`; Task 4 `test_cache_configs_render_only_when_absent_unless_reset`, `test_cache_drift_reports_a_config_whose_template_moved` and `test_cache_drift_is_reported_never_fatal_and_skips_a_config_this_run_rendered`; Task 4 `test_the_default_user_is_off_and_the_engine_keeps_keys_and_info_past_dangerous`, which gained its `@keyspace`, `@read` and `@write` assertion and probe 29 for the fifth line, while R4 now runs the probe under the same `engine` grant. Each name was searched for as a `def` in the assembled plan and found once, in the task the line names.
