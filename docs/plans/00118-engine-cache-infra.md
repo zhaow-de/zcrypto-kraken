@@ -978,30 +978,7 @@ O3. The workstation's copies of the three deploy keys, written to files, never p
 W$ (cd infra/ansible && umask 077 && for n in 1 2 3; do uv run ansible-vault view "files/deploy_zcrypto-valkey${n}_ed25519" > "$HOME/.ssh/deploy_zcrypto-valkey${n}_ed25519"; done)
 ```
 
-O4. The aliases in `~/.ssh/config`, one stanza per node, on the shape of the existing `red` stanza, which the operator compares against (this plan does not read that file). `IdentitiesOnly yes` is load-bearing: the hardened sshd allows two authentication tries, and an agent offering other keys first exhausts them.
-
-```
-Host db1
-    HostName zcrypto-valkey1.zhaow.me
-    Port 10022
-    User zcrypto-deploy
-    IdentityFile ~/.ssh/deploy_zcrypto-valkey1_ed25519
-    IdentitiesOnly yes
-
-Host db2
-    HostName zcrypto-valkey2.zhaow.me
-    Port 10022
-    User zcrypto-deploy
-    IdentityFile ~/.ssh/deploy_zcrypto-valkey2_ed25519
-    IdentitiesOnly yes
-
-Host db3
-    HostName zcrypto-valkey3.zhaow.me
-    Port 10022
-    User zcrypto-deploy
-    IdentityFile ~/.ssh/deploy_zcrypto-valkey3_ed25519
-    IdentitiesOnly yes
-```
+O4. The aliases in `~/.ssh/config`: the `db1`, `db2` and `db3` stanzas `infra/external-systems.md`'s SSH config block carries, copied verbatim (`tests/test_ops_daily.py` holds them to the inventory). `IdentitiesOnly yes` is load-bearing: the hardened sshd allows two authentication tries, and an agent offering other keys first exhausts them.
 
 ---
 

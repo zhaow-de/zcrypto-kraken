@@ -2863,6 +2863,41 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     assert any(line.strip().startswith('host = "ops"') for line in alloy.splitlines())
 
 
+def _published_ssh_stanzas(repo: Path) -> dict[str, dict[str, str]]:
+    doc = (repo / "infra/external-systems.md").read_text()
+    block = re.search(r"^\*\*SSH config\*\*$.*?^```\n(.*?)^```$", doc, re.M | re.S)
+    assert block, "infra/external-systems.md carries no fenced block under **SSH config**"
+    stanzas: dict[str, dict[str, str]] = {}
+    current: dict[str, str] | None = None
+    for line in block.group(1).splitlines():
+        if line.startswith("Host "):
+            current = stanzas.setdefault(line.split(None, 1)[1], {})
+        elif line.strip():
+            assert current is not None and line.startswith(" "), line
+            key, value = line.split(None, 1)
+            assert key not in current, (line, current)
+            current[key] = value
+    return stanzas
+
+
+def test_every_published_ssh_destination_has_a_stanza_and_the_cache_nodes_match_the_inventory():
+    repo = Path(__file__).resolve().parents[1]
+    rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", (repo / "docs/reference/fleet.md").read_text(), re.M))
+    stanzas = _published_ssh_stanzas(repo)
+    for fleet_host, destination in rows.items():
+        if destination != fleet_host:
+            assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
+    ansible = repo / "infra/ansible"
+    group = yaml.safe_load((ansible / "group_vars/cache_host/vars.yml").read_text())
+    for node in ("zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"):
+        stanza = stanzas[rows[node]]
+        host_vars = yaml.safe_load((ansible / f"host_vars/{node}/vars.yml").read_text())
+        assert stanza["HostName"] == host_vars["ansible_host"], (node, stanza)
+        assert stanza["Port"] == str(group["ansible_port"]), (node, stanza)
+        assert stanza["User"] == group["ansible_user"], (node, stanza)
+        assert stanza.get("IdentitiesOnly") == "yes", (node, stanza)
+
+
 @pytest.mark.parametrize("host", ["zcrypto-valkey1", "db1"])
 def test_a_cache_node_is_a_telemetry_host_under_either_of_its_names(host):
     """A step's host names a cache node by its Alloy `host` label or by its ssh alias, and an `ssh` step by the alias."""
