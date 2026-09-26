@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "T0005's archive is on develop, the T1 memo and the verdict with it — the transform waits on nothing else, both failures being in rung 1's ledger and the owner's ledger CSV export its fixture, and the ramp past 25 % needs it deployed (master plan §12); check: `ls docs/open-topics/archive/T0005-*.md` names the file"
+ripe_when: "a milestone: rung 2 is entered, its time box fixed (master plan §12); check: `docs/research/14.phase6-decisions.md` carries the entry"
 ---
 
 # The Blockpit T3 fallback: a deterministic pre-transform of Kraken's exports into the manual-import CSV
