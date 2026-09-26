@@ -634,3 +634,24 @@ def test_a_dependabot_bump_is_exempt_and_one_carrying_a_fix_commit_is_not(tmp_pa
         timeout=120,
     )
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
+
+
+def test_drills_on_the_primary_reads_the_subject_the_host_clause_names(tmp_path):
+    """The rule's set is the primary's capture daemon and its Alloy: an entry on `zcrypto` counts unless its host
+    clause opens with the engine, which is the order-path tier's opening; the secondary never counts."""
+    log = tmp_path / "drill-log.md"
+    log.write_text(
+        "# Drill log\n\n"
+        "## 2026-09-04 — P — pass\n\n*host* `zcrypto-red`, the capture **secondary**; nothing on the primary was touched. *induction* x.\n\n"
+        "## 2026-09-26 — G — pass\n\n*host* `zcrypto`, the engine, armed; the venue flat. *induction* y.\n\n"
+        "## 2026-09-26 — A1 — pass\n\n*host* `zcrypto`, the engine host rebooted with an order resting. *induction* z.\n\n"
+        "## 2026-09-27 — K — fail\n\n*host* `zcrypto`, the capture **primary** and its Alloy. *induction* w.\n"
+    )
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "drills-on-the-primary"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "COUNT_LIST_DRILL_LOG": str(log)},
+    )
+    assert done.stdout.strip() == "drills-on-the-primary\t1", done.stdout

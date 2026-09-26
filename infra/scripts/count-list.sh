@@ -328,7 +328,13 @@ c_converges_inside_a_kraken_window() {
 }
 
 # shellcheck disable=SC2016  # the backticks are the drill-log row's literal Markdown fences
-c_drills_on_the_primary() { grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md; }
+# The rule's set is the primary's CAPTURE daemon and its Alloy. An order-path drill runs on the engine host
+# by design and opens its *host* clause `` `zcrypto`, the engine `` -- outside the set. COUNT_LIST_DRILL_LOG
+# points the count at a fixture.
+c_drills_on_the_primary() {
+  local log="${COUNT_LIST_DRILL_LOG:-docs/reference/drill-log.md}"
+  grep -E '^\*host\* `zcrypto`' "$log" | grep -vcE '^\*host\* `zcrypto`, the engine'
+}
 
 # `--skip-tags engine` is the Alloy bump's published primary form and names no tag, so it books an
 # empty `tags` and its own `skip_tags` cell; counting it here would read a violation that never was.
