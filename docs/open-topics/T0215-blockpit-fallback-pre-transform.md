@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "rung 2's first ISO week of fills is in Kraken's ledger — the fixture carrying the shapes rung 1 never produced (a margin close at a loss, a taker close); check: Kraken's ledger CSV over that week lists a `margin` row with a negative amount"
+ripe_when: "T0213 is resolved — the engine-side cache half that rung 2 waits on lands first, so rung 2's fills carry the shapes rung 1 lacked by the time the transform is built; check: `ls docs/open-topics/archive/T0213-*.md` names the file"
 ---
 
 # The Blockpit T3 fallback: a deterministic pre-transform of Kraken's exports into the manual-import CSV
@@ -17,7 +17,7 @@ At rung 3 every PnL-carrying close loses its fee from the deductible sums and ev
 
 - The mapping Blockpit applies to every Kraken row type this window produced is the table in `docs/reference/blockpit-t1-memo.md`; the transform reproduces it row for row and changes two shapes: a conversion pair becomes a Trade EUR → EURC at the pair's amounts, and a `margin` row with a non-zero amount becomes a Margin Profit (or Loss) at the amount plus a separate Margin Fee row at its fee.
 - The input is a spec decision: Kraken's ledger CSV (full precision, `refid`) or the read-only key of [[T0000]]; the PDFs are neither.
-- In the ledger CSV a position's opening `margin` row, its `collateralconversion` pair and its `rollover` rows carry `refid` = the opening trade id, while a close's `margin` row and a settle's `settled` pair carry an id of their own, so the ledger alone does not link a close to its open; the types are `margin`, `rollover`, `settled`, `collateralconversion`, and `trade` with subtype `tradespot` for a spot leg.
+- In the ledger CSV a position's opening `margin` row, its `collateralconversion` pair and its `rollover` rows carry `refid` = the opening trade id, while a close's `margin` row and a settle's `settled` pair carry an id of their own, so the ledger alone does not link a close to its open; the types are `deposit`, `margin`, `rollover`, `settled`, `collateralconversion`, and `trade` with subtype `tradespot` for a spot leg.
 - Blockpit computes FIFO per integration, so a manual-import depot that replaces the connector's must carry the whole history from the 2026-07-10 deposit, not the rows from the switch on; whether the connector's depot is removed or the manual one supplements it is the spec's first decision.
 
 ## Suggested next steps
