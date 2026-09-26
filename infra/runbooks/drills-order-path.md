@@ -151,7 +151,7 @@ The flatten command, per [`engine-procedures.md#engine-flatten`](engine-procedur
 
 ### Must fire
 
-**Not [`zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped), and its absence is not a finding.** The wrapper's order is kill file first, then `systemctl stop` on the unit, then a proof it is `inactive` (`zcrypto-flatten.sh.j2`). The exporter is therefore gone within a scrape or two of the kill file being written, so that rule never accumulates its `for:`, whether the engine was running a plan, idle, or already dark as D's response. Read the kill file on the host instead of waiting for it. What does arrive: pressed against a running or idle engine, the stop leaves the unit down, so [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) pages at ≈11 min and, while a position was open, [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) at ≈12 min, on the clocks Drill D's Must fire derives; both are expected, and the entry records their arrival. Against a dark engine, B run as D's response, nothing new pages.
+**Not [`zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped), and its absence is not a finding.** The wrapper's order is kill file first, then `systemctl stop` on the unit, then a proof it is `inactive` (`zcrypto-flatten.sh.j2`). The exporter is therefore gone within a scrape or two of the kill file being written, so that rule never accumulates its `for:`, whether the engine was running a plan, idle, or already dark as D's response. Read the kill file on the host instead of waiting for it. What does arrive: pressed against a running or idle engine, the stop leaves the unit down, so [`zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) pages at ≈7 min and, while a position was open, [`zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure) at ≈12 min, on the clocks Drill D's Must fire derives; both are expected, and the entry records their arrival. Against a dark engine, B run as D's response, nothing new pages.
 
 Two exceptions:
 
@@ -199,7 +199,7 @@ On the engine host (`ssh zcrypto`), stop the engine and hold. Engine only: never
 sudo systemctl stop zcrypto-engine
 ```
 
-**Hold past ≈12 min so the drill's own page lands** — the gate-evaluation rule below pages on the same clock. Do not hold to six hours to see the log-dead rule: that is six hours of a real open position with nothing watching it.
+**Hold past ≈12 min so the drill's own page lands.** Do not hold to six hours to see the log-dead rule: that is six hours of a real open position with nothing watching it.
 
 ### Must fire
 
@@ -224,7 +224,7 @@ sudo systemctl start zcrypto-engine
 
 and confirm by value: `up{job="engine_app",host="zcrypto"}` back at 1, the position gauge publishing again, and `sudo docker exec zcrypto-engine zcrypto engine exec-status` showing the restart hold re-latched.
 
-**Expect [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted) on the restore** (warning, `metrics`): `changes(process_start_time_seconds{…}[15m]) > 0` with `for: 2m`, and a hold under 15 minutes puts the return inside that window; a longer hold returns unpaged, the rule blind to a daemon back after an absence longer than its window (`fleet.md#zcrypto-fleet-daemon-restarted`). Name it in the entry; never chase it.
+**No [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted) on the restore**: `changes(…[15m]) > 0` must hold through `for: 2m` with a pre-stop sample still in the window, so a return ≈13 min or more after the last scrape stays unpaged, and D's hold is past ≈12 min. Name it in the entry either way; never chase it.
 
 ### Record
 
@@ -398,7 +398,7 @@ sudo systemctl start zcrypto-engine
 
 ### Must fire
 
-- **Nothing, if the engine is back inside ≈7 minutes.** All three of the rules D lists need longer, and G's stop is deliberately short.
+- **Nothing, if the engine is back inside ≈7 minutes.** All three of the rules D lists need longer.
 - **On the restart, [`zcrypto-fleet-daemon-restarted`](fleet.md#zcrypto-fleet-daemon-restarted)** (warning, `metrics`) at ≈2–3 min: `changes(process_start_time_seconds{…}[15m]) > 0` with `for: 2m`, and the engine is one of that rule's targets. Waiting it out is not an option here: the restart is the drill. Name it in the entry.
 
 ### Operator action

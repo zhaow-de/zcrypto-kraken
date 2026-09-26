@@ -2,7 +2,6 @@
 # One line per entry -- its name and today's value -- for every count the corpus and the contracts name by entry; a universal with no entry beside it is the finding.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 # Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
-# Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
 
 errors=()
@@ -330,8 +329,6 @@ c_converges_inside_a_kraken_window() {
 
 # shellcheck disable=SC2016  # the backticks are the drill-log row's literal Markdown fences
 # `, the engine` opens an order-path entry, outside the rule's set (.claude/rules/fleet-deploys.md).
-# by design and opens its *host* clause `` `zcrypto`, the engine `` -- outside the set. COUNT_LIST_DRILL_LOG
-# points the count at a fixture.
 c_drills_on_the_primary() {
   local log="${COUNT_LIST_DRILL_LOG:-docs/reference/drill-log.md}"
   [ -r "$log" ] || return 2
