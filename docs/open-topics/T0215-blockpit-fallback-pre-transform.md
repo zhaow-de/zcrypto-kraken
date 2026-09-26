@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "T0213 is resolved — the engine-side cache half that rung 2 waits on lands first, so rung 2's fills carry the shapes rung 1 lacked by the time the transform is built; check: `ls docs/open-topics/archive/T0213-*.md` names the file"
+ripe_when: "T0213 is resolved; check: `ls docs/open-topics/archive/T0213-*.md` names the file"
 ---
 
 # The Blockpit T3 fallback: a deterministic pre-transform of Kraken's exports into the manual-import CSV
