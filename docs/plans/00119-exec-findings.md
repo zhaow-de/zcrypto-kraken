@@ -15,12 +15,12 @@
 - The ladder's constants are unchanged: `_MAX_REPRICES` 5, `_MAX_IOC_ATTEMPTS` 3, `_QUOTE_SILENCE` 30 s, `_TIME_BOX` 15 min, `_ACK_WAIT` 30 s (spec D2, D3). The waiting phase is `awaiting_reprice`; a reprice resubmits at once when `quote_seq > priced_seq` and waits otherwise (spec D1); the wait is bounded by `resting`'s three checks in `resting`'s order (spec D2); the sixth crossing calls `_fallback` in `execute` mode and ends `unfilled` with `reprice budget exhausted` in the rest modes, and the runbook's `Nothing retries itself` rule says an `execute` intent's `unfilled` follows both ladders (spec D3). Entering the wait clears `client_order_id` and `order`, so the ended order's later events take the detached path, and `_resubmit` ends an intent `filled` when less than one lot step remains, as does `_poll`'s `awaiting_reprice` arm before its three checks (spec D1); `on_quote`'s handler refuses with `filled` carried (spec D2).
 - No schema changes: `_ROW_KEYS` and `EXEC_SCHEMA_VERSION` in `cli/engine/execledger.py` stay as they are, the priced quote living inside the row's `order` payload as `bid`, `ask`, `quote_seq` (spec D5); `_INTENT_KEYS` in `cli/engine/probeplan.py` is untouched (spec D4); no `_inc_order` label is added, since `tests/test_engine_metrics.py` pins `_EXEC_ORDER_OUTCOMES` against the executor's call sites.
 - The reader's constants: `_MATCHED_LEDGER_TYPES = {"trade", "margin"}`; `_NO_FILL_LEDGER_TYPES` gains `settled` and `collateralconversion`; the result gains `known` and `matched_fees_eur`, a fee summed when its asset is in `_EURO_FEE_ASSETS`, the euro codes and `EURC`, for the rollover arm and the matched arm alike; `status` is `ok` once a trade or margin row was compared; the rollover and matched-fee lines print `:,.4f` (spec D7, D9, D10); `_LEDGER_COLUMNS` is unchanged, so the sixteen-column export still parses and the only-used-columns rule `tests/test_engine_tracking.py` pins holds.
-- The startup pass's words: `filled`, `revoked` with `the engine restarted while the intent was in flight`, `refused` with `not run -- the engine restarted before it ran`, written at classification time, before the venue answers the pass's cancel, so a fill after the write is on the order's row and not in the intent's `filled_qty`; an intent with an open row the pass sent no cancel for stays `pending`, six shapes — a reducer it kept, a cancel that raised, an order the venue read returned still open outside the Cache, a row the read did not return, a row that recorded no txid, and a row whose reconcile raised on an order closed at the venue — and so does the whole window's when the venue read or the ledger read failed or the pass latched the kill switch, the sweep skipped whole; a later startup inside the re-attach window — `_exec_records_in_window`'s in `cli/engine/execledger.py`, the boundary's UTC day and the next, which the intent sweep and the row re-attach both read — settles the intents of a failed read, a cancel that raised, an order outside the Cache once the venue reports it closed, and a reconcile that raised, and settles neither a row with no txid nor one no venue read returns, which stay `pending`; past the window no startup reads the intent or its row, and the pages say the window's entry records what stays `pending` beside Kraken's closed orders and positions read for the order; the one shape outside the rule, a Cache-resident order whose reconcile raised and which the loop then cancelled, is settled from the figure the raise left unrepaired (spec D14). A minted terminal on an adopted row writes `ambiguous` and logs at CRITICAL, naming the hand cancel on Kraken's open-orders page; a flagged non-terminal writes nothing (spec D15); a cancel the venue refuses on an adopted order — the pass's or a trip's — logs at CRITICAL naming the hand cancel and writes nothing, the row still open and the intent as the pass left it (spec D14).
+- The startup pass's words: `filled`, `revoked` with `the engine restarted while the intent was in flight`, `refused` with `not run -- the engine restarted before it ran`, written at classification time, before the venue answers the pass's cancel, so a fill after the write is on the order's row and not in the intent's `filled_qty`; an intent with an open row the pass sent no cancel for stays `pending`, six shapes — a reducer it kept, a cancel that raised, an order the venue read returned still open outside the Cache, a row the read did not return, a row that recorded no txid, and a row whose reconcile raised on an order closed at the venue — and so does the whole window's when the venue read or the ledger read failed or the pass latched the kill switch, the sweep skipped whole; a later startup inside the re-attach window — `_exec_records_in_window`'s in `cli/engine/execledger.py`, the boundary's UTC day and the next, which the intent sweep and the row re-attach both read — settles the intents of a failed read, a cancel that raised, an order outside the Cache once the venue reports it closed, and a reconcile that raised, and settles neither a row with no txid nor one no venue read returns, which stay `pending`, nor, while the latch's cause stands, the intents a latched kill skipped; past the window no startup reads the intent or its row, and the pages say the window's entry records what stays `pending` beside Kraken's closed orders and positions read for the order; the one shape outside the rule, a Cache-resident order whose reconcile raised and which the loop then cancelled, is settled from the figure the raise left unrepaired (spec D14). A minted terminal on an adopted row writes `ambiguous` and logs at CRITICAL, naming the hand cancel on Kraken's open-orders page; a flagged non-terminal writes nothing (spec D15); a cancel the venue refuses on an adopted order — the pass's or a trip's — logs at CRITICAL naming the hand cancel and writes nothing, the row still open and the intent as the pass left it (spec D14).
 - No string literal added under `cli/engine/` and no text added to `README.md`, `infra/runbooks/engine-procedures.md` or `infra/runbooks/drills-order-path.md` names a spec, a decision or a topic: `tests/test_internal_terms_not_operator_visible.py` walks them and runs in every task's consumer command.
 - The three tasks land in order on one branch and merge together: the counts each task's failing and passing runs state assume the tasks before it have landed, and Task 2's and Task 3's first steps check the previous task's marker.
 - A fence is the exact text at its indentation in the file: an indented fence is a fragment replaced in place, never a module of its own, and a `Replace, in <path>, this block:` instruction names the whole block it replaces, which occurs exactly once in the file at that step. A fence whose closing backticks sit on its last text line is a mid-line fragment with no trailing newline: the replacement lands inside that line, and neither the backticks nor the line end belongs to the text replaced.
-- A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend with the tree clean; the probe never runs while a pytest run is in flight in the same checkout.
-- Every commit is green over the changed files' consumers, the union of `grep -rlE 'engine\.executor|engine import executor|engine\.execledger|engine import execledger' tests/test_*.py` for Tasks 1 and 3 and of `grep -rlE 'engine\.tracking|engine import tracking|engine\.command|engine import command' tests/test_*.py` for Task 2, each plus the internal-terms guard, and, since each task changes a page under `infra/runbooks/` or `README.md`, the tests that read those pages from the tree — the files `grep -rlE 'infra/runbooks|README\.md' tests/test_*.py` finds that read the pages, not those it finds naming the paths in a fixture, a string or a comment alone, and `tests/test_code_prose_citations.py`, which walks `infra/` for `*.md`: `tests/test_code_prose_citations.py`, `tests/test_guidance_guard.py`, `tests/test_guidance_refs_resolve.py`, `tests/test_infra_alert_rules.py`, `tests/test_ops_daily.py`, `tests/test_runbook_internal_tokens.py`, `tests/test_runbook_triggers.py` and `tests/test_systemd_user_units.py` — all as they read when this plan was written; never the full suite locally, which is CI's on every push.
+- A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend with the tree clean, from a file (`git commit --amend -F <file>`) and never from a double-quoted `-m` argument, inside which the shell runs each backticked name of the verdict text as a command substitution and the message no longer carries the text as written; the probe never runs while a pytest run is in flight in the same checkout.
+- Every commit is green over the changed files' consumers, the union of `grep -rlE 'engine\.executor|engine import executor|engine\.execledger|engine import execledger' tests/test_*.py` for Tasks 1 and 3 and of `grep -rlE 'engine\.tracking|engine import tracking|engine\.command|engine import command' tests/test_*.py` for Task 2, each plus the internal-terms guard, and, since each task changes a page under `infra/runbooks/` or `README.md`, the tests that read those pages from the tree — the files `grep -rlE 'infra/runbooks|README\.md' tests/test_*.py` finds that read the pages, not those it finds naming the paths in a fixture, a string or a comment alone, and `tests/test_code_prose_citations.py`, which walks `infra/` for `*.md`: `tests/test_code_prose_citations.py`, `tests/test_count_list.py`, `tests/test_guidance_guard.py`, `tests/test_guidance_refs_resolve.py`, `tests/test_infra_alert_rules.py`, `tests/test_ops_daily.py`, `tests/test_runbook_internal_tokens.py`, `tests/test_runbook_triggers.py` and `tests/test_systemd_user_units.py` — all as they read when this plan was written; never the full suite locally, which is CI's on every push.
 - `uv run pre-commit run -a` runs the pre-commit stage alone and is clean before every commit; `guidance-guard` and `message-citations` run at commit-msg, on `git commit`: the runbook list items the three tasks write carry no universal word (every, never, always, only, any, cannot) outside code spans, and no commit message cites a `path:line`, a `path::symbol` or a topic.
 - No step reaches a host or a venue; the executor tests drive the library's own events against a stub client, and the tracking tests a synthetic export.
 - A new Markdown paragraph or list item is one line: no column wrap, no filler blank lines. An existing file's lines are left as they are, except where a step replaces them.
@@ -268,10 +268,11 @@ def test_the_hold_elapsing_while_a_rest_hold_reprice_waits_ends_it_expired_with_
 
 
 def test_a_sell_closes_six_accept_then_cancel_crossings_end_in_an_ioc_at_the_bid(tmp_path):
-    """The 2026-09-25 shape: a margin close, a sell, accepted and then cancelled by the venue as
-    crossing six times, each crossing answered by one tick, so each order is priced off a newer ask;
-    the sixth crossing's IOC is bounded by the last tick's bid, the opposite touch on this side, and
-    carries the closer's reduce-only flag."""
+    """The measured side: a sell, accepted and then cancelled by the venue as crossing six times,
+    each crossing answered by one tick, so each order is priced off a newer ask; the sixth crossing's
+    IOC is bounded by the last tick's bid, the opposite touch on this side. The 2026-09-25 order was
+    a spot disposal; this one is a margin close, so the IOC also carries the closer's reduce-only
+    flag."""
     client = StubClient(StubCache(positions=_held(**{"BTC/EUR": 0.001})))
     ex, client, clock = _resting_executor(
         tmp_path, client=client, intents=[_intent(side="sell", action="close", notional_eur=90.0, leverage=2)]
@@ -856,8 +857,8 @@ Expected: `264 passed`.
 
 - [ ] **Step 6: The consumers**
 
-Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a gate, none failed; `1914 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates, `ZCRYPTO_LIVE_VENUE_TESTS` unset.
+Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_count_list.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
+Expected: every test passed or skipped by a gate, none failed; `1932 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates, `ZCRYPTO_LIVE_VENUE_TESTS` unset.
 
 - [ ] **Step 7: The commit gate**
 
@@ -958,7 +959,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 ```
 
-Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend` with the whole message re-supplied, with:
+Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message with the text below: write the whole message, that line replaced, to a file under `.tmp/` (gitignored) and amend from it with `git commit --amend -F <that file>` — the Global Constraints' rule, never `--amend -m "…"`, inside which the shell runs each backticked name below as a command:
 
 ```
 Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/executor.py`, control the waiting phase
@@ -974,7 +975,7 @@ control proven; a waiting rest-cancel's box taking the IOC, KILLED, control prov
 tick counted, KILLED, control proven; the timer's completion test disarmed, KILLED, control proven.
 ```
 
-Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
+Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`; `git log -1 --format=%B | grep -c 'infra/scripts/mutate-probe.sh'` — Expected: `1`, the verdict naming the script.
 
 ---
 
@@ -1423,9 +1424,9 @@ with:
         )
         if reconciliation["matched"]:
             lines.append(
-                f"  fees on the matched rows {reconciliation['matched_fees_eur']:,.4f} EUR -- the venue's own figure for "
-                "the window's journaled fills, a fee charged in EURC counted at par; the journal's fills carry each fee "
-                "cent-rounded, and a margin row's amount is its realized PnL, summed nowhere."
+                f"  fees on the matched rows {reconciliation['matched_fees_eur']:,.4f} EUR -- the venue's own figure "
+                "over the journaled fills the export's rows matched, a fee charged in EURC counted at par; the journal's "
+                "fills carry each fee cent-rounded, and a margin row's amount is its realized PnL, summed nowhere."
             )
         if reconciliation["known"]:
             lines.append(
@@ -1469,7 +1470,7 @@ Rollover rows are summed as a euro cost only when the row's asset is a euro (bot
 with:
 
 ```markdown
-Rollover rows are summed as a euro cost only when the row's asset is a euro (both venue spellings) or EURC, which the venue charges a fee in after converting euro to it at par. `trade` and `margin` rows are matched by their trade id — a margin open or close writes a `margin` row under the fill's own trade id and no `trade` row beside it — and a matched row's `fee`, in euro or in EURC at par, joins the `fees on the matched rows` figure, the venue's own total over the window's journaled fills, while a `margin` row's `amount`, the position's realized PnL, is summed nowhere. `settled` and `collateralconversion` rows have no fill behind them and are counted by type beside deposits; a row type the reader has not met is **counted by type and printed**, and the block reports how many rows were read at all. The `rollover fees` and matched-fee figures print at four decimals, the export's own precision for a euro fee.```
+Rollover rows are summed as a euro cost only when the row's asset is a euro (both venue spellings) or EURC, which the venue charges a fee in after converting euro to it at par. `trade` and `margin` rows are matched by their trade id — a margin open or close writes a `margin` row under the fill's own trade id and no `trade` row beside it — and a matched row's `fee`, in euro or in EURC at par, joins the `fees on the matched rows` figure, the venue's own total over the journaled fills the export's rows matched — the window's total only when the export's `time` span covers the window, which the reader does not check — while a `margin` row's `amount`, the position's realized PnL, is summed nowhere. `settled` and `collateralconversion` rows have no fill behind them and are counted by type beside deposits; a row type the reader has not met is **counted by type and printed**, and the block reports how many rows were read at all. The `rollover fees` and matched-fee figures print at four decimals, the export's own precision for a euro fee.```
 
 Replace, in `infra/runbooks/engine-procedures.md`, this block:
 
@@ -1494,7 +1495,7 @@ with:
 
 ```markdown
    - **The `rollover fees` figure prints at four decimals, the export's precision for a euro fee.** The reader sums the `fee` column, where the charge lives (four `rollover` rows of 0.0040 read as 0.016 by hand and as 0.02 at the two-decimal print the reader used to have). A figure that differs from the hand read at four decimals is a finding about the reader, not about the window.
-   - **`trade` and `margin` rows are matched by their trade id.** (no count command: `reconcile_ledger` in `cli/engine/tracking.py` holds the two matched types in `_MATCHED_LEDGER_TYPES`) A spot fill writes `trade` rows and a margin open or close writes a `margin` row under the fill's own trade id, with no `trade` row beside it. Read the export's distinct `type` values (`cut -d, -f4 <the export>.csv | sort -u`, allowing for quoting). `settled` rows, a hand settle's delivery pair the journal holds no row for, and `collateralconversion` rows, the venue's currency swap for a margin fee keyed to the position's opening trade, are counted on the `rows with no fill behind them by construction:` line beside deposits. The `row types this reader places nowhere:` line names a type the reader has not met, and a type appearing there is a decision to record here. The `fees on the matched rows` figure is the venue's own fee total over the window's journaled fills, a fee charged in EURC counted at par — the venue converts euro to EURC beside the row to charge a margin open's fee, and the journal reports that fill's fee in euro — printed at four decimals to read against the fills' cent-rounded fees in the ledger read; it is not added to the blend, and a `margin` row's `amount`, the realized PnL, is summed nowhere.
+   - **`trade` and `margin` rows are matched by their trade id.** (no count command: `reconcile_ledger` in `cli/engine/tracking.py` holds the two matched types in `_MATCHED_LEDGER_TYPES`) A spot fill writes `trade` rows and a margin open or close writes a `margin` row under the fill's own trade id, with no `trade` row beside it. Read the export's distinct `type` values (`cut -d, -f4 <the export>.csv | sort -u`, allowing for quoting). `settled` rows, a hand settle's delivery pair the journal holds no row for, and `collateralconversion` rows, the venue's currency swap for a margin fee keyed to the position's opening trade, are counted on the `rows with no fill behind them by construction:` line beside deposits. The `row types this reader places nowhere:` line names a type the reader has not met, and a type appearing there is a decision to record here. The `fees on the matched rows` figure is the venue's own fee total over the journaled fills the export's rows matched — a journaled fill the export carries no row for adds nothing and is not reported, so read the export's first and last `time` against the window's `--since` and `--until` before reading the figure as the window's — a fee charged in EURC counted at par (the venue converts euro to EURC beside the row to charge a margin open's fee, and the journal reports that fill's fee in euro), printed at four decimals to read against the fills' cent-rounded fees in the ledger read; it is not added to the blend, and a `margin` row's `amount`, the realized PnL, is summed nowhere.
 ```
 
 - [ ] **Step 5: Run the file and watch it pass**
@@ -1504,8 +1505,8 @@ Expected: `86 passed, 3 skipped`.
 
 - [ ] **Step 6: The consumers**
 
-Run: `uv run pytest tests/test_config.py tests/test_engine_concordance.py tests/test_engine_gate_export_cache.py tests/test_engine_gate_cache.py tests/test_engine_stub_fidelity.py tests/test_engine_command.py tests/test_engine_gate_export.py tests/test_engine_feeders.py tests/test_engine_tracking.py tests/test_engine_execledger.py tests/test_ops_daily_soak.py tests/test_error_paths_are_logged.py tests/test_engine_metrics.py tests/test_engine_soak_command.py tests/test_ops_daily.py tests/test_engine_soak.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a data gate, none failed; `2132 passed, 7 skipped` when this plan was written.
+Run: `uv run pytest tests/test_config.py tests/test_engine_concordance.py tests/test_engine_gate_export_cache.py tests/test_engine_gate_cache.py tests/test_engine_stub_fidelity.py tests/test_engine_command.py tests/test_engine_gate_export.py tests/test_engine_feeders.py tests/test_engine_tracking.py tests/test_engine_execledger.py tests/test_ops_daily_soak.py tests/test_error_paths_are_logged.py tests/test_engine_metrics.py tests/test_engine_soak_command.py tests/test_ops_daily.py tests/test_engine_soak.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_count_list.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
+Expected: every test passed or skipped by a data gate, none failed; `2150 passed, 7 skipped` when this plan was written.
 
 - [ ] **Step 7: The commit gate**
 
@@ -1525,7 +1526,8 @@ trade id, its amount the realized PnL and its fee the fill's fee; the rollover f
 against a hand read of 0.016, four rows of 0.0040. The match widens to margin rows by the same
 refid rule, an unmatched one failing the reconciliation and a matched one counting as a comparison;
 a matched row's fee, in euro or in EURC at par, joins matched_fees_eur, the venue's own figure over
-the window's journaled fills, printed beside the rollover total while the blend keeps the journal's
+the journaled fills the export's rows matched, printed beside the rollover total while the blend
+keeps the journal's
 cent-rounded fees, and a margin row's amount is summed nowhere; settled and collateralconversion join the known no-fill
 types, counted under known and printed on their own line, ignored keeping the types the reader has
 not met; both figures print at four decimals, the export's precision for a euro fee. The README row
@@ -1589,7 +1591,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/command.py \
   -- uv run pytest tests/test_engine_tracking.py -q -p no:cacheprovider
 ```
 
-Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend` with the whole message re-supplied, with:
+Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message with the text below: write the whole message, that line replaced, to a file under `.tmp/` (gitignored) and amend from it with `git commit --amend -F <that file>` — the Global Constraints' rule, never `--amend -m "…"`, inside which the shell runs each backticked name below as a command:
 
 ```
 Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/tracking.py`, control the matched types
@@ -1603,7 +1605,7 @@ misspelled: the rollover print back to two decimals, KILLED, control proven; the
 trade rows alone, KILLED, control proven.
 ```
 
-Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
+Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`; `git log -1 --format=%B | grep -c 'infra/scripts/mutate-probe.sh'` — Expected: `1`, the verdict naming the script.
 
 ---
 
@@ -2431,8 +2433,9 @@ with:
             )
             return "ambiguous"
         if type(event).__name__ == "OrderCancelRejected":
-            # The venue positively says the cancel did not take, so the order rests where the cancel is not re-sent and
-            # after the pass's sweep has written its intent: the hand cancel is the operator's, the own-order path's line.
+            # The venue positively says the cancel did not take, so the order rests where the cancel is not re-sent and,
+            # where the pass cancelled it and its sweep ran, after the sweep has written its intent: the hand cancel is
+            # the operator's, the own-order path's line.
             logger.critical(
                 "cancel of adopted order %s was REJECTED by the venue -- the order may still rest, and the cancel is not "
                 "re-sent: cancel it by hand on Kraken's open-orders page",
@@ -2468,8 +2471,8 @@ with:
         Three things write nothing here -- no terminal state, row untouched: a status outside the
         map (every OPEN one), an order the Cache does not hold, and a Cache that cannot be read at
         all; a refused cancel writes nothing too, decided before the read and logged CRITICAL, since
-        the venue positively says the order rests where the cancel is not re-sent and after the
-        pass's sweep has written its intent. The unreadable Cache is
+        the venue positively says the order rests where the cancel is not re-sent and, where the pass
+        cancelled it and its sweep ran, after the sweep has written its intent. The unreadable Cache is
 ```
 
 Replace, in `infra/runbooks/engine-procedures.md`, this block:
@@ -2480,7 +2483,7 @@ Replace, in `infra/runbooks/engine-procedures.md`, this block:
 with:
 
 ```markdown
-`revoked` — the kill file, a disarm, quote silence or an engine restart took it mid-rest, so it was revoked rather than held to its expiry, and the plan stops there. After a restart the startup pass writes it, with `the engine restarted while the intent was in flight` as the reason, and writes `not run -- the engine restarted before it ran` on the intents that never placed an order; the pass writes the intent before the venue answers its cancel, so a fill that lands afterwards — racing the cancel, or on an order the cancel did not reach — is on the order's row and not in the intent's `filled_qty`: read the row; a cancel the venue refuses leaves the order resting beside its `revoked` intent, the `cancel of adopted order … was REJECTED by the venue` line at CRITICAL says so, and the hand cancel on Kraken's open-orders page is yours. An intent still `pending` after the pass is one whose order the pass left resting — a reducer it kept, or an order it could not cancel or could not match — or the whole window's, when the pass's ledger or venue read failed or the pass latched the kill switch. A startup inside the re-attach window — the intent's boundary day and the next UTC day (`_exec_records_in_window` in `cli/engine/execledger.py` reads those two day directories, for the intent sweep and the row re-attach alike) — settles the intents a failed read left, a cancel that raised, a reconcile that raised, and an order resting outside the Cache once it is cancelled by hand or closes at the venue; an intent whose row recorded no txid, or whose txid no venue read returns, stays `pending` through later startups too. Past the window no startup reads the intent or its row: the window's entry records each intent still `pending`, and its row, beside Kraken's open and closed orders and the positions page read for that order.```
+`revoked` — the kill file, a disarm, quote silence or an engine restart took it mid-rest, so it was revoked rather than held to its expiry, and the plan stops there. After a restart the startup pass writes it, with `the engine restarted while the intent was in flight` as the reason, and writes `not run -- the engine restarted before it ran` on the intents that never placed an order; the pass writes the intent before the venue answers its cancel, so a fill that lands afterwards — racing the cancel, or on an order the cancel did not reach — is on the order's row and not in the intent's `filled_qty`: read the row; a cancel the venue refuses leaves the order resting beside its `revoked` intent, the `cancel of adopted order … was REJECTED by the venue` line at CRITICAL says so, and the hand cancel on Kraken's open-orders page is yours. An intent still `pending` after the pass is one whose order the pass left resting — a reducer it kept, or an order it could not cancel or could not match — or the whole window's, when the pass's ledger or venue read failed or the pass latched the kill switch. A startup inside the re-attach window — the intent's boundary day and the next UTC day (`_exec_records_in_window` in `cli/engine/execledger.py` reads those two day directories, for the intent sweep and the row re-attach alike) — settles the intents a failed read left, a cancel that raised, a reconcile that raised, and an order resting outside the Cache once it is cancelled by hand or closes at the venue; an intent whose row recorded no txid, or whose txid no venue read returns, stays `pending` through later startups too, and one the pass latched the kill switch over is written by no startup while the latch's cause stands. Past the window no startup reads the intent or its row: the window's entry records each intent still `pending`, and its row, beside Kraken's open and closed orders and the positions page read for that order.```
 
 Replace, in `infra/runbooks/engine-procedures.md`, this block:
 
@@ -2500,7 +2503,7 @@ The executor treats every one of those as an unknown venue outcome: the intent e
 with:
 
 ```markdown
-The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts; on an order the startup pass adopted, the row reads `ambiguous` instead, until a startup inside the re-attach window settles it against the venue (the `Three terminal outcomes` paragraph below names the window and what the entry records past it), and its intent is the pass's, written before the venue answered, or left `pending` when the pass's ledger or venue read failed; read Kraken's open orders — an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart.```
+The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts; on an order the startup pass adopted, the row reads `ambiguous` instead, until a startup inside the re-attach window settles it against the venue (the `Three terminal outcomes` paragraph below names the window and what the entry records past it), and its intent is the pass's, written before the venue answered, or left `pending` when the pass's ledger or venue read failed or the pass latched the kill switch, when no startup writes it while the latch's cause stands; read Kraken's open orders — an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart.```
 
 Replace, in `infra/runbooks/engine-procedures.md`, this block:
 
@@ -2510,7 +2513,7 @@ Replace, in `infra/runbooks/engine-procedures.md`, this block:
 with:
 
 ```markdown
-`outcome="ambiguous"` is where a minted terminal on the plan's own order lands; one on an order the startup pass adopted moves no outcome, and the `was reconciled, not received` lines count the mints on both paths, read the same way as the timeout count: `sudo docker logs --since 24h zcrypto-engine | grep -c 'was reconciled, not received'`.```
+`outcome="ambiguous"` is where a minted terminal on the plan's own order lands; one on an order the startup pass adopted moves no outcome, and the `was reconciled, not received` lines count the mints on both paths, read the same way as the timeout count, with `sudo docker logs --since 24h zcrypto-engine | grep -c 'was reconciled, not received'`.```
 
 Replace, in `infra/runbooks/engine-procedures.md`, this block:
 
@@ -2555,7 +2558,7 @@ Replace, in `infra/runbooks/engine.md`, this block:
 with:
 
 ```markdown
-   - **`… was reconciled, not received -- the venue never answered; its row reads ambiguous …`**: the startup pass's cancel of an adopted order went unacknowledged past the engine's in-flight budget, so the engine minted the terminal itself; the row reads `ambiguous`, and its intent is written by the pass, unless the pass's ledger or venue read failed, when a startup inside the re-attach window writes it. Read Kraken's open orders: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled — read its entry in Kraken's closed orders and the positions page, since the pass wrote the intent before the venue answered and a fill after that is on the order's row alone. A startup inside the re-attach window — the row's boundary day and the next UTC day — settles the row in both cases; past it no startup reads the row, so the restart's record — the attended window's entry, or the ops journal's — carries the row and its intent beside that closed-orders and positions reading. No disarm is owed for this line alone (no count command: the line is `_venue_terminal_state`'s in `cli/engine/executor.py`, the window `_exec_records_in_window`'s in `cli/engine/execledger.py`, and the venue's answer is the venue's act).
+   - **`… was reconciled, not received -- the venue never answered; its row reads ambiguous …`**: the startup pass's, or a kill trip's, cancel of an adopted order went unacknowledged past the engine's in-flight budget, so the engine minted the terminal itself; the row reads `ambiguous`, and its intent is the pass's: written where the pass cancelled the order and its sweep ran, and `pending` where the pass kept the order or could not cancel or match it, where its ledger or venue read failed, when a startup inside the re-attach window writes it, or where it latched the kill switch, when no startup writes it while the latch's cause stands. Read Kraken's open orders: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled — read its entry in Kraken's closed orders and the positions page, since the pass wrote the intent before the venue answered and a fill after that is on the order's row alone. A startup inside the re-attach window — the row's boundary day and the next UTC day — settles the row in both cases; past it no startup reads the row, so the restart's record — the attended window's entry, or the ops journal's — carries the row and its intent beside that closed-orders and positions reading. No disarm is owed for this line alone (no count command: the line is `_venue_terminal_state`'s in `cli/engine/executor.py`, the window `_exec_records_in_window`'s in `cli/engine/execledger.py`, and the venue's answer is the venue's act).
    - **`cancel of adopted order … was REJECTED by the venue`**: the venue refused the startup pass's, or a kill trip's, cancel of an order this process adopted, and the cancel is not re-sent; the order rests, and its intent, where the pass wrote it, reads `revoked` already. Cancel it by hand on Kraken's open-orders page, and read the row's `filled_qty` for what filled before that; no disarm is owed for this line alone (no count command: the line is `_venue_terminal_state`'s in `cli/engine/executor.py`, and the venue's refusal is the venue's act).
    - **Anything naming the executor, an order, a fill, the ledger, or the kill switch is the execution path, and it is the one to act on now.** Continue at step 3.
 ```
@@ -2568,7 +2571,7 @@ Replace, in `infra/runbooks/drills-order-path.md`, this block:
 with:
 
 ```markdown
-3. **The ledger**, with the probe window's ledger read: the order's row carries `canceled`, or `ambiguous` where the venue's acknowledgement did not arrive and the engine minted the cancel's terminal for itself — step 4's read then decides it: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which Kraken's closed orders and the row's `filled_qty` tell apart (drill G's record says how that reads) — `filled_qty 0.0`, and no `fill` lines at all; the intent reads `revoked`, written by the startup pass before the venue answered, unless the pass could not cancel or match the order, or its ledger or venue read failed, when it stays `pending` — which of those a later startup settles, inside what window, and what the entry records past it, the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) says.```
+3. **The ledger**, with the probe window's ledger read: the order's row carries `canceled`, or `ambiguous` where the venue's acknowledgement did not arrive and the engine minted the cancel's terminal for itself — step 4's read then decides it: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which Kraken's closed orders and the row's `filled_qty` tell apart (drill G's record says how that reads) — `filled_qty 0.0`, and no `fill` lines at all; the intent reads `revoked`, written by the startup pass before the venue answered, unless the pass could not cancel or match the order, its ledger or venue read failed, or it latched the kill switch, when it stays `pending` — which of those a later startup settles, inside what window, and what the entry records past it, the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) says.```
 
 Replace, in `infra/runbooks/drills-order-path.md`, this block:
 
@@ -2578,7 +2581,7 @@ Replace, in `infra/runbooks/drills-order-path.md`, this block:
 with:
 
 ```markdown
-4. **The ledger**, with the probe window's ledger read: the row's `events` for the cancel, and, if a fill raced it, a `fill` line beside it in the same row; the row `canceled`, or `ambiguous` where the engine minted the cancel's terminal for itself (the Record says how that reads, and an order still resting on Kraken's open-orders page is cancelled by hand there); the intent `revoked` with `the engine restarted while the intent was in flight`, written by the pass before the venue answered, so a fill that raced the cancel is on the row and not in the intent's `filled_qty`, and the plan's later intents `refused` as not run — an intent still `pending` after the pass is one whose order it could not cancel or match, or the whole window's when its ledger or venue read failed, and which of those a later startup settles, inside what window, and what the entry records past it, the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) says.```
+4. **The ledger**, with the probe window's ledger read: the row's `events` for the cancel, and, if a fill raced it, a `fill` line beside it in the same row; the row `canceled`, or `ambiguous` where the engine minted the cancel's terminal for itself (the Record says how that reads, and an order still resting on Kraken's open-orders page is cancelled by hand there); the intent `revoked` with `the engine restarted while the intent was in flight`, written by the pass before the venue answered, so a fill that raced the cancel is on the row and not in the intent's `filled_qty`, and the plan's later intents `refused` as not run — an intent still `pending` after the pass is one whose order it could not cancel or match, or the whole window's when its ledger or venue read failed or it latched the kill switch, and which of those a later startup settles, inside what window, and what the entry records past it, the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) says.```
 
 Replace, in `infra/runbooks/drills-order-path.md`, this block:
 
@@ -2590,7 +2593,7 @@ with:
 
 ```markdown
 - **One more per fill racing the cancel**, keyed back the same way. Either reading proves a restart re-attaches a ledgered order by its txid, which is the question this reading exists to answer.
-- **The row after the pass's cancel** reads `canceled` on the venue's own acknowledgement and `ambiguous` on one the engine minted for itself after its in-flight budget — the cancel executed at Kraken with its acknowledgement lost, or did not reach it, and Kraken's open orders are what tell those apart: an order still resting there is cancelled by hand on that page, one that is gone was cancelled or filled, which Kraken's closed orders and the row's `filled_qty` tell apart, and an `ambiguous` row is settled by a startup inside the re-attach window, which the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) names with what the entry records past it. The intent reads `revoked` in both cases, written by the pass itself before the venue answered, so a fill after that is on the row alone — unless the pass's ledger or venue read failed, when it stays `pending` for a startup inside that window.
+- **The row after the pass's cancel** reads `canceled` on the venue's own acknowledgement and `ambiguous` on one the engine minted for itself after its in-flight budget — the cancel executed at Kraken with its acknowledgement lost, or did not reach it, and Kraken's open orders are what tell those apart: an order still resting there is cancelled by hand on that page, one that is gone was cancelled or filled, which Kraken's closed orders and the row's `filled_qty` tell apart, and an `ambiguous` row is settled by a startup inside the re-attach window, which the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) names with what the entry records past it. The intent reads `revoked` in both cases, written by the pass itself before the venue answered, so a fill after that is on the row alone — unless the pass's ledger or venue read failed, when it stays `pending` for a startup inside that window, or the pass latched the kill switch, when no startup writes it while the latch's cause stands.
 ```
 
 - [ ] **Step 5: Run the file and watch it pass**
@@ -2600,8 +2603,8 @@ Expected: `283 passed`.
 
 - [ ] **Step 6: The consumers**
 
-Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a gate, none failed; `1933 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates.
+Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_count_list.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
+Expected: every test passed or skipped by a gate, none failed; `1951 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates.
 
 - [ ] **Step 7: The commit gate**
 
@@ -2712,7 +2715,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/execledger.py \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 ```
 
-Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend` with the whole message re-supplied, with:
+Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message with the text below: write the whole message, that line replaced, to a file under `.tmp/` (gitignored) and amend from it with `git commit --amend -F <that file>` — the Global Constraints' rule, never `--amend -m "…"`, inside which the shell runs each backticked name below as a command:
 
 ```
 Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/executor.py`, control the revoked reason
@@ -2731,7 +2734,7 @@ over `cli/engine/execledger.py`, control the pending word misspelled: every inte
 ones included, KILLED, control proven.
 ```
 
-Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
+Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`; `git log -1 --format=%B | grep -c 'infra/scripts/mutate-probe.sh'` — Expected: `1`, the verdict naming the script.
 
 ---
 
