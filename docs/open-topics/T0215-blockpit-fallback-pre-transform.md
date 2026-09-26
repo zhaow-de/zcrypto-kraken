@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: "rung 2's first ISO week of fills is in Kraken's ledger — the fixture carrying the shapes rung 1 never produced (a margin close at a loss, a taker close); check: Kraken's ledger over that week lists a `Margin Trade` row with a negative amount"
+ripe_when: "rung 2's first ISO week of fills is in Kraken's ledger — the fixture carrying the shapes rung 1 never produced (a margin close at a loss, a taker close); check: Kraken's ledger CSV over that week lists a `margin` row with a negative amount"
 ---
 
 # The Blockpit T3 fallback: a deterministic pre-transform of Kraken's exports into the manual-import CSV
@@ -16,7 +16,8 @@ At rung 3 every PnL-carrying close loses its fee from the deductible sums and ev
 ## Findings so far
 
 - The mapping Blockpit applies to every Kraken row type this window produced is the table in `docs/reference/blockpit-t1-memo.md`; the transform reproduces it row for row and changes two shapes: a conversion pair becomes a Trade EUR → EURC at the pair's amounts, and a `margin` row with a non-zero amount becomes a Margin Profit (or Loss) at the amount plus a separate Margin Fee row at its fee.
-- The input is a spec decision: Kraken exported PDFs only (four decimals, no `refid`); the read-only key of [[T0000]] can query ledgers and trades.
+- The input is a spec decision: Kraken's ledger CSV (full precision, `refid`) or the read-only key of [[T0000]]; the PDFs are neither.
+- In the ledger CSV every `margin`, `rollover` and `collateralconversion` row carries `refid` = its position's opening trade id (the 25th's BTC long `TS3DOW-2DP7C-GB7IOO`, its ETH short `TXUN26-ZE65D-WWISMG`), so the transform links a position's rows without the trades export; the type spellings are `margin`, `rollover`, `settled`, `collateralconversion`, a spot leg `trade` with subtype `tradespot`, and the settle's BTC row carries full precision.
 - Blockpit computes FIFO per integration, so a manual-import depot that replaces the connector's must carry the whole history from the 2026-07-10 deposit, not the rows from the switch on; whether the connector's depot is removed or the manual one supplements it is the spec's first decision.
 
 ## Suggested next steps

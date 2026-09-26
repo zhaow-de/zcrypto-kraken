@@ -4,7 +4,7 @@
 
 ## The connection
 
-- The depot is Blockpit's own Kraken connector, granted through Kraken's OAuth login on 2026-07-09 — not the read-only API key of [[T0000]]; the grant offered no scope to check or uncheck.
+- The depot is Blockpit's own Kraken connector, granted through Kraken's OAuth login on 2026-07-09 — not the read-only API key of [[T0000]]; the grant offered no scope to check or uncheck. Kraken's connected-apps entry for Blockpit, read by the owner on 2026-09-25, lists view and export scopes only — the account balance, closed and open orders and trades, the ledger's view and export, the account information and a one-time API key for the session — and no order placement.
 - Blockpit's integration page for Kraken still names no spot-margin scope. What it imports is the table below, measured.
 
 ## The import scope, measured
@@ -38,4 +38,4 @@ Not observed in this window: a `Margin Loss`, a taker close, a position held acr
 ## The gaps, and where they are worked
 
 - [[T0215]], the T3 fallback: the deterministic pre-transform of Kraken's exports — the conversion pairs, the fee split, and the whole ledger into Blockpit's manual-import CSV so the connector's depot can be replaced.
-- Kraken's ledger and trades export came as PDF statements — four decimals, no `refid` — so they are evidence, not input; the lossless input is [[T0215]]'s to decide.
+- Kraken's ledger CSV export carries full precision and the `refid`; the PDF statements round to four decimals and carry neither, so they are evidence, not input.
