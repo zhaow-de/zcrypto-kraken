@@ -24,10 +24,7 @@ _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave that
 # host's rule permanently unable to fire while still provisioned: green-when-blind.
 
-# 00069 T6/T7: the six ProcessCollector families are shared by every app endpoint AND (per the NAS,
-# ops and capture config.alloy's `exporter.self "alloy"` comments) admitted for Alloy's own
-# self-scrape on those three hosts, so they admit the same six names (spec 00069 D5); the cache
-# nodes' keep regex admits none of them (CACHE_REQUIRED below).
+# Every app endpoint's six ProcessCollector families, also admitted for Alloy's own self-scrape on the NAS, ops and capture.
 PROCESS_FAMILIES = [
     "process_cpu_seconds_total",
     "process_max_fds",
