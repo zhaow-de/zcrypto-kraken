@@ -2637,7 +2637,7 @@ def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variable
     assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]
 
 
-# --- a fresh node's preview in the base, fail2ban, docker, firewall and chrony roles ---
+# --- a fresh node's preview ---
 ROLES = ANSIBLE / "roles"
 FRESH_NODE_SITES = [
     (ROLES / "base" / "tasks" / "main.yml", "enable + start unattended-upgrades service", ("base_unattended_upgrades_install",)),
