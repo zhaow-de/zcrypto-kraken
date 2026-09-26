@@ -8,7 +8,7 @@ Nothing fires these; you open this page deliberately, in an attended window, to 
 
 These bind every section below.
 
-- **The primary's capture daemon and the primary's Alloy are never a drill's subject** (set: `docs/reference/drill-log.md` entries; count: `infra/scripts/count-list.sh drills-on-the-primary`). The rule is `.claude/rules/fleet-deploys.md`; the subjects here are ops, the secondary and the NAS.
+- **The primary's capture daemon and the primary's Alloy are never a drill's subject** (set: the rule's, `.claude/rules/fleet-deploys.md`; count: `infra/scripts/count-list.sh drills-on-the-primary`); the subjects here are ops, the secondary and the NAS.
 - **Never induce inside a published Kraken maintenance window** (no count command: a drill's feed read is entry prose; the converge count reads the deploy log) (`.claude/rules/fleet-deploys.md`). Read `curl -fsS https://status.kraken.com/api/v2/scheduled-maintenances.json` at planning time **and again immediately before each induction**: a window can be published between the two reads. Which entries count is the converge bullet's test in `.claude/rules/fleet-deploys.md`; an empty `components` array is not an absent impact.
 - **One induction at a time. Revert it and verify the revert BY VALUE before the next one starts.** A drill that leaves the fleet degraded is an incident, not a drill.
 - **A stop and start moves the container's `.State.StartedAt`, which is what a `since` cell of [`fleet-pins.md`](../../docs/reference/fleet-pins.md) records — re-true that row in the same step as the restore** (no count command: a drill entry's *operator action* clause is prose). One `docker inspect <name> --format '{{.State.StartedAt}}'` — `/usr/local/bin/docker` on the NAS — is the whole cost; skipped, the cell keeps a value the container no longer has and no later reader can tell it from a converge-clock value.
@@ -51,7 +51,7 @@ What a restarted shipper recovers **per plane**, and which rules misfire on the 
 ### Preconditions
 
 - An attended window, the standing rules above satisfied, and the Kraken maintenance feed read immediately before.
-- **Ops and the secondary only** (set: `docs/reference/drill-log.md` entries; count: `infra/scripts/count-list.sh drills-on-the-primary`) (standing rules above).
+- **Ops and the secondary only** (set: the rule's, `.claude/rules/fleet-deploys.md`; count: `infra/scripts/count-list.sh drills-on-the-primary`) (standing rules above).
 - The previous induction reverted and verified by value.
 - **`max(hc_checks_down_total) == 0`, read by value immediately before**: `uv run python infra/scripts/grafana-query.py 'hc_checks_down_total'`. `zcrypto-hcio-watchdog` is in this drill's *Must fire* with a number on the ops half and with *must stay quiet* on the secondary half, and it is a fleet-wide aggregate: a check left down by an earlier drill has it already firing, which turns the ops reading into an unrelated event's `activeAt` and the secondary assertion into one nothing can satisfy. Not 0 ⇒ clear the down check first, or record **`blocked`** with the reason.
 - Budget two holds of **2 h each**, one per host, sequentially. The hold is the backfill horizon this drill exists to measure; a short hold measures the bound instead, which is drill K.

@@ -16,7 +16,7 @@ Reading rules:
 | --- | --- | --- | --- | --- |
 | capture | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-24 19:49:47 | `7d4c6066d71e` |
 | capture | zcrypto-red | `3f291f3cee57` — revision `77df6273` | 2026-09-24 15:48:46 | `7d4c6066d71e` |
-| engine | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-25 20:52:54 | `7d4c6066d71e` |
+| engine | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-26 16:58:53 | `7d4c6066d71e` |
 | alloy | zcrypto | `b8ec653c4423` — v1.19.2 | 2026-09-22 10:40:38 | `491b0578c049` — v1.18.0 |
 | alloy | zcrypto-red | `b8ec653c4423` — v1.19.2 | 2026-09-22 10:25:05 | `491b0578c049` — v1.18.0 |
 | alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 09:40:56 | `491b0578c049` — v1.18.0 |

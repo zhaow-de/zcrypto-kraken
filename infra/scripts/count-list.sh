@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# The instrument that replaced the refine-rules staleness sweep: one line per entry -- its name and today's value -- for every count the corpus and the contracts name by entry (the top-level runbook pages among them since 2026-09-11), and a universal with no entry beside it is the finding.
-# Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
+# One line per entry -- its name and today's value -- for every count the corpus and the contracts name by entry; a universal with no entry beside it is the finding.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
 set -uo pipefail
 
@@ -328,7 +327,12 @@ c_converges_inside_a_kraken_window() {
 }
 
 # shellcheck disable=SC2016  # the backticks are the drill-log row's literal Markdown fences
-c_drills_on_the_primary() { grep -cE '^\*host\* `zcrypto`' docs/reference/drill-log.md; }
+# `, the engine` opens an order-path entry, outside the rule's set (.claude/rules/fleet-deploys.md).
+c_drills_on_the_primary() {
+  local log="${COUNT_LIST_DRILL_LOG:-docs/reference/drill-log.md}"
+  [ -f "$log" ] && [ -r "$log" ] || return 2
+  grep -E '^\*host\* `zcrypto`' "$log" | grep -vcE '^\*host\* `zcrypto`, the engine\b'
+}
 
 # `--skip-tags engine` is the Alloy bump's published primary form and names no tag, so it books an
 # empty `tags` and its own `skip_tags` cell; counting it here would read a violation that never was.
