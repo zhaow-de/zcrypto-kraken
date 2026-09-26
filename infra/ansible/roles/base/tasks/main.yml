@@ -54,6 +54,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  register: base_unattended_upgrades_install
 
 - name: configure unattended-upgrades — security pocket, auto-reboot, mail on failure only
   ansible.builtin.template:
@@ -71,11 +72,14 @@
     group: root
     mode: "0644"
 
+# A fresh node's preview never installed the package, so systemd cannot find the unit and the
+# module fails even under --check, which aborts converge.sh. Skip exactly that case.
 - name: enable + start unattended-upgrades service
   ansible.builtin.systemd:
     name: unattended-upgrades
     enabled: true
     state: started
+  when: not (ansible_check_mode and base_unattended_upgrades_install is changed)
 
 - name: create the zcrypto-data system user (rrsync-only shell, home = its state dir)
   ansible.builtin.user:

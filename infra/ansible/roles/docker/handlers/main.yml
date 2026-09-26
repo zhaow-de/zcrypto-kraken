@@ -2,3 +2,4 @@
   ansible.builtin.systemd:
     name: docker
     state: restarted
+  when: not (ansible_check_mode and (docker_repo is changed or docker_install is changed))

@@ -2635,3 +2635,29 @@ def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variable
     task = find_task(load_tasks(CACHE), CACHE_ALLOY_DRIFT)
     assert truthy(when_conditions(task), variables) is expected
     assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]
+
+
+# --- a fresh node's preview: every task naming a unit or group the dry run never installed ---------
+ROLES = ANSIBLE / "roles"
+FRESH_NODE_SITES = [
+    (ROLES / "base" / "tasks" / "main.yml", "enable + start unattended-upgrades service", ("base_unattended_upgrades_install",)),
+    (ROLES / "fail2ban" / "tasks" / "main.yml", "enable + start fail2ban", ("fail2ban_install",)),
+    (ROLES / "fail2ban" / "handlers" / "main.yml", "restart fail2ban", ("fail2ban_install",)),
+    (ROLES / "docker" / "tasks" / "main.yml", "install Docker Engine + Compose plugin", ("docker_repo",)),
+    (ROLES / "docker" / "tasks" / "main.yml", "add deploy user to the docker group", ("docker_repo", "docker_install")),
+    (ROLES / "docker" / "tasks" / "main.yml", "enable + start docker", ("docker_repo", "docker_install")),
+    (ROLES / "docker" / "handlers" / "main.yml", "restart docker", ("docker_repo", "docker_install")),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "name", "registers"), FRESH_NODE_SITES, ids=[f"{p.parts[-3]}:{n}" for p, n, _ in FRESH_NODE_SITES]
+)
+@pytest.mark.parametrize("check_mode", [True, False])
+def test_a_fresh_node_preview_skips_exactly_what_it_never_installed(path, name, registers, check_mode):
+    task = find_task(load_tasks(path), name)
+    for fresh in registers:
+        variables = {"ansible_check_mode": check_mode, **{r: {"changed": r == fresh} for r in registers}}
+        assert truthy(when_conditions(task), variables) is (not check_mode), (name, fresh, check_mode)
+    settled = {"ansible_check_mode": check_mode, **{r: {"changed": False} for r in registers}}
+    assert truthy(when_conditions(task), settled) is True, (name, check_mode)
