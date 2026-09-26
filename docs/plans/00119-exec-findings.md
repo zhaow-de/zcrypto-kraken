@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A crossing post-only order is re-priced off a tick newer than the one it crossed on and, in `execute` mode, an exhausted maker ladder crosses through the bounded IOC before the intent ends `unfilled`; `tracking-report --ledger-export` matches `margin` rows by trade id, counts `settled` and `collateralconversion` as known no-fill types, reports the matched rows' fees beside the rollover total and prints both at four decimals; the startup pass settles every intent a restart orphans and marks a minted terminal on an adopted row `ambiguous`; the operator pages say so.
+**Goal:** A crossing post-only order is re-priced off a tick newer than the one it crossed on and, in `execute` mode, an exhausted maker ladder crosses through the bounded IOC before the intent ends `unfilled`; `tracking-report --ledger-export` matches `margin` rows by trade id, counts `settled` and `collateralconversion` as known no-fill types, reports the matched rows' fees beside the rollover total and prints both at four decimals; the startup pass settles every intent a restart orphans and marks a minted terminal on an adopted row `ambiguous`; the executor's reconnect pass re-reads at the venue each row it minted terminal during a socket cut and cancels what still rests; the gate's gauges are republished once a minute while no plan runs; the operator pages say so.
 
-**Architecture:** Three tasks, one per finding, each a guard-proven commit on one branch. Task 1 adds two counters to `_ActiveIntent`, a phase `awaiting_reprice` with its own `_poll` arm, entered with the ended order detached, and the fall-through from `_reprice`'s exhaustion to `_fallback` in `cli/engine/executor.py`, records the priced quote inside each row's `order` payload, and gives the runbook's `Nothing retries itself` rule the clause that an `execute` intent's `unfilled` follows both ladders. Task 2 widens `reconcile_ledger`'s match in `cli/engine/tracking.py` to a `_MATCHED_LEDGER_TYPES` set, adds `known` and `matched_fees_eur` to its result, a fee summed under `_EURO_FEE_ASSETS`, the euro codes and EURC, and changes `cli/engine/command.py`'s rendering, with the README row and the runbook's §6 item 3 following. Task 3 adds `pending_plan_intents` to `cli/engine/execledger.py`, a `_settle_pending_intents` sweep the adopt pass runs after classification, which leaves `pending` every intent with an open row the pass did not cancel, and the `ambiguous` return of `_venue_terminal_state`'s reconciliation arm for a minted terminal, with the two drill and procedure pages and the error-logs runbook following. The third task is the spec's strikeable cluster: nothing in the first two depends on it.
+**Architecture:** Five tasks, one per finding, each a guard-proven commit on one branch. Task 1 adds two counters to `_ActiveIntent`, a phase `awaiting_reprice` with its own `_poll` arm, entered with the ended order detached, and the fall-through from `_reprice`'s exhaustion to `_fallback` in `cli/engine/executor.py`, records the priced quote inside each row's `order` payload, and gives the runbook's `Nothing retries itself` rule the clause that an `execute` intent's `unfilled` follows both ladders. Task 2 widens `reconcile_ledger`'s match in `cli/engine/tracking.py` to a `_MATCHED_LEDGER_TYPES` set, adds `known` and `matched_fees_eur` to its result, a fee summed under `_EURO_FEE_ASSETS`, the euro codes and EURC, and changes `cli/engine/command.py`'s rendering, with the README row and the runbook's §6 item 3 following. Task 3 adds `pending_plan_intents` to `cli/engine/execledger.py`, a `_settle_pending_intents` sweep the adopt pass runs after classification, which leaves `pending` every intent with an open row the pass did not cancel, and the `ambiguous` return of `_venue_terminal_state`'s reconciliation arm for a minted terminal, with the two drill and procedure pages and the error-logs runbook following. The third task is the spec's strikeable cluster: nothing in the first two depends on it. Task 4 subscribes `ShadowStrategy` to the client's socket-state stream and forwards it to the executor, which arms a reconnect pass when the last endpoint reported down reports back and runs it on its next tick with nothing in flight: the startup's row sweep (`_reconcile_adopted_rows`) over the open rows whose Cache order a minted terminal closed, with a venue read scoped to them and a bare-client cancel by txid (`cancel_venue_order`) for a report still open, the row written `canceled`; drill F2's procedure and the two runbooks follow. Task 4 is the third cluster's pass at one more moment and falls with Task 3 if that cluster is struck. Task 5 stamps every gate evaluation and refreshes the gate at the tick's tail once `_GATE_REFRESH` has passed, so a control file moved by hand reaches the gauges within a minute; two idle-tick cases are re-bounded and the four page sentences and one test comment that named the old cadence are re-trued. Task 5 stands whatever is struck.
 
 **Tech Stack:** Python 3.14 through `uv run`, pytest, the pinned `nautilus-trader` (`2.0.0rc6.dev20260921`) whose real order events and orders the executor tests drive, `infra/scripts/mutate-probe.sh` for the guard verdicts, `uv run pre-commit run -a` as the commit gate.
 
@@ -16,11 +16,13 @@
 - No schema changes: `_ROW_KEYS` and `EXEC_SCHEMA_VERSION` in `cli/engine/execledger.py` stay as they are, the priced quote living inside the row's `order` payload as `bid`, `ask`, `quote_seq` (spec D5); `_INTENT_KEYS` in `cli/engine/probeplan.py` is untouched (spec D4); no `_inc_order` label is added, since `tests/test_engine_metrics.py` pins `_EXEC_ORDER_OUTCOMES` against the executor's call sites.
 - The reader's constants: `_MATCHED_LEDGER_TYPES = {"trade", "margin"}`; `_NO_FILL_LEDGER_TYPES` gains `settled` and `collateralconversion`; the result gains `known` and `matched_fees_eur`, a fee summed when its asset is in `_EURO_FEE_ASSETS`, the euro codes and `EURC`, for the rollover arm and the matched arm alike; `status` is `ok` once a trade or margin row was compared; the rollover and matched-fee lines print `:,.4f` (spec D7, D9, D10); `_LEDGER_COLUMNS` is unchanged, so the sixteen-column export still parses and the only-used-columns rule `tests/test_engine_tracking.py` pins holds.
 - The startup pass's words: `filled`, `revoked` with `the engine restarted while the intent was in flight`, `refused` with `not run -- the engine restarted before it ran`, written at classification time, before the venue answers the pass's cancel, so a fill after the write is on the order's row and not in the intent's `filled_qty`; an intent with an open row the pass sent no cancel for stays `pending`, six shapes — a reducer it kept, a cancel that raised, an order the venue read returned still open outside the Cache, a row the read did not return, a row that recorded no txid, and a row whose reconcile raised on an order closed at the venue — and so does the whole window's when the venue read or the ledger read failed or the pass latched the kill switch, the sweep skipped whole; a later startup inside the re-attach window — `_exec_records_in_window`'s in `cli/engine/execledger.py`, the boundary's UTC day and the next, which the intent sweep and the row re-attach both read — settles the intents of a failed read, a cancel that raised, an order outside the Cache once the venue reports it closed, and a reconcile that raised, and settles neither a row with no txid nor one no venue read returns, which stay `pending`, nor, while the latch's cause stands, the intents a latched kill skipped; past the window no startup reads the intent or its row, and the pages say the window's entry records what stays `pending` beside Kraken's closed orders and positions read for the order; the one shape outside the rule, a Cache-resident order whose reconcile raised and which the loop then cancelled, is settled from the figure the raise left unrepaired (spec D14). A minted terminal on an adopted row writes `ambiguous` and logs at CRITICAL, naming the hand cancel on Kraken's open-orders page; a flagged non-terminal writes nothing (spec D15); a cancel the venue refuses on an adopted order — the pass's or a trip's — logs at CRITICAL naming the hand cancel and writes nothing, the row still open and the intent as the pass left it (spec D14).
+- The reconnect pass's words: `_RECONNECT_ATTEMPTS` 3; the population is the open rows of the re-attach window whose Cache order is closed by an event of `_RECONCILED_TERMINALS` carrying the `reconciliation` flag (`_minted_terminal`), and `_cached_order` answers nothing for such an order; the pass runs on the tick before the pickup, when `_reconnect_tries` is set and `_active` is None; a report still open is cancelled through `venue_cancel`, `cancel_venue_order` by default, and its acceptance writes the row `canceled` with a `recancelled` event; a refused or raising cancel and a read past the budget log CRITICAL and write nothing; no intent is written, no `_inc_order` label is added and `_settle_pending_intents` is not called; `ShadowStrategy.on_start` calls `subscribe_socket_state()` beside the tick and `on_socket_state` is the fifth forwarder (spec D17 to D20).
+- The refresh's words: `_GATE_REFRESH` 60 s; `_evaluate` stamps `_gate_evaluated_at`, which the constructor sets to its clock; `_refresh_gate` runs at the tick's tail and evaluates once the period has passed, and journals nothing (spec D22 to D25).
 - No string literal added under `cli/engine/` and no text added to `README.md`, `infra/runbooks/engine-procedures.md` or `infra/runbooks/drills-order-path.md` names a spec, a decision or a topic: `tests/test_internal_terms_not_operator_visible.py` walks them and runs in every task's consumer command.
-- The three tasks land in order on one branch and merge together: the counts each task's failing and passing runs state assume the tasks before it have landed, and Task 2's and Task 3's first steps check the previous task's marker.
+- The five tasks land in order on one branch and merge together: the counts each task's failing and passing runs state assume the tasks before it have landed, and every task's first step from the second on checks the previous task's marker.
 - A fence is the exact text at its indentation in the file: an indented fence is a fragment replaced in place, never a module of its own, and a `Replace, in <path>, this block:` instruction names the whole block it replaces, which occurs exactly once in the file at that step. A fence whose closing backticks sit on its last text line is a mid-line fragment with no trailing newline: the replacement lands inside that line, and neither the backticks nor the line end belongs to the text replaced.
 - A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend with the tree clean, from a file (`git commit --amend -F <file>`) and never from a double-quoted `-m` argument, inside which the shell runs each backticked name of the verdict text as a command substitution and the message no longer carries the text as written; the probe never runs while a pytest run is in flight in the same checkout.
-- Every commit is green over the changed files' consumers, the union of `grep -rlE 'engine\.executor|engine import executor|engine\.execledger|engine import execledger' tests/test_*.py` for Tasks 1 and 3 and of `grep -rlE 'engine\.tracking|engine import tracking|engine\.command|engine import command' tests/test_*.py` for Task 2, each plus the internal-terms guard, and, since each task changes a page under `infra/runbooks/` or `README.md`, the tests that read those pages from the tree — the files `grep -rlE 'infra/runbooks|README\.md' tests/test_*.py` finds that read the pages, not those it finds naming the paths in a fixture, a string or a comment alone, and `tests/test_code_prose_citations.py`, which walks `infra/` for `*.md`: `tests/test_code_prose_citations.py`, `tests/test_count_list.py`, `tests/test_guidance_guard.py`, `tests/test_guidance_refs_resolve.py`, `tests/test_infra_alert_rules.py`, `tests/test_ops_daily.py`, `tests/test_runbook_internal_tokens.py`, `tests/test_runbook_triggers.py` and `tests/test_systemd_user_units.py` — all as they read when this plan was written; never the full suite locally, which is CI's on every push.
+- Every commit is green over the changed files' consumers, the union of `grep -rlE 'engine\.executor|engine import executor|engine\.execledger|engine import execledger' tests/test_*.py` for Tasks 1 and 3 and of `grep -rlE 'engine\.tracking|engine import tracking|engine\.command|engine import command' tests/test_*.py` for Task 2, each plus the internal-terms guard, and, since each task changes a page under `infra/runbooks/` or `README.md`, the tests that read those pages from the tree — the files `grep -rlE 'infra/runbooks|README\.md' tests/test_*.py` finds that read the pages, not those it finds naming the paths in a fixture, a string or a comment alone, and `tests/test_code_prose_citations.py`, which walks `infra/` for `*.md`: `tests/test_code_prose_citations.py`, `tests/test_count_list.py`, `tests/test_guidance_guard.py`, `tests/test_guidance_refs_resolve.py`, `tests/test_infra_alert_rules.py`, `tests/test_ops_daily.py`, `tests/test_runbook_internal_tokens.py`, `tests/test_runbook_triggers.py` and `tests/test_systemd_user_units.py` — all as they read when this plan was written; for Task 4 the executor union with the loopback venue's other consumers, `grep -rl kraken_loopback tests/test_*.py`, since it teaches that venue an answer; for Task 5 the executor union with Task 2's, since it touches `cli/engine/command.py`; never the full suite locally, which is CI's on every push.
 - `uv run pre-commit run -a` runs the pre-commit stage alone and is clean before every commit; `guidance-guard` and `message-citations` run at commit-msg, on `git commit`: the runbook list items the three tasks write carry no universal word (every, never, always, only, any, cannot) outside code spans, and no commit message cites a `path:line`, a `path::symbol` or a topic.
 - No step reaches a host or a venue; the executor tests drive the library's own events against a stub client, and the tracking tests a synthetic export.
 - A new Markdown paragraph or list item is one line: no column wrap, no filler blank lines. An existing file's lines are left as they are, except where a step replaces them.
@@ -33,16 +35,21 @@ Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU
 
 ## File structure
 
-- Modify `cli/engine/executor.py` — `_ActiveIntent` gains `quote_seq` and `priced_seq`; `on_quote` advances the count and resubmits from `awaiting_reprice`; `_place` records the quote and sets `priced_seq`; `_reprice` waits, with the ended order detached, or falls through to `_fallback`, its tail moving to `_reprice_at_touch`; `_resubmit` ends a remainder below one lot step `filled`; `on_quote`'s handler carries `filled`; `_poll` gains the `awaiting_reprice` arm, the completion test at its head, and `_time_box_with_nothing_resting` (Task 1). `_adopt_resting_orders` records whether the ledger read succeeded, collects the intents it cancelled and calls `_settle_pending_intents`, a new method; `_venue_terminal_state`'s reconciliation arm returns `ambiguous` for a minted terminal (Task 3).
+- Modify `cli/engine/executor.py` — `on_socket_state`, `_reconnect_pass`, `_minted_closed`, `_recancel`, `_cache_lookup`, `_minted_terminal` and `cancel_venue_order`, with `_cached_order` withholding a minted-closed order and `_reconcile_adopted_rows` taking `recancel` (Task 4); `_gate_evaluated_at`, `_refresh_gate` and `_GATE_REFRESH` (Task 5). `_ActiveIntent` gains `quote_seq` and `priced_seq`; `on_quote` advances the count and resubmits from `awaiting_reprice`; `_place` records the quote and sets `priced_seq`; `_reprice` waits, with the ended order detached, or falls through to `_fallback`, its tail moving to `_reprice_at_touch`; `_resubmit` ends a remainder below one lot step `filled`; `on_quote`'s handler carries `filled`; `_poll` gains the `awaiting_reprice` arm, the completion test at its head, and `_time_box_with_nothing_resting` (Task 1). `_adopt_resting_orders` records whether the ledger read succeeded, collects the intents it cancelled and calls `_settle_pending_intents`, a new method; `_venue_terminal_state`'s reconciliation arm returns `ambiguous` for a minted terminal (Task 3).
 - Modify `tests/test_engine_executor.py` — the ladder test replaced by nineteen cases and six existing cases gaining the quote line the reprice waits for (Task 1); the pinned minted-terminal case flipped, the external cancel-rejection case's docstring re-trued, `_submitted_row` gaining a `qty` keyword, a `_pending_plan_entry` helper and seventeen cases on the sweep and the adopted row (Task 3).
 - Modify `cli/engine/tracking.py` — `LedgerRow.refid`'s comment, `_EURO_FEE_ASSETS`, `_MATCHED_LEDGER_TYPES`, `_NO_FILL_LEDGER_TYPES`, `reconcile_ledger` (Task 2).
-- Modify `cli/engine/command.py` — `_cost_over`'s basis text and `_render_tracking`'s ledger block (Task 2).
+- Modify `cli/engine/command.py` — `_cost_over`'s basis text and `_render_tracking`'s ledger block (Task 2); `_ExecGauges`' docstring (Task 5).
 - Modify `tests/test_engine_tracking.py` — two unit cases replaced by six, the real-shape fixture among them; one CLI case replaced by three (Task 2).
 - Modify `README.md` — the `tracking-report` row's ledger sentences (Task 2).
-- Modify `infra/runbooks/engine-procedures.md` — the `Nothing retries itself` rule (Task 1); §6 item 3's lead-in and two bullets (Task 2); the rest-hold terminal vocabulary, the `Read filled_qty` paragraph's last sentence and three sentences of the pre-probe step on minted terminals (Task 3).
+- Modify `infra/runbooks/engine-procedures.md` — the `Nothing retries itself` rule (Task 1); §6 item 3's lead-in and two bullets (Task 2); the rest-hold terminal vocabulary, the `Read filled_qty` paragraph's last sentence and three sentences of the pre-probe step on minted terminals (Task 3); one clause of that step (Task 4); the no-alert bullet on the external-events counter (Task 5).
 - Modify `cli/engine/execledger.py` — `pending_plan_intents` (Task 3).
-- Modify `infra/runbooks/drills-order-path.md` — A1's Must fire and step 3, G's Must fire, step 4 and Record (Task 3).
-- Modify `infra/runbooks/engine.md` — the error-logs runbook's step 2 gains the minted-terminal class and the refused cancel's (Task 3).
+- Modify `infra/runbooks/drills-order-path.md` — A1's Must fire and step 3, G's Must fire, step 4 and Record (Task 3); F2's Must fire, operator actions 3 and 4, its property paragraph and Record (Task 4); the derivation rule on the gate's gauges and E's resting-plan precondition (Task 5).
+- Modify `infra/runbooks/engine.md` — the error-logs runbook's step 2 gains the minted-terminal class and the refused cancel's (Task 3); the reconnect pass's class, and the socket section's real-drop bullet (Task 4); the kill-tripped runbook's step 3 (Task 5).
+- Modify `cli/engine/node.py` — `ShadowStrategy` subscribes to the socket-state stream in `on_start` and forwards it (Task 4).
+- Modify `tests/kraken_loopback.py` — the `CancelOrder` answer and its form record (Task 4).
+- Modify `tests/test_engine_node.py` — the recorder's fifth method, the stub's subscription, three cases (Task 4).
+- Modify `tests/test_engine_stub_fidelity.py` — the `_VenueCancel` row (Task 4).
+- Modify `tests/test_infra_alert_rules.py` — the `NOT_A_FAULT_SIGNAL` entry's comment on the external-events counter (Task 5).
 
 ## Review Focus
 
@@ -52,6 +59,9 @@ Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU
 - The ended order's events reaching the in-flight arms while the reprice waits, a row reopened by a racing fill or a crossing counted twice: Task 1 owns `test_a_fill_racing_the_venue_cancel_lands_detached_while_the_reprice_waits` and `test_a_replayed_cancel_ack_while_the_reprice_waits_counts_no_crossing`.
 - A margin row's realized PnL summed as a cost, a hand settle's pair failing the window, or a fee charged in EURC dropped from the venue's figure: Task 2 owns `test_a_margin_row_matching_a_journaled_fill_reconciles_and_carries_its_fee_not_its_pnl` and `test_every_row_type_of_the_real_export_lands_in_exactly_one_place`.
 - A minted terminal read as the venue's answer, a kept reducer's intent rewritten, an intent closed `revoked` while its order rests at Kraken with nothing naming the hand cancel, or fills nobody compared or read, or the venue refuted, journaled as an intent's: Task 3 owns `test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_venues_ack_closes_it`, `test_the_startup_pass_leaves_the_intent_of_a_reducer_it_keeps_pending`, the three `leaves_its_intent_pending` cases, `test_a_cancel_the_venue_refused_on_an_adopted_order_logs_the_hand_cancel_and_leaves_the_row_accepted` and the five `leaves_the_pending_intents` cases, two of them with an opener resting, the restart every drill takes.
+- An order a cut left resting at Kraken after the engine minted its cancel, the measured defect: the sockets' return must arm the pass, the tick must read the venue for that row and cancel it by txid on a report still open, and the row must settle; Task 4 owns `test_a_reconnect_after_a_minted_cancel_re_cancels_the_order_still_resting_and_settles_its_row` and the adopted twin, and `test_cancel_venue_order_sends_the_txid_on_the_real_client_and_returns_on_the_venues_count` pins the bare client.
+- A pass reading every open row, running beside an order in flight, arming on the connect's own `CONNECTED`, retrying a failed read for good or giving up at once, or writing a row on a cancel the venue refused: Task 4 owns `test_a_reconnect_reads_the_venue_for_no_row_the_engine_did_not_mint_terminal`, `test_the_pass_waits_for_a_tick_with_nothing_of_this_process_in_flight`, `test_the_pass_is_owed_when_the_last_socket_reported_down_is_back_and_not_before`, `test_a_venue_read_failing_after_the_reconnect_is_tried_on_three_ticks_then_left_to_the_hand_or_a_restart` and `test_a_re_cancel_the_venue_refuses_leaves_the_row_and_names_the_hand_cancel`; a void the venue reported read as a mint would strand the startup's withdrawal check, and `test_a_withdrawn_fill_on_a_row_this_engine_closed_latches_the_kill_switch` holds it.
+- A gauge holding the boot's reading with no plan running, the measured defect, or a refresh on every tick where the idle path was contracted cheap: Task 5 owns `test_a_kill_file_removed_on_an_idle_engine_is_republished_within_the_refresh_period` and `test_an_idle_tick_reads_no_gate_inside_the_refresh_period_and_one_per_period_past_it`.
 - An intent `filled` on a partial, or its target read off a remainder row or off a row with no readable quantity: Task 3 owns the partial arm of `test_an_intent_whose_order_closed_while_down_is_settled_from_its_rows`, `test_an_intents_two_orders_closed_while_down_are_summed_against_the_first_orders_quantity` and `test_a_row_with_no_readable_quantity_settles_its_intent_revoked_never_filled`.
 
 ---
@@ -1611,7 +1621,7 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 
 ### Task 3: The startup pass settles the intents a restart orphans, and a minted terminal marks an adopted row ambiguous
 
-This task is the spec's third cluster (D13 to D16); struck, Tasks 1 and 2 stand as they are, and the restart finding keeps the registration this branch gave it — the third item on T0018's build-list line of 2026-09-26, drill G's reading — so the struck cluster stays owed work on that line rather than dropping out of the tree, and the closeout's re-true of the line names it as still open.
+This task is the spec's third cluster (D13 to D16); struck, Tasks 1 and 2 stand as they are, Task 4 falls with it, since its pass is this task's sweep at one more moment, Task 5 stands, and the restart finding keeps the registration this branch gave it — the third item on T0018's build-list line of 2026-09-26, drill G's reading — so the struck cluster stays owed work on that line rather than dropping out of the tree, and the closeout's re-true of the line names it as still open.
 
 What this task decides, where the spec leaves it open:
 
@@ -2539,13 +2549,13 @@ with:
 Replace, in `infra/runbooks/drills-order-path.md`, this block:
 
 ```markdown
-- **Nothing, if the engine is back inside ~11 minutes.** All three of the rules D lists need longer, and G's stop is deliberately short.
+- **Nothing, if the engine is back inside ≈7 minutes.** All three of the rules D lists need longer.
 ```
 
 with:
 
 ```markdown
-- **Nothing, if the engine is back inside ~11 minutes.** All three of the rules D lists need longer, and G's stop is deliberately short.
+- **Nothing, if the engine is back inside ≈7 minutes.** All three of the rules D lists need longer.
 - [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) (warning, `logs`), when the pass's cancel goes unacknowledged past the engine's in-flight budget and the engine mints the cancel's terminal for itself: the CRITICAL `was reconciled, not received` line pages it. Expected on that path and named in the entry; [`engine.md#zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) step 2 says what the line asks for, and it is not a disarm (no count command: whether the venue acknowledges is the venue's act, and the line is `_venue_terminal_state`'s in `cli/engine/executor.py`).
 ```
 
@@ -2738,17 +2748,1793 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 
 ---
 
+### Task 4: The reconnect pass re-cancels the order a cut left resting, and settles its row from the venue's answer
+
+This task is the spec's fourth cluster (D17 to D21): the third cluster's pass at one more moment, so it falls with Task 3 if that cluster is struck.
+
+What this task decides, where the spec leaves it open:
+
+- The trigger is kept in the executor as the set of endpoints reported down, `_sockets_down`, and the arm as a count of tries left, `_reconnect_tries`; the handler arms and the tick runs, before the pickup and with `_active` None.
+- The population is derived at the pass through `_minted_terminal`, a module-level predicate on the Cache's order, and `_cached_order` is split: `_cache_lookup` is the two-step lookup the startup sweeps used, and `_cached_order` withholds an order so closed from every caller.
+- The pass calls `_reconcile_adopted_rows` with `recancel=True`, whose one new arm sends a report still open to `_recancel`; the read is `_read_venue_orders`' scope rule inline, since that method's failure arm sets the startup's refusal and this pass sets none.
+- The bare-client cancel is `cancel_venue_order`, `read_venue_orders`' construction, injectable as `venue_cancel` beside `venue_orders`; the test module records it with `_VenueCancel` and resolves it at the call through `_cancel_venue_order`, so the module collects before the source step, and passes `venue_cancel` only when given, so every earlier case still builds its executor on the tree before that step.
+- F2's shape on the plan's own order is built by `_minted_after_a_cut`: a real `LimitOrder` held in the stub Cache after the startup pass ran (`_hold_in_cache`), the quote feed silent through the cut so the executor sends its one cancel, and the minted `OrderCanceled` applied to the order before the executor sees it, as the library does.
+- The loopback venue answers `CancelOrder` with `count` 1 and records the form, so the real client's cancel is measured offline as its read is.
+
+**Files:**
+- Modify `cli/engine/executor.py` (the `nautilus_trader.common` import; `_RECONNECT_ATTEMPTS` after `_VENUE_READ_MARGIN`; `_minted_terminal` before `_venue_order_id_of`; `read_venue_orders`' nonce paragraph; `cancel_venue_order` after it; `ProbeExecutor`'s docstring and `__init__`; `on_timer`'s reconnect line before the pickup; `on_socket_state` after `_publish_resting_age`; `_reconnect_pass` and `_minted_closed` before `_reconcile_adopted_rows`; `_reconcile_adopted_rows`' signature, docstring and report arm; `_recancel` before `_mark_unmatched`; `_cached_order` split into `_cached_order` and `_cache_lookup`)
+- Modify `cli/engine/node.py` (`ShadowStrategy`'s docstring; `on_start`'s subscription; the `on_socket_state` forwarder)
+- Modify `infra/runbooks/drills-order-path.md` (F2's Must fire, one bullet added; its operator actions 3 and 4; the property paragraph after them; its Record)
+- Modify `infra/runbooks/engine.md` (the error-logs runbook's step 2, one class added before `Anything naming the executor`; the socket section's real-drop bullet)
+- Modify `infra/runbooks/engine-procedures.md` (the pre-probe step on minted terminals, one clause)
+- Test: `tests/test_engine_executor.py` (the `nautilus_trader.common` import and two model names; `_executor`'s `venue_cancel`; `_VenueOrders`' docstring; `_VenueCancel` and `_cancel_venue_order` before `_closed_order`; `_resting_executor`'s two keywords; six helpers and eight cases before `_UnreadableOrderCache`; three cases after `test_read_venue_orders_refuses_without_credentials_before_building_a_client`)
+- Test: `tests/kraken_loopback.py` (`cancel_forms`; the `CancelOrder` answer)
+- Test: `tests/test_engine_node.py` (`RecordingExecutor.on_socket_state`; `_exec_stub`'s subscription; two `on_start` assertions; the forwarder case)
+- Test: `tests/test_engine_stub_fidelity.py` (the `_VenueCancel` row)
+
+**Interfaces:**
+- Consumes: `_resting_executor`, `_executor`, `_intent`, `_resting_limit_order`, `_event`, `_accepted`, `_report`, `_VenueOrders`, `_submitted_row`, `_pending_plan_entry`, `_deliver_external_event`, `_deliver_fill`, `_drop_plan`, `_plan_dict`, `_quote`, `_record`, `_intent_outcome`, `_boundary`, `_executor_errors`, `_gate`, `_Clock`, `RecordingMetrics`, `set_executor_hooks`, `StubClient`, `StubCache`, `_TXID`, `_TRADER_ID`, `NOW`, `kraken_loopback`, `_loopback_credentials`, `executor_module`, `EngineError`, `GateLevel`, `OrderStatus`, `OrderAccepted`, `OrderCanceled`, `VenueOrderId`, `UUID4`, `logging`, `pytest`, `timedelta` from the test module's existing names; `RecordingExecutor`, `_exec_stub`, `FakeClock`, `ShadowStrategy`, `_config` in the node tests; `_ADOPTED_TERMINAL_STATES`, `_RECONCILED_TERMINALS`, `_row_venue_order_id`, `_row_label`, `_reconcile_adopted_row`, `open_submitted_rows`, `update_submitted_row`, `_VENUE_READ_MARGIN`, `_VENUE_READ_TIMEOUT_SECONDS`, `_credentials`, `_ACCOUNT_ID` in the executor.
+- Produces: `SocketState` and `SocketStateChanged` from `nautilus_trader.common`, `ClientId` and `Venue` from `nautilus_trader.model` in the test module; `cancel_venue_order(venue_order_id, instrument_id, *, base_url=None)`; `_minted_terminal(order) -> bool`; `_RECONNECT_ATTEMPTS`; `ProbeExecutor(..., venue_cancel=None)`, `.on_socket_state(event)`, `._reconnect_pass(now)`, `._minted_closed(row)`, `._recancel(boundary, row, venue_order_id, report)`, `._cache_lookup(row, venue_order_id)`, `._reconcile_adopted_rows(rows, venue_orders, *, recancel=False)`; `ShadowStrategy.on_socket_state(event)`; the row event `{"event": "recancelled", "at", "venue_order_id"}`; `_VenueCancel`, `_cancel_venue_order`, `_socket`, `_reconnect`, `_hold_in_cache`, `_minted_after_a_cut` in the test module; `KrakenLoopback.cancel_forms`; `RecordingExecutor.socket_states`.
+
+- [ ] **Step 1: Confirm Task 3 has landed and the executor is at the spec's basis**
+
+Run: `grep -c '_settle_pending_intents' cli/engine/executor.py; grep -c 'on_socket_state' cli/engine/executor.py`
+Expected: `4` then `0`. A first count other than 4 means Task 3 is not on the branch; a second other than 0 means the handler already exists; stop and report either to the controller.
+
+- [ ] **Step 2: The failing cases in `tests/test_engine_executor.py`, `tests/kraken_loopback.py`, `tests/test_engine_node.py` and `tests/test_engine_stub_fidelity.py`**
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+import pytest
+from nautilus_trader.core import UUID4
+from nautilus_trader.model import (
+    AccountId,
+    ClientOrderId,
+```
+
+with:
+
+```python
+import pytest
+from nautilus_trader.common import SocketState, SocketStateChanged
+from nautilus_trader.core import UUID4
+from nautilus_trader.model import (
+    AccountId,
+    ClientId,
+    ClientOrderId,
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+    TradeId,
+    TraderId,
+    VenueOrderId,
+```
+
+with:
+
+```python
+    TradeId,
+    TraderId,
+    Venue,
+    VenueOrderId,
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None) -> ProbeExecutor:
+    client = client if client is not None else StubClient()
+    return ProbeExecutor(
+        client=client,
+        gate=gate if gate is not None else _gate(tmp_path),
+        config=config if config is not None else _config(tmp_path),
+        clock=clock if clock is not None else (lambda: NOW),
+        venue_orders=venue_orders,
+    )
+```
+
+with:
+
+```python
+def _executor(
+    tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None, venue_cancel=None
+) -> ProbeExecutor:
+    client = client if client is not None else StubClient()
+    return ProbeExecutor(
+        client=client,
+        gate=gate if gate is not None else _gate(tmp_path),
+        config=config if config is not None else _config(tmp_path),
+        clock=clock if clock is not None else (lambda: NOW),
+        venue_orders=venue_orders,
+        # Passed only when given: the keyword lands in the reconnect task's source step, and every
+        # other case here builds its executor before that step.
+        **({"venue_cancel": venue_cancel} if venue_cancel is not None else {}),
+    )
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+class _VenueOrders:
+    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the
+    `since` of every call -- the read is once per process, and a second call is a finding."""
+```
+
+with:
+
+```python
+class _VenueOrders:
+    """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the
+    `since` of every call -- the startup pass reads once, and the reconnect pass once more per arm
+    over the rows it minted terminal; any other second call is a finding."""
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+def _closed_order(client_order_id, status, *, filled_qty=0.0, venue_order_id=None):
+```
+
+with:
+
+```python
+class _VenueCancel:
+    """The executor's `venue_cancel`: records each `(venue_order_id, instrument_id)` it is asked to
+    cancel, and raises `raises` instead when set -- the venue's refusal, or the cut not over."""
+
+    def __init__(self, *, raises=None):
+        self.calls: list[tuple[str, str]] = []
+        self._raises = raises
+
+    def __call__(self, venue_order_id, instrument_id):
+        self.calls.append((venue_order_id, instrument_id))
+        if self._raises is not None:
+            raise self._raises
+
+
+def _cancel_venue_order(*args, **kwargs):
+    """`cancel_venue_order`, resolved at the call: the name lands in the reconnect task's source step,
+    and the module must collect before it does."""
+    return executor_module.cancel_venue_order(*args, **kwargs)
+
+
+def _closed_order(client_order_id, status, *, filled_qty=0.0, venue_order_id=None):
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+def _resting_executor(tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None):
+    """A plan accepted and its first intent resting: exactly one order at the venue. The trailing
+    assert is the point -- a helper that quietly submitted nothing would hand every ladder test
+    below a green it never earned."""
+    clock = _Clock()
+    client = client if client is not None else StubClient()
+    ex = _executor(tmp_path, client=client, clock=clock)
+```
+
+with:
+
+```python
+def _resting_executor(tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None, venue_orders=None, venue_cancel=None):
+    """A plan accepted and its first intent resting: exactly one order at the venue. The trailing
+    assert is the point -- a helper that quietly submitted nothing would hand every ladder test
+    below a green it never earned."""
+    clock = _Clock()
+    client = client if client is not None else StubClient()
+    ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue_orders, venue_cancel=venue_cancel)
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+class _UnreadableOrderCache(StubCache):
+```
+
+with:
+
+```python
+# --- the reconnect pass (drill F2) ---------------------------------------------------------------
+
+
+def _socket(state, endpoint="kraken-spot-data-streams"):
+    """A REAL `SocketStateChanged`, as the client's socket-state stream delivers it once the strategy
+    subscribed: the Kraken client's id and the socket's own endpoint name, `kraken-spot-data-streams`
+    measured against the loopback drop for the data socket. The execution socket's name is unmeasured
+    offline, which is why the executor keys on the set of endpoints down and never on a name."""
+    return SocketStateChanged(_TRADER_ID, ClientId("KRAKEN"), Venue("KRAKEN"), endpoint, state, UUID4(), 0, 0)
+
+
+def _reconnect(ex, *endpoints):
+    """The cut and the return as the stream reports them: each endpoint down, then each one back."""
+    endpoints = endpoints or ("kraken-spot-data-streams",)
+    for endpoint in endpoints:
+        ex.on_socket_state(_socket(SocketState.DISCONNECTED, endpoint))
+    for endpoint in endpoints:
+        ex.on_socket_state(_socket(SocketState.CONNECTED, endpoint))
+
+
+def _hold_in_cache(client, order):
+    """Put a REAL order into the stub Cache after the startup pass ran, as the library's own submit
+    does for an order this process places: held from construction, the pass at the first tick would
+    cancel it as an order with no row."""
+    client.cache._open_orders.append(order)
+
+
+def _minted_after_a_cut(tmp_path, *, venue_orders=None, venue_cancel=None):
+    """Drill F2's shape on the plan's own order: a rest-hold order accepted under `_TXID`, the quote
+    feed silent through the cut so the executor sends its one cancel, the venue never answering it,
+    and the engine minting `OrderCanceled` for itself -- the Cache's order closed by the flagged
+    terminal, the row `ambiguous`, the intent `ambiguous`, the plan dropped."""
+    ex, client, clock = _resting_executor(
+        tmp_path,
+        intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)],
+        venue_orders=venue_orders,
+        venue_cancel=venue_cancel,
+    )
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    _hold_in_cache(client, order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence: the one cancel goes out into the cut
+    assert [str(cid) for cid in client.canceled] == ["O-1"]
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    ex.on_order_event(minted)
+    assert (_record(tmp_path)["submitted"][0]["state"], _intent_outcome(tmp_path)) == ("ambiguous", "ambiguous")
+    return ex, client, clock
+
+
+def test_a_reconnect_after_a_minted_cancel_re_cancels_the_order_still_resting_and_settles_its_row(tmp_path):
+    """Drill F2, measured 2026-09-26: the REST cancel failed in the cut, the engine minted the cancel's
+    terminal, and the order rested at Kraken for eight minutes with nothing re-cancelling it on the
+    reconnect. The sockets' return arms the pass; the next tick with nothing in flight reads the venue
+    for the row the mint closed, the report says the order still rests, the cancel goes out by txid on
+    the bare client -- the strategy handle refuses an order it holds closed -- and the venue's
+    acceptance writes the row `canceled`. The intent stays `ambiguous`: it was terminal at the mint,
+    and the row is the re-cancel's record. No counter moves."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    _reconnect(ex)
+    assert venue.calls == [] and cancel.calls == []  # the handler arms; the tick runs
+    clock.now += timedelta(seconds=5)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(clock.now)
+
+    assert venue.calls == [_boundary(NOW) - timedelta(hours=1)]
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    assert [str(cid) for cid in client.canceled] == ["O-1"]  # no second cancel through the handle
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "canceled"
+    assert row["events"][-1] == {"event": "recancelled", "at": clock.now.isoformat(), "venue_order_id": _TXID}
+    assert _intent_outcome(tmp_path) == "ambiguous"
+    assert metrics.orders == []
+    assert [r.getMessage() for r in records if r.getMessage().startswith("re-cancelled")] == [
+        f"re-cancelled O-1 (Kraken {_TXID}) after the reconnect -- it rested at Kraken (ACCEPTED) through the cut; "
+        "its row reads canceled"
+    ]
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 1  # the arm is consumed: a later tick reads nothing
+
+
+def test_a_reconnect_after_a_minted_cancel_of_an_adopted_opener_re_cancels_it_and_leaves_the_intent_the_sweep_wrote(
+    tmp_path,
+):
+    """The adopted path's twin: the startup pass cancelled the opener and its sweep wrote the intent
+    `revoked`; the cut lost the ack and the engine minted the terminal, the row `ambiguous`. The
+    reconnect pass reads the venue, cancels what still rests by txid and settles the row; the intent
+    stands as the sweep wrote it."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=cancel)
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [_TXID] and _intent_outcome(tmp_path, 0, earlier) == "revoked"
+    assert venue.calls == []  # the Cache answered the startup pass, so the venue was not read
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "ambiguous"
+
+    _reconnect(ex)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "canceled" and row["events"][-1]["event"] == "recancelled"
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+
+def test_a_venue_report_closed_at_the_reconnect_settles_the_minted_row_without_a_cancel(tmp_path):
+    """G's shape met on a reconnect rather than a startup: the venue had executed the cancel and lost
+    the ack. The report closes the row as a startup would, and no cancel goes out."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    cancel = _VenueCancel()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert cancel.calls == []
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "canceled"
+    assert [e.get("event") or e["type"] for e in row["events"]] == ["OrderAccepted", "OrderCanceled"]
+
+
+def test_a_venue_read_failing_after_the_reconnect_is_tried_on_three_ticks_then_left_to_the_hand_or_a_restart(tmp_path):
+    """The sockets' return is the host's network, not Kraken's REST edge answering: the pass asks
+    again on the next tick, three ticks in all, then names the hand cancel and a restart and stops
+    asking; a later return of the sockets arms it again. Unlike the startup read, no plan is refused
+    for it."""
+    venue = _VenueOrders(raises=RuntimeError("dns"))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+
+    _reconnect(ex)
+    with _executor_errors(level=logging.WARNING) as records:
+        for _ in range(4):
+            clock.now += timedelta(seconds=5)
+            ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 3
+    lines = [r for r in records if "reconnect pass could not read" in r.getMessage()]
+    assert [r.levelno for r in lines] == [logging.WARNING, logging.WARNING, logging.CRITICAL]
+    assert lines[-1].getMessage().endswith("or restart the engine, whose startup pass reads it")
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"
+    assert ex._reconciliation_refusal is None
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 4
+
+
+def test_a_reconnect_reads_the_venue_for_no_row_the_engine_did_not_mint_terminal(tmp_path):
+    """The population is the rows whose Cache order a minted terminal closed and no other: a kept
+    reducer's row is open and its order rests, so the sockets' return reads nothing for it."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+    ex.on_timer(NOW)
+
+    _reconnect(ex)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert venue.calls == [] and client.canceled == []
+
+
+def test_the_pass_is_owed_when_the_last_socket_reported_down_is_back_and_not_before(tmp_path):
+    """The stream delivers `CONNECTED` at the connect itself, which owes nothing; with two endpoints
+    down, the first back owes nothing and the second does -- the data and execution sockets both
+    resubscribed, F2's reading of `Reconnect succeeded`."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+
+    ex.on_socket_state(_socket(SocketState.CONNECTED))  # the connect itself
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls == []
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "a-second-endpoint"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls == []
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "a-second-endpoint"))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 1
+
+
+def test_the_pass_waits_for_a_tick_with_nothing_of_this_process_in_flight(tmp_path):
+    """The read and the cancel go out on a second client on the same key -- `read_venue_orders`'
+    nonce hazard against the execution client's in-flight queries -- so the pass runs on a tick with
+    no order of this process in flight, the arm kept until one comes."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    clock = _Clock()
+    ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue, venue_cancel=_VenueCancel())
+    ex.on_timer(clock.now)
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+    _drop_plan(tmp_path, _plan_dict())
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote())
+    assert client.last_order_id == "O-1" and ex._active is not None  # the plan's own order is in flight
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls == []
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.001)
+    assert ex._active is None
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_re_cancel_the_venue_refuses_leaves_the_row_and_names_the_hand_cancel(tmp_path):
+    """The order went between the read and the cancel, or the cut is not over for REST: the venue's
+    refusal, or a raise, leaves the row as it was and the line names the hand cancel -- the
+    refused-cancel arm's precedent -- and the arm is consumed, since the line is the operator's."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel(raises=RuntimeError("EOrder:Unknown order"))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    with _executor_errors() as records:
+        ex.on_timer(clock.now)
+
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"
+    assert [r.getMessage() for r in records] == [
+        f"the reconnect pass's cancel of O-1 (Kraken {_TXID}) raised or was refused -- the order may still rest at "
+        "Kraken: cancel it by hand on Kraken's open-orders page"
+    ]
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 1
+
+
+class _UnreadableOrderCache(StubCache):
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+def test_read_venue_orders_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        read_venue_orders(NOW, base_url="http://127.0.0.1:9")
+```
+
+with:
+
+```python
+def test_read_venue_orders_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        read_venue_orders(NOW, base_url="http://127.0.0.1:9")
+
+
+def test_cancel_venue_order_sends_the_txid_on_the_real_client_and_returns_on_the_venues_count(_loopback_credentials):
+    """The re-cancel's whole contract on the pinned wheel, offline: the listing is cached first, the
+    cancel names the order by its txid alone, and the venue's `count` returns it."""
+    with kraken_loopback.serve() as venue:
+        _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url=venue.base_url)
+
+    assert [form["txid"] for form in venue.cancel_forms] == [_TXID]
+    assert venue.private_calls[-1] == "CancelOrder"
+
+
+def test_cancel_venue_order_raises_on_the_venues_refusal(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        venue.errors["CancelOrder"] = "EOrder:Unknown order"
+        with pytest.raises(Exception, match="Unknown order"):
+            _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url=venue.base_url)
+    assert venue.private_calls[-1] == "CancelOrder"  # the refusal came from the venue, not from the client
+
+
+def test_cancel_venue_order_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url="http://127.0.0.1:9")
+```
+
+Replace, in `tests/kraken_loopback.py`, this block:
+
+```python
+    add_orders: list[dict[str, str]] = field(default_factory=list)
+    closed_order_forms: list[dict[str, str]] = field(default_factory=list)
+```
+
+with:
+
+```python
+    add_orders: list[dict[str, str]] = field(default_factory=list)
+    closed_order_forms: list[dict[str, str]] = field(default_factory=list)
+    cancel_forms: list[dict[str, str]] = field(default_factory=list)
+```
+
+Replace, in `tests/kraken_loopback.py`, this block:
+
+```python
+        if path == "/0/private/AddOrder":
+            self.add_orders.append(form)
+            return {"descr": {"order": "loopback"}, "txid": [f"OLOOP{len(self.add_orders)}-AAAAA-BBBBBB"]}, []
+```
+
+with:
+
+```python
+        if path == "/0/private/AddOrder":
+            self.add_orders.append(form)
+            return {"descr": {"order": "loopback"}, "txid": [f"OLOOP{len(self.add_orders)}-AAAAA-BBBBBB"]}, []
+        if path == "/0/private/CancelOrder":
+            self.cancel_forms.append(form)
+            return {"count": 1}, []
+```
+
+Replace, in `tests/test_engine_node.py`, this block:
+
+```python
+        self.external_events: list[object] = []
+        self.boundaries: list[datetime] = []
+
+    def on_boundary(self, boundary):
+        self.boundaries.append(boundary)
+```
+
+with:
+
+```python
+        self.external_events: list[object] = []
+        self.boundaries: list[datetime] = []
+        self.socket_states: list[object] = []
+
+    def on_boundary(self, boundary):
+        self.boundaries.append(boundary)
+
+    def on_socket_state(self, event):
+        self.socket_states.append(event)
+```
+
+Replace, in `tests/test_engine_node.py`, this block:
+
+```python
+        _executor_factory=executor_factory,
+        _executor=executor,
+    )
+    stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
+```
+
+with:
+
+```python
+        _executor_factory=executor_factory,
+        _executor=executor,
+        socket_subscriptions=[],
+    )
+    stub.subscribe_socket_state = lambda: stub.socket_subscriptions.append("all")
+    stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
+```
+
+Replace, in `tests/test_engine_node.py`, this block:
+
+```python
+    # The alert chain is untouched by the wiring; the executor tick is a SECOND, repeating timer.
+    assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+    assert clock.timers == [("exec-probe-tick", timedelta(seconds=5), stub._on_exec_tick)]
+
+
+def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
+    clock = FakeClock()
+    stub = _exec_stub(_config(tmp_path), clock)
+    ShadowStrategy.on_start(stub)
+    assert clock.timers == []
+    assert stub._executor is None
+```
+
+with:
+
+```python
+    # The alert chain is untouched by the wiring; the executor tick is a SECOND, repeating timer.
+    assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+    assert clock.timers == [("exec-probe-tick", timedelta(seconds=5), stub._on_exec_tick)]
+    # The socket-state stream is opt-in, and the executor's reconnect pass is what reads it.
+    assert stub.socket_subscriptions == ["all"]
+
+
+def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
+    clock = FakeClock()
+    stub = _exec_stub(_config(tmp_path), clock)
+    ShadowStrategy.on_start(stub)
+    assert clock.timers == []
+    assert stub._executor is None
+    assert stub.socket_subscriptions == []
+```
+
+Replace, in `tests/test_engine_node.py`, this block:
+
+```python
+    assert executor.external_events == [event]
+    # The filter is a SEPARATE entry point: nothing arrived on the own-order path the trip reads.
+    assert executor.events == []
+
+
+# --- the external order observer (spec 00100 D2) ------------------------------------------------
+```
+
+with:
+
+```python
+    assert executor.external_events == [event]
+    # The filter is a SEPARATE entry point: nothing arrived on the own-order path the trip reads.
+    assert executor.events == []
+
+
+def test_the_socket_state_forwarder_passes_the_object_through_and_is_inert_unwired(tmp_path):
+    # The fifth forwarder, in the shape of the other four: object through, a no-op with no executor
+    # wired, and a separate entry point from the two order paths.
+    strategy = ShadowStrategy(_config(tmp_path))
+    strategy.on_socket_state(object())
+
+    executor = RecordingExecutor()
+    strategy._executor = executor
+    event = object()
+    strategy.on_socket_state(event)
+    assert executor.socket_states == [event]
+    assert executor.events == [] and executor.external_events == []
+
+
+# --- the external order observer (spec 00100 D2) ------------------------------------------------
+```
+
+Replace, in `tests/test_engine_stub_fidelity.py`, this block:
+
+```python
+        # Answers REAL `OrderStatusReport`s; what it restates is this repo's reader, not the library.
+        "_VenueOrders": Standin(OURS, "cli.engine.executor.read_venue_orders, the venue_orders ProbeExecutor is built with", ()),
+```
+
+with:
+
+```python
+        # Answers REAL `OrderStatusReport`s; what it restates is this repo's reader, not the library.
+        "_VenueOrders": Standin(OURS, "cli.engine.executor.read_venue_orders, the venue_orders ProbeExecutor is built with", ()),
+        "_VenueCancel": Standin(OURS, "cli.engine.executor.cancel_venue_order, the venue_cancel ProbeExecutor is built with", ()),
+```
+
+- [ ] **Step 3: Run the three files and watch the new cases fail**
+
+Run: `uv run pytest tests/test_engine_executor.py tests/test_engine_node.py tests/test_engine_stub_fidelity.py -q -p no:cacheprovider`
+Expected: `13 failed, 424 passed, 2 skipped`; the executor file alone reads `11 failed, 283 passed`. The seven reconnect cases that hand the executor a `_VenueCancel` fail in `_executor` on `TypeError: ProbeExecutor.__init__() got an unexpected keyword argument 'venue_cancel'`; `test_a_reconnect_reads_the_venue_for_no_row_the_engine_did_not_mint_terminal` on `AttributeError: 'ProbeExecutor' object has no attribute 'on_socket_state'`; `test_cancel_venue_order_sends_the_txid_on_the_real_client_and_returns_on_the_venues_count` and `test_cancel_venue_order_refuses_without_credentials_before_building_a_client` on `AttributeError: module 'cli.engine.executor' has no attribute 'cancel_venue_order'`, and `test_cancel_venue_order_raises_on_the_venues_refusal` on `Regex pattern did not match`, the same attribute error caught by its `pytest.raises`; `test_on_start_builds_the_executor_and_registers_the_exec_tick` on `assert [] == ['all']` and `test_the_socket_state_forwarder_passes_the_object_through_and_is_inert_unwired` on `TypeError: 'object' object is not an instance of 'SocketStateChanged'`, the library's own handler taking the call. `test_on_start_registers_no_exec_tick_without_a_factory` passes on the old tree, which subscribes nothing, and the fidelity table's row finds its class.
+
+- [ ] **Step 4: The pass in `cli/engine/executor.py`, the wiring in `cli/engine/node.py`, and the three pages**
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+from nautilus_trader.model import AccountId, ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue, VenueOrderId
+```
+
+with:
+
+```python
+from nautilus_trader.common import SocketState
+from nautilus_trader.model import AccountId, ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue, VenueOrderId
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+_VENUE_READ_MARGIN = timedelta(hours=1)
+```
+
+with:
+
+```python
+_VENUE_READ_MARGIN = timedelta(hours=1)
+# How many ticks the reconnect pass may fail to read the venue before it stops asking: the sockets'
+# return says the host's network is back, not that Kraken's REST edge answers yet, and a pass that
+# asked on every tick until it did would be the retry storm the engine runbook's socket section
+# forbids. Past the budget the rows keep their state and the line names the hand cancel.
+_RECONNECT_ATTEMPTS = 3
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
+    so this client's can reach the venue out of order against the execution client's, and one of them
+    is answered `Invalid nonce`. The caller therefore makes this read once per process, before this
+    process has sent anything -- the startup pass reads it before its own cancels, and no plan is
+    picked up before the pass has run -- and never retries it.
+```
+
+with:
+
+```python
+    A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
+    so this client's can reach the venue out of order against the execution client's, and one of them
+    is answered `Invalid nonce`. The startup pass therefore makes this read once, before this process
+    has sent anything -- before its own cancels, and no plan is picked up before the pass has run --
+    and never retries it; the reconnect pass reads again on a tick with nothing of this process in
+    flight, when the execution client has no in-flight query out, and `cancel_venue_order` follows
+    it on the same terms.
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    return list(asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS)) or ())
+
+
+def _newest_venue_balances(journal_dir: Path) -> dict:
+```
+
+with:
+
+```python
+    return list(asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS)) or ())
+
+
+def cancel_venue_order(venue_order_id: str, instrument_id: str, *, base_url: str | None = None) -> None:
+    """Cancel one order at the venue by its txid, on `read_venue_orders`' client and terms: the
+    reconnect pass's cancel of an order the Cache holds closed by a terminal this engine minted,
+    which the strategy handle refuses to cancel (`Cannot cancel order: state is ...`, sent nowhere).
+    The listing is cached first because the client resolves the pair through it. Returns once the
+    venue accepted the cancel, and raises on its refusal (`EOrder:Unknown order` for an order already
+    gone) or on anything short of an answer inside `_VENUE_READ_TIMEOUT_SECONDS`."""
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    from cli.engine.node import _ACCOUNT_ID, _credentials
+
+    credentials = _credentials()
+    if credentials is None:
+        raise EngineError("the trade credentials are not in this environment")
+    api_key, api_secret = credentials
+    client = KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+
+    async def _cancel():
+        for instrument in await client.request_instruments() or ():
+            client.cache_instrument(instrument)
+        await client.cancel_order(
+            AccountId(_ACCOUNT_ID), InstrumentId.from_str(instrument_id), venue_order_id=VenueOrderId(venue_order_id)
+        )
+
+    asyncio.run(asyncio.wait_for(_cancel(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+
+
+def _newest_venue_balances(journal_dir: Path) -> dict:
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    `venue_orders` is `read_venue_orders`' signature. None, the engine's construction, reads the
+    module's own at call time, so a test can replace it before any executor exists.
+    """
+
+    def __init__(self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now, venue_orders=None) -> None:
+        self._client = client
+        self._gate = gate
+        self._config = config
+        self._now = clock
+        self._venue_orders = venue_orders
+```
+
+with:
+
+```python
+    `venue_orders` is `read_venue_orders`' signature and `venue_cancel` is `cancel_venue_order`'s.
+    None, the engine's construction, reads the module's own at call time, so a test can replace it
+    before any executor exists.
+    """
+
+    def __init__(
+        self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now, venue_orders=None, venue_cancel=None
+    ) -> None:
+        self._client = client
+        self._gate = gate
+        self._config = config
+        self._now = clock
+        self._venue_orders = venue_orders
+        self._venue_cancel = venue_cancel
+        # The socket endpoints the client has reported down and not yet back, and the reconnect pass's
+        # tries left once the last of them is back: the pass runs on the next tick with nothing in
+        # flight, and a read that fails spends one try.
+        self._sockets_down: set[str] = set()
+        self._reconnect_tries = 0
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+            if not self._adopted:
+                self._adopt_resting_orders(now)
+            # No plan before the startup pass has run: until it has, no row is reconciled against the
+            # venue, and the pass's one venue read must reach the venue before any order of this
+            # process does (`read_venue_orders` says why).
+            if self._plan is None and self._adopted:
+                self._pickup(now)
+```
+
+with:
+
+```python
+            if not self._adopted:
+                self._adopt_resting_orders(now)
+            # Before the pickup, so a plan dropped during a cut waits one tick behind the re-cancel;
+            # with nothing in flight, `read_venue_orders`' nonce terms.
+            if self._reconnect_tries and self._active is None:
+                self._reconnect_pass(now)
+            # No plan before the startup pass has run: until it has, no row is reconciled against the
+            # venue, and the pass's one venue read must reach the venue before any order of this
+            # process does (`read_venue_orders` says why).
+            if self._plan is None and self._adopted:
+                self._pickup(now)
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+        except Exception:
+            logger.exception("executor resting-age publish raised -- continuing")
+
+    def _adopt_resting_orders(self, now: datetime) -> None:
+```
+
+with:
+
+```python
+        except Exception:
+            logger.exception("executor resting-age publish raised -- continuing")
+
+    # --- the sockets ---------------------------------------------------------------------------
+
+    def on_socket_state(self, event) -> None:
+        """The client's socket-state stream, the strategy's `on_socket_state` once it subscribed:
+        `DISCONNECTED` names an endpoint down, `CONNECTED` one back. The reconnect pass is owed when
+        the last endpoint reported down reports back -- `Reconnect succeeded` in this engine's terms
+        -- and runs on the tick, never here: it reads the Cache and the venue, which the tick does on
+        the main thread with no loop running (`read_venue_orders`). A `CONNECTED` with nothing down,
+        the connect itself, owes nothing. Bookkeeping, never a submission: log and continue."""
+        try:
+            endpoint = str(getattr(event, "endpoint", "?"))
+            state = getattr(event, "state", None)
+            if state == SocketState.DISCONNECTED:
+                self._sockets_down.add(endpoint)
+                logger.warning(
+                    "socket %s is down -- an order whose terminal this engine mints meanwhile is re-read at the venue "
+                    "once the sockets are back",
+                    endpoint,
+                )
+            elif state == SocketState.CONNECTED and endpoint in self._sockets_down:
+                self._sockets_down.discard(endpoint)
+                if not self._sockets_down:
+                    self._reconnect_tries = _RECONNECT_ATTEMPTS
+                    logger.warning(
+                        "socket %s is back and none is down -- the reconnect pass runs on the next tick with nothing in flight",
+                        endpoint,
+                    )
+        except Exception:
+            logger.exception("executor socket-state handling raised -- continuing")
+
+    def _adopt_resting_orders(self, now: datetime) -> None:
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    def _reconcile_adopted_rows(self, rows: dict, venue_orders: dict | None) -> None:
+        """The startup reconciliation sweep (spec 00098 D7): every open ledgered row, compared
+        against its order's own quantity and status, before anything is classified.
+```
+
+with:
+
+```python
+    def _reconnect_pass(self, now: datetime) -> None:
+        """The startup sweep at one more moment: after the sockets come back, over every open row of
+        the window whose Cache order was closed by a terminal this engine minted -- the cancel the
+        venue never acknowledged, on the plan's own order (drill F2: the REST cancel failed in the cut
+        and the engine minted `OrderCanceled` while the order rested at Kraken) or on one the startup
+        pass adopted. The venue's report settles each: a closed report as at startup, an open one by
+        a cancel, since the Cache's own order is the guess the venue must answer. The rows are read
+        from the ledger and the Cache when the pass runs, not collected at the mint: F2's mint landed
+        half a second before the socket's own deadline reported the cut, and a mint the ack deadline
+        had already stranded lands detached. No intent is written: each is terminal at its mint or by
+        the startup sweep, and a plan may be running beside the pass. A read that fails spends one
+        try and the tick asks again; past the budget the rows keep their state and the line names
+        the hand cancel and a restart, whose startup pass reads them. Wrapped whole: a raise here may
+        never drop a plan."""
+        try:
+            rows = {
+                row["client_order_id"]: (boundary, row)
+                for boundary, row in open_submitted_rows(self._journal_dir, now)
+                if self._minted_closed(row)
+            }
+            if not rows:
+                self._reconnect_tries = 0
+                return
+            since = min(boundary for boundary, _ in rows.values()) - _VENUE_READ_MARGIN
+            reports = (self._venue_orders or read_venue_orders)(since)
+        except Exception:
+            self._reconnect_tries -= 1
+            if self._reconnect_tries:
+                logger.warning("the reconnect pass could not read the ledger or the venue -- asking again next tick", exc_info=True)
+            else:
+                logger.critical(
+                    "the reconnect pass could not read the ledger or the venue on %d ticks -- an order this engine minted "
+                    "terminal during the cut may still rest at Kraken: cancel it by hand on Kraken's open-orders page, or "
+                    "restart the engine, whose startup pass reads it",
+                    _RECONNECT_ATTEMPTS,
+                    exc_info=True,
+                )
+            return
+        self._reconnect_tries = 0
+        logger.warning("the reconnect pass reads %d row(s) this engine minted terminal against the venue", len(rows))
+        self._reconcile_adopted_rows(rows, {str(report.venue_order_id): report for report in reports}, recancel=True)
+
+    def _minted_closed(self, row: dict) -> bool:
+        """Whether the Cache's order for `row` was closed by a terminal this engine minted: the order
+        is closed and its last event carries the `reconciliation` flag, which a minted terminal
+        carries and which a venue answer the state machine then refused cannot replace. A Cache that
+        cannot be read answers no."""
+        try:
+            order = self._cache_lookup(row, _row_venue_order_id(row))
+        except Exception:
+            return False
+        return _minted_terminal(order)
+
+    def _reconcile_adopted_rows(self, rows: dict, venue_orders: dict | None, *, recancel: bool = False) -> None:
+        """The startup reconciliation sweep (spec 00098 D7): every open ledgered row, compared
+        against its order's own quantity and status, before anything is classified -- and the
+        reconnect pass's, with `recancel`, over the rows this engine minted terminal.
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+        take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
+        its terminal state and both trips exactly as a resting one does. A report that is still open
+        is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL.
+```
+
+with:
+
+```python
+        take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
+        its terminal state and both trips exactly as a resting one does. A report that is still open
+        is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL at
+        startup; the reconnect pass cancels it instead (`_recancel`), by txid on the bare client, since
+        the row is this engine's own record of an order it placed or adopted and the Cache's closed
+        copy is why no cancel through the strategy handle reaches it.
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+                    report = venue_orders.get(venue_order_id)
+                    if report is None:
+                        self._mark_unmatched(
+                            boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True, critical=True
+                        )
+                        continue
+                    _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
+```
+
+with:
+
+```python
+                    report = venue_orders.get(venue_order_id)
+                    if report is None:
+                        self._mark_unmatched(
+                            boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True, critical=True
+                        )
+                        continue
+                    if recancel and report.order_status not in _ADOPTED_TERMINAL_STATES:
+                        self._recancel(boundary, row, venue_order_id, report)
+                        continue
+                    _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    def _mark_unmatched(self, boundary: datetime, row: dict, what: str, *, open_row: bool, critical: bool = False) -> None:
+```
+
+with:
+
+```python
+    def _recancel(self, boundary: datetime, row: dict, venue_order_id: str, report) -> None:
+        """The reconnect pass's cancel of an order the venue still reports open: the report's fills
+        repair the row first, through the arms and trips a startup's repair takes, then the cancel
+        goes out by txid on the bare client, and the venue's acceptance of it writes the row
+        `canceled` with a `recancelled` event -- the venue's own answer, since the library drops the
+        stream's later event for an order it already holds closed. A cancel the venue refuses, or
+        that raises, leaves the row and names the hand cancel, the refused-cancel arm's precedent.
+        No counter moves, the adopted path's rule for a terminal written from the venue's answer, and
+        no intent is written. A fill landing between the read and the cancel is on Kraken's closed
+        orders and not in the row."""
+        label = _row_label(row, venue_order_id)
+        self._reconcile_adopted_row(
+            boundary, row, float(report.filled_qty), report.order_status, order_id=None, venue_order_id=venue_order_id
+        )
+        try:
+            (self._venue_cancel or cancel_venue_order)(venue_order_id, str(report.instrument_id))
+        except Exception:
+            logger.critical(
+                "the reconnect pass's cancel of %s raised or was refused -- the order may still rest at Kraken: cancel it "
+                "by hand on Kraken's open-orders page",
+                label,
+                exc_info=True,
+            )
+            return
+        event = {"event": "recancelled", "at": self._now().isoformat(), "venue_order_id": venue_order_id}
+        try:
+            update_submitted_row(self._journal_dir, boundary, row["client_order_id"], state="canceled", event=event)
+        except Exception:
+            logger.critical("the re-cancel of %s could not be journaled -- its row keeps the state it has", label, exc_info=True)
+            return
+        row["state"] = "canceled"
+        logger.warning(
+            "re-cancelled %s after the reconnect -- it rested at Kraken (%s) through the cut; its row reads canceled",
+            label,
+            report.order_status.name,
+        )
+
+    def _mark_unmatched(self, boundary: datetime, row: dict, what: str, *, open_row: bool, critical: bool = False) -> None:
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    def _cached_order(self, row: dict, venue_order_id: str | None):
+        """The Cache's order for `row`: by the id this engine minted, then by the txid the row
+        recorded. The second lookup is the one every order a restart reconciled needs, since the
+        adapter's reports carry no client order id and reconciliation names the order by its txid;
+        it goes through the Cache's own venue-order-id index rather than an assumption about how
+        reconciliation names what it adopts. `cache.order` serves closed orders as readily as open
+        ones, and both accessors are typed and refuse a plain str."""
+        cache = self._client.cache
+```
+
+with:
+
+```python
+    def _cached_order(self, row: dict, venue_order_id: str | None):
+        """The Cache's answer for `row`: its order (`_cache_lookup`), unless that order was closed by
+        a terminal this engine minted (`_minted_terminal`), when the Cache holds this engine's own
+        guess and answers nothing, so the venue is asked. At startup no order is closed that way --
+        reconciliation adopts open orders, and the void it can mint is not one of those terminals --
+        so the startup sweeps read as before."""
+        order = self._cache_lookup(row, venue_order_id)
+        return None if _minted_terminal(order) else order
+
+    def _cache_lookup(self, row: dict, venue_order_id: str | None):
+        """The Cache's order for `row`: by the id this engine minted, then by the txid the row
+        recorded. The second lookup is the one every order a restart reconciled needs, since the
+        adapter's reports carry no client order id and reconciliation names the order by its txid;
+        it goes through the Cache's own venue-order-id index rather than an assumption about how
+        reconciliation names what it adopts. `cache.order` serves closed orders as readily as open
+        ones, and both accessors are typed and refuse a plain str."""
+        cache = self._client.cache
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+def _venue_order_id_of(order_or_event) -> str | None:
+```
+
+with:
+
+```python
+def _minted_terminal(order) -> bool:
+    """Whether `order` was closed by a terminal the execution engine minted rather than received: it
+    is closed and its last event is one of `_RECONCILED_TERMINALS` carrying the `reconciliation`
+    flag -- the set the two minted arms key on; an `OrderFillVoided` carries the flag from the
+    venue's own report and is not one. The flag stays the last word, because the state machine
+    refuses a venue's later ack of an order already closed. A stand-in without those attributes
+    reads as not minted."""
+    last = getattr(order, "last_event", None)
+    return (
+        order is not None
+        and bool(getattr(order, "is_closed", False))
+        and type(last).__name__ in _RECONCILED_TERMINALS
+        and bool(getattr(last, "reconciliation", False))
+    )
+
+
+def _venue_order_id_of(order_or_event) -> str | None:
+```
+
+Replace, in `cli/engine/node.py`, this block:
+
+```python
+    The four executor forwarders below are the ONLY inputs the order path has, and each carries
+    exactly what nautilus routes to this strategy. `on_order_event` in particular is the
+```
+
+with:
+
+```python
+    The five executor forwarders below are the ONLY inputs the order path has, and each carries
+    exactly what nautilus routes to this strategy. `on_socket_state` is the client's socket-state
+    stream, opt-in through `subscribe_socket_state` in `on_start`, which the executor's reconnect
+    pass keys on. `on_order_event` in particular is the
+```
+
+Replace, in `cli/engine/node.py`, this block:
+
+```python
+            self._executor = self._executor_factory(self)
+            self.clock.set_timer(_EXEC_TIMER_NAME, timedelta(seconds=_TICK_SECONDS), callback=self._on_exec_tick)
+```
+
+with:
+
+```python
+            self._executor = self._executor_factory(self)
+            self.clock.set_timer(_EXEC_TIMER_NAME, timedelta(seconds=_TICK_SECONDS), callback=self._on_exec_tick)
+            # Every client and endpoint: the executor keys on the set of endpoints down, never on a name.
+            self.subscribe_socket_state()
+```
+
+Replace, in `cli/engine/node.py`, this block:
+
+```python
+    def on_order_event(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_order_event(event)
+
+    def _on_external_order_event(self, event) -> None:
+```
+
+with:
+
+```python
+    def on_order_event(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_order_event(event)
+
+    def on_socket_state(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_socket_state(event)
+
+    def _on_external_order_event(self, event) -> None:
+```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+- **Nothing during a hold under ≈7 minutes, then [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) (critical, `logs`) after the reconnect**, on the lines the ring held (below). The silence during the hold is a coverage finding, not a quiet fleet: every rule that would notice keys on the exporter or on the log stream, and all of them are slower than the entire behaviour this drill measures (no count command: `infra/grafana/alerts.yaml`'s rules on the engine's series are the set, and no entry reads it).
+```
+
+with:
+
+```markdown
+- **Nothing during a hold under ≈7 minutes, then [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) (critical, `logs`) after the reconnect**, on the lines the ring held (below). The silence during the hold is a coverage finding, not a quiet fleet: every rule that would notice keys on the exporter or on the log stream, and all of them are slower than the entire behaviour this drill measures (no count command: `infra/grafana/alerts.yaml`'s rules on the engine's series are the set, and no entry reads it).
+- **The executor's own re-cancel, on its first tick after the reconnect with nothing in flight**: `re-cancelled <id> (Kraken <txid>) after the reconnect -- it rested at Kraken (<status>) through the cut; its row reads canceled` at WARNING, which pages nothing. Its two CRITICAL lines page [`zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) after the reconnect as the mint's lines do: `the reconnect pass could not read the ledger or the venue on 3 ticks` and `the reconnect pass's cancel of <id> raised or was refused`; [`engine.md#zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs) step 2 says what each asks for (no count command: the lines are `_reconnect_pass`'s and `_recancel`'s in `cli/engine/executor.py`, and whether Kraken's REST edge answers after the socket's return is the venue's act).
+```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+3. **Read Kraken's open orders by hand.** The order may still be resting there and nothing in this engine will cancel it: the intent is terminal, so a hand-placed kill file sweeps nothing.
+```
+
+with:
+
+```markdown
+3. **Read the engine log for the re-cancel, then Kraken's open orders by hand.** On its first tick after `Reconnect succeeded` with nothing in flight, the executor's reconnect pass reads the venue for the row the mint closed and cancels the order by its txid on the bare client, logging `re-cancelled <id> (Kraken <txid>) after the reconnect`; Kraken's open orders then no longer carry it. The row reads `canceled` with a `recancelled` event, and the intent stays `ambiguous`: it was terminal at the mint, and the row is the re-cancel's record. A hand-placed kill file still sweeps nothing on this path.
+```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+4. **Clear it deliberately.** A direct cancel in the Kraken web UI always works```
+
+with:
+
+```markdown
+4. **Clear it deliberately when the pass did not.** A CRITICAL `the reconnect pass could not read the ledger or the venue on 3 ticks` or `the reconnect pass's cancel of <id> raised or was refused` line means the order may still rest, and so does the pass's own line missing three ticks after `Reconnect succeeded`. A direct cancel in the Kraken web UI always works```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+If the property you wanted is "the order dies with the socket", that is re-cancel-on-reconnect, a build-sequence item not yet delivered<!-- T0018 -->, never an expectation to write against this drill.
+```
+
+with:
+
+```markdown
+"The order dies with the socket" is re-cancel-on-reconnect, delivered by the executor's reconnect pass<!-- T0018 -->: this drill measures it — the time from `Reconnect succeeded` to the pass's line, and to the order leaving Kraken's open orders — and records a pass whose line did not come as the finding it is.
+```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+Entry `F2`: how long the order rested at the venue, whether the intent journaled `ambiguous` inside the derived ~60 s, which page fired if any, and how the order was finally cleared.```
+
+with:
+
+```markdown
+Entry `F2`: how long the order rested at the venue, whether the intent journaled `ambiguous` inside the derived ~60 s, the reconnect pass's line and its time after `Reconnect succeeded` — or the CRITICAL line that says it could not read or cancel — which page fired if any, and how the order was finally cleared.```
+
+Replace, in `infra/runbooks/engine.md`, this block:
+
+```markdown
+   - **Anything naming the executor, an order, a fill, the ledger, or the kill switch is the execution path, and it is the one to act on now.** Continue at step 3.
+```
+
+with:
+
+```markdown
+   - **`the reconnect pass could not read the ledger or the venue on 3 ticks …`** or **`the reconnect pass's cancel of … raised or was refused`**: the sockets came back after a cut, and the executor's reconnect pass, which re-reads at the venue each row it minted terminal during the cut and cancels what still rests, could not read on three ticks or could not cancel; the order may still rest at Kraken, its row `ambiguous`. Cancel it by hand on Kraken's open-orders page, or restart the engine inside the inter-cycle gap, whose startup pass reads the row (the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) names the window). No disarm is owed for these lines alone (no count command: the lines are `_reconnect_pass`'s and `_recancel`'s in `cli/engine/executor.py`, and the venue's answer is the venue's act).
+   - **Anything naming the executor, an order, a fill, the ledger, or the kill switch is the execution path, and it is the one to act on now.** Continue at step 3.
+```
+
+Replace, in `infra/runbooks/engine.md`, this block:
+
+```markdown
+both moving means the venue or the host's network moved; the engine alone moving is the engine's problem.
+```
+
+with:
+
+```markdown
+both moving means the venue or the host's network moved; the engine alone moving is the engine's problem. The executor's reconnect pass follows on its next tick with nothing in flight: it re-reads at the venue each order whose terminal it minted during the drop and cancels what still rests, logging `re-cancelled … after the reconnect`; drill F2's procedure reads it.
+```
+
+Replace, in `infra/runbooks/engine-procedures.md`, this block:
+
+```markdown
+which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart. That is the right answer```
+
+with:
+
+```markdown
+which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart; where the mint fell inside a socket cut, the executor's reconnect pass re-reads the row at the venue on its first tick after the sockets return and cancels what still rests, so read its `re-cancelled … after the reconnect` line before the hand cancel (drill F2's procedure). That is the right answer```
+
+- [ ] **Step 5: Run the three files and watch them pass**
+
+Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider; uv run pytest tests/test_engine_node.py tests/test_engine_stub_fidelity.py -q -p no:cacheprovider`
+Expected: `294 passed`, then `143 passed, 2 skipped`.
+
+- [ ] **Step 6: The consumers**
+
+Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_count_list.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_ops_daily.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py tests/test_kraken_fixture_mint_loopback.py tests/test_kraken_window_reads.py tests/test_kraken_wheel_contract.py tests/test_engine_flatten.py -q -p no:cacheprovider`
+Expected: every test passed or skipped by a gate, none failed; `2181 passed, 3 skipped` when this plan was written, the executor union's `1965 passed, 2 skipped` with the loopback venue's four other consumers, `216 passed, 1 skipped`, the skips `tests/test_engine_node.py`'s two live-venue gates and one of the loopback consumers' own.
+
+- [ ] **Step 7: The commit gate**
+
+Run: `uv run pre-commit run -a`
+Expected: every hook Passed; re-run after any rewrite until clean, then stage what it rewrote. `mdformat` covers the three runbook pages.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add cli/engine/executor.py cli/engine/node.py infra/runbooks/drills-order-path.md infra/runbooks/engine-procedures.md infra/runbooks/engine.md tests/kraken_loopback.py tests/test_engine_executor.py tests/test_engine_node.py tests/test_engine_stub_fidelity.py
+git commit -m "fix(engine): the reconnect pass re-cancels the order a cut left resting and settles its row from the venue's answer
+
+Measured on 2026-09-26, drill F2: the engine container lost its network with a rest-hold order
+resting, its one cancel failed on REST, the engine minted OrderCanceled for itself and the executor
+wrote the intent and the row ambiguous; the sockets came back four minutes later and nothing
+re-cancelled the order, which rested at Kraken for eight minutes until a hand cancel. The strategy
+subscribes to the client's socket-state stream and forwards it to the executor, which keeps the set
+of endpoints reported down and, when the last reports back, runs the startup's row sweep on its
+next tick with nothing in flight over every open row of the window whose Cache order a minted
+terminal closed: the venue's report settles a closed one as a startup would, and one still open is
+cancelled by txid on a bare client, since the strategy handle refuses an order it holds closed, the
+venue's acceptance writing the row canceled with a recancelled event. A read that fails is tried on
+three ticks, then the line names the hand cancel and a restart; a refused cancel leaves the row and
+names it too. No intent is written and no counter moves. The Cache's answer for an order so closed
+is withheld from the startup sweeps' lookup too, where reconciliation adopts open orders and the
+void it can mint is not one of those terminals. Drill F2's Must fire, operator action and record,
+the error-logs runbook's classes and the socket section, and the procedures page's minted-terminal
+step say so.
+
+Cases: F2's shape re-cancelled and settled with the intent left ambiguous and no counter moved; the
+adopted path's twin with the intent left as the sweep wrote it; a closed report settling the row
+with no cancel; a read failing on three ticks then left to the hand or a restart, with a later
+return arming the pass again; a kept reducer's row read nowhere; the connect's own CONNECTED arming
+nothing and the second of two endpoints arming; the pass waiting for a tick with nothing in flight;
+a refused cancel leaving the row; the bare client's cancel on the loopback venue sending the txid,
+raising on the venue's refusal and refusing without credentials; the strategy's subscription and
+fifth forwarder.
+
+PROBE_VERDICT
+
+Co-Authored-By: Claude <model> <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU"
+```
+
+- [ ] **Step 9: The tree is clean**
+
+Run: `git status --porcelain`
+Expected: empty.
+
+- [ ] **Step 10: Prove the guards with ten probes, then record their verdicts by a message-only amend**
+
+The executor's control disarms the re-cancel arm, so the re-cancel cases fail. The mutations, in order: the pass is never armed; the pass runs with an order in flight; every open row is swept, minted or not; the Cache answers for an order a minted terminal closed; a void closed by the venue's own report counts as minted; a failed read never gives up; a failed read gives up at once; the cancel is skipped, so the row is written on nothing; the connect's own `CONNECTED` arms the pass. The node's control drops the subscription, which the `on_start` case pins, and its mutation makes the forwarder inert. Each executor `-k` selects 12 of the file's 294 cases, the node's 3 of its 87:
+
+```bash
+K="reconnect or re_cancel or socket_reported_down or nothing_of_this_process or cancel_venue_order or withdrawn_fill_on_a_row_this_engine_closed"
+C='s/if recancel and report.order_status not in _ADOPTED_TERMINAL_STATES:/if False:/'
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/self._reconnect_tries = _RECONNECT_ATTEMPTS/self._reconnect_tries = 0/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/if self._reconnect_tries and self._active is None:/if self._reconnect_tries:/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^                if self._minted_closed(row)$/                if True/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/return None if _minted_terminal(order) else order/return order/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/and type(last).__name__ in _RECONCILED_TERMINALS$/and True/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/self._reconnect_tries -= 1/pass/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/self._reconnect_tries -= 1/self._reconnect_tries = 0/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^            (self._venue_cancel or cancel_venue_order)(venue_order_id, str(report.instrument_id))$/            pass/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/elif state == SocketState.CONNECTED and endpoint in self._sockets_down:/elif state == SocketState.CONNECTED:/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/node.py \
+  --control 's/^            self.subscribe_socket_state()$/            pass/' \
+  --mutation 's/^            self._executor.on_socket_state(event)$/            pass/' \
+  -- uv run pytest tests/test_engine_node.py -q -p no:cacheprovider -k "socket_state or registers_the_exec_tick or no_exec_tick"
+```
+
+Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message with the text below: write the whole message, that line replaced, to a file under `.tmp/` (gitignored) and amend from it with `git commit --amend -F <that file>` — the Global Constraints' rule, never `--amend -m "…"`, inside which the shell runs each backticked name below as a command:
+
+```
+Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/executor.py`, control the re-cancel arm
+disarmed so the re-cancel cases fail, through
+`-k "reconnect or re_cancel or socket_reported_down or nothing_of_this_process or cancel_venue_order or withdrawn_fill_on_a_row_this_engine_closed"`:
+the pass never armed, KILLED, control proven; the pass run with an order in flight, KILLED,
+control proven; every open row swept, KILLED, control proven; the Cache answering for an order a
+minted terminal closed, KILLED, control proven; a venue-reported void counted as minted, KILLED,
+control proven; a failed read never giving up, KILLED, control proven; a failed read giving up at
+once, KILLED, control proven; the cancel skipped, KILLED, control proven; the connect's own
+CONNECTED arming the pass, KILLED, control proven; over `cli/engine/node.py`, control the
+subscription dropped: the forwarder inert, KILLED, control proven.
+```
+
+Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`; `git log -1 --format=%B | grep -c 'infra/scripts/mutate-probe.sh'` — Expected: `1`, the verdict naming the script.
+
+---
+
+### Task 5: The gate's gauges are republished once a minute while no plan runs
+
+This task is the spec's fifth cluster (D22 to D25), on nothing but the executor's tick; it stands whatever is struck.
+
+What this task decides, where the spec leaves it open:
+
+- The stamp is `_gate_evaluated_at`, set by every `_evaluate` and by the constructor to its clock, so the first idle refresh comes a period after construction, the process's startup evaluation having published moments before; a clock stepping back delays the refresh by the step and forces nothing.
+- `_refresh_gate` is the tick's last act, after the resting-age publish, wrapped as that publish is.
+- `test_an_idle_tick_reads_no_gate_at_all` becomes the bounded claim with the same plan-file half; `test_the_idle_tick_never_evaluates_tracking` keeps its count, its three ticks preceding the period's first elapse, and says so.
+
+**Files:**
+- Modify `cli/engine/executor.py` (`_GATE_REFRESH` after `_RECONNECT_ATTEMPTS`; `_gate_evaluated_at` in `__init__`; `_evaluate`'s docstring and stamp; `on_timer`'s refresh line; `_refresh_gate` after `_publish_resting_age`)
+- Modify `cli/engine/command.py` (`_ExecGauges`' docstring's first sentence)
+- Modify `infra/runbooks/engine.md` (the kill-tripped runbook's step 3)
+- Modify `infra/runbooks/drills-order-path.md` (the derivation rule on the gate's gauges; E's resting-plan precondition)
+- Modify `infra/runbooks/engine-procedures.md` (the no-alert bullet on the external-events counter)
+- Test: `tests/test_engine_executor.py` (`test_an_idle_tick_reads_no_gate_at_all` replaced by two cases; `test_the_idle_tick_never_evaluates_tracking`'s docstring and comment)
+- Test: `tests/test_infra_alert_rules.py` (the `NOT_A_FAULT_SIGNAL` entry's comment on the external-events counter)
+
+**Interfaces:**
+- Consumes: `_executor`, `_gate`, `_drop_plan`, `_plan_dict`, `_kill_file`, `CountingGate`, `set_executor_hooks`, `GateLevel`, `NOW`, `timedelta` from the test module's existing names; `_publish`, `_publish_resting_age` in the executor.
+- Produces: `_GATE_REFRESH`; `ProbeExecutor._gate_evaluated_at` and `._refresh_gate(now)`.
+
+- [ ] **Step 1: Confirm Task 4 has landed and the executor is at the spec's basis**
+
+Run: `grep -c 'on_socket_state' cli/engine/executor.py; grep -c '_GATE_REFRESH' cli/engine/executor.py`
+Expected: `2` then `0`. A first count other than 2 means Task 4 is not on the branch; a second other than 0 means the refresh already exists; stop and report either to the controller.
+
+- [ ] **Step 2: The failing cases in `tests/test_engine_executor.py`**
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+def test_an_idle_tick_reads_no_gate_at_all(tmp_path):
+    """The cheap-lstat claim: with no plan file there is no gate evaluation and therefore no venue
+    read. The second half is what stops this passing vacuously against an executor that never
+    evaluates anything."""
+    gate = CountingGate()
+    ex = _executor(tmp_path, gate=gate)
+
+    ex.on_timer(NOW)
+    assert gate.calls == 0
+
+    _drop_plan(tmp_path, _plan_dict())
+    ex.on_timer(NOW)
+    assert gate.calls > 0
+```
+
+with:
+
+```python
+def test_an_idle_tick_reads_no_gate_inside_the_refresh_period_and_one_per_period_past_it(tmp_path):
+    """The cheap-lstat claim, bounded: with no plan file there is no gate evaluation and no venue
+    read inside the refresh period, then one per period -- the tick a plan runs on evaluates anyway.
+    The plan-file half is what stops this passing vacuously against an executor that never
+    evaluates anything."""
+    gate = CountingGate()
+    ex = _executor(tmp_path, gate=gate)
+
+    ex.on_timer(NOW)
+    ex.on_timer(NOW + timedelta(seconds=55))
+    assert gate.calls == 0
+    ex.on_timer(NOW + timedelta(seconds=60))
+    ex.on_timer(NOW + timedelta(seconds=65))
+    assert gate.calls == 1
+    ex.on_timer(NOW + timedelta(seconds=120))
+    assert gate.calls == 2
+
+    _drop_plan(tmp_path, _plan_dict(created_at=NOW + timedelta(seconds=120)))
+    ex.on_timer(NOW + timedelta(seconds=125))
+    assert gate.calls > 2
+
+
+def test_a_kill_file_removed_on_an_idle_engine_is_republished_within_the_refresh_period(tmp_path):
+    """Drill D, measured 2026-09-26: the boot published the switch as tripped, the file went, no
+    intent was live, and the gauge held the boot's reading to the next boundary, so the rule paged a
+    switch gone four minutes. The idle tick now re-evaluates the gate once a minute and the publish
+    hook -- `_ExecGauges.update` in production -- sees the file gone within it; the refresh journals
+    nothing."""
+    published = []
+    set_executor_hooks(publish_verdict=lambda verdict, *, evaluated_at: published.append((evaluated_at, verdict)))
+    ex = _executor(tmp_path, gate=_gate(tmp_path, GateLevel.NONE))  # the kill file stands at the boot
+
+    ex.on_timer(NOW)
+    _kill_file(tmp_path).unlink()
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert published == []
+    ex.on_timer(NOW + timedelta(seconds=60))
+
+    assert [(at, v.level, v.inputs["kill_file"]) for at, v in published] == [(NOW + timedelta(seconds=60), GateLevel.FULL, False)]
+    assert not (tmp_path / "journal").exists()
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+def test_the_idle_tick_never_evaluates_tracking(tmp_path):
+    """`on_timer` is not a call site for this. A week-wide read on a 5-second tick would be 17280
+    journal scans a day, and `_pickup`'s idle path is contracted to read no gate and no venue at
+    all."""
+```
+
+with:
+
+```python
+def test_the_idle_tick_never_evaluates_tracking(tmp_path):
+    """`on_timer` is not a call site for this. A week-wide read on a 5-second tick would be 17280
+    journal scans a day, and `_pickup`'s idle path is contracted to read no gate inside the refresh
+    period; the three ticks here precede the period's first elapse from the executor's
+    construction."""
+```
+
+Replace, in `tests/test_engine_executor.py`, this block:
+
+```python
+    assert not _kill_file(tmp_path).exists()
+    assert gate.calls == 0  # the idle path reads nothing at all
+```
+
+with:
+
+```python
+    assert not _kill_file(tmp_path).exists()
+    assert gate.calls == 0  # the three ticks fall before the first refresh
+```
+
+- [ ] **Step 3: Run the file and watch the new cases fail**
+
+Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
+Expected: `2 failed, 293 passed`. `test_an_idle_tick_reads_no_gate_inside_the_refresh_period_and_one_per_period_past_it` fails on `assert 0 == 1` at the tick a period after construction, and `test_a_kill_file_removed_on_an_idle_engine_is_republished_within_the_refresh_period` on `assert [] == [(datetime..., 'full', False)]`, nothing published; `test_the_idle_tick_never_evaluates_tracking` passes either way.
+
+- [ ] **Step 4: The refresh in `cli/engine/executor.py`, the docstring in `cli/engine/command.py`, the three pages and the alert-rules entry**
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+_RECONNECT_ATTEMPTS = 3
+```
+
+with:
+
+```python
+_RECONNECT_ATTEMPTS = 3
+# The idle cadence the gate is re-evaluated and its gauges republished at, against the kill-switch
+# rule's `for: 5m`: a refresh, a scrape and the rule's evaluation are a minute each at most, three
+# minutes end to end, so a switch removed on an idle engine resets the rule's pending period with
+# two evaluations to spare. While a plan runs the tick evaluates anyway; between cycles the boundary
+# sink alone published before, up to four hours apart.
+_GATE_REFRESH = timedelta(seconds=60)
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+        self._sockets_down: set[str] = set()
+        self._reconnect_tries = 0
+```
+
+with:
+
+```python
+        self._sockets_down: set[str] = set()
+        self._reconnect_tries = 0
+        # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
+        # published moments before this construction.
+        self._gate_evaluated_at: datetime = self._now()
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+    def _evaluate(self, now: datetime) -> GateVerdict:
+        """The ONE gate read. Every evaluation reaches the publish hook (D4's cadence ruling), so
+        the gate's published state is seconds-fresh for as long as a plan is running and reverts to
+        the between-cycles cadence the moment one is not."""
+        verdict = self._gate.evaluate(now)
+        _publish(verdict, now)
+        return verdict
+```
+
+with:
+
+```python
+    def _evaluate(self, now: datetime) -> GateVerdict:
+        """The ONE gate read. Every evaluation reaches the publish hook (D4's cadence ruling), so
+        the gate's published state is seconds-fresh for as long as a plan is running and at most
+        `_GATE_REFRESH` old while none is (`_refresh_gate`), since the board's kill-switch rule reads
+        the gauge and a switch removed on an idle engine would otherwise page until the boundary."""
+        verdict = self._gate.evaluate(now)
+        self._gate_evaluated_at = now
+        _publish(verdict, now)
+        return verdict
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+            self._pump(now)
+            self._publish_resting_age(now)
+        except Exception:
+            # Refusal by default: whatever broke, stop running this plan. Anything already resting
+```
+
+with:
+
+```python
+            self._pump(now)
+            self._publish_resting_age(now)
+            self._refresh_gate(now)
+        except Exception:
+            # Refusal by default: whatever broke, stop running this plan. Anything already resting
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+        except Exception:
+            logger.exception("executor resting-age publish raised -- continuing")
+
+    # --- the sockets ---------------------------------------------------------------------------
+```
+
+with:
+
+```python
+        except Exception:
+            logger.exception("executor resting-age publish raised -- continuing")
+
+    def _refresh_gate(self, now: datetime) -> None:
+        """The idle refresh: one evaluation, published, once `_GATE_REFRESH` has passed since the last
+        -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
+        reads, its own fail-closed readings included; it journals nothing, since the exec record's
+        verdict is the boundary sink's alone. Wrapped as `_publish_resting_age` is: telemetry may
+        never end a plan."""
+        try:
+            if now - self._gate_evaluated_at >= _GATE_REFRESH:
+                self._evaluate(now)
+        except Exception:
+            logger.exception("executor gate refresh raised -- continuing")
+
+    # --- the sockets ---------------------------------------------------------------------------
+```
+
+Replace, in `cli/engine/command.py`, this block:
+
+```python
+    """The execution envelope's published state, updated from the gate's verdict every cycle. `gate_level` and the presence gauges
+```
+
+with:
+
+```python
+    """The execution envelope's published state, updated at every gate evaluation: the boundary sink's, the executor's on its
+    tick while a plan runs, and its idle refresh once a minute, so a control file moved by hand reaches the board within that
+    minute. `gate_level` and the presence gauges
+```
+
+Replace, in `infra/runbooks/engine.md`, this block:
+
+```markdown
+3. **If the reason no longer holds, remove the kill file on the engine host.** This clears immediately: no deploy, no restart, no engine downtime.
+```
+
+with:
+
+```markdown
+3. **If the reason no longer holds, remove the kill file on the engine host.** This clears within the executor's next gate refresh — one tick while a plan runs, a minute at most while none does — plus one scrape: no deploy, no restart, no engine downtime (no count command: `_GATE_REFRESH` in `cli/engine/executor.py` is the idle cadence, and drill D of 2026-09-26 measured the page outliving the file by four minutes before it).
+```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+While a plan is running the executor evaluates on every 5-second tick and publishes each verdict; with no plan running it evaluates at engine start and at each 4-hourly boundary. Every kill-switch bound below therefore assumes a plan is resting, which is why E's preconditions demand one: a kill file placed on an idle engine can wait four hours to reach Grafana at all.```
+
+with:
+
+```markdown
+While a plan is running the executor evaluates on every 5-second tick and publishes each verdict; with no plan running it evaluates at engine start, at each 4-hourly boundary, and once a minute on its idle tick. Every kill-switch bound below assumes a plan is resting, which is why E's preconditions demand one: a kill file placed on an idle engine reaches Grafana within a minute plus a scrape, a phase the bounds below do not carry.```
+
+Replace, in `infra/runbooks/drills-order-path.md`, this block:
+
+```markdown
+so a kill file placed on an idle engine can wait hours to reach Grafana and the measured page time would be an artefact of the cycle clock (no count command:```
+
+with:
+
+```markdown
+so a kill file placed on an idle engine waits for the idle refresh, up to a minute, and the measured page time would carry the refresh's phase rather than the tick's (no count command:```
+
+Replace, in `infra/runbooks/engine-procedures.md`, this block:
+
+```markdown
+that gauge is published when the gate is EVALUATED, which while disarmed is engine start and each 4-hourly cycle — so it reads 0 for hours after you arm and 1 for hours after you disarm, and the rule would page on your own attended work and stay mute through the hour after you walk away. Visibility is unaffected: engine-dashboard panel 61 plots both dispositions. The full reasoning, and the one change that would make a rule viable, are in `tests/test_infra_alert_rules.py`'s `NOT_A_FAULT_SIGNAL` entry for this metric.```
+
+with:
+
+```markdown
+that gauge follows an arm or a disarm within a minute, the executor's idle refresh, and the counter the rule would gate on counts your own hand-placed orders while the engine is disarmed — so the rule would page on your own account activity, and a rule on a forensic counter is a decision of its own. Visibility is unaffected: engine-dashboard panel 61 plots both dispositions. The full reasoning is in `tests/test_infra_alert_rules.py`'s `NOT_A_FAULT_SIGNAL` entry for this metric.```
+
+Replace, in `tests/test_infra_alert_rules.py`, this block:
+
+```python
+    # `unmatched` rising while `zcrypto_exec_armed` is 0 -- is unsound, because `zcrypto_exec_armed`
+    # is published only when the gate is EVALUATED (engine start, then each 4-hourly cycle), so it is
+    # a snapshot rather than an attendance signal and is stale in BOTH directions: loud during the
+    # owner's own attended activity, mute through the hours after a window closes. What would make
+    # the candidate work is one change: publish `zcrypto_exec_armed` on the executor's 5s tick --
+    # engine code on the live trade path, so a decision of its own. The silent failure no rule could
+    # catch either way -- an adopted order whose events fail to key into `_attached` -- is a
+    # by-value reading in T0018.
+```
+
+with:
+
+```python
+    # `unmatched` rising while `zcrypto_exec_armed` is 0 -- pages on the owner's own account
+    # activity, since a hand-placed order while the engine is disarmed is exactly an unmatched
+    # external event, and a rule on a forensic counter is a decision of its own. `zcrypto_exec_armed`
+    # itself is no longer the obstacle: it is published at every gate evaluation, the executor's idle
+    # refresh once a minute included, so it follows an arm or a disarm within that minute. The silent
+    # failure no rule could catch either way -- an adopted order whose events fail to key into
+    # `_attached` -- is a by-value reading in T0018.
+```
+
+- [ ] **Step 5: Run the file and watch it pass**
+
+Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
+Expected: `295 passed`.
+
+- [ ] **Step 6: The consumers**
+
+Run: `uv run pytest tests/test_config.py tests/test_engine_concordance.py tests/test_engine_gate_export_cache.py tests/test_engine_gate_cache.py tests/test_engine_stub_fidelity.py tests/test_engine_command.py tests/test_engine_gate_export.py tests/test_engine_feeders.py tests/test_engine_tracking.py tests/test_engine_execledger.py tests/test_ops_daily_soak.py tests/test_error_paths_are_logged.py tests/test_engine_metrics.py tests/test_engine_soak_command.py tests/test_ops_daily.py tests/test_engine_soak.py tests/test_engine_node.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_count_list.py tests/test_guidance_guard.py tests/test_guidance_refs_resolve.py tests/test_infra_alert_rules.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_systemd_user_units.py -q -p no:cacheprovider`
+Expected: every test passed or skipped by a gate, none failed; `2532 passed, 9 skipped` when this plan was written, the executor union with Task 2's, since the task touches `cli/engine/command.py`.
+
+- [ ] **Step 7: The commit gate**
+
+Run: `uv run pre-commit run -a`
+Expected: every hook Passed; re-run after any rewrite until clean, then stage what it rewrote. `mdformat` covers the three runbook pages.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add cli/engine/command.py cli/engine/executor.py infra/runbooks/drills-order-path.md infra/runbooks/engine-procedures.md infra/runbooks/engine.md tests/test_engine_executor.py tests/test_infra_alert_rules.py
+git commit -m "fix(engine): the gate's gauges are republished once a minute while no plan runs
+
+Measured on 2026-09-26, drill D's restore: the startup evaluation published the kill switch as
+tripped, the file and the hold were removed two minutes later with no intent live, and the gauges
+kept the boot's reading until the next boundary, so the kill-tripped rule paged a switch gone four
+minutes and cleared two hours later. Every gate evaluation now stamps its time and the executor's
+tick re-evaluates the gate once sixty seconds have passed since the last, publishing what the gate
+reads through the hook the boundary sink and a running plan's ticks use; a refresh, a scrape and
+the rule's evaluation are a minute each at most, inside the rule's five-minute pending, and the
+refresh journals nothing. The idle tick reads no gate inside the period and one per period past
+it. The kill-tripped runbook's step says the removal clears within the refresh bound, the drill
+page's derivation rule and E's precondition name the idle refresh, and the procedures page's
+no-alert bullet and the alert-rules entry on the external-events counter name the signal, not the
+gauge's cadence, as what keeps a rule unauthored.
+
+Cases: an idle tick reading no gate inside the period, one past it and one per period after, with
+a plan file read on its own tick; D's shape, a boot with the kill file present, the file removed,
+no intent live, and the published verdict reading the file gone at the first refresh with the
+journal untouched; the tracking idle case re-bounded to the period.
+
+PROBE_VERDICT
+
+Co-Authored-By: Claude <model> <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU"
+```
+
+- [ ] **Step 9: The tree is clean**
+
+Run: `git status --porcelain`
+Expected: empty.
+
+- [ ] **Step 10: Prove the guards with three probes, then record their verdicts by a message-only amend**
+
+The control stretches the period to four hours, so both idle cases fail. The mutations, in order: the refresh is never called; the refresh runs on every tick; the stamp is never set, so a refresh follows every tick past the first period. Each `-k` selects 3 of the file's 295 cases:
+
+```bash
+K="refresh_period or never_evaluates_tracking"
+C='s/_GATE_REFRESH = timedelta(seconds=60)/_GATE_REFRESH = timedelta(hours=4)/'
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^            self._refresh_gate(now)$/            pass/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/if now - self._gate_evaluated_at >= _GATE_REFRESH:/if True:/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^        self._gate_evaluated_at = now$/        pass/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+```
+
+Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message with the text below: write the whole message, that line replaced, to a file under `.tmp/` (gitignored) and amend from it with `git commit --amend -F <that file>` — the Global Constraints' rule, never `--amend -m "…"`, inside which the shell runs each backticked name below as a command:
+
+```
+Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/executor.py`, control the refresh period
+stretched to four hours so both idle cases fail, through
+`-k "refresh_period or never_evaluates_tracking"`:
+the refresh never called, KILLED, control proven; the refresh on every tick, KILLED, control
+proven; the stamp never set, KILLED, control proven.
+```
+
+Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`; `git log -1 --format=%B | grep -c 'infra/scripts/mutate-probe.sh'` — Expected: `1`, the verdict naming the script.
+
+---
+
 ## Rollout (attended)
 
 The change ships with T0213's engine rollout as one image, on the owner's word of 2026-09-26: the executor, the ledger and the reader ride the image that plan builds, through `.claude/skills/zcrypto-rollout-image/SKILL.md`'s engine section, inside an inter-cycle gap while flat, and this plan plans no converge of its own; T0213's findings carry that ride-along on this branch, so the engine half's author reads it there. If T0213's own plan is not converged within a week of this pair's merge, the pair takes its own rollout through the same skill. Both halves are registered where a reader evaluates them: at closeout the controller re-trues T0018's build-list line to `merged in PR #<N>, not deployed: rides T0213's engine image, or takes its own rollout by <merge date + 7 days>`, adds that date as an arm of T0018's `ripe_when` — `or <that date>, the pull request's image not yet on the engine, read from the engine row of docs/reference/fleet-pins.md` — and re-renders the index with `uv run python infra/scripts/topics-index.py`; the arm goes when the converge lands. The tracking-report change reaches the workstation at merge, where the report runs, and the runbook's §6 item 3 is read against it at the next attended window.
 
 ## Resolution
 
-The branch delivers the build-list item registered on T0018 on 2026-09-26 from Rung 1's verdict and extended on this branch with drill G's finding: the reprice ladder, the ledger reader's margin rows, and the intents a restart orphans, one pull request on the live trade path. T0018 stays `partial`; its build-list line for the item is re-trued in the pull request's closeout, by the controller, to name the pull request and the deploy still owed (the Rollout's text), and to carry the restart finding as still open if the third cluster was struck; `docs/reference/change-index.md` maps the pull request to the topic. No topic is registered and none resolved; T0213's findings gain two lines on this branch, the kept reducer's intent and the ride-along, and T0214's one, the EURC-charged fee. What the pair leaves with a named home: the kept reducer's intent after a restart, T0213's engine half, on its findings line; cancel-on-stop and re-cancel-on-reconnect, T0018's other build-sequence items.
+The branch delivers the build-list item registered on T0018 on 2026-09-26 from Rung 1's verdict and extended on this branch with drill G's finding: the reprice ladder, the ledger reader's margin rows, and the intents a restart orphans, one pull request on the live trade path. T0018 stays `partial`; its build-list line for the item is re-trued in the pull request's closeout, by the controller, to name the pull request and the deploy still owed (the Rollout's text), and to carry the restart finding as still open if the third cluster was struck; `docs/reference/change-index.md` maps the pull request to the topic. No topic is registered and none resolved; T0213's findings gain two lines on this branch, the kept reducer's intent and the ride-along, and T0214's one, the EURC-charged fee. What the pair leaves with a named home: the kept reducer's intent after a restart, T0213's engine half, on its findings line; cancel-on-stop, T0018's other build-sequence item. Re-cancel-on-reconnect is delivered by Task 4 and the gate-gauge defect by Task 5, two T0018 lines the closeout re-trues beside the build-list line.
 
 ## Self-review
 
-- Spec coverage: D1 and D2 are Task 1's counters, phase, detach and `_poll` arm, with the revoke, time-box, racing-fill, replayed-ack, completing-fill, half-book, silence-order and raise cases; D3 its fall-through with the alternating-crossings case, the sell close and the two rest-mode ladders, and its runbook clause in Task 1's page step; D4 a Global Constraint (no `_INTENT_KEYS` change); D5 the `order` payload keys the first case reads; D6 changes nothing and is a Global Constraint's silence. D7 and D12 are Task 2's matched set and the real-shape fixture; D8 its `matched_fees_eur` over `_EURO_FEE_ASSETS`, the PnL case and the fixture's EURC row; D9 its `known` tally; D10 the four-decimal cases; D11 changes nothing. D13 changes nothing; D14 is Task 3's sweep and its sixteen cases; D15 the flipped minted case and the flagged-acceptance case; D16 the page edits in Tasks 1, 2 and 3. The measured basis is the spec's and no task re-measures it.
+- Spec coverage: D1 and D2 are Task 1's counters, phase, detach and `_poll` arm, with the revoke, time-box, racing-fill, replayed-ack, completing-fill, half-book, silence-order and raise cases; D3 its fall-through with the alternating-crossings case, the sell close and the two rest-mode ladders, and its runbook clause in Task 1's page step; D4 a Global Constraint (no `_INTENT_KEYS` change); D5 the `order` payload keys the first case reads; D6 changes nothing and is a Global Constraint's silence. D7 and D12 are Task 2's matched set and the real-shape fixture; D8 its `matched_fees_eur` over `_EURO_FEE_ASSETS`, the PnL case and the fixture's EURC row; D9 its `known` tally; D10 the four-decimal cases; D11 changes nothing. D13 changes nothing; D14 is Task 3's sweep and its sixteen cases; D15 the flipped minted case and the flagged-acceptance case; D16 the page edits in Tasks 1, 2 and 3. D17 is Task 4's subscription, forwarder and socket handler with the two arming cases; D18 its `_minted_terminal` predicate and the withheld Cache answer, with the reducer case and the withdrawn-fill case it must not disturb; D19 its pass, cancel and budget with the two re-cancel cases, the closed-report case, the failed-read case, the refused-cancel case, the in-flight case and the three loopback cases; D20 the intent and counter assertions inside the first case; D21 a Global Constraint's silence and the spec's Out of scope. D22 and D23 are Task 5's stamp, refresh and constant with the bounded idle case; D24 the refresh's wrap; D25 the journal assertion in the D-shaped case and the page edits in Task 5. The measured basis is the spec's and no task re-measures it.
 - Placeholders: `PROBE_VERDICT` is the one token, replaced in each task's Step 10 and checked to be gone; `<model>` in the trailers is the executing model's own name, a Global Constraint.
-- Names: every name a task consumes is listed under its Interfaces and exists in the test module or the source module at the step that uses it; the three new source names (`_reprice_at_touch`, `_time_box_with_nothing_resting`, `_settle_pending_intents`), the ledger accessor (`pending_plan_intents`) and the two test helpers (`_real_row`, `_pending_plan_entry`) are defined in the fence that introduces them, and `_submitted_row`'s `qty` keyword by the fence before the first case that passes it.
+- Names: every name a task consumes is listed under its Interfaces and exists in the test module or the source module at the step that uses it; the new source names (`_reprice_at_touch`, `_time_box_with_nothing_resting`, `_settle_pending_intents`, `cancel_venue_order`, `_minted_terminal`, `on_socket_state`, `_reconnect_pass`, `_minted_closed`, `_recancel`, `_cache_lookup`, `_refresh_gate`), the ledger accessor (`pending_plan_intents`) and the test helpers (`_real_row`, `_pending_plan_entry`, `_VenueCancel`, `_cancel_venue_order`, `_socket`, `_reconnect`, `_hold_in_cache`, `_minted_after_a_cut`) are defined in the fence that introduces them, `_submitted_row`'s `qty` keyword by the fence before the first case that passes it, and `_executor`'s and `_resting_executor`'s `venue_cancel` keyword by the fences before the first case that passes it, on a tree that does not yet take it.
 - Order: Task 2's and Task 3's first steps check the previous task's marker, and every failing and passing count was read with the tasks applied in this order.
