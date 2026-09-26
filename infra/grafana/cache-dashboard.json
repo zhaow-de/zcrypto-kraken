@@ -272,14 +272,14 @@
     {
       "id": 107,
       "type": "timeseries",
-      "title": "Alloy memory against its 256 MiB cap",
+      "title": "Alloy memory against its 512 MiB cap",
       "description": "The telemetry agent's resident memory as a share of its container cap. The red line is the fleet's Alloy headroom bar, the agent's Go soft limit; that rule is shared with the other hosts and its notification links the Fleet health board, so this is where a cache node's reading is. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 12, "x": 0, "y": 14},
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
-          "expr": "process_resident_memory_bytes{host=~\"$host\", job=\"integrations/self\"} / 268435456",
+          "expr": "process_resident_memory_bytes{host=~\"$host\", job=\"integrations/self\"} / 536870912",
           "refId": "A",
           "legendFormat": "{{host}}"
         }

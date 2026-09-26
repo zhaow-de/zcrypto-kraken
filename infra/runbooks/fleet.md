@@ -39,7 +39,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red and nas, 256 MiB on the three cache nodes zcrypto-valkey1 to zcrypto-valkey3 — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means RSS has passed the Go soft limit and is heading for the cgroup limit.
+A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red, nas and the three cache nodes zcrypto-valkey1 to zcrypto-valkey3 — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means RSS has passed the Go soft limit and is heading for the cgroup limit.
 
 ### What it means
 
@@ -49,7 +49,7 @@ If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark
 
 ### What to do
 
-1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`; a cache node is on the Cache board's *Alloy memory against its 256 MiB cap* panel (107), already divided. Steady state sits below the bar on every host (no count command: a live reading the tree does not record), and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit.
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`; a cache node is on the Cache board's *Alloy memory against its 512 MiB cap* panel (107), already divided. Steady state sits below the bar on every host (no count command: a live reading the tree does not record), and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit.
 2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds (no count command: `docker restart grafana-alloy` touches that one container, which runs Alloy alone), and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
 3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
 

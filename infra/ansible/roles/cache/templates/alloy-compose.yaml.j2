@@ -18,7 +18,7 @@ services:
     network_mode: host
     environment:
       # 0.9 of the memory cap below, the fleet's ratio (tests/test_infra_alert_rules.py holds it).
-      GOMEMLIMIT: 230MiB
+      GOMEMLIMIT: 460MiB
     env_file:
       - ./alloy-secrets.env
     command:
@@ -41,7 +41,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          memory: 512m
           cpus: "0.5"
     logging:
       driver: journald
