@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: Stage 6b (tiny-live) starts
+status: resolved
 ---
 
 # Blockpit T1 tax check (read-only depot connection + historical labeling + T1 memo)
@@ -24,8 +23,6 @@ Tax treatment is a **net-return** input, not a nicety: §11/§3 note that a EUR-
 - **Read-only Kraken key exists** (T0000, verified 2026-07-07: Query funds + Query ledger entries + Query closed orders & trades) — the natural read-only feed for Blockpit; no trade-scoped key is or should be involved.
 - Not a dependency of the Phase-2 validation harness (synthetic data) or Phases 3–4 (historical OHLCVT research); it feeds the **after-tax** view and live bookkeeping, so it is deferred without blocking research.
 
-## Suggested next steps
+## Resolution
 
-- **(human)** Create/log into Blockpit; connect the Kraken depot **read-only** (via the T0000 read-only API key or Blockpit's Kraken connector); authorize import.
-- **(human + autonomous write-up)** Re-verify the import scope covers **spot + spot-margin**; inspect historical-trade labeling (esp. §23 holding-period handling and margin-vs-spot classification); capture screenshots/notes.
-- **(autonomous)** Draft the **T1 memo** from the human's findings — import scope, labeling correctness, any gaps to feed the Phase-2 after-tax model — as a `docs/` note.
+Resolved 2026-09-25 with Rung 1's T2 verdict (`[iter-172]` in `docs/research/14.phase6-decisions.md`): the depot is Blockpit's own Kraken connector, granted by Kraken's OAuth login on 2026-07-09; the T1 memo is `docs/reference/blockpit-t1-memo.md`, and what it found wrong is [[T0215]]'s work.

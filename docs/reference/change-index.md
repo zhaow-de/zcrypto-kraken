@@ -351,3 +351,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #607 | 2026-09-24 | feat(cache): 00118 the engine's cache, the infrastructure half | — | 00118 | — |
 | #608 | 2026-09-24 | fix(engine): the gap closes 15 min early; the window ran to flat | — | — | T0159, T0160 |
 | #613 | 2026-09-25 | feat(portfolio): iter-171 — the cost basis measured at rung 1 | iter-171 | — | T0090 |
+| #616 | 2026-09-26 | docs(engine): iter-172 — Rung 1's disarm records and the T2 tax verdict | iter-172 | — | T0005 |
