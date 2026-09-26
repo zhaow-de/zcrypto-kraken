@@ -4,7 +4,7 @@
 
 ## The connection
 
-- The depot is Blockpit's own Kraken connector, granted through Kraken's OAuth login on 2026-07-09 — not the read-only API key of [[T0000]]; the grant offered no scope to check or uncheck. Kraken's connected-apps entry for Blockpit, read by the owner on 2026-09-25, lists view and export scopes only — the account balance, closed and open orders and trades, the ledger's view and export, the account information and a one-time API key for the session — and no order placement.
+- The depot is Blockpit's own Kraken connector, granted through Kraken's OAuth login on 2026-07-09 — not the read-only API key of [[T0000]]; the grant offered no scope to check or uncheck, and Kraken's connected-apps entry for it lists view and export scopes and no order placement.
 - Blockpit's integration page for Kraken still names no spot-margin scope. What it imports is the table below, measured.
 
 ## The import scope, measured
