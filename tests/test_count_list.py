@@ -642,7 +642,9 @@ def test_drills_on_the_primary_reads_the_subject_the_host_clause_names(tmp_path)
         "## 2026-09-04 — P — pass\n\n*host* `zcrypto-red`, the capture **secondary**; nothing on the primary was touched. *induction* x.\n\n"
         "## 2026-09-26 — G — pass\n\n*host* `zcrypto`, the engine, armed; the venue flat. *induction* y.\n\n"
         "## 2026-09-26 — A1 — pass\n\n*host* `zcrypto`, the engine host rebooted with an order resting. *induction* z.\n\n"
-        "## 2026-09-27 — K — fail\n\n*host* `zcrypto`, the capture **primary** and its Alloy. *induction* w.\n"
+        "## 2026-09-27 — K — fail\n\n*host* `zcrypto`, the capture **primary** and its Alloy. *induction* w.\n\n"
+        "## 2026-09-27 — C — pass\n\n*host* `zcrypto`, the capture **primary** and its Alloy, the engine left armed. *induction* v.\n\n"
+        "## 2026-09-28 — K — fail\n\n*host* `zcrypto`, the engineering line of the capture **primary** stopped. *induction* u.\n"
     )
     done = subprocess.run(
         ["bash", str(SCRIPT), "drills-on-the-primary"],
@@ -652,17 +654,17 @@ def test_drills_on_the_primary_reads_the_subject_the_host_clause_names(tmp_path)
         env={**os.environ, "COUNT_LIST_DRILL_LOG": str(log)},
         timeout=120,
     )
-    assert done.stdout.strip() == "drills-on-the-primary\t1", done.stdout
+    assert done.stdout.strip() == "drills-on-the-primary\t3", done.stdout
 
 
 @pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
-def test_drills_on_the_primary_reports_an_unreadable_log_as_an_error(tmp_path):
+def test_drills_on_the_primary_reports_a_log_it_cannot_read_as_an_error(tmp_path):
     done = subprocess.run(
         ["bash", str(SCRIPT), "drills-on-the-primary"],
         cwd=REPO,
         capture_output=True,
         text=True,
-        env={**os.environ, "COUNT_LIST_DRILL_LOG": str(tmp_path / "absent-drill-log.md")},
+        env={**os.environ, "COUNT_LIST_DRILL_LOG": str(tmp_path)},
         timeout=120,
     )
     assert "ERROR" in done.stdout and not done.stdout.strip().endswith("\t0"), done.stdout + done.stderr

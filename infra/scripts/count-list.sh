@@ -330,8 +330,8 @@ c_converges_inside_a_kraken_window() {
 # `, the engine` opens an order-path entry, outside the rule's set (.claude/rules/fleet-deploys.md).
 c_drills_on_the_primary() {
   local log="${COUNT_LIST_DRILL_LOG:-docs/reference/drill-log.md}"
-  [ -r "$log" ] || return 2
-  grep -E '^\*host\* `zcrypto`' "$log" | grep -vcE '^\*host\* `zcrypto`, the engine'
+  [ -f "$log" ] && [ -r "$log" ] || return 2
+  grep -E '^\*host\* `zcrypto`' "$log" | grep -vcE '^\*host\* `zcrypto`, the engine\b'
 }
 
 # `--skip-tags engine` is the Alloy bump's published primary form and names no tag, so it books an
