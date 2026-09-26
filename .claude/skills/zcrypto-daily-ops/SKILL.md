@@ -39,7 +39,7 @@ Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action a
 
 **The classifier is default-deny over an enumerated table of command shapes, so `prepared` also means *not yet enumerated*** — a diagnostic a runbook gained after the table was written is refused exactly like a destructive one. That is the safe direction and never a reason to widen the table in the moment: prepare the step, then add the shape and its fixture through the normal fix branch.
 
-**The host comes from the report's `Alert.hosts`, never from the step.** One runbook body serves each Alloy host, and the same restart is routine on ops and attended on the capture pair. **A rule firing on several hosts is classified once PER HOST** — the report names every host with a firing instance, the tier can differ between them, and the silence the capture runbook prescribes is created and deleted per host too.
+**The host comes from the report's `Alert.hosts`, never from the step.** The same Alloy restart is routine on ops and attended on the capture pair. **A rule firing on several hosts is classified once PER HOST** — the report names every host with a firing instance, the tier can differ between them, and the silence the capture runbook prescribes is created and deleted per host too.
 
 **Done is an outcome, never a merge.** A fix whose effect needs a converge is not done when it merges: the entry names it as owed to an attended converge.
 
