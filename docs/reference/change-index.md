@@ -352,3 +352,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #608 | 2026-09-24 | fix(engine): the gap closes 15 min early; the window ran to flat | — | — | T0159, T0160 |
 | #613 | 2026-09-25 | feat(portfolio): iter-171 — the cost basis measured at rung 1 | iter-171 | — | T0090 |
 | #616 | 2026-09-26 | docs(engine): iter-172 — Rung 1's disarm records and the T2 tax verdict | iter-172 | — | T0005 |
+| #617 | 2026-09-26 | chore(records): the 2026-09-26 drill day — tier run and reboot round | — | — | T0018, T0085, T0158 |
