@@ -2652,17 +2652,6 @@ FRESH_NODE_SITES = [
     (ROLES / "chrony" / "tasks" / "main.yml", "enable + start chrony", ("chrony_install",)),
     (ROLES / "chrony" / "handlers" / "main.yml", "restart chrony", ("chrony_install",)),
 ]
-FRESH_NODE_REGISTERS = {
-    "base_unattended_upgrades_install": (ROLES / "base" / "tasks" / "main.yml", "install unattended-upgrades"),
-    "fail2ban_install": (ROLES / "fail2ban" / "tasks" / "main.yml", "install fail2ban"),
-    "docker_repo": (
-        ROLES / "docker" / "tasks" / "main.yml",
-        "add the Docker apt repository (deb822 format; module fetches + stores the signing key)",
-    ),
-    "docker_install": (ROLES / "docker" / "tasks" / "main.yml", "install Docker Engine + Compose plugin"),
-    "firewall_nftables_install": (ROLES / "firewall" / "tasks" / "main.yml", "install nftables"),
-    "chrony_install": (ROLES / "chrony" / "tasks" / "main.yml", "ensure chrony is installed"),
-}
 
 
 @pytest.mark.parametrize(
@@ -2678,9 +2667,24 @@ def test_a_fresh_node_preview_skips_exactly_what_it_never_installed(path, name, 
     assert truthy(when_conditions(task), settled) is True, (name, check_mode)
 
 
-@pytest.mark.parametrize("register", sorted(FRESH_NODE_REGISTERS))
-def test_every_register_a_fresh_node_guard_reads_is_set_by_its_install_task(register):
-    path, name = FRESH_NODE_REGISTERS[register]
-    assert find_task(load_tasks(path), name).get("register") == register, (register, name)
-    readers = [n for _, n, regs in FRESH_NODE_SITES if register in regs]
-    assert readers, register
+def _role_files(role: Path) -> list[Path]:
+    return sorted(p for d in ("tasks", "handlers") for p in (role / d).glob("*.yml"))
+
+
+PREVIEW_GUARDED_ROLES = sorted(
+    r.name for r in ROLES.iterdir() if any("ansible_check_mode and" in p.read_text() for p in _role_files(r))
+)
+
+
+@pytest.mark.parametrize("role", PREVIEW_GUARDED_ROLES)
+def test_every_register_a_preview_guard_reads_is_set_in_its_own_role(role):
+    registered, read = set(), set()
+    for path in _role_files(ROLES / role):
+        for task, gates in iter_tasks(load_tasks(path) or []):
+            if task.get("register"):
+                registered.add(task["register"])
+            for gate in gates:
+                if "ansible_check_mode" in gate:
+                    read.update(re.findall(r"\b([a-z_][a-z0-9_]*) is changed", gate))
+    assert read, role
+    assert read <= registered, (role, sorted(read - registered))

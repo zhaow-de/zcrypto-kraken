@@ -1427,7 +1427,7 @@ _HOST_VOCABULARY = re.compile(r'eq \. "([^"]+)" \}\}([^\n{]+)')
 
 def test_the_headroom_summary_names_the_hosts_its_expression_actually_reads():
     """A summary is read on a phone with nothing open, so "512 MiB elsewhere" promised every other
-    Alloy host while the expression selects four by name. The edge runs the apt Alloy under no
+    Alloy host while the expression selects its hosts by name. The edge runs the apt Alloy under no
     container and no cap, so this ratio has no denominator for it and `zcrypto-alloy-dark-zaccess`
     owns its OOM; a CAPPED host is forced in by the memory-limited-job test above."""
     vocabulary = dict(_HOST_VOCABULARY.findall(_SLACK_TEMPLATE.read_text()))
@@ -1464,7 +1464,7 @@ def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
 
 def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
     """The 0.9 headroom bar means "the runtime lost its soft limit" only if GOMEMLIMIT sits at the
-    same fraction of the container cap on every host -- ops's 920MiB/1g and the other three's
+    same fraction of the container cap on every host -- ops's 920MiB/1g and the rest's
     460MiB/512m both land at 0.898. [0.88, 0.92] tolerates the MiB-vs-binary-GiB rounding without
     tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
     ops_defaults = ANSIBLE / "roles/ops/defaults/main.yml"
@@ -1866,3 +1866,23 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
 # LogQL, and every partial parser built for it shipped a hole while reading as complete, which is
 # worse than nothing because it licenses the belief that the class is covered. Re-measure the widest
 # window in an audit; do not add a regex that claims to settle it.
+
+
+def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
+    cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+    board = json.loads((REPO / "infra/grafana/cache-dashboard.json").read_text())
+    stack, panels = list(board["panels"]), []
+    while stack:
+        panel = stack.pop()
+        stack.extend(panel.get("panels", []))
+        panels.append(panel)
+    drawn = [
+        (panel, target["expr"])
+        for panel in panels
+        for target in panel.get("targets", [])
+        if "process_resident_memory_bytes" in target.get("expr", "") and 'job="integrations/self"' in target["expr"]
+    ]
+    assert drawn, "no Alloy memory panel on the Cache board"
+    for panel, expr in drawn:
+        assert re.search(rf"/\s*{cap}\s*$", expr), (panel["id"], expr, cap)
+        assert f"{cap // 2**20} MiB" in panel["title"], (panel["id"], panel["title"])
