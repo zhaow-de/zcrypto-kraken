@@ -43,7 +43,7 @@ A **warning** Grafana alert, one instance per host: Grafana Alloy there has been
 
 ### What it means
 
-**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — 1 GiB on ops, 256 MiB on the cache nodes, 512 MiB on the other three — and panel 601 plots raw RSS, so divide before judging: a larger cap is not more headroom, and raw MiB does not rank proximity to the bar. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
+**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — 1 GiB on ops, 512 MiB on the rest — and panel 601 plots raw RSS, so divide before judging: a larger cap is not more headroom, and raw MiB does not rank proximity to the bar. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
 
 If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark` reports it within ~10 min. **This is the warning before that**, not the detector for it.
 
