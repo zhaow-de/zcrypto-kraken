@@ -273,7 +273,7 @@
       "id": 107,
       "type": "timeseries",
       "title": "Alloy Go runtime memory against its 384 MiB cap",
-      "description": "The telemetry agent's Go runtime memory — the runtime's memory from the OS less the heap it has released, the quantity its Go soft limit governs — as a share of its container cap. Not resident memory: that counts the binary's file-mapped pages and sits above the bar on a healthy node. The red line is the fleet's Alloy headroom bar, the agent's Go soft limit; that rule is shared with the other hosts and its notification links the Fleet health board, so this is where a cache node's reading is. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom",
+      "description": "The telemetry agent's Go runtime memory — the runtime's memory from the OS less the heap it has released, the quantity its Go soft limit governs — as a share of its container cap. The red line is the fleet's Alloy headroom bar, the agent's Go soft limit; that rule is shared with the other hosts and its notification links the Fleet health board, so this is where a cache node's reading is. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 12, "x": 0, "y": 14},
       "targets": [

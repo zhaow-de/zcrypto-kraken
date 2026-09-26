@@ -1309,8 +1309,7 @@ _CACHE_SENTINEL_UNLEGGED = "Sentinel's `INFO` carries no memory section, so its 
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (
-        "No headroom leg is possible: the rules divide a memory family the process publishes "
-        "(`process_resident_memory_bytes`, or Alloy's Go runtime memory on a cache node) by a limit, and "
+        "No headroom leg is possible: the rules divide a memory family the process publishes by a limit, and "
         "agentboard publishes no /metrics and is scraped by nothing, so no such series exists. The cap "
         "is a systemd `MemoryMax=`, which no metric on this fleet carries either -- cadvisor is "
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
@@ -1366,7 +1365,6 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
         for n in _rule(uid)["data"]
     )
     legs = re.findall(r"(?:process_resident_memory_bytes|redis_memory_used_rss_bytes)\{([^}]*)\}\s*/\s*\d+", exprs)
-    # The cache nodes' Alloy leg divides the Go runtime's memory, a difference of two families.
     legs += re.findall(r"\(go_memstats_sys_bytes\{([^}]*)\}\s*-\s*go_memstats_heap_released_bytes\{[^}]*\}\)\s*/\s*\d+", exprs)
     assert len(legs) >= 6, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
 
@@ -1413,10 +1411,7 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
         f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
     )
-    # The cache nodes' own cap, read back from its compose literal, divides the Go runtime's memory
-    # (sys less heap released, what GOMEMLIMIT governs), never RSS: Alloy's RSS counts the binary's
-    # file-mapped pages and sits above 0.9 of the cap on a healthy node, so an RSS leg there fires in
-    # steady state and says nothing.
+    # The cache nodes' own cap, read back from its compose literal.
     cache_cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
     cache_nodes = r'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"'
     assert re.search(
@@ -1424,7 +1419,7 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
         expr,
     ), f"the cache leg must divide the Go runtime's memory by the cache compose literal ({cache_cap}); found: {expr!r}"
     assert not re.search(r"process_resident_memory_bytes\{[^}]*zcrypto-valkey", expr), (
-        f"a cache node's Alloy is read by RSS, which its binary's file-mapped pages hold above the bar: {expr!r}"
+        f"a cache node's Alloy is read by RSS, which counts its binary's file-mapped pages: {expr!r}"
     )
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
@@ -1879,8 +1874,6 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
 
 
 def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
-    """The panel draws what the headroom rule's cache leg divides -- the Go runtime's memory, sys less
-    heap released -- over the compose cap; a panel back on RSS is no Alloy memory panel here."""
     cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
     board = json.loads((REPO / "infra/grafana/cache-dashboard.json").read_text())
     stack, panels = list(board["panels"]), []

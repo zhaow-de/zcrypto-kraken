@@ -24,10 +24,8 @@ prometheus.exporter.unix "host" {
   }
 }
 
-// Alloy's own families (job="integrations/self"), of which the keep regex below admits the two
-// go_memstats_* the fleet's Alloy memory-headroom rule reads on a cache node: the Go runtime's
-// memory, not RSS, which counts the binary's file-mapped pages and sits above 0.9 of the cap on a
-// healthy node, and which nothing reads here.
+// Alloy's own families (job="integrations/self"): the fleet's Alloy memory-headroom rule reads the
+// two go_memstats_* the keep regex below admits, and nothing reads RSS here.
 prometheus.exporter.self "alloy" {}
 
 // No `job_name` here: exporter targets carry their own `job` label (integrations/unix, integrations/self),
@@ -102,8 +100,7 @@ prometheus.remote_write "grafana" {
     }
 
     // Alloy's own internals first, then keep-only: a series the keep regex does not list does not
-    // exist in Grafana; tests/test_infra_alloy_series.py holds it to CACHE_REQUIRED exactly. The drop
-    // rule names no `go_.*`, unlike the other hosts': the two go_memstats families below reach Cloud.
+    // exist in Grafana; tests/test_infra_alloy_series.py holds it to CACHE_REQUIRED exactly.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "alloy_.*"

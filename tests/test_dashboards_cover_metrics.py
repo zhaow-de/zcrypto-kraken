@@ -835,7 +835,6 @@ def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits
     assert reach("label_values(up, host)") == CACHE_NODES
     assert reach('label_values(up{host=~"zcrypto-valkey1|ops"}, host)') == frozenset({"zcrypto-valkey1"})
     assert reach('label_values(up{host=~"zcrypto|ops"}, host)') == frozenset()
-    # A family the cache keep regex drops exists on no cache node, so a variable over it has no reach there at all.
     unadmitted = {"name": "h", "type": "query", "query": "label_values(process_resident_memory_bytes, host)"}
     assert "h" not in _host_variables({"templating": {"list": [unadmitted]}})
     variable = {

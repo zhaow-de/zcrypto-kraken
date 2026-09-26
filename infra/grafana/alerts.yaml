@@ -4143,7 +4143,7 @@ rules:
   # The four rules below replace the capture-image bake's hand-read RSS rows, which every converge
   # voided and which never found a real leak (T0151). They run regardless of converges and across the
   # FLEET: both capture daemons, the engine, and the ops liquidations poller -- the app-daemon
-  # headroom rule below excludes Alloy, which gets its own rule covering the four Alloy containers.
+  # headroom rule below excludes Alloy, which gets its own rule over every capped Alloy container.
   # A bake owes no memory read; a rollout is closed at gate-close.
   - uid: zcrypto-fleet-memory-headroom
     title: "Fleet · a daemon is near its memory limit"
@@ -4223,9 +4223,8 @@ rules:
       # liquidations). The capture pair and the NAS stay at 512m: the CAPTURE hosts already commit
       # most of their RAM in caps, so headroom is not free there. The cache nodes' Alloy is 384m on
       # a 1 GB node, and its leg reads the Go runtime's memory -- go_memstats_sys_bytes less
-      # go_memstats_heap_released_bytes, the quantity GOMEMLIMIT governs -- not RSS: RSS counts the
-      # binary's file-mapped pages, which hold it above 0.9 of the cap on a healthy node while the
-      # cgroup charge sits far below, so an RSS leg there fires in steady state and says nothing. The
+      # go_memstats_heap_released_bytes, the quantity GOMEMLIMIT governs -- not RSS, which also
+      # counts the binary's file-mapped pages, outside what GOMEMLIMIT governs. The
       # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
       - refId: A
         queryType: ""
@@ -4248,11 +4247,10 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means the reading (RSS, or
-            # the Go runtime's memory on a cache node) has passed the Go soft limit and is heading for
-            # the cgroup limit. The consequence of the ceiling
-            # is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at 10 m --
-            # so this is the EARLY warning for that fault, not its detector.
+            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means the leg's reading has
+            # passed the Go soft limit and is heading for the cgroup limit. The consequence of the
+            # ceiling is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at
+            # 10 m -- so this is the EARLY warning for that fault, not its detector.
             - evaluator: {type: gt, params: [0.9]}
     noDataState: OK
     execErrState: Alerting
