@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # One line per entry -- its name and today's value -- for every count the corpus and the contracts name by entry; a universal with no entry beside it is the finding.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
-# Four entries the corpus does not name close the list: topic-only merges, the claude-kind commits since the last refine round closed, the processes with a cwd inside a worktree, and the ambient bytes every session pays on every turn.
 set -uo pipefail
 
 errors=()
