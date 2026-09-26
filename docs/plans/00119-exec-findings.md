@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- The ladder's constants are unchanged: `_MAX_REPRICES` 5, `_MAX_IOC_ATTEMPTS` 3, `_QUOTE_SILENCE` 30 s, `_TIME_BOX` 15 min, `_ACK_WAIT` 30 s (spec D2, D3). The waiting phase is `awaiting_reprice`; a reprice resubmits at once when `quote_seq > priced_seq` and waits otherwise (spec D1); the wait is bounded by `resting`'s three checks in `resting`'s order (spec D2); the sixth crossing calls `_fallback` in `execute` mode and ends `unfilled` with `reprice budget exhausted` in the rest modes, and the runbook's `Nothing retries itself` rule says an `execute` intent's `unfilled` follows both ladders (spec D3). Entering the wait clears `client_order_id` and `order`, so the ended order's later events take the detached path, and `_resubmit` ends an intent `filled` when less than one lot step remains (spec D1); `on_quote`'s handler refuses with `filled` carried (spec D2).
+- The ladder's constants are unchanged: `_MAX_REPRICES` 5, `_MAX_IOC_ATTEMPTS` 3, `_QUOTE_SILENCE` 30 s, `_TIME_BOX` 15 min, `_ACK_WAIT` 30 s (spec D2, D3). The waiting phase is `awaiting_reprice`; a reprice resubmits at once when `quote_seq > priced_seq` and waits otherwise (spec D1); the wait is bounded by `resting`'s three checks in `resting`'s order (spec D2); the sixth crossing calls `_fallback` in `execute` mode and ends `unfilled` with `reprice budget exhausted` in the rest modes, and the runbook's `Nothing retries itself` rule says an `execute` intent's `unfilled` follows both ladders (spec D3). Entering the wait clears `client_order_id` and `order`, so the ended order's later events take the detached path, and `_resubmit` ends an intent `filled` when less than one lot step remains, as does `_poll`'s `awaiting_reprice` arm before its three checks (spec D1); `on_quote`'s handler refuses with `filled` carried (spec D2).
 - No schema changes: `_ROW_KEYS` and `EXEC_SCHEMA_VERSION` in `cli/engine/execledger.py` stay as they are, the priced quote living inside the row's `order` payload as `bid`, `ask`, `quote_seq` (spec D5); `_INTENT_KEYS` in `cli/engine/probeplan.py` is untouched (spec D4); no `_inc_order` label is added, since `tests/test_engine_metrics.py` pins `_EXEC_ORDER_OUTCOMES` against the executor's call sites.
 - The reader's constants: `_MATCHED_LEDGER_TYPES = {"trade", "margin"}`; `_NO_FILL_LEDGER_TYPES` gains `settled` and `collateralconversion`; the result gains `known` and `matched_fees_eur`, a fee summed when its asset is in `_EURO_FEE_ASSETS`, the euro codes and `EURC`, for the rollover arm and the matched arm alike; `status` is `ok` once a trade or margin row was compared; the rollover and matched-fee lines print `:,.4f` (spec D7, D9, D10); `_LEDGER_COLUMNS` is unchanged, so the sixteen-column export still parses and the only-used-columns rule `tests/test_engine_tracking.py` pins holds.
-- The startup pass's words: `filled`, `revoked` with `the engine restarted while the intent was in flight`, `refused` with `not run -- the engine restarted before it ran`; an intent with an open row the pass did not cancel — a reducer it kept, an order whose cancel raised, one the venue read returned still open outside the Cache or did not return at all — stays `pending`; the sweep is skipped whole when the venue read or the ledger read failed (spec D14). A minted terminal on an adopted row writes `ambiguous` and logs at CRITICAL, naming the hand cancel on Kraken's open-orders page; a flagged non-terminal writes nothing (spec D15).
+- The startup pass's words: `filled`, `revoked` with `the engine restarted while the intent was in flight`, `refused` with `not run -- the engine restarted before it ran`, written at classification time, before the venue answers the pass's cancel, so a fill after the write is on the order's row and not in the intent's `filled_qty`; an intent with an open row the pass sent no cancel for stays `pending`, six shapes — a reducer it kept, a cancel that raised, an order the venue read returned still open outside the Cache, a row the read did not return, a row that recorded no txid, and a row whose reconcile raised on an order closed at the venue — and so does the whole window's when the venue read or the ledger read failed, the sweep skipped whole; a later startup settles the intents of a failed read, a cancel that raised, an order outside the Cache once the venue reports it closed, and a reconcile that raised, and settles neither a row with no txid nor one no venue read returns, which stay `pending`; the one shape outside the rule, a Cache-resident order whose reconcile raised and which the loop then cancelled, is settled from the figure the raise left unrepaired (spec D14). A minted terminal on an adopted row writes `ambiguous` and logs at CRITICAL, naming the hand cancel on Kraken's open-orders page; a flagged non-terminal writes nothing (spec D15).
 - No string literal added under `cli/engine/` and no text added to `README.md`, `infra/runbooks/engine-procedures.md` or `infra/runbooks/drills-order-path.md` names a spec, a decision or a topic: `tests/test_internal_terms_not_operator_visible.py` walks them and runs in every task's consumer command.
 - The three tasks land in order on one branch and merge together: the counts each task's failing and passing runs state assume the tasks before it have landed, and Task 2's and Task 3's first steps check the previous task's marker.
 - A fence is the exact text at its indentation in the file: an indented fence is a fragment replaced in place, never a module of its own, and a `Replace, in <path>, this block:` instruction names the whole block it replaces, which occurs exactly once in the file at that step. A fence whose closing backticks sit on its last text line is a mid-line fragment with no trailing newline: the replacement lands inside that line, and neither the backticks nor the line end belongs to the text replaced.
@@ -33,13 +33,13 @@ Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU
 
 ## File structure
 
-- Modify `cli/engine/executor.py` — `_ActiveIntent` gains `quote_seq` and `priced_seq`; `on_quote` advances the count and resubmits from `awaiting_reprice`; `_place` records the quote and sets `priced_seq`; `_reprice` waits, with the ended order detached, or falls through to `_fallback`, its tail moving to `_reprice_at_touch`; `_resubmit` ends a remainder below one lot step `filled`; `on_quote`'s handler carries `filled`; `_poll` gains the `awaiting_reprice` arm and `_time_box_with_nothing_resting` (Task 1). `_adopt_resting_orders` records whether the ledger read succeeded, collects the intents it cancelled and calls `_settle_pending_intents`, a new method; `_venue_terminal_state`'s reconciliation arm returns `ambiguous` for a minted terminal (Task 3).
-- Modify `tests/test_engine_executor.py` — the ladder test replaced by seventeen cases and six existing cases gaining the quote line the reprice waits for (Task 1); the pinned minted-terminal case flipped, `_submitted_row` gaining a `qty` keyword, a `_pending_plan_entry` helper and thirteen cases on the sweep and the adopted row (Task 3).
+- Modify `cli/engine/executor.py` — `_ActiveIntent` gains `quote_seq` and `priced_seq`; `on_quote` advances the count and resubmits from `awaiting_reprice`; `_place` records the quote and sets `priced_seq`; `_reprice` waits, with the ended order detached, or falls through to `_fallback`, its tail moving to `_reprice_at_touch`; `_resubmit` ends a remainder below one lot step `filled`; `on_quote`'s handler carries `filled`; `_poll` gains the `awaiting_reprice` arm, the completion test at its head, and `_time_box_with_nothing_resting` (Task 1). `_adopt_resting_orders` records whether the ledger read succeeded, collects the intents it cancelled and calls `_settle_pending_intents`, a new method; `_venue_terminal_state`'s reconciliation arm returns `ambiguous` for a minted terminal (Task 3).
+- Modify `tests/test_engine_executor.py` — the ladder test replaced by nineteen cases and six existing cases gaining the quote line the reprice waits for (Task 1); the pinned minted-terminal case flipped, `_submitted_row` gaining a `qty` keyword, a `_pending_plan_entry` helper and thirteen cases on the sweep and the adopted row (Task 3).
 - Modify `cli/engine/tracking.py` — `LedgerRow.refid`'s comment, `_EURO_FEE_ASSETS`, `_MATCHED_LEDGER_TYPES`, `_NO_FILL_LEDGER_TYPES`, `reconcile_ledger` (Task 2).
 - Modify `cli/engine/command.py` — `_cost_over`'s basis text and `_render_tracking`'s ledger block (Task 2).
 - Modify `tests/test_engine_tracking.py` — two unit cases replaced by five, the real-shape fixture among them; one CLI case replaced by three (Task 2).
 - Modify `README.md` — the `tracking-report` row's ledger sentences (Task 2).
-- Modify `infra/runbooks/engine-procedures.md` — the `Nothing retries itself` rule (Task 1); §6 item 3's lead-in and two bullets (Task 2); the rest-hold terminal vocabulary and the pre-probe step on minted terminals (Task 3).
+- Modify `infra/runbooks/engine-procedures.md` — the `Nothing retries itself` rule (Task 1); §6 item 3's lead-in and two bullets (Task 2); the rest-hold terminal vocabulary, the `Read filled_qty` paragraph's last sentence and the pre-probe step on minted terminals (Task 3).
 - Modify `cli/engine/execledger.py` — `pending_plan_intents` (Task 3).
 - Modify `infra/runbooks/drills-order-path.md` — A1's Must fire and step 3, G's Must fire, step 4 and Record (Task 3).
 - Modify `infra/runbooks/engine.md` — the error-logs runbook's step 2 gains the minted-terminal class (Task 3).
@@ -47,8 +47,8 @@ Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU
 ## Review Focus
 
 - A reprice firing off the tick it crossed on, the measured defect: the resubmission must wait for a newer stored tick and price off it; Task 1 owns `test_a_venue_cancel_off_the_priced_tick_waits_for_the_next_quote_before_repricing` and `test_alternating_crossings_place_one_order_per_tick_and_the_sixth_crossing_crosses_through_the_ioc`, and `test_a_sell_closes_six_accept_then_cancel_crossings_end_in_an_ioc_at_the_bid` pins the measured side.
-- A reprice that always waits, losing a tick that already arrived, or a rest mode crossing through the IOC: Task 1 owns `test_a_tick_that_landed_before_the_cancel_reprices_on_the_cancel_itself`, `test_a_half_book_tick_while_a_reprice_waits_prices_nothing` and the two `spent_by_rejections` cases.
-- A waiting reprice outliving a kill file, a dead feed or the time-box, an intent parked with no order and no bound, or the box firing an IOC off a quote the silence bound already condemned: Task 1 owns the five `with_no_cancel` cases and `test_quote_silence_outranks_the_time_box_while_a_reprice_waits`.
+- A reprice that always waits, losing a tick that already arrived, or a rest mode crossing through the IOC: Task 1 owns `test_a_tick_that_landed_before_the_cancel_reprices_on_the_cancel_itself`, `test_a_half_book_tick_while_a_reprice_waits_prices_nothing`, `test_a_half_book_tick_while_the_order_rests_is_not_the_newer_tick_a_reprice_waits_for` and the two `spent_by_rejections` cases.
+- A waiting reprice outliving a kill file, a dead feed or the time-box, an intent parked with no order and no bound, the box firing an IOC off a quote the silence bound already condemned, or an intent a detached fill completed ended `revoked` by the timer: Task 1 owns the five `with_no_cancel` cases, the rest-cancel one in two arms, `test_quote_silence_outranks_the_time_box_while_a_reprice_waits` and `test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_timer_too`.
 - The ended order's events reaching the in-flight arms while the reprice waits, a row reopened by a racing fill or a crossing counted twice: Task 1 owns `test_a_fill_racing_the_venue_cancel_lands_detached_while_the_reprice_waits` and `test_a_replayed_cancel_ack_while_the_reprice_waits_counts_no_crossing`.
 - A margin row's realized PnL summed as a cost, a hand settle's pair failing the window, or a fee charged in EURC dropped from the venue's figure: Task 2 owns `test_a_margin_row_matching_a_journaled_fill_reconciles_and_carries_its_fee_not_its_pnl` and `test_every_row_type_of_the_real_export_lands_in_exactly_one_place`.
 - A minted terminal read as the venue's answer, a kept reducer's intent rewritten, an intent closed `revoked` while its order rests at Kraken, or fills nobody compared or read journaled as an intent's: Task 3 owns `test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_venues_ack_closes_it`, `test_the_startup_pass_leaves_the_intent_of_a_reducer_it_keeps_pending`, the three `leaves_its_intent_pending` cases and the two `leaves_the_pending_intents` cases.
@@ -63,19 +63,19 @@ What this task decides, where the spec leaves it open:
 - The tail of `_reprice` that prices and resubmits moves whole into `_reprice_at_touch`, which `on_quote` calls from `awaiting_reprice` and `_reprice` calls when a newer tick has already arrived: one resubmission path, two callers.
 - `on_quote` advances `quote_seq` only for a tick it stores (both sides usable), and resubmits from `awaiting_reprice` only on such a tick, so a half book never prices a reprice; the `awaiting_quote` arm keeps its existing behaviour, where `_first_submission` refuses on no usable touch.
 - The `_poll` arm for `awaiting_reprice` runs before the generic non-resting check, so `phase_deadline`, which `_enter` leaves None for the new phase, is never consulted for it.
-- The six existing cases that drove a reprice off the priced tick gain one `on_quote` line after the crossing event, keeping each case's own subject (placement time, a refused resubmission, a late fill, the cross-order sum, the tripped chokepoint); the old ladder case is replaced by the seventeen cases below.
+- The six existing cases that drove a reprice off the priced tick gain one `on_quote` line after the crossing event, keeping each case's own subject (placement time, a refused resubmission, a late fill, the cross-order sum, the tripped chokepoint); the old ladder case is replaced by the nineteen cases below.
 - `_reprice` clears `client_order_id` and `order` before entering `awaiting_reprice`, spec D1's detach, so `_on_order_event` routes the ended order's later events through `_on_detached_event`.
-- `_resubmit` carries spec D1's completion end, one comparison at the head of the path every resubmission takes.
+- `_resubmit` carries spec D1's completion end, one comparison at the head of the path every resubmission takes, and `_poll`'s `awaiting_reprice` arm the same comparison at its head, before its three checks, so a completed intent starved of ticks ends `filled` on the timer.
 - `on_quote`'s handler carries `filled` into the refusal it writes, `_submit`'s rule, since the resubmission now runs inside it.
 
 **Files:**
 - Modify: `cli/engine/executor.py` (`_ActiveIntent`, the two fields appended after `hold_expired`; `on_quote`, the block from `bid = _as_price(...)` through the `awaiting_quote` arm; `_place`, the `order_payload` literal's tail and the line after it; `_reprice`, its docstring and its tail after the `cancel_requested` branch; `_resubmit`, its head; `on_quote`'s handler; `_poll`, its docstring and the arm inserted before `if active.phase != "resting":`; `_time_box_with_nothing_resting`, inserted before `_start_intent`)
 - Modify: `infra/runbooks/engine-procedures.md` (the `Nothing retries itself` bullet's first sentence)
-- Test: `tests/test_engine_executor.py` (`test_both_crossing_surfaces_count_one_reprice_and_the_sixth_refuses` replaced by seventeen cases; one line added to each of `test_a_late_fill_on_a_superseded_order_is_published_too`, `test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase`, `test_a_refused_resubmission_journals_the_fills_that_already_happened`, `test_an_intents_orders_filling_past_its_target_between_them_trips`, `test_a_superseded_orders_late_fills_are_summed_against_that_orders_own_quantity`, `test_the_chokepoint_refuses_once_this_process_has_tripped`)
+- Test: `tests/test_engine_executor.py` (`test_both_crossing_surfaces_count_one_reprice_and_the_sixth_refuses` replaced by nineteen cases; one line added to each of `test_a_late_fill_on_a_superseded_order_is_published_too`, `test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_phase`, `test_a_refused_resubmission_journals_the_fills_that_already_happened`, `test_an_intents_orders_filling_past_its_target_between_them_trips`, `test_a_superseded_orders_late_fills_are_summed_against_that_orders_own_quantity`, `test_the_chokepoint_refuses_once_this_process_has_tripped`)
 
 **Interfaces:**
 - Consumes: `_resting_executor`, `_advance_with_quotes`, `_quote`, `_accepted`, `_canceled`, `_rejected`, `_deliver_fill`, `_held`, `_intent`, `_intent_entry`, `_intent_outcome`, `_record`, `exec_dir`, `KILL_FILE`, `NOW`, `StubCache`, `StubClient`, `TimeInForce`, `Price`, `SimpleNamespace`, `timedelta` from the test module's existing names; `_limit_price`, `_resubmit`, `_fallback`, `_finish_active`, `_finish_revoked`, `_enter`, `_level_permits`, `_QUOTE_SILENCE`, `_MAX_REPRICES` in the executor.
-- Produces: `_ActiveIntent.quote_seq` and `.priced_seq` (defaults 0, so every keyword construction in `tests/test_engine_node.py` and the test module keeps working); the phase `awaiting_reprice`; `ProbeExecutor._reprice_at_touch(active)` and `._time_box_with_nothing_resting(active)`; the row's `order` payload keys `bid`, `ask`, `quote_seq`; `_resubmit`'s `filled` end below one lot step; the ended order's events taking `_on_detached_event` while the reprice waits.
+- Produces: `_ActiveIntent.quote_seq` and `.priced_seq` (defaults 0, so every keyword construction in `tests/test_engine_node.py` and the test module keeps working); the phase `awaiting_reprice`; `ProbeExecutor._reprice_at_touch(active)` and `._time_box_with_nothing_resting(active)`; the row's `order` payload keys `bid`, `ask`, `quote_seq`; `_resubmit`'s and `_poll`'s `filled` end below one lot step; the ended order's events taking `_on_detached_event` while the reprice waits.
 
 - [ ] **Step 1: Confirm the tree is at the spec's basis**
 
@@ -341,6 +341,25 @@ def test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_fille
     assert (intent["outcome"], intent["filled_qty"]) == ("filled", 1.0)
 
 
+def test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_timer_too(tmp_path):
+    """The completing fill can be the last thing the feed delivers for a while: the timer ends the
+    intent `filled` on its next tick, where the wait's revoke arms would otherwise end it `revoked`
+    on silence or the kill file, its whole quantity in `filled_qty`, and halt the plan."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_canceled("O-1"))
+    assert ex._active.phase == "awaiting_reprice"
+    _deliver_fill(ex, client, "O-1", 0.6, px=30.0)
+
+    clock.now = NOW + timedelta(seconds=31)  # past the silence bound, and no tick since the fill
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", 1.0)
+
+
 def test_a_half_book_tick_while_a_reprice_waits_prices_nothing(tmp_path):
     """A tick carrying one side is not stored, so it is not the newer tick the reprice waits for:
     priced off the stale touch, the resubmission would be the crossing order again."""
@@ -354,6 +373,18 @@ def test_a_half_book_tick_while_a_reprice_waits_prices_nothing(tmp_path):
     assert len(client.submitted) == 1 and ex._active.phase == "awaiting_reprice"
     ex.on_quote(_quote(bid=29990.0, ask=29991.0))
     assert len(client.submitted) == 2 and client.submitted[1][0].price == 29990.0
+
+
+def test_a_half_book_tick_while_the_order_rests_is_not_the_newer_tick_a_reprice_waits_for(tmp_path):
+    """A one-sided tick landing while the order rests advances no count, so the crossing after it
+    still waits: counted, it would reprice at once off the touch it crossed on."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_quote(SimpleNamespace(instrument_id="BTC/EUR.KRAKEN", bid_price=Price(29990.0, 1), ask_price=None))
+
+    ex.on_order_event(_canceled(client.last_order_id))
+
+    assert len(client.submitted) == 1 and ex._active.phase == "awaiting_reprice"
 
 
 def test_quote_silence_outranks_the_time_box_while_a_reprice_waits(tmp_path):
@@ -389,26 +420,32 @@ def test_a_rest_cancel_ladder_spent_by_rejections_ends_unfilled_and_never_crosse
     assert intent["outcome"] == "unfilled" and intent["reasons"] == ["reprice budget exhausted"]
 
 
-def test_the_time_box_elapsing_while_a_rest_cancel_reprice_waits_ends_it_rest_cancel_ok_with_no_cancel(tmp_path):
-    """A mode built never to fill takes no IOC when its box elapses inside the wait: the arm is
-    `_on_cancel_ack`'s rest-cancel one, less the cancel."""
-    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-cancel")])
-    _advance_with_quotes(ex, client, clock, minutes=14.75)
-    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+@pytest.mark.parametrize("filled_before, outcome", [(0.0, "rest_cancel_ok"), (0.2, "partial")])
+def test_the_time_box_elapsing_while_a_rest_cancel_reprice_waits_ends_it_rest_cancel_ok_or_partial_with_no_cancel(
+    tmp_path, filled_before, outcome
+):
+    """A mode built never to fill takes no IOC when its box elapses inside the wait; a fill that
+    landed ahead of the acceptance makes the end `partial`, since the name alone says nothing filled."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05, intents=[_intent(mode="rest-cancel")])
+    if filled_before:
+        _deliver_fill(ex, client, "O-1", filled_before, px=30.0)  # ahead of the acceptance: the streams' own ordering
+    _advance_with_quotes(ex, client, clock, minutes=14.75, bid=30.0, ask=30.05)
+    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel; ticks have arrived since: repriced at once
     assert len(client.submitted) == 2
-    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+    ex.on_order_event(_canceled(client.last_order_id))  # none since the second: the reprice waits
     assert ex._active.phase == "awaiting_reprice"
 
     clock.now = NOW + timedelta(minutes=15, seconds=5)
     ex.on_timer(clock.now)
 
     assert client.canceled == [] and len(client.submitted) == 2
-    assert _intent_outcome(tmp_path) == "rest_cancel_ok"
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == (outcome, filled_before)
 
 
 def test_a_raise_inside_a_waiting_reprice_journals_the_fills_that_already_happened(tmp_path):
-    """The resubmission now runs inside `on_quote`, whose handler refuses the intent on a raise: the
-    refusal carries `filled`, `_submit`'s rule, so a real partial is not erased from the summary."""
+    """A raise inside the resubmission refuses the intent on the tick, and the refusal carries
+    `filled`, so a real partial is not erased from the summary."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
@@ -538,7 +575,7 @@ with:
 - [ ] **Step 3: Run the file and watch the new cases fail**
 
 Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
-Expected: `14 failed, 247 passed`. `test_a_venue_cancel_off_the_priced_tick_waits_for_the_next_quote_before_repricing` fails on `a second order means it repriced off the tick that priced the first`; `test_alternating_crossings_place_one_order_per_tick_and_the_sixth_crossing_crosses_through_the_ioc` and `test_a_sell_closes_six_accept_then_cancel_crossings_end_in_an_ioc_at_the_bid` on `the reprice fired before its tick`; `test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_tick` on `assert 2 == 1`, a second order out; `test_a_replayed_cancel_ack_while_the_reprice_waits_counts_no_crossing` on `assert ('resting', 1) == ('awaiting_reprice', 1)`; the nine other cases that enter the wait — the five `with_no_cancel` cases, the racing fill, the half-book tick, the silence-before-box case and the raise — on `assert 'resting' == 'awaiting_reprice'`. `test_a_tick_that_landed_before_the_cancel_reprices_on_the_cancel_itself` and the two `spent_by_rejections` cases pass on the old tree, since each pins the arm today's code already takes; the six adjusted cases pass either way.
+Expected: `17 failed, 247 passed`. `test_a_venue_cancel_off_the_priced_tick_waits_for_the_next_quote_before_repricing` fails on `a second order means it repriced off the tick that priced the first`; `test_alternating_crossings_place_one_order_per_tick_and_the_sixth_crossing_crosses_through_the_ioc` and `test_a_sell_closes_six_accept_then_cancel_crossings_end_in_an_ioc_at_the_bid` on `the reprice fired before its tick`; `test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_tick` on `assert 2 == 1`, a second order out; `test_a_half_book_tick_while_the_order_rests_is_not_the_newer_tick_a_reprice_waits_for` on `assert (2 == 1)`, the crossing repriced at once; `test_a_replayed_cancel_ack_while_the_reprice_waits_counts_no_crossing` on `assert ('resting', 1) == ('awaiting_reprice', 1)`; the eleven other arms that enter the wait — the five `with_no_cancel` cases, the rest-cancel one in both arms, the racing fill, the half-book tick, the completing fill on the timer, the silence-before-box case and the raise — on `assert 'resting' == 'awaiting_reprice'`. `test_a_tick_that_landed_before_the_cancel_reprices_on_the_cancel_itself` and the two `spent_by_rejections` cases pass on the old tree, since each pins the arm today's code already takes; the six adjusted cases pass either way.
 
 - [ ] **Step 4: The counters, the waiting phase and the fall-through in `cli/engine/executor.py`**
 
@@ -761,8 +798,12 @@ with:
             return
         if active.phase == "awaiting_reprice":
             # Nothing rests, so a revoke ends the intent on this tick with no cancel to wait on; the
-            # checks are `resting`'s, in `resting`'s order.
-            if not _level_permits(verdict.level, active.intent):
+            # checks are `resting`'s, in `resting`'s order, after `_resubmit`'s completion test: a
+            # detached fill can complete the intent inside the wait, and a feed silent from then on
+            # would otherwise revoke what has already filled.
+            if active.target_qty - active.filled < active.constraints.lot_step:
+                self._finish_active("filled", (), active.filled)
+            elif not _level_permits(verdict.level, active.intent):
                 active.revoke_reasons = tuple(verdict.reasons)
                 self._finish_revoked(active)
             elif active.last_quote_at is not None and now - active.last_quote_at > _QUOTE_SILENCE:
@@ -806,17 +847,17 @@ An intent ending `unfilled`, `refused`, `rejected`, `partial` or `ambiguous` sto
 with:
 
 ```markdown
-An intent ending `unfilled`, `refused`, `rejected`, `partial` or `ambiguous` stops there (an `execute` intent's `unfilled` follows both ladders, the maker reprices and the bounded IOC attempts, so its `filled_qty` says what the IOCs got), and so do```
+An intent ending `unfilled`, `refused`, `rejected`, `partial` or `ambiguous` stops there (an `execute` intent's `unfilled` follows both ladders, the maker reprices and the bounded IOC attempts, so its `filled_qty` is what its orders got, maker and IOC alike), and so do```
 
 - [ ] **Step 5: Run the file and watch it pass**
 
 Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
-Expected: `261 passed`.
+Expected: `264 passed`.
 
 - [ ] **Step 6: The consumers**
 
 Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a gate, none failed; `1344 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates, `ZCRYPTO_LIVE_VENUE_TESTS` unset.
+Expected: every test passed or skipped by a gate, none failed; `1347 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates, `ZCRYPTO_LIVE_VENUE_TESTS` unset.
 
 - [ ] **Step 7: The commit gate**
 
@@ -840,7 +881,8 @@ time-box taking the cancel ack's arm less the cancel. The sixth crossing in exec
 through the bounded IOC fallback, the intent ending unfilled only once both budgets are spent; the
 rest modes keep unfilled with the maker reason. Entering the wait detaches the ended order, so a
 fill racing the cancel or a replayed ack takes the detached path, and a remainder below one lot
-step when the tick arrives ends the intent filled; the quote handler's refusal carries the fills.
+step ends the intent filled, on the tick or on the timer; the quote handler's refusal carries the
+fills.
 Each row's order payload records the bid, the ask and the tick count it was priced from, inside
 the payload, so no schema moves. The runbook's Nothing-retries-itself rule says an execute intent's
 unfilled follows both ladders.
@@ -852,12 +894,13 @@ at the last ask and three returned remainders ending it unfilled after nine orde
 crossed six times by accept-then-cancel ending in an IOC at the last bid; a rest-hold ladder and a
 rest-cancel ladder spent by rejections ending unfilled with no IOC; a kill file, quote silence and
 the time-box each ending a waiting reprice on the tick with no cancel, the box firing the IOC for
-execute, rest_hold_expired for rest-hold and rest_cancel_ok for rest-cancel, and silence outranking
-the box inside the wait; a fill racing the venue's cancel landing detached while the reprice waits,
-the row keeping venue_canceled and the replacement sized to the remainder; a replayed cancel ack
-counting no crossing; late fills completing the intent inside the wait ending it filled on the
-tick; a half-book tick pricing nothing; a raise inside the waiting reprice journaling the fills
-already made. Six existing cases deliver the quote the reprice now waits for.
+execute, rest_hold_expired for rest-hold and rest_cancel_ok, or partial on a fill, for rest-cancel,
+and silence outranking the box inside the wait; a fill racing the venue's cancel landing detached
+while the reprice waits, the row keeping venue_canceled and the replacement sized to the remainder;
+a replayed cancel ack counting no crossing; late fills completing the intent inside the wait ending
+it filled on the tick, and on the timer when no tick follows; a half-book tick pricing nothing, and
+one landing while the order rests counting as no newer tick; a raise inside the waiting reprice
+journaling the fills already made. Six existing cases deliver the quote the reprice now waits for.
 
 PROBE_VERDICT
 
@@ -870,9 +913,9 @@ Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU"
 Run: `git status --porcelain`
 Expected: empty.
 
-- [ ] **Step 10: Prove the guards with ten probes, then record their verdicts by a message-only amend**
+- [ ] **Step 10: Prove the guards with twelve probes, then record their verdicts by a message-only amend**
 
-The control renames the waiting phase where `_reprice` enters it, so `on_quote` never resubmits from it and the waiting cases fail. The mutations, in order: every reprice fires at once; the sixth crossing does not cross in execute mode; the time-box is disarmed while a reprice waits; the tick count never advances, so a reprice waits for good; a half book resubmits off the stale touch; a rest-cancel ladder crosses through the IOC; the ended order stays attached while the reprice waits; a completed intent places its remainder anyway; the handler's refusal drops the fills; a waiting rest-cancel's box takes the IOC. Each `-k` selects 17 of the file's 261 cases:
+The control renames the waiting phase where `_reprice` enters it, so `on_quote` never resubmits from it and the waiting cases fail. The mutations, in order: every reprice fires at once; the sixth crossing does not cross in execute mode; the time-box is disarmed while a reprice waits; the tick count never advances, so a reprice waits for good; a half book resubmits off the stale touch; a rest-cancel ladder crosses through the IOC; the ended order stays attached while the reprice waits; a completed intent places its remainder anyway; the handler's refusal drops the fills; a waiting rest-cancel's box takes the IOC; a one-sided tick counts, so the crossing after it reprices at once; the timer's completion test is disarmed, so a completed intent waits for silence to revoke it. Each `-k` selects 20 of the file's 264 cases:
 
 ```bash
 K="priced_tick or before_the_cancel or crossings_place or spent_by_rejections or reprice_waits or waiting_reprice or sell_closes"
@@ -899,13 +942,19 @@ infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
   --mutation 's/        active.client_order_id = active.order = None/        pass/' \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
-  --mutation 's/        if active.target_qty - active.filled < active.constraints.lot_step:/        if False:/' \
+  --mutation 's/^        if active.target_qty - active.filled < active.constraints.lot_step:$/        if False:/' \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
   --mutation 's/self._finish_active("refused", ("quote handling failed",), self._active.filled)/self._finish_active("refused", ("quote handling failed",))/' \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
   --mutation 's/^            self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)/            self._fallback(active)/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^                active.quote_seq += 1$/            active.quote_seq += 1/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^            if active.target_qty - active.filled < active.constraints.lot_step:$/            if False:/' \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 ```
 
@@ -921,7 +970,8 @@ the tick count never advancing, KILLED, control proven; a half book repricing of
 KILLED, control proven; a rest-cancel ladder crossing through the IOC, KILLED, control proven; the
 ended order left attached while the reprice waits, KILLED, control proven; a completed intent
 placing its remainder, KILLED, control proven; the handler's refusal dropping the fills, KILLED,
-control proven; a waiting rest-cancel's box taking the IOC, KILLED, control proven.
+control proven; a waiting rest-cancel's box taking the IOC, KILLED, control proven; a one-sided
+tick counted, KILLED, control proven; the timer's completion test disarmed, KILLED, control proven.
 ```
 
 Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
@@ -945,7 +995,7 @@ What this task decides, where the spec leaves it open:
 - Modify: `cli/engine/command.py` (`_cost_over`'s `basis` text; `_render_tracking`'s ledger block from the `Ledger export:` line through the `row types this reader places nowhere` line)
 - Modify: `README.md` (the `tracking-report` row: its `fails the reconciliation, not the run` sentence, its `insufficient-data`, never `ok` sentence, and its sentences from `Rollover rows are summed` through `read at all.`)
 - Modify: `infra/runbooks/engine-procedures.md` (§6 item 3's lead-in sentence and its first two bullets, `rollover fees 0.00` and `Only trade rows are matched today`)
-- Test: `tests/test_engine_tracking.py` (`test_a_non_trade_non_rollover_row_is_neither_matched_nor_unmatched` and `test_a_row_type_this_reader_places_nowhere_is_counted_by_type` replaced by five cases, `_REAL_HEADER` and `_real_row` among them; `test_a_row_type_the_reader_places_nowhere_is_named_in_the_report` replaced by three CLI cases)
+- Test: `tests/test_engine_tracking.py` (`test_a_non_trade_non_rollover_row_is_neither_matched_nor_unmatched` and `test_a_row_type_this_reader_places_nowhere_is_counted_by_type` replaced by five cases, `_REAL_HEADER` and `_real_row` among them; `test_a_row_type_the_reader_places_nowhere_is_named_in_the_report` replaced by three CLI cases; `test_a_failed_reconciliation_withdraws_the_proposed_rate_from_the_payload` gaining the `basis` assertion)
 
 **Interfaces:**
 - Consumes: `_export`, `_lfill`, `_tracking_argv`, `_invoke`, `mixed_schema_fixture`, `reconcile_ledger`, `read_ledger_export`, `json`, `pytest` from the test module's existing names; `EUR_CODES` in the reader.
@@ -1051,13 +1101,14 @@ def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
     `margin` matched by trade id, `rollover` summed, `settled` and `collateralconversion` known
     no-fill types beside `deposit`, nothing left for `ignored`. A journaled spot fill T-1 and two
     margin fills, T-2 charged in euro and T-3 in EURC after the venue's par conversion beside it;
-    the rollovers carry T-2, the position's opening trade, and the settle an id of its own. The
-    shape and the asset spellings are the export's; the figures are synthetic."""
+    the rollovers carry T-2, the position's opening trade, and the settle an id of its own; the spot
+    fill's BTC leg carries a fee in BTC, outside the euro figure. The shape and the asset spellings
+    are the export's; the figures are synthetic."""
     p = _export(
         tmp_path,
         [
             _real_row("L1", "T-1", "2026-09-25 20:44:53", "trade", "tradespot", "EUR", "19.86", "0.0800"),
-            _real_row("L2", "T-1", "2026-09-25 20:44:53", "trade", "tradespot", "BTC", "-0.00027", "0", ""),
+            _real_row("L2", "T-1", "2026-09-25 20:44:53", "trade", "tradespot", "BTC", "-0.00027", "0.0000027", "BTC"),
             _real_row("L3", "T-2", "2026-09-25 10:32:05", "margin", "", "EUR", "0", "0.0800"),
             _real_row("L4", "T-3", "2026-09-25 10:32:03", "margin", "", "EURC", "0", "0.084000", "EURC"),
             _real_row("L5", "T-2", "2026-09-25 14:33:50", "rollover", "", "EUR", "-0.0040", "0.0040"),
@@ -1148,10 +1199,23 @@ def test_the_matched_fee_figure_is_rendered_beside_the_rollover_line(tmp_path, m
     assert "rows with no fill behind them by construction: settled 2" in run.stdout
 ```
 
+Replace, in `tests/test_engine_tracking.py`, this block:
+
+```python
+    assert "1" in cost["basis"] and "no rate proposed" in cost["basis"]  # the unmatched count, named
+```
+
+with:
+
+```python
+    assert "1" in cost["basis"] and "no rate proposed" in cost["basis"]  # the unmatched count, named
+    assert "trade or margin row(s) matched no journaled fill" in cost["basis"]
+```
+
 - [ ] **Step 3: Run the file and watch the new cases fail**
 
 Run: `uv run pytest tests/test_engine_tracking.py -q -p no:cacheprovider`
-Expected: `7 failed, 78 passed, 3 skipped`. `test_a_no_fill_row_type_is_counted_as_known_never_matched` and `test_a_row_type_this_reader_has_not_met_is_counted_by_type` fail on `KeyError: 'known'`; `test_a_margin_row_matching_a_journaled_fill_reconciles_and_carries_its_fee_not_its_pnl` on `assert ('insufficient-data' == 'ok'`; `test_a_margin_row_matching_no_journaled_fill_FAILS_the_reconciliation` on `assert ('insufficient-data' == 'FAILED'`; `test_every_row_type_of_the_real_export_lands_in_exactly_one_place` on `assert (2 == 4)`, the margin rows unmatched; `test_the_rollover_figure_prints_at_four_decimals_and_the_no_fill_rows_are_named` on `'rollover fees 0.0160 EUR' in`; `test_the_matched_fee_figure_is_rendered_beside_the_rollover_line` on `'3 ledger trade or margin row(s) matched a journaled fill' in`. `test_a_row_type_the_reader_has_not_met_is_named_in_the_report` passes on the old tree, since an unknown type is counted there today. The three skips are `_copy_slice`'s data gates, the journal mount or the refdata snapshot, whichever the checkout lacks.
+Expected: `8 failed, 77 passed, 3 skipped`. `test_a_no_fill_row_type_is_counted_as_known_never_matched` and `test_a_row_type_this_reader_has_not_met_is_counted_by_type` fail on `KeyError: 'known'`; `test_a_margin_row_matching_a_journaled_fill_reconciles_and_carries_its_fee_not_its_pnl` on `assert ('insufficient-data' == 'ok'`; `test_a_margin_row_matching_no_journaled_fill_FAILS_the_reconciliation` on `assert ('insufficient-data' == 'FAILED'`; `test_every_row_type_of_the_real_export_lands_in_exactly_one_place` on `assert (2 == 4)`, the margin rows unmatched; `test_the_rollover_figure_prints_at_four_decimals_and_the_no_fill_rows_are_named` on `'rollover fees 0.0160 EUR' in`; `test_the_matched_fee_figure_is_rendered_beside_the_rollover_line` on `'3 ledger trade or margin row(s) matched a journaled fill' in`; `test_a_failed_reconciliation_withdraws_the_proposed_rate_from_the_payload` on `'trade or margin row(s) matched no journaled fill' in`. `test_a_row_type_the_reader_has_not_met_is_named_in_the_report` passes on the old tree, since an unknown type is counted there today. The three skips are `_copy_slice`'s data gates, the journal mount or the refdata snapshot, whichever the checkout lacks.
 
 - [ ] **Step 4: The widened match, the known types and the figures in `cli/engine/tracking.py`, the rendering in `cli/engine/command.py`, and the two pages**
 
@@ -1185,8 +1249,7 @@ with:
 
 ```python
 # The assets a fee is summed under as euro: the venue's two spellings, and EURC, which it charges a margin open's fee in
-# after converting euro to it at par beside the row (the export's `collateralconversion` pair) -- the adapter reports
-# that fill's commission in euro, so the journal's figure this one is read against already counts it.
+# after converting euro to it at par beside the row, the export's `collateralconversion` pair, so a EURC fee counts at par.
 _EURO_FEE_ASSETS = frozenset(EUR_CODES) | {"EURC"}
 # The row types a journaled fill is matched by: a spot fill writes `trade` rows and a margin open or close writes a
 # `margin` row, each under the fill's own trade id and a margin fill with no `trade` row beside it.
@@ -1452,13 +1515,15 @@ the window's journaled fills, printed beside the rollover total while the blend 
 cent-rounded fees, and a margin row's amount is summed nowhere; settled and collateralconversion join the known no-fill
 types, counted under known and printed on their own line, ignored keeping the types the reader has
 not met; both figures print at four decimals, the export's precision for a euro fee. The README row
-and the runbook's third verify-by-outcome item say so.
+and the runbook's third verify-by-outcome item say so. The adapter reports a EURC-charged fill's
+commission in euro, so the journal's figure the venue's is read against already counts it at par.
 
 Cases: a margin row matched by its trade id carrying its fee and not its positive PnL; an unmatched
 margin row failing; every row type of the real export landing in exactly one place under the
 sixteen-column header with its asset spellings, the EURC-charged open's fee counted, ignored empty; a deposit counted as known and an unmet type as ignored; four
 rollover rows of 0.0040 printing 0.0160 with the deposit on the known line and no matched-fee line;
-the matched-fee line rendered through the command with the reconciliation stood in.
+the matched-fee line rendered through the command with the reconciliation stood in; the basis text
+naming margin rows on a failed reconciliation.
 
 PROBE_VERDICT
 
@@ -1471,9 +1536,9 @@ Claude-Session: https://claude.ai/code/session_015giLLD6tUoSWoSNdhriVZU"
 Run: `git status --porcelain`
 Expected: empty.
 
-- [ ] **Step 10: Prove the guards with five probes, then record their verdicts by a message-only amend**
+- [ ] **Step 10: Prove the guards with seven probes, then record their verdicts by a message-only amend**
 
-The reader's control narrows the matched types back to `trade`, so the margin cases fail. The first mutation sums a matched row's amount instead of its fee; the second drops the two new no-fill types; the third makes a margin row no comparison, so a margin-only export reads `insufficient-data`; the fourth drops EURC from the fee assets, so the EURC-charged open's fee falls out of the figure. The command's control misspells the matched-fee line, which the render case pins, and its mutation puts the rollover print back to two decimals:
+The reader's control narrows the matched types back to `trade`, so the margin cases fail. The first mutation sums a matched row's amount instead of its fee; the second drops the two new no-fill types; the third makes a margin row no comparison, so a margin-only export reads `insufficient-data`; the fourth drops EURC from the fee assets, so the EURC-charged open's fee falls out of the figure; the fifth drops the matched arm's asset gate, so the BTC leg's fee joins the euro figure. The command's control misspells the matched-fee line, which the render case pins, and its mutations put the rollover print back to two decimals and the basis text back to trade rows alone:
 
 ```bash
 infra/scripts/mutate-probe.sh --file cli/engine/tracking.py \
@@ -1492,9 +1557,17 @@ infra/scripts/mutate-probe.sh --file cli/engine/tracking.py \
   --control 's/_MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})/_MATCHED_LEDGER_TYPES = frozenset({"trade"})/' \
   --mutation 's/_EURO_FEE_ASSETS = frozenset(EUR_CODES) | {"EURC"}/_EURO_FEE_ASSETS = frozenset(EUR_CODES)/' \
   -- uv run pytest tests/test_engine_tracking.py -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file cli/engine/tracking.py \
+  --control 's/_MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})/_MATCHED_LEDGER_TYPES = frozenset({"trade"})/' \
+  --mutation 's/^                if row.asset in _EURO_FEE_ASSETS:$/                if True:/' \
+  -- uv run pytest tests/test_engine_tracking.py -q -p no:cacheprovider
 infra/scripts/mutate-probe.sh --file cli/engine/command.py \
   --control 's/fees on the matched rows {/fees on matched rows {/' \
   --mutation 's/:,.4f} EUR -- charged/:,.2f} EUR -- charged/' \
+  -- uv run pytest tests/test_engine_tracking.py -q -p no:cacheprovider
+infra/scripts/mutate-probe.sh --file cli/engine/command.py \
+  --control 's/fees on the matched rows {/fees on matched rows {/' \
+  --mutation 's/ledger trade or margin row(s) matched no journaled fill/ledger trade row(s) matched no journaled fill/' \
   -- uv run pytest tests/test_engine_tracking.py -q -p no:cacheprovider
 ```
 
@@ -1505,9 +1578,10 @@ Probe: `infra/scripts/mutate-probe.sh` over `cli/engine/tracking.py`, control th
 narrowed back to trade so the margin cases fail, the whole file as the probe: a matched row's
 amount summed instead of its fee, KILLED, control proven; settled and collateralconversion dropped
 from the no-fill types, KILLED, control proven; a margin row no longer a comparison, KILLED,
-control proven; EURC dropped from the fee assets, KILLED, control proven; over
-`cli/engine/command.py`, control the matched-fee line misspelled: the rollover print back to two
-decimals, KILLED, control proven.
+control proven; EURC dropped from the fee assets, KILLED, control proven; the matched arm's asset
+gate dropped, KILLED, control proven; over `cli/engine/command.py`, control the matched-fee line
+misspelled: the rollover print back to two decimals, KILLED, control proven; the basis text back to
+trade rows alone, KILLED, control proven.
 ```
 
 Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
@@ -1520,7 +1594,7 @@ This task is the spec's third cluster (D13 to D16); struck, Tasks 1 and 2 stand 
 
 What this task decides, where the spec leaves it open:
 
-- The sweep is one method, `_settle_pending_intents`, called from both exits of `_adopt_resting_orders`: the early return when nothing rests, with an empty cancelled set, and the end of the classification loop, with the intents whose order the pass sent a cancel for. It takes the `rows` and `finished` dicts the pass already holds, the `venue_orders` result and the `ledger_read` flag the pass sets false when its row read raised, spec D14's two-conjunct skip, and derives the intents it leaves `pending` from the rows' mirrored state and the cancelled set, spec D14's rule; the shapes that rule covers, and the one it does not, are D14's.
+- The sweep is one method, `_settle_pending_intents`, called from both exits of `_adopt_resting_orders`: the early return when nothing rests, with an empty cancelled set, and the end of the classification loop, with the intents whose order the pass sent a cancel for. It takes the `rows` and `finished` dicts the pass already holds, the `venue_orders` result and the `ledger_read` flag the pass sets false when its row read raised, spec D14's two-conjunct skip, and derives the intents it leaves `pending` from the rows' mirrored state and the cancelled set, spec D14's rule; the shapes that rule leaves `pending`, which of them a later startup settles, and the one shape outside the rule are the Global Constraints' startup-pass item.
 - The first order's quantity is the largest `order.qty` among an intent's rows, read through `_ordered_qty`, and an intent whose rows carry no readable quantity is `revoked`, never `filled`.
 - The minted-terminal arm keys on the flag and on `_RECONCILED_TERMINALS`, as the own-order path does, since the library's non-terminals carry the flag too; its log line moves from WARNING to CRITICAL and names the hand cancel on Kraken's open-orders page for an order still resting there; the `OrderPendingCancel` arm below it, the unreadable Cache, is unchanged.
 - `_pending_plan_entry`, the new test helper, writes the plan entry through the real `append_plan_entry` at the same boundary `_submitted_row` files its rows, with an optional intent already terminal that the sweep must leave alone.
@@ -1529,7 +1603,7 @@ What this task decides, where the spec leaves it open:
 **Files:**
 - Modify: `cli/engine/execledger.py` (`pending_plan_intents`, inserted before `open_submitted_rows`)
 - Modify: `cli/engine/executor.py` (the `cli.engine.execledger` import block; `_adopt_resting_orders`, its docstring's last paragraph, the ledger read's `try` and its `except` arm, the `if not resting:` return, the `for order in resting:` loop's head and cancel branch, and the call after the loop; `_settle_pending_intents`, inserted before `_reconcile_adopted_rows`; `_venue_terminal_state`, its docstring's first paragraph and its reconciliation arm)
-- Modify: `infra/runbooks/engine-procedures.md` (the `Three terminal outcomes` paragraph's `revoked` sentence; the pre-probe step's sentence on minted terminals)
+- Modify: `infra/runbooks/engine-procedures.md` (the `Three terminal outcomes` paragraph's `revoked` sentence; the `Read filled_qty` paragraph's last sentence; the pre-probe step's sentence on minted terminals)
 - Modify: `infra/runbooks/drills-order-path.md` (A1's Must fire, one bullet added after `Nothing else, on an ~83 s reboot`, and its operator action 3; G's Must fire, one bullet added after `Nothing, if the engine is back inside ~11 minutes`, its operator action 4, and one bullet added under its Record after `One more per fill racing the cancel`)
 - Modify: `infra/runbooks/engine.md` (the error-logs runbook's step 2, one class added before `Anything naming the executor`)
 - Test: `tests/test_engine_executor.py` (`_submitted_row`'s signature and its row's `qty`; `test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venues_ack_closes_it` renamed and its true arm flipped; `_pending_plan_entry` and thirteen cases inserted before `_UnreadableOrderCache`)
@@ -1615,8 +1689,8 @@ def test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_
     engine publishes the `OrderCanceled` itself. It is applied to the order before dispatch, so the
     Cache says CANCELED either way and only the flag can tell the two apart. `canceled` on it would
     put a venue claim in the ledger nobody made; `accepted`, the old rule, claimed the order still
-    rested when the venue had in fact cancelled it. `ambiguous` is in `_OPEN_ORDER_STATES`, so the
-    next startup re-attaches and settles the row.
+    rested when the venue had in fact cancelled it. `ambiguous` keeps the row open, so the next
+    startup re-attaches and settles it.
 
     Read as a pair: the false arm is the true positive, and the `open_submitted_rows` reading IS what
     the next startup re-attaches from."""
@@ -1816,7 +1890,7 @@ def test_an_intents_two_orders_closed_while_down_are_summed_against_the_first_or
 
 def test_a_row_with_no_readable_quantity_settles_its_intent_revoked_never_filled(tmp_path):
     """A row whose `order.qty` is unreadable reads 0.0, and nothing filled against 0.0 must not read
-    as complete: `revoked`, `_ordered_qty`'s rule that such a row is not one to reason from."""
+    as complete: `revoked`, since such a row is not one to reason from."""
     earlier = NOW - timedelta(hours=4)
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
     _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID, qty=None)
@@ -1829,9 +1903,8 @@ def test_a_row_with_no_readable_quantity_settles_its_intent_revoked_never_filled
 
 
 def test_an_order_resting_at_kraken_outside_the_cache_leaves_its_intent_pending(tmp_path):
-    """The venue read returns the order still open and the Cache does not hold it,
-    `_log_resting_outside_the_cache`'s case: the pass can send it no cancel, so the order is live and
-    its intent is not the sweep's to end."""
+    """The venue read returns the order still open and the Cache does not hold it: the pass can send
+    it no cancel, so the order is live and its intent is not the sweep's to end."""
     earlier = NOW - timedelta(hours=4)
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
     _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
@@ -1845,9 +1918,8 @@ def test_an_order_resting_at_kraken_outside_the_cache_leaves_its_intent_pending(
 
 
 def test_a_row_the_venue_read_does_not_return_leaves_its_intent_pending(tmp_path):
-    """`_mark_unmatched`'s CRITICAL arm: the row's txid is in neither the Cache nor the venue's read,
-    so the order may rest where no cancel of this process reaches it; the row reads `ambiguous` and
-    the intent waits with it."""
+    """The row's txid is in neither the Cache nor the venue's read, so the order may rest where no
+    cancel of this process reaches it; the row reads `ambiguous` and the intent waits with it."""
     earlier = NOW - timedelta(hours=4)
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
     _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
@@ -1917,9 +1989,9 @@ class _UnreadableOrderCache(StubCache):
 - [ ] **Step 3: Run the file and watch the new cases fail**
 
 Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
-Expected: `11 failed, 265 passed`. The true arm of `test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_venues_ack_closes_it` fails on `assert 'accepted' == 'ambiguous'`; `test_the_startup_pass_settles_the_intent_of_the_opener_it_cancels_and_the_ones_that_never_ran` on `assert ('pending', [], 0.0) == ('revoked', [...], 0.0)`; `test_the_startup_pass_leaves_the_intent_of_a_reducer_it_keeps_pending` on `assert 'pending' == 'refused'`; `test_a_restart_with_nothing_resting_still_settles_the_windows_pending_intents` on `assert ('pending', []) == ('refused', [...])`; the three arms of `test_an_intent_whose_order_closed_while_down_is_settled_from_its_rows` on `assert ('pending', 0.0) == ('revoked', 0.0)`, `('revoked', 0.0004)` and `('filled', 0.001)`; `test_an_intents_two_orders_closed_while_down_are_summed_against_the_first_orders_quantity` on `assert ('pending', 0.0) == ('revoked', 0.0007 ± 7.0e-10)`; `test_a_row_with_no_readable_quantity_settles_its_intent_revoked_never_filled` and `test_a_reducer_cancelled_on_a_latched_kill_has_its_intent_revoked` on `assert 'pending' == 'revoked'`; `test_a_flagged_non_terminal_on_an_adopted_row_leaves_its_state_as_it_is` on the WARNING record the old arm logs, `assert [<LogRecord ...>] == []`. The false arm of the minted case, the three `leaves_its_intent_pending` cases and the two `leaves_the_pending_intents` cases pass on the old tree, which writes nothing and closes the row on the venue's own ack.
+Expected: `11 failed, 268 passed`. The true arm of `test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_venues_ack_closes_it` fails on `assert 'accepted' == 'ambiguous'`; `test_the_startup_pass_settles_the_intent_of_the_opener_it_cancels_and_the_ones_that_never_ran` on `assert ('pending', [], 0.0) == ('revoked', [...], 0.0)`; `test_the_startup_pass_leaves_the_intent_of_a_reducer_it_keeps_pending` on `assert 'pending' == 'refused'`; `test_a_restart_with_nothing_resting_still_settles_the_windows_pending_intents` on `assert ('pending', []) == ('refused', [...])`; the three arms of `test_an_intent_whose_order_closed_while_down_is_settled_from_its_rows` on `assert ('pending', 0.0) == ('revoked', 0.0)`, `('revoked', 0.0004)` and `('filled', 0.001)`; `test_an_intents_two_orders_closed_while_down_are_summed_against_the_first_orders_quantity` on `assert ('pending', 0.0) == ('revoked', 0.0007 ± 7.0e-10)`; `test_a_row_with_no_readable_quantity_settles_its_intent_revoked_never_filled` and `test_a_reducer_cancelled_on_a_latched_kill_has_its_intent_revoked` on `assert 'pending' == 'revoked'`; `test_a_flagged_non_terminal_on_an_adopted_row_leaves_its_state_as_it_is` on the WARNING record the old arm logs, `assert [<LogRecord ...>] == []`. The false arm of the minted case, the three `leaves_its_intent_pending` cases and the two `leaves_the_pending_intents` cases pass on the old tree, which writes nothing and closes the row on the venue's own ack.
 
-- [ ] **Step 4: The accessor in `cli/engine/execledger.py`, the sweep and the ambiguous arm in `cli/engine/executor.py`, and the two pages**
+- [ ] **Step 4: The accessor in `cli/engine/execledger.py`, the sweep and the ambiguous arm in `cli/engine/executor.py`, and the three pages**
 
 Replace, in `cli/engine/execledger.py`, this block:
 
@@ -1931,8 +2003,7 @@ with:
 
 ```python
 def pending_plan_intents(journal_dir: Path, now: datetime) -> list[tuple[datetime, str, int]]:
-    """Every (boundary, plan_id, index) whose intent still reads `pending`, over the same window: at startup, the
-    intents of plans no process is running."""
+    """Every (boundary, plan_id, index) whose intent still reads `pending`, over the same window as `open_submitted_rows`."""
     out: list[tuple[datetime, str, int]] = []
     for doc in _exec_records_in_window(journal_dir, now):
         boundary = datetime.fromisoformat(doc["cycle_ts"])
@@ -2247,7 +2318,17 @@ Replace, in `infra/runbooks/engine-procedures.md`, this block:
 with:
 
 ```markdown
-`revoked` — the kill file, a disarm, quote silence or an engine restart took it mid-rest, so it was revoked rather than held to its expiry, and the plan stops there. After a restart the startup pass writes it, with `the engine restarted while the intent was in flight` as the reason, and writes `not run -- the engine restarted before it ran` on the intents that never placed an order; an intent still `pending` after the pass is one whose order the pass left resting — a reducer it kept, or an order it could not cancel or could not match — or the whole window's, when the pass's ledger or venue read failed, and the next startup settles those.```
+`revoked` — the kill file, a disarm, quote silence or an engine restart took it mid-rest, so it was revoked rather than held to its expiry, and the plan stops there. After a restart the startup pass writes it, with `the engine restarted while the intent was in flight` as the reason, and writes `not run -- the engine restarted before it ran` on the intents that never placed an order; the pass writes the intent before the venue answers its cancel, so a fill that lands afterwards — racing the cancel, or on an order the cancel did not reach — is on the order's row and not in the intent's `filled_qty`: read the row. An intent still `pending` after the pass is one whose order the pass left resting — a reducer it kept, or an order it could not cancel or could not match — or the whole window's, when the pass's ledger or venue read failed. The next startup settles the intents a failed read left, a cancel that raised, and an order resting outside the Cache once it is cancelled by hand or closes at the venue; an intent whose row recorded no txid, or whose txid no venue read returns, stays `pending` through later startups too, and the window's entry records it beside Kraken's open and closed orders read for that row.```
+
+Replace, in `infra/runbooks/engine-procedures.md`, this block:
+
+```markdown
+On a `revoked` intent, `filled_qty` is the only field that answers whether anything reached the book.```
+
+with:
+
+```markdown
+On a `revoked` intent, `filled_qty` is the only field that answers whether anything reached the book — on one the startup pass wrote, the order row's `filled_qty`, since the pass writes before the venue answers its cancel.```
 
 Replace, in `infra/runbooks/engine-procedures.md`, this block:
 
@@ -2257,7 +2338,7 @@ The executor treats every one of those as an unknown venue outcome: the intent e
 with:
 
 ```markdown
-The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts; on an order the startup pass adopted, whose intent the pass has already written, the row reads `ambiguous` instead, until the next startup's sweep settles it against the venue; read Kraken's open orders, and an order still resting there is cancelled by hand on that page.```
+The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts; on an order the startup pass adopted, the row reads `ambiguous` instead, until the next startup's sweep settles it against the venue, and its intent is the pass's, written before the venue answered, or left `pending` when the pass's ledger or venue read failed; read Kraken's open orders — an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart.```
 
 Replace, in `infra/runbooks/drills-order-path.md`, this block:
 
@@ -2292,7 +2373,7 @@ Replace, in `infra/runbooks/engine.md`, this block:
 with:
 
 ```markdown
-   - **`… was reconciled, not received -- the venue never answered; its row reads ambiguous …`**: the startup pass's cancel of an adopted order went unacknowledged past the engine's in-flight budget, so the engine minted the terminal itself; the row reads `ambiguous` and its intent is already written by the pass. Read Kraken's open orders: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled with its acknowledgement lost; the next startup settles the row in both cases, and no disarm is owed for this line alone (no count command: the line is `_venue_terminal_state`'s in `cli/engine/executor.py`, and the venue's answer is the venue's act).
+   - **`… was reconciled, not received -- the venue never answered; its row reads ambiguous …`**: the startup pass's cancel of an adopted order went unacknowledged past the engine's in-flight budget, so the engine minted the terminal itself; the row reads `ambiguous`, and its intent is written by the pass, unless the pass's ledger or venue read failed, when the next startup writes it. Read Kraken's open orders: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled — read its entry in Kraken's closed orders and the positions page, since the pass wrote the intent before the venue answered and a fill after that is on the order's row alone; the next startup settles the row in both cases, and no disarm is owed for this line alone (no count command: the line is `_venue_terminal_state`'s in `cli/engine/executor.py`, and the venue's answer is the venue's act).
    - **Anything naming the executor, an order, a fill, the ledger, or the kill switch is the execution path, and it is the one to act on now.** Continue at step 3.
 ```
 
@@ -2304,7 +2385,7 @@ Replace, in `infra/runbooks/drills-order-path.md`, this block:
 with:
 
 ```markdown
-3. **The ledger**, with the probe window's ledger read: the order's row carries `canceled`, or `ambiguous` where the venue's acknowledgement did not arrive and the engine minted the cancel's terminal for itself — step 4's read then decides it, and an order still resting there is cancelled by hand on that page (drill G's record says how that reads) — `filled_qty 0.0`, and no `fill` lines at all; the intent reads `revoked`, written by the startup pass, unless the pass could not cancel or match the order, when it stays `pending` for the next startup to settle.```
+3. **The ledger**, with the probe window's ledger read: the order's row carries `canceled`, or `ambiguous` where the venue's acknowledgement did not arrive and the engine minted the cancel's terminal for itself — step 4's read then decides it: an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which Kraken's closed orders and the row's `filled_qty` tell apart (drill G's record says how that reads) — `filled_qty 0.0`, and no `fill` lines at all; the intent reads `revoked`, written by the startup pass before the venue answered, unless the pass could not cancel or match the order, or its ledger or venue read failed, when it stays `pending` — which of those the next startup settles, the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) says.```
 
 Replace, in `infra/runbooks/drills-order-path.md`, this block:
 
@@ -2314,7 +2395,7 @@ Replace, in `infra/runbooks/drills-order-path.md`, this block:
 with:
 
 ```markdown
-4. **The ledger**, with the probe window's ledger read: the row's `events` for the cancel, and, if a fill raced it, a `fill` line beside it in the same row; the row `canceled`, or `ambiguous` where the engine minted the cancel's terminal for itself (the Record says how that reads, and an order still resting on Kraken's open-orders page is cancelled by hand there); the intent `revoked` with `the engine restarted while the intent was in flight`, written by the pass, and the plan's later intents `refused` as not run — an intent still `pending` after the pass is one whose order it could not cancel or match, or the whole window's when its ledger or venue read failed, and the next startup settles those.```
+4. **The ledger**, with the probe window's ledger read: the row's `events` for the cancel, and, if a fill raced it, a `fill` line beside it in the same row; the row `canceled`, or `ambiguous` where the engine minted the cancel's terminal for itself (the Record says how that reads, and an order still resting on Kraken's open-orders page is cancelled by hand there); the intent `revoked` with `the engine restarted while the intent was in flight`, written by the pass before the venue answered, so a fill that raced the cancel is on the row and not in the intent's `filled_qty`, and the plan's later intents `refused` as not run — an intent still `pending` after the pass is one whose order it could not cancel or match, or the whole window's when its ledger or venue read failed, and which of those the next startup settles, the `revoked` outcome's paragraph under [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window) says.```
 
 Replace, in `infra/runbooks/drills-order-path.md`, this block:
 
@@ -2326,18 +2407,18 @@ with:
 
 ```markdown
 - **One more per fill racing the cancel**, keyed back the same way. Either reading proves a restart re-attaches a ledgered order by its txid, which is the question this reading exists to answer.
-- **The row after the pass's cancel** reads `canceled` on the venue's own acknowledgement and `ambiguous` on one the engine minted for itself after its in-flight budget — the cancel executed at Kraken with its acknowledgement lost, or did not reach it, and Kraken's open orders are what tell those apart: an order still resting there is cancelled by hand on that page, and an `ambiguous` row is settled by the next startup's sweep. The intent reads `revoked` in both cases, written by the pass itself.
+- **The row after the pass's cancel** reads `canceled` on the venue's own acknowledgement and `ambiguous` on one the engine minted for itself after its in-flight budget — the cancel executed at Kraken with its acknowledgement lost, or did not reach it, and Kraken's open orders are what tell those apart: an order still resting there is cancelled by hand on that page, one that is gone was cancelled or filled, which Kraken's closed orders and the row's `filled_qty` tell apart, and an `ambiguous` row is settled by the next startup's sweep. The intent reads `revoked` in both cases, written by the pass itself before the venue answered, so a fill after that is on the row alone — unless the pass's ledger or venue read failed, when it stays `pending` for the next startup.
 ```
 
 - [ ] **Step 5: Run the file and watch it pass**
 
 Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
-Expected: `276 passed`.
+Expected: `279 passed`.
 
 - [ ] **Step 6: The consumers**
 
 Run: `uv run pytest tests/test_engine_command.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_engine_node.py tests/test_engine_metrics.py tests/test_engine_executor.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a gate, none failed; `1359 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates.
+Expected: every test passed or skipped by a gate, none failed; `1362 passed, 2 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates.
 
 - [ ] **Step 7: The commit gate**
 
@@ -2357,12 +2438,13 @@ expiry and the next boundary, since the hold's timer died with the old process a
 nothing. The venue had cancelled the order. After classification the pass now settles every pending
 intent of the two-day window, whose plans no process runs: filled when its rows' fills reach the
 first order's quantity, revoked with the restart named when it ran and did not fill, refused as not
-run when it has no row, the fills summed either way; an intent whose order the pass left resting,
-a reducer it kept or an order it could neither cancel nor match, stays pending beside its open row,
-and the sweep is skipped whole when the venue read or the ledger read failed. A terminal the engine
-minted for an adopted order now writes the row ambiguous, at CRITICAL, naming Kraken's open orders
-as what tells a cancel the venue executed unacknowledged from one that did not reach it and the
-hand cancel on that page for an order still resting; a flagged non-terminal writes nothing;
+run when it has no row, the fills summed either way and written before the venue answers the
+pass's cancel, so a fill after that lands on the row alone; an intent whose order the pass left
+resting, a reducer it kept or an order it could neither cancel nor match, stays pending beside its
+open row, and the sweep is skipped whole when the venue read or the ledger read failed. A terminal
+the engine minted for an adopted order now writes the row ambiguous, at CRITICAL, naming Kraken's
+open orders as what tells a cancel the venue executed unacknowledged from one that did not reach it
+and the hand cancel on that page for an order still resting; a flagged non-terminal writes nothing;
 ambiguous keeps the row in the re-attach set, so the next startup settles it. The runbook's
 rest-hold vocabulary, its pre-probe step on minted terminals, drill A1's and G's Must fire, operator
 and record clauses, and the error-logs runbook's class for the line say so.
@@ -2390,7 +2472,7 @@ Expected: empty.
 
 - [ ] **Step 10: Prove the guards with ten probes, then record their verdicts by a message-only amend**
 
-The executor's control shortens the revoked reason, which the settling case pins. The mutations, in order: an intent whose order the pass left resting is settled; the sweep is skipped when nothing rests; the minted-terminal arm is disarmed, so the row reads the venue's status; the sweep runs on a failed ledger read; the sweep runs on a failed venue read; a partial counts as filled; a row with no readable quantity counts as filled; the target is read off the smallest order; a flagged non-terminal writes ambiguous. The ledger's control misspells the pending word so the accessor lists nothing, and its mutation lists every intent, terminal ones included. Each `-k` selects 17 of the file's 276 cases:
+The executor's control shortens the revoked reason, which the settling case pins. The mutations, in order: an intent whose order the pass left resting is settled; the sweep is skipped when nothing rests; the minted-terminal arm is disarmed, so the row reads the venue's status; the sweep runs on a failed ledger read; the sweep runs on a failed venue read; a partial counts as filled; a row with no readable quantity counts as filled; the target is read off the smallest order; a flagged non-terminal writes ambiguous. The ledger's control misspells the pending word so the accessor lists nothing, and its mutation lists every intent, terminal ones included. Each `-k` selects 17 of the file's 279 cases:
 
 ```bash
 K="settles_the_intent or reducer_it_keeps or nothing_resting or closed_while_down_is_settled or first_orders_quantity or no_readable_quantity or leaves_its_intent_pending or latched_kill_has or leaves_the_pending or minted_marks or flagged_non_terminal"
