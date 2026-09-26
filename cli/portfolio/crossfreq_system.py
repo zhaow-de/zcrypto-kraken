@@ -132,12 +132,15 @@ def _validate_config(c: CrossfreqSystemConfig) -> None:
         raise PortfolioError("assets must include 'BTC' (the A-sleeve books and the ffill feed require it)")
     for name, value in (
         ("fee_per_side", c.fee_per_side),
-        ("spread_per_side", c.spread_per_side),
         ("long_cap", c.long_cap),
         ("short_cap", c.short_cap),
     ):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise PortfolioError(f"{name} must be a finite number > 0, got {value!r}")
+    # A zero spread is a maker fill at mid, legitimate on the split cost model.
+    s = c.spread_per_side
+    if isinstance(s, bool) or not isinstance(s, (int, float)) or not math.isfinite(s) or s < 0:
+        raise PortfolioError(f"spread_per_side must be a finite number >= 0, got {s!r}")
     if not isinstance(c.a2_arms, tuple) or not c.a2_arms:
         raise PortfolioError(f"a2_arms must be a non-empty tuple of (lookbacks, target_vol) pairs, got {c.a2_arms!r}")
     for arm in c.a2_arms:
