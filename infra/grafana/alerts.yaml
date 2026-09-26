@@ -4221,8 +4221,11 @@ rules:
       # LARGER CAP rather than a looser bar -- `ops_alloy_memory_limit` is 1g and this leg divides by
       # it -- because ops reads the most journal (reconcile, panel, verify-replay, tape-bars,
       # liquidations). The capture pair and the NAS stay at 512m: the CAPTURE hosts already commit
-      # most of their RAM in caps, so headroom is not free there. The cache nodes' Alloy is 512m too:
-      # its RSS, which counts the binary's file-mapped pages, reads above 0.9 of a 256m cap. The
+      # most of their RAM in caps, so headroom is not free there. The cache nodes' Alloy is 384m on
+      # a 1 GB node, and its leg reads the Go runtime's memory -- go_memstats_sys_bytes less
+      # go_memstats_heap_released_bytes, the quantity GOMEMLIMIT governs -- not RSS: RSS counts the
+      # binary's file-mapped pages, which hold it above 0.9 of the cap on a healthy node while the
+      # cgroup charge sits far below, so an RSS leg there fires in steady state and says nothing. The
       # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
       - refId: A
         queryType: ""
@@ -4232,7 +4235,7 @@ rules:
           expr: >-
             (process_resident_memory_bytes{host="ops", job="integrations/self"} / 1073741824)
             or (process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|nas", job="integrations/self"} / 536870912)
-            or (process_resident_memory_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} / 536870912)
+            or ((go_memstats_sys_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} - go_memstats_heap_released_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"}) / 402653184)
           instant: true
           refId: A
       - refId: C
@@ -4245,8 +4248,9 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means RSS has passed the Go
-            # soft limit and is heading for the cgroup limit. The consequence of the ceiling
+            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means the reading (RSS, or
+            # the Go runtime's memory on a cache node) has passed the Go soft limit and is heading for
+            # the cgroup limit. The consequence of the ceiling
             # is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at 10 m --
             # so this is the EARLY warning for that fault, not its detector.
             - evaluator: {type: gt, params: [0.9]}
@@ -4256,7 +4260,8 @@ rules:
     annotations:
       summary: >-
         Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on Ops, 512 MiB on the Capture
-        primary, the Capture secondary, the NAS, Cache 1, Cache 2 and Cache 3. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
+        primary, the Capture secondary and the NAS, and 384 MiB on Cache 1, Cache 2 and Cache 3, where the reading is the Go
+        runtime's memory rather than resident memory. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
         label says which machine. If it is OOM-killed that host's telemetry goes dark, which `Fleet · Alloy dark` reports separately;
         this is the warning before that.
         Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom

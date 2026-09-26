@@ -349,7 +349,12 @@ CACHE_REQUIRED = [
     "node_textfile_mtime_seconds",
     "node_textfile_scrape_error",
     "zcache_wireguard_handshake_age_seconds",
-    "process_resident_memory_bytes",
+    # The fleet's Alloy headroom rule reads a cache node's Go runtime memory, the quantity GOMEMLIMIT
+    # governs, and no PROCESS_FAMILIES entry: nothing reads a cache node's RSS, which the binary's
+    # file-mapped pages hold above the bar. The other hosts' drop rule eats every go_* name; the
+    # cache drop rule must not.
+    "go_memstats_sys_bytes",
+    "go_memstats_heap_released_bytes",
     *CACHE_REDIS_SERIES,
 ]
 

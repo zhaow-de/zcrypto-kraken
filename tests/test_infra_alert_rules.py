@@ -1309,7 +1309,8 @@ _CACHE_SENTINEL_UNLEGGED = "Sentinel's `INFO` carries no memory section, so its 
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (
-        "No headroom leg is possible: the rules divide `process_resident_memory_bytes` by a limit, and "
+        "No headroom leg is possible: the rules divide a memory family the process publishes "
+        "(`process_resident_memory_bytes`, or Alloy's Go runtime memory on a cache node) by a limit, and "
         "agentboard publishes no /metrics and is scraped by nothing, so no such series exists. The cap "
         "is a systemd `MemoryMax=`, which no metric on this fleet carries either -- cadvisor is "
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
@@ -1365,7 +1366,9 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
         for n in _rule(uid)["data"]
     )
     legs = re.findall(r"(?:process_resident_memory_bytes|redis_memory_used_rss_bytes)\{([^}]*)\}\s*/\s*\d+", exprs)
-    assert len(legs) >= 5, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
+    # The cache nodes' Alloy leg divides the Go runtime's memory, a difference of two families.
+    legs += re.findall(r"\(go_memstats_sys_bytes\{([^}]*)\}\s*-\s*go_memstats_heap_released_bytes\{[^}]*\}\)\s*/\s*\d+", exprs)
+    assert len(legs) >= 6, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
 
     def covered(host: str, job: str) -> bool:
         for leg in legs:
@@ -1389,9 +1392,9 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     separately by `Fleet · Alloy dark`."""
     rule = _rule(_ALLOY_HEADROOM)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    # ops divides by its OWN cap: it runs too close to the 512m every other Alloy carries, and ops is
-    # the one host where margin is free. Read the number back from the ansible var so raising the cap
-    # without the rule fails here.
+    # ops divides by its OWN cap: it runs too close to the 512m the capture pair and the NAS carry,
+    # and ops is the one host where margin is free. Read the number back from the ansible var so
+    # raising the cap without the rule fails here.
     ops_cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/ops/defaults/main.yml", "ops_alloy_memory_limit")
     assert re.search(rf'host="ops", job="integrations/self"\}}\s*/\s*{ops_cap}\b', expr), (
         f"the ops leg must divide by ops_alloy_memory_limit ({ops_cap}); a cap raised without this ratio lies: {expr!r}"
@@ -1410,11 +1413,19 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
         f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
     )
-    # The cache nodes' own cap, read back from its compose literal.
+    # The cache nodes' own cap, read back from its compose literal, divides the Go runtime's memory
+    # (sys less heap released, what GOMEMLIMIT governs), never RSS: Alloy's RSS counts the binary's
+    # file-mapped pages and sits above 0.9 of the cap on a healthy node, so an RSS leg there fires in
+    # steady state and says nothing.
     cache_cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+    cache_nodes = r'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"'
     assert re.search(
-        rf'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"\}}\s*/\s*{cache_cap}\b', expr
-    ), f"the cache leg must divide by the cache compose literal ({cache_cap}); found: {expr!r}"
+        rf"\(go_memstats_sys_bytes\{{{cache_nodes}\}}\s*-\s*go_memstats_heap_released_bytes\{{{cache_nodes}\}}\)\s*/\s*{cache_cap}\b",
+        expr,
+    ), f"the cache leg must divide the Go runtime's memory by the cache compose literal ({cache_cap}); found: {expr!r}"
+    assert not re.search(r"process_resident_memory_bytes\{[^}]*zcrypto-valkey", expr), (
+        f"a cache node's Alloy is read by RSS, which its binary's file-mapped pages hold above the bar: {expr!r}"
+    )
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
@@ -1464,9 +1475,8 @@ def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
 
 def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
     """The 0.9 headroom bar means "the runtime lost its soft limit" only if GOMEMLIMIT sits at the
-    same fraction of the container cap on every host -- ops's 920MiB/1g and the rest's
-    460MiB/512m both land at 0.898. [0.88, 0.92] tolerates the MiB-vs-binary-GiB rounding without
-    tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
+    same fraction of the container cap on every host. [0.88, 0.92] tolerates the MiB-vs-binary-GiB
+    rounding without tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
     ops_defaults = ANSIBLE / "roles/ops/defaults/main.yml"
     ops_soft = _parse_size_bytes(yaml.safe_load(ops_defaults.read_text())["ops_alloy_gomemlimit"])
     ops_cap = _ansible_memory_limit_bytes(ops_defaults, "ops_alloy_memory_limit")
@@ -1869,6 +1879,8 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
 
 
 def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
+    """The panel draws what the headroom rule's cache leg divides -- the Go runtime's memory, sys less
+    heap released -- over the compose cap; a panel back on RSS is no Alloy memory panel here."""
     cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
     board = json.loads((REPO / "infra/grafana/cache-dashboard.json").read_text())
     stack, panels = list(board["panels"]), []
@@ -1880,9 +1892,14 @@ def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
         (panel, target["expr"])
         for panel in panels
         for target in panel.get("targets", [])
-        if "process_resident_memory_bytes" in target.get("expr", "") and 'job="integrations/self"' in target["expr"]
+        if "go_memstats_sys_bytes" in target.get("expr", "") and 'job="integrations/self"' in target["expr"]
     ]
-    assert drawn, "no Alloy memory panel on the Cache board"
+    assert drawn, "no Alloy Go runtime memory panel on the Cache board"
+    selector = r'\{host=~"\$host", job="integrations/self"\}'
     for panel, expr in drawn:
-        assert re.search(rf"/\s*{cap}\s*$", expr), (panel["id"], expr, cap)
-        assert f"{cap // 2**20} MiB" in panel["title"], (panel["id"], panel["title"])
+        assert re.fullmatch(rf"\(go_memstats_sys_bytes{selector} - go_memstats_heap_released_bytes{selector}\) / {cap}", expr), (
+            panel["id"],
+            expr,
+            cap,
+        )
+        assert f"{cap // 2**20} MiB" in panel["title"] and "Go runtime" in panel["title"], (panel["id"], panel["title"])
