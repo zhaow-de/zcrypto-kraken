@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**. Find the section whose anchor matches the alert `uid`. Each section is written to be actioned without opening any other document.
 
-These four rules are one routine — memory watched continuously across the fleet, regardless of converges. They cover both capture daemons, the engine, the ops liquidations poller, and Alloy on the four containerised hosts; the bridgehead's Alloy runs as an apt package with no memory cap and ships no `process_*` series, so it is outside all four.
+These four rules are one routine — memory watched continuously across the fleet, regardless of converges. They cover both capture daemons, the engine, the ops liquidations poller, and Alloy on the containerised hosts; the bridgehead's Alloy runs as an apt package with no memory cap and ships no `process_*` series, so it is outside all four.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -39,19 +39,19 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red and nas, 256 MiB on the three cache nodes zcrypto-valkey1 to zcrypto-valkey3 — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means RSS has passed the Go soft limit and is heading for the cgroup limit.
+A **warning** Grafana alert, one instance per host: Grafana Alloy there has been above **90 % of its container limit** — 1 GiB on ops, 512 MiB on zcrypto, zcrypto-red and nas, 384 MiB on the three cache nodes zcrypto-valkey1 to zcrypto-valkey3 — for fifteen minutes. That 90 % bar is Alloy's Go soft limit (GOMEMLIMIT) on every host, so crossing it means the reading — RSS, or on a cache node the Go runtime's memory — has passed the Go soft limit and is heading for the cgroup limit.
 
 ### What it means
 
-**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — 1 GiB on ops, 256 MiB on the cache nodes, 512 MiB on the other three — and panel 601 plots raw RSS, so divide before judging: a larger cap is not more headroom, and raw MiB does not rank proximity to the bar. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
+**Alloy runs closer to its ceiling than the app daemons do, by design** — it holds the remote-write WAL and the journald reader's buffers. Each host is read against **its own** cap — 1 GiB on ops, 384 MiB on the cache nodes, 512 MiB on the rest — and panel 601 plots raw RSS, so divide before judging: a larger cap is not more headroom, and raw MiB does not rank proximity to the bar. A cache node's reading is the Go runtime's memory — `go_memstats_sys_bytes` less `go_memstats_heap_released_bytes`, the quantity GOMEMLIMIT governs — and it ships no RSS, which also counts the binary's file-mapped pages. The app daemons sit far lower, which is why Alloy has its own bar and its own rule: a shared one pages ops on a perfectly healthy fleet.
 
 If Alloy is OOM-killed, that host's telemetry goes dark and `Fleet · Alloy dark` reports it within ~10 min. **This is the warning before that**, not the detector for it.
 
 ### What to do
 
-1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`; a cache node is on the Cache board's *Alloy memory against its 256 MiB cap* panel (107), already divided. Steady state sits below the bar on every host (no count command: a live reading the tree does not record), and a host climbing toward 0.9 is RSS approaching the Go soft limit, heading for the cgroup limit.
+1. **Read which host, and against its own history** — the fleet board's *Daemon memory* panel (601), `job="integrations/self"`; a cache node is on the Cache board's *Alloy Go runtime memory against its 384 MiB cap* panel (107), already divided, since panel 601 selects no cache node. Steady state sits below the bar on every host (no count command: a live reading the tree does not record), and a host climbing toward 0.9 is the reading approaching the Go soft limit, heading for the cgroup limit.
 2. **Restart Alloy if it is climbing** — `sudo docker restart grafana-alloy` (on the NAS: `sudo /usr/local/bin/docker restart grafana-alloy`). Telemetry-only, seconds (no count command: `docker restart grafana-alloy` touches that one container, which runs Alloy alone), and the `alloy-data` WAL and journal cursor survive it, so no backlog is re-shipped and no log tail is lost.
-3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose, which is an ansible change and a converge, not a restart.
+3. **Repeated firing on one host is a capacity finding, not an incident** — its Alloy needs a larger `memory:` in that host's Alloy compose: an ansible change and a converge, on the NAS with `-e nas_apply_compose=true`, elsewhere with the running Alloy digest and then `sudo docker compose up -d` in `/etc/zcrypto-capture/alloy`, `/etc/zcrypto-ops/alloy` or `/opt/zcrypto-cache/alloy`, or the old cap runs under the new divisor.
 
 ### Retire when
 

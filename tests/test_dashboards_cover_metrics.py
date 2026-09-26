@@ -832,13 +832,15 @@ def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits
     def reach(query: str) -> frozenset[str]:
         return _host_variables({"templating": {"list": [{"name": "h", "type": "query", "query": query}]}})["h"]
 
-    assert reach("label_values(process_resident_memory_bytes, host)") == CACHE_NODES
-    assert reach('label_values(process_resident_memory_bytes{host=~"zcrypto-valkey1|ops"}, host)') == frozenset({"zcrypto-valkey1"})
-    assert reach('label_values(process_resident_memory_bytes{host=~"zcrypto|ops"}, host)') == frozenset()
+    assert reach("label_values(up, host)") == CACHE_NODES
+    assert reach('label_values(up{host=~"zcrypto-valkey1|ops"}, host)') == frozenset({"zcrypto-valkey1"})
+    assert reach('label_values(up{host=~"zcrypto|ops"}, host)') == frozenset()
+    unadmitted = {"name": "h", "type": "query", "query": "label_values(process_resident_memory_bytes, host)"}
+    assert "h" not in _host_variables({"templating": {"list": [unadmitted]}})
     variable = {
         "name": "h",
         "type": "query",
-        "query": "label_values(process_resident_memory_bytes, host)",
+        "query": "label_values(up, host)",
         "regex": "/^(zcrypto|ops)$/",
     }
     assert _host_variables({"templating": {"list": [variable]}})["h"] == frozenset()

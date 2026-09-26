@@ -2635,3 +2635,56 @@ def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variable
     task = find_task(load_tasks(CACHE), CACHE_ALLOY_DRIFT)
     assert truthy(when_conditions(task), variables) is expected
     assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]
+
+
+# --- a fresh node's preview ---
+ROLES = ANSIBLE / "roles"
+FRESH_NODE_SITES = [
+    (ROLES / "base" / "tasks" / "main.yml", "enable + start unattended-upgrades service", ("base_unattended_upgrades_install",)),
+    (ROLES / "fail2ban" / "tasks" / "main.yml", "enable + start fail2ban", ("fail2ban_install",)),
+    (ROLES / "fail2ban" / "handlers" / "main.yml", "restart fail2ban", ("fail2ban_install",)),
+    (ROLES / "docker" / "tasks" / "main.yml", "install Docker Engine + Compose plugin", ("docker_repo",)),
+    (ROLES / "docker" / "tasks" / "main.yml", "add deploy user to the docker group", ("docker_repo", "docker_install")),
+    (ROLES / "docker" / "tasks" / "main.yml", "enable + start docker", ("docker_repo", "docker_install")),
+    (ROLES / "docker" / "handlers" / "main.yml", "restart docker", ("docker_repo", "docker_install")),
+    (ROLES / "firewall" / "tasks" / "main.yml", "enable + start nftables", ("firewall_nftables_install",)),
+    (ROLES / "firewall" / "handlers" / "main.yml", "reload nftables", ("firewall_nftables_install",)),
+    (ROLES / "chrony" / "tasks" / "main.yml", "enable + start chrony", ("chrony_install",)),
+    (ROLES / "chrony" / "handlers" / "main.yml", "restart chrony", ("chrony_install",)),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "name", "registers"), FRESH_NODE_SITES, ids=[f"{p.parts[-3]}:{n}" for p, n, _ in FRESH_NODE_SITES]
+)
+@pytest.mark.parametrize("check_mode", [True, False])
+def test_a_fresh_node_preview_skips_exactly_what_it_never_installed(path, name, registers, check_mode):
+    task = find_task(load_tasks(path), name)
+    for fresh in registers:
+        variables = {"ansible_check_mode": check_mode, **{r: {"changed": r == fresh} for r in registers}}
+        assert truthy(when_conditions(task), variables) is (not check_mode), (name, fresh, check_mode)
+    settled = {"ansible_check_mode": check_mode, **{r: {"changed": False} for r in registers}}
+    assert truthy(when_conditions(task), settled) is True, (name, check_mode)
+
+
+def _role_files(role: Path) -> list[Path]:
+    return sorted(p for d in ("tasks", "handlers") for p in (role / d).glob("*.yml"))
+
+
+PREVIEW_GUARDED_ROLES = sorted(
+    r.name for r in ROLES.iterdir() if any("ansible_check_mode and" in p.read_text() for p in _role_files(r))
+)
+
+
+@pytest.mark.parametrize("role", PREVIEW_GUARDED_ROLES)
+def test_every_register_a_preview_guard_reads_is_set_in_its_own_role(role):
+    registered, read = set(), set()
+    for path in _role_files(ROLES / role):
+        for task, gates in iter_tasks(load_tasks(path) or []):
+            if task.get("register"):
+                registered.add(task["register"])
+            for gate in gates:
+                if "ansible_check_mode" in gate:
+                    read.update(re.findall(r"\b([a-z_][a-z0-9_]*) is changed", gate))
+    assert read, role
+    assert read <= registered, (role, sorted(read - registered))

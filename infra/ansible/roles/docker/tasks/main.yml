@@ -32,7 +32,9 @@
     architectures: "{{ docker_apt_arch }}"
     signed_by: https://download.docker.com/linux/debian/gpg
     install_python_debian: true
+  register: docker_repo
 
+# A fresh node's preview never adds the repository, so docker-ce, its group and its unit do not exist.
 - name: install Docker Engine + Compose plugin
   ansible.builtin.apt:
     name:
@@ -43,12 +45,15 @@
       - docker-compose-plugin
     state: present
     update_cache: true
+  register: docker_install
+  when: not (ansible_check_mode and docker_repo is changed)
 
 - name: add deploy user to the docker group
   ansible.builtin.user:
     name: "{{ docker_deploy_user }}"
     groups: docker
     append: true
+  when: not (ansible_check_mode and (docker_repo is changed or docker_install is changed))
 
 # daemon.json change-ack (spec 00082 D3 guard 8): the template below notifies `restart docker`, and
 # bouncing dockerd under live capture is an unbackfillable gap, so this renders to a probe path and
@@ -104,3 +109,4 @@
     name: docker
     enabled: true
     state: started
+  when: not (ansible_check_mode and (docker_repo is changed or docker_install is changed))

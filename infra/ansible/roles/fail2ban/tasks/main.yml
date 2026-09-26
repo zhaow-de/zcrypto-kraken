@@ -4,6 +4,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  register: fail2ban_install
 
 - name: configure the sshd jail (port 10022)
   ansible.builtin.copy:
@@ -17,8 +18,10 @@
       port = {{ fail2ban_ssh_port }}
   notify: restart fail2ban
 
+# A fresh node's preview never installed the package, so systemd cannot find the unit.
 - name: enable + start fail2ban
   ansible.builtin.systemd:
     name: fail2ban
     enabled: true
     state: started
+  when: not (ansible_check_mode and fail2ban_install is changed)
