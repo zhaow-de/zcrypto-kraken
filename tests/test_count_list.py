@@ -1,5 +1,3 @@
-"""count-list.sh: one entry per count the corpus names by entry name plus the four it does not, a name filter, and a topic-only-merge arm that counts a merge only when every file it brought in is a topic file."""
-
 from __future__ import annotations
 
 import datetime
@@ -636,9 +634,8 @@ def test_a_dependabot_bump_is_exempt_and_one_carrying_a_fix_commit_is_not(tmp_pa
     assert done.returncode == 0 and done.stdout.strip().endswith("\t1"), done.stdout + done.stderr
 
 
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
 def test_drills_on_the_primary_reads_the_subject_the_host_clause_names(tmp_path):
-    """The rule's set is the primary's capture daemon and its Alloy: an entry on `zcrypto` counts unless its host
-    clause opens with the engine, which is the order-path tier's opening; the secondary never counts."""
     log = tmp_path / "drill-log.md"
     log.write_text(
         "# Drill log\n\n"
@@ -653,5 +650,19 @@ def test_drills_on_the_primary_reads_the_subject_the_host_clause_names(tmp_path)
         capture_output=True,
         text=True,
         env={**os.environ, "COUNT_LIST_DRILL_LOG": str(log)},
+        timeout=120,
     )
     assert done.stdout.strip() == "drills-on-the-primary\t1", done.stdout
+
+
+@pytest.mark.skipif(not develop_resolves(), reason="main() refuses a checkout with no develop ref before any entry runs")
+def test_drills_on_the_primary_reports_an_unreadable_log_as_an_error(tmp_path):
+    done = subprocess.run(
+        ["bash", str(SCRIPT), "drills-on-the-primary"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "COUNT_LIST_DRILL_LOG": str(tmp_path / "absent-drill-log.md")},
+        timeout=120,
+    )
+    assert "ERROR" in done.stdout and not done.stdout.strip().endswith("\t0"), done.stdout + done.stderr
