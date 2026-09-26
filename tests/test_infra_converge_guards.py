@@ -2637,7 +2637,7 @@ def test_cache_alloy_drift_assert_runs_only_where_it_cannot_be_repaired(variable
     assert assert_that(task) == ["cache_deployed_alloy_config.stat.checksum == cache_repo_alloy_config.stat.checksum"]
 
 
-# --- a fresh node's preview: every task naming a unit or group the dry run never installed ---------
+# --- a fresh node's preview in the base, fail2ban, docker, firewall and chrony roles ---
 ROLES = ANSIBLE / "roles"
 FRESH_NODE_SITES = [
     (ROLES / "base" / "tasks" / "main.yml", "enable + start unattended-upgrades service", ("base_unattended_upgrades_install",)),
@@ -2647,7 +2647,22 @@ FRESH_NODE_SITES = [
     (ROLES / "docker" / "tasks" / "main.yml", "add deploy user to the docker group", ("docker_repo", "docker_install")),
     (ROLES / "docker" / "tasks" / "main.yml", "enable + start docker", ("docker_repo", "docker_install")),
     (ROLES / "docker" / "handlers" / "main.yml", "restart docker", ("docker_repo", "docker_install")),
+    (ROLES / "firewall" / "tasks" / "main.yml", "enable + start nftables", ("firewall_nftables_install",)),
+    (ROLES / "firewall" / "handlers" / "main.yml", "reload nftables", ("firewall_nftables_install",)),
+    (ROLES / "chrony" / "tasks" / "main.yml", "enable + start chrony", ("chrony_install",)),
+    (ROLES / "chrony" / "handlers" / "main.yml", "restart chrony", ("chrony_install",)),
 ]
+FRESH_NODE_REGISTERS = {
+    "base_unattended_upgrades_install": (ROLES / "base" / "tasks" / "main.yml", "install unattended-upgrades"),
+    "fail2ban_install": (ROLES / "fail2ban" / "tasks" / "main.yml", "install fail2ban"),
+    "docker_repo": (
+        ROLES / "docker" / "tasks" / "main.yml",
+        "add the Docker apt repository (deb822 format; module fetches + stores the signing key)",
+    ),
+    "docker_install": (ROLES / "docker" / "tasks" / "main.yml", "install Docker Engine + Compose plugin"),
+    "firewall_nftables_install": (ROLES / "firewall" / "tasks" / "main.yml", "install nftables"),
+    "chrony_install": (ROLES / "chrony" / "tasks" / "main.yml", "ensure chrony is installed"),
+}
 
 
 @pytest.mark.parametrize(
@@ -2661,3 +2676,11 @@ def test_a_fresh_node_preview_skips_exactly_what_it_never_installed(path, name, 
         assert truthy(when_conditions(task), variables) is (not check_mode), (name, fresh, check_mode)
     settled = {"ansible_check_mode": check_mode, **{r: {"changed": False} for r in registers}}
     assert truthy(when_conditions(task), settled) is True, (name, check_mode)
+
+
+@pytest.mark.parametrize("register", sorted(FRESH_NODE_REGISTERS))
+def test_every_register_a_fresh_node_guard_reads_is_set_by_its_install_task(register):
+    path, name = FRESH_NODE_REGISTERS[register]
+    assert find_task(load_tasks(path), name).get("register") == register, (register, name)
+    readers = [n for _, n, regs in FRESH_NODE_SITES if register in regs]
+    assert readers, register

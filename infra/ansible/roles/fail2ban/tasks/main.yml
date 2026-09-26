@@ -18,7 +18,7 @@
       port = {{ fail2ban_ssh_port }}
   notify: restart fail2ban
 
-# A fresh node's preview never installed the package, so systemd cannot find the unit; skip exactly that case.
+# A fresh node's preview never installed the package, so systemd cannot find the unit.
 - name: enable + start fail2ban
   ansible.builtin.systemd:
     name: fail2ban

@@ -4,6 +4,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  register: firewall_nftables_install
 
 - name: deploy the managed nftables ruleset
   ansible.builtin.template:
@@ -14,8 +15,10 @@
     mode: "0644"
   notify: reload nftables
 
+# A fresh node's preview never installed the package, so systemd cannot find the unit.
 - name: enable + start nftables
   ansible.builtin.systemd:
     name: nftables
     enabled: true
     state: started
+  when: not (ansible_check_mode and firewall_nftables_install is changed)

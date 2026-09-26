@@ -4,6 +4,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  register: chrony_install
 
 - name: configure chrony — NTS servers + makestep
   ansible.builtin.template:
@@ -14,11 +15,13 @@
     mode: "0644"
   notify: restart chrony
 
+# A fresh node's preview never installed the package, so systemd cannot find the unit.
 - name: enable + start chrony
   ansible.builtin.systemd:
     name: chrony
     enabled: true
     state: started
+  when: not (ansible_check_mode and chrony_install is changed)
 
 - name: flush handlers so the source verification below sees the new config
   ansible.builtin.meta: flush_handlers

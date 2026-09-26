@@ -34,8 +34,7 @@
     install_python_debian: true
   register: docker_repo
 
-# A fresh node's preview never adds the repository, so apt has no docker-ce to install, and every task
-# naming the docker group or unit below fails the same way; each skips exactly that preview.
+# A fresh node's preview never adds the repository, so docker-ce, its group and its unit do not exist.
 - name: install Docker Engine + Compose plugin
   ansible.builtin.apt:
     name:
