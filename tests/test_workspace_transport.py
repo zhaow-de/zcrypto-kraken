@@ -21,6 +21,10 @@ _STEP = re.compile(
 _MKDIR = (
     r'^    "\$\{RSYNC\[@\]\}" --delete --rsync-path="mkdir -m 700 -p \$\{\(q\)root\} \$\{\(q\)root\}/claude-\$UID && rsync" \\$'
 )
+_JQ_CHECK = re.compile(
+    r'^command -v jq >/dev/null 2>&1 \|\| die "(?P<message>[^"]*)"\nCLAUDE_TMP_ROOT="\$\(jq -r ',
+    re.M,
+)
 
 
 def test_the_temp_root_the_script_reads_is_the_settings_override():
@@ -49,3 +53,11 @@ def test_the_scratchpad_step_syncs_the_per_uid_directory_under_each_root_to_the_
         "the source or the destination is no longer the per-uid directory under the root walked"
     )
     assert not re.search(r"/tmp/claude", text), "a literal per-uid directory is back in the script"
+
+
+def test_the_jq_check_dies_naming_jq_and_its_remedy_on_the_line_above_the_read_it_guards():
+    text = SCRIPT.read_text()
+    check = _JQ_CHECK.search(text)
+    assert check, "the jq check is gone, or is no longer the line directly above the settings read"
+    assert re.search(r"\bjq\b.*\(apt install jq\)", check.group("message")), check.group("message")
+    assert re.search(r"^#   needs: jq on the source", text, re.M), "the header no longer names jq among the preconditions"

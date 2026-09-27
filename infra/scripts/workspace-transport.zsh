@@ -4,6 +4,8 @@
 #
 #   usage: workspace-transport.zsh [destination-fqdn] [-y|--yes]   -- -y skips the confirmation,
 # which is required when there is no terminal
+#   needs: jq on the source -- the scratchpad step reads Claude Code's temp root out of
+# .claude/settings.json with it; the transfer itself is ssh, rsync and git on both machines
 #
 # Git state moves as a bundle because this repo keeps branches local until PR-open, so origin cannot
 # align them. `.local/` moves because it is gitignored and kept, and its memo is hand-edited and
@@ -47,6 +49,7 @@ remote() { "${SSH[@]}" "$DEST" "$@" }
 # Every abort path leaks a ~10 MB bundle without this; the remote copy is removed explicitly below.
 trap 'rm -f "$BUNDLE"' EXIT INT TERM
 
+command -v jq >/dev/null 2>&1 || die "jq is not installed on this machine; the scratchpad step reads the temp root out of $REPO_DIR/.claude/settings.json with it -- install it (apt install jq) and re-run"
 CLAUDE_TMP_ROOT="$(jq -r '.env.CLAUDE_CODE_TMPDIR // empty' "$REPO_DIR/.claude/settings.json")"
 [[ -n "$CLAUDE_TMP_ROOT" ]] || die "no env.CLAUDE_CODE_TMPDIR in $REPO_DIR/.claude/settings.json; the scratchpad step reads the temp root from it"
 
