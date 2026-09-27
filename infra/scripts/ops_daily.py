@@ -61,8 +61,8 @@ _UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexE
 HISTORY_CHUNK = timedelta(hours=6)
 HISTORY_PAGE_LIMIT = 5000
 
-# These rules pin one host and fire with no `host` label, so without this map the pass cannot tell an
-# Alloy restart that is routine on ops from the same restart on the capture pair, which is attended.
+# These rules pin one host and can fire with no `host` label, so without this map the pass cannot tell
+# an Alloy restart that is routine on ops from the same restart on the capture pair, which is attended.
 _UID_HOST = {
     "zcrypto-engine-dark-with-exposure": "zcrypto",
     "zcrypto-engine-log-dead": "zcrypto",
