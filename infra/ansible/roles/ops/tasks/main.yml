@@ -185,9 +185,6 @@
   register: ops_docker_dropin
   when: not (ansible_check_mode and ops_docker_dropin_dir is changed)
 
-# The drop-in takes effect at docker's next start, the next boot. Inline rather than a handler: a
-# reload queued as one would run after any `restart docker` the docker role queued earlier in this
-# play, and that restart would start docker without the drop-in.
 - name: systemd daemon-reload so docker's next start reads the drop-in  # noqa: no-handler
   ansible.builtin.systemd_service:
     daemon_reload: true

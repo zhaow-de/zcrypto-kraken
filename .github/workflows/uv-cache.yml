@@ -20,8 +20,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      # Every input here is part of the cache key, so each equals coverage.yml's
-      # (tests/test_ci_uv_cache.py); no test runs here.
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.14"

@@ -40,7 +40,6 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-      # The key-bearing inputs equal uv-cache.yml's (tests/test_ci_uv_cache.py).
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.14"
