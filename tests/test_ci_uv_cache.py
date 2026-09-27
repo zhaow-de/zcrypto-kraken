@@ -1,3 +1,5 @@
+import os
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -37,13 +39,40 @@ def test_the_warmer_and_the_suite_compute_the_same_cache_key():
     assert suite["with"]["cache-dependency-glob"] == "uv.lock"
 
 
-def test_a_pull_request_saves_the_cache_only_when_it_changes_the_lockfile():
+def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool) -> str:
+    (lock,) = [s for s in _only_job(_load(COVERAGE))["steps"] if s.get("id") == "lock"]
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    (repo / "uv.lock").write_text("base\n")
+    git("add", "uv.lock")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
+    git("update-ref", "refs/remotes/origin/develop", "HEAD")
+    if lockfile_changed:
+        (repo / "uv.lock").write_text("changed\n")
+    output = tmp_path / "github_output"
+    # GitHub's own `run:` shell.
+    subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", lock["run"]],
+        cwd=repo,
+        check=True,
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+    )
+    return output.read_text()
+
+
+def test_a_pull_request_saves_the_cache_only_when_it_changes_the_lockfile(tmp_path):
     job = _only_job(_load(COVERAGE))
     step = _setup_uv(job)
     assert step["with"].get("save-cache") == SAVE_WHEN_THE_LOCK_CHANGED
     (lock,) = [s for s in job["steps"] if s.get("id") == "lock"]
-    assert "git diff --quiet origin/develop -- uv.lock" in lock["run"]
     assert job["steps"].index(lock) < job["steps"].index(step)
+    assert _lock_step_output(tmp_path / "same", lockfile_changed=False) == "changed=false\n"
+    assert _lock_step_output(tmp_path / "moved", lockfile_changed=True) == "changed=true\n"
 
 
 def test_the_warmer_seeds_develop_on_a_lockfile_change_and_a_schedule_and_runs_no_suite():
