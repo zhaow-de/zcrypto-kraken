@@ -219,7 +219,7 @@
           "custom": {"thresholdsStyle": {"mode": "line"}},
           "thresholds": {
             "mode": "absolute",
-            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 180}]
+            "steps": [{"color": "green", "value": null}, {"color": "red", "value": 300}]
           }
         },
         "overrides": []

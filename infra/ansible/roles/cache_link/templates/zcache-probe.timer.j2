@@ -5,8 +5,8 @@ Description=zcache mesh probe cadence — every minute
 
 [Timer]
 OnCalendar=*:*:23
-# AccuracySec defaults to one minute, which lets each run slide by a whole period against the
-# three-minute staleness the handshake-age rule reads.
+# AccuracySec defaults to one minute, which would let each run slide by a whole period; the
+# handshake-age rule's bar budgets this timer exactly one period past WireGuard's key lifetime.
 AccuracySec=1s
 # Deliberately NO Persistent=true, as for the zaccess probe timers: this reports CURRENT state, and a
 # run missed while the host was down is meaningless to catch up on.
