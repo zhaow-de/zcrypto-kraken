@@ -371,10 +371,11 @@ def test_the_copying_role_installs_what_its_unit_runs_and_enables_the_timer_alon
 
 def test_the_ops_unit_writes_where_the_ops_alloy_mounts_its_textfile_directory():
     """Ops's Alloy reads `/textfile`, a bind mount of ops_textfile_dir, not the host root."""
-    compose = (REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2").read_text()
+    compose = yaml.safe_load((REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2").read_text())
     alloy = (REPO / "infra/ansible/roles/ops/files/config.alloy").read_text()
     directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
-    assert f'"{{{{ ops_textfile_dir }}}}:{directory}:ro"' in compose, f"ops_textfile_dir is not mounted at {directory}"
+    volumes = compose["services"]["alloy"]["volumes"]
+    assert f"{{{{ ops_textfile_dir }}}}:{directory}:ro" in volumes, f"ops_textfile_dir is not mounted at {directory}: {volumes}"
     unit = (REPO / "infra/ansible/roles/ops/templates/zcrypto-clock-offset.service.j2").read_text()
     exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
     assert exec_start.endswith("{{ ops_textfile_dir }}/clock-offset.prom"), exec_start
