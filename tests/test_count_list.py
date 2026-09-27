@@ -97,7 +97,6 @@ def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_
     assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
 
 
-SETTINGS = REPO / ".claude" / "settings.json"
 PROTOCOL = REPO / "docs" / "reference" / "multi-agent-protocol.md"
 
 
@@ -107,19 +106,26 @@ def _worktree_pipeline() -> str:
     return fn.group("pipe")
 
 
-def test_the_worktree_count_matches_the_per_uid_directory_under_either_temp_root():
-    root = json.loads(SETTINGS.read_text())["env"]["CLAUDE_CODE_TMPDIR"]
+def test_the_worktree_count_counts_a_cwd_inside_any_linked_worktree_and_not_the_main_checkout(tmp_path):
+    main = tmp_path.resolve() / "main"
+    root = tmp_path.resolve() / "claude-tmp"
     slug = "-home-zhaow-Projects-zcrypto-kraken"
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    harness = main / ".claude" / "worktrees" / "x"
+    payload = root / "claude-1000" / slug / "wt-b"
+    for worktree in (harness, payload):
+        subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
     cwds = [
-        f"{root}/claude-1000/{slug}/wt-a",  # the override's per-uid directory: counted
-        f"/tmp/claude-1000/{slug}/wt-b",  # a session started before the override: counted
-        f"{root}/claude-1000",  # the per-uid directory itself
-        f"{root}/{slug}/wt-c",  # the root without the per-uid directory
-        f"/tmp/claude-1001/{slug}/wt-d",  # another uid
-        str(REPO),  # the checkout
+        str(harness / "sub"),  # below a worktree cut under the checkout, where the harness cuts its own: counted
+        str(payload),  # a payload worktree under a temp root, the cwd its own top: counted
+        str(main),  # the main checkout
+        str(harness) + "y",  # a sibling sharing a worktree's path as a prefix
+        str(root / "claude-1000" / slug / "scratch"),  # a scratchpad beside a worktree, under the per-uid directory
     ]
-    grep = _worktree_pipeline().rsplit(" | ", 1)[1]
-    done = subprocess.run(["bash", "-c", f"printf '%s\\n' \"$@\" | {grep}", "_", *cwds], capture_output=True, text=True)
+    stage = _worktree_pipeline().rsplit(" | ", 1)[1]
+    done = subprocess.run(["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main)
     assert done.stdout.strip() == "2", done.stdout + done.stderr
 
 
