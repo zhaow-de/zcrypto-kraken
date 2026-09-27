@@ -1,5 +1,3 @@
-"""Docker on the ops node waits, bounded, for a nameserver before it starts, and fails open at the bound."""
-
 from __future__ import annotations
 
 import re
@@ -129,7 +127,7 @@ def test_a_lease_that_lands_mid_wait_ends_it(tmp_path):
 
 def test_the_predicate_sees_the_docker_roles_restart_handler():
     handlers = yaml.safe_load((ROLES / "docker/handlers/main.yml").read_text())
-    assert any(_restarts_docker(h) for h in handlers), "the predicate below would pass over a real docker restart"
+    assert any(_restarts_docker(h) for h in handlers), "_restarts_docker would miss a real docker restart"
 
 
 def test_nothing_in_the_ops_role_restarts_docker_directly_or_through_a_handler():

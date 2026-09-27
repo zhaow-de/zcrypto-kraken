@@ -185,8 +185,7 @@
   register: ops_docker_dropin
   when: not (ansible_check_mode and ops_docker_dropin_dir is changed)
 
-# A daemon-reload, never a docker restart, which would bounce Alloy and the liquidations poller: the
-# drop-in takes effect at docker's next start, the next boot. Inline rather than a handler for the
+# The drop-in takes effect at docker's next start, the next boot. Inline rather than a handler for the
 # dropped-notify reason the fstab reload above states.
 - name: systemd daemon-reload so docker's next start reads the drop-in  # noqa: no-handler
   ansible.builtin.systemd_service:
