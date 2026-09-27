@@ -282,11 +282,11 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member, the engine host `zcrypto` or a cache node, has not completed a WireGuard handshake with one of its peers for more than three minutes. The host the notification names is the end reporting it; the `peer` label is the other end's mesh address — `10.98.0.1` the engine host, `10.98.0.11` to `10.98.0.13` Cache 1 to Cache 3. A stopped probe timer reads the same way, since the rule adds the probe file's own age.
+A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member, the engine host `zcrypto` or a cache node, reads a WireGuard handshake age past five minutes with one of its peers, the age at the probe's last write plus that file's age since. The host the notification names is the end reporting it; the `peer` label is the other end's mesh address — `10.98.0.1` the engine host, `10.98.0.11` to `10.98.0.13` Cache 1 to Cache 3. A stopped probe timer reads the same way, since the rule adds the probe file's own age.
 
 ### What it means
 
-`PersistentKeepalive 25` keeps traffic on every link, so a healthy peer re-handshakes about every two minutes. Past three, the link is down: replication between two nodes, or the engine's cache traffic to one node, is not flowing. A link seen from both ends fires twice, once per reporting end.
+`PersistentKeepalive 25` keeps traffic on every link, so a healthy peer re-handshakes about every two minutes on the tunnel, and the reading lags the tunnel by up to two minutes, the probe's minute and the scrape's, so a healthy reading reaches about 265 s. Past 300 the link has missed WireGuard's 180 s key lifetime and is down: replication between two nodes, or the engine's cache traffic to one node, is not flowing. A link seen from both ends fires twice, once per reporting end.
 
 ### What to do
 
@@ -294,7 +294,7 @@ A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member
 2. **Read the tunnel on both ends:** `sudo wg show zcache0` on the reporting host and on the peer, the engine host (alias `zcrypto`) for `10.98.0.1`. A peer with no `latest handshake` line has not reached it since the interface came up.
 3. **Is the peer's port open?** Both layers carry `51821/udp`: the host's nftables, which the firewall role renders and `sudo systemctl status nftables` shows loaded on each end; and the Linode Cloud Firewall, managed by hand, in the Linode console for each end.
 4. **Restart the tunnel on the reporting host:** `sudo systemctl restart wg-quick@zcache0`; it restarts no container and drops the link's traffic for the seconds the interface is down.
-5. **Confirm by value:** the Cache board's panel 105 falls below 180 for the pair, and the rule is back to **Normal**.
+5. **Confirm by value:** `sudo wg show zcache0` on both ends reads the pair's `latest handshake` under three minutes, the key lifetime; the Cache board's panel 105 falls below 300 for the pair, and the rule is back to **Normal**.
 
 ### Retire when
 
