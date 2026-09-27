@@ -287,7 +287,7 @@ The bar leaves time to act: at the fastest fill seen on `/tmp`, the page lands w
 ### What to do
 
 1. **Read which filesystem and how full**, on the host (`ssh hp`): `df -i / /tmp`.
-2. **Find what holds the inodes**: `sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20`, or over `/` with `-d 3` when `/` is the one named. The sessions' scratch trees sit under their temp root: `/tmp/claude-<uid>/`, or the directory `CLAUDE_CODE_TMPDIR` names in `.claude/settings.json` for a session started while it was set.
+2. **Find what holds the inodes**: `sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20`, or over `/` with `-d 3` when `/` is the one named. The sessions' scratch trees sit under their temp root: `/tmp/claude-<uid>/`, or `claude-<uid>/` under the directory `CLAUDE_CODE_TMPDIR` names in the environment the session was launched in (the owner's shell startup exports it).
 3. **Removing files is the operator's decision.** A scratch tree belongs to a session that may still be reading it: ask the session that owns it, or the owner, before anything under a session's temp root goes. A reboot empties the tmpfs, but it also ends the sessions and restarts the host's timers mid-run, so it is not the remedy here.
 4. **Confirm by value**: `df -i / /tmp` and panel 305 above 0.25; the next `:12`/`:42` writer tick exits 0, which clears `zcrypto-ops-archive-pull-exit-nonzero` if it paged.
 
