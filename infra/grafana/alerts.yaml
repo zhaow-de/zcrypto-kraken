@@ -4902,10 +4902,6 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
-    # Paused while no cache node has a pin row in docs/reference/fleet-pins.md: each would otherwise
-    # page critical before any node runs Alloy. tests/test_infra_alert_rules.py refuses the pause once
-    # one has.
-    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -4945,7 +4941,6 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
-    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -4985,7 +4980,6 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
-    isPaused: true
     data:
       - refId: A
         queryType: ""

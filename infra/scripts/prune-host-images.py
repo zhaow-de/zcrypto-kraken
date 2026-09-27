@@ -74,6 +74,9 @@ HOSTS = {
     "zcrypto-red": HostAccess(ssh="red", docker=("docker",)),
     "zcrypto-ops": HostAccess(ssh="hp", docker=("docker",)),
     "nas": HostAccess(ssh="nas", docker=("sudo", "/usr/local/bin/docker")),
+    "zcrypto-valkey1": HostAccess(ssh="db1", docker=("docker",)),
+    "zcrypto-valkey2": HostAccess(ssh="db2", docker=("docker",)),
+    "zcrypto-valkey3": HostAccess(ssh="db3", docker=("docker",)),
 }
 
 

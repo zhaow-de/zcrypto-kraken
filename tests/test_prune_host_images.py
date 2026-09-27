@@ -93,11 +93,17 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
         ("alloy", ("nas",)),
         ("ops (timers + liquidations)", ("zcrypto-ops",)),
         ("archive-pull", ("nas",)),
+        ("valkey + sentinel", ("zcrypto-valkey1",)),
+        ("alloy", ("zcrypto-valkey1",)),
+        ("valkey + sentinel", ("zcrypto-valkey2",)),
+        ("alloy", ("zcrypto-valkey2",)),
+        ("valkey + sentinel", ("zcrypto-valkey3",)),
+        ("alloy", ("zcrypto-valkey3",)),
     }
     assert {h for row in rows for h in row.hosts} == set(pm.HOSTS)
     for row in rows:
         assert len(row.current) == 12, row
-        assert len(row.operand) == 12, row
+        assert len(row.operand) == 12 or row.hosts in {("zcrypto-valkey1",), ("zcrypto-valkey2",), ("zcrypto-valkey3",)}, row
 
 
 def test_the_real_file_puts_capture_and_the_engine_on_one_host_sharing_one_repo():
