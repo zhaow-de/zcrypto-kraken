@@ -246,6 +246,7 @@
         daemon_reload: true
         enabled: true
         state: started
+      register: cache_service_start
       # A first-install preview never wrote the unit, so systemd cannot find it.
       when: not (ansible_check_mode and cache_unit_install is changed)
 

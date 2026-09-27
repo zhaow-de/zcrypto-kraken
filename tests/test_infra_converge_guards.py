@@ -2569,14 +2569,47 @@ def test_the_cache_role_sets_memory_overcommit_on_every_converge_and_persists_it
     assert task_index(tasks, CACHE_SYSCTL) < task_index(tasks, CACHE_BLOCK)
 
 
+CACHE_START = "enable + start the cache service (boot resume)"
+
+
 @pytest.mark.parametrize(
-    ("check_mode", "unit_changed", "expected"),
-    [(True, True, False), (True, False, True), (False, True, True), (False, False, True)],
+    ("check_mode", "unit_changed", "start_changed", "expected"),
+    [
+        (True, True, False, False),
+        (True, False, False, True),
+        (True, False, True, False),
+        (False, True, True, False),
+        (False, True, False, True),
+        (False, False, True, False),
+        (False, False, False, True),
+    ],
+    ids=[
+        "first-install-preview",
+        "preview-of-a-unit-edit",
+        "preview-of-a-stopped-node",
+        "first-install",
+        "unit-edit-on-a-running-node",
+        "a-stopped-node-this-run-started",
+        "config-change-on-a-running-node",
+    ],
 )
-def test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview(check_mode, unit_changed, expected):
+def test_the_cache_restart_handler_stands_down_on_a_first_install_preview_and_after_a_start_this_converge_made(
+    check_mode, unit_changed, start_changed, expected
+):
     handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
-    variables = {"ansible_check_mode": check_mode, "cache_unit_install": {"changed": unit_changed}}
+    variables = {
+        "ansible_check_mode": check_mode,
+        "cache_unit_install": {"changed": unit_changed},
+        "cache_service_start": {"changed": start_changed},
+    }
     assert truthy(when_conditions(handler), variables) is expected
+
+
+def test_the_cache_start_task_registers_what_its_restart_handler_reads():
+    start = find_task(load_tasks(CACHE), CACHE_START)
+    handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
+    read = re.findall(r"\b(\w+) is not changed\b", " ".join(when_conditions(handler)))
+    assert read == [start.get("register")], (read, start.get("register"))
 
 
 # --- the cache nodes' Alloy: the digest shape, the pins refusal, and the drift assert ---------------
