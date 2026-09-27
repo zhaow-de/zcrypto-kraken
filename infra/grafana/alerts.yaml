@@ -2558,11 +2558,8 @@ rules:
       # selector, the label scheme) leaves Alloy itself alive and its OWN logfmt stream flowing, so
       # that canary never notices while `Ops · ERROR logs` reads 0 = healthy for the unit streams.
       #
-      # Deliberately level-filtered AND a wide 26h window (matching `zcrypto-ops-journal-transport-
-      # dead`'s window below, for the same reason): archive-pull's gate skip logs at WARNING through
-      # its log() helper, and panel-materialize (hourly) and verify-replay/verified-replay (daily) run
-      # on schedules the gate does not touch, so at least one `zcrypto-*` unit produces a leveled line
-      # well within 26h even through an extended fail-closed streak.
+      # Level-filtered, over `zcrypto-ops-journal-transport-dead`'s 26h window below: every
+      # archive-pull tick logs a leveled line, a gate skip at WARNING, so a streak cannot false-fire it.
       #
       # `by (host, container)` -- container is a REGEX here, so it is real information on the label
       # line rather than something the rule already knows. It does not change when this rule fires:

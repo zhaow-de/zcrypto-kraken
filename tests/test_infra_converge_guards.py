@@ -2573,15 +2573,16 @@ CACHE_START = "enable + start the cache service (boot resume)"
 
 
 @pytest.mark.parametrize(
-    ("check_mode", "unit_changed", "start_changed", "expected"),
+    ("check_mode", "unit_changed", "start_changed", "active_before", "expected"),
     [
-        (True, True, False, False),
-        (True, False, False, True),
-        (True, False, True, False),
-        (False, True, True, False),
-        (False, True, False, True),
-        (False, False, True, False),
-        (False, False, False, True),
+        (True, True, False, None, False),
+        (True, False, False, "active", True),
+        (True, False, True, "inactive", False),
+        (False, True, True, "inactive", False),
+        (False, True, False, "active", True),
+        (False, False, True, "inactive", False),
+        (False, False, False, "active", True),
+        (False, False, True, "active", True),
     ],
     ids=[
         "first-install-preview",
@@ -2591,24 +2592,27 @@ CACHE_START = "enable + start the cache service (boot resume)"
         "unit-edit-on-a-running-node",
         "a-stopped-node-this-run-started",
         "config-change-on-a-running-node",
+        "an-enable-flip-on-a-running-node",
     ],
 )
 def test_the_cache_restart_handler_stands_down_on_a_first_install_preview_and_after_a_start_this_converge_made(
-    check_mode, unit_changed, start_changed, expected
+    check_mode, unit_changed, start_changed, active_before, expected
 ):
     handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
-    variables = {
-        "ansible_check_mode": check_mode,
-        "cache_unit_install": {"changed": unit_changed},
-        "cache_service_start": {"changed": start_changed},
-    }
+    # The start task's result: skipped on a first-install preview; otherwise `status` is the unit as
+    # systemctl showed it before the task acted, and `changed` reports an enable flip as well as a start.
+    if active_before is None:
+        start = {"changed": False, "skipped": True}
+    else:
+        start = {"changed": start_changed, "status": {"ActiveState": active_before}}
+    variables = {"ansible_check_mode": check_mode, "cache_unit_install": {"changed": unit_changed}, "cache_service_start": start}
     assert truthy(when_conditions(handler), variables) is expected
 
 
 def test_the_cache_start_task_registers_what_its_restart_handler_reads():
     start = find_task(load_tasks(CACHE), CACHE_START)
     handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
-    read = re.findall(r"\b(\w+) is not changed\b", " ".join(when_conditions(handler)))
+    read = re.findall(r"\b(\w+)\.status\.ActiveState\b", " ".join(when_conditions(handler)))
     assert read == [start.get("register")], (read, start.get("register"))
 
 

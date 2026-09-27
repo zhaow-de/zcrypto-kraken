@@ -4,6 +4,13 @@
 # it. It runs on the host, not in the Alloy container, whose adjtimex route would need CAP_SYS_TIME.
 set -euo pipefail
 
+# archive-pull.sh.j2's log(): the shape the ops Alloy parse stage levels. WARNING, never ERROR: the
+# 0 flag published below already pages through the clock rule's synchronisation leg.
+log() {
+  _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+  printf '%s %s zcrypto.clock-offset [zcrypto-clock-offset.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
 usage="usage: zcrypto-clock-offset <chronyc-path> <output.prom>"
 chronyc=${1:-}
 out=${2:-}
@@ -36,7 +43,7 @@ if tracking=$("$chronyc" tracking 2>/dev/null); then
     Normal | "Insert leap second" | "Delete leap second") synced=1 ;;
   esac
 else
-  echo "zcrypto-clock-offset: '$chronyc tracking' failed; publishing an unknown offset" >&2
+  log WARNING "'$chronyc tracking' failed; publishing an unknown offset"
 fi
 
 # Atomic publish: the collector globs this directory continuously and must never read a half-written

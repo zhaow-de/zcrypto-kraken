@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.test_infra_archive_pull_template import _ops_parse_regex
+
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/capture"
 SCRIPT = ROLE / "files/zcrypto-clock-offset.sh"
@@ -123,6 +125,15 @@ def test_an_unreadable_clock_publishes_unknown_rather_than_a_fabricated_zero(tmp
     series = _series(prom)
     assert math.isnan(series["zcrypto_clock_offset_seconds"]), series
     assert series["zcrypto_clock_synchronised"] == 0.0
+
+
+def test_an_unreadable_clocks_warning_carries_the_shape_the_ops_parse_stage_reads(tmp_path):
+    result = _run(_chronyc(tmp_path, "", exit_code=1), tmp_path / "clock-offset.prom")
+    assert result.returncode == 0, result.stderr
+    (line,) = result.stderr.splitlines()
+    m = _ops_parse_regex().match(line)
+    assert m, f"the warning does not parse through the ops stage: {line!r}"
+    assert m.group("level") == "WARNING" and m.group("rest").startswith("zcrypto.clock-offset [zcrypto-clock-offset.sh] - "), line
 
 
 def test_the_prom_is_well_formed_for_the_collector(tmp_path):
@@ -249,8 +260,7 @@ def test_the_unit_writes_into_the_directory_alloy_actually_scrapes():
 
 
 def _keep_list(alloy: str) -> list[str]:
-    """The names the remote_write keep rule admits, read from the `write_relabel_config` block whose
-    `action` is keep: a `regex` line picked by a name it carries could be the drop rule's, or a comment's."""
+    """The names the remote_write keep rule admits; the drop rule carries a `regex` line too."""
     blocks, cur = [], None
     for line in alloy.splitlines():
         s = line.strip()

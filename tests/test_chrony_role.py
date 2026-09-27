@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 import jinja2
+import pytest
 import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
@@ -62,6 +63,20 @@ def test_the_verify_task_retries_through_the_handshake_and_reports_no_change():
     assert task["ansible.builtin.command"] == "chronyc -N sources"
     assert task["changed_when"] is False
     assert task["retries"] * task["delay"] >= 30, "NTS-KE plus the iburst exchange take seconds after a restart; one read is a race"
+
+
+def _runs(check_mode: bool, fresh: bool) -> bool:
+    variables = {"ansible_check_mode": check_mode, "chrony_install": {"changed": fresh}}
+    templar = Templar(loader=DataLoader(), variables=variables)
+    return templar.evaluate_conditional(trust_as_template(_verify_task().get("when", "true")))
+
+
+@pytest.mark.parametrize("fresh", [True, False], ids=["fresh-node", "installed-node"])
+def test_the_verify_task_reads_the_daemon_on_the_real_pass_and_never_in_the_preview(fresh):
+    assert not _runs(True, fresh), (
+        "a preview writes no config and restarts nothing: its read is of the daemon this converge is there to fix"
+    )
+    assert _runs(False, fresh)
 
 
 def test_every_ptb_server_is_named_as_its_certificate_names_it():

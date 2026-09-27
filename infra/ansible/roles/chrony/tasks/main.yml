@@ -29,17 +29,17 @@
 # A selected source (`*` in the second column of the MS field, after the mode character) exists
 # only after NTS-KE and the iburst exchange, a few seconds after a restart; a source whose NTS-KE
 # fails stays `?` and is never selected, so one selected line is the proof that a source is usable
-# with NTS. A read, so it runs under --check too, except on a fresh node whose preview never
-# installed the package.
+# with NTS. The real pass only: a preview writes no config and restarts nothing, so its read is of
+# the daemon this converge is there to fix, and on a host with no selected source it would fail
+# converge.sh's preview before the real pass could run.
 - name: verify chrony has a selected NTS source
   ansible.builtin.command: chronyc -N sources
   register: chrony_sources_result
   changed_when: false
-  check_mode: false
   until: chrony_sources_result.stdout is search('^.[*] ', multiline=True)
   retries: 12
   delay: 5
-  when: not (ansible_check_mode and chrony_install is changed)
+  when: not ansible_check_mode
 
 - name: report chrony sources
   ansible.builtin.debug:

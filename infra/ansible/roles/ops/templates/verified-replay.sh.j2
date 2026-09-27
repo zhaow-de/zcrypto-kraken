@@ -3,23 +3,16 @@
 # on the host, edit infra/ansible/roles/ops/templates/verified-replay.sh.j2 and re-converge instead.
 #
 # Verified-path replay of the engine journal (spec 00051 OPS-3): replays every still-unverified
-# UTC day (watermark catch-up loop, T0059) by running `zcrypto engine replay --path verified`
-# (the oracle builder) in the digest-pinned default-AVX image, reading the journal straight from
-# the NAS's read-only NFS export (T0058 — the local engine-journal mirror is retired), publishes
-# the outcome as a node-exporter textfile (ops_verified_replay_*; a non-zero exit_code is the
-# CLI's own mismatch/validation-failure verdict), and pings the dead-man URL only on a clean,
-# fully-caught-up run — an empty URL skips the ping (the CLI's optional `ping_healthcheck`
-# semantics, shell edition).
+# UTC day from the watermark (T0059), reading the journal through the NAS's read-only NFS export
+# (T0058), and publishes the outcome as a node-exporter textfile.
 #
 # A REFUSED run (invalid or future watermark below) exits non-zero without touching the watermark
-# or the textfile: the unit goes red, its reason logs at WARNING to the unit journal, which ships
-# it to Loki (T0060), the dead man misses its ping (healthchecks.io pages on the silence), and the
-# 48h staleness alert backs both.
+# or the textfile: the unit goes red, the dead man misses its ping (healthchecks.io pages on the
+# silence), and the 48h staleness alert backs both.
 set -u
 
-# The line shape `zcrypto`'s Python logging emits, as archive-pull.sh.j2's log(): the ops Alloy
-# parse stage attaches the `level` label to it and to nothing a bare `echo` writes. WARNING, never
-# ERROR, for a line the exit code, the dead man or the staleness rule already pages on.
+# archive-pull.sh.j2's log(): the shape the ops Alloy parse stage levels. WARNING, never ERROR, for
+# a line the exit code, the dead man or the staleness rule already pages on.
 log() {
     _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
     printf '%s %s zcrypto.verified-replay [verified-replay.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
