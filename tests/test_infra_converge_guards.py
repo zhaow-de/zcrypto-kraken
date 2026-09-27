@@ -2551,6 +2551,24 @@ def test_every_cache_probe_never_fails_changes_or_skips_under_check():
         assert modes == (False, False, False), f"{probe['name']!r}: failed_when, changed_when, check_mode = {modes}"
 
 
+CACHE_SYSCTL = "enable memory overcommit for Valkey's forks (AOF rewrite, RDB save, replica sync)"
+
+
+def test_the_cache_role_sets_memory_overcommit_on_every_converge_and_persists_it():
+    tasks = load_tasks(CACHE)
+    sysctl = find_task(tasks, CACHE_SYSCTL)["ansible.posix.sysctl"]
+    assert (sysctl["name"], str(sysctl["value"]), sysctl["sysctl_set"], sysctl["state"]) == (
+        "vm.overcommit_memory",
+        "1",
+        True,
+        "present",
+    )
+    assert Path(sysctl["sysctl_file"]).parent == Path("/etc/sysctl.d") and sysctl["sysctl_file"].endswith(".conf")
+    gates = next(g for t, g in iter_tasks(tasks) if t.get("name") == CACHE_SYSCTL)
+    assert gates == (), f"the overcommit task is gated: {gates}"
+    assert task_index(tasks, CACHE_SYSCTL) < task_index(tasks, CACHE_BLOCK)
+
+
 @pytest.mark.parametrize(
     ("check_mode", "unit_changed", "expected"),
     [(True, True, False), (True, False, True), (False, True, True), (False, False, True)],
