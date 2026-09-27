@@ -9,11 +9,11 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 COVERAGE = WORKFLOWS / "coverage.yml"
 WARMER = WORKFLOWS / "uv-cache.yml"
 # setup-uv folds the first five into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
-# with the runner's OS and the action's own version, and `cache-local-path` decides the path the cache
+# with the runner's OS and its cache-format version, and `cache-local-path` decides the path the cache
 # is saved under, which a restore must match too: one differing input splits the two workflows onto
 # caches neither ever restores from the other.
 KEY_INPUTS = ("python-version", "cache-dependency-glob", "prune-cache", "cache-python", "cache-suffix", "cache-local-path")
-# uv reads these over the directory setup-uv caches, so either one set anywhere leaves it empty.
+# UV_NO_CACHE turns uv's cache off, and UV_CACHE_DIR moves it off the path the pair shares.
 CACHE_OVERRIDES = ("UV_NO_CACHE", "UV_CACHE_DIR")
 SAVE_WHEN_THE_LOCK_CHANGED = "${{ steps.lock.outputs.changed == 'true' }}"
 
