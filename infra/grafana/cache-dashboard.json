@@ -2,7 +2,7 @@
   "id": null,
   "uid": "zcrypto-cache",
   "title": "Cache",
-  "description": "Is the engine's cache set healthy? The three Valkey nodes, their Sentinels and the mesh between them, and the engine's own lines about the cache. Every panel that serves an alert plots that alert's own expression and carries its own threshold line.",
+  "description": "Is the engine's cache set healthy? The three Valkey nodes, their Sentinels and the mesh between them. Every panel that serves an alert plots that alert's own expression and carries its own threshold line.",
   "tags": [],
   "schemaVersion": 39,
   "version": 0,
@@ -1019,66 +1019,6 @@
         "colorMode": "background",
         "orientation": "auto",
         "graphMode": "none"
-      }
-    },
-    {
-      "id": 400,
-      "type": "row",
-      "title": "Logs",
-      "collapsed": false,
-      "panels": [],
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 73}
-    },
-    {
-      "id": 401,
-      "type": "logs",
-      "title": "Engine lines naming the cache",
-      "description": "The engine's own log lines that mention the cache, newest first: the counts it restored at each boot, and a refusal to start against a cache that is unreachable or lost its data. The library's own cache errors are written by its native side and never reach this log store.",
-      "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 74},
-      "targets": [
-        {
-          "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
-          "refId": "A",
-          "queryType": "range",
-          "expr": "{host=\"zcrypto\", container=\"engine\"} |~ \"(?i)cache\" | json | drop __error__, __error_details__ | line_format \"{{ if .message }}{{ .message }}{{ if .exception }}\\n{{ .exception }}{{ end }}{{ else }}{{ __line__ }}{{ end }}\""
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "sortOrder": "Descending"
-      }
-    },
-    {
-      "id": 402,
-      "type": "logs",
-      "title": "Valkey and Sentinel lines",
-      "description": "Each node's Valkey and Sentinel log, newest first. A failover reads here as the Sentinels' +sdown, +odown and +switch-master events; a replica's resync as its MASTER <-> REPLICA sync lines.",
-      "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 84},
-      "targets": [
-        {
-          "datasource": {"type": "loki", "uid": "grafanacloud-logs"},
-          "refId": "A",
-          "queryType": "range",
-          "expr": "{host=~\"$host\", container=~\"valkey|sentinel\"}"
-        }
-      ],
-      "options": {
-        "showTime": true,
-        "showLabels": false,
-        "showCommonLabels": false,
-        "wrapLogMessage": true,
-        "prettifyLogMessage": false,
-        "enableLogDetails": true,
-        "dedupStrategy": "none",
-        "sortOrder": "Descending"
       }
     }
   ]
