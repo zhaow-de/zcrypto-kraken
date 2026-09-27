@@ -280,15 +280,15 @@ A **warning** Grafana alert (`Ops · inodes low`): free inodes over total, `node
 
 ### What it means
 
-A filesystem out of inodes refuses to create a file however many bytes it still has free, and the free-space panels cannot show it. `/tmp` is the one at risk: a tmpfs capped at 1,048,576 inodes, where the Claude Code sessions on this host keep their scratch trees, and a checkout or a dependency tree there costs hundreds of thousands. When it runs out, a `docker run` fails before its container starts (`failed to create temp dir: mkdir /tmp/containerd-mount…: no space left on device`), so the ops timers' runs fail with it and `zcrypto-ops-archive-pull-exit-nonzero` is the usual first page. The overlay writer reconciles a 48 h window, so ticks lost this way are made good by the first clean one inside it. `/` is ext4, its inode table sized with the disk, and is watched for the same failure.
+A filesystem out of inodes refuses to create a file however many bytes it still has free, and the free-space panels cannot show it. `/tmp` is the one at risk: a tmpfs capped at 1,048,576 inodes, and the Claude Code sessions' default temp root (`/tmp/claude-<uid>/`), where a checkout or a dependency tree in a session's scratch costs hundreds of thousands. A session started while `.claude/settings.json` sets `CLAUDE_CODE_TMPDIR` keeps its scratch under that directory instead, on `/`. When it runs out, a `docker run` fails before its container starts (`failed to create temp dir: mkdir /tmp/containerd-mount…: no space left on device`), so the ops timers' runs fail with it and `zcrypto-ops-archive-pull-exit-nonzero` is the usual first page. The overlay writer reconciles a 48 h window, so ticks lost this way are made good by the first clean one inside it. `/` is ext4, its inode table sized with the disk, and is watched for the same failure.
 
 The bar leaves time to act: at the fastest fill seen on `/tmp`, the page lands with a little under two hours to go.
 
 ### What to do
 
 1. **Read which filesystem and how full**, on the host (`ssh hp`): `df -i / /tmp`.
-2. **Find what holds the inodes**: `sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20`, or over `/` with `-d 3` when `/` is the one named. The sessions' scratch trees sit under `/tmp/claude-<uid>/`.
-3. **Removing files is the operator's decision.** A scratch tree belongs to a session that may still be reading it: ask the session that owns it, or the owner, before anything under `/tmp/claude-<uid>/` goes. A reboot empties the tmpfs, but it also ends the sessions and restarts the host's timers mid-run, so it is not the remedy here.
+2. **Find what holds the inodes**: `sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20`, or over `/` with `-d 3` when `/` is the one named. The sessions' scratch trees sit under their temp root: `/tmp/claude-<uid>/`, or the directory `CLAUDE_CODE_TMPDIR` names in `.claude/settings.json` for a session started while it was set.
+3. **Removing files is the operator's decision.** A scratch tree belongs to a session that may still be reading it: ask the session that owns it, or the owner, before anything under a session's temp root goes. A reboot empties the tmpfs, but it also ends the sessions and restarts the host's timers mid-run, so it is not the remedy here.
 4. **Confirm by value**: `df -i / /tmp` and panel 305 above 0.25; the next `:12`/`:42` writer tick exits 0, which clears `zcrypto-ops-archive-pull-exit-nonzero` if it paged.
 
 ### Retire when

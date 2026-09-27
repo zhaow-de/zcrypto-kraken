@@ -1170,7 +1170,7 @@
       "id": 305,
       "type": "timeseries",
       "title": "Ops inodes free — / and /tmp",
-      "description": "The share of each filesystem's inodes still free on the ops machine, against the alert's red line at 25% after `for: 10m`. A filesystem out of inodes refuses new files while it still reports free bytes, so the free-space panels above cannot show it. `/tmp` is a memory-backed filesystem capped at 1,048,576 inodes where the Claude Code sessions keep their scratch trees; when it runs out, every container the ops timers start fails before it runs.",
+      "description": "The share of each filesystem's inodes still free on the ops machine, against the alert's red line at 25% after `for: 10m`. A filesystem out of inodes refuses new files while it still reports free bytes, so the free-space panels above cannot show it. `/tmp` is a memory-backed filesystem capped at 1,048,576 inodes and the Claude Code sessions' default temp root; when it runs out, every container the ops timers start fails before it runs.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
