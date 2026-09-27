@@ -1475,9 +1475,10 @@ rules:
       # `source="secondary"` fire independently. This is dataflow-based and therefore independent of
       # both hosts' healthchecks.io dead-men: a host can keep pinging while its capture writes nothing.
       #
-      # Threshold 3h against a measured normal of ~1h: a final only commits after its hour closes and
-      # the NAS pulls hourly, so ~1-2h of lag is the healthy steady state. 3h means a mirror has missed
-      # a whole cycle beyond that.
+      # Threshold 3h: a final only commits after its hour closes and the NAS pulls hourly plus its work,
+      # so the healthy steady state is a sawtooth from a little over 1h to past 2h, under an hour below
+      # this bar. 3h means a mirror has missed a whole cycle beyond that, or a NAS recreate's cold gate
+      # replay is holding the capture pulls behind it.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
