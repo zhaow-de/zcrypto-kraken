@@ -535,6 +535,24 @@ def test_the_journal_paragraph_carries_every_labelled_clause():
         assert clause in para, f"missing clause: {clause}"
 
 
+def test_the_journal_paragraph_carries_each_failing_checks_value_or_its_read_error():
+    verdict = [
+        ops_daily.Check("capture primary up", "up{...}", ok=True, value="1"),
+        ops_daily.Check("engine cycle age", "time() - ...", ok=False, value="17012.4"),
+        ops_daily.Check(ops_daily.UPGRADE_CHECK, "ssh ...", ok=False, value="unreadable: time data '' does not match format"),
+    ]
+    para = _report(verdict=verdict).journal_paragraph()
+    assert (
+        f"· checks engine cycle age (17012.4), {ops_daily.UPGRADE_CHECK} (unreadable: time data '' does not match format) ·" in para
+    ), para
+
+
+def test_a_failing_soak_row_is_named_once_in_the_checks_clause_and_carried_whole_in_its_own():
+    soak = ops_daily.Check(ops_daily.SOAK_CHECK, ops_daily.SOAK_EXPR, ok=False, value="void: cap-breach inconsistent")
+    para = _report(verdict=[soak]).journal_paragraph()
+    assert f"· checks {ops_daily.SOAK_CHECK} · soak void: cap-breach inconsistent ·" in para, para
+
+
 def test_the_cli_refuses_an_unknown_subcommand():
     assert ops_daily.main([]) == 2
     assert ops_daily.main(["frobnicate"]) == 2

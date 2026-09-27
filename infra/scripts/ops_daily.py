@@ -1045,7 +1045,11 @@ class Report:
         # Named separately from `fired`: "it is still firing" and "it fired and went away" are
         # different findings and take different runbook dispositions.
         cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
-        failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
+        # A failing check carries the value it read, or the read's error, since the entry is what outlives
+        # the report; the soak row's value is the soak clause below.
+        failed = (
+            ", ".join(c.name if c.name == SOAK_CHECK else f"{c.name} ({c.value})" for c in self.verdict if not c.ok) or "all pass"
+        )
         # Carried whole and on a PASS too: these entries are where `SOAK_OUTSIDE_FAILS_AT`'s history lives.
         soak = next((c.value for c in self.verdict if c.name == SOAK_CHECK), None)
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))
