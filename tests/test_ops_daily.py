@@ -336,23 +336,8 @@ def test_an_unreachable_grafana_is_reported_never_read_as_nothing_firing():
     assert read.unreadable and "down" in read.unreadable
 
 
-@pytest.mark.parametrize(
-    "uid,expected",
-    [
-        ("zcrypto-alloy-dark-ops", "ops"),
-        ("zcrypto-alloy-dark-nas", "nas"),
-        ("zcrypto-alloy-dark-capture-primary", "zcrypto"),
-        ("zcrypto-alloy-dark-capture-secondary", "zcrypto-red"),
-        ("zcrypto-alloy-dark-cache-1", "zcrypto-valkey1"),
-        ("zcrypto-alloy-dark-cache-2", "zcrypto-valkey2"),
-        ("zcrypto-alloy-dark-cache-3", "zcrypto-valkey3"),
-        ("zcrypto-engine-dark-with-exposure", "zcrypto"),
-    ],
-)
-def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid, expected):
-    """These rules' expr aggregates the host away -- `count(up{host="ops"}) or on() vector(0)` leaves
-    the firing instance carrying only `severity` -- so without `_UID_HOST` the pass cannot tell an
-    Alloy restart that is routine on ops from the same restart on the attended capture pair."""
+@pytest.mark.parametrize("uid,expected", sorted(ops_daily._UID_HOST.items()))
+def test_the_host_is_recovered_from_the_uid_when_the_firing_instance_carries_no_host_label(uid, expected):
     payload = _rules(
         {
             "name": "Alloy dark",
