@@ -103,7 +103,11 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
     assert {h for row in rows for h in row.hosts} == set(pm.HOSTS)
     for row in rows:
         assert len(row.current) == 12, row
-        assert len(row.operand) == 12 or row.hosts in {("zcrypto-valkey1",), ("zcrypto-valkey2",), ("zcrypto-valkey3",)}, row
+        first_pin = row.hosts in {("zcrypto-valkey1",), ("zcrypto-valkey2",), ("zcrypto-valkey3",)} and row.current in {
+            "418652cfb58e",
+            "b8ec653c4423",
+        }
+        assert len(row.operand) == 12 or first_pin, row
 
 
 def test_the_real_file_puts_capture_and_the_engine_on_one_host_sharing_one_repo():

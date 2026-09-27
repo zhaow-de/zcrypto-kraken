@@ -19,13 +19,8 @@
 # Placeholders are literal `${VAR}` tokens that infra/scripts/grafana-push.sh substitutes from its
 # own environment before sending each rule -- the alert-rule provisioning API has no server-side
 # template substitution (unlike the dashboard JSON's `${DS_PROMETHEUS}`/`${DS_LOKI}` variables,
-# which Grafana itself resolves on dashboard import):
-#   - `${GRAFANA_PROM_DS_UID}` / `${GRAFANA_LOKI_DS_UID}` -- the two datasource UIDs.
-#   - `${GRAFANA_ALERT_FOLDER_UID}` -- the folder UID the rules provision into (the API needs
-#     the folder's UID, not its display name).
-#   - `notification_settings.receiver: metrics` (or `logs` for the Loki-sourced ERROR-log rules;
-#     the `logs` receiver disables resolve messages -- a log alert resolves by ageing, so a
-#     resolve ping is noise) (both receivers' Slack webhook is provisioned separately, not here).
+# which Grafana itself resolves on dashboard import). A rule pins `notification_settings.receiver:
+# metrics`, or `logs` for the Loki-sourced ERROR-log rules; grafana-push.sh mints both.
 #
 # noDataState is per-rule, not boilerplate: Alerting only where nothing else owns the series'
 # absence; OK wherever a dead-man or canary already does, or where absence is legitimate.

@@ -2,11 +2,11 @@
 
 The current pin and rollback operand of every service — a state file: a row is re-trued in the change that re-pins or converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt`, the restart marker — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
 
-`tests/test_fleet_contracts.py` holds the file to state. The Alloy pins on the ops, capture and cache hosts and the cache nodes' Valkey pin are converge-time extra-vars with no repo default, so their rows are the only record.
+`tests/test_fleet_contracts.py` holds the file to state. Every pin but the NAS's is a converge-time extra-var with no repo default, so its row is the only record.
 
 Reading rules:
 
-- `infra/ansible/scripts/converge.sh` appends one line per real pass to `deploy-log.jsonl` beside this file, whatever that pass's `rc` — an interrupted pass is recorded, a preview or an aborted confirm is not (`tests/test_converge_sh.py`); a row's digest is re-trued from that line, not from memory, and its `since` is read off the container.
+- `infra/ansible/scripts/converge.sh` appends a line to `deploy-log.jsonl` for each real pass, whatever its `rc` (`tests/test_converge_sh.py`): re-true a row from a line whose `rc` is 0.
 - A running pin is read from the container, `docker inspect <name> --format '{{.Config.Image}}'` — never `.Image`, which is host-dependent under classic storage, and never the compose file, which has pinned one image while the container ran another (set: the non-comment lines of the non-Markdown files under `infra/`, `cli/` and `.claude/` whose `docker inspect` format reads `.Image`, the counter excluded; count: `infra/scripts/count-list.sh inspect-reads-of-dot-image`).
 - Capture, engine, ops and the NAS archive-pull share the image repo `ghcr.io/zhaow-de/zcrypto-capture` with independent digests: a row is matched by its service cell, not by the repo.
 
