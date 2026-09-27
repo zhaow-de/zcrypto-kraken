@@ -19,9 +19,11 @@
 #
 # Outside, deliberately: `git push --no-verify` (no hook runs at push here), the pre-commit framework's
 # `SKIP=<hook>` door (used on purpose), an edit of `.git/hooks/` or of this file, a git alias, a shell string
-# handed to `sh -c`, `eval` or a Python subprocess, a program or a flag arriving through a variable or a
-# substitution, a cap first in its pipeline, which truncates what it opened rather than what the command computed
-# (`head -1 VERSION`), and a truncation that is neither head nor tail -- none is an argv this guard judges.
+# handed to `sh -c`, `eval` or a Python subprocess, a program, a flag or a vaulted path arriving through a variable
+# or a substitution, a cap first in its pipeline, which truncates what it opened rather than what the command
+# computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a program no
+# family names (`grep` without `-c`, `diff`, `git log -p`) or reached through `xargs`, `find -exec` or a copy of its
+# whole directory -- none is an argv this guard judges.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -31,6 +33,7 @@ set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
 import json
+import posixpath
 import re
 import shlex
 import sys
@@ -74,6 +77,26 @@ SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
 PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator starts a new one
 REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
+INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
+PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
+COPIERS = {"cp", "scp", "rsync"}
+WRAPPERS = {"sudo", "doas", "timeout", "nice", "env", "setsid", "nohup", "command", "exec", "time", "stdbuf"}
+INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
+OPENS = re.compile(r"\b(open|read_text|read_bytes)\(")
+SOPS_FILE = re.compile(r"^[^.].*\.sops\.(ya?ml|json)$")
+KEY_TAILS = ("_ed25519", ".vault")
+WILD = re.compile(r"[*?[]")
+VAULT_REMEDY = (
+    "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
+    "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
+)
+
+
+class Stage(list):
+    # A stage's words, and the files its `<` redirects feed it, which are no word of its argv.
+    def __init__(self):
+        super().__init__()
+        self.inputs = []
 
 
 def expansions(body):
@@ -250,10 +273,12 @@ def pipelines(text):
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
-    pipes, skip = [[[]]], False
+    pipes, skip = [[Stage()]], ""
     for tok in lex:
         if skip:
-            skip = False
+            if skip in INPUT:
+                pipes[-1][-1].inputs.append(tok)
+            skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
             pipes[-1][-1].append(tok)
@@ -262,11 +287,11 @@ def pipelines(text):
         while tok:
             last = next(op for op in OPS if tok.startswith(op))
             if last in PIPE and pipes[-1][-1]:
-                pipes[-1].append([])
+                pipes[-1].append(Stage())
             elif last in SEP and pipes[-1][-1]:
-                pipes.append([[]])
+                pipes.append([Stage()])
             tok = tok[len(last) :]
-        skip = last in REDIRECT
+        skip = last if last in REDIRECT else ""
     out = [[stage for stage in pipe if stage] for pipe in pipes]
     out = [pipe for pipe in out if pipe]
     for body in bodies:
@@ -466,6 +491,108 @@ def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
 
+def could_end(name, tail):
+    # A glob can name a file ending in `tail` when the literal text after its last wildcard is a suffix of `tail`, or
+    # ends with it: `deploy_*` can, `*.pub` cannot.
+    rest = re.split(r"[*?]|\[[^]]*\]", name)[-1]
+    return tail.endswith(rest) or rest.endswith(tail)
+
+
+def vaulted(word):
+    # A private key or a `.vault` file in a `files` directory, or named bare from inside one; any `vault.yml`; any
+    # `<name>.sops.<ext>`. A glob is judged only where it names a directory, and a `vault.yml` glob only under
+    # group_vars or host_vars: a bare `*` names whatever the working directory holds, which the hook cannot see.
+    if not word:
+        return False
+    head, _, name = posixpath.normpath(word).rpartition("/")
+    dirs = head.split("/") if head else []
+    if WILD.search(name):
+        if not dirs:
+            return False
+        vault_yml = could_end(name, "vault.yml") and ("group_vars" in dirs or "host_vars" in dirs)
+        return vault_yml or (dirs[-1] == "files" and any(could_end(name, t) for t in KEY_TAILS))
+    if name.endswith("vault.yml") or SOPS_FILE.match(name):
+        return True
+    return name.endswith(KEY_TAILS) and (not dirs or dirs[-1] == "files")
+
+
+def program_at(words):
+    # The index of a stage's program, past assignments, keywords and a wrapper with its options (`sudo`, `timeout 5`,
+    # `uv run`); a wrapper option that takes a word of its own leaves that word read as the program.
+    i = 0
+    while i < len(words):
+        base = words[i].rpartition("/")[2]
+        if ASSIGN.match(words[i]) or words[i] in KEYWORDS:
+            i += 1
+        elif base in WRAPPERS or (base == "uv" and words[i + 1 : i + 2] == ["run"]):
+            i += 2 if base == "uv" else 1
+            while i < len(words) and (words[i].startswith("-") or ASSIGN.match(words[i]) or words[i][:1].isdigit()):
+                i += 1
+        else:
+            return i
+    return None
+
+
+def operands(args):
+    out, ended = [], False
+    for a in args:
+        if a == "--" and not ended:
+            ended = True
+        elif ended or a == "-" or not a.startswith("-"):
+            out.append(a)
+    return out
+
+
+def git_sub(words):
+    at = next((i for i, w in enumerate(words) if is_git(w)), None)
+    if at is None:
+        return None, []
+    argv, i = words[at:], 1
+    while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
+        name, eq, _ = argv[i].partition("=")
+        i += 2 if name in GLOBAL_VALUE and not eq else 1
+    return (argv[i], argv[i + 1 :]) if i < len(argv) else (None, [])
+
+
+def refuse_vault(words, what, raw):
+    refuse(f"`{spelled(words)}` {what}; in `{raw}`. {VAULT_REMEDY}")
+
+
+def judge_vault(words, raw):
+    for i, w in enumerate(words):
+        p = w.rpartition("/")[2]
+        if p == "ansible-vault" and any(a in ("view", "decrypt") for a in words[i + 1 :]):
+            refuse_vault(words, "decrypts a vaulted file to the terminal", raw)
+        if p == "sops" and any(a in ("-d", "--decrypt", "decrypt") for a in words[i + 1 :]):
+            refuse_vault(words, "decrypts a sops file to the terminal", raw)
+        if INTERPRETER.match(p):
+            rest = words[i + 1 :]
+            code = next((rest[j + 1] for j, a in enumerate(rest[:-1]) if re.fullmatch(r"-[A-Za-z]*c", a)), "")
+            hit = next((tok for tok in re.findall(r"[^\s'\"(),;]+", code) if vaulted(tok)), None) if OPENS.search(code) else None
+            if hit:
+                refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
+    sub, rest = git_sub(words)
+    hit = next((a for a in rest if ":" in a and vaulted(a.partition(":")[2])), None) if sub in ("show", "cat-file") else None
+    if hit:
+        refuse_vault(words, f"prints the vaulted file `{hit.partition(':')[2]}` at a revision", raw)
+    at = program_at(words)
+    if at is None:
+        return
+    p, args = words[at].rpartition("/")[2], words[at + 1 :]
+    ops = operands(args)
+    if p == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in args):
+        return  # in place: sed writes the file back and prints nothing
+    if p in PRINTERS:
+        hit = next((a for a in ops + getattr(words, "inputs", []) if vaulted(a)), None)
+        if hit:
+            refuse_vault(words, f"prints the vaulted file `{hit}`", raw)
+    if p in COPIERS:
+        sources = ops if p == "cp" and any(a == "-t" or a.startswith("--target-directory") for a in args) else ops[:-1]
+        hit = next((a for a in sources if vaulted(a)), None)
+        if hit:
+            refuse_vault(words, f"copies the vaulted file `{hit}` to another path", raw)
+
+
 def env_assignments(words):
     at = next((i for i, w in enumerate(words) if is_git(w)), None)
     prefix = words[:at] if at is not None else []
@@ -526,6 +653,7 @@ raw = clip(" ".join(command.split()))
 for pipe in commands:
     for words in pipe:
         judge(words)
+        judge_vault(words, raw)
     judge_cap(pipe, raw)
 PY
 )"
