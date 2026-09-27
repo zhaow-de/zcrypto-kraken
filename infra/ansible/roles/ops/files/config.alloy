@@ -334,8 +334,8 @@ loki.process "parse" {
       format   = "2006-01-02 15:04:05,000"
       location = "UTC"
       // "skip", NOT the default "fudge" (review finding): lines that fail the stage.regex above --
-      // the scripts' own echoes (including the load-bearing "writer cycle SKIPPED (fail-closed
-      // gate)" warning),
+      // the scripts' own echoes (archive-pull.sh.j2's three warnings go through its log() helper
+      // and parse; the other runners' echoes do not),
       // rsync stderr, docker-client errors, Python tracebacks -- have no `ts` in the extracted map,
       // and "fudge" rewrites their timestamp to the stream's LAST PARSED app timestamp +1ns. For an
       // hourly unit whose failure path emits ONLY unparsed echoes, that time-warps the headline

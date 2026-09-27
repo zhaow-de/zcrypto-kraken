@@ -335,10 +335,10 @@ The overlay-writer cycle runs at `*:12` and `*:42`, so 3 h is roughly six missed
 **What a persistent gate skip looks like, because nothing else says it out loud:** the unit is green, `ops_archive_pull_exit_code` is 0, `ops_archive_pull_last_success_timestamp` keeps advancing, the healthchecks.io dead-man keeps being pinged, and one line per tick goes into the unit journal —
 
 ```
-zcrypto-archive-pull: WARNING: writer cycle SKIPPED (fail-closed gate): <reason>
+2026-09-24 01:42:09,042 WARNING zcrypto.archive-pull [archive-pull.sh] - writer cycle SKIPPED (fail-closed gate): <reason>
 ```
 
-That line is a shell `echo`, so it carries **no `level` label** in Loki (the ops Alloy parse stage labels only Python-logging-shaped lines) and can never reach `Ops · ERROR logs`. The skip is a state, not a fault: the hours reconcile on the next healthy cycle.
+The script writes that line in the Python-logging shape the ops Alloy parse stage reads, so it carries **`level="WARNING"`** in Loki: the Logs board's WARNING filter shows it, and `Ops · ERROR logs`, which selects ERROR and CRITICAL, never pages on it. The skip is a state, not a fault: the hours reconcile on the next healthy cycle.
 
 The gate's conditions, read from `/mnt/zhao-crypto/.pull-status`, are enumerated in [`ops-node.md#zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled). The file is written by the NAS's own pull loop immediately after its primary and secondary capture pulls, so a stale one means the NAS's VPS pulls are broken or its loop is dead — **the fault is upstream, on the NAS, not here.**
 

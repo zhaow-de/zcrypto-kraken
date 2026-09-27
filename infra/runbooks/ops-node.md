@@ -265,7 +265,7 @@ The `container` label names the source, and that is your routing:
 - **`alloy`** — Alloy's own logfmt `level=error`, typically a remote-write or Loki-push failure. The telemetry plane is complaining about itself.
 - **`liquidations`** — the poller. **This rule is the only channel its ERROR lines have**: it is a long-lived daemon that flips no exit-code metric, and it direct-ships its own lines to Loki without passing through Alloy at all (no count command: `alerts.yaml` selects its ERROR lines in `zcrypto-ops-error-logs` alone).
 
-**Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the CLI's Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). The runner scripts' own `echo` lines never match it and ship unleveled — including the load-bearing `WARNING: writer cycle SKIPPED (fail-closed gate): …`. A gate-skip streak produces no ERROR page by construction.
+**Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). `archive-pull.sh` writes that shape for its own three lines — the gate skip, `reconcile failed, continuing`, `trade backfill failed` — at **WARNING**, so they show under the board's WARNING filter and never page here; the other runner scripts' `echo` lines still ship unleveled. A gate-skip streak produces no ERROR page by construction.
 
 The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.alloy`; the rule's selector is `zcrypto-.*`, so a unit the keep-regex does not admit produces no page here — extend the regex, not the selector.
 
