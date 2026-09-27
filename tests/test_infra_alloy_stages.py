@@ -241,3 +241,35 @@ def test_alloy_itself_agrees_with_the_model(tmp_path):
     if no_binary("alloy"):
         pytest.skip("no alloy binary on PATH; the model above is the guard, this is its check against the real stage engine")
     assert _run_alloy(shutil.which("alloy"), tmp_path) == EXPECTED
+
+
+# --- every timestamp stage keeps the journal's time on a miss --------------------------------------
+ALLOY_CONFIGS = sorted((REPO / "infra").rglob("*.alloy"))
+
+
+def _nested_blocks(text: str, opener: str) -> list[str]:
+    """Every `<opener> {` block at any depth, braces balanced."""
+    out, cur, depth = [], None, 0
+    for line in text.splitlines(keepends=True):
+        if cur is None and line.strip().startswith(opener):
+            cur, depth = [], 0
+        if cur is not None:
+            cur.append(line)
+            depth += line.count("{") - line.count("}")
+            if depth == 0:
+                out.append("".join(cur))
+                cur = None
+    return out
+
+
+@pytest.mark.parametrize("config", ALLOY_CONFIGS, ids=lambda p: p.relative_to(REPO).as_posix())
+def test_every_timestamp_stage_keeps_the_journal_time_on_a_miss(config):
+    """The default `fudge` stamps a line the regex missed at the stream's last parsed time plus 1 ns,
+    which dated the NAS's ssh and rsync stderr an hour before the ERROR they explained."""
+    for block in _nested_blocks(config.read_text(), "stage.timestamp"):
+        assert re.search(r'^\s*action_on_failure\s*=\s*"skip"\s*$', block, re.M), f"{config.relative_to(REPO)}:\n{block}"
+
+
+def test_the_timestamp_guard_reads_the_stages_the_tree_carries():
+    found = {c.relative_to(REPO).as_posix(): len(_nested_blocks(c.read_text(), "stage.timestamp")) for c in ALLOY_CONFIGS}
+    assert sum(found.values()) >= 2, f"the guard above ran over no timestamp stage: {found}"
