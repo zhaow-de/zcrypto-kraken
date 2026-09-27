@@ -81,4 +81,11 @@ def test_the_warmer_seeds_develop_on_a_lockfile_change_and_a_schedule_and_runs_n
     assert triggers["push"]["branches"] == ["develop"]
     assert "uv.lock" in triggers["push"]["paths"]
     assert triggers["schedule"]
-    assert not any("pytest" in str(s.get("run", "")) for s in _only_job(warmer)["steps"])
+    job = _only_job(warmer)
+    assert not any("pytest" in str(s.get("run", "")) for s in job["steps"])
+    step = _setup_uv(job)
+    # setup-uv v10.1.0 saves only when both are on; `auto` enables caching on GitHub-hosted runners.
+    assert str(step.get("with", {}).get("enable-cache", "auto")).lower() in ("auto", "true")
+    assert str(step.get("with", {}).get("save-cache", "true")).lower() == "true"
+    after = job["steps"][job["steps"].index(step) + 1 :]
+    assert any(str(s.get("run", "")).strip() == "uv sync" for s in after)
