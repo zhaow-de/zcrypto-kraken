@@ -5180,18 +5180,13 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # PersistentKeepalive 25 keeps traffic flowing, so WireGuard re-handshakes about every
-            # 120 s plus one keepalive, and a true age past its 180 s key lifetime is the link down.
-            # The reading is the age at the probe's write plus the file's age since it, each sampled
-            # once a minute, so it runs up to two minutes past the true age: the bar is the key
-            # lifetime plus the two sampling steps, and tests/test_infra_alert_rules.py derives it
-            # from the timer's OnCalendar and the scrape interval.
+            # The reading runs up to the probe's minute and the scrape's past the true age, so the bar is WireGuard's 180 s key lifetime plus both: 300.
             - evaluator: {type: gt, params: [300]}
     noDataState: OK
     execErrState: Alerting
     for: 2m
     annotations:
-      summary: "A zcache mesh member, the engine host or a cache node, reads a WireGuard handshake age past five minutes with one of its peers: the age at the probe's last write plus that file's age since, so the true age is past WireGuard's 180 s key lifetime even after the minute the probe and the minute the scrape can each add. The host this notification names is the end that reports it, and the `peer` label is the other end's mesh address: 10.98.0.1 is the engine host, 10.98.0.11 to 10.98.0.13 are Cache 1 to Cache 3. Replication or the engine's cache traffic over that link is down. Runbook: infra/runbooks/cache.md#zcrypto-cache-wg-handshake-stale"
+      summary: "A zcache mesh member, the engine host or a cache node, reads a WireGuard handshake age past five minutes with one of its peers, which even after the probe's and the scrape's minute puts the true age past WireGuard's 180 s key lifetime. The host this notification names is the end that reports it, and the `peer` label is the other end's mesh address: 10.98.0.1 is the engine host, 10.98.0.11 to 10.98.0.13 are Cache 1 to Cache 3. Replication or the engine's cache traffic over that link is down. Runbook: infra/runbooks/cache.md#zcrypto-cache-wg-handshake-stale"
       __dashboardUid__: "zcrypto-cache"
       __panelId__: "105"
       unit: "seconds since the last handshake with that peer"

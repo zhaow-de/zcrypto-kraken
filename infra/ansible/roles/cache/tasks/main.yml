@@ -11,9 +11,8 @@
       -e cache_config_reset=true re-renders this node's configs only on a converge that also carries
       -e cache_image_digest=sha256:<...>, the digest docs/reference/fleet-pins.md records for this node.
 
-# Valkey forks for AOF rewrites, RDB saves and diskless replica sync; under the kernel's heuristic
-# mode a fork on a 1 GB node can be refused, and Valkey warns at every start until this is 1. Set
-# here, beside what needs it, rather than as a group_vars copy of the hardening role's fleet keys.
+# Under the kernel's heuristic mode Valkey's fork on a 1 GB node can be refused. Set here, beside what
+# needs it, rather than as a group_vars copy of the hardening role's fleet keys.
 - name: enable memory overcommit for Valkey's forks (AOF rewrite, RDB save, replica sync)
   ansible.posix.sysctl:
     name: vm.overcommit_memory

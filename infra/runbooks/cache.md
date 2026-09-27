@@ -282,11 +282,11 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member, the engine host `zcrypto` or a cache node, reads a WireGuard handshake age past five minutes with one of its peers, the age at the probe's last write plus that file's age since. The host the notification names is the end reporting it; the `peer` label is the other end's mesh address — `10.98.0.1` the engine host, `10.98.0.11` to `10.98.0.13` Cache 1 to Cache 3. A stopped probe timer reads the same way, since the rule adds the probe file's own age.
+A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member, the engine host `zcrypto` or a cache node, reads a WireGuard handshake age past five minutes with one of its peers. The host the notification names is the end reporting it; the `peer` label is the other end's mesh address — `10.98.0.1` the engine host, `10.98.0.11` to `10.98.0.13` Cache 1 to Cache 3. A stopped probe timer reads the same way, since the rule adds the probe file's own age.
 
 ### What it means
 
-`PersistentKeepalive 25` keeps traffic on every link, so a healthy peer re-handshakes about every two minutes on the tunnel, and the reading lags the tunnel by up to two minutes, the probe's minute and the scrape's, so a healthy reading reaches about 265 s. Past 300 the link has missed WireGuard's 180 s key lifetime and is down: replication between two nodes, or the engine's cache traffic to one node, is not flowing. A link seen from both ends fires twice, once per reporting end.
+`PersistentKeepalive 25` keeps traffic on every link, so a healthy peer re-handshakes about every two minutes, and the reading runs up to two minutes behind the tunnel, the probe's minute and the scrape's. Past 300 the link has missed WireGuard's 180 s key lifetime and is down: replication between two nodes, or the engine's cache traffic to one node, is not flowing. A link seen from both ends fires twice, once per reporting end.
 
 ### What to do
 
