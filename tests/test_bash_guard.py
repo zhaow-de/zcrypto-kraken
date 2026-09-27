@@ -400,6 +400,8 @@ AGENT_IN_MAIN = [
     (f"git -C {WORKTREE} -C ../../.. commit -m x", "/tmp", f"git -C {WORKTREE} -C ../../.. commit -m x"),
     (f"cd {WORKTREE} && cd {MAIN} && git reset --hard", MAIN, "git reset --hard"),
     (f"cd {WORKTREE}/../../.. && git add f", "/tmp", "git add f"),
+    (f"pushd {MAIN} && git commit -m x", WORKTREE, "git commit -m x"),
+    (f'cd "$WT" && git -C {MAIN} commit -m x', WORKTREE, f"git -C {MAIN} commit -m x"),  # an absolute -C past an unknown cd
 ]
 
 # (command, the payload's cwd) -- admitted silently from a dispatched agent
@@ -444,6 +446,9 @@ AGENT_ADMITTED = [
     ("git merge-base develop HEAD", MAIN),
     ("git cherry develop", MAIN),
     ('cd "$WT" && git commit -m x', MAIN),  # a directory through a variable is judged as nothing
+    ("cd - && git commit -m x", MAIN),
+    ("popd && git commit -m x", MAIN),
+    (f"pushd {WORKTREE} && git commit -m x", MAIN),
     ("git commit -m x", "/tmp/elsewhere"),
     ("git commit -m x", f"{MAIN}-other"),  # a sibling sharing the main checkout's path as a prefix
 ]
