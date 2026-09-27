@@ -370,7 +370,7 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
 _THRESHOLD_PASSES = {"gt": lambda value, bar: value > bar, "lt": lambda value, bar: value < bar}
 
 
-def _fires_with_no_host_label(rule: dict, exprs: list[str]) -> bool:
+def _the_expr_can_fire_with_no_host_label(rule: dict, exprs: list[str]) -> bool:
     if all(re.match(r"\s*(?:max|min|count|sum|avg)\s*\(", e) and not re.search(r"\bby\s*\(", e) for e in exprs):
         return True
     # A `vector(N)` fallback's sample carries no label and fires wherever the rule's threshold passes N;
@@ -385,16 +385,32 @@ def _fires_with_no_host_label(rule: dict, exprs: list[str]) -> bool:
     return any(_THRESHOLD_PASSES[ev["type"]](n, ev["params"][0]) for ev in evaluators for n in fallbacks)
 
 
-def test_a_rule_that_pins_one_host_and_fires_with_no_host_label_is_in_the_uid_map():
+def test_the_uid_map_is_every_rule_that_pins_one_host_and_can_fire_with_no_host_label():
     rules = yaml.safe_load((Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml").read_text())["rules"]
-    owed = {}
+    owed, reasons = {}, set()
     for rule in rules:
         exprs = [q["model"]["expr"] for q in rule["data"] if (q.get("model") or {}).get("expr")]
-        hosts = {host for expr in exprs for host in re.findall(r'host="([^"]+)"', expr)}
-        if exprs and len(hosts) == 1 and _fires_with_no_host_label(rule, exprs):
+        matchers = [m for expr in exprs for m in re.findall(r'\bhost\s*(=~|!=|!~|=)\s*"([^"]*)"', expr)]
+        hosts = {value for op, value in matchers if op == "="}
+        # A host matcher other than `=` can reach hosts the literal does not name, and a uid names one host.
+        if not exprs or len(hosts) != 1 or any(op != "=" for op, _ in matchers):
+            continue
+        # A NoData or error firing can arrive on an instance with no series behind it, so with no `host`
+        # whatever the expr keeps, and the rules read admits both: `Alerting (NoData)`, `Alerting (Error)`.
+        why = {state for state in ("noDataState", "execErrState") if rule.get(state) == "Alerting"}
+        if _the_expr_can_fire_with_no_host_label(rule, exprs):
+            why.add("expr")
+        if why:
             owed[rule["uid"]] = hosts.pop()
-    assert {"zcrypto-alloy-dark-ops", "zcrypto-capture-log-dead-primary"} <= owed.keys(), sorted(owed)
-    assert {uid: host for uid, host in owed.items() if ops_daily._UID_HOST.get(uid) != host} == {}
+            reasons |= {(reason, rule["uid"]) for reason in why}
+    witnesses = {
+        ("expr", "zcrypto-alloy-dark-ops"),
+        ("expr", "zcrypto-capture-log-dead-primary"),
+        ("noDataState", "zcrypto-engine-cycle-stale"),
+        ("execErrState", "zcrypto-engine-cycle-failed"),
+    }
+    assert witnesses <= reasons, sorted(witnesses - reasons)
+    assert owed == ops_daily._UID_HOST
 
 
 def test_an_instance_host_label_wins_over_the_uid_map():
