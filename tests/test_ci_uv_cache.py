@@ -39,7 +39,7 @@ def test_the_warmer_and_the_suite_compute_the_same_cache_key():
     assert suite["with"]["cache-dependency-glob"] == "uv.lock"
 
 
-def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool) -> str:
+def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool, has_base: bool = True) -> str:
     (lock,) = [s for s in _only_job(_load(COVERAGE))["steps"] if s.get("id") == "lock"]
     repo = tmp_path / "repo"
     repo.mkdir(parents=True)
@@ -51,7 +51,8 @@ def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool) -> str:
     (repo / "uv.lock").write_text("base\n")
     git("add", "uv.lock")
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base")
-    git("update-ref", "refs/remotes/origin/develop", "HEAD")
+    if has_base:
+        git("update-ref", "refs/remotes/origin/develop", "HEAD")
     if lockfile_changed:
         (repo / "uv.lock").write_text("changed\n")
         git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "the pull request")
@@ -73,6 +74,7 @@ def test_a_pull_request_saves_the_cache_only_when_it_changes_the_lockfile(tmp_pa
     assert job["steps"].index(lock) < job["steps"].index(step)
     assert _lock_step_output(tmp_path / "same", lockfile_changed=False) == "changed=false\n"
     assert _lock_step_output(tmp_path / "moved", lockfile_changed=True) == "changed=true\n"
+    assert _lock_step_output(tmp_path / "no-base", lockfile_changed=False, has_base=False) == "changed=true\n"
 
 
 def test_the_warmer_seeds_develop_on_a_lockfile_change_and_a_schedule_and_runs_no_suite():
