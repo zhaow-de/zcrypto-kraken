@@ -366,7 +366,7 @@ ______________________________________________________________________
 
 A **warning** Grafana alert (`Reconciler · capture mirror lagging`): `max by (source) (zcrypto_reconcile_source_lag_seconds)` above 10800 s (3 h) for 10 minutes. **One instance per mirror** — the `source` label reads `primary` or `secondary` and names which one, and the two fire independently.
 
-The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so the healthy steady state is a sawtooth from a little over 1 h, at the writer tick after a pull, to well past 2 h just before the next one: the daily pass has read 7936 s on an ordinary day, which leaves the 3 h bar under an hour of margin.
+The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so the healthy steady state is a sawtooth from a little over 1 h, at the writer tick after a pull, to well past 2 h just before the next one, under an hour below the 3 h bar.
 
 ### What it means
 
@@ -394,7 +394,7 @@ Read the `source` label first, because the two directions mean very different th
 3. **Discriminate the capture host from its pull channel.** The host's own signals answer the first half — `zcrypto-capture-all-streams-silent` / `-stream-silent` and [`capture.md`](capture.md). `cat /mnt/zhao-crypto/.pull-status` answers the second: `capture_ok=0` or `secondary_ok=0` is the NAS telling you which pull failed, and its `zcrypto-nas-archive-pull-errors` / `-stalled` rules carry the reason.
 4. **`+Inf`: do not attempt to repopulate the tree from ops.** The mount is read-only by role and writing through a soft mount can corrupt silently; the mirror is the NAS's to restore, and pushes go only through its own rrsync channel (no count command: the nas role's hot-push key, an rrsync forced command, is its one write path).
 5. **Do not converge or restart a capture host on this signal alone** (`.claude/rules/fleet-deploys.md`) — a converge on the primary restarts live, unbackfillable capture, and this alert has not yet said the daemon is at fault.
-6. **All-clear by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_reconcile_source_lag_seconds'` shows both sources back under the 10800 s bar, falling to about 4300 s at the first `:12`/`:42` writer tick after the next NAS pull; a reading above 7200 s is not on its own a fault still standing, since the healthy sawtooth passes it.
+6. **All-clear by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_reconcile_source_lag_seconds'` shows both sources back under the 10800 s bar, and a little over 1 h at the first `:12`/`:42` writer tick after the next NAS pull.
 
 ### Retire when
 
