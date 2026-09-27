@@ -754,9 +754,10 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     # A pending reboot is the normal state between a kernel patch and its attended window, so it is
     # absent from `ok` by design: conflating it with a failed upgrade would report attention on every
     # one of those days and bury the failed patch this check exists to surface.
-    # With no exit recorded, `Result` and `ExecMainStatus` are systemd's reset values and describe no
-    # finished run, so the stamp decides alone.
-    ran_ok = ran is None or (result == "success" and status == "0")
+    # With no exit recorded, `Result` and `ExecMainStatus` still decide: after a boot or during a run
+    # they are systemd's reset values, which pass and leave the verdict to the stamp, and a start that
+    # failed before its main process ran leaves a failed `Result`, which fails the row.
+    ran_ok = result == "success" and status == "0"
     return Check(
         UPGRADE_CHECK,
         " ".join(UPGRADE_COMMAND),

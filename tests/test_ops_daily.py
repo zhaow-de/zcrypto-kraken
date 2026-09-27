@@ -2406,6 +2406,14 @@ def test_an_empty_exit_timestamp_beside_a_stale_stamp_is_attention():
     assert _report(verdict=[check]).exit_code == 1
 
 
+@pytest.mark.parametrize("result", ["exit-code", "resources", "start-limit-hit"])
+def test_an_empty_exit_timestamp_beside_a_failed_result_is_attention(result):
+    check = _upgrade(_host_answering(ExecMainExitTimestamp="", Result=result))
+    assert "no exit recorded" in check.value, check.value
+    assert check.ok is False, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
 def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
     """`Result=success` and `ExecMainStatus=0` are what systemd reports for a unit that has NEVER run,
     with `ExecMainExitTimestamp` empty and no stamp written -- so those two fields alone cannot pass a
