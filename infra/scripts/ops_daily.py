@@ -61,11 +61,8 @@ _UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexE
 HISTORY_CHUNK = timedelta(hours=6)
 HISTORY_PAGE_LIMIT = 5000
 
-# These rules pin one host and fire with no `host` label: their expr aggregates it away
-# (`count(up{host="ops"}) or on() vector(0)`), or only its label-less `or on() vector(0)` sample can
-# pass the threshold (`sum by (host) (count_over_time({host="ops", …}[6h])) or on() vector(0)` below 1).
-# Without this map the pass cannot tell an Alloy restart that is routine on ops from the same restart on
-# the capture pair, which is attended.
+# These rules pin one host and fire with no `host` label, so without this map the pass cannot tell an
+# Alloy restart that is routine on ops from the same restart on the capture pair, which is attended.
 _UID_HOST = {
     "zcrypto-engine-dark-with-exposure": "zcrypto",
     "zcrypto-engine-log-dead": "zcrypto",
@@ -769,9 +766,6 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     # A pending reboot is the normal state between a kernel patch and its attended window, so it is
     # absent from `ok` by design: conflating it with a failed upgrade would report attention on every
     # one of those days and bury the failed patch this check exists to surface.
-    # With no exit recorded, `Result` and `ExecMainStatus` still decide: after a boot or during a run
-    # they are systemd's reset values, which pass and leave the verdict to the stamp, and a start that
-    # failed before its main process ran leaves a failed `Result`, which fails the row.
     ran_ok = result == "success" and status == "0"
     return Check(
         UPGRADE_CHECK,

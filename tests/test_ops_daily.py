@@ -1071,8 +1071,6 @@ def test_the_history_admits_a_real_firing_and_its_nodata_sentinel_but_not_a_data
 
 
 def test_a_history_alert_takes_the_host_from_its_own_labels():
-    """A history row carries its own labels, and `_UID_HOST` names only the handful of rules that fire
-    with no host label -- so falling straight to the map prints `on ?` for most rules."""
     rules = _rules(
         {
             "name": "Gate · exporter stale",
