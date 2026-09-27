@@ -2329,6 +2329,97 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-disk-low
+    title: "Ops · root filesystem low"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The threshold and the duration are zaccess-disk-high's. `/` here holds `/home` too, the
+      # operator's checkouts and their unversioned `data/`; `/mnt/zhao-crypto` is the NAS's export,
+      # which zcrypto-nas-disk-low watches, and `/tmp` is a tmpfs whose limit is inodes, not bytes.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_avail_bytes{host="ops", mountpoint="/"}
+            / node_filesystem_size_bytes{host="ops", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.15]}  # < 15% free
+    # A dark host is zcrypto-alloy-dark-ops's page.
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The ops node's root filesystem has been below 15% free for 30+ minutes. It holds the ops timers' images and state, the reconcile ledger among it, and the operator's checkouts with their datasets; on a full disk the timers' writes fail. Removing anything is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-disk-low"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the root filesystem still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-inodes-low
+    title: "Ops · inodes low"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # One instance per mountpoint. `/tmp` is a tmpfs capped at 1,048,576 inodes where the Claude
+      # Code sessions keep their scratch trees, and a full inode table fails every `docker run` the
+      # ops timers make with bytes to spare. The bar and `for` are sized in
+      # tests/test_infra_alert_rules.py against the fastest fill rate seen.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_files_free{host="ops", mountpoint=~"/|/tmp"}
+            / node_filesystem_files{host="ops", mountpoint=~"/|/tmp"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.25]}  # < 25% of the inodes free
+    # A dark host is zcrypto-alloy-dark-ops's page.
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "A filesystem on the ops node has had under 25% of its inodes free for 10+ minutes; the notification names the mountpoint. On /tmp the Claude Code sessions' scratch trees are the usual holder, and a full inode table fails every ops timer's docker run while bytes remain free. Removing files is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-inodes-low"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "305"
+      unit: "of the filesystem's inodes still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-error-logs
     title: "Ops · ERROR logs"
     ruleGroup: zcrypto-ops

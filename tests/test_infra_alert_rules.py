@@ -1982,3 +1982,32 @@ def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
     threshold = next(q for q in rule["data"] if q["model"].get("type") == "threshold")
     assert threshold["model"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [1800]}
     assert rule["noDataState"] == "OK", "the series is absent until the roles converge; NoData must not page"
+
+
+# --- ops' inode rule: sized against the fastest fill seen on its tmpfs ----------------------------
+_OPS_INODES = "zcrypto-ops-inodes-low"
+# `/tmp` on ops is a tmpfs of `nr_inodes=1048576`, and the rate is the fastest refill of it read so far,
+# which the commit that sized the rule derives.
+_TMP_INODES = 1_048_576
+_FILL_PER_HOUR = 127_000
+
+
+def test_the_ops_inode_rule_reads_free_over_total_per_mountpoint_on_root_and_tmp():
+    rule = _rule(_OPS_INODES)
+    (expr,) = _prom_exprs(rule)
+    # Bare selectors on both sides, so no aggregation folds the two mountpoints into one instance.
+    free, total = (part.strip() for part in expr.split(" / "))
+    assert free.startswith("node_filesystem_files_free{") and total.startswith("node_filesystem_files{"), expr
+    for side in (free, total):
+        assert 'host="ops"' in side and 'mountpoint=~"/|/tmp"' in side, side
+    assert rule["noDataState"] == "OK", "the pair is absent until ops' Alloy ships it, and a dark host is alloy-dark-ops's page"
+
+
+def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_seen():
+    rule = _rule(_OPS_INODES)
+    evaluator = next(q for q in rule["data"] if q["model"].get("type") == "threshold")["model"]["conditions"][0]["evaluator"]
+    assert evaluator["type"] == "lt", evaluator
+    # Pending waits up to one scrape and one evaluation after the crossing, then `for` runs.
+    late = _duration_seconds(rule["for"]) + 60 + 60
+    left_at_page = evaluator["params"][0] * _TMP_INODES - _FILL_PER_HOUR * late / 3600
+    assert left_at_page >= _FILL_PER_HOUR, f"{left_at_page:.0f} inodes left at the page, under an hour at {_FILL_PER_HOUR}/h"

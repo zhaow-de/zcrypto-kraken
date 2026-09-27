@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers come from this role (`ls infra/ansible/roles/ops/templates/*.timer.j2`), each firing a `Type=oneshot` unit; the host itself shows one more, `zaccess-probe-ops.timer` from the `access_ops` role, so `systemctl list-timers` there lists eight project timers and not seven. Five of those units run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`; the two `grafana-*` units are plain scripts. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers come from this role (`ls infra/ansible/roles/ops/templates/*.timer.j2`), each firing a `Type=oneshot` unit; the host itself shows one more, `zaccess-probe-ops.timer` from the `access_ops` role, so `systemctl list-timers` there lists eight project timers and not seven. Five of those units run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`; the two `grafana-*` units are plain scripts. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average and filesystems. The host has **no `uv`** — it runs containers, not the repo CLI.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -241,6 +241,59 @@ The load is Alloy plus the timers under `infra/ansible/roles/ops/`; the overlay 
 ### Retire when
 
 `zcrypto-ops-load-high` is absent from `infra/grafana/alerts.yaml`. The metric itself is node-exporter's and will not stop existing.
+
+______________________________________________________________________
+
+<a name="zcrypto-ops-disk-low"></a>
+
+## zcrypto-ops-disk-low — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert (`Ops · root filesystem low`): `node_filesystem_avail_bytes / node_filesystem_size_bytes` on `host="ops"`, `mountpoint="/"`, below 0.15 for 30 minutes. `noDataState: OK`, since a dark host is `zcrypto-alloy-dark-ops`'s page. The `Fleet health` board's *Filesystem free % by mountpoint* panel (301) draws the ops line against its red line at 0.15.
+
+### What it means
+
+The root filesystem holds `/home` as well as the system. On it sit the Docker images the ops timers run from, under `/var/lib/docker`; the timers' own state under `/var/lib/zcrypto-ops`, the reconcile ledger among it; the journal; and the operator's checkouts of this repository with their worktrees and their gitignored `data/`, the canonical datasets, which are unversioned and have no copy to restore from. A full disk fails the timers' textfile and ledger writes and the next image pull. `/mnt/zhao-crypto` is the NAS's export on a filesystem of its own, which `zcrypto-nas-disk-low` watches, and `/tmp` is a tmpfs that runs out of inodes before bytes: `zcrypto-ops-inodes-low` below.
+
+### What to do
+
+1. **Read what fills it**, on the host (`ssh hp`): `df -h /`, then `sudo du -xh -d 2 / 2>/dev/null | sort -h | tail -25`. `-x` keeps the walk on this filesystem, so the NFS mount and the tmpfs stay out of it.
+2. **Removing anything is the operator's decision**, and this section names candidates, not steps to run. The usual ones: stale images, listed by `uv run python infra/scripts/prune-host-images.py zcrypto-ops` from a checkout (`--apply` is what removes them, and `--keep <digest12>` spares one staged for a converge); the journal, `sudo journalctl --vacuum-size=<size>`; a finished session's worktree or a checkout's `.tmp/`.
+3. **A checkout's `data/` is the owner's alone to touch**: those datasets exist nowhere else, and a copy is set aside before a tool rewrites one.
+4. **`/var/lib/zcrypto-ops` is not reclaimable space.** The reconcile ledger is the record of what each hour's reconcile decided, and a verify-replay state directory lost is a rebuild that takes nights (`zcrypto-ops-load-high` step 4).
+5. **Confirm by value**: panel 301's ops line back above 0.15, and the rule back to Normal.
+
+### Retire when
+
+`zcrypto-ops-disk-low` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-ops-inodes-low"></a>
+
+## zcrypto-ops-inodes-low — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert (`Ops · inodes low`): free inodes over total, `node_filesystem_files_free / node_filesystem_files` on `host="ops"` for the mountpoints `/` and `/tmp`, below 0.25 for 10 minutes. One instance per mountpoint, and the notification's `mountpoint` label names which. `noDataState: OK`, since a dark host is `zcrypto-alloy-dark-ops`'s page. The `Fleet health` board's *Ops inodes free* panel (305) draws both against the red line at 0.25.
+
+### What it means
+
+A filesystem out of inodes refuses to create a file however many bytes it still has free, and the free-space panels cannot show it. `/tmp` is the one at risk: a tmpfs capped at 1,048,576 inodes, where the Claude Code sessions on this host keep their scratch trees, and a checkout or a dependency tree there costs hundreds of thousands. When it runs out, a `docker run` fails before its container starts (`failed to create temp dir: mkdir /tmp/containerd-mount…: no space left on device`), so the ops timers' runs fail with it and `zcrypto-ops-archive-pull-exit-nonzero` is the usual first page. The overlay writer reconciles a 48 h window, so ticks lost this way are made good by the first clean one inside it. `/` is ext4, its inode table sized with the disk, and is watched for the same failure.
+
+The bar leaves time to act: at the fastest fill seen on `/tmp`, about 127,000 inodes an hour, the page lands with a little under two hours to go.
+
+### What to do
+
+1. **Read which filesystem and how full**, on the host (`ssh hp`): `df -i / /tmp`.
+2. **Find what holds the inodes**: `sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20`, or over `/` with `-d 3` when `/` is the one named. The sessions' scratch trees sit under `/tmp/claude-<uid>/`, one directory per session.
+3. **Removing files is the operator's decision.** A scratch tree belongs to a session that may still be reading it: ask the session that owns it, or the owner, before anything under `/tmp/claude-<uid>/` goes. A reboot empties the tmpfs, but it also ends the sessions and restarts the host's timers mid-run, so it is not the remedy here.
+4. **Confirm by value**: `df -i /tmp` and panel 305 back above 0.25; then the next `:12`/`:42` writer tick exits 0, which clears `zcrypto-ops-archive-pull-exit-nonzero` if it paged.
+
+### Retire when
+
+`zcrypto-ops-inodes-low` is absent from `infra/grafana/alerts.yaml`, or `node_filesystem_files_free` is no longer admitted by the keep regex in `infra/ansible/roles/ops/files/config.alloy`.
 
 ______________________________________________________________________
 
