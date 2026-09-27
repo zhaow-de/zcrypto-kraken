@@ -61,11 +61,20 @@ _UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexE
 HISTORY_CHUNK = timedelta(hours=6)
 HISTORY_PAGE_LIMIT = 5000
 
-# These rules pin one host and aggregate it away in their own expr (`count(up{host="ops"}) or on()
-# vector(0)`), so the firing instance carries only `severity`. Without this map the pass cannot tell an
-# Alloy restart that is routine on ops from the same restart on the capture pair, which is attended.
+# These rules pin one host and fire with no `host` label: their expr aggregates it away
+# (`count(up{host="ops"}) or on() vector(0)`), or only its label-less `or on() vector(0)` sample can
+# pass the threshold (`sum by (host) (count_over_time({host="ops", …}[6h])) or on() vector(0)` below 1).
+# Without this map the pass cannot tell an Alloy restart that is routine on ops from the same restart on
+# the capture pair, which is attended.
 _UID_HOST = {
     "zcrypto-engine-dark-with-exposure": "zcrypto",
+    "zcrypto-engine-log-dead": "zcrypto",
+    "zcrypto-capture-log-dead-primary": "zcrypto",
+    "zcrypto-capture-log-dead-secondary": "zcrypto-red",
+    "zcrypto-ops-log-pipeline-dead": "ops",
+    "zcrypto-ops-poller-log-dead": "ops",
+    "zcrypto-ops-unit-parse-dead": "ops",
+    "zcrypto-ops-journal-transport-dead": "ops",
     "zcrypto-alloy-dark-ops": "ops",
     "zcrypto-alloy-dark-nas": "nas",
     "zcrypto-alloy-dark-zaccess": "zaccess",

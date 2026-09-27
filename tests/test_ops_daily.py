@@ -367,16 +367,33 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
     assert read.firing_now[0].hosts == (expected,)
 
 
-def test_a_rule_that_pins_one_host_and_aggregates_it_away_is_in_the_uid_map():
+_THRESHOLD_PASSES = {"gt": lambda value, bar: value > bar, "lt": lambda value, bar: value < bar}
+
+
+def _fires_with_no_host_label(rule: dict, exprs: list[str]) -> bool:
+    if all(re.match(r"\s*(?:max|min|count|sum|avg)\s*\(", e) and not re.search(r"\bby\s*\(", e) for e in exprs):
+        return True
+    # A `vector(N)` fallback's sample carries no label and fires wherever the rule's threshold passes N;
+    # a math node changes the value the threshold sees, so a rule carrying one is owed unjudged.
+    fallbacks = [float(n) for e in exprs for n in re.findall(r"\bor\s+(?:on\s*\(\s*\)\s*)?vector\s*\(\s*(-?[\d.]+)\s*\)", e)]
+    if not fallbacks:
+        return False
+    models = {q["refId"]: q.get("model") or {} for q in rule["data"]}
+    if any(model.get("type") == "math" for model in models.values()):
+        return True
+    evaluators = [c["evaluator"] for c in models[rule["condition"]]["conditions"]]
+    return any(_THRESHOLD_PASSES[ev["type"]](n, ev["params"][0]) for ev in evaluators for n in fallbacks)
+
+
+def test_a_rule_that_pins_one_host_and_fires_with_no_host_label_is_in_the_uid_map():
     rules = yaml.safe_load((Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml").read_text())["rules"]
     owed = {}
     for rule in rules:
         exprs = [q["model"]["expr"] for q in rule["data"] if (q.get("model") or {}).get("expr")]
         hosts = {host for expr in exprs for host in re.findall(r'host="([^"]+)"', expr)}
-        aggregated = all(re.match(r"\s*(?:max|min|count|sum|avg)\s*\(", e) and not re.search(r"\bby\s*\(", e) for e in exprs)
-        if exprs and aggregated and len(hosts) == 1:
+        if exprs and len(hosts) == 1 and _fires_with_no_host_label(rule, exprs):
             owed[rule["uid"]] = hosts.pop()
-    assert "zcrypto-alloy-dark-ops" in owed, sorted(owed)
+    assert {"zcrypto-alloy-dark-ops", "zcrypto-capture-log-dead-primary"} <= owed.keys(), sorted(owed)
     assert {uid: host for uid, host in owed.items() if ops_daily._UID_HOST.get(uid) != host} == {}
 
 
@@ -1053,8 +1070,8 @@ def test_the_history_admits_a_real_firing_and_its_nodata_sentinel_but_not_a_data
 
 
 def test_a_history_alert_takes_the_host_from_its_own_labels():
-    """A history row carries its own labels, and `_UID_HOST` names only the handful of rules whose
-    expr aggregates the host away -- so falling straight to the map prints `on ?` for most rules."""
+    """A history row carries its own labels, and `_UID_HOST` names only the handful of rules that fire
+    with no host label -- so falling straight to the map prints `on ?` for most rules."""
     rules = _rules(
         {
             "name": "Gate · exporter stale",
