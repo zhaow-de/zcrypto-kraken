@@ -8,10 +8,13 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 COVERAGE = WORKFLOWS / "coverage.yml"
 WARMER = WORKFLOWS / "uv-cache.yml"
-# setup-uv folds each of these into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
-# with the runner's OS and the action's own version: one differing input splits the two workflows
-# onto keys neither ever restores from the other.
-KEY_INPUTS = ("python-version", "cache-dependency-glob", "prune-cache", "cache-python", "cache-suffix")
+# setup-uv folds the first five into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
+# with the runner's OS and the action's own version, and `cache-local-path` decides the path the cache
+# is saved under, which a restore must match too: one differing input splits the two workflows onto
+# caches neither ever restores from the other.
+KEY_INPUTS = ("python-version", "cache-dependency-glob", "prune-cache", "cache-python", "cache-suffix", "cache-local-path")
+# uv reads these over the directory setup-uv caches, so either one set anywhere leaves it empty.
+CACHE_OVERRIDES = ("UV_NO_CACHE", "UV_CACHE_DIR")
 SAVE_WHEN_THE_LOCK_CHANGED = "${{ steps.lock.outputs.changed == 'true' }}"
 
 
@@ -77,6 +80,23 @@ def test_a_pull_request_saves_the_cache_only_when_it_changes_the_lockfile(tmp_pa
     assert _lock_step_output(tmp_path / "no-base", lockfile_changed=False, has_base=False) == "changed=true\n"
 
 
+def _envs(workflow: dict) -> list[dict]:
+    job = _only_job(workflow)
+    return [workflow.get("env") or {}, job.get("env") or {}, *(s.get("env") or {} for s in job["steps"])]
+
+
+def test_neither_workflow_can_switch_the_cache_off_or_skip_the_steps_that_fill_it():
+    for path in (COVERAGE, WARMER):
+        workflow = _load(path)
+        job = _only_job(workflow)
+        step = _setup_uv(job)
+        inputs = step.get("with", {})
+        assert str(inputs.get("enable-cache", "auto")).lower() in ("auto", "true"), path.name
+        assert str(inputs.get("restore-cache", "true")).lower() == "true", path.name
+        assert "if" not in job and "if" not in step, path.name
+        assert not {name for env in _envs(workflow) for name in env} & set(CACHE_OVERRIDES), path.name
+
+
 def test_the_warmer_seeds_develop_on_a_lockfile_change_and_a_schedule_and_runs_no_suite():
     warmer = _load(WARMER)
     triggers = warmer.get("on", warmer.get(True))
@@ -86,8 +106,6 @@ def test_the_warmer_seeds_develop_on_a_lockfile_change_and_a_schedule_and_runs_n
     job = _only_job(warmer)
     assert not any("pytest" in str(s.get("run", "")) for s in job["steps"])
     step = _setup_uv(job)
-    # setup-uv v10.1.0 saves only when both are on; `auto` enables caching on GitHub-hosted runners.
-    assert str(step.get("with", {}).get("enable-cache", "auto")).lower() in ("auto", "true")
     assert str(step.get("with", {}).get("save-cache", "true")).lower() == "true"
     after = job["steps"][job["steps"].index(step) + 1 :]
-    assert any(str(s.get("run", "")).strip() == "uv sync" for s in after)
+    assert any(str(s.get("run", "")).strip() == "uv sync" and "if" not in s for s in after)
