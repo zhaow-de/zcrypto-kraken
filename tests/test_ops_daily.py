@@ -2341,11 +2341,43 @@ def test_no_field_the_upgrade_reader_reads_is_dropped_from_the_command():
         assert f'echo "{echoed}=' in body, (echoed, body)
 
 
+def test_an_empty_exit_timestamp_after_a_reboot_is_a_reading_and_the_stamp_decides():
+    """systemd empties `ExecMainExitTimestamp` at boot and leaves it empty until the timer's next run,
+    so the reboot round's own day reads this way; the stamp file is what survives the reboot."""
+    check = _upgrade(_host_answering(ExecMainExitTimestamp=""))
+    assert not check.value.startswith("unreadable"), check.value
+    assert "no run since boot" in check.value, check.value
+    assert check.ok is True, check.value
+    assert _report(verdict=[check]).exit_code == 0
+
+
+def test_an_empty_exit_timestamp_beside_a_stale_stamp_is_attention():
+    stale = _UPGRADE_NOW - (ops_daily.UPGRADE_STALE_AFTER + timedelta(hours=1))
+    check = _upgrade(_host_answering(ExecMainExitTimestamp="", StampEpoch=str(int(stale.timestamp()))))
+    assert "no run since boot" in check.value, check.value
+    assert check.ok is False, check.value
+    assert _report(verdict=[check]).exit_code == 1
+
+
 def test_a_unit_that_never_ran_is_unreadable_rather_than_the_pass_its_two_fields_alone_would_give():
     """`Result=success` and `ExecMainStatus=0` are what systemd reports for a unit that has NEVER run,
-    with `ExecMainExitTimestamp` empty -- so the timestamp is parsed rather than merely printed, and
-    those two fields alone cannot pass a host whose upgrade has never happened."""
-    check = _upgrade(_host_answering(ExecMainExitTimestamp=""))
+    with `ExecMainExitTimestamp` empty and no stamp written -- so those two fields alone cannot pass a
+    host whose upgrade has never happened."""
+    check = _upgrade(_host_answering(ExecMainExitTimestamp="", StampEpoch=""))
+    assert check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 2
+
+
+def test_an_exit_timestamp_present_but_unparseable_stays_unreadable():
+    check = _upgrade(_host_answering(ExecMainExitTimestamp="n/a"))
+    assert check.value.startswith("unreadable: "), check.value
+    assert _report(verdict=[check]).exit_code == 2
+
+
+def test_an_exit_timestamp_absent_from_the_answer_stays_unreadable():
+    answer = _host_answering()(ops_daily.UPGRADE_COMMAND)
+    kept = "".join(f"{line}\n" for line in answer.splitlines() if not line.startswith("ExecMainExitTimestamp="))
+    check = ops_daily.read_unattended_upgrades(now=_UPGRADE_NOW, runner=lambda command: kept)
     assert check.value.startswith("unreadable: "), check.value
     assert _report(verdict=[check]).exit_code == 2
 

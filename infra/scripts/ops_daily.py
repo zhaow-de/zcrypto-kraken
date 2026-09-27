@@ -724,20 +724,18 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
         status = fields["ExecMainStatus"]
         # systemd's human form, not ISO. The weekday is dropped rather than matched with `%a`, whose
         # abbreviations follow the RUNNER's locale and would make this parse fail off an English one.
-        # A field systemd leaves empty raises here, and a record this cannot read is the same finding
-        # as a host it cannot reach -- the convention `read_verdict` already follows.
-        ran = datetime.strptime(fields["ExecMainExitTimestamp"].split(" ", 1)[-1], "%Y-%m-%d %H:%M:%S %Z").replace(
-            tzinfo=timezone.utc
-        )
+        # systemd empties the field at boot and leaves it empty until the timer's next run, so empty
+        # is a reading; a value this cannot parse raises, and a record this cannot read is the same
+        # finding as a host it cannot reach.
+        exited = fields["ExecMainExitTimestamp"]
+        ran = datetime.strptime(exited.split(" ", 1)[-1], "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc) if exited else None
         age = now - datetime.fromtimestamp(int(fields["StampEpoch"]), timezone.utc)
     # An unreachable host, a timeout and a non-zero ssh are all `unreadable`, never a FAIL: a FAIL
     # here says the host's patching is broken, which is not what a dropped connection shows.
     except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
         return Check(UPGRADE_CHECK, " ".join(UPGRADE_COMMAND), ok=False, value=f"unreadable: {exc}")
-    value = (
-        f"Result={result}, ExecMainStatus={status}, "
-        f"last run {ran:%Y-%m-%dT%H:%M:%SZ}, stamp {int(age.total_seconds() // 3600)} h old"
-    )
+    last = f"last run {ran:%Y-%m-%dT%H:%M:%SZ}" if ran else "no run since boot"
+    value = f"Result={result}, ExecMainStatus={status}, {last}, stamp {int(age.total_seconds() // 3600)} h old"
     # Informational, and deliberately not a Check of its own: a row that can never read FAIL is a
     # guard that cannot fail. The operator choosing an attended reboot window wants WHICH packages
     # `node_reboot_required` is already flagging.
@@ -746,10 +744,13 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     # A pending reboot is the normal state between a kernel patch and its attended window, so it is
     # absent from `ok` by design: conflating it with a failed upgrade would report attention on every
     # one of those days and bury the failed patch this check exists to surface.
+    # With no run since boot, `Result` and `ExecMainStatus` are systemd's defaults and describe no run,
+    # so the stamp, which the reboot leaves in place, decides alone.
+    ran_ok = ran is None or (result == "success" and status == "0")
     return Check(
         UPGRADE_CHECK,
         " ".join(UPGRADE_COMMAND),
-        ok=result == "success" and status == "0" and age <= UPGRADE_STALE_AFTER,
+        ok=ran_ok and age <= UPGRADE_STALE_AFTER,
         value=value,
     )
 
