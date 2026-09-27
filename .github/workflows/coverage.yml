@@ -30,9 +30,23 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # On a key develop already holds (uv-cache.yml seeds it), setup-uv restores it and skips the save
+      # by itself; this rule decides the miss. A pull request that changes the lockfile saves its own
+      # key for its later pushes; any other leaves the save to uv-cache.yml rather than writing a copy
+      # under its merge ref, which no other pull request can read. A failed comparison counts as
+      # changed, so that run still saves.
+      - id: lock
+        run: |
+          if git diff --quiet origin/develop -- uv.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.14"
+          cache-dependency-glob: uv.lock
+          save-cache: ${{ steps.lock.outputs.changed == 'true' }}
       # The branch under the name the tooling reads: a pull_request checkout is detached at the
       # merge ref with only `origin/develop`, and `count-list.sh` refuses a checkout with no local
       # `develop`, which left nine of `tests/test_count_list.py`'s cases skipping here.

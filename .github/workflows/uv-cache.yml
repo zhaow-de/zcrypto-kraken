@@ -1,0 +1,27 @@
+name: uv cache
+
+on:
+  # Seeds setup-uv's cache on develop, the one ref every pull request can restore from: a PR run
+  # reads only its own merge ref, its base branch and the default branch, and coverage.yml runs on
+  # pull requests alone. A push that changes the lockfile writes the new key; the schedule keeps the
+  # key read inside GitHub's seven-day eviction through a week with no pull request.
+  push:
+    branches: [develop]
+    paths: [uv.lock, .github/workflows/uv-cache.yml]
+  schedule:
+    - cron: "17 3 * * 1,4"
+  workflow_dispatch: {}
+
+jobs:
+  warm:
+    name: uv cache
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          python-version: "3.14"
+          cache-dependency-glob: uv.lock
+      - run: uv sync

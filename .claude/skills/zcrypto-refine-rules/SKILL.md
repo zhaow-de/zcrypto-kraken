@@ -17,7 +17,7 @@ A line lands on one of four grounds, or it does not land:
 3. it is a recurring cross-session failure with an existing check;
 4. the owner kept it by name.
 
-Net ambient growth is the owner's word, in a round or outside one: a coordinator cannot grant it and a session cannot grant its own. A session does not author a change to the instruction set that governs it, so a guidance change rides its own branch, never a payload's.
+Net ambient growth is the owner's word, in a round or outside one: a coordinator cannot grant it and a session cannot grant its own. A guidance change rides its own `claude(` commit and may share the payload's branch.
 
 Three tests on the line as written, two of them the guard's:
 

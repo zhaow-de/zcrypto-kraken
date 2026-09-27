@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "infra" / "scripts" / "workspace-transport.zsh"
-SETTINGS = REPO / ".claude" / "settings.json"
 
-_ROOT = re.compile(r"""^CLAUDE_TMP_ROOT="\$\(jq -r '(?P<filter>[^']+)' "\$REPO_DIR/\.claude/settings\.json"\)"$""", re.M)
+_ROOT = re.compile(r"^CLAUDE_TMP_ROOT=.*$", re.M)
 _ROOTS = re.compile(r"^typeset -aU SCRATCH_ROOTS=\((?P<roots>[^)]*)\)$", re.M)
 _SCRATCH = r"\$root/claude-\$UID/\$PROJECT_SLUG"
 _STEP = re.compile(
@@ -21,22 +22,28 @@ _STEP = re.compile(
 _MKDIR = (
     r'^    "\$\{RSYNC\[@\]\}" --delete --rsync-path="mkdir -m 700 -p \$\{\(q\)root\} \$\{\(q\)root\}/claude-\$UID && rsync" \\$'
 )
-_JQ_CHECK = re.compile(
-    r'^command -v jq >/dev/null 2>&1 \|\| die "(?P<message>[^"]*)"\nCLAUDE_TMP_ROOT="\$\(jq -r ',
-    re.M,
+
+
+@pytest.mark.parametrize(
+    ("launch_env", "root"),
+    [
+        ({"CLAUDE_CODE_TMPDIR": "/home/u/.cache/claude-tmp"}, "/home/u/.cache/claude-tmp"),
+        ({}, "/tmp"),
+        ({"CLAUDE_CODE_TMPDIR": ""}, "/tmp"),
+    ],
+    ids=["named", "unset", "empty"],
 )
+def test_the_temp_root_is_the_launch_environments_and_tmp_when_it_names_none(launch_env, root):
+    (line,) = _ROOT.findall(SCRIPT.read_text())
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_TMPDIR"} | launch_env
+    # `sh` reads the zsh script's line: this expansion means the same in both, and the suite then needs no zsh.
+    read = subprocess.run(
+        ["sh", "-c", f"{line}\nprintf '%s\\n' \"$CLAUDE_TMP_ROOT\""], env=env, capture_output=True, text=True, check=True
+    )
+    assert read.stdout == f"{root}\n", read
 
 
-def test_the_temp_root_the_script_reads_is_the_settings_override():
-    line = _ROOT.search(SCRIPT.read_text())
-    assert line, "the script no longer reads CLAUDE_TMP_ROOT out of .claude/settings.json with jq"
-    read = subprocess.run(["jq", "-r", line.group("filter"), str(SETTINGS)], capture_output=True, text=True, check=True).stdout
-    expected = json.loads(SETTINGS.read_text())["env"]["CLAUDE_CODE_TMPDIR"]
-    assert read.strip() == expected, f"the script's filter reads {read.strip()!r}; the settings say {expected!r}"
-    assert Path(expected).is_absolute(), expected
-
-
-def test_the_scratchpad_step_walks_the_settings_root_and_tmp_the_cli_default():
+def test_the_scratchpad_step_walks_the_launch_root_and_tmp_the_cli_default():
     roots = _ROOTS.search(SCRIPT.read_text())
     assert roots, "the scratchpad step no longer walks a SCRATCH_ROOTS array"
     assert roots.group("roots") == '"$CLAUDE_TMP_ROOT" /tmp', roots.group("roots")
@@ -53,11 +60,3 @@ def test_the_scratchpad_step_syncs_the_per_uid_directory_under_each_root_to_the_
         "the source or the destination is no longer the per-uid directory under the root walked"
     )
     assert not re.search(r"/tmp/claude", text), "a literal per-uid directory is back in the script"
-
-
-def test_the_jq_check_dies_naming_jq_and_its_remedy_on_the_line_above_the_read_it_guards():
-    text = SCRIPT.read_text()
-    check = _JQ_CHECK.search(text)
-    assert check, "the jq check is gone, or is no longer the line directly above the settings read"
-    assert re.search(r"\bjq\b.*\(apt install jq\)", check.group("message")), check.group("message")
-    assert re.search(r"^#   needs: jq on the source", text, re.M), "the header no longer names jq among the preconditions"
