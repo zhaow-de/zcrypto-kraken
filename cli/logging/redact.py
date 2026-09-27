@@ -9,7 +9,6 @@ from urllib.parse import urlsplit
 
 
 def ping_failure(url: str, exc: BaseException) -> str:
-    """`healthcheck ping failed target=<host>[/fail] error=<text or class name>`."""
     try:
         parts = urlsplit(url)
         target = parts.hostname or "?"

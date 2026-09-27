@@ -198,11 +198,9 @@ loki.process "parse" {
     // Use the app's own stamp as the entry time (Go layout; the comma is literal). "skip", not the
     // default "fudge", for a line the regex above misses -- rsync and ssh stderr, a traceback's
     // continuation lines, the entrypoint's own echoes: "fudge" stamps such a line at the stream's
-    // LAST PARSED timestamp plus 1ns, and the pull loop's failure path emits exactly those lines,
-    // so an ssh error was dated to the previous cycle's last "pull complete", an hour before the
-    // ERROR it explained. "skip" keeps the journal's capture time, the emission time to the
-    // millisecond, so a traceback still lands beside its record and a stderr line beside the
-    // failure it caused. Either way the line is passed through, never dropped.
+    // LAST PARSED timestamp plus 1ns, which on the pull loop's failure path dates a stderr line to
+    // the previous cycle. "skip" keeps the journal's capture time, so a traceback still lands beside
+    // its record and a stderr line beside the failure it caused.
     // tests/test_infra_alloy_stages.py holds every stage.timestamp under infra/ to this.
     stage.timestamp {
       source            = "ts"

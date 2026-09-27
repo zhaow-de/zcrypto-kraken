@@ -1908,8 +1908,6 @@ def test_every_clock_call_the_strategy_makes_lands_on_the_same_parameters_as_the
 
 
 def test_the_node_logs_without_colours():
-    """The unit's journal is read by the primary's Alloy, whose nautilus stage keys on the line's shape;
-    nautilus colours its stdout by default, and a coloured line opens with an escape, not a stamp."""
     config = node._logging_config()
     assert config.is_colored is False
     assert config.stdout_level == LogLevel.INFO

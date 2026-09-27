@@ -335,7 +335,7 @@ The overlay-writer cycle runs at `*:12` and `*:42`, so 3 h is roughly six missed
 **What a persistent gate skip looks like, because nothing else says it out loud:** the unit is green, `ops_archive_pull_exit_code` is 0, `ops_archive_pull_last_success_timestamp` keeps advancing, the healthchecks.io dead-man keeps being pinged, and one line per tick goes into the unit journal —
 
 ```
-2026-09-24 01:42:09,042 WARNING zcrypto.archive-pull [archive-pull.sh] - writer cycle SKIPPED (fail-closed gate): <reason>
+YYYY-MM-DD HH:MM:SS,mmm WARNING zcrypto.archive-pull [archive-pull.sh] - writer cycle SKIPPED (fail-closed gate): <reason>
 ```
 
 The script writes that line in the Python-logging shape the ops Alloy parse stage reads, so it carries **`level="WARNING"`** in Loki: the Logs board's WARNING filter shows it, and `Ops · ERROR logs`, which selects ERROR and CRITICAL, never pages on it. The skip is a state, not a fault: the hours reconcile on the next healthy cycle.

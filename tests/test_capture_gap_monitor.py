@@ -269,7 +269,6 @@ def test_disk_watermark_measurable_recovers_when_the_probe_succeeds_again(tmp_pa
 
 
 def test_a_failed_ping_logs_the_host_and_never_the_check_path(monkeypatch):
-    """The path is the check's capability, and the line ships to Grafana Cloud."""
     import urllib.error
 
     from cli.capture import gap_monitor as module

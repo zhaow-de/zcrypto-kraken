@@ -1362,8 +1362,6 @@ def test_real_builder_round_trips_through_replay_cycle(tmp_path, monkeypatch):
 
 
 def test_a_failed_ping_logs_the_host_and_the_fail_flag_and_never_the_check_path(monkeypatch):
-    """The arm catches a bare Exception, and a ValueError from urllib quotes the whole URL, so the
-    line carries the class name where the text could carry the path."""
     from tests.logcapture import messages_of
 
     uuid = "1c1ab0a3-0d68-4c47-9a67-3b8c0f0e7c9d"

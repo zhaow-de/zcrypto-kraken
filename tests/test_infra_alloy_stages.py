@@ -106,12 +106,20 @@ def _parse_body(text: str) -> str:
     return body[: body.index("\n}\n")]
 
 
+def _assigned(block: str, key: str) -> str | None:
+    """The value the `<key> = "..."` line of `block` assigns; a commented-out copy opens with `//` and is not it."""
+    for line in block.splitlines():
+        if m := re.fullmatch(rf'{re.escape(key)}\s*=\s*"((?:[^"\\]|\\.)*)"', line.strip()):
+            return _alloy_string(m.group(1))
+    return None
+
+
 def _engine_blocks() -> tuple[str, str]:
     """The nautilus stage and its sibling drop, in the order the pipeline runs them."""
     blocks = [b for b in _blocks(_parse_body(CAPTURE_ALLOY.read_text()), "stage.match") if "engine" in b]
     assert len(blocks) == 2, f"expected the nautilus stage and its drop, found {len(blocks)}"
     stage, drop = blocks
-    assert 'pipeline_name = "engine_nautilus"' in stage and 'action   = "drop"' in drop
+    assert _assigned(stage, "pipeline_name") == "engine_nautilus" and _assigned(drop, "action") == "drop"
     return stage, drop
 
 
@@ -132,8 +140,8 @@ def model(line: str) -> tuple[str, str] | None:
         level = "WARNING" if m.group("level") == "WARN" else m.group("level")
     if re.search(backoff, line):
         return None
-    selector = re.search(r'selector = "((?:[^"\\]|\\.)*)"', drop).group(1)
-    kept = re.search(r'level!~\\"([^\\]+)\\"', selector)
+    selector = _assigned(drop, "selector")
+    kept = selector and re.search(r'level!~"([^"]+)"', selector)
     assert kept, f"the sibling drop no longer keys on the level label: {selector}"
     if level is None or not re.fullmatch(kept.group(1), level):
         return None
@@ -141,8 +149,6 @@ def model(line: str) -> tuple[str, str] | None:
 
 
 def test_the_sample_carries_every_shape_the_stage_answers_for():
-    """The guard is only as wide as its sample: a coloured prefixed warning, an error, an info and a
-    debug, the back-off, a Python record at both levels, a traceback and its nautilus-shaped line."""
     raw = [line for line, _ in SAMPLE]
     assert any(ESC in line and "[WARN]" in line for line in raw)
     assert any("[INFO]" in line for line in raw) and any("[DEBUG]" in line for line in raw)
@@ -159,9 +165,11 @@ def test_the_engine_stage_keeps_nautilus_warnings_and_errors_alone():
 
 def test_the_engine_stage_labels_the_survivors_as_their_own_container():
     stage, drop = _engine_blocks()
-    assert 'selector      = "{container=\\"zcrypto-engine\\"}"' in stage, "the stage no longer selects the unit's relabelled stream"
+    assert _assigned(stage, "selector") == '{container="zcrypto-engine"}', (
+        "the stage no longer selects the unit's relabelled stream"
+    )
     assert re.search(r'stage\.static_labels \{\s*values = \{ container = "engine-nautilus" \}', stage), stage
-    assert 'selector = "{container=\\"engine-nautilus\\", level!~\\"WARNING|ERROR\\"}"' in drop, drop
+    assert _assigned(drop, "selector") == '{container="engine-nautilus", level!~"WARNING|ERROR"}', drop
 
 
 def test_the_journal_keep_rule_admits_the_engine_unit():
@@ -264,8 +272,6 @@ def _nested_blocks(text: str, opener: str) -> list[str]:
 
 @pytest.mark.parametrize("config", ALLOY_CONFIGS, ids=lambda p: p.relative_to(REPO).as_posix())
 def test_every_timestamp_stage_keeps_the_journal_time_on_a_miss(config):
-    """The default `fudge` stamps a line the regex missed at the stream's last parsed time plus 1 ns,
-    which dated the NAS's ssh and rsync stderr an hour before the ERROR they explained."""
     for block in _nested_blocks(config.read_text(), "stage.timestamp"):
         assert re.search(r'^\s*action_on_failure\s*=\s*"skip"\s*$', block, re.M), f"{config.relative_to(REPO)}:\n{block}"
 

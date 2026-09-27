@@ -63,10 +63,8 @@ prometheus.exporter.unix "host" {
   rootfs_path = "/host/root"
 
   textfile {
-    // The timers' textfiles -- archive-pull, panel-materialize, tape-bars, verify-replay,
-    // verified-replay, grafana-keepalive and clock-offset from roles/ops, and zaccess-probe-ops
-    // from access_ops, which runs in the same play and writes here too. No count: every one this file carried went
-    // stale at the next writer, and a list is its own length.
+    // The textfiles of roles/ops's timers and of access_ops's zaccess-probe-ops, which runs in the
+    // same play and writes here too.
     // alloy-compose.yaml.j2 mounts that host directory read-only at this exact
     // container path -- literal "/textfile", exactly like the NAS's, not a templated
     // ops_textfile_dir -- because this string names the CONTAINER's view of the mount, not the
@@ -333,16 +331,14 @@ loki.process "parse" {
       source   = "ts"
       format   = "2006-01-02 15:04:05,000"
       location = "UTC"
-      // "skip", NOT the default "fudge" (review finding): lines that fail the stage.regex above --
-      // the scripts' own echoes (archive-pull.sh.j2's three warnings go through its log() helper
-      // and parse; the other runners' echoes do not),
-      // rsync stderr, docker-client errors, Python tracebacks -- have no `ts` in the extracted map,
-      // and "fudge" rewrites their timestamp to the stream's LAST PARSED app timestamp +1ns. For an
-      // hourly unit whose failure path emits ONLY unparsed echoes, that time-warps the headline
-      // warning up to an hour into the past (up to ~24h for the daily units), interleaving it into
-      // the PREVIOUS run's output and hiding it from any short-window Explore view or alert. "skip"
-      // keeps the journal/docker capture time -- the correct emission time -- for non-matching
-      // lines; matching lines still get the app timestamp.
+      // "skip", NOT the default "fudge": lines that fail the stage.regex above -- the runner
+      // scripts' bare echoes, rsync stderr, docker-client errors, Python tracebacks -- have no `ts`
+      // in the extracted map, and "fudge" rewrites their timestamp to the stream's LAST PARSED app
+      // timestamp +1ns. For a unit whose failure path emits only unparsed lines, that time-warps the
+      // failure up to a run's interval into the past, interleaving it into the PREVIOUS run's output
+      // and hiding it from any short-window Explore view or alert. "skip" keeps the journal/docker
+      // capture time -- the correct emission time -- for non-matching lines; matching lines still get
+      // the app timestamp.
       action_on_failure = "skip"
     }
 

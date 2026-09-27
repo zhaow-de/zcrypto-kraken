@@ -1948,9 +1948,8 @@ def test_the_handshake_bar_is_the_key_lifetime_plus_the_two_sampling_steps_and_t
 # --- the node clock pair: the capture rules' twins on the hosts that copy the exporter ------------
 _NODE_CLOCK_SKEW = "zcrypto-node-clock-skew"
 _NODE_CLOCK_STALE = "zcrypto-node-clock-exporter-stale"
-# ops and the three cache nodes: the hosts whose roles install a copy of the capture role's clock
-# exporter (tests/test_clock_offset.py holds the copies equal). The capture pair keeps its own
-# critical pair, so neither host may appear here and none of these four may be missing.
+# The hosts whose roles install a copy of the capture role's clock exporter; the capture pair keeps
+# its own critical pair.
 _NODE_CLOCK_HOSTS = frozenset({"ops", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 
 
@@ -1970,8 +1969,7 @@ def test_the_node_clock_rules_select_exactly_the_hosts_that_copy_the_exporter(ui
 
 def test_the_node_clock_skew_rule_reads_an_unsynchronised_clock_as_one():
     """A bare `== 0` filter returns the left operand's VALUE, 0, which no `gt 0` evaluator can see;
-    `== bool 0` yields 1 -- the capture rule's own reasoning, restated here because the twin is
-    written out rather than shared."""
+    `== bool 0` yields 1."""
     (expr,) = _prom_exprs(_rule(_NODE_CLOCK_SKEW))
     assert "zcrypto_clock_synchronised" in expr and "== bool 0" in expr, expr
     assert "abs(zcrypto_clock_offset_seconds" in expr and ") > 10" in expr, expr

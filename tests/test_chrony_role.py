@@ -65,8 +65,6 @@ def test_the_verify_task_retries_through_the_handshake_and_reports_no_change():
 
 
 def test_every_ptb_server_is_named_as_its_certificate_names_it():
-    """NTS-KE checks the configured name against the certificate, so an alias (ntp3.ptb.de is
-    ptbtime3.ptb.de's) fails the handshake and the source is never selectable."""
     servers = _defaults()["chrony_nts_servers"]
     ptb = [s for s in servers if s.endswith(".ptb.de")]
     assert ptb, "no PTB server configured"

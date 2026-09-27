@@ -183,7 +183,7 @@ loki.relabel "journal_units" {
   // component -- loki.source.journal below consumes its exported rules via `relabel_rules`.
   forward_to = []
 
-  // KEEP the prune unit's journal lines (source 1: __journal__systemd_unit) OR Alloy's own
+  // KEEP the listed units' journal lines (source 1: __journal__systemd_unit) OR Alloy's own
   // journald-driver stream (source 2: __journal_container_name = grafana-alloy, the container_name
   // the alloy compose service sets) -- everything else on the host journal (sshd, cron, dockerd,
   // ...) stays local.
@@ -241,23 +241,16 @@ loki.source.journal "capture_units" {
   max_age       = "48h"
 }
 
-// Parse ONCE, here at ingest -- never at query time. Two stages: Alloy's own logfmt output, and the
-// engine unit's nautilus lines. The capture daemon's own Python-timestamped lines had a stage here
-// too, but the docker log path that carried them into this pipeline is gone (D6) -- the capture
-// container now ships its OWN logs straight to Grafana Cloud (--ship-logs, D3), never through
-// Alloy, so nothing on this host would ever match that selector again. The prune unit's bash lines
-// fall through this component unmatched by the stages below (no selector here admits them),
-// keeping their journal capture time and no level label, same as before.
+// Parse ONCE, here at ingest -- never at query time. The prune and reboot-check units' bash lines
+// fall through this component unmatched (no selector here admits them), keeping their journal
+// capture time and no level label.
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
 
-  // The engine unit's journal carries two writers: the Python records --ship-logs already delivers
-  // under container="engine", and nautilus's Rust logger, which reaches Loki through nothing else.
-  // Only nautilus's [WARN]/[ERROR] lines are kept, under container="engine-nautilus" -- their own
-  // label, so `zcrypto-engine-error-logs` (container="engine", for 0s) pages on none of them: a
-  // month of the journal held eleven transient reconnect [ERROR]s, and whether any nautilus class
-  // should page is a separate call. The reconnect back-off chatter is dropped. No stage.timestamp:
-  // the journal stamps a line within milliseconds of nautilus's own.
+  // Only nautilus's [WARN]/[ERROR] lines are kept, under their own label container="engine-nautilus",
+  // so `zcrypto-engine-error-logs` (container="engine") pages on none of them; whether any nautilus
+  // class should page is a separate call. No stage.timestamp: the journal stamps a line within
+  // milliseconds of nautilus's own.
   //
   // The unit-name relabel above labels this stream container="zcrypto-engine"; this stage is what
   // renames the survivors, so the two selectors are read together.
@@ -278,9 +271,8 @@ loki.process "parse" {
       replace    = ""
     }
 
-    // `<RFC3339 nanoseconds>Z [WARN|ERROR] ` opens a nautilus line and nothing else in this unit:
-    // the Python record opens `YYYY-MM-DD HH:MM:SS,mmm LEVEL`, a traceback with `Traceback` or
-    // spaces. A line this misses extracts no level, and the drop below takes it.
+    // `<RFC3339 nanoseconds>Z [LEVEL] ` opens a nautilus line and no other line in this unit, a
+    // Python record's or a traceback's; a line this misses extracts no level, and the drop below takes it.
     stage.regex {
       expression = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z \\[(?P<level>WARN|ERROR)\\] "
     }

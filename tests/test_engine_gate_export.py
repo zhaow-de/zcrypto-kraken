@@ -465,8 +465,6 @@ def test_gate_ping_swallows_opener_errors(monkeypatch):
 
 
 def test_a_failed_gate_ping_logs_the_host_and_never_the_check_path(monkeypatch):
-    """The arm catches a bare Exception, and http.client's InvalidURL quotes the URL, so the line
-    carries the class name where the text could carry the path."""
     import http.client
 
     from tests.logcapture import messages_of

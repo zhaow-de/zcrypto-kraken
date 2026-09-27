@@ -231,9 +231,6 @@ def _ops_parse_regex() -> re.Pattern:
 
 
 def test_the_scripts_own_warnings_carry_the_shape_the_ops_parse_stage_reads():
-    """A bare echo ships with no level label. The log() helper's line must parse through the same
-    regex the unit-parse-dead canary and Ops · ERROR logs read, at WARNING: those failures page
-    through the exit-code rules, and ERROR here would page twice."""
     bash = shutil.which("bash")
     if no_binary("bash"):  # pragma: no cover - bash is present on every image we run
         pytest.skip("bash not available")
