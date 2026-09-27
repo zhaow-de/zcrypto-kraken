@@ -4,7 +4,6 @@ export const meta = {
   whenToUse: 'Before every review or re-review — over the fix range after the first review: graders grade the range’s prose, re-run the commands and probes its messages quote, and check each fix’s class walk. args: {repo, range, tip, reportDir, worktree?, ranges?, rulings?}',
   phases: [
     { title: 'Pre-review', detail: 'a read-only grader per slice over the range’s prose and message claims' },
-    { title: 'Record', detail: 'the row the review that follows checks, written once the read is done' },
   ],
 }
 
@@ -13,7 +12,7 @@ const { repo, range, tip, reportDir, worktree, model, ranges, rulings } = args |
 // `ranges` fans the read out: one grader per entry, each inside its own budget, over one slice of `range`.
 const FAN = Array.isArray(ranges) && ranges.length ? ranges : null
 const LABEL = /^[a-z0-9][a-z0-9-]{0,31}$/
-// The one recorded row says the whole branch range was read, so the slices are held to a cover of it by their own spelling.
+// The one row it returns says the whole branch range was read, so the slices are held to a cover of it by their own spelling.
 const ends = (r) => String((r && r.range) || r || '').split('..')
 const chained = FAN && FAN.every((r, i) => ends(r).length === 2 && ends(r)[0] !== ends(r)[1] && ends(r)[0] === (i ? ends(FAN[i - 1])[1] : ends(range)[0])) && ends(FAN[FAN.length - 1])[1] === ends(range)[1]
 const badRanges = ranges != null && (!chained || FAN.some((r) => !LABEL.test(r.label || '')) || new Set(FAN.map((r) => r.label)).size !== FAN.length)
@@ -141,14 +140,5 @@ const saysNothing = (ship) => {
 const mute = report.prose.filter((p) => p.survives === 'keep' && saysNothing(p.ship)).map((p) => p.site)
 if (mute.length) log(`OWED: ${mute.length} \`keep\` row(s) name no reason a reader would act on — ${mute.join(', ')}`)
 log(`prose: ${report.graded} graded${FAN ? ' (summed over slices, so a site two slices graded counts twice)' : ''}, ${n(report.prose, (p) => p.survives === 'cut')} cut, ${n(report.prose, (p) => p.survives === 'trim')} trimmed, ${n(report.prose, (p) => p.survives === 'fix')} corrected, ${n(report.prose, (p) => p.survives === 'keep')} keep rows; claims: ${n(report.claims, (c) => c.disposition === 'does-not-reproduce')} do not reproduce; probes: ${n(report.probes, (p) => !p.mutationParses || !p.verdictReproduces)} void; class walk: ${n(report.classWalk, (w) => w.siblingsLeft.length)} fixes with siblings left; ready: ${report.ready}`)
-const ledgerPath = `${reportDir}/ledger.jsonl`
-const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' } }, required: ['appended'] }
-
-// --- Record -------------------------------------------------------------------------------------
-phase('Record')
-const recorded = await agent(
-  `Bookkeeping only. Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"pre-review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. Return appended true once the line is on disk. No other file, no other command.`,
-  { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
-)
-if (!recorded || !recorded.appended) log(`${ledgerPath} did not take the row for this pre-review — the next read refuses ${tip} until it carries {"kind":"pre-review","tip":"${tip}"}; append it by hand`)
-return { ...report, recorded: Boolean(recorded && recorded.appended) }
+log(`ledger: uv run python infra/scripts/review-ledger.py append ${reportDir} --kind pre-review --range ${range} --tip ${tip}`)
+return { ...report, row: { kind: 'pre-review', range, tip } }
