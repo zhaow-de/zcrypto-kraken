@@ -2,7 +2,7 @@
 
 The current pin and rollback operand of every service — a state file: a row is re-trued in the change that re-pins or converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt`, the restart marker — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
 
-`tests/test_fleet_contracts.py` holds the file to state: a date sits in a `since` column alone, a cell, a bullet and a paragraph stay under their caps, no heading sits below the three sections, a digest appears in the tables' digest cells and the glossary alone, the glossary mirrors the table, and the NAS rows agree with `infra/ansible/host_vars/nas/vars.yml`. The Alloy pins on the ops and capture hosts are converge-time extra-vars with no repo default, so their rows are the only record.
+`tests/test_fleet_contracts.py` holds the file to state. The Alloy pins on the ops, capture and cache hosts and the cache nodes' Valkey pin are converge-time extra-vars with no repo default, so their rows are the only record.
 
 Reading rules:
 
@@ -14,13 +14,13 @@ Reading rules:
 
 | service | host | digest (sha256, first 12) | since (UTC) | rollback operand (resident on the host at the re-pin) |
 | --- | --- | --- | --- | --- |
-| capture | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-24 19:49:47 | `7d4c6066d71e` |
-| capture | zcrypto-red | `3f291f3cee57` — revision `77df6273` | 2026-09-24 15:48:46 | `7d4c6066d71e` |
+| capture | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-26 13:28:11 | `7d4c6066d71e` |
+| capture | zcrypto-red | `3f291f3cee57` — revision `77df6273` | 2026-09-26 09:54:52 | `7d4c6066d71e` |
 | engine | zcrypto | `3f291f3cee57` — revision `77df6273` | 2026-09-26 16:58:53 | `7d4c6066d71e` |
-| alloy | zcrypto | `b8ec653c4423` — v1.19.2 | 2026-09-22 10:40:38 | `491b0578c049` — v1.18.0 |
-| alloy | zcrypto-red | `b8ec653c4423` — v1.19.2 | 2026-09-22 10:25:05 | `491b0578c049` — v1.18.0 |
-| alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 09:40:56 | `491b0578c049` — v1.18.0 |
-| alloy | nas | `491b0578c049` — v1.18.0, upstream `grafana/alloy`, no `-compat` variant | 2026-09-01 14:48:03 | `4f6ddc56ffdc` — v1.17.1 |
+| alloy | zcrypto | `b8ec653c4423` — v1.19.2 | 2026-09-26 13:28:09 | `491b0578c049` — v1.18.0 |
+| alloy | zcrypto-red | `b8ec653c4423` — v1.19.2 | 2026-09-26 09:54:50 | `491b0578c049` — v1.18.0 |
+| alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 15:55:36 | `491b0578c049` — v1.18.0 |
+| alloy | nas | `491b0578c049` — v1.18.0, upstream `grafana/alloy`, no `-compat` variant | 2026-09-27 09:56:09 | `4f6ddc56ffdc` — v1.17.1 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
 | alloy | zcrypto-valkey1 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:35:40 | first pin |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
@@ -28,7 +28,7 @@ Reading rules:
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
 | alloy | zcrypto-valkey3 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:41:11 | first pin |
 | ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-09-24 20:04:48 | `7d4c6066d71e` |
-| archive-pull | nas | `c4135ac75b72` — revision `77df6273`, the `-compat` build | 2026-09-24 20:00:43 | `ee5ba1d92b46` |
+| archive-pull | nas | `c4135ac75b72` — revision `77df6273`, the `-compat` build | 2026-09-27 09:56:05 | `ee5ba1d92b46` |
 
 **Non-image pins.** `zaccess`'s `caddy` and `alloy` are apt packages the access role installs unversioned, clearing a `dpkg` hold, so they have no row and no rollback operand here; read the installed versions off the host: `dpkg-query -W alloy caddy`.
 
@@ -52,7 +52,7 @@ The current pins and their operands; older digests are in this file's git log.
 - `7d4c6066d71e` = `sha256:7d4c6066d71edad9fa9029c4d725f9bfc354ba22b7e7044be95cd01b1c27a107` — revision `a1a39280`, AVX; the capture pair's, the engine's and ops' operand
 - `c4135ac75b72` = `sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164` — revision `77df6273`, the `-compat` build; the NAS archive-pull
 - `ee5ba1d92b46` = `sha256:ee5ba1d92b461e74859ff766c4992f791021be605138796dc8ac962f64506470` — revision `8f4ac521`, the `-compat` build; the NAS archive-pull's operand
-- `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; valkey and sentinel on the three cache nodes
+- `418652cfb58e` = `sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd` — Valkey 9.1.2; the cache nodes
 - `b8ec653c4423` = `sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839` — Alloy v1.19.2; the ops, capture and cache hosts
-- `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0; the NAS, and those hosts' operand
+- `491b0578c049` = `sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308` — Alloy v1.18.0; the NAS, and the ops and capture hosts' operand
 - `4f6ddc56ffdc` = `sha256:4f6ddc56ffdcf8a6316748fc5162972e20cb301523cac1bb4a31957df733ae9b` — Alloy v1.17.1; the NAS's operand
