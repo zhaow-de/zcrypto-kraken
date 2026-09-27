@@ -368,8 +368,6 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
 
 
 def test_a_rule_that_pins_one_host_and_aggregates_it_away_is_in_the_uid_map():
-    """Its firing instance carries no `host` label, so the map is the only place the report reads the host
-    from. An aggregation with no `by` over every query is the shape; `host=~` pins no one host."""
     rules = yaml.safe_load((Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml").read_text())["rules"]
     owed = {}
     for rule in rules:
@@ -2376,11 +2374,9 @@ def test_no_field_the_upgrade_reader_reads_is_dropped_from_the_command():
 
 
 def test_an_empty_exit_timestamp_after_a_reboot_is_a_reading_and_the_stamp_decides():
-    """systemd empties `ExecMainExitTimestamp` at boot and leaves it empty until the timer's next run,
-    so the reboot round's own day reads this way; the stamp file is what survives the reboot."""
     check = _upgrade(_host_answering(ExecMainExitTimestamp=""))
     assert not check.value.startswith("unreadable"), check.value
-    assert "no run since boot" in check.value, check.value
+    assert "no exit recorded" in check.value, check.value
     assert check.ok is True, check.value
     assert _report(verdict=[check]).exit_code == 0
 
@@ -2388,7 +2384,7 @@ def test_an_empty_exit_timestamp_after_a_reboot_is_a_reading_and_the_stamp_decid
 def test_an_empty_exit_timestamp_beside_a_stale_stamp_is_attention():
     stale = _UPGRADE_NOW - (ops_daily.UPGRADE_STALE_AFTER + timedelta(hours=1))
     check = _upgrade(_host_answering(ExecMainExitTimestamp="", StampEpoch=str(int(stale.timestamp()))))
-    assert "no run since boot" in check.value, check.value
+    assert "no exit recorded" in check.value, check.value
     assert check.ok is False, check.value
     assert _report(verdict=[check]).exit_code == 1
 
