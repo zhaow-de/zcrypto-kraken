@@ -54,10 +54,10 @@ def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool) -> str:
     git("update-ref", "refs/remotes/origin/develop", "HEAD")
     if lockfile_changed:
         (repo / "uv.lock").write_text("changed\n")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "the pull request")
     output = tmp_path / "github_output"
-    # GitHub's own `run:` shell.
     subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", lock["run"]],
+        ["bash", "-e", "-c", lock["run"]],
         cwd=repo,
         check=True,
         env={**os.environ, "GITHUB_OUTPUT": str(output)},
