@@ -1,7 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION": "1000"
+    "CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION": "1000",
+    "CLAUDE_CODE_TMPDIR": "/home/zhaow/Projects/zcrypto-kraken/.tmp"
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
