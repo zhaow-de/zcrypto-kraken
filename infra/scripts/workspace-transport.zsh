@@ -18,10 +18,9 @@
 # is backed up outside the repo first.
 #
 # QUIET POINT, immediately before switching: no session, agent or workflow mid-flight on EITHER
-# machine, since running processes do not transfer and a live one mutates state mid-rsync; the /tmp
-# scratchpad copy lasts only as long as the destination's uptime; both repos must be clean or the
-# script aborts; and a destination branch AHEAD of the source's is force-rewound, so committed work
-# must transfer back before switching.
+# machine, since running processes do not transfer and a live one mutates state mid-rsync; both
+# repos must be clean or the script aborts; and a destination branch AHEAD of the source's is
+# force-rewound, so committed work must transfer back before switching.
 
 set -euo pipefail
 
@@ -47,6 +46,11 @@ remote() { "${SSH[@]}" "$DEST" "$@" }
 
 # Every abort path leaks a ~10 MB bundle without this; the remote copy is removed explicitly below.
 trap 'rm -f "$BUNDLE"' EXIT INT TERM
+
+# Claude Code's temp root is the settings' override, read rather than restated; the CLI keeps its
+# per-uid directory under it, claude-<uid>, and the scratchpads and task outputs under that.
+CLAUDE_TMP_ROOT="$(jq -r '.env.CLAUDE_CODE_TMPDIR // empty' "$REPO_DIR/.claude/settings.json")"
+[[ -n "$CLAUDE_TMP_ROOT" ]] || die "no env.CLAUDE_CODE_TMPDIR in $REPO_DIR/.claude/settings.json; the scratchpad step reads the temp root from it"
 
 # --- arguments ---------------------------------------------------------------------------------
 ASSUME_YES=0
@@ -267,10 +271,11 @@ remote "rm -rf ~/.zcrypto-local.pre-transport && cp -pr ${(q)REPO_DIR}/.local ~/
 # NOTE: this file also carries machineID/userID/installMethod; same account both ends, so benign
 # today, but it is why the file is copied whole rather than merged.
 "${RSYNC[@]}" "$HOME/.claude.json" "$DEST:.claude.json"
-# The /tmp scratchpad (SDD review packages, diffs, task outputs) -- absent after a reboot.
-if [[ -d "/tmp/claude-1000/$PROJECT_SLUG" ]]; then
-  "${RSYNC[@]}" --delete --rsync-path="mkdir -p /tmp/claude-1000 && rsync" \
-    "/tmp/claude-1000/$PROJECT_SLUG/" "$DEST:/tmp/claude-1000/$PROJECT_SLUG/"
+# The scratchpads (SDD review packages, diffs, task outputs), under the per-uid directory the CLI keeps
+# below the temp root; the destination's root and per-uid directory are made 0700, the CLI's own modes.
+if [[ -d "$CLAUDE_TMP_ROOT/claude-$UID/$PROJECT_SLUG" ]]; then
+  "${RSYNC[@]}" --delete --rsync-path="mkdir -m 700 -p ${(q)CLAUDE_TMP_ROOT} ${(q)CLAUDE_TMP_ROOT}/claude-$UID && rsync" \
+    "$CLAUDE_TMP_ROOT/claude-$UID/$PROJECT_SLUG/" "$DEST:$CLAUDE_TMP_ROOT/claude-$UID/$PROJECT_SLUG/"
 fi
 # The SDD progress ledgers inside the repo (gitignored).
 if [[ -d "$REPO_DIR/.superpowers" ]]; then
