@@ -1,11 +1,12 @@
-"""The PreToolUse[Bash] guard's two arms -- the git hook bypasses, and a stream a cap has already shortened being
-counted or compared -- driven with synthetic stdin JSON.
+"""The PreToolUse[Bash] guard's three arms -- the git hook bypasses, a stream a cap has already shortened being
+counted or compared, and a vaulted file printed -- driven with synthetic stdin JSON.
 
 The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
 family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
 the ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
 comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
-pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks.
+pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks; the
+count, the hash and the public half beside a vaulted file.
 """
 
 from __future__ import annotations
@@ -144,6 +145,58 @@ REFUSED = [
     ('[ -n "$(git log --grep=doesn\'t)" ] && git commit -n -m x', "-n"),
 ]
 
+# (command, the vaulted file or the decrypting program the message must name)
+VAULTED = [
+    # the 2026-09-24 shape, and every reader the family names, over each kind of vaulted file
+    ("head -1 infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("tail -n 3 infra/ansible/host_vars/zcrypto-ops/vault.yml", "infra/ansible/host_vars/zcrypto-ops/vault.yml"),
+    ("less infra/ansible/vault-password.sops.yaml", "infra/ansible/vault-password.sops.yaml"),
+    ("more infra/ansible/files/zaccess_ca.key.vault", "infra/ansible/files/zaccess_ca.key.vault"),
+    ("sed -n 1p infra/ansible/files/sync_ed25519", "infra/ansible/files/sync_ed25519"),
+    ("awk 'NR==1' infra/ansible/files/zcrypto_hot_push_ed25519", "infra/ansible/files/zcrypto_hot_push_ed25519"),
+    ("cut -c1-20 infra/ansible/group_vars/engine_host/vault.yml", "infra/ansible/group_vars/engine_host/vault.yml"),
+    ("strings infra/ansible/files/deploy_nas_ed25519", "infra/ansible/files/deploy_nas_ed25519"),
+    ("xxd infra/ansible/files/deploy_zcrypto_ed25519 | head", "infra/ansible/files/deploy_zcrypto_ed25519"),
+    ("od -c infra/ansible/files/deploy_zcrypto-ops_ed25519", "infra/ansible/files/deploy_zcrypto-ops_ed25519"),
+    ("base64 infra/ansible/files/deploy_zcrypto-red_ed25519", "infra/ansible/files/deploy_zcrypto-red_ed25519"),
+    ("tac infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("hexdump -C infra/ansible/files/deploy_zcrypto-valkey1_ed25519", "infra/ansible/files/deploy_zcrypto-valkey1_ed25519"),
+    # relative to another directory, bare, globbed, redirected, wrapped, substituted
+    ("cd infra/ansible && cat files/deploy_zcrypto_ed25519", "files/deploy_zcrypto_ed25519"),
+    ("cat deploy_zcrypto_ed25519", "deploy_zcrypto_ed25519"),
+    ("cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
+    ("cat infra/ansible/files/deploy_*", "infra/ansible/files/deploy_*"),
+    ("head -2 infra/ansible/group_vars/*/vault.yml", "infra/ansible/group_vars/*/vault.yml"),
+    ("cat infra/ansible/group_vars/all/*", "infra/ansible/group_vars/all/*"),
+    ("head -1 < infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("sudo cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("timeout 5 head -1 infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("x=$(cat infra/ansible/files/deploy_zaccess_ed25519)", "infra/ansible/files/deploy_zaccess_ed25519"),
+    # python -c opening one, a copy of one elsewhere, a decrypt, a revision's copy
+    (
+        "python3 -c \"print(open('infra/ansible/files/deploy_zaccess_ed25519').read())\"",
+        "infra/ansible/files/deploy_zaccess_ed25519",
+    ),
+    (
+        "uv run python -c \"import pathlib; print(pathlib.Path('infra/ansible/group_vars/all/vault.yml').read_text())\"",
+        "infra/ansible/group_vars/all/vault.yml",
+    ),
+    ("cp infra/ansible/files/deploy_zaccess_ed25519 /tmp/k", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("scp infra/ansible/files/deploy_zaccess_ed25519 nas:/tmp/", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("rsync -a infra/ansible/group_vars/all/vault.yml /tmp/v.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("cp -t /tmp infra/ansible/files/deploy_nas_ed25519", "infra/ansible/files/deploy_nas_ed25519"),
+    (
+        "cd infra/ansible && uv run ansible-vault view --vault-password-file scripts/vault-pass.sh files/zaccess_ca.key.vault",
+        "ansible-vault view",
+    ),
+    ("ansible-vault decrypt --output - files/deploy_zaccess_ed25519", "ansible-vault decrypt"),
+    ("sops -d infra/ansible/vault-password.sops.yaml", "sops -d"),
+    ("sops --decrypt --extract '[\"vault_password\"]' infra/ansible/vault-password.sops.yaml", "sops --decrypt"),
+    ("git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("git -C /repo show develop:infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+]
+
 ADMITTED = [
     # commit without the flag; the flag as message text, in a heredoc, in a comment, after --
     "git commit -m msg",
@@ -246,6 +299,32 @@ ADMITTED = [
     'echo "git log | head -5 | wc -l"',
     "cat <<'EOF'\nls | head -2 | wc -l\nEOF",
     'uv run pytest tests/test_bash_guard.py -k "head or tail"',  # the ids are the commands, so this is the selector
+    # a vaulted file counted, hashed, listed or logged; its public half, its neighbours, its path as text
+    "grep -c ANSIBLE_VAULT infra/ansible/files/deploy_zaccess_ed25519",
+    "grep -c '^\\$ANSIBLE_VAULT' infra/ansible/group_vars/all/vault.yml",
+    "sha256sum infra/ansible/files/deploy_zaccess_ed25519",
+    "wc -c infra/ansible/group_vars/all/vault.yml",
+    "stat infra/ansible/vault-password.sops.yaml",
+    "ls -la infra/ansible/files/",
+    "git log --oneline -- infra/ansible/group_vars/all/vault.yml",
+    "cat infra/ansible/files/deploy_zaccess_ed25519.pub",
+    "cat infra/ansible/files/*.pub",
+    "git show HEAD:infra/ansible/files/deploy_zaccess_ed25519.pub",
+    "head -3 infra/ansible/files/README.md",
+    "cat infra/ansible/.sops.yaml",
+    "head -5 .github/workflows/*.yml",
+    "echo infra/ansible/group_vars/all/vault.yml",
+    "grep -rn 'cat infra/ansible/group_vars/all/vault.yml' docs/",
+    "python3 -c \"print(open('README.md').read())\"",
+    # the vault's own consumers: its password script, the playbook, a value read into a variable, a write to one
+    "cat infra/ansible/scripts/vault-pass.sh",
+    "bash -n infra/ansible/scripts/vault-pass.sh",
+    "cd infra/ansible && uv run ansible-playbook --vault-password-file scripts/vault-pass.sh site.yml --list-tags",
+    "infra/ansible/scripts/converge.sh --limit zcrypto-red --tags capture",
+    'TOKEN="$(uv run python -c \'from grafana_auth import vault_var; print(vault_var("grafana_sa_token"))\')"',
+    "uv run ansible-vault encrypt_string --stdin-name x",
+    "cp /tmp/new_key infra/ansible/files/deploy_zaccess_ed25519",
+    "sed -i 's/old_name:/new_name:/' infra/ansible/group_vars/all/vault.yml",
 ]
 
 
@@ -281,6 +360,21 @@ def test_a_refused_shape_is_blocked_and_the_message_names_it(tmp_path: Path, com
     else:
         assert spelling in r.stderr.partition(" sets ")[0], r.stderr
     assert ("cap" if capping else "hooks") in r.stderr  # what the shape costs
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize(("command", "spelling"), VAULTED, ids=[c for c, _ in VAULTED])
+def test_a_command_that_prints_a_vaulted_file_is_blocked_with_the_remedy(tmp_path: Path, command: str, spelling: str):
+    r = run_hook(call(command), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    claim = r.stderr.partition("; in `")[0]  # the message's own words, before its echo of the command
+    named = claim.partition("`")[2].partition("`")[0]
+    if spelling.startswith(("ansible-vault", "sops")):
+        assert spelling in named and "decrypts" in claim, r.stderr
+    else:
+        assert f"`{spelling}`" in claim and named != spelling, r.stderr  # the file in a span of its own, past the stage
+    assert "BLOCKED" in claim
+    assert "`vault_var` through command substitution" in r.stderr and "`grep -c`" in r.stderr
     assert r.stdout == ""
 
 
