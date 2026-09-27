@@ -366,7 +366,7 @@ ______________________________________________________________________
 
 A **warning** Grafana alert (`Reconciler · capture mirror lagging`): `max by (source) (zcrypto_reconcile_source_lag_seconds)` above 10800 s (3 h) for 10 minutes. **One instance per mirror** — the `source` label reads `primary` or `secondary` and names which one, and the two fire independently.
 
-The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so the healthy steady state is a sawtooth from a little over 1 h, at the writer tick after a pull, to well past 2 h just before the next one, under an hour below the 3 h bar.
+The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so the healthy steady state is a sawtooth from about 4300 s, at the writer tick after a pull, to about 9740–9775 s just before the next one: read over 2026-09-19 to 2026-09-26, outside a NAS recreate, its daily peak sits about 1025–1065 s, some 17 minutes, below the 10800 s bar.
 
 ### What it means
 
