@@ -2,7 +2,7 @@
 
 The current pin and rollback operand of every service — a state file: a row is re-trued in the change that re-pins or converges it — the digest from that converge's line in `deploy-log.jsonl`, `since` from the container's `.State.StartedAt`, the restart marker — and the converge's evidence goes in the commit message, so `git log --follow` on this file is the deploy chronicle.
 
-`tests/test_fleet_contracts.py` holds the file to state. Every pin but the NAS's is a converge-time extra-var with no repo default, so its row is the only record.
+`tests/test_fleet_contracts.py` holds the file to state. Every image pin but the NAS's is a converge-time extra-var, so its row is the only record.
 
 Reading rules:
 
