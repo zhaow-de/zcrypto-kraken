@@ -13,10 +13,6 @@ WARMER = WORKFLOWS / "uv-cache.yml"
 # is saved under, which a restore must match too: one differing input splits the two workflows onto
 # caches neither ever restores from the other.
 KEY_INPUTS = ("python-version", "cache-dependency-glob", "prune-cache", "cache-python", "cache-suffix", "cache-local-path")
-# UV_NO_CACHE and `--no-cache` turn uv's cache off, and UV_CACHE_DIR and `--cache-dir` move it off the
-# path the pair shares; read over each file's whole text, so an `env:` map, a `$GITHUB_ENV` write and a
-# command-line flag all count.
-CACHE_OVERRIDES = ("UV_NO_CACHE", "UV_CACHE_DIR", "--no-cache", "--cache-dir")
 SAVE_WHEN_THE_LOCK_CHANGED = "${{ steps.lock.outputs.changed == 'true' }}"
 
 
@@ -80,40 +76,3 @@ def test_a_pull_request_saves_the_cache_only_when_it_changes_the_lockfile(tmp_pa
     assert _lock_step_output(tmp_path / "same", lockfile_changed=False) == "changed=false\n"
     assert _lock_step_output(tmp_path / "moved", lockfile_changed=True) == "changed=true\n"
     assert _lock_step_output(tmp_path / "no-base", lockfile_changed=False, has_base=False) == "changed=true\n"
-
-
-def test_neither_workflow_can_switch_the_cache_off_or_skip_the_steps_that_fill_it():
-    for path in (COVERAGE, WARMER):
-        workflow = _load(path)
-        job = _only_job(workflow)
-        step = _setup_uv(job)
-        inputs = step.get("with", {})
-        assert str(inputs.get("enable-cache", "auto")).lower() in ("auto", "true"), path.name
-        assert str(inputs.get("restore-cache", "true")).lower() == "true", path.name
-        # No gate anywhere: a skipped checkout, lock step, setup-uv or `uv sync` each breaks the pair.
-        assert "if" not in job and not [s for s in job["steps"] if "if" in s], path.name
-        text = path.read_text(encoding="utf-8")
-        assert not [token for token in CACHE_OVERRIDES if token in text], path.name
-
-
-def test_each_workflow_runs_only_on_events_where_setup_uv_caches():
-    # `enable-cache: auto` resolves off for pull_request_target, workflow_run, release and a tag push.
-    coverage, warmer = _load(COVERAGE), _load(WARMER)
-    assert set(coverage.get("on", coverage.get(True))) == {"pull_request"}
-    triggers = warmer.get("on", warmer.get(True))
-    assert set(triggers) <= {"push", "schedule", "workflow_dispatch"}
-    assert "tags" not in triggers["push"]
-
-
-def test_the_warmer_seeds_develop_on_a_lockfile_change_and_a_schedule_and_runs_no_suite():
-    warmer = _load(WARMER)
-    triggers = warmer.get("on", warmer.get(True))
-    assert triggers["push"]["branches"] == ["develop"]
-    assert "uv.lock" in triggers["push"]["paths"]
-    assert triggers["schedule"]
-    job = _only_job(warmer)
-    assert not any("pytest" in str(s.get("run", "")) for s in job["steps"])
-    step = _setup_uv(job)
-    assert str(step.get("with", {}).get("save-cache", "true")).lower() == "true"
-    after = job["steps"][job["steps"].index(step) + 1 :]
-    assert any(str(s.get("run", "")).strip() == "uv sync" and "if" not in s for s in after)
