@@ -220,3 +220,32 @@ def test_the_outer_cycle_carries_last_success_forward_on_failure(tmp_path):
         f"CRITICAL staleness rule forever"
     )
     assert "ops_archive_pull_exit_code 1" in written, "the failing exit code was not published"
+
+
+def _ops_parse_regex() -> re.Pattern:
+    """The ops Alloy parse stage's line-shape regex, read out of its Alloy string literal."""
+    alloy = (REPO / "infra/ansible/roles/ops/files/config.alloy").read_text()
+    block = re.search(r'selector = "\{container=~\\"zcrypto-\.\*\\"\}"(.*?)stage\.timestamp', alloy, re.S).group(1)
+    literal = re.search(r'expression = "((?:[^"\\]|\\.)*)"', block).group(1)
+    return re.compile(re.sub(r"\\(.)", r"\1", literal))
+
+
+def test_the_scripts_own_warnings_carry_the_shape_the_ops_parse_stage_reads():
+    bash = shutil.which("bash")
+    if no_binary("bash"):  # pragma: no cover - bash is present on every image we run
+        pytest.skip("bash not available")
+    r = _rendered()
+    start = r.index("log() {")
+    helper = r[start : r.index("\n}\n", start) + 3]
+    proc = subprocess.run(
+        [bash, "-c", helper + '\nlog WARNING "writer cycle SKIPPED (fail-closed gate): x"'], capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    (line,) = proc.stderr.splitlines()
+    m = _ops_parse_regex().match(line)
+    assert m, f"the helper's line does not parse through the ops stage: {line!r}"
+    assert m.group("level") == "WARNING"
+    assert m.group("rest") == "zcrypto.archive-pull [archive-pull.sh] - writer cycle SKIPPED (fail-closed gate): x"
+    for text in ("writer cycle SKIPPED (fail-closed gate)", "reconcile failed, continuing", "trade backfill failed"):
+        assert f'log WARNING "{text}' in r, f"{text!r} is not logged at WARNING through the helper"
+    assert "log ERROR" not in r and 'echo "zcrypto-archive-pull:' not in r

@@ -11,6 +11,8 @@ import subprocess
 import pytest
 import yaml
 
+from tests.test_infra_archive_pull_template import _ops_parse_regex
+
 ROLES = pathlib.Path(__file__).resolve().parent.parent / "infra" / "ansible" / "roles"
 
 # Vars the templates need that their role defaults do not carry — runtime facts (ops_uid/ops_gid
@@ -107,3 +109,18 @@ def test_shell_template_renders_to_valid_bash(template):
     assert "{{" not in rendered and "{%" not in rendered, f"{template.name}: unrendered Jinja survived"
     proc = subprocess.run(["bash", "-n"], input=rendered, text=True, capture_output=True)
     assert proc.returncode == 0, f"{template.name}: renders to invalid bash — {proc.stderr.strip()}"
+
+
+def test_verified_replays_refusals_log_through_the_helper_at_warning():
+    template = ROLES / "ops/templates/verified-replay.sh.j2"
+    rendered = ansible_render(template.read_text(), role_variables(template))
+    start = rendered.index("log() {")
+    helper = rendered[start : rendered.index("\n}\n", start) + 3]
+    proc = subprocess.run(["bash", "-c", helper + '\nlog WARNING "x"'], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    (line,) = proc.stderr.splitlines()
+    m = _ops_parse_regex().match(line)
+    assert m, f"the helper's line does not parse through the ops stage: {line!r}"
+    assert (m.group("level"), m.group("rest")) == ("WARNING", "zcrypto.verified-replay [verified-replay.sh] - x")
+    logged = [ln.strip() for ln in rendered.splitlines() if ln.strip().startswith("log ")]
+    assert len(logged) == 4 and all(ln.startswith('log WARNING "') for ln in logged), logged

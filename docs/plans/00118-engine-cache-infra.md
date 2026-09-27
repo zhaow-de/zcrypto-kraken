@@ -8172,7 +8172,7 @@ W$ python3 -c 'import json; d = json.load(open("infra/grafana/cache-dashboard.js
 W$ while read -r id; do printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- -o "$CAP/r8-cache-panel-$id.png" "https://zcrypto2026.grafana.net/render/d-solo/zcrypto-cache/x?panelId=$id&width=1100&height=420&from=now-6h&to=now"; done < "$CAP/r8-panel-ids.txt"
 ```
 
-The push names `cache-dashboard.json` among the dashboards, upserts the nine new uids and the changed `zcrypto-fleet-alloy-memory-headroom`, reads every rule's datasource back and reports no orphan; the group reads `interval` 60, `rules` 9 and `paused` the three `zcrypto-alloy-dark-cache-N` uids; every rendered panel but 401 shows data, no `NaN` and no `No data` (read each PNG). Panel 401 draws the engine's lines naming the cache, which the second plan's wiring writes, so `No data` there is its expected reading until then. Then each rule's own expression, read from Cloud the same minute:
+The push names `cache-dashboard.json` among the dashboards, upserts the eleven new uids and the changed `zcrypto-fleet-alloy-memory-headroom`, reads every rule's datasource back and reports no orphan; the group reads `interval` 60, `rules` 11 and `paused` the three `zcrypto-alloy-dark-cache-N` uids; every rendered panel shows data, no `NaN` and no `No data` (read each PNG). Then each rule's own expression, read from Cloud the same minute:
 
 ```
 W$ for n in 1 2 3; do uv run python infra/scripts/grafana-query.py "count(up{host=\"zcrypto-valkey$n\"}) or on() vector(0)"; done
@@ -8182,13 +8182,15 @@ W$ uv run python infra/scripts/grafana-query.py 'redis_memory_used_bytes{job="va
 W$ uv run python infra/scripts/grafana-query.py 'min by (host) (redis_aof_enabled{job="valkey"} * redis_aof_last_write_status{job="valkey"} * redis_aof_last_bgrewrite_status{job="valkey"})'
 W$ uv run python infra/scripts/grafana-query.py 'node_filesystem_avail_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", mountpoint="/"} / node_filesystem_size_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", mountpoint="/"}'
 W$ uv run python infra/scripts/grafana-query.py 'max by (host, peer) (zcache_wireguard_handshake_age_seconds{host=~"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"}) + on(host) group_left() (time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", file=~".*/zcache.prom"}))'
+W$ uv run python infra/scripts/grafana-query.py 'min by (host, job) (redis_up{job=~"valkey|sentinel"})'
+W$ uv run python infra/scripts/grafana-query.py 'redis_memory_used_rss_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="valkey"} / 268435456'
 W$ uv run python infra/scripts/grafana-query.py '(go_memstats_sys_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} - go_memstats_heap_released_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"}) / 402653184'
 W$ printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- "https://zcrypto2026.grafana.net/api/prometheus/grafana/api/v1/rules" | jq -r '.data.groups[] | select(.name == "zcrypto-cache") | .rules[] | "\(.name) \(.state) \(.health)"'
-W$ for n in 1 2 3; do printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- -G "https://zcrypto2026.grafana.net/api/datasources/proxy/uid/grafanacloud-logs/loki/api/v1/query" --data-urlencode "query=sum by (container) (count_over_time({host=\"zcrypto-valkey$n\"}[1h]))" | jq -r --arg n "$n" '.data.result[] | "valkey\($n) \(.metric.container) \(.value[1])"'; done
+W$ for n in 1 2 3; do printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- -G "https://zcrypto2026.grafana.net/api/datasources/proxy/uid/grafanacloud-logs/loki/api/v1/query" --data-urlencode "query=sum by (container) (count_over_time({host=\"zcrypto-valkey$n\"}[6h]))" | jq -r --arg n "$n" '.data.result[] | "valkey\($n) \(.metric.container) \(.value[1])"'; done
 W$ unset GRAFANA_SA_TOKEN
 ```
 
-In order: 4 on each node (the host scrape's two targets and the two Redis exporters); 0; 2, one series, the primary's; three series, each under 0.7; 1 on each of three; three series, each above 0.15; twelve series, three per member, each under 180; three series, each under 0.9; nine lines, the six rules the group read does not name as paused each `inactive ok`, and the three paused ones evaluate nothing until R9 un-pauses them, so their state is read then; each node names `alloy`, `valkey` and `sentinel` with a count of 1 or more, and `zcache-probe` only when the probe has failed. A series absent, a value on the firing side of its bar, or a rule reading `nodata` or `error` stops here: the rule's runbook section is the next step, and the finding is fixed before R9. The captures under `$CAP` are what R9's commit message quotes.
+In order: 4 on each node (the host scrape's two targets and the two Redis exporters); 0; 2, one series, the primary's; three series, each under 0.7; 1 on each of three; three series, each above 0.15; twelve series, three per member, each under 300; six series, `valkey` and `sentinel` on each node, each 1; three series, each under 0.7; three series, each under 0.9; eleven lines, the eight rules the group read does not name as paused each `inactive ok`, and the three paused ones evaluate nothing until R9 un-pauses them, so their state is read then; each node names `alloy`, `valkey` and `sentinel` with a count of 1 or more, and `zcache-probe` only when the probe has failed, over a window that reaches back past each node's last container start, since a steady node's containers log at start and on events and nothing between: `[6h]`, the render's window above, widened when a node's last container start is older. A series absent, a value on the firing side of its bar, or a rule reading `nodata` or `error` stops here: the rule's runbook section is the next step, and the finding is fixed before R9. The captures under `$CAP` are what R9's commit message quotes.
 
 **R9. The records: one pull request** (the `open-pr` skill; a different agent reads it; `merge-pr` merges it). From `develop`, carrying the deploy-log lines the converges appended:
 
@@ -8228,7 +8230,7 @@ W$ printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- "ht
 W$ unset GRAFANA_SA_TOKEN
 ```
 
-The group reads `interval` 60, `rules` 9 and `paused` `[]`; nine lines, each `inactive ok`. A rule reading `pending`, `firing`, `nodata` or `error` is its runbook section's next step.
+The group reads `interval` 60, `rules` 11 and `paused` `[]`; eleven lines, each `inactive ok`. A rule reading `pending`, `firing`, `nodata` or `error` is its runbook section's next step.
 
 ## Resolution
 

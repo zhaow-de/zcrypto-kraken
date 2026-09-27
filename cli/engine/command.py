@@ -51,6 +51,7 @@ from cli.engine.store import _HOST_REDELIVERY, BASKET, GRID_INTERVALS, PAIR_KEYS
 from cli.engine.tracking import Fill, cost_blend, extract_fills, read_ledger_export, reconcile_ledger, weekly_tracking
 from cli.engine.venue import read_system_status
 from cli.logging import get_logger
+from cli.logging.redact import ping_failure
 from cli.obs.metrics import build_registry, metrics_port_from_env, start_metrics_server
 from cli.ohlc.dataset import read_parquet
 from cli.portfolio.crossfreq_system import CrossfreqSystemConfig
@@ -294,7 +295,7 @@ def _gate_ping(url: str, success: bool) -> None:
         with _urlopen(ping_url, timeout=10):
             pass
     except Exception as exc:
-        logger.warning("gate-export healthcheck ping failed url=%s error=%s", ping_url, exc)
+        logger.warning("gate-export %s", ping_failure(ping_url, exc))
 
 
 def _write_prom_textfile(

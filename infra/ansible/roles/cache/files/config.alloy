@@ -11,7 +11,8 @@
 // ---- Host metrics -------------------------------------------------------------------------------
 // The textfile directory is where the cache_link role's mesh probe (zcache-probe) writes zcache.prom,
 // each mesh peer's handshake age, and the cache role's reboot check reboot.prom, the pending-reboot
-// flag. It sits inside the `/:/host/root:ro` mount.
+// flag, and its clock exporter clock-offset.prom, the clock's offset and sync state. It sits inside
+// the `/:/host/root:ro` mount.
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
 
@@ -109,7 +110,7 @@ prometheus.remote_write "grafana" {
 
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_scrape_collector_success|node_reboot_required|node_textfile_mtime_seconds|node_textfile_scrape_error|zcache_wireguard_handshake_age_seconds|go_memstats_sys_bytes|go_memstats_heap_released_bytes|redis_up|redis_instance_info|redis_uptime_in_seconds|redis_connected_slaves|redis_master_repl_offset|redis_connected_slave_offset_bytes|redis_master_link_up|redis_memory_used_bytes|redis_memory_max_bytes|redis_memory_used_rss_bytes|redis_commands_processed_total|redis_connected_clients|redis_aof_enabled|redis_aof_last_write_status|redis_aof_last_bgrewrite_status|redis_rdb_last_bgsave_status|redis_sentinel_masters|redis_sentinel_master_status|redis_sentinel_master_sentinels|redis_sentinel_master_ok_sentinels|redis_sentinel_master_slaves"
+      regex         = "up|node_load1|node_cpu_seconds_total|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_scrape_collector_success|node_reboot_required|node_textfile_mtime_seconds|node_textfile_scrape_error|zcache_wireguard_handshake_age_seconds|zcrypto_clock_offset_seconds|zcrypto_clock_synchronised|go_memstats_sys_bytes|go_memstats_heap_released_bytes|redis_up|redis_instance_info|redis_uptime_in_seconds|redis_connected_slaves|redis_master_repl_offset|redis_connected_slave_offset_bytes|redis_master_link_up|redis_memory_used_bytes|redis_memory_max_bytes|redis_memory_used_rss_bytes|redis_commands_processed_total|redis_connected_clients|redis_aof_enabled|redis_aof_last_write_status|redis_aof_last_bgrewrite_status|redis_rdb_last_bgsave_status|redis_sentinel_masters|redis_sentinel_master_status|redis_sentinel_master_sentinels|redis_sentinel_master_ok_sentinels|redis_sentinel_master_slaves"
       action        = "keep"
     }
   }
@@ -169,6 +170,14 @@ loki.source.journal "cache_units" {
 
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
+
+  // Sentinel has no LATENCY command; the exporter asks it on every scrape, logs the error once per Alloy
+  // process, and takes no argument that stops the call.
+  stage.match {
+    selector            = "{container=\"alloy\"} |= \"ERR unknown command 'LATENCY'\""
+    action              = "drop"
+    drop_counter_reason = "sentinel_has_no_latency_command"
+  }
 
   stage.match {
     selector = "{container=\"alloy\"}"

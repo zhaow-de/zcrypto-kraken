@@ -1873,17 +1873,21 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
 # window in an audit; do not add a regex that claims to settle it.
 
 
-def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
-    cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+def _cache_board_panels() -> list[dict]:
     board = json.loads((REPO / "infra/grafana/cache-dashboard.json").read_text())
     stack, panels = list(board["panels"]), []
     while stack:
         panel = stack.pop()
         stack.extend(panel.get("panels", []))
         panels.append(panel)
+    return panels
+
+
+def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
+    cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
     drawn = [
         (panel, target["expr"])
-        for panel in panels
+        for panel in _cache_board_panels()
         for target in panel.get("targets", [])
         if "go_memstats_sys_bytes" in target.get("expr", "") and 'job="integrations/self"' in target["expr"]
     ]
@@ -1896,3 +1900,85 @@ def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
             cap,
         )
         assert f"{cap // 2**20} MiB" in panel["title"] and "Go runtime" in panel["title"], (panel["id"], panel["title"])
+
+
+_HANDSHAKE_STALE = "zcrypto-cache-wg-handshake-stale"
+_WIREGUARD_KEY_LIFETIME_S = 180
+PROBE_TIMER = ANSIBLE / "roles/cache_link/templates/zcache-probe.timer.j2"
+CACHE_ALLOY = ANSIBLE / "roles/cache/files/config.alloy"
+
+
+def _timer_period_seconds(path: Path) -> int:
+    calendar = re.search(r"^OnCalendar=(.+)$", path.read_text(), re.M).group(1).strip()
+    if re.fullmatch(r"\*:\*:\d{1,2}", calendar):
+        return 60
+    if re.fullmatch(r"\*:\d{1,2}:\d{1,2}", calendar):
+        return 3600
+    raise AssertionError(f"{path.name}: OnCalendar={calendar!r} is a shape this reader derives no period from")
+
+
+def _textfile_scrape_interval_seconds(path: Path) -> int:
+    text = path.read_text()
+    exporter = re.search(r'^prometheus\.exporter\.unix "(\w+)" \{\n(.*?)\n\}', text, re.M | re.S)
+    assert exporter and '"textfile"' in exporter.group(2), f"{path}: no unix exporter with the textfile collector"
+    jobs = [
+        body
+        for body in re.findall(r'^prometheus\.scrape "\w+" \{\n(.*?)\n\}', text, re.M | re.S)
+        if f"prometheus.exporter.unix.{exporter.group(1)}.targets" in body
+    ]
+    assert len(jobs) == 1, f"{path}: {len(jobs)} scrape jobs read the unix exporter"
+    return _duration_seconds(re.search(r'^\s*scrape_interval\s*=\s*"(\w+)"', jobs[0], re.M).group(1))
+
+
+def test_the_handshake_bar_is_the_key_lifetime_plus_the_two_sampling_steps_and_the_board_draws_it():
+    rule = _rule(_HANDSHAKE_STALE)
+    period = _timer_period_seconds(PROBE_TIMER)
+    scrape = max(_textfile_scrape_interval_seconds(CACHE_ALLOY), _textfile_scrape_interval_seconds(CAPTURE_ALLOY))
+    bar = _WIREGUARD_KEY_LIFETIME_S + period + scrape
+    evaluator = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+    assert evaluator == {"type": "gt", "params": [bar]}, (
+        f"{evaluator}: the key lifetime plus the probe's {period} s plus the scrape's {scrape} s is {bar}"
+    )
+    assert rule["for"] == "2m" and rule["noDataState"] == "OK"
+    panel = next(p for p in _cache_board_panels() if str(p["id"]) == rule["annotations"]["__panelId__"])
+    steps = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    assert [step["value"] for step in steps if step["color"] == "red"] == [bar], (panel["id"], steps)
+
+
+# --- the node clock pair: the capture rules' twins on the hosts that copy the exporter ------------
+_NODE_CLOCK_SKEW = "zcrypto-node-clock-skew"
+_NODE_CLOCK_STALE = "zcrypto-node-clock-exporter-stale"
+# The hosts whose roles install a copy of the capture role's clock exporter; the capture pair keeps
+# its own critical pair.
+_NODE_CLOCK_HOSTS = frozenset({"ops", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
+
+
+def _prom_exprs(rule: dict) -> list[str]:
+    return [q["model"]["expr"] for q in rule["data"] if q.get("datasourceUid") == "${GRAFANA_PROM_DS_UID}"]
+
+
+@pytest.mark.parametrize("uid", [_NODE_CLOCK_SKEW, _NODE_CLOCK_STALE])
+def test_the_node_clock_rules_select_exactly_the_hosts_that_copy_the_exporter(uid):
+    rule = _rule(uid)
+    matchers = [m.group(1) for expr in _prom_exprs(rule) for m in re.finditer(r'host=~"([^"]+)"', expr)]
+    assert matchers, f"{uid} carries no host matcher, so it would claim the capture pair's series too"
+    for matcher in matchers:
+        assert frozenset(matcher.split("|")) == _NODE_CLOCK_HOSTS, f"{uid} selects {matcher!r}"
+    assert rule["labels"]["severity"] == "warning", "no archive hour closes on these clocks"
+
+
+def test_the_node_clock_skew_rule_reads_an_unsynchronised_clock_as_one():
+    """A bare `== 0` filter returns the left operand's VALUE, 0, which no `gt 0` evaluator can see;
+    `== bool 0` yields 1."""
+    (expr,) = _prom_exprs(_rule(_NODE_CLOCK_SKEW))
+    assert "zcrypto_clock_synchronised" in expr and "== bool 0" in expr, expr
+    assert "abs(zcrypto_clock_offset_seconds" in expr and ") > 10" in expr, expr
+
+
+def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
+    rule = _rule(_NODE_CLOCK_STALE)
+    (expr,) = _prom_exprs(rule)
+    assert 'file=~".*/clock-offset.prom"' in expr and "node_textfile_mtime_seconds" in expr, expr
+    threshold = next(q for q in rule["data"] if q["model"].get("type") == "threshold")
+    assert threshold["model"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [1800]}
+    assert rule["noDataState"] == "OK", "the series is absent until the roles converge; NoData must not page"

@@ -1,6 +1,12 @@
-# Two independent public NTS servers for basic redundancy — Cloudflare and PTB
-# (Germany's national metrology institute), both widely documented chrony NTS sources.
+# Two operators, four servers: Cloudflare, and PTB (Germany's national metrology institute) under
+# the three names its NTS-KE endpoints carry on their certificates. NTS-KE checks the configured
+# name against the certificate, so an alias of one of these hosts (ntp3.ptb.de, a CNAME of
+# ptbtime3.ptb.de answered with its certificate) fails the handshake and is never selectable. PTB's
+# three share one operator: they add selection votes -- with three or more sources chrony can
+# outvote one that is wrong -- not a second failure domain beside Cloudflare.
 chrony_nts_servers:
   - time.cloudflare.com
-  - ntp3.ptb.de
+  - ptbtime1.ptb.de
+  - ptbtime2.ptb.de
+  - ptbtime3.ptb.de
 chrony_makestep: "1.0 3"

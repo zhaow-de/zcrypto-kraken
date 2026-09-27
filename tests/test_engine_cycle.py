@@ -1359,3 +1359,19 @@ def test_real_builder_round_trips_through_replay_cycle(tmp_path, monkeypatch):
     eur = {replayed[s] for s in EUR_SYMBOLS}
     assert len(eur) == 10 and 0.0 not in eur
     assert all(replayed[leg] == 0.0 for leg in BTC_SYMBOLS)
+
+
+def test_a_failed_ping_logs_the_host_and_the_fail_flag_and_never_the_check_path(monkeypatch):
+    from tests.logcapture import messages_of
+
+    uuid = "1c1ab0a3-0d68-4c47-9a67-3b8c0f0e7c9d"
+    monkeypatch.setenv("HEALTHCHECK_URL", f"https://hc-ping.com/{uuid}")
+
+    def quoting(url, timeout):
+        raise ValueError(f"unknown url type: {url!r}")
+
+    monkeypatch.setattr(cycle, "_hc_opener", quoting)
+    with messages_of(cycle.logger) as lines:
+        cycle._ping_healthcheck(False)
+    assert lines == ["healthcheck ping failed target=hc-ping.com/fail error=ValueError"]
+    assert uuid not in "".join(lines)

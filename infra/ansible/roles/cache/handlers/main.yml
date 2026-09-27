@@ -4,8 +4,11 @@
     name: zcrypto-cache.service
     daemon_reload: true
     state: restarted
-  # A first-install preview never wrote the unit, so systemd cannot find it.
-  when: not (ansible_check_mode and cache_unit_install is changed)
+  # A first-install preview never wrote the unit, so systemd cannot find it. A stack the start task
+  # just started runs the files this converge rendered; restarting it again only costs each replica a
+  # second full resync. `status` is the unit as the start task found it: the task's `changed` alone
+  # also reports an enable flip on a running stack, which still needs the restart.
+  when: not (ansible_check_mode and cache_unit_install is changed) and cache_service_start.status.ActiveState in ['active', 'activating']
 
 - name: reload alloy
   # A reload, never a recreate: the directory mount lands the new file in place, and this role never

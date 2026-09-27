@@ -1,0 +1,15 @@
+# Installed by the `cache` Ansible role at /etc/systemd/system/zcrypto-clock-offset.timer, a copy of
+# the capture role's timer; edit this file and re-converge instead of editing the host's copy.
+[Unit]
+Description=Publish the host clock offset as a node-exporter textfile
+
+[Timer]
+# The interval bounds how long a clock can be wrong before the page. OnBootSec republishes promptly
+# after a reboot, when a clock is most likely to come back wrong.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Deliberately no Persistent=true: this reports the current clock.
+Unit=zcrypto-clock-offset.service
+
+[Install]
+WantedBy=timers.target

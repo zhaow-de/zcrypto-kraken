@@ -2551,14 +2551,69 @@ def test_every_cache_probe_never_fails_changes_or_skips_under_check():
         assert modes == (False, False, False), f"{probe['name']!r}: failed_when, changed_when, check_mode = {modes}"
 
 
+CACHE_SYSCTL = "enable memory overcommit for Valkey's forks (AOF rewrite, RDB save, replica sync)"
+
+
+def test_the_cache_role_sets_memory_overcommit_on_every_converge_and_persists_it():
+    tasks = load_tasks(CACHE)
+    sysctl = find_task(tasks, CACHE_SYSCTL)["ansible.posix.sysctl"]
+    assert (sysctl["name"], str(sysctl["value"]), sysctl["sysctl_set"], sysctl["state"]) == (
+        "vm.overcommit_memory",
+        "1",
+        True,
+        "present",
+    )
+    assert Path(sysctl["sysctl_file"]).parent == Path("/etc/sysctl.d") and sysctl["sysctl_file"].endswith(".conf")
+    gates = next(g for t, g in iter_tasks(tasks) if t.get("name") == CACHE_SYSCTL)
+    assert gates == (), f"the overcommit task is gated: {gates}"
+    assert task_index(tasks, CACHE_SYSCTL) < task_index(tasks, CACHE_BLOCK)
+
+
+CACHE_START = "enable + start the cache service (boot resume)"
+
+
 @pytest.mark.parametrize(
-    ("check_mode", "unit_changed", "expected"),
-    [(True, True, False), (True, False, True), (False, True, True), (False, False, True)],
+    ("check_mode", "unit_changed", "start_changed", "active_before", "expected"),
+    [
+        (True, True, False, None, False),
+        (True, False, False, "active", True),
+        (True, False, True, "inactive", False),
+        (False, True, True, "inactive", False),
+        (False, True, False, "active", True),
+        (False, False, True, "inactive", False),
+        (False, False, False, "active", True),
+        (False, False, True, "active", True),
+    ],
+    ids=[
+        "first-install-preview",
+        "preview-of-a-unit-edit",
+        "preview-of-a-stopped-node",
+        "first-install",
+        "unit-edit-on-a-running-node",
+        "a-stopped-node-this-run-started",
+        "config-change-on-a-running-node",
+        "an-enable-flip-on-a-running-node",
+    ],
 )
-def test_the_cache_restart_handler_stands_down_only_on_a_first_install_preview(check_mode, unit_changed, expected):
+def test_the_cache_restart_handler_stands_down_on_a_first_install_preview_and_after_a_start_this_converge_made(
+    check_mode, unit_changed, start_changed, active_before, expected
+):
     handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
-    variables = {"ansible_check_mode": check_mode, "cache_unit_install": {"changed": unit_changed}}
+    # The start task's result: skipped on a first-install preview; otherwise `status` is the unit as
+    # systemctl showed it before the task acted, and `changed` reports an enable flip as well as a start.
+    if active_before is None:
+        start = {"changed": False, "skipped": True}
+    else:
+        start = {"changed": start_changed, "status": {"ActiveState": active_before}}
+    variables = {"ansible_check_mode": check_mode, "cache_unit_install": {"changed": unit_changed}, "cache_service_start": start}
     assert truthy(when_conditions(handler), variables) is expected
+
+
+def test_the_cache_start_task_registers_what_its_restart_handler_reads():
+    start = find_task(load_tasks(CACHE), CACHE_START)
+    handler = find_task(load_tasks(CACHE_HANDLERS), "restart cache service")
+    read = re.findall(r"\b(\w+)\.status\.ActiveState\b", " ".join(when_conditions(handler)))
+    assert read == [start.get("register")], (read, start.get("register"))
 
 
 # --- the cache nodes' Alloy: the digest shape, the pins refusal, and the drift assert ---------------

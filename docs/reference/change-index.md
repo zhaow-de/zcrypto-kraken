@@ -354,3 +354,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #616 | 2026-09-26 | docs(engine): iter-172 — Rung 1's disarm records and the T2 tax verdict | iter-172 | — | T0005 |
 | #617 | 2026-09-26 | chore(records): the 2026-09-26 drill day — tier run and reboot round | — | — | T0018, T0085, T0158 |
 | #619 | 2026-09-26 | fix(ansible): fresh-node previews, and cache Alloy at a real 384m cap | — | 00118 | — |
+| #620 | 2026-09-27 | fix(cache): R8 findings, the fleet time sources and log gaps | — | 00118 | — |

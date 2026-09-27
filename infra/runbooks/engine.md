@@ -396,11 +396,11 @@ Two properties of the page itself: a storm can carry more lines than the five sh
 
 Something went wrong **between** boundaries. The cycle rules see only a boundary's final outcome, so key or API failures, store refresh errors, venue-snapshot failures, order-path exceptions, a raising metrics sink and the node's own `shadow node: run_cycle(…) raised` all surface here first, on the host that holds the live Kraken trade key.
 
-Note what does **not** appear here: a controlled cycle failure logs at WARNING, so a `failed-cycle` sidecar never pages this rule. If you are seeing both, they are two findings.
+Note what does **not** appear here: a controlled cycle failure logs at WARNING, so a `failed-cycle` sidecar never pages this rule. If you are seeing both, they are two findings. Neither do the nautilus library's own `[WARN]`/`[ERROR]` lines (a rejected order, a failed reconciliation, a lost venue socket): they ship under `container="engine-nautilus"`, which this rule does not select. Read them beside the engine's records whenever an execution-path error is on the page.
 
 ### What to do
 
-1. **Read the full lines, not the 200-character hoist.** Panel 102 on the `zcrypto-logs` board filtered to `container="engine"`, or on the host `sudo docker logs --since 30m zcrypto-engine | tail -80`; tracebacks are in the same stream. Count a storm before calling it five errors: `sum(count_over_time({host="zcrypto", container="engine", level=~"ERROR|CRITICAL"}[15m]))`.
+1. **Read the full lines, not the 200-character hoist.** The `Logs` panel on the `zcrypto-logs` board with the container filter at `engine` and `engine-nautilus`, or on the host `sudo docker logs --since 30m zcrypto-engine | tail -80`, where both writers and the tracebacks share one stream. Count a storm before calling it five errors: `sum(count_over_time({host="zcrypto", container="engine", level=~"ERROR|CRITICAL"}[15m]))`.
 2. **Classify by message, and act on the class:**
    - **`shadow node: run_cycle(…) raised`**: a boundary is being lost right now with no artifact written. Go to [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) step 3 immediately, well before its 4h35m bar can fire.
    - **`shadow node: snapshot_fn() raised`**: venue truth only. The cycle proceeds with `venue_state=None` by design; this cannot cost a boundary (no count command: `cli/engine/node.py::_invoke_cycle` catches it and still runs the cycle). Read it beside [`zcrypto-venue-snapshot-stale`](#zcrypto-venue-snapshot-stale) and [`zcrypto-venue-concordance-failed`](#zcrypto-venue-concordance-failed).

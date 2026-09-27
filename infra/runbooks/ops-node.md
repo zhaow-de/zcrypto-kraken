@@ -24,7 +24,7 @@ Two Grafana alerts on the same unit, `zcrypto-archive-pull.service` — despite 
 
 `zcrypto-archive-pull.timer` fires at `*-*-* *:12,42:00` with `Persistent=true`, so 3 h is about six missed half-hourly ticks. Each tick reads the NAS's canonical trees through the read-only NFS automount at `/mnt/zhao-crypto` and writes the overlay locally under `/var/lib/zcrypto-ops/capture-reconciled`.
 
-**The two rules partition the failure, and a gate-skip is in neither of them.** The cycle opens with a fail-closed gate: it reads `/mnt/zhao-crypto/.pull-status` — written by the NAS right after its own capture pulls — and skips reconcile *and* backfill unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 14400 s and no more than 600 s in the future. A skip is a state, not a fault: it exits 0, bumps `ops_archive_pull_last_success_timestamp`, and echoes `WARNING: writer cycle SKIPPED (fail-closed gate): <reason>` to the journal. So **stalled firing is never a skip** — it is the unit itself not completing.
+**The two rules partition the failure, and a gate-skip is in neither of them.** The cycle opens with a fail-closed gate: it reads `/mnt/zhao-crypto/.pull-status` — written by the NAS right after its own capture pulls — and skips reconcile *and* backfill unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 14400 s and no more than 600 s in the future. A skip is a state, not a fault: it exits 0, bumps `ops_archive_pull_last_success_timestamp`, and logs `writer cycle SKIPPED (fail-closed gate): <reason>` at WARNING to the journal. So **stalled firing is never a skip** — it is the unit itself not completing.
 
 `rc=1` is set in exactly one place in `infra/ansible/roles/ops/templates/archive-pull.sh.j2`: the reconcile `docker run` failing. A trade-backfill failure leaves rc at 0 and pages through its own exit-code rule instead.
 
@@ -78,7 +78,7 @@ Only the trade tape is affected. Book data — the unbackfillable part — is un
 
 ### What to do
 
-1. **Read the day's attempt.** `ssh hp`, then `sudo journalctl -u zcrypto-archive-pull.service --since -48h --no-pager | grep -iE 'backfill|SKIPPED'` — the script echoes `trade backfill failed (exit=<n>), continuing` and replays the CLI's whole output into the journal, including the `errors=` summary line.
+1. **Read the day's attempt.** `ssh hp`, then `sudo journalctl -u zcrypto-archive-pull.service --since -48h --no-pager | grep -iE 'backfill|SKIPPED'` — the script logs `trade backfill failed (exit=<n>), continuing` at WARNING and replays the CLI's whole output into the journal, including the `errors=` summary line.
 2. **Read the stamp and the textfile.** `cat /var/lib/zcrypto-ops/.trade-backfill-last-utc-day` — today's date means today's attempt has already happened. `cat /var/lib/zcrypto-ops/textfile/trade-backfill.prom` for the exit code, last run and last success as published.
 3. **Exit 2 → the mount.** `ls /mnt/zhao-crypto/capture-segments`. Treat it exactly as the writer cycle's mount check above.
 4. **Exit 1 → read the errors.** Fetch failures against Kraken's REST point at the venue (check its status page and the capture-side venue-status signals); unreadable segments point at the NAS or the mount.
@@ -121,7 +121,7 @@ Two Grafana alerts on `zcrypto-verified-replay.service`, the daily verified-path
 - **`days_behind > 0`, exit code 0** — the loop stopped short, for one of three reasons, each logged verbatim — **the first two stop *without advancing the watermark*, the third advances and resumes tomorrow**: the day's directory under `/mnt/zhao-crypto/engine-journal/<day>/` holds no `cycle-*.json` or `failed-cycle-*.json` (`journal has not caught up`); the **successor** day holds none either, so the day may be only partly pulled (`journal freshness unproven` — that successor-day probe stands in for a journal freshness signal, since `.pull-status` attests `capture_ok`/`secondary_ok` and nothing about the journal) (no count command: a day's pull state lives on the NAS, not in the tree); or the 30-day budget ran out (`capped at 30 day(s)`).
 - **Exit code non-zero** — a day genuinely mismatched, the run was **refused** before it started, or a day verified but its watermark could not be persisted.
 
-**A refused run touches neither the watermark nor the textfile**, exits 1, and prints its own reason at ERROR: the watermark is not a `YYYY-MM-DD` day, is a shape-valid but nonexistent calendar date, is beyond yesterday (clock skew or a manual edit), or the seed could not be persisted. An **empty** watermark file is the one to know: it parses as *tomorrow*, would skip the loop forever and read fully healthy while doing so — hence the refusal.
+**A refused run touches neither the watermark nor the textfile**, exits 1, and logs its own reason at WARNING (the dead man's silence and `-stale` page it, not `Ops · ERROR logs`): the watermark is not a `YYYY-MM-DD` day, is a shape-valid but nonexistent calendar date, is beyond yesterday (clock skew or a manual edit), or the seed could not be persisted. An **empty** watermark file is the one to know: it parses as *tomorrow*, would skip the loop forever and read fully healthy while doing so — hence the refusal.
 
 **A mismatch is retried nightly and blocks everything after it.** The loop breaks on the first failing day without advancing, so no later day is verified past the gap — which is why `-stale` follows about 48 h behind a persistent `-exit-nonzero`.
 
@@ -129,7 +129,7 @@ The healthchecks.io dead-man for this timer is fed only on a clean, fully-caught
 
 ### What to do
 
-1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the three stop messages above and for `verified-replay: ERROR:`.
+1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the three stop messages above and for `WARNING zcrypto.verified-replay`.
 2. **Read the watermark and the journal tree.** `cat /var/lib/zcrypto-ops/.verified-replay-watermark`; `ls /mnt/zhao-crypto/engine-journal/ | tail -3`. The day after the watermark **and** its successor must each hold `cycle-*.json` or `failed-cycle-*.json`.
 3. **Journal not arriving is a NAS-side finding**, not this unit's. Nothing here can fix a stalled journal pull, and the fail-closed stop is correct behaviour.
 4. **Repair a refused run with a tmp+mv write, matching the script** — an in-place truncate is what the script's own comment rules out:
@@ -265,7 +265,7 @@ The `container` label names the source, and that is your routing:
 - **`alloy`** — Alloy's own logfmt `level=error`, typically a remote-write or Loki-push failure. The telemetry plane is complaining about itself.
 - **`liquidations`** — the poller. **This rule is the only channel its ERROR lines have**: it is a long-lived daemon that flips no exit-code metric, and it direct-ships its own lines to Loki without passing through Alloy at all (no count command: `alerts.yaml` selects its ERROR lines in `zcrypto-ops-error-logs` alone).
 
-**Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the CLI's Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). The runner scripts' own `echo` lines never match it and ship unleveled — including the load-bearing `WARNING: writer cycle SKIPPED (fail-closed gate): …`. A gate-skip streak produces no ERROR page by construction.
+**Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). `archive-pull.sh` and `verified-replay.sh` write that shape for their own warnings, at **WARNING**, so they show under the board's WARNING filter and never page here; every other runner `echo` still ships unleveled. A gate-skip streak produces no ERROR page by construction.
 
 The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.alloy`; the rule's selector is `zcrypto-.*`, so a unit the keep-regex does not admit produces no page here — extend the regex, not the selector.
 

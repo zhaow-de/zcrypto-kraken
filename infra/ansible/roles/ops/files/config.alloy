@@ -63,10 +63,8 @@ prometheus.exporter.unix "host" {
   rootfs_path = "/host/root"
 
   textfile {
-    // The timers' textfiles -- archive-pull, panel-materialize, tape-bars, verify-replay,
-    // verified-replay, grafana-keepalive from roles/ops, and zaccess-probe-ops from access_ops,
-    // which runs in the same play and writes here too. No count: every one this file carried went
-    // stale at the next writer, and a list is its own length.
+    // The textfiles of roles/ops's timers and of access_ops's zaccess-probe-ops, which runs in the
+    // same play and writes here too.
     // alloy-compose.yaml.j2 mounts that host directory read-only at this exact
     // container path -- literal "/textfile", exactly like the NAS's, not a templated
     // ops_textfile_dir -- because this string names the CONTAINER's view of the mount, not the
@@ -198,9 +196,13 @@ prometheus.remote_write "grafana" {
     // tunnel/cert gauges the ops-side probe (access_ops role) writes into the textfile dir. The
     // bridgehead publishes the same two names under host="zaccess" (roles/access/files/config.alloy);
     // this host's copy carries host="ops", so the two are distinguishable in Grafana.
+    //
+    // zcrypto_clock_offset_seconds / zcrypto_clock_synchronised: the clock exporter this role
+    // installs as a copy of the capture role's; `Node · the host clock cannot be trusted (ops,
+    // cache)` reads them here.
     write_relabel_config {
       source_labels = ["__name__"]
-      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|zcrypto_tapebars_.*|zcrypto_grafana_keepalive_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds"
+      regex         = "up|node_load1|node_load5|node_load15|node_memory_MemTotal_bytes|node_memory_MemAvailable_bytes|node_memory_MemFree_bytes|node_filesystem_avail_bytes|node_filesystem_size_bytes|node_filesystem_free_bytes|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_cpu_seconds_total|node_textfile_mtime_seconds|node_textfile_scrape_error|node_scrape_collector_success|node_scrape_collector_duration_seconds|ops_archive_pull_.*|ops_panel_.*|ops_verify_replay_.*|ops_verified_replay_.*|zcrypto_reconcile_.*|zcrypto_trade_backfill_.*|zcrypto_tapebars_.*|zcrypto_grafana_keepalive_.*|hc_check_up|hc_checks_down_total|zcrypto_liquidations_polls_total|zcrypto_liquidations_api_errors_total|zcrypto_liquidations_last_success_timestamp_seconds|zcrypto_logship_dropped_lines_total|zcrypto_logship_shipped_lines_total|zcrypto_logship_last_cycle_timestamp_seconds|zcrypto_logship_last_success_timestamp_seconds|process_cpu_seconds_total|process_max_fds|process_open_fds|process_resident_memory_bytes|process_start_time_seconds|process_virtual_memory_bytes|zaccess_wireguard_handshake_age_seconds|zaccess_tls_not_after_seconds|zcrypto_clock_offset_seconds|zcrypto_clock_synchronised"
       action        = "keep"
     }
   }
@@ -329,16 +331,14 @@ loki.process "parse" {
       source   = "ts"
       format   = "2006-01-02 15:04:05,000"
       location = "UTC"
-      // "skip", NOT the default "fudge" (review finding): lines that fail the stage.regex above --
-      // the scripts' own echoes (including the load-bearing "writer cycle SKIPPED (fail-closed
-      // gate)" warning),
-      // rsync stderr, docker-client errors, Python tracebacks -- have no `ts` in the extracted map,
-      // and "fudge" rewrites their timestamp to the stream's LAST PARSED app timestamp +1ns. For an
-      // hourly unit whose failure path emits ONLY unparsed echoes, that time-warps the headline
-      // warning up to an hour into the past (up to ~24h for the daily units), interleaving it into
-      // the PREVIOUS run's output and hiding it from any short-window Explore view or alert. "skip"
-      // keeps the journal/docker capture time -- the correct emission time -- for non-matching
-      // lines; matching lines still get the app timestamp.
+      // "skip", NOT the default "fudge": lines that fail the stage.regex above -- the runner
+      // scripts' bare echoes, rsync stderr, docker-client errors, Python tracebacks -- have no `ts`
+      // in the extracted map, and "fudge" rewrites their timestamp to the stream's LAST PARSED app
+      // timestamp +1ns. For a unit whose failure path emits only unparsed lines, that time-warps the
+      // failure up to a run's interval into the past, interleaving it into the PREVIOUS run's output
+      // and hiding it from any short-window Explore view or alert. "skip" keeps the journal/docker
+      // capture time -- the correct emission time -- for non-matching lines; matching lines still get
+      // the app timestamp.
       action_on_failure = "skip"
     }
 
