@@ -2400,7 +2400,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "A filesystem on the ops node has had under 25% of its inodes free for 10+ minutes; the notification names the mountpoint. The Claude Code sessions' scratch trees under their temp root are the usual holder, and a full inode table on /tmp fails every ops timer's docker run while bytes remain free. Removing files is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-inodes-low"
+      summary: "A filesystem on the ops node has had under 25% of its inodes free for 10+ minutes; the notification names the mountpoint. The Claude Code sessions' scratch trees are the usual holder, and a full inode table on /tmp fails every ops timer's docker run while bytes remain free. Removing files is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-inodes-low"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "305"
       unit: "of the filesystem's inodes still free (a fraction, not a percent)"
