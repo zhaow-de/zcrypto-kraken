@@ -266,9 +266,10 @@ Valkey's append-only file and snapshots live on this filesystem, under `/var/lib
 
 1. **Read what fills it**, on the node: `df -h /`, then `sudo du -xsh /var/lib/zcrypto-cache /var/log/journal /var/lib/docker`.
 2. **The journal:** `sudo journalctl --vacuum-size=500M` on the node removes its oldest archived files until they hold 500M.
-3. **The cache's own directory growing** is Valkey's AOF between rewrites: `zcrypto-cache-aof-not-ok` above reads the rewrite's state.
-4. **Read Valkey on the node:** `vk INFO persistence`. No Valkey to answer is one that exited on the full disk and was not brought back: restart the node's containers, `sudo systemctl restart zcrypto-cache.service`, then confirm by `cache-rejoin-node` steps 3 and 4. An answer reading `rdb_last_bgsave_status:err` is a Valkey still refusing writes, which reads `ok` once a snapshot succeeds on the freed disk.
-5. **Confirm by value:** the Cache board's panel 104 reads above 0.15 for the node, `vk INFO persistence` on it reads `rdb_last_bgsave_status:ok`, and the rule is back to **Normal**.
+3. **Stale images**, from the workstation: `uv run python infra/scripts/prune-host-images.py zcrypto-valkey<N>` lists what it would remove; `--apply` removes it, and `--keep <digest12>` spares one staged for a converge.
+4. **The cache's own directory growing** is Valkey's AOF between rewrites: `zcrypto-cache-aof-not-ok` above reads the rewrite's state.
+5. **Read Valkey on the node:** `vk INFO persistence`. No Valkey to answer is one that exited on the full disk and was not brought back: restart the node's containers, `sudo systemctl restart zcrypto-cache.service`, then confirm by `cache-rejoin-node` steps 3 and 4. An answer reading `rdb_last_bgsave_status:err` is a Valkey still refusing writes, which reads `ok` once a snapshot succeeds on the freed disk.
+6. **Confirm by value:** the Cache board's panel 104 reads above 0.15 for the node, `vk INFO persistence` on it reads `rdb_last_bgsave_status:ok`, and the rule is back to **Normal**.
 
 ### Retire when
 
