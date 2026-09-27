@@ -90,21 +90,11 @@ def test_the_grading_grades_prose_by_consequence():
     assert "prose that, acted on as written, breaks something no test stops" in text
 
 
-def test_every_workflow_records_itself_once_it_has_read_and_the_ledger_gates_the_two_reads():
-    texts = {f: (_FLOWS / f"{f}.js").read_text() for f in ("pre-review", "review", "re-review")}
-    for name, text in texts.items():
-        record, append = text.index("phase('Record')"), text.index("const recorded = await agent(")
-        assert text.rindex("phase('") == record, f"{name}: Record is the last phase"
-        assert record < append < text.rindex("\nreturn ") and text.rindex("await agent(") == text.index("await agent(", append), (
-            f"{name}: the row is appended by the last agent to run and before the return, so a read that dies leaves no row"
-        )
-    for name, phase in (("review", "Read"), ("re-review", "Re-read")):
-        text = texts[name]
-        gate, ledger = text.index("phase('Ledger')"), text.index("const ledger = await agent(")
-        assert gate < ledger < text.index(f"\nphase('{phase}')"), (
-            f"{name}: the Ledger phase gates the read, both before the first read phase"
-        )
-    before_the_grader = texts["pre-review"][: texts["pre-review"].index("phase('Pre-review')")]
+def test_no_workflow_keeps_the_ledger_and_the_first_read_reads_none():
+    for name in ("pre-review", "review", "re-review"):
+        text = (_FLOWS / f"{name}.js").read_text()
+        assert "Bookkeeping" not in text and "phase('Record')" not in text and "phase('Ledger')" not in text, name
+    before_the_grader = (_FLOWS / "pre-review.js").read_text().split("phase('Pre-review')")[0]
     assert "ledger" not in before_the_grader and before_the_grader.count("throw") == 1, (
         "pre-review is the first read: it reads no ledger and refuses nothing but its arguments"
     )
@@ -126,9 +116,12 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     """Driven, not read: a condition inverted under the right string passes every text assert above; what each row
     must do is the admission comment above `sameTip` in the flow it drives."""
     assert shutil.which("node") is not None, "no node on PATH, so the refusal cannot be driven"
+    ancestor = {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}
     cases = {
         "review": [
-            (None, "the ledger agent returned nothing"),
+            (None, "is not the array"),
+            ({"entries": []}, "is not the array"),
+            ([None], "is not the array"),
             ([], "records no pre-review"),
             ([{"kind": "pre-review", "tip": "0ancestor"}], "records no pre-review"),
             ([{"kind": "review", "tip": "abcdef012"}], "records no pre-review"),
@@ -137,12 +130,18 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "pre-review"}], "records no pre-review"),
-            ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}], None),
+            ([ancestor], None),
+            ([{**ancestor, "against": "abcdef012"}], None),
+            ([{**ancestor, "against": "abcdef0"}], None),
+            ([{**ancestor, "against": "fedcba987"}], "was read against another tip"),
+            ([{"kind": "pre-review", "tip": "abcdef012"}, {**ancestor, "against": "fedcba987"}], "was read against another tip"),
             ([{"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor", "sameTreeAndMessages": True}], "records no pre-review"),
         ],
         "re-review": [
-            (None, "the ledger agent returned nothing"),
+            (None, "is not the array"),
+            ({"entries": []}, "is not the array"),
+            ([None], "is not the array"),
             ([], "records no review"),
             ([{"kind": "pre-review", "tip": "abcdef012"}], "records no review"),
             ([{"kind": "review", "tip": "abcdef012"}, {"kind": "pre-review", "tip": "0ancestor"}], "records no pre-review"),
@@ -150,10 +149,10 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcdef0"}], None),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "abcde"}], "records no pre-review"),
             ([{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review"}], "records no pre-review"),
-            (
-                [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": True}],
-                None,
-            ),
+            ([{"kind": "review", "tip": "0ancestor"}, ancestor], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {**ancestor, "against": "abcdef012"}], None),
+            ([{"kind": "review", "tip": "0ancestor"}, {**ancestor, "against": "fedcba987"}], "was read against another tip"),
+            ([{**ancestor, "against": "fedcba987"}], "was read against another tip"),
             (
                 [{"kind": "review", "tip": "0ancestor"}, {"kind": "pre-review", "tip": "0ancestor", "sameTreeAndMessages": False}],
                 "records no pre-review",
@@ -163,24 +162,20 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
     }
     for flow, table in cases.items():
         text = (_FLOWS / f"{flow}.js").read_text()
-        assert "merge-base <its tip> ${tip}" in text and text.count("log --format=%B <that merge base>..") == 2, (
-            f"{flow}: the ledger agent compares the messages from the two tips' merge base, not the trees alone"
-        )
-        assert text.count("| sha256sum") == 2, f"{flow}: two logs are compared by their sums, never by an agent's reading"
         refuses = rf"^if \([^\n]*\) throw new Error\(`{flow} refuses \$\{{tip\}}: "
         block = re.search(
-            refuses + r"the ledger agent returned nothing[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-review[^\n]*$",
+            refuses + r"\\`ledger\\` is not the array[^\n]*$.*?" + refuses + r"\$\{ledgerPath\} records no pre-review[^\n]*$",
             text,
             re.M | re.S,
         )
         assert block, (
-            f"{flow}: the refusals are the block from the null-ledger throw to the pre-review refusal, anchored on their words"
+            f"{flow}: the refusals are the block from the ledger-shape throw to the pre-review refusal, anchored on their words"
         )
         program = "\n".join(
             (
-                "const tip = 'abcdef012', ledgerPath = 'LEDGER'",
+                "const tip = 'abcdef012', ledgerPath = 'LEDGER', reportDir = 'RD'",
                 f"const CASES = {json.dumps([entries for entries, _ in table])}",
-                "const OUT = CASES.map((entries) => { const ledger = entries === null ? null : { entries }; try {",
+                "const OUT = CASES.map((ledger) => { try {",
                 block.group(0),
                 "return null } catch (e) { return e.message } })",
                 "console.log(JSON.stringify(OUT))",
@@ -197,34 +192,50 @@ def test_the_two_reads_refuse_in_order_by_what_the_ledger_holds():
                 )
 
 
-def _drive_pre_review(args: dict) -> dict:
-    """The whole script run as the harness runs it, its agents stubbed: each grader answers from its label, so
-    what the union did with two answers is read off the return value rather than off the script's text."""
-    assert shutil.which("node") is not None, "no node on PATH, so the fan-out cannot be driven"
-    body = (_FLOWS / "pre-review.js").read_text().replace("export const meta", "const meta", 1)
+def _drive(flow: str, args: dict, answers: tuple[str, ...]) -> dict:
+    """The whole script run as the harness runs it, its agents stubbed: each answers from its label, so what the
+    script did with the answers is read off the return value rather than off the script's text."""
+    assert shutil.which("node") is not None, "no node on PATH, so the workflow cannot be driven"
+    body = (_FLOWS / f"{flow}.js").read_text().replace("export const meta", "const meta", 1)
     program = "\n".join(
         (
             "const CALLS = [], LOGS = []",
-            "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'head' ? 3 : 4,",
-            "  prose: [{ site: 'a.py:1', survives: label === 'head' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
-            "          { site: 'b.py:2', survives: label === 'head' ? 'trim' : 'cut', correct: true, duplicateOf: '', ship: label === 'head' ? 'ship-b' : '' },",
-            "          { site: 'c.py:3', survives: 'cut', correct: true, duplicateOf: '', ship: '' },",
-            "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
-            "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
-            "const twice = (r) => ({ ...r, prose: [...r.prose, { site: 'a.py:1', survives: 'cut', correct: true, duplicateOf: '', ship: '' }] })",
-            "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt, model: opts.model })",
-            "  return opts.label === 'record' ? { appended: true } : opts.label === 'pre-review' ? twice(part('pre-review')) : part(opts.label.replace('pre-review:', '')) }",
+            *answers,
             "const parallel = (thunks) => Promise.all(thunks.map((t) => t()))",
             "async function wrap(args, agent, phase, parallel, pipeline, log, budget, workflow) {",
             body,
             "}",
             f"wrap({json.dumps(args)}, agent, () => {{}}, parallel, null, (l) => LOGS.push(l), null, null)",
             "  .then((out) => console.log(JSON.stringify({ out, calls: CALLS, logs: LOGS })))",
-            "  .catch((e) => console.log(JSON.stringify({ error: e.message })))",
+            "  .catch((e) => console.log(JSON.stringify({ error: e.message, calls: CALLS })))",
         )
     )
     done = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
     return json.loads(done.stdout)
+
+
+_GRADERS = (
+    "const part = (label) => ({ ready: label !== 'tail', verdict: `v-${label}`, graded: label === 'head' ? 3 : 4,",
+    "  prose: [{ site: 'a.py:1', survives: label === 'head' ? 'keep' : 'trim', correct: true, duplicateOf: '', ship: `ship-${label}` },",
+    "          { site: 'b.py:2', survives: label === 'head' ? 'trim' : 'cut', correct: true, duplicateOf: '', ship: label === 'head' ? 'ship-b' : '' },",
+    "          { site: 'c.py:3', survives: 'cut', correct: true, duplicateOf: '', ship: '' },",
+    "          { site: `${label}.py:9`, survives: 'keep', correct: true, duplicateOf: '', ship: 'a reader would not find the unit without it' }],",
+    "  claims: [{ commit: label, claim: 'c', disposition: 'reproduces', by: 'b' }], probes: [], classWalk: [], reportPath: `r-${label}.md` })",
+    "const twice = (r) => ({ ...r, prose: [...r.prose, { site: 'a.py:1', survives: 'cut', correct: true, duplicateOf: '', ship: '' }] })",
+    "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt, model: opts.model })",
+    "  return opts.label === 'pre-review' ? twice(part('pre-review')) : part(opts.label.replace('pre-review:', '')) }",
+)
+_READERS = (
+    "const finding = { severity: 'Important', path: 'a.py', line: 1, claim: 'c', evidence: 'e', consequence: 'q' }",
+    "const agent = async (prompt, opts) => { CALLS.push({ label: opts.label, prompt, model: opts.model })",
+    "  if (opts.label.startsWith('refute:')) return { refuted: true, reason: 'r | why' }",
+    "  const prior = opts.label === 're-read' ? { prior: [{ id: 1, status: 'closed', by: 'b' }] } : {}",
+    "  return { verdict: 'v', ...prior, findings: [finding], executed: [], reportPath: 'x' } }",
+)
+
+
+def _drive_pre_review(args: dict) -> dict:
+    return _drive("pre-review", args, _GRADERS)
 
 
 _BRANCH = {"repo": "/r", "range": "develop..tip9abcde", "tip": "tip9abcde", "reportDir": "/r/.tmp/reads/x"}
@@ -235,7 +246,7 @@ def test_the_graders_run_on_opus_unless_a_caller_names_another_which_is_refused(
     the reads, whose class walks build compositions by hand."""
     for args in (_BRANCH, {**_BRANCH, "model": "opus"}):
         ran = _drive_pre_review(args)
-        assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus"), ("record", "sonnet")]
+        assert [(c["label"], c["model"]) for c in ran["calls"]] == [("pre-review", "opus")]
     for below_or_above in ("sonnet", "fable"):
         ran = _drive_pre_review({**_BRANCH, "model": below_or_above})
         assert "floor and cap" in ran.get("error", ""), (below_or_above, ran)
@@ -244,13 +255,13 @@ def test_the_graders_run_on_opus_unless_a_caller_names_another_which_is_refused(
 _SLICES = [{"label": "head", "range": "develop..aaa1111"}, {"label": "tail", "range": "aaa1111..tip9abcde"}]
 
 
-def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_tip_once():
-    """The tip rule reads ONE pre-review row at the branch tip, so a fan-out that recorded a row per slice, or
+def test_a_fanned_pre_review_runs_one_grader_per_slice_and_returns_one_row_at_the_branch_tip():
+    """The tip rule reads ONE pre-review row at the branch tip, so a fan-out that returned a row per slice, or
     a row at a slice's own end, would either pass a review over a tip nobody read whole or refuse one that was."""
     ran = _drive_pre_review({**_BRANCH, "ranges": _SLICES, "rulings": "/r/.tmp/sdd/progress.md", "worktree": "/r/.tmp/wt"})
     assert "error" not in ran, ran
-    assert [c["label"] for c in ran["calls"]] == ["pre-review:head", "pre-review:tail", "record"]
-    first, last, record = (c["prompt"] for c in ran["calls"])
+    assert [c["label"] for c in ran["calls"]] == ["pre-review:head", "pre-review:tail"]
+    first, last = (c["prompt"] for c in ran["calls"])
     for prompt, slice_ in ((first, _SLICES[0]), (last, _SLICES[1])):
         assert (
             f"`git log {slice_['range']}`" in prompt
@@ -260,9 +271,10 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
         assert f"/r/.tmp/reads/x/wt-pre-{slice_['label']} tip9abcde" in prompt
         assert "you are its only user" not in prompt, "a fanned grader was told the shared worktree is its own"
     assert "/r/.tmp/sdd/progress.md" in last and "/r/.tmp/sdd/progress.md" not in first, "the rulings go to the last slice alone"
-    assert record.count('"kind":"pre-review"') == 1 and '"range":"develop..tip9abcde","tip":"tip9abcde"' in record
     out = ran["out"]
-    assert out["recorded"] is True and out["graded"] == 7 and out["ready"] is False
+    assert out["row"] == {"kind": "pre-review", "range": "develop..tip9abcde", "tip": "tip9abcde"} and "recorded" not in out
+    assert "review-ledger.py append /r/.tmp/reads/x --kind pre-review --range develop..tip9abcde --tip tip9abcde" in ran["logs"][-1]
+    assert out["graded"] == 7 and out["ready"] is False
     assert out["verdict"] == "[head] v-head [tail] v-tail"
     rows = sorted((row["site"], row["survives"], row["ship"]) for row in out["prose"])
     assert [r for r in rows if r[0] == "a.py:1"] == [("a.py:1", "trim", "ship-tail")], "a change outranks a sibling slice's keep"
@@ -282,7 +294,7 @@ def test_a_fanned_pre_review_runs_one_grader_per_slice_and_records_the_branch_ti
 @pytest.mark.parametrize("absent", [{}, {"ranges": None}], ids=["left out", "null"])
 def test_a_pre_review_given_no_slices_is_the_one_grader_it_was(absent):
     ran = _drive_pre_review({**_BRANCH, "worktree": "/r/.tmp/wt", "rulings": "/r/.tmp/sdd/progress.md", **absent})
-    assert [c["label"] for c in ran["calls"]] == ["pre-review", "record"]
+    assert [c["label"] for c in ran["calls"]] == ["pre-review"]
     prompt = ran["calls"][0]["prompt"]
     assert "/r/.tmp/reads/x/pre-review-tip9abcde.md" in prompt and "the slice" not in prompt
     assert "you are its only user" in prompt and "/r/.tmp/sdd/progress.md" in prompt
@@ -323,4 +335,46 @@ def test_a_malformed_fan_out_is_refused_with_the_args_rule(ranges):
 
 def test_the_longest_label_and_a_one_slice_cover_are_admitted():
     ran = _drive_pre_review({**_BRANCH, "ranges": _whole("t" * 32)})
-    assert [c["label"] for c in ran.get("calls", [])] == ["pre-review:" + "t" * 32, "record"], ran
+    assert [c["label"] for c in ran.get("calls", [])] == ["pre-review:" + "t" * 32], ran
+
+
+_PRE_REVIEWED = {"kind": "pre-review", "range": "develop..tip9abcde", "tip": "tip9abcde", "ts": "t"}
+_READS = {
+    "review": ({**_BRANCH, "ledger": [_PRE_REVIEWED]}, ["read:behaviour", "read:guards", "refute:1"], ["behaviour", "guards"]),
+    "re-review": (
+        {
+            **_BRANCH,
+            "prior": [{"id": 1, "severity": "Important", "path": "a.py", "line": 1, "claim": "c"}],
+            "ledger": [{**_PRE_REVIEWED, "kind": "review"}, _PRE_REVIEWED],
+        },
+        ["re-read", "refute:1"],
+        ["re-review"],
+    ),
+}
+
+
+@pytest.mark.parametrize("flow", sorted(_READS))
+def test_a_read_runs_no_bookkeeping_agent_and_returns_its_row_and_refutation(flow):
+    args, labels, reports = _READS[flow]
+    ran = _drive(flow, args, _READERS)
+    assert "error" not in ran, ran
+    assert [c["label"] for c in ran["calls"]] == labels, "every agent is a reader or a skeptic"
+    assert not any("ledger" in c["prompt"] for c in ran["calls"]), "no agent is told of the ledger"
+    out = ran["out"]
+    assert out["row"] == {"kind": flow, "range": "develop..tip9abcde", "tip": "tip9abcde"} and "recorded" not in out
+    assert out["refutation"].startswith("## Refutation\n") and "| REFUTED — r \\| why |" in out["refutation"]
+    append = f"review-ledger.py append /r/.tmp/reads/x --kind {flow} --range develop..tip9abcde --tip tip9abcde --refutation "
+    assert any(append in line for line in ran["logs"]), ran["logs"]
+    for report in reports:
+        assert any(f"--report /r/.tmp/reads/x/{report}-tip9abcde.md" in line for line in ran["logs"]), (report, ran["logs"])
+
+
+@pytest.mark.parametrize("flow", sorted(_READS))
+@pytest.mark.parametrize(
+    "ledger", [{}, {"ledger": None}, {"ledger": {"entries": []}}], ids=["left out", "null", "the agent's shape"]
+)
+def test_a_read_given_no_ledger_array_refuses_before_any_agent(flow, ledger):
+    args = {k: v for k, v in _READS[flow][0].items() if k != "ledger"} | ledger
+    ran = _drive(flow, args, _READERS)
+    assert ran.get("error", "").startswith(f"{flow} refuses tip9abcde: `ledger` is not the array"), ran
+    assert "review-ledger.py read /r/.tmp/reads/x --tip tip9abcde" in ran["error"] and ran["calls"] == []
