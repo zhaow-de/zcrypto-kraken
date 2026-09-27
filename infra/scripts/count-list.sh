@@ -397,8 +397,10 @@ c_claude_commits_since_the_round_closed() {
 }
 
 # The third count the corpus does not carry: processes with a cwd inside a worktree, the read that
-# catches a stale worktree whatever its branch's merge state (the protocol's worktree line).
-c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -c /tmp/claude-1000/; }
+# catches a stale worktree whatever its branch's merge state (the protocol's worktree line). A cwd
+# under the CLI's per-uid directory, claude-1000, below either temp root: /tmp for a session started
+# before the settings' override, which keeps it until it restarts, and the override itself.
+c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | grep -cE '^(/tmp|/home/zhaow/\.cache/claude-tmp)/claude-1000/'; }
 
 # The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
 # which load with it -- measured by the guard's own parser, so this entry and what the guard refuses to

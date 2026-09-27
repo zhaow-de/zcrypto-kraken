@@ -97,6 +97,41 @@ def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_
     assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
 
 
+SETTINGS = REPO / ".claude" / "settings.json"
+PROTOCOL = REPO / "docs" / "reference" / "multi-agent-protocol.md"
+
+
+def _worktree_pipeline() -> str:
+    fn = re.search(r"^c_worktree_processes\(\) \{ (?P<pipe>.*); \}$", SCRIPT.read_text(), re.M)
+    assert fn, "the worktrees entry's function is gone, renamed or no longer one line"
+    return fn.group("pipe")
+
+
+def test_the_worktree_count_matches_the_per_uid_directory_under_either_temp_root():
+    root = json.loads(SETTINGS.read_text())["env"]["CLAUDE_CODE_TMPDIR"]
+    slug = "-home-zhaow-Projects-zcrypto-kraken"
+    cwds = [
+        f"{root}/claude-1000/{slug}/wt-a",  # the override's per-uid directory: counted
+        f"/tmp/claude-1000/{slug}/wt-b",  # a session started before the override: counted
+        f"{root}/claude-1000",  # the per-uid directory itself
+        f"{root}/{slug}/wt-c",  # the root without the per-uid directory
+        f"/tmp/claude-1001/{slug}/wt-d",  # another uid
+        str(REPO),  # the checkout
+    ]
+    grep = _worktree_pipeline().rsplit(" | ", 1)[1]
+    done = subprocess.run(["bash", "-c", f"printf '%s\\n' \"$@\" | {grep}", "_", *cwds], capture_output=True, text=True)
+    assert done.stdout.strip() == "2", done.stdout + done.stderr
+
+
+def test_the_protocols_worktree_count_is_the_scripts_own_pipeline():
+    line = next(
+        l for l in PROTOCOL.read_text().splitlines() if l.startswith("- A worktree is removed when its branch merges; the count")
+    )
+    copy = re.search(r"\(`(?P<pipe>for l in /proc/\[0-9\]\*/cwd; [^`]*)`\)", line)
+    assert copy, "the protocol's worktree line no longer carries the count in a code span"
+    assert copy.group("pipe") == _worktree_pipeline(), "the protocol's copy and the script's function differ"
+
+
 def _set_clause(entry: str) -> str:
     """The `(set: …; count: …)` clause of the CLAUDE.md bullet naming `entry`, parsed out of its line."""
     tail = re.compile(r"count-list\.sh " + re.escape(entry) + r"`\)")
