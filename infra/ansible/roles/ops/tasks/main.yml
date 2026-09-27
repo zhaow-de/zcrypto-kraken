@@ -153,6 +153,46 @@
     state: started
   when: not (ansible_check_mode and ops_clock_timer_install is changed)
 
+# Docker starts its `restart:` containers the moment it is up, and each keeps the resolver config it
+# started with. Here dhcpcd writes /etc/resolv.conf at lease time and network-online.target does not
+# wait for the lease, so docker waits for a nameserver itself. In this role and not the docker role:
+# the capture hosts' resolver config is static.
+- name: install the resolver wait docker runs before it starts
+  ansible.builtin.copy:
+    src: zcrypto-wait-for-resolver.sh
+    dest: /usr/local/sbin/zcrypto-wait-for-resolver
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: ensure docker's drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  register: ops_docker_dropin_dir
+
+# A first-install preview never made the directory, and the copy refuses a missing destination.
+- name: install docker's drop-in that waits for a resolver
+  ansible.builtin.copy:
+    src: docker-wait-for-resolver.conf
+    dest: /etc/systemd/system/docker.service.d/zcrypto-wait-for-resolver.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: ops_docker_dropin
+  when: not (ansible_check_mode and ops_docker_dropin_dir is changed)
+
+# A daemon-reload, never a docker restart, which would bounce Alloy and the liquidations poller: the
+# drop-in takes effect at docker's next start, the next boot. Inline rather than a handler for the
+# dropped-notify reason the fstab reload above states.
+- name: systemd daemon-reload so docker's next start reads the drop-in  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: ops_docker_dropin is changed
+
 # spec 00078 D8/D9: the nightly verify-replay checkpoint, bind-mounted at /state as the sweep's only
 # writable mount. Ungated like the data dirs above -- the runner's container is the only writer and
 # it fails loudly (summary withheld, run_ok=0) if this is missing or unwritable, so creating it must

@@ -2706,6 +2706,7 @@ FRESH_NODE_SITES = [
     (ROLES / "firewall" / "handlers" / "main.yml", "reload nftables", ("firewall_nftables_install",)),
     (ROLES / "chrony" / "tasks" / "main.yml", "enable + start chrony", ("chrony_install",)),
     (ROLES / "chrony" / "handlers" / "main.yml", "restart chrony", ("chrony_install",)),
+    (ROLES / "ops" / "tasks" / "main.yml", "install docker's drop-in that waits for a resolver", ("ops_docker_dropin_dir",)),
 ]
 
 
