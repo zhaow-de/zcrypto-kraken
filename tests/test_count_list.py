@@ -141,7 +141,7 @@ def test_the_worktree_count_sees_a_cwd_the_kernel_renders_deleted_under_a_worktr
     (prunable / "sub").mkdir()
     parked = [subprocess.Popen(["sleep", "60"], cwd=str(d)) for d in (prunable, prunable / "sub", unregistered)]
     try:
-        shutil.rmtree(prunable)  # the directory gone under two of them, the worktree still listed as prunable
+        shutil.rmtree(prunable)
         subprocess.run([*git, "-C", str(main), "worktree", "remove", "--force", str(unregistered)], check=True)
         cwds = [os.readlink(f"/proc/{p.pid}/cwd") for p in parked]
         assert [c.endswith(" (deleted)") for c in cwds] == [True] * 3, cwds

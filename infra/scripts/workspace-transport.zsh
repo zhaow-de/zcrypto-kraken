@@ -4,8 +4,7 @@
 #
 #   usage: workspace-transport.zsh [destination-fqdn] [-y|--yes]   -- -y skips the confirmation,
 # which is required when there is no terminal
-#   needs: jq on the source -- the scratchpad step reads Claude Code's temp root out of
-# .claude/settings.json with it; the transfer itself is ssh, rsync and git on both machines
+#   needs: jq on the source
 #
 # Git state moves as a bundle because this repo keeps branches local until PR-open, so origin cannot
 # align them. `.local/` moves because it is gitignored and kept, and its memo is hand-edited and
