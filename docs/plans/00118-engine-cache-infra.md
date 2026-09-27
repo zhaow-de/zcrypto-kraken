@@ -8172,7 +8172,7 @@ W$ python3 -c 'import json; d = json.load(open("infra/grafana/cache-dashboard.js
 W$ while read -r id; do printf 'Authorization: Bearer %s\n' "$GRAFANA_SA_TOKEN" | curl -fsS -H @- -o "$CAP/r8-cache-panel-$id.png" "https://zcrypto2026.grafana.net/render/d-solo/zcrypto-cache/x?panelId=$id&width=1100&height=420&from=now-6h&to=now"; done < "$CAP/r8-panel-ids.txt"
 ```
 
-The push names `cache-dashboard.json` among the dashboards, upserts the eleven new uids and the changed `zcrypto-fleet-alloy-memory-headroom`, reads every rule's datasource back and reports no orphan; the group reads `interval` 60, `rules` 11 and `paused` the three `zcrypto-alloy-dark-cache-N` uids; every rendered panel but 401 shows data, no `NaN` and no `No data` (read each PNG). Panel 401 draws the engine's lines naming the cache, which the second plan's wiring writes, so `No data` there is its expected reading until then. Then each rule's own expression, read from Cloud the same minute:
+The push names `cache-dashboard.json` among the dashboards, upserts the eleven new uids and the changed `zcrypto-fleet-alloy-memory-headroom`, reads every rule's datasource back and reports no orphan; the group reads `interval` 60, `rules` 11 and `paused` the three `zcrypto-alloy-dark-cache-N` uids; every rendered panel shows data, no `NaN` and no `No data` (read each PNG). Then each rule's own expression, read from Cloud the same minute:
 
 ```
 W$ for n in 1 2 3; do uv run python infra/scripts/grafana-query.py "count(up{host=\"zcrypto-valkey$n\"}) or on() vector(0)"; done
