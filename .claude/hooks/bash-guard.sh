@@ -25,6 +25,15 @@
 # family names (`grep` without `-c`, `diff`, `git log -p`) or reached through `xargs`, `find -exec` or a copy of its
 # whole directory -- none is an argv this guard judges.
 #
+# The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
+# subagent alone, so the main loop's pushes and merges never reach it. Its directory is the payload's `cwd` moved by
+# each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; one arriving through a variable, `cd -`
+# or `popd` is judged as nothing, and scope is not tracked, so a `cd` outlives its subshell. The main checkout is the
+# parent of the git common dir of the repository this file lives in: the payload's `cwd` can sit in any repository.
+# Outside it: `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory that is no repository of its own, where
+# git reaches the main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL
+# mutation) and every `gh` verb the family does not name.
+#
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
 # class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
@@ -32,10 +41,13 @@
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
+import functools
 import json
+import os
 import posixpath
 import re
 import shlex
+import subprocess
 import sys
 
 KEY = "core.hookspath"
@@ -90,6 +102,18 @@ VAULT_REMEDY = (
     "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
 )
+GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
+GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
+GH_VALUE = {"-R", "--repo"}
+MOVES = {"commit", "add", "checkout", "switch", "reset", "stash", "rebase", "merge", "cherry-pick"}
+STASH_READS = {"list", "show"}
+AGENT_DIRS = (".claude/worktrees/", ".tmp/")
+PUSH_REMEDY = "The coordinator pushes and opens PRs after the read; a dispatched agent reports and stops."
+CHECKOUT_REMEDY = (
+    "A dispatched agent works in its worktree -- `git -C <worktree>` or `cd <worktree> &&`, a path under "
+    ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's."
+)
+HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
 class Stage(list):
@@ -544,14 +568,17 @@ def operands(args):
 
 
 def git_sub(words):
+    # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them.
     at = next((i for i, w in enumerate(words) if is_git(w)), None)
     if at is None:
-        return None, []
-    argv, i = words[at:], 1
+        return None, [], []
+    argv, i, chdirs = words[at:], 1, []
     while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
         name, eq, _ = argv[i].partition("=")
+        if name == "-C" and not eq and i + 1 < len(argv):
+            chdirs.append(argv[i + 1])
         i += 2 if name in GLOBAL_VALUE and not eq else 1
-    return (argv[i], argv[i + 1 :]) if i < len(argv) else (None, [])
+    return (argv[i], argv[i + 1 :], chdirs) if i < len(argv) else (None, [], chdirs)
 
 
 def refuse_vault(words, what, raw):
@@ -571,7 +598,7 @@ def judge_vault(words, raw):
             hit = next((tok for tok in re.findall(r"[^\s'\"(),;]+", code) if vaulted(tok)), None) if OPENS.search(code) else None
             if hit:
                 refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
-    sub, rest = git_sub(words)
+    sub, rest, _ = git_sub(words)
     hit = next((a for a in rest if ":" in a and vaulted(a.partition(":")[2])), None) if sub in ("show", "cat-file") else None
     if hit:
         refuse_vault(words, f"prints the vaulted file `{hit.partition(':')[2]}` at a revision", raw)
@@ -591,6 +618,120 @@ def judge_vault(words, raw):
         hit = next((a for a in sources if vaulted(a)), None)
         if hit:
             refuse_vault(words, f"copies the vaulted file `{hit}` to another path", raw)
+
+
+def is_gh(w):
+    return w == "gh" or (w.endswith("/gh") and not ASSIGN.match(w))
+
+
+def gh_writes(words):
+    at = next((i for i, w in enumerate(words) if is_gh(w)), None)
+    if at is None:
+        return False
+    rest, pos, j = words[at + 1 :], [], 0
+    while j < len(rest):
+        if rest[j] in GH_VALUE:
+            j += 2
+            continue
+        if not rest[j].startswith("-"):
+            pos.append(rest[j])
+        j += 1
+    if pos[:1] == ["pr"]:
+        return pos[1:2] != [] and pos[1] in GH_PR_WRITES
+    if pos[:2] == ["cache", "delete"]:
+        return True
+    if pos[:1] != ["api"]:
+        return False
+    for j, a in enumerate(rest):
+        name, eq, value = a.partition("=")
+        if a in ("-X", "--method"):
+            value = rest[j + 1] if j + 1 < len(rest) else ""
+        elif a.startswith("-X"):
+            value = a[2:].removeprefix("=")
+        elif name != "--method" or not eq:
+            continue
+        if value.upper() in GH_WRITE_METHODS:
+            return True
+    return False
+
+
+def moves_checkout(sub, rest):
+    if sub == "stash":
+        return rest[:1] == [] or rest[0] not in STASH_READS
+    if sub in MOVES:
+        return True
+    if sub == "worktree":
+        return rest[:1] == ["remove"]
+    if sub != "branch":
+        return False
+    for a in rest:
+        if a == "--":
+            return False
+        name = a.partition("=")[0]
+        if name.startswith("--") and len(name) > 2 and "--delete".startswith(name):
+            return True
+        if a.startswith("-") and not a.startswith("--") and ("d" in a or "D" in a):
+            return True
+    return False
+
+
+def resolve(here, target):
+    # The directory `cd <target>` or `git -C <target>` leaves from `here`, None where the hook cannot know it.
+    if target == "":
+        return here
+    if target == "-" or "$" in target or "`" in target:
+        return None
+    if target.startswith("~"):
+        target = posixpath.expanduser(target)
+    if target.startswith("/"):
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(here, target)) if here else None
+
+
+def moved(words, here):
+    p, args = argv_of(words)
+    if p == "popd":
+        return None
+    if p not in ("cd", "pushd"):
+        return here
+    ops = [a for a in args if a == "-" or not a.startswith(("-", "+"))]
+    return resolve(here, ops[0] if ops else "~")
+
+
+@functools.cache
+def main_checkout():
+    done = subprocess.run(
+        ["git", "-C", HOOK_DIR, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True
+    )
+    common = done.stdout.strip()
+    return os.path.realpath(posixpath.dirname(common)) if done.returncode == 0 and posixpath.basename(common) == ".git" else None
+
+
+def in_main_checkout(path):
+    main = main_checkout()
+    if not path or not main:
+        return False
+    p = os.path.realpath(path)
+    if p != main and not p.startswith(main + "/"):
+        return False
+    return not p.startswith(tuple(f"{main}/{d}" for d in AGENT_DIRS))
+
+
+def judge_agent(words, here, raw):
+    sub, rest, chdirs = git_sub(words)
+    if sub == "push":
+        refuse(f"`{spelled(words)}` pushes from a dispatched agent; in `{raw}`. {PUSH_REMEDY}")
+    if gh_writes(words):
+        refuse(f"`{spelled(words)}` writes to GitHub from a dispatched agent; in `{raw}`. {PUSH_REMEDY}")
+    if not sub or not moves_checkout(sub, rest):
+        return
+    for d in chdirs:
+        here = resolve(here, d)
+    if in_main_checkout(here):
+        refuse(
+            f"`{spelled(words)}` runs `git {sub}` in the main checkout, at `{here}`, from a dispatched agent; in "
+            f"`{raw}`. {CHECKOUT_REMEDY}"
+        )
 
 
 def env_assignments(words):
@@ -650,14 +791,20 @@ except ValueError as exc:
     print(f"the command does not tokenise ({exc})")
     sys.exit(3)
 raw = clip(" ".join(command.split()))
+agent = bool(call.get("agent_id"))
+here = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
 for pipe in commands:
     for words in pipe:
         judge(words)
         judge_vault(words, raw)
+        if agent:
+            judge_agent(words, here, raw)
     judge_cap(pipe, raw)
+    if agent and len(pipe) == 1:
+        here = moved(pipe[0], here)
 PY
 )"
-if out="$(printf '%s' "$input" | python3 -c "$prog" 2>/dev/null)"; then
+if out="$(printf '%s' "$input" | python3 -c "$prog" "${BASH_SOURCE[0]}" 2>/dev/null)"; then
   exit 0
 else
   rc=$?
