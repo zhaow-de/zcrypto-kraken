@@ -174,7 +174,6 @@ OPS_REQUIRED = [
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
-    # The inode pair, as the NAS keeps it: ops' `/tmp` is a tmpfs whose inode cap can fill with bytes to spare.
     "node_filesystem_files",
     "node_filesystem_files_free",
     "ops_archive_pull_exit_code",

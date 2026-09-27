@@ -2336,9 +2336,8 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The threshold and the duration are zaccess-disk-high's. `/` here holds `/home` too, the
-      # operator's checkouts and their unversioned `data/`; `/mnt/zhao-crypto` is the NAS's export,
-      # which zcrypto-nas-disk-low watches, and `/tmp` is a tmpfs whose limit is inodes, not bytes.
+      # The threshold and the duration are zaccess-disk-high's. `/mnt/zhao-crypto` is the NAS's export,
+      # which zcrypto-nas-disk-low watches, and `/tmp` is a tmpfs, whose inodes zcrypto-ops-inodes-low watches.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -2381,10 +2380,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # One instance per mountpoint. `/tmp` is a tmpfs capped at 1,048,576 inodes where the Claude
-      # Code sessions keep their scratch trees, and a full inode table fails every `docker run` the
-      # ops timers make with bytes to spare. The bar and `for` are sized in
-      # tests/test_infra_alert_rules.py against the fastest fill rate seen.
+      # The bar and `for` are sized in tests/test_infra_alert_rules.py against the fastest fill seen on `/tmp`.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
