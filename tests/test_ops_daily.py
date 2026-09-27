@@ -346,6 +346,7 @@ def test_an_unreachable_grafana_is_reported_never_read_as_nothing_firing():
         ("zcrypto-alloy-dark-cache-1", "zcrypto-valkey1"),
         ("zcrypto-alloy-dark-cache-2", "zcrypto-valkey2"),
         ("zcrypto-alloy-dark-cache-3", "zcrypto-valkey3"),
+        ("zcrypto-engine-dark-with-exposure", "zcrypto"),
     ],
 )
 def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid, expected):
@@ -364,6 +365,21 @@ def test_the_host_is_recovered_from_the_uid_when_the_rule_aggregates_it_away(uid
     )
     read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(payload, _EMPTY_HISTORY))
     assert read.firing_now[0].hosts == (expected,)
+
+
+def test_a_rule_that_pins_one_host_and_aggregates_it_away_is_in_the_uid_map():
+    """Its firing instance carries no `host` label, so the map is the only place the report reads the host
+    from. An aggregation with no `by` over every query is the shape; `host=~` pins no one host."""
+    rules = yaml.safe_load((Path(__file__).resolve().parents[1] / "infra/grafana/alerts.yaml").read_text())["rules"]
+    owed = {}
+    for rule in rules:
+        exprs = [q["model"]["expr"] for q in rule["data"] if (q.get("model") or {}).get("expr")]
+        hosts = {host for expr in exprs for host in re.findall(r'host="([^"]+)"', expr)}
+        aggregated = all(re.match(r"\s*(?:max|min|count|sum|avg)\s*\(", e) and not re.search(r"\bby\s*\(", e) for e in exprs)
+        if exprs and aggregated and len(hosts) == 1:
+            owed[rule["uid"]] = hosts.pop()
+    assert "zcrypto-alloy-dark-ops" in owed, sorted(owed)
+    assert {uid: host for uid, host in owed.items() if ops_daily._UID_HOST.get(uid) != host} == {}
 
 
 def test_an_instance_host_label_wins_over_the_uid_map():
