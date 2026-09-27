@@ -156,7 +156,7 @@
 # Docker starts its `restart:` containers the moment it is up, and each keeps the resolver config it
 # started with. Here dhcpcd writes /etc/resolv.conf at lease time and network-online.target does not
 # wait for the lease, so docker waits for a nameserver itself. In this role and not the docker role:
-# the capture hosts' resolver config is static.
+# its other hosts, the capture pair and the cache nodes, keep a static resolver config.
 - name: install the resolver wait docker runs before it starts
   ansible.builtin.copy:
     src: zcrypto-wait-for-resolver.sh
