@@ -174,6 +174,8 @@ OPS_REQUIRED = [
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
+    "node_filesystem_files",
+    "node_filesystem_files_free",
     "ops_archive_pull_exit_code",
     "ops_archive_pull_last_success_timestamp",
     "ops_panel_exit_code",

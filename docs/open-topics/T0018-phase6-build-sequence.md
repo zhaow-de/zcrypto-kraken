@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'the first armed session whose resting order survives a restart — then read `zcrypto_exec_external_events_total{disposition="matched"}` by VALUE; owned by nothing else and invisible to rung 1''s exit bar'
+ripe_when: 'a milestone: rung 2 is entered, its time box fixed at entry (master plan §12); check: `docs/research/14.phase6-decisions.md` carries the entry'
 ---
 
 # Phase-6 build sequence and its cross-iteration constraints
@@ -32,6 +32,8 @@ Read the journal the way it was read, because a wrong path returns a plausible z
 - Spec 00039 (kickoff decisions 1–8, the pre-registered go-live criteria incl. the pinned Stage-6a concordance semantics, and the adapter-verification protocol); decisions log `[iter-079]`.
 - The go/no-go gate and every ramp step are **D3(vi) human decisions**, conditional on no gate breaches and the DD ladder untouched or correctly handled — never automatic calendar promotions.
 - The governor enters live at its true carried state (×0.5).
+
+**(2026-09-27) The trigger moved from a spent read to rung 2's entry.** The read it named, `zcrypto_exec_external_events_total{disposition="matched"}` by value in the first armed session whose resting order survives a restart, was taken at drills G and A1 on 2026-09-26 (the `DISCHARGED 2026-09-26` bullet under `## Suggested next steps`), and the rendered index went on carrying the topic as live on it. What the topic still holds waits on rung 2: the build items from rung 1's verdict and from the drill day are the fixes rung 2's daily loop takes first, and `00092`'s rows, the alert-set rework and the drawdown trips follow rung 2. Its entry is when this sequence is re-read, what landed is recorded here, and the trigger moves to `00092`.
 
 ## Done so far
 

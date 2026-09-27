@@ -33,6 +33,8 @@ One case the counter cannot see at all, and which this topic's strict form would
 
 The owner's ruling of 2026-09-21 is to leave the strict form unbuilt and let the count say whether it is worth building. A count that stays at one or two rows is the answer that the wrapper change buys nothing.
 
+**The reading of 2026-09-27: the file arm fired and the band still holds one row, so the topic is deferred again under that ruling.** The watched files changed four times since registration, none of them at the floor or its inference: 11cf4e531 added a sentence to the window comment in `infra/scripts/deploy-log-audit.py` and 2caf33cee removed it, leaving the file as it was (#608, 2026-09-24); 1605abe64 added the three cache nodes to that script's `NO_VENUE_EXPOSURE` and to `infra/ansible/scripts/converge.sh`'s hosts, tags and keys, and 519600589 trimmed the wrapper's comment on them (#607, 2026-09-25). `infra/scripts/count-list.sh engine-rows-on-the-completion-floor` reads 1, and the row is the one the band has held since before registration: 2026-09-19T08:12:24Z, `--limit zcrypto`, tags `capture,engine`, rc 0.
+
 ## Suggested next steps
 
 Read the count first: `infra/scripts/count-list.sh engine-rows-on-the-completion-floor`. If it still reads one or two, record that reading here and defer again; the topic's own criterion is that a band which does not grow is not worth a wrapper change.

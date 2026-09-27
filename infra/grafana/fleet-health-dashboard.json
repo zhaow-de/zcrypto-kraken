@@ -840,7 +840,7 @@
       "id": 301,
       "type": "timeseries",
       "title": "Filesystem free % by mountpoint",
-      "description": "Which mountpoint on which machine is filling, and how fast. Three alerts watch three different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`. The ops root filesystem is drawn for context and has **no** alert behind it, so its line is deliberately unmarked. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
+      "description": "Which mountpoint on which machine is filling, and how fast. Four alerts watch four different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`; the ops root filesystem, which holds the ops timers' state and the operator's checkouts, pages below 15% free after `for: 30m`. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -886,7 +886,7 @@
           },
           "expr": "node_filesystem_avail_bytes{host=\"ops\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"ops\", mountpoint=\"/\"}",
           "refId": "D",
-          "legendFormat": "{{host}} {{mountpoint}} (no alert)"
+          "legendFormat": "{{host}} {{mountpoint}}"
         }
       ],
       "fieldConfig": {
@@ -972,6 +972,36 @@
             "matcher": {
               "id": "byFrameRefID",
               "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.15
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
             },
             "properties": [
               {
@@ -1085,7 +1115,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 6,
         "x": 0,
         "y": 38
       },
@@ -1118,6 +1148,70 @@
               {
                 "color": "green",
                 "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 305,
+      "type": "timeseries",
+      "title": "Ops inodes free — / and /tmp",
+      "description": "The share of each filesystem's inodes still free on the ops machine, against the alert's red line at 25% after `for: 10m`. A filesystem out of inodes refuses new files while it still reports free bytes, so the free-space panels above cannot show it. `/tmp` is a memory-backed filesystem capped at 1,048,576 inodes and the Claude Code sessions' default temp root; when it runs out, every container the ops timers start fails before it runs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 38
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_files_free{host=\"ops\", mountpoint=~\"/|/tmp\"} / node_filesystem_files{host=\"ops\", mountpoint=~\"/|/tmp\"}",
+          "refId": "A",
+          "legendFormat": "{{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.25
               }
             ]
           }
