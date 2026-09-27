@@ -18,8 +18,8 @@
 #
 # Placeholders are literal `${VAR}` tokens that infra/scripts/grafana-push.sh substitutes from its
 # own environment before sending each rule -- the alert-rule provisioning API has no server-side
-# template substitution (unlike the dashboard JSON's `${DS_PROMETHEUS}`/`${DS_LOKI}` variables,
-# which Grafana itself resolves on dashboard import). A rule pins `notification_settings.receiver:
+# template substitution; the boards pin `grafanacloud-prom` and `grafanacloud-logs` by uid and the
+# script substitutes nothing in them. A rule pins `notification_settings.receiver:
 # metrics`, or `logs` for the Loki-sourced ERROR-log rules; grafana-push.sh mints both.
 #
 # noDataState is per-rule, not boilerplate: Alerting only where nothing else owns the series'
