@@ -170,6 +170,14 @@ loki.source.journal "cache_units" {
 loki.process "parse" {
   forward_to = [loki.write.grafana.receiver]
 
+  // Sentinel has no LATENCY command: the exporter asks it LATENCY LATEST and LATENCY HISTOGRAM on its
+  // first scrape and logs this error once per Alloy process, and no exporter argument stops the call.
+  stage.match {
+    selector            = "{container=\"alloy\"} |= \"ERR unknown command 'LATENCY'\""
+    action              = "drop"
+    drop_counter_reason = "sentinel_has_no_latency_command"
+  }
+
   stage.match {
     selector = "{container=\"alloy\"}"
 

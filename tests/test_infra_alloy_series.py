@@ -707,3 +707,18 @@ def test_the_cache_textfile_collector_reads_where_the_mesh_probe_writes():
     for role, var in (("cache_link", "cache_link_textfile_dir"), ("cache", "cache_textfile_dir")):
         written = re.search(rf"^{var}: (\S+)$", (REPO / f"infra/ansible/roles/{role}/defaults/main.yml").read_text(), re.M)
         assert written and directory.group(1) == "/host/root" + written.group(1), (role, written, directory.group(1))
+
+
+def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_nothing_else():
+    pipeline = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', CACHE_ALLOY.read_text(), re.M | re.S)
+    assert pipeline, 'no loki.process "parse" in the cache config'
+    drops = [
+        block
+        for block in re.findall(r"^  stage\.match \{\n(.*?)\n  \}", pipeline.group(1), re.M | re.S)
+        if re.search(r'^\s*action\s*=\s*"drop"$', block, re.M)
+    ]
+    assert len(drops) == 1, f"{len(drops)} drop stages in the cache log pipeline"
+    selector = re.search(r'^\s*selector\s*=\s*"(.*)"$', drops[0], re.M)
+    assert selector and selector.group(1) == '{container=\\"alloy\\"} |= \\"ERR unknown command \'LATENCY\'\\"', drops[0]
+    assert re.search(r'^\s*drop_counter_reason\s*=\s*"\w+"$', drops[0], re.M), drops[0]
+    assert not re.search(r"^\s*stage\.", drops[0], re.M), drops[0]
