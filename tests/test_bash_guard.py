@@ -1,12 +1,14 @@
-"""The PreToolUse[Bash] guard's three arms -- the git hook bypasses, a stream a cap has already shortened being
-counted or compared, and a vaulted file printed -- driven with synthetic stdin JSON.
+"""The PreToolUse[Bash] guard's four arms -- the git hook bypasses, a stream a cap has already shortened being
+counted or compared, a vaulted file printed, and a dispatched agent's push, GitHub write or git that moves the main
+checkout -- driven with synthetic stdin JSON.
 
 The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
 family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
 the ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
 comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
 pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks; the
-count, the hash and the public half beside a vaulted file.
+count, the hash and the public half beside a vaulted file; the read, the worktree and the main loop beside a dispatched
+agent's write.
 """
 
 from __future__ import annotations
@@ -19,6 +21,19 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 HOOK = REPO / ".claude" / "hooks" / "bash-guard.sh"
+# The hook judges these paths as text and never touches them, so a worktree need not exist to be one.
+MAIN = str(
+    Path(
+        subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    ).parent
+)
+WORKTREE = f"{MAIN}/.claude/worktrees/agent-x"
+SCRATCH = f"{MAIN}/.tmp/scratch"
 
 HEREDOC_MESSAGE = (
     "$(cat <<'EOF'\nclaude(settings): --no-verify and -n are refused\n\n-n in a bundle too, and \"--no-verify\" quoted\nEOF\n)"
@@ -327,6 +342,112 @@ ADMITTED = [
     "sed -i 's/old_name:/new_name:/' infra/ansible/group_vars/all/vault.yml",
 ]
 
+# (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
+AGENT_WRITES = [
+    ("git push", "git push"),
+    ("git push -u origin claude/refine-round-17", "git push -u origin claude/refine-round-17"),
+    ("git push --no-verify", "git push --no-verify"),
+    (f"git -C {WORKTREE} push origin HEAD", f"git -C {WORKTREE} push origin HEAD"),
+    ("git status && git push", "git push"),
+    ("git add f; git commit -m x; git push", "git push"),
+    ("git log -1 | git push", "git push"),
+    ("x=$(git push)", "'x=$' git push"),  # the walk reads the assignment's words as one stage, as it does for `git commit -n`
+    ("echo `git push`", "git push"),
+    ("timeout 60 git push origin x", "timeout 60 git push origin x"),
+    ("/usr/bin/git push", "/usr/bin/git push"),
+    ("gh pr create --base develop --title x --body y", "gh pr create --base develop --title x --body y"),
+    ("gh pr ready 624", "gh pr ready 624"),
+    ("gh pr merge 624 --merge", "gh pr merge 624 --merge"),
+    ("gh pr edit 624 --body-file b.md", "gh pr edit 624 --body-file b.md"),
+    ("gh pr close 624", "gh pr close 624"),
+    ("gh pr comment 624 --body x", "gh pr comment 624 --body x"),
+    ("gh pr review 624 --approve", "gh pr review 624 --approve"),
+    ("gh pr -R zhaow-de/zcrypto-kraken merge 624", "gh pr -R zhaow-de/zcrypto-kraken merge 624"),
+    ("gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api -X POST repos/o/r/issues/1/comments -f body=x"),
+    ("gh api repos/o/r/pulls/624/merge -X PUT", "gh api repos/o/r/pulls/624/merge -X PUT"),
+    ("gh api --method PATCH repos/o/r/pulls/624", "gh api --method PATCH repos/o/r/pulls/624"),
+    ("gh api --method=DELETE repos/o/r/git/refs/heads/x", "gh api --method=DELETE repos/o/r/git/refs/heads/x"),
+    ("gh api -XPOST repos/o/r/pulls", "gh api -XPOST repos/o/r/pulls"),
+    ("gh api -X post repos/o/r/pulls", "gh api -X post repos/o/r/pulls"),
+    ("gh cache delete --all", "gh cache delete --all"),
+    ("cd /tmp && timeout 30 gh pr create --fill", "timeout 30 gh pr create --fill"),
+]
+
+# (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
+AGENT_IN_MAIN = [
+    ("git commit -m x", MAIN, "git commit -m x"),
+    ("git add cli/x.py", MAIN, "git add cli/x.py"),
+    ("git checkout develop", MAIN, "git checkout develop"),
+    ("git switch -c y", MAIN, "git switch -c y"),
+    ("git reset --hard origin/develop", MAIN, "git reset --hard origin/develop"),
+    ("git stash", MAIN, "git stash"),
+    ("git stash pop", MAIN, "git stash pop"),
+    ("git rebase develop", MAIN, "git rebase develop"),
+    ("git merge --ff-only origin/develop", MAIN, "git merge --ff-only origin/develop"),
+    ("git cherry-pick abc1234", MAIN, "git cherry-pick abc1234"),
+    ("git branch -d x", MAIN, "git branch -d x"),
+    ("git branch -D x", MAIN, "git branch -D x"),
+    ("git branch --delete x", MAIN, "git branch --delete x"),
+    ("git branch -rd origin/x", MAIN, "git branch -rd origin/x"),
+    ("git worktree remove .claude/worktrees/agent-x", MAIN, "git worktree remove .claude/worktrees/agent-x"),
+    ("git add x.py", f"{MAIN}/cli", "git add x.py"),  # below the main checkout
+    ("git commit -m x", f"{MAIN}/.claude/worktrees", "git commit -m x"),  # the directory holding the worktrees
+    (f"git -C {MAIN} commit -m x", WORKTREE, f"git -C {MAIN} commit -m x"),
+    (f"cd {MAIN} && git commit -m x", WORKTREE, "git commit -m x"),
+    ("git -C ../../.. add f", WORKTREE, "git -C ../../.. add f"),
+    ("cd ../../.. && git stash", WORKTREE, "git stash"),
+    (f"git -C {MAIN} checkout develop", "/tmp", f"git -C {MAIN} checkout develop"),
+    (f"git -C {WORKTREE} -C ../../.. commit -m x", "/tmp", f"git -C {WORKTREE} -C ../../.. commit -m x"),
+    (f"cd {WORKTREE} && cd {MAIN} && git reset --hard", MAIN, "git reset --hard"),
+    (f"cd {WORKTREE}/../../.. && git add f", "/tmp", "git add f"),
+]
+
+# (command, the payload's cwd) -- admitted silently from a dispatched agent
+AGENT_ADMITTED = [
+    ("git status", WORKTREE),
+    ("git log --oneline develop..HEAD", WORKTREE),
+    ("git fetch origin develop", WORKTREE),
+    ('git commit -m "then git push"', WORKTREE),
+    ('echo "git push"', WORKTREE),
+    ("gh pr view 624 --json body", WORKTREE),
+    ("gh pr list --state merged", WORKTREE),
+    ("gh pr diff 624", WORKTREE),
+    ("gh pr checks 624", WORKTREE),
+    ("gh api repos/o/r/pulls/624", WORKTREE),
+    ("gh api -X GET repos/o/r/pulls/624/files --paginate", WORKTREE),
+    ("gh cache list", WORKTREE),
+    ("gh run view 1 --log", WORKTREE),
+    ("git commit -m x", WORKTREE),
+    ("git add -A", WORKTREE),
+    ("git reset --soft HEAD~1", WORKTREE),
+    ("git checkout -b y", WORKTREE),
+    ("git branch -D x", WORKTREE),
+    ("git stash", WORKTREE),
+    ("git rebase develop", WORKTREE),
+    (f"cd {WORKTREE} && git commit -m x", MAIN),
+    (f"git -C {WORKTREE} commit -m x", MAIN),
+    ("git -C .claude/worktrees/agent-x add f", MAIN),
+    ("cd .claude/worktrees/agent-x && git commit -m x", MAIN),
+    (f"git -C {SCRATCH} commit -m x", MAIN),
+    ("cd .tmp/scratch && git init -q && git add . && git commit -m x", MAIN),
+    (f"git -C {WORKTREE} worktree remove --force {WORKTREE}", MAIN),
+    ("git status", MAIN),
+    ("git log --oneline -3", MAIN),
+    ("git diff develop...HEAD", MAIN),
+    ("git worktree list", MAIN),
+    ("git worktree add .claude/worktrees/y -b y develop", MAIN),
+    ("git branch --list", MAIN),
+    ("git branch -a", MAIN),
+    ("git branch -u origin/develop", MAIN),
+    ("git stash list", MAIN),
+    ("git stash show -p", MAIN),
+    ("git merge-base develop HEAD", MAIN),
+    ("git cherry develop", MAIN),
+    ('cd "$WT" && git commit -m x', MAIN),  # a directory through a variable is judged as nothing
+    ("git commit -m x", "/tmp/elsewhere"),
+    ("git commit -m x", f"{MAIN}-other"),  # a sibling sharing the main checkout's path as a prefix
+]
+
 
 def run_hook(payload: dict | str, cwd: Path) -> subprocess.CompletedProcess:
     """Dicts are JSON-encoded; strings pass through verbatim so the malformed-input cases can hand the hook
@@ -419,3 +540,47 @@ def test_hook_is_wired_as_a_pretooluse_bash_hook():
         hook["command"] for entry in settings["hooks"]["PreToolUse"] if entry["matcher"] == "Bash" for hook in entry["hooks"]
     ]
     assert any("bash-guard.sh" in c for c in commands), "the hook is inert unless settings.json wires it"
+
+
+def agent_call(command: str, cwd: str, **extra: str) -> dict:
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd, **extra}
+
+
+def _named(stderr: str) -> str:
+    return stderr.partition("; in `")[0].partition("`")[2].partition("`")[0]
+
+
+@pytest.mark.parametrize(("command", "spelling"), AGENT_WRITES, ids=[c for c, _ in AGENT_WRITES])
+def test_a_dispatched_agents_push_or_github_write_is_blocked_with_the_remedy(tmp_path: Path, command: str, spelling: str):
+    r = run_hook(agent_call(command, WORKTREE, agent_id="a1", agent_type="general-purpose"), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling, r.stderr
+    assert "a dispatched agent reports and stops" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize(("command", "where", "spelling"), AGENT_IN_MAIN, ids=[f"{c} @ {w}" for c, w, _ in AGENT_IN_MAIN])
+def test_a_dispatched_agents_git_that_moves_the_main_checkout_is_blocked_with_the_remedy(
+    tmp_path: Path, command: str, where: str, spelling: str
+):
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "in the main checkout" in r.stderr, r.stderr
+    assert "the main checkout is the coordinator's" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize(("command", "where"), AGENT_ADMITTED, ids=[f"{c} @ {w}" for c, w in AGENT_ADMITTED])
+def test_a_dispatched_agents_read_and_worktree_git_are_admitted_silently(tmp_path: Path, command: str, where: str):
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+MAIN_LOOP = [(c, WORKTREE) for c, _ in AGENT_WRITES] + [(c, w) for c, w, _ in AGENT_IN_MAIN]
+
+
+@pytest.mark.parametrize(("command", "where"), MAIN_LOOP, ids=[f"{c} @ {w}" for c, w in MAIN_LOOP])
+@pytest.mark.parametrize("extra", [{}, {"agent_type": "reviewer"}], ids=["bare", "agent_type alone"])
+def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, command: str, where: str, extra: dict):
+    r = run_hook(agent_call(command, where, **extra), cwd=tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
