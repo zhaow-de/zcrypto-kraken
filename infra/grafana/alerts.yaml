@@ -1471,15 +1471,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Per-mirror, so the alert instance names WHICH host went quiet -- `source="primary"` and
-      # `source="secondary"` fire independently. This is dataflow-based and therefore independent of
-      # both hosts' healthchecks.io dead-men: a host can keep pinging while its capture writes nothing.
-      #
-      # Threshold 3h: a final only commits after its hour closes and the NAS pulls hourly plus its work,
-      # so the healthy steady state is a sawtooth from about 4300 s to about 9740-9775 s; read over
-      # 2026-09-19 to 2026-09-26, outside a NAS recreate, its daily peak sits about 17 minutes below this
-      # bar. 3h means a mirror has missed a whole cycle beyond that, or a NAS recreate's cold gate replay
-      # is holding the capture pulls behind it.
+      # Threshold 3h sits just above the healthy sawtooth's peak; ops.md#zcrypto-reconcile-source-lag sizes the margin.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
