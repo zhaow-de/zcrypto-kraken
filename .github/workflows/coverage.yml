@@ -30,9 +30,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # A pull request writes setup-uv's cache only when it changes the lockfile: otherwise develop
-      # already holds its key (uv-cache.yml seeds it), and a copy under the PR's merge ref is one no
-      # other pull request can read. A failed comparison counts as changed, so a run still saves.
+      # On a key develop already holds (uv-cache.yml seeds it), setup-uv restores it and skips the save
+      # by itself; this rule decides the miss. A pull request that changes the lockfile saves its own
+      # key for its later pushes; any other leaves the save to uv-cache.yml rather than writing a copy
+      # under its merge ref, which no other pull request can read. A failed comparison counts as
+      # changed, so that run still saves.
       - id: lock
         run: |
           if git diff --quiet origin/develop -- uv.lock; then
