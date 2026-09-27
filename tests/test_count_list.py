@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -127,6 +128,37 @@ def test_the_worktree_count_counts_a_cwd_inside_any_linked_worktree_and_not_the_
     stage = _worktree_pipeline().rsplit(" | ", 1)[1]
     done = subprocess.run(["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main)
     assert done.stdout.strip() == "2", done.stdout + done.stderr
+
+
+def test_the_worktree_count_sees_a_cwd_the_kernel_renders_deleted_under_a_worktree_git_still_lists(tmp_path):
+    main = tmp_path.resolve() / "main"
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    prunable, unregistered = tmp_path.resolve() / "wt-rm", tmp_path.resolve() / "wt-gitrm"
+    for worktree in (prunable, unregistered):
+        subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
+    (prunable / "sub").mkdir()
+    parked = [subprocess.Popen(["sleep", "60"], cwd=str(d)) for d in (prunable, prunable / "sub", unregistered)]
+    try:
+        shutil.rmtree(prunable)  # the directory gone under two of them, the worktree still listed as prunable
+        subprocess.run([*git, "-C", str(main), "worktree", "remove", "--force", str(unregistered)], check=True)
+        cwds = [os.readlink(f"/proc/{p.pid}/cwd") for p in parked]
+        assert [c.endswith(" (deleted)") for c in cwds] == [True] * 3, cwds
+        listed = subprocess.run(
+            [*git, "-C", str(main), "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True
+        ).stdout
+        assert f"worktree {prunable}\n" in listed and f"worktree {unregistered}\n" not in listed, listed
+        stage = _worktree_pipeline().rsplit(" | ", 1)[1]
+        done = subprocess.run(
+            ["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main
+        )
+        # The prunable worktree's two count; the unregistered one's is inside no worktree the list names.
+        assert done.stdout.strip() == "2", done.stdout + done.stderr
+    finally:
+        for p in parked:
+            p.kill()
+            p.wait()
 
 
 def test_the_protocols_worktree_count_is_the_scripts_own_pipeline():

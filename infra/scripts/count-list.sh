@@ -399,8 +399,11 @@ c_claude_commits_since_the_round_closed() {
 # The third count the corpus does not carry: processes with a cwd inside a worktree, the read that
 # catches a stale worktree whatever its branch's merge state (the protocol's worktree line). The
 # worktrees are the linked ones `git worktree list` names, wherever each was cut; its first entry is
-# the main checkout, which is not one.
-c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | awk 'NR == FNR { if (sub(/^worktree /, "") && seen++) w[$0] = 1; next } { for (p in w) if (index($0 "/", p "/") == 1) { n++; break } } END { print n + 0 }' <(git worktree list --porcelain) -; }
+# the main checkout, which is not one. The kernel renders a cwd whose directory was removed as
+# `<path> (deleted)`; the suffix is stripped before the match, so a process parked in a worktree
+# `rm -rf`'d but still listed as prunable counts, and one parked in a worktree `git worktree remove`
+# already unregistered counts as nothing -- it is inside no worktree the list names.
+c_worktree_processes() { for l in /proc/[0-9]*/cwd; do readlink "$l"; done 2>/dev/null | awk 'NR == FNR { if (sub(/^worktree /, "") && seen++) w[$0] = 1; next } { sub(/ \(deleted\)$/, ""); for (p in w) if (index($0 "/", p "/") == 1) { n++; break } } END { print n + 0 }' <(git worktree list --porcelain) -; }
 
 # The fourth: the always-loaded bytes -- the corpus whole, plus every skill's name and description values,
 # which load with it -- measured by the guard's own parser, so this entry and what the guard refuses to
