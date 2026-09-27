@@ -17,7 +17,7 @@ A line lands on one of four grounds, or it does not land:
 3. it is a recurring cross-session failure with an existing check;
 4. the owner kept it by name.
 
-Net ambient growth is the owner's word, in a round or outside one: a coordinator cannot grant it and a session cannot grant its own. A guidance change rides its own `claude(` commit, never a payload's, and may share the payload's branch: the `staged-kind` hook refuses a commit that mixes `CLAUDE.md` or `.claude/` with another file, and `merge-pr`'s gate refuses one an amend landed past the hook.
+Net ambient growth is the owner's word, in a round or outside one: a coordinator cannot grant it and a session cannot grant its own. A guidance change rides its own `claude(` commit and may share the payload's branch.
 
 Three tests on the line as written, two of them the guard's:
 
