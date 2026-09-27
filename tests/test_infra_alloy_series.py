@@ -233,6 +233,10 @@ OPS_REQUIRED = [
     # bridgehead does (ACCESS_APP_SERIES below) -- host="ops" vs host="zaccess" tells them apart.
     "zaccess_wireguard_handshake_age_seconds",
     "zaccess_tls_not_after_seconds",
+    # The clock exporter, a copy of the capture role's on this host; both are alert-bearing
+    # (zcrypto-node-clock-skew), so dropping either leaves that rule unable to see ops.
+    "zcrypto_clock_offset_seconds",
+    "zcrypto_clock_synchronised",
 ]
 # One-off timers publish a .prom, not a /metrics endpoint (spec 00071 D1) -- a daily oneshot runs
 # for a second and has no process to scrape. The keep-regex is an ALLOW-list with no `node_.*`
@@ -347,6 +351,9 @@ CACHE_REQUIRED = [
     "node_textfile_mtime_seconds",
     "node_textfile_scrape_error",
     "zcache_wireguard_handshake_age_seconds",
+    # The clock exporter, a copy of the capture role's on each node (zcrypto-node-clock-skew).
+    "zcrypto_clock_offset_seconds",
+    "zcrypto_clock_synchronised",
     # The two families the fleet's Alloy headroom rule reads on a cache node, in place of RSS.
     "go_memstats_sys_bytes",
     "go_memstats_heap_released_bytes",
@@ -551,6 +558,7 @@ _OPS_ROLE = REPO / "infra/ansible/roles/ops"
 _JOURNAL_NOT_SHIPPED = {
     "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
     "zcrypto-grafana-keepalive": "a shell curl call; its one line a run is read on the host, which stays readable while Grafana is dark",
+    "zcrypto-clock-offset": "a shell probe; its output is the .prom it writes, and a chronyc failure is the unknown offset it publishes",
 }
 
 

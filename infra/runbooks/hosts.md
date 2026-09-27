@@ -1,6 +1,6 @@
 # Hosts — disk, load, reboots and the textfile transport
 
-You are here because **an alert fired in Slack**. These are the two capture VPSes as *machines* — `zcrypto` (primary, also the trade engine) and `zcrypto-red` (secondary) — not the venue feed and not the archive. Every signal below is produced by Alloy's embedded node-exporter (`prometheus.exporter.unix` in `infra/ansible/roles/capture/files/config.alloy`): the `filesystem`, `loadavg`/`cpu` and `textfile` collectors, the last of them reading `.prom` files that small systemd oneshots write into `/var/lib/zcrypto-node-textfile`.
+You are here because **an alert fired in Slack**. These are the two capture VPSes as *machines* — `zcrypto` (primary, also the trade engine) and `zcrypto-red` (secondary) — not the venue feed and not the archive. Every signal below is produced by Alloy's embedded node-exporter (`prometheus.exporter.unix` in `infra/ansible/roles/capture/files/config.alloy`): the `filesystem`, `loadavg`/`cpu` and `textfile` collectors, the last of them reading `.prom` files that small systemd oneshots write into `/var/lib/zcrypto-node-textfile`. One section, [`zcrypto-node-clock`](#zcrypto-node-clock-skew), is about the other machines — ops and the three cache nodes — whose own `config.alloy` reads a copy of the same clock exporter.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -165,6 +165,44 @@ What is at stake: the **attended-reboot safety net** — `node_reboot_required`,
 ### Retire when
 
 All four uids — `zcrypto-capture-textfile-missing`, `zcrypto-capture-textfile-unreadable`, `zcrypto-reboot-probe-stale`, `zcrypto-oneoff-textfile-stale` — are absent from `infra/grafana/alerts.yaml`, or the `textfile { directory = … }` block leaves `infra/ansible/roles/capture/files/config.alloy` (the one-off timers then publish through something else and every command above names the wrong path).
+
+______________________________________________________________________
+
+<a name="zcrypto-node-clock-skew"></a>
+<a name="zcrypto-node-clock-exporter-stale"></a>
+
+## zcrypto-node-clock — ALERT
+
+### What you are seeing
+
+One of two **warning** Grafana alerts on the clock of ops or a cache node — the hosts outside the capture pair that publish `clock-offset.prom` — and which one fired says which fault it is:
+
+- **`Node · the host clock cannot be trusted (ops, cache)`** (uid `zcrypto-node-clock-skew`) — `abs(zcrypto_clock_offset_seconds) > 10`, or `zcrypto_clock_synchronised == 0`, held 10 m.
+- **`Node · the clock reading has stopped refreshing (ops, cache)`** (uid `zcrypto-node-clock-exporter-stale`) — `time() - node_textfile_mtime_seconds{file=~".*/clock-offset.prom"} > 1800`, held 10 m: the exporter rewrites its file on a 5-min timer, so this is about six missed runs.
+
+Both select `host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"`. Dashboard: `zcrypto-fleet` panel 504. The capture pair's clock has its own critical rules, [`capture.md#zcrypto-capture-clock-skew`](capture.md#zcrypto-capture-clock-skew) and [`capture.md#zcrypto-capture-clock-exporter-stale`](capture.md#zcrypto-capture-clock-exporter-stale); this section is the same exporter — the ops and cache roles install a copy of the capture role's script, timer and unit — on the hosts where no archive hour is at stake.
+
+### What it means
+
+**Skew**: chrony on that host has lost its sources or is not disciplining the clock. chrony free-runs silently — `chronyc tracking` keeps reporting the last reference while the clock drifts at the crystal's rate — so without this rule a host runs for days with no source and nothing says so. Every host runs the same four NTS sources (`infra/ansible/roles/chrony/defaults/main.yml`), so one host skewed while the others are fine points at that host's network — on ops, the home uplink's IPv6, since chrony keeps the address it resolved for a source and does not fall back to the other address family — and all of them at once points at the source list.
+
+What is at stake per host. On **ops**, the writer cycle's fail-closed gate compares the NAS's `.pull-status` stamp against this clock and skips the cycle when the stamp reads over 600 s in the future or over 4 h old (`archive-pull.sh.j2`), so a skewed ops clock stalls the overlay writer, which [`ops.md#zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) then pages at 3 h. On a **cache node**, Valkey and Sentinel keep their timeouts on a monotonic clock and the WireGuard mesh carries no wall-clock check, so nothing breaks; the clock is watched because a free-running clock is a fault whether or not something reads it yet.
+
+**Stale**: the offset and synchronised gauges are frozen at whatever they last held — the textfile collector re-serves the last file forever — so the skew rule is blind on that host until the exporter writes again.
+
+**Direction**: `zcrypto_clock_offset_seconds` is positive when the clock is fast, ahead of the reference; confirm on the machine before acting on the sign.
+
+### What to do
+
+1. **Read the source table on the host**: `ssh <hp|db1|db2|db3>`, then `chronyc -N sources` and `chronyc tracking`. A selected source is `^*` in the MS column; `^?` on each line means no source is reachable or none passes NTS-KE, and `journalctl -u chrony --since -1h --no-pager` names which (`Can't synchronise: no selectable sources`, `TLS handshake with ... failed`, `Could not connect to ...`).
+2. **The repair is the role, not a hand edit**: an attended `infra/ansible/scripts/converge.sh` of that host with `--tags chrony` re-asserts the config, restarts chrony and fails unless a source is selected within a minute (`infra/ansible/roles/chrony/tasks/main.yml`). Ops is venue-facing, so its converge waits for the Kraken maintenance read like the capture pair's.
+3. **Sources fine, offset still large**: chrony is slewing a clock that stepped. `makestep 1.0 3` lets it step during the first three updates after a restart and slew after that, so a large offset on a long-running daemon shrinks at the slew rate; restarting chrony steps it.
+4. **For the stale rule**: `systemctl list-timers zcrypto-clock-offset` and `systemctl status zcrypto-clock-offset.service --no-pager` on the host. The script writes one stderr line when `chronyc` fails and still publishes — an unknown offset (NaN) with synchronised 0 — so a stale file means the timer did not run, not that chrony failed. Then [`#capture-textfile-transport`](#capture-textfile-transport) steps 3 to 7, with ops's directory `/var/lib/zcrypto-ops/textfile` (mounted at `/textfile` in its Alloy) in place of the capture path, and the ops or cache role's `config.alloy` in place of the capture role's.
+5. **Verify by value** from the workstation: `uv run python infra/scripts/grafana-query.py 'zcrypto_clock_offset_seconds{host="<host>"}' 'zcrypto_clock_synchronised{host="<host>"}' 'time() - node_textfile_mtime_seconds{host="<host>", file=~".*/clock-offset.prom"}'`. `(no series)` is a FAIL, never a zero (no count command: `grafana-query.py` prints `(no series)` for an empty result).
+
+### Retire when
+
+Both uids are absent from `infra/grafana/alerts.yaml`, or the ops and cache roles no longer install `zcrypto-clock-offset` (`infra/ansible/roles/ops/tasks/main.yml`, `infra/ansible/roles/cache/tasks/main.yml`) — at which point the series do not exist on those hosts and the rules can only read NoData.
 
 ______________________________________________________________________
 

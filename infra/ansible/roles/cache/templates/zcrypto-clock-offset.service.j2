@@ -1,0 +1,17 @@
+# Rendered by the `cache` Ansible role at /etc/systemd/system/zcrypto-clock-offset.service; edit
+# infra/ansible/roles/cache/templates/zcrypto-clock-offset.service.j2 and re-converge. A copy of the
+# capture role's unit.
+[Unit]
+Description=Publish the host clock offset as a node-exporter textfile
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zcrypto-clock-offset /usr/bin/chronyc {{ cache_textfile_dir }}/clock-offset.prom
+# chronyc binds its own reply socket next to chronyd's in /run/chrony, so under ProtectSystem=strict
+# a read-only /run makes even reading the clock fail. The `-` prefix keeps the unit startable where
+# chrony is not installed.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ cache_textfile_dir }} -/run/chrony

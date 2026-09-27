@@ -307,3 +307,100 @@ def test_the_timer_actually_repeats():
         "without a boot trigger the gauge is stale until the first interval"
     )
     assert any(l.strip() == "Unit=zcrypto-clock-offset.service" for l in timer.splitlines())
+
+
+# --- the ops and cache roles' copies ---------------------------------------------------------------
+# Ops and the cache nodes publish the same pair from a copy of this role's script, timer and unit, so
+# `zcrypto-node-clock-skew` covers them. The copies' comments are their own, naming the role that installs
+# them; what a shell or systemd reads must be this role's, the unit's one variable renamed.
+COPY_ROLES = {"ops": "ops_textfile_dir", "cache": "cache_textfile_dir"}
+CLOCK_OFFSET_FILES = (
+    "files/zcrypto-clock-offset.sh",
+    "files/zcrypto-clock-offset.timer",
+    "templates/zcrypto-clock-offset.service.j2",
+)
+
+
+def _program(path: Path) -> list[str]:
+    return [line for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def _resolved_default(role: str, var: str) -> str:
+    """A default through the defaults it names: ops's is `{{ ops_data_dir }}/textfile`."""
+    defaults = yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
+    value = defaults[var]
+    while m := re.search(r"\{\{ (\w+) \}\}", value):
+        value = value.replace(m.group(0), defaults[m.group(1)])
+    return value
+
+
+@pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
+@pytest.mark.parametrize("relative", CLOCK_OFFSET_FILES)
+def test_the_copied_clock_offset_is_the_capture_roles_program(role, var, relative):
+    copy = [line.replace(var, "capture_textfile_dir") for line in _program(REPO / "infra/ansible/roles" / role / relative)]
+    assert copy == _program(ROLE / relative), f"the {role} role's {relative} drifted from the capture role's"
+
+
+@pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
+def test_the_copying_role_installs_what_its_unit_runs_and_enables_the_timer_alone(role, var):
+    role_dir = REPO / "infra/ansible/roles" / role
+    unit = (
+        (role_dir / "templates/zcrypto-clock-offset.service.j2")
+        .read_text()
+        .replace("{{ " + var + " }}", _resolved_default(role, var))
+    )
+    assert "{{" not in unit, f"unsubstituted variable remains: {unit}"
+    _refuse_continuations(unit, f"{role}: zcrypto-clock-offset.service.j2")
+    binary, chronyc, out = (
+        next(line for line in unit.splitlines() if line.startswith("ExecStart=")).removeprefix("ExecStart=").split()
+    )
+    tasks_yaml = (role_dir / "tasks/main.yml").read_text()
+    assert binary in _installed_dests(tasks_yaml), f"the unit runs {binary}, which the {role} role does not install"
+    assert chronyc.startswith("/"), chronyc
+    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    assert str(Path(out).parent) in _rw_paths(rw), f"the output directory is not writable: {rw}"
+    assert "/run/chrony" in _rw_paths(rw), f"chronyc cannot create its client socket: {rw}"
+    enabled = [
+        t["ansible.builtin.systemd_service"]["name"]
+        for t in _flatten(yaml.safe_load(tasks_yaml))
+        if "ansible.builtin.systemd_service" in t and t["ansible.builtin.systemd_service"].get("enabled")
+    ]
+    assert "zcrypto-clock-offset.timer" in enabled, f"the timer is not enabled: {enabled}"
+    assert "zcrypto-clock-offset.service" not in enabled, f"the oneshot must not be enabled: {enabled}"
+
+
+def test_the_ops_unit_writes_where_the_ops_alloy_mounts_its_textfile_directory():
+    """Ops's Alloy reads `/textfile`, a bind mount of ops_textfile_dir, not the host root."""
+    compose = (REPO / "infra/ansible/roles/ops/templates/alloy-compose.yaml.j2").read_text()
+    alloy = (REPO / "infra/ansible/roles/ops/files/config.alloy").read_text()
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
+    assert f'"{{{{ ops_textfile_dir }}}}:{directory}:ro"' in compose, f"ops_textfile_dir is not mounted at {directory}"
+    unit = (REPO / "infra/ansible/roles/ops/templates/zcrypto-clock-offset.service.j2").read_text()
+    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert exec_start.endswith("{{ ops_textfile_dir }}/clock-offset.prom"), exec_start
+
+
+def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
+    unit = (REPO / "infra/ansible/roles/cache/templates/zcrypto-clock-offset.service.j2").read_text()
+    unit = unit.replace("{{ cache_textfile_dir }}", _resolved_default("cache", "cache_textfile_dir"))
+    host_dir = str(Path(next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]).parent)
+    alloy = (REPO / "infra/ansible/roles/cache/files/config.alloy").read_text()
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
+    assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory}"
+
+
+@pytest.mark.parametrize(
+    "config",
+    [REPO / "infra/ansible/roles/ops/files/config.alloy", REPO / "infra/ansible/roles/cache/files/config.alloy"],
+    ids=["ops", "cache"],
+)
+def test_every_series_the_script_emits_is_admitted_by_the_copying_hosts_keep_regex(config, tmp_path):
+    prom = tmp_path / "clock-offset.prom"
+    assert _run(_chronyc(tmp_path, TRACKING.format(magnitude="0.1", direction="fast", leap="Normal")), prom).returncode == 0
+    keep = (
+        next(ln for ln in config.read_text().splitlines() if ln.strip().startswith("regex") and "node_load1" in ln)
+        .split('"')[1]
+        .split("|")
+    )
+    missing = [name for name in _series(prom) if name not in keep]
+    assert not missing, f"{config}: {missing} are written to the textfile dir but dropped at remote_write"

@@ -3625,6 +3625,93 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-node-clock-skew
+    title: "Node · the host clock cannot be trusted (ops, cache)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-capture-clock-skew for the hosts that publish the same pair through a copy of the
+      # capture role's exporter: ops, whose writer cycle's fail-closed gate reads the NAS's stamp
+      # against this clock, and the three cache nodes. Warning, not critical: no archive hour closes
+      # on these clocks. Same shape as the capture rule -- both legs host-scoped, `== bool 0` on the
+      # sync leg so an unsynchronised clock reaches the threshold as 1 -- and its comment carries
+      # why each is load-bearing.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'abs(zcrypto_clock_offset_seconds{host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"}) > 10 or (zcrypto_clock_synchronised{host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"} == bool 0) > 0'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The clock on ops or a cache node is more than 10 seconds from true time, or the host reports it unsynchronised. On ops the writer cycle's fail-closed gate reads the NAS's stamp against this clock (600 s of skew holds it closed); on a cache node nothing depends on it yet, and the rule exists because a clock nobody watches free-runs unseen. Check `chronyc -N sources` on the host; the repair is a `--tags chrony` converge. Runbook: infra/runbooks/hosts.md#zcrypto-node-clock-skew"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "504"
+      unit: "seconds of clock offset (or 1 when the host reports itself unsynchronised)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-node-clock-exporter-stale
+    title: "Node · the clock reading has stopped refreshing (ops, cache)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-capture-clock-exporter-stale's twin for the same four hosts: the textfile collector
+      # re-serves the last file forever, so a dead timer reads as a healthy clock to the skew rule
+      # above until this one says the reading is frozen.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", file=~".*/clock-offset.prom"})'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [1800]}  # 30 min ~= 6 missed runs at the 5-min cadence
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The clock reading on ops or a cache node has not refreshed in over 30 min (it writes every 5 min), so that host's offset and synchronised gauges are frozen at their last values and `Node · the host clock cannot be trusted (ops, cache)` is blind for it. Check `systemctl list-timers zcrypto-clock-offset` on the host. Runbook: infra/runbooks/hosts.md#zcrypto-node-clock-exporter-stale"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "504"
+      unit: "seconds since the clock exporter last wrote its file"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-logship-lines-dropped
     title: "Logs · lines dropped before reaching Loki"
     ruleGroup: zcrypto-capture

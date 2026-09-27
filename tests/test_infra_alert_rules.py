@@ -1943,3 +1943,44 @@ def test_the_handshake_bar_is_the_key_lifetime_plus_the_two_sampling_steps_and_t
     panel = next(p for p in _cache_board_panels() if str(p["id"]) == rule["annotations"]["__panelId__"])
     steps = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
     assert [step["value"] for step in steps if step["color"] == "red"] == [bar], (panel["id"], steps)
+
+
+# --- the node clock pair: the capture rules' twins on the hosts that copy the exporter ------------
+_NODE_CLOCK_SKEW = "zcrypto-node-clock-skew"
+_NODE_CLOCK_STALE = "zcrypto-node-clock-exporter-stale"
+# ops and the three cache nodes: the hosts whose roles install a copy of the capture role's clock
+# exporter (tests/test_clock_offset.py holds the copies equal). The capture pair keeps its own
+# critical pair, so neither host may appear here and none of these four may be missing.
+_NODE_CLOCK_HOSTS = frozenset({"ops", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
+
+
+def _prom_exprs(rule: dict) -> list[str]:
+    return [q["model"]["expr"] for q in rule["data"] if q.get("datasourceUid") == "${GRAFANA_PROM_DS_UID}"]
+
+
+@pytest.mark.parametrize("uid", [_NODE_CLOCK_SKEW, _NODE_CLOCK_STALE])
+def test_the_node_clock_rules_select_exactly_the_hosts_that_copy_the_exporter(uid):
+    rule = _rule(uid)
+    matchers = [m.group(1) for expr in _prom_exprs(rule) for m in re.finditer(r'host=~"([^"]+)"', expr)]
+    assert matchers, f"{uid} carries no host matcher, so it would claim the capture pair's series too"
+    for matcher in matchers:
+        assert frozenset(matcher.split("|")) == _NODE_CLOCK_HOSTS, f"{uid} selects {matcher!r}"
+    assert rule["labels"]["severity"] == "warning", "no archive hour closes on these clocks"
+
+
+def test_the_node_clock_skew_rule_reads_an_unsynchronised_clock_as_one():
+    """A bare `== 0` filter returns the left operand's VALUE, 0, which no `gt 0` evaluator can see;
+    `== bool 0` yields 1 -- the capture rule's own reasoning, restated here because the twin is
+    written out rather than shared."""
+    (expr,) = _prom_exprs(_rule(_NODE_CLOCK_SKEW))
+    assert "zcrypto_clock_synchronised" in expr and "== bool 0" in expr, expr
+    assert "abs(zcrypto_clock_offset_seconds" in expr and ") > 10" in expr, expr
+
+
+def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
+    rule = _rule(_NODE_CLOCK_STALE)
+    (expr,) = _prom_exprs(rule)
+    assert 'file=~".*/clock-offset.prom"' in expr and "node_textfile_mtime_seconds" in expr, expr
+    threshold = next(q for q in rule["data"] if q["model"].get("type") == "threshold")
+    assert threshold["model"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [1800]}
+    assert rule["noDataState"] == "OK", "the series is absent until the roles converge; NoData must not page"
