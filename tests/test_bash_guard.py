@@ -84,6 +84,8 @@ REFUSED = [
     ("git add . ; git commit -n -m msg", "-n"),
     ("git add x\ngit commit -n -m x", "-n"),
     ("git commit -m msg --no-verify >/dev/null 2>&1", "--no-verify"),
+    ("git 2>/dev/null commit -n", "-n"),  # an fd number is its redirection's, and no subcommand
+    ("git commit -m 2 > /dev/null -n", "-n"),  # a number apart from its redirection is a word: here -m's value
     (f'git commit -m "{HEREDOC_MESSAGE}" --no-verify', "--no-verify"),
     (f'git commit --no-verify -m "{HEREDOC_MESSAGE}"', "--no-verify"),
     # an unquoted # inside a word is text to bash, not a comment
@@ -216,6 +218,8 @@ VAULTED = [
     ("git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("git -C /repo show develop:infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("git cat-file -p HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("2>/dev/null git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("flock /tmp/l git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("awk -f prog.awk infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("awk -f infra/ansible/files/deploy_zaccess_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("awk --file=infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
@@ -408,6 +412,11 @@ AGENT_WRITES = [
     ("sudo -u zhaow git push", "sudo -u zhaow git push"),
     ("if false; then :; else git push; fi", "else git push"),
     ("nice -n 5 gh pr merge 624", "nice -n 5 gh pr merge 624"),
+    ("2>/dev/null git push origin x", "git push origin x"),
+    ("2>&1 git push origin x", "git push origin x"),
+    ("0<&- git push origin x", "git push origin x"),
+    ("git 2>/dev/null push origin x", "git push origin x"),
+    ("2>/dev/null gh pr merge 624", "gh pr merge 624"),
 ]
 
 # (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
@@ -462,6 +471,7 @@ AGENT_IN_MAIN = [
     ("git fetch --refmap=+refs/heads/*:refs/heads/* origin", MAIN, "git fetch '--refmap=+refs/heads/*:refs/heads/*' origin"),
     ("git fetch origin develop:develop", MAIN, "git fetch origin develop:develop"),
     ("git worktree prune", MAIN, "git worktree prune"),
+    ("2>/dev/null git clean -fdx", MAIN, "git clean -fdx"),
 ]
 
 # (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
@@ -473,6 +483,7 @@ AGENT_BRANCH_DELETES = [
     ("git branch -D x", WORKTREE, "git branch -D x"),
     (f"git -C {WORKTREE} branch -D develop", MAIN, f"git -C {WORKTREE} branch -D develop"),
     ("git branch --del x", "/tmp/elsewhere", "git branch --del x"),
+    ("2>/dev/null git branch -D x", WORKTREE, "git branch -D x"),
 ]
 
 # (command, the payload's cwd, the stage the message must name, what it says the stage does) -- refused from a
@@ -548,6 +559,7 @@ AGENT_ADMITTED = [
     ("echo git branch -D x", WORKTREE),
     ("echo gh pr merge 624", WORKTREE),
     ("echo git clean -fdx", MAIN),
+    (">out git status", MAIN),
     ("gh pr view 624 --json body", WORKTREE),
     ("gh pr list --state merged", WORKTREE),
     ("gh pr diff 624", WORKTREE),
@@ -804,7 +816,7 @@ def test_a_dispatched_agents_branch_delete_is_blocked_wherever_it_runs(tmp_path:
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "deletes a branch" in r.stderr, r.stderr
-    assert "and no `worktree move`; it creates the branches it needs and reports them." in r.stderr
+    assert "A dispatched agent creates the branches it needs and reports them." in r.stderr
     assert r.stdout == ""
 
 
@@ -817,7 +829,7 @@ def test_a_dispatched_agents_ref_rename_force_or_delete_or_worktree_move_is_bloc
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and f"` {claim} from a dispatched agent" in r.stderr, r.stderr
-    assert "and no `worktree move`; it creates the branches it needs and reports them." in r.stderr
+    assert "A dispatched agent creates the branches it needs and reports them." in r.stderr
     assert r.stdout == ""
 
 
