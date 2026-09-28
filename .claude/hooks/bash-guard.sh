@@ -113,6 +113,11 @@ CHECKOUT_REMEDY = (
     "A dispatched agent works in its worktree -- `git -C <worktree>` or `cd <worktree> &&`, a path under "
     ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's."
 )
+BRANCH_REMEDY = "Branches are the repository's, one set for every worktree: a dispatched agent deletes none and reports the ones it made."
+WORKTREE_REMEDY = (
+    "A dispatched agent removes only a scratch tree it made under the main checkout's .tmp/ or under its session's "
+    "directory in Claude Code's temp root, named by a path and not a variable; every other worktree is a session's."
+)
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
 
@@ -658,12 +663,10 @@ def gh_writes(words):
 def moves_checkout(sub, rest):
     if sub == "stash":
         return rest[:1] == [] or rest[0] not in STASH_READS
-    if sub in MOVES:
-        return True
-    if sub == "worktree":
-        return rest[:1] == ["remove"]
-    if sub != "branch":
-        return False
+    return sub in MOVES
+
+
+def deletes_branch(rest):
     for a in rest:
         if a == "--":
             return False
@@ -717,17 +720,50 @@ def in_main_checkout(path):
     return not p.startswith(tuple(f"{main}/{d}" for d in AGENT_DIRS))
 
 
-def judge_agent(words, here, raw):
+def scratch_tree(path, session):
+    # Under the main checkout's .tmp/, or under the payload's session directory in a temp root -- `/tmp` or
+    # CLAUDE_CODE_TMPDIR, then `claude-<uid>/<project>/<session_id>/`. Not the whole temp root: a payload session's
+    # worktree is cut there too (docs/reference/multi-agent-protocol.md).
+    if not path:
+        return False
+    p, main = os.path.realpath(path), main_checkout()
+    if main and p.startswith(os.path.realpath(f"{main}/.tmp") + "/"):
+        return True
+    if not isinstance(session, str) or not session or "/" in session or session in (".", ".."):
+        return False
+    for root in {"/tmp", os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp"}:
+        base = os.path.realpath(f"{root}/claude-{os.getuid()}") + "/"
+        parts = p[len(base) :].split("/") if p.startswith(base) else []
+        if len(parts) > 2 and parts[1] == session:
+            return True
+    return False
+
+
+def judge_agent(words, here, raw, session):
     sub, rest, chdirs = git_sub(words)
     if sub == "push":
         refuse(f"`{spelled(words)}` pushes from a dispatched agent; in `{raw}`. {PUSH_REMEDY}")
     if gh_writes(words):
         refuse(f"`{spelled(words)}` writes to GitHub from a dispatched agent; in `{raw}`. {PUSH_REMEDY}")
-    if not sub or not moves_checkout(sub, rest):
+    if not sub:
         return
     for d in chdirs:
         here = resolve(here, d)
-    if in_main_checkout(here):
+    # Refs and the worktree list are the repository's, shared by every worktree: these two are judged by what they
+    # act on, never by the directory they run in.
+    if sub == "branch" and deletes_branch(rest):
+        refuse(
+            f"`{spelled(words)}` deletes a branch from a dispatched agent, whatever directory it runs in; in `{raw}`. "
+            f"{BRANCH_REMEDY}"
+        )
+    if sub == "worktree" and rest[:1] == ["remove"]:
+        hit = next((a for a in operands(rest[1:]) if not scratch_tree(resolve(here, a), session)), None)
+        if hit is not None:
+            refuse(
+                f"`{spelled(words)}` removes the worktree `{hit}` from a dispatched agent, whatever directory it runs in; "
+                f"in `{raw}`. {WORKTREE_REMEDY}"
+            )
+    if moves_checkout(sub, rest) and in_main_checkout(here):
         refuse(
             f"`{spelled(words)}` runs `git {sub}` in the main checkout, at `{here}`, from a dispatched agent; in "
             f"`{raw}`. {CHECKOUT_REMEDY}"
@@ -798,7 +834,7 @@ for pipe in commands:
         judge(words)
         judge_vault(words, raw)
         if agent:
-            judge_agent(words, here, raw)
+            judge_agent(words, here, raw, call.get("session_id"))
     judge_cap(pipe, raw)
     if agent and len(pipe) == 1:
         here = moved(pipe[0], here)
