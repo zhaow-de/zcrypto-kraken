@@ -170,8 +170,10 @@ class ShadowStrategy(Strategy):
     invoking the cycle core. The logic lives in the pure module functions (on_start_logic /
     on_alert_logic); run_cycle_fn and clock are injectable for tests.
 
-    The four executor forwarders below are the ONLY inputs the order path has, and each carries
-    exactly what nautilus routes to this strategy. `on_order_event` in particular is the
+    The five executor forwarders below are the ONLY inputs the order path has, and each carries
+    exactly what nautilus routes to this strategy. `on_socket_state` is the client's socket-state
+    stream, opt-in through `subscribe_socket_state` in `on_start`, which the executor's re-read
+    pass keys on. `on_order_event` in particular is the
     `events.order.<this strategy's id>` subscription `Strategy.register` installs, and this class's
     `StrategyConfig` claims no instruments, so the strategy's external-order claim list stays
     empty: an order the engine did not submit -- the account owner settling a position by hand
@@ -251,6 +253,8 @@ class ShadowStrategy(Strategy):
             # obligation and must be seeded even if the executor's construction were to raise.
             self._executor = self._executor_factory(self)
             self.clock.set_timer(_EXEC_TIMER_NAME, timedelta(seconds=_TICK_SECONDS), callback=self._on_exec_tick)
+            # Every client and endpoint: the executor keys on the set of endpoints down, never on a name.
+            self.subscribe_socket_state()
 
     def _on_cycle_alert(self, event) -> None:
         # Read BEFORE on_alert_logic, whose FIRST act is schedule_alert -- which overwrites this
@@ -285,6 +289,10 @@ class ShadowStrategy(Strategy):
     def on_order_event(self, event) -> None:
         if self._executor is not None:
             self._executor.on_order_event(event)
+
+    def on_socket_state(self, event) -> None:
+        if self._executor is not None:
+            self._executor.on_socket_state(event)
 
     def _on_external_order_event(self, event) -> None:
         """The second order stream's landing point, handed to `ExternalOrderObserver` by

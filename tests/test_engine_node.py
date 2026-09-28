@@ -522,9 +522,13 @@ class RecordingExecutor:
         self.events: list[object] = []
         self.external_events: list[object] = []
         self.boundaries: list[datetime] = []
+        self.socket_states: list[object] = []
 
     def on_boundary(self, boundary):
         self.boundaries.append(boundary)
+
+    def on_socket_state(self, event):
+        self.socket_states.append(event)
 
     def on_timer(self, now):
         self.timers.append(now)
@@ -552,7 +556,9 @@ def _exec_stub(config, clock, *, executor_factory=None, executor=None):
         _next_cycle_ts=None,
         _executor_factory=executor_factory,
         _executor=executor,
+        socket_subscriptions=[],
     )
+    stub.subscribe_socket_state = lambda: stub.socket_subscriptions.append("all")
     stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
     stub._on_cycle_alert = functools.partial(ShadowStrategy._on_cycle_alert, stub)
     stub._on_exec_tick = functools.partial(ShadowStrategy._on_exec_tick, stub)
@@ -589,6 +595,8 @@ def test_on_start_builds_the_executor_and_registers_the_exec_tick(tmp_path):
     # The alert chain is untouched by the wiring; the executor tick is a SECOND, repeating timer.
     assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
     assert clock.timers == [("exec-probe-tick", timedelta(seconds=5), stub._on_exec_tick)]
+    # The socket-state stream is opt-in, and the executor's re-read pass is what reads it.
+    assert stub.socket_subscriptions == ["all"]
 
 
 def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
@@ -597,6 +605,7 @@ def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
     ShadowStrategy.on_start(stub)
     assert clock.timers == []
     assert stub._executor is None
+    assert stub.socket_subscriptions == []
 
 
 def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
@@ -632,6 +641,20 @@ def test_the_external_order_forwarder_passes_the_object_through_and_is_inert_unw
     assert executor.external_events == [event]
     # The filter is a SEPARATE entry point: nothing arrived on the own-order path the trip reads.
     assert executor.events == []
+
+
+def test_the_socket_state_forwarder_passes_the_object_through_and_is_inert_unwired(tmp_path):
+    # The fifth forwarder, in the shape of the other four: object through, a no-op with no executor
+    # wired, and a separate entry point from the two order paths.
+    strategy = ShadowStrategy(_config(tmp_path))
+    strategy.on_socket_state(object())
+
+    executor = RecordingExecutor()
+    strategy._executor = executor
+    event = object()
+    strategy.on_socket_state(event)
+    assert executor.socket_states == [event]
+    assert executor.events == [] and executor.external_events == []
 
 
 # --- the external order observer (spec 00100 D2) ------------------------------------------------

@@ -30,6 +30,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.adapters.kraken", "KrakenSpotHttpClient"),
     ("nautilus_trader.common", "Environment"),
     ("nautilus_trader.common", "LogLevel"),
+    ("nautilus_trader.common", "SocketState"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),
     ("nautilus_trader.config", "LoggerConfig"),
     ("nautilus_trader.live", "LiveNode"),
@@ -56,6 +57,11 @@ PINNED_SYMBOLS = [
 # (`positions_open(strategy_id=self._client.strategy_id)`).
 PINNED_ATTRIBUTES = [
     ("nautilus_trader.trading", "Strategy", "strategy_id"),
+    # The socket-state subscription `ShadowStrategy.on_start` makes and the two states the
+    # executor's re-read pass keys on.
+    ("nautilus_trader.trading", "Strategy", "subscribe_socket_state"),
+    ("nautilus_trader.common", "SocketState", "CONNECTED"),
+    ("nautilus_trader.common", "SocketState", "DISCONNECTED"),
     # The two members that name which Kraken venue the engine reaches. Both configs state them
     # explicitly, so a rename breaks the call rather than silently selecting the other member.
     ("nautilus_trader.adapters.kraken", "KrakenProductType", "SPOT"),

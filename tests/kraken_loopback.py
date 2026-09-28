@@ -154,6 +154,10 @@ class KrakenLoopback:
     private_calls: list[str] = field(default_factory=list)
     add_orders: list[dict[str, str]] = field(default_factory=list)
     closed_order_forms: list[dict[str, str]] = field(default_factory=list)
+    cancel_forms: list[dict[str, str]] = field(default_factory=list)
+    # The `count` CancelOrder answers: 1 as Kraken answers a cancel it executed, 0 the other answer a
+    # test serves, since which one Kraken gives for a txid already closed is unmeasured.
+    cancel_count: int = 1
     base_url: str = ""
 
     def answer(self, method: str, path: str, query: dict[str, list[str]], form: dict[str, str]) -> tuple[Any, list[str]]:
@@ -187,6 +191,9 @@ class KrakenLoopback:
         if path == "/0/private/AddOrder":
             self.add_orders.append(form)
             return {"descr": {"order": "loopback"}, "txid": [f"OLOOP{len(self.add_orders)}-AAAAA-BBBBBB"]}, []
+        if path == "/0/private/CancelOrder":
+            self.cancel_forms.append(form)
+            return {"count": self.cancel_count}, []
         return None, ["EGeneral:Unknown method"]
 
     def _trade_volume(self) -> dict[str, Any]:

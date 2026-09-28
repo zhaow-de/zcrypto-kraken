@@ -63,13 +63,17 @@ for p in paths:
         print(" order", r["client_order_id"], r["state"], "filled_qty", r["filled_qty"], "kraken", ",".join(txids) or "-")
         for ev in r["events"]:
             if ev.get("event") == "fill":
-                print("     fill", ev["qty"], "@", ev["px"], "fee", ev["fee"], ev["fee_currency"], ev["liquidity"], ev["trade_id"])
+                print("     fill", ev["at"], ev["qty"], "@", ev["px"], "fee", ev["fee"], ev["fee_currency"], ev["liquidity"], ev["trade_id"], "credited", ev.get("credited", "whole"))
+            elif ev.get("event") in ("reconciled", "recancelled"):
+                print("    ", ev["event"], ev["at"], ev.get("venue_filled_qty", ""), ev.get("venue_order_id", ""))
             elif ev.get("type") == "ambiguous":
                 print("     ambiguous", ev["at"], ev["what"])
+            elif ev.get("reconciliation"):
+                print("    ", ev["type"], ev["at"], "reconciliation: true, minted by this engine")
 PY
 ```
 
-`kraken` is the Kraken txid, or txids, that the row's acceptance and fill events recorded, `-` for a row that recorded none. An `ambiguous` line marks a row whose venue outcome this engine could not establish: a submit that raised, or the startup pass's mark on a row it could not match to a venue order ([step 4 of the arm](#adopt-pass-by-txid)); its `what` says which.
+`kraken` is the Kraken txid, or txids, that the row's acceptance and fill events recorded, `-` for a row that recorded none. An `ambiguous` line marks a row whose venue outcome this engine could not establish: a submit that raised, or the startup pass's or the re-read pass's mark on a row it could not match to a venue order ([step 4 of the arm](#adopt-pass-by-txid)); its `what` says which.
 
 **The venue-truth read** — positions, balances and the instrument constraints the engine last saw:
 
@@ -134,7 +138,7 @@ PY
 
    For a FUTURE nautilus version the baseline reading in item 1 is still owed; the alert is not.
 
-5. **On the same first window, and only after the baseline above has a number, read how often the engine mints an order's terminal event for itself.** Past its in-flight retry budget the execution engine stops waiting on an unanswered order and publishes that order's `OrderCanceled`, or an `INFLIGHT_TIMEOUT` `OrderRejected`, on its own authority. The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts; on an order the startup pass adopted, the row reads `ambiguous` instead, until a startup inside the re-attach window settles it against the venue (the `Three terminal outcomes` paragraph below names the window and what the entry records past it), and its intent is the pass's, written before the venue answered, or left `pending` when the pass's ledger or venue read failed or the pass latched the kill switch, when no startup writes it while the latch's cause stands; read Kraken's open orders — an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart. That is the right answer and it is also a **plan-stopping** one, so how often the machinery fires decides how often an attended window ends on a slow venue rather than on a real result (no count command: `_strand_ambiguous` in `cli/engine/executor.py` ends each such intent; the version's record holds the rate, not a count).
+5. **On the same first window, and only after the baseline above has a number, read how often the engine mints an order's terminal event for itself.** Past its in-flight retry budget the execution engine stops waiting on an unanswered order and publishes that order's `OrderCanceled`, or an `INFLIGHT_TIMEOUT` `OrderRejected`, on its own authority. The executor treats every one of those as an unknown venue outcome: the intent ends `ambiguous`, nothing is resubmitted, and the plan halts; on an order the startup pass adopted, the row reads `ambiguous` instead, until the executor's re-read pass settles it from the venue's own report on its next tick with nothing in flight, or a startup inside the re-attach window where the pass could not read (the `Three terminal outcomes` paragraph below names the window and what the entry records past it), and its intent is the pass's, written before the venue answered, or left `pending` when the pass's ledger or venue read failed or the pass latched the kill switch, when no startup writes it while the latch's cause stands; read Kraken's open orders — an order still resting there is cancelled by hand on that page, and one that is gone was cancelled or filled, which its entry in Kraken's closed orders, the positions page and the row's `filled_qty` tell apart; the pass runs after the mint with the sockets up, or after the sockets' return where the mint fell inside a cut, and cancels what still rests, so read its `re-read pass reads … row(s)` and `re-cancelled …` lines before the hand cancel (drills A1, G and F2 read them). That is the right answer and it is also a **plan-stopping** one, so how often the machinery fires decides how often an attended window ends on a slow venue rather than on a real result (no count command: `_strand_ambiguous` in `cli/engine/executor.py` ends each such intent; the version's record holds the rate, not a count).
 
    Three readings, none of which needs new instrumentation. From the workstation:
 

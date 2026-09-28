@@ -15,9 +15,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from nautilus_trader.common import SocketState, SocketStateChanged
 from nautilus_trader.core import UUID4
 from nautilus_trader.model import (
     AccountId,
+    ClientId,
     ClientOrderId,
     Currency,
     CurrencyPair,
@@ -48,6 +50,7 @@ from nautilus_trader.model import (
     TimeInForce,
     TradeId,
     TraderId,
+    Venue,
     VenueOrderId,
 )
 
@@ -452,6 +455,12 @@ class StubCache:
     def orders_open(self, *, venue=None, **kwargs):
         return list(self._open_orders)
 
+    def orders_inflight(self, *, venue=None, **kwargs):
+        """The orders the library's in-flight check queries, derived from each held order's own
+        `is_inflight` -- SUBMITTED, PENDING_UPDATE or PENDING_CANCEL on the real state machine -- so
+        a test moves it only by applying the library's own events to a REAL order."""
+        return [o for o in self._open_orders if getattr(o, "is_inflight", False)]
+
     def account_for_venue(self, *, venue=None, **kwargs):
         # `balances_free()` in the real account's own terms: dict[Currency, Money]. Both halves are
         # library types the reader has to coerce, and a real Currency keys the dict directly --
@@ -551,7 +560,9 @@ def _config(tmp_path: Path, **overrides) -> EngineConfig:
     return EngineConfig(**base)
 
 
-def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None) -> ProbeExecutor:
+def _executor(
+    tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None, venue_cancel=None
+) -> ProbeExecutor:
     client = client if client is not None else StubClient()
     return ProbeExecutor(
         client=client,
@@ -559,20 +570,31 @@ def _executor(tmp_path: Path, *, client=None, gate=None, config=None, clock=None
         config=config if config is not None else _config(tmp_path),
         clock=clock if clock is not None else (lambda: NOW),
         venue_orders=venue_orders,
+        venue_cancel=venue_cancel,
     )
 
 
 @pytest.fixture(autouse=True)
 def _no_production_venue_read(monkeypatch):
-    """The executor's default venue read is a real client on the trade credentials, and a developer's
-    shell may hold them. A test that needs the venue's orders hands the executor its own reader;
-    reaching the default fails the test through every `except Exception` on the way, because
-    `pytest.fail` raises a BaseException."""
+    """The executor's default venue read and venue cancel are a real client on the trade credentials,
+    and a developer's shell may hold them. A test that needs the venue's orders hands the executor
+    its own reader, and one that needs the re-cancel its own canceller; reaching a default fails the
+    test through every `except Exception` on the way, because `pytest.fail` raises a BaseException.
+    The cancel's wrap lets a call with a `base_url` through, the loopback cases' own, since those
+    reach the real client on purpose."""
 
     def _refuse(since, **kwargs):
         pytest.fail(f"a test reached the production venue read (since {since.isoformat()}) -- pass venue_orders")
 
+    cancel = executor_module.cancel_venue_order
+
+    def _refuse_cancel(venue_order_id, instrument_id, *, base_url=None):
+        if base_url is None:
+            pytest.fail(f"a test reached the production venue cancel ({venue_order_id}) -- pass venue_cancel")
+        return cancel(venue_order_id, instrument_id, base_url=base_url)
+
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
+    monkeypatch.setattr(executor_module, "cancel_venue_order", _refuse_cancel)
 
 
 def _intent(**overrides):
@@ -678,7 +700,8 @@ def _report(txid, status, *, filled_qty="0", quantity="0.001"):
 
 class _VenueOrders:
     """The executor's `venue_orders` reader: answers `reports`, or raises `raises`, and records the
-    `since` of every call -- the read is once per process, and a second call is a finding."""
+    `since` of every call -- the startup pass reads once, and the re-read pass once more per arm
+    over the rows it minted terminal; any other second call is a finding."""
 
     def __init__(self, *reports, raises=None):
         self.reports = list(reports)
@@ -690,6 +713,26 @@ class _VenueOrders:
         if self._raises is not None:
             raise self._raises
         return list(self.reports)
+
+
+class _VenueCancel:
+    """The executor's `venue_cancel`: records each `(venue_order_id, instrument_id)` it is asked to
+    cancel, and raises `raises` instead when set -- the venue's refusal, or the cut not over."""
+
+    def __init__(self, *, raises=None):
+        self.calls: list[tuple[str, str]] = []
+        self._raises = raises
+
+    def __call__(self, venue_order_id, instrument_id):
+        self.calls.append((venue_order_id, instrument_id))
+        if self._raises is not None:
+            raise self._raises
+
+
+def _cancel_venue_order(*args, **kwargs):
+    """`cancel_venue_order` through the module's attribute at the call, the one the autouse refusal
+    wraps: a loopback `base_url` passes that wrap, so these cases prove the wrap lets one through."""
+    return executor_module.cancel_venue_order(*args, **kwargs)
 
 
 def _closed_order(client_order_id, status, *, filled_qty=0.0, venue_order_id=None):
@@ -853,13 +896,13 @@ def _intent_outcome(tmp_path, index: int = 0, when: datetime = NOW) -> str:
     return _intent_entry(tmp_path, index, when)["outcome"]
 
 
-def _resting_executor(tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None):
+def _resting_executor(tmp_path, *, intents=None, bid=30000.0, ask=30001.0, client=None, venue_orders=None, venue_cancel=None):
     """A plan accepted and its first intent resting: exactly one order at the venue. The trailing
     assert is the point -- a helper that quietly submitted nothing would hand every ladder test
     below a green it never earned."""
     clock = _Clock()
     client = client if client is not None else StubClient()
-    ex = _executor(tmp_path, client=client, clock=clock)
+    ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue_orders, venue_cancel=venue_cancel)
     _drop_plan(tmp_path, _plan_dict(intents=intents))
     ex.on_timer(clock.now)
     ex.on_quote(_quote(bid=bid, ask=ask))
@@ -1707,6 +1750,7 @@ def _fill(
     symbol="BTC/EUR",
     side="buy",
     liquidity=LiquiditySide.MAKER,
+    trade_id="T-1",
     **overrides,
 ):
     """A REAL `OrderFilled`, carrying every field the executor's fill row reads in the venue's own
@@ -1728,7 +1772,7 @@ def _fill(
         OrderFilled,
         client_order_id=client_order_id,
         instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]),
-        trade_id=TradeId("T-1"),
+        trade_id=TradeId(trade_id),
         order_side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         last_qty=_quantity(last_qty),
         last_px=_price(px),
@@ -4131,13 +4175,14 @@ def test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_
     engine publishes the `OrderCanceled` itself. It is applied to the order before dispatch, so the
     Cache says CANCELED either way and only the flag can tell the two apart. `canceled` on it would
     put a venue claim in the ledger nobody made; `accepted` would claim the order still rests where
-    the venue may have cancelled it. `ambiguous` keeps the row open, so a startup inside the
-    re-attach window re-attaches and settles it. The line is a WARNING, the mint being the expected
+    the venue may have cancelled it. `ambiguous` keeps the row open, so the re-read pass settles it
+    from the venue's own report on the next tick with nothing in flight, and a startup inside the
+    re-attach window where the pass could not read. The line is a WARNING, the mint being the expected
     end of an adopt-pass cancel on this wheel, and the row's event records the flag so the ledger
     can tell the mint once the row is settled.
 
     Read as a pair: the false arm is the true positive, and the `open_submitted_rows` reading IS what
-    a startup inside the re-attach window re-attaches from."""
+    the re-read pass and a startup inside the re-attach window read the row from."""
     ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
     assert [str(cid) for cid in client.canceled] == ["O-opener"]  # this process asked; the venue is what did not answer
     metrics = RecordingMetrics()
@@ -4159,7 +4204,7 @@ def test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_
             (
                 logging.WARNING,
                 "OrderCanceled for O-opener was reconciled, not received -- no venue answer reached this engine; its row "
-                "reads ambiguous until the venue's own report settles it",
+                "reads ambiguous until the re-read pass settles it from the venue's own report",
             )
         ]
         if reconciled
@@ -4623,6 +4668,760 @@ def test_every_cache_and_strategy_id_read_in_the_executor_goes_through_the_handl
     a raise latches a false kill, so no site reads through the client."""
     source = Path(executor_module.__file__).read_text()
     assert (source.count("self._client.cache"), source.count("self._client.strategy_id")) == (0, 0)
+
+
+# --- the re-read pass (drills F2, G and A1) ---------------------------------------------------------------
+
+
+def _socket(state, endpoint="kraken-spot-data-streams"):
+    """A REAL `SocketStateChanged`, as the client's socket-state stream delivers it once the strategy
+    subscribed: the Kraken client's id and the socket's own endpoint name, `kraken-spot-data-streams`
+    for the data socket, the name its loopback drop reports. The execution socket's name is unmeasured
+    offline, which is why the executor keys on the set of endpoints down and never on a name."""
+    return SocketStateChanged(_TRADER_ID, ClientId("KRAKEN"), Venue("KRAKEN"), endpoint, state, UUID4(), 0, 0)
+
+
+def _reconnect(ex, *endpoints):
+    """The cut and the return as the stream reports them: each endpoint down, then each one back."""
+    endpoints = endpoints or ("kraken-spot-data-streams",)
+    for endpoint in endpoints:
+        ex.on_socket_state(_socket(SocketState.DISCONNECTED, endpoint))
+    for endpoint in endpoints:
+        ex.on_socket_state(_socket(SocketState.CONNECTED, endpoint))
+
+
+def _hold_in_cache(client, order):
+    """Put a REAL order into the stub Cache after the startup pass ran, as the library's own submit
+    does for an order this process places: held from construction, the pass at the first tick would
+    cancel it as an order with no row."""
+    client.cache._open_orders.append(order)
+
+
+def _minted_after_a_cut(tmp_path, *, venue_orders=None, venue_cancel=None):
+    """Drill F2's shape on the plan's own order: a rest-hold order accepted under `_TXID`, the quote
+    feed silent through the cut so the executor sends its one cancel, the venue never answering it,
+    and the engine minting `OrderCanceled` for itself -- the Cache's order closed by the flagged
+    terminal, the row `ambiguous`, the intent `ambiguous`, the plan dropped."""
+    ex, client, clock = _resting_executor(
+        tmp_path,
+        intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)],
+        venue_orders=venue_orders,
+        venue_cancel=venue_cancel,
+    )
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    _hold_in_cache(client, order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence: the one cancel goes out into the cut
+    assert [str(cid) for cid in client.canceled] == ["O-1"]
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    ex.on_order_event(minted)
+    assert (_record(tmp_path)["submitted"][0]["state"], _intent_outcome(tmp_path)) == ("ambiguous", "ambiguous")
+    return ex, client, clock
+
+
+def test_a_reconnect_after_a_minted_cancel_re_cancels_the_order_still_resting_and_settles_its_row(tmp_path):
+    """Drill F2's shape: the REST cancel fails in the cut, the engine mints the cancel's terminal, and
+    the order rests at Kraken with nothing else re-cancelling it on the reconnect. The sockets' return
+    arms the pass; the next tick with nothing in flight reads the venue for the row the mint closed, the
+    report says the order still rests, the cancel goes out by txid on the bare client -- the strategy
+    handle refuses an order it holds closed -- and the venue's acceptance writes the row `canceled`. The
+    intent stays `ambiguous`: it was terminal at the mint, and the row is the re-cancel's record. No
+    counter moves for the re-cancel."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    _reconnect(ex)
+    assert venue.calls == [] and cancel.calls == []  # the handler arms; the tick runs
+    clock.now += timedelta(seconds=5)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(clock.now)
+
+    assert venue.calls == [_boundary(NOW) - timedelta(hours=1)]
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    assert [str(cid) for cid in client.canceled] == ["O-1"]  # no second cancel through the handle
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "canceled"
+    assert row["events"][-1] == {"event": "recancelled", "at": clock.now.isoformat(), "venue_order_id": _TXID}
+    assert _intent_outcome(tmp_path) == "ambiguous"
+    assert metrics.orders == []
+    assert [r.getMessage() for r in records if r.getMessage().startswith("re-cancelled")] == [
+        f"re-cancelled O-1 (Kraken {_TXID}) -- it rested at Kraken (ACCEPTED) after a terminal this engine minted; "
+        "its row reads canceled"
+    ]
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 1  # the arm is consumed: a later tick reads nothing
+
+
+def test_a_reconnect_after_a_minted_cancel_of_an_adopted_opener_re_cancels_it_and_leaves_the_intent_the_sweep_wrote(
+    tmp_path,
+):
+    """The adopted path's twin: the startup pass cancelled the opener and its sweep wrote the intent
+    `revoked`; the cut lost the ack and the engine minted the terminal, the row `ambiguous`. The
+    re-read pass reads the venue, cancels what still rests by txid and settles the row; the intent
+    stands as the sweep wrote it."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=cancel)
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [_TXID] and _intent_outcome(tmp_path, 0, earlier) == "revoked"
+    assert venue.calls == []  # the Cache answered the startup pass, so the venue was not read
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "ambiguous"
+
+    _reconnect(ex)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "canceled" and row["events"][-1]["event"] == "recancelled"
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+
+def test_a_venue_report_closed_at_the_reconnect_settles_the_minted_row_without_a_cancel(tmp_path):
+    """G's shape met on a reconnect rather than a startup: the venue had executed the cancel and lost
+    the ack. The report closes the row as a startup would, and no cancel goes out."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    cancel = _VenueCancel()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert cancel.calls == []
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "canceled"
+    assert [e.get("event") or e["type"] for e in row["events"]] == ["OrderAccepted", "OrderCanceled"]
+
+
+def test_a_venue_report_filled_at_the_reconnect_settles_the_minted_row_filled_and_counts_it_as_a_startup_would(tmp_path):
+    """The one counter the pass moves, and not for a re-cancel: a report that completes the row takes
+    the startup's completion arm, `filled` written and counted once, so the board reads the fill the
+    cut hid as a restart's sweep would read it. The intent stays as the mint left it."""
+    venue = _VenueOrders()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    ordered = executor_module._ordered_qty(_record(tmp_path)["submitted"][0])
+    venue.reports.append(_report(_TXID, OrderStatus.FILLED, filled_qty=f"{ordered:.8f}", quantity=f"{ordered:.8f}"))
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"], metrics.orders) == ("filled", ordered, ["filled"])
+    assert _intent_outcome(tmp_path) == "ambiguous"
+
+
+def test_a_venue_read_failing_after_the_reconnect_is_tried_on_three_ticks_then_left_to_the_hand_cancel(tmp_path):
+    """The sockets' return is the host's network, not Kraken's REST edge answering: the pass asks
+    again on the next tick, three ticks in all, then names the hand cancel and the rows it could not
+    read for, the ledger read having succeeded, and stops asking; a later return of the sockets arms
+    it again, and a startup inside the re-attach window reads the row too, under the restart rule the
+    error-logs page names. Unlike the startup read, no plan is refused for it."""
+    venue = _VenueOrders(raises=RuntimeError("dns"))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+
+    _reconnect(ex)
+    with _executor_errors(level=logging.WARNING) as records:
+        for _ in range(4):
+            clock.now += timedelta(seconds=5)
+            ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 3
+    lines = [r for r in records if "re-read pass could not read" in r.getMessage()]
+    assert [r.levelno for r in lines] == [logging.WARNING, logging.WARNING, logging.CRITICAL]
+    assert (
+        lines[-1]
+        .getMessage()
+        .endswith(f"may still rest at Kraken (O-1 (Kraken {_TXID})): cancel it by hand on Kraken's open-orders page")
+    )
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"
+    assert ex._reconciliation_refusal is None
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 4
+
+
+def test_a_reconnect_reads_the_venue_for_no_row_the_engine_did_not_mint_terminal(tmp_path):
+    """The population is the rows whose Cache order a minted terminal closed and no other: a kept
+    reducer's row is open and its order rests, so the sockets' return reads nothing for it."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+    ex.on_timer(NOW)
+
+    _reconnect(ex)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert venue.calls == [] and client.canceled == []
+
+
+def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_connect_itself_arms_nothing(tmp_path):
+    """The stream delivers `CONNECTED` at the connect itself, which owes nothing. With two endpoints
+    down, the first back owes the pass whatever the second reports -- the execution socket's name,
+    and whether its return arrives under the string its drop carried, are unmeasured offline, and the
+    data socket reports its return under its own name -- and the second back owes it again, an empty
+    population consuming that arm with no read. A socket reported down first holds the arm the
+    mint set, so the first tick measures the connect's `CONNECTED` alone. Each drop and return logs
+    its endpoint, the line F2's Record and the rollout's first hour read the execution socket's off."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_socket_state(_socket(SocketState.DISCONNECTED, "a-second-endpoint"))  # holds the arm the mint set
+
+        ex.on_socket_state(_socket(SocketState.CONNECTED))  # the connect itself: not held down
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+        assert venue.calls == []
+        ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+        assert len(venue.calls) == 1  # the first return arms it, the second endpoint still down
+        assert (ex._reread_tries, ex._sockets_down) == (0, {"a-second-endpoint"})
+        ex.on_socket_state(_socket(SocketState.CONNECTED, "a-second-endpoint"))
+        assert ex._reread_tries == executor_module._REREAD_ATTEMPTS  # armed again
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+        assert len(venue.calls) == 1  # nothing left minted terminal: the arm is consumed with no read
+
+    assert [r.getMessage() for r in records if r.getMessage().startswith("socket ")] == [
+        "socket a-second-endpoint is down -- an order whose terminal this engine mints meanwhile is re-read at the venue "
+        "once a socket is back",
+        "socket kraken-spot-data-streams is down -- an order whose terminal this engine mints meanwhile is re-read at the "
+        "venue once a socket is back",
+        "socket kraken-spot-data-streams is back (a-second-endpoint still down) -- the re-read pass runs on the next tick "
+        "with nothing in flight",
+        "socket a-second-endpoint is back and none is down -- the re-read pass runs on the next tick with nothing in flight",
+    ]
+
+
+def test_the_pass_waits_for_a_tick_with_nothing_of_this_process_in_flight(tmp_path):
+    """The read and the cancel go out on a second client on the same key -- `read_venue_orders`'
+    nonce hazard against the execution client's in-flight queries -- so the pass runs on a tick with
+    no order of this process in flight, the arm -- a mint's, here, beside a live intent -- kept until one comes."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    clock = _Clock()
+    ex = _executor(tmp_path, client=client, clock=clock, venue_orders=venue, venue_cancel=_VenueCancel())
+    ex.on_timer(clock.now)
+    _drop_plan(tmp_path, _plan_dict())
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    ex.on_quote(_quote())
+    assert client.last_order_id == "O-1" and ex._active is not None  # the plan's own order is in flight
+
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))  # the mint arms
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls == []
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.001)
+    assert ex._active is None
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+
+
+def test_the_reread_pass_waits_while_a_startup_cancel_of_an_adopted_order_is_still_unanswered(tmp_path):
+    """`_active` None is not nothing in flight: the startup pass's cancels of adopted orders, and a
+    trip's, leave orders PENDING_CANCEL with no intent live, and the library's in-flight check
+    queries those on the same key. The pass waits for a tick on which the Cache holds no order of
+    this process in flight, and the minted terminal that ends the library's query is what frees it."""
+    earlier = NOW - timedelta(hours=4)
+    minted, pending = _TXID, "OBBBBB-BBBBB-BBBBBB"
+    _pending_plan_entry(tmp_path, earlier, n_intents=2)
+    _submitted_row(tmp_path, "O-a", reduce_only=False, when=earlier, index=0, venue_order_id=minted)
+    _submitted_row(tmp_path, "O-b", reduce_only=False, when=earlier, index=1, venue_order_id=pending)
+    orders = [_resting_limit_order(minted, venue_order_id=minted), _resting_limit_order(pending, venue_order_id=pending)]
+    client = StubClient(StubCache(open_orders=orders))
+    venue = _VenueOrders(_report(minted, OrderStatus.ACCEPTED))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=_VenueCancel()
+    )
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [minted, pending]
+    for order in orders:  # the handle's own `OrderPendingCancel`, which the library applies on the cancel
+        order.apply(_event(OrderPendingCancel, client_order_id=str(order.client_order_id)))
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=minted, reconciliation=True))
+
+    _reconnect(ex)
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert venue.calls == [] and ex._active is None  # the second cancel is still in flight
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=pending, reconciliation=True))
+    ex.on_timer(NOW + timedelta(seconds=10))
+
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+
+
+def test_a_re_cancel_the_venue_refuses_leaves_the_row_and_names_the_hand_cancel(tmp_path):
+    """The order went between the read and the cancel, or the cut is not over for REST: the venue's
+    refusal, or a raise, leaves the row as it was and the line names the hand cancel -- the
+    refused-cancel arm's precedent -- and the arm is consumed, since the line is the operator's."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel(raises=RuntimeError("EOrder:Unknown order"))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    with _executor_errors() as records:
+        ex.on_timer(clock.now)
+
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"
+    assert [r.getMessage() for r in records] == [
+        f"the re-read pass's cancel of O-1 (Kraken {_TXID}) raised or was refused -- the order may still rest at "
+        "Kraken: cancel it by hand on Kraken's open-orders page"
+    ]
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert len(venue.calls) == 1
+
+
+def test_a_partial_fill_applied_after_the_mint_keeps_the_row_in_the_reread_pass_which_re_cancels_the_remainder(
+    tmp_path,
+):
+    """The order F2 exists for: a maker at the touch part-fills during the cut, and the private stream
+    delivers the fill after the reconnect. The state machine applies it to the order held
+    minted-CANCELED -- its last event is then the fill -- so the mint is read off the order's
+    history, the venue is asked, and the remainder still resting is re-cancelled with the fill on
+    the row."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004"))
+    cancel = _VenueCancel()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+    order = client.cache.order(ClientOrderId("O-1"))
+    fill = _fill("O-1", 0.0004, venue_order_id=VenueOrderId(_TXID))
+    order.apply(fill)
+    ex.on_order_event(fill)
+    assert (order.status, type(order.last_event).__name__) == (OrderStatus.CANCELED, "OrderFilled")
+
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1 and cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", 0.0004)
+
+
+def test_a_minted_cancel_of_an_adopted_opener_with_the_sockets_up_is_settled_from_the_venue_on_the_next_tick(tmp_path):
+    """Drills G's and A1's shape, the one each adopt-pass cancel takes on this wheel: the pass cancels
+    the adopted opener, Kraken cancels it at the second asked, nothing it answers is applied, and about
+    31 s on the engine mints the cancel's terminal with the sockets up. The mint writes the row
+    `ambiguous` at WARNING and arms the re-read pass; the next tick with nothing in flight reads the
+    venue for the row, the report says closed, and the row settles `canceled` with no cancel sent, no
+    counter moved, no CRITICAL line, and the intent as the sweep wrote it. The row's own evidence of the
+    mint is the flag on its `OrderCanceled` event."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    cancel = _VenueCancel()
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=cancel)
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [_TXID] and _intent_outcome(tmp_path, 0, earlier) == "revoked"
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+        assert _record(tmp_path, earlier)["submitted"][0]["state"] == "ambiguous"
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)] and cancel.calls == []
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "canceled"
+    assert row["events"][-1] == {"type": "OrderCanceled", "at": NOW.isoformat(), "reconciliation": True}
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
+    assert metrics.orders == []
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (
+            logging.WARNING,
+            f"OrderCanceled for {_TXID} was reconciled, not received -- no venue answer reached this engine; its row reads "
+            "ambiguous until the re-read pass settles it from the venue's own report",
+        ),
+        (logging.WARNING, "the re-read pass reads 1 row(s) this engine minted terminal against the venue"),
+    ]
+    ex.on_timer(NOW + timedelta(seconds=10))
+    assert len(venue.calls) == 1  # the arm is consumed
+
+
+def test_a_socket_reported_down_holds_the_re_read_a_mint_armed_until_a_socket_is_back(tmp_path):
+    """F2's shape, where the mint lands before the socket's own deadline reports the cut: the mint arms
+    the pass, the `DISCONNECTED` holds it, so nothing is read inside the cut, and the socket's return
+    arms it again."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    assert ex._reread_tries == executor_module._REREAD_ATTEMPTS  # the mint armed it
+
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls == [] and ex._reread_tries == 0
+    ex.on_socket_state(_socket(SocketState.CONNECTED))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_mint_while_a_socket_is_held_down_arms_nothing_and_the_sockets_return_does(tmp_path):
+    """The other order of F2's two clocks: the socket reports the cut before the in-flight budget
+    mints the terminal. The mint arms nothing while an endpoint is held down, the tick reads
+    nothing, and the return arms the pass."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=_VenueCancel()
+    )
+    ex.on_timer(NOW)
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED))
+
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+    assert ex._reread_tries == 0
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert venue.calls == []
+    ex.on_socket_state(_socket(SocketState.CONNECTED))
+    ex.on_timer(NOW + timedelta(seconds=10))
+
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_socket_drop_after_another_sockets_return_leaves_that_returns_arm_and_the_pass_runs(tmp_path):
+    """The execution socket drops about hourly on this wheel and reconnects in about 1.5 s, and its
+    endpoint string is unmeasured: a `DISCONNECTED` of it landing after the data socket's return
+    must not clear the arm that return set, or a return under another string would never re-arm it
+    and the order the mint closed would rest until a startup. A mint's arm it does clear, and an
+    entry held down under a string no `CONNECTED` matches holds every later mint's arm off, the
+    cost the spec names."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    _reconnect(ex)  # the data socket down and back: the return arms the pass
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    assert (ex._reread_tries, ex._sockets_down) == (executor_module._REREAD_ATTEMPTS, {"kraken-spot-user-streams"})
+
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1 and _record(tmp_path)["submitted"][0]["state"] == "canceled"
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "another-string"))  # a return under another string arms nothing
+    ex._arm_reread_after_mint()  # and the entry it left holds a mint's arm off
+    assert (ex._reread_tries, ex._sockets_down) == (0, {"kraken-spot-user-streams"})
+
+
+@pytest.mark.parametrize(
+    "venue_status, venue_filled", [(OrderStatus.PARTIALLY_FILLED, "0.0004"), (OrderStatus.FILLED, "the ordered quantity")]
+)
+def test_a_fill_the_stream_replays_after_the_pass_repaired_the_row_adds_nothing_and_trips_nothing(
+    tmp_path, venue_status, venue_filled
+):
+    """F2's part-filled maker, the order the pass exists for, with the execution stream resubscribing
+    behind the data socket's return: the pass repairs the row from the venue's report and re-cancels
+    it, or settles it `filled`, and the stream then replays the fill the repair already carries --
+    whether it does on this wheel is unmeasured, F2's Record reading it, and the replay here is
+    delivered by hand. A fill credits the row with what the Cache's order holds beyond it, so the
+    replay adds nothing: the event's quantity would read the row at twice the venue's figure, latch
+    the kill switch at the next startup on a withdrawal that never happened, and on a whole fill's
+    replay trip it on an overfill at once. The `fill` line keeps the stream's own quantity and
+    carries what the cap credited the row, 0.0, the figure the ledger's readers count into `held`,
+    the repair's `reconciled` line already carrying the fill."""
+    venue = _VenueOrders()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    ordered = executor_module._ordered_qty(_record(tmp_path)["submitted"][0])
+    filled = ordered if venue_filled == "the ordered quantity" else float(venue_filled)
+    venue.reports.append(_report(_TXID, venue_status, filled_qty=f"{filled:.8f}", quantity=f"{ordered:.8f}"))
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    row = _record(tmp_path)["submitted"][0]
+    settled = "canceled" if venue_status is OrderStatus.PARTIALLY_FILLED else "filled"
+    assert (row["state"], row["filled_qty"]) == (settled, filled)
+
+    order = client.cache.order(ClientOrderId("O-1"))
+    replay = _fill("O-1", filled, venue_order_id=VenueOrderId(_TXID))
+    order.apply(replay)
+    ex.on_order_event(replay)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == (settled, filled)
+    assert (row["events"][-1]["event"], row["events"][-1]["qty"], row["events"][-1]["credited"]) == ("fill", filled, 0.0)
+    assert not _kill_file(tmp_path).exists() and metrics.orders == (["filled"] if settled == "filled" else [])
+    later_status = OrderStatus.CANCELED if settled == "canceled" else OrderStatus.FILLED
+    later = _VenueOrders(_report(_TXID, later_status, filled_qty=f"{filled:.8f}", quantity=f"{ordered:.8f}"))
+    ex2 = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=later)
+    ex2.on_timer(NOW + timedelta(minutes=10))
+    assert not _kill_file(tmp_path).exists()  # the next startup reads the venue's figure and the row's as one
+
+
+def test_a_fill_after_the_pass_re_cancelled_an_adopted_order_completes_its_row_on_the_passs_own_mirror(tmp_path):
+    """The adopted path's row sits in `_attached` under its txid, the id the Cache names the order by,
+    from the startup's mirror; the pass reads fresh rows from the ledger and re-attaches each under
+    the Cache order's own id too, so a later fill reads the pass's row and not the startup's stale
+    copy. The stream then replays the fill the repair carries, adding nothing, and delivers one
+    beyond it, which completes the row on the pass's figure and counts once."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    order = _resting_limit_order(_TXID, quantity="0.001", venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[order]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0006", quantity="0.001"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=_VenueCancel()
+    )
+    ex.on_timer(NOW)
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+    ex.on_timer(NOW + timedelta(seconds=5))  # the mint armed the pass: the row is repaired to 0.0006 and re-cancelled
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", 0.0006)
+    assert ex._attached[_TXID][1] is ex._attached["O-opener"][1]  # one row dict under both ids
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    _deliver_external_event(ex, client, _fill(_TXID, 0.0006, venue_order_id=VenueOrderId(_TXID)))  # the replay
+    _deliver_external_event(ex, client, _fill(_TXID, 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-2"))  # beyond it
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], metrics.orders) == ("filled", ["filled"])
+    assert row["filled_qty"] == pytest.approx(0.001)
+    # `credited` only where the cap moved the row by less: the replay's line carries 0.0, the fill beyond it none.
+    assert [(e["qty"], e.get("credited")) for e in row["events"] if e.get("event") == "fill"] == [(0.0006, 0.0), (0.0004, None)]
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_a_mint_landing_detached_after_the_ack_deadline_stranded_the_intent_arms_the_pass_which_re_cancels_the_order(
+    tmp_path,
+):
+    """The third mint site: the ack deadline fires on the first tick at or after 30 s and the
+    library's mint, past its own in-flight budget, can land later, so a tick between the two strands
+    the intent first and the minted terminal lands detached, for an order no intent holds. It arms
+    the pass as the other two sites do, and the next tick reads the venue and re-cancels the order
+    still resting; without the arm the row would stay `accepted` and the order rest until a
+    socket's return or a startup."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)], venue_orders=venue, venue_cancel=cancel
+    )
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    _hold_in_cache(client, order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence: the cancel goes out
+    for _ in range(7):  # 35 s on, past `_ACK_WAIT`: the deadline strands the intent first
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+    assert (_intent_outcome(tmp_path), ex._active, ex._reread_tries) == ("ambiguous", None, 0)
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    ex.on_order_event(minted)
+    assert ex._reread_tries == executor_module._REREAD_ATTEMPTS  # the detached site armed it
+
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1 and cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["events"][-1]["event"]) == ("canceled", "recancelled")
+    assert _intent_outcome(tmp_path) == "ambiguous"
+
+
+def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_the_return_settles_the_row(tmp_path):
+    """The execution socket drops and returns while an order rests, about hourly on this wheel: its
+    return arms the pass, which waits behind the live intent. Then the cut: both endpoints report
+    down, the quote silence sends the one cancel into it, and the engine mints the terminal. The
+    arming endpoint's own drop cleared its arm, so nothing is read into the cut -- an arm every drop
+    but its own left standing would read into it and page the CRITICAL over an order the return
+    then settles -- and the return arms the pass, which settles the row. The drops here lead
+    the mint; the case below takes F2's order, the mint ahead of the first drop."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)], venue_orders=venue, venue_cancel=cancel
+    )
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    _hold_in_cache(client, order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    _reconnect(ex, "kraken-spot-user-streams")
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    assert venue.calls == [] and ex._reread_tries == executor_module._REREAD_ATTEMPTS  # the intent is live: the arm waits
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    assert ex._reread_tries == executor_module._REREAD_ATTEMPTS  # another endpoint's drop leaves it
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    assert ex._reread_tries == 0  # its own endpoint's drop clears it
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence: the one cancel goes out into the cut
+    assert [str(cid) for cid in client.canceled] == ["O-1"]
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    ex.on_order_event(minted)
+    with _executor_errors(level=logging.WARNING) as records:
+        for _ in range(3):
+            clock.now += timedelta(seconds=5)
+            ex.on_timer(clock.now)
+    assert venue.calls == [] and [r for r in records if r.levelno >= logging.ERROR] == []
+
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1 and cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_returns_arm_pending_behind_a_live_intent_that_the_other_endpoints_drop_left_standing_is_closed_by_its_first_failed_read_into_the_cut(
+    tmp_path,
+):
+    """The case above in F2's order: the mint ahead of the first `DISCONNECTED`, and the execution
+    socket's own drop, the one that clears the arm its return set, later, its time unmeasured. The
+    mint ends the intent, so nothing holds the arm back when the data socket reports down, and the
+    tick reads into the cut: the first read that fails while an endpoint is held down
+    closes the arm at WARNING -- one read, no CRITICAL -- where a budget spent into the cut would
+    page over an order the return then settles. The return arms three again and settles the row."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex, client, clock = _resting_executor(
+        tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)], venue_orders=venue, venue_cancel=cancel
+    )
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    _hold_in_cache(client, order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    _reconnect(ex, "kraken-spot-user-streams")
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence: the one cancel goes out into the cut, the return's arm waiting behind the intent
+    assert [str(cid) for cid in client.canceled] == ["O-1"] and venue.calls == []
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    ex.on_order_event(minted)
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    assert (ex._active, ex._reread_tries, ex._reread_armed_by) == (
+        None,
+        executor_module._REREAD_ATTEMPTS,
+        "kraken-spot-user-streams",
+    )
+    venue._raises = RuntimeError("dns")
+    with _executor_errors(level=logging.WARNING) as records:
+        for _ in range(3):
+            clock.now += timedelta(seconds=5)
+            ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1 and (ex._reread_tries, ex._reread_armed_by) == (0, None)
+    lines = [r for r in records if "re-read pass could not read" in r.getMessage()]
+    assert [r.levelno for r in lines] == [logging.WARNING]
+    assert "while socket kraken-spot-data-streams is down -- the arm closes" in lines[0].getMessage()
+
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    venue._raises = None
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 2 and cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+
+
+def test_a_row_the_read_has_no_order_for_is_marked_once_and_left_out_of_the_passs_later_arms(tmp_path):
+    """A row whose txid the venue read does not return -- a closed order the adapter cannot resolve
+    -- no read of this process settles: the pass marks it `ambiguous` with the unmatched event, once,
+    its CRITICAL the operator's line, and leaves it out of every later arm, where re-reading it on
+    each socket return, about hourly on this wheel, would page the same line each time over a row
+    already read. A startup inside the re-attach window reads it again, the startup's own rule."""
+    venue = _VenueOrders()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    marked_at = clock.now
+    with _executor_errors() as records:
+        ex.on_timer(clock.now)
+        _reconnect(ex)
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+
+    assert len(venue.calls) == 1
+    assert [r.getMessage() for r in records] == [
+        f"ledgered order O-1 matches no venue order -- the venue's order read has no order {_TXID}; its row is marked ambiguous"
+    ]
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "ambiguous"
+    assert [e for e in row["events"] if e.get("type") == "ambiguous"] == [
+        {"type": "ambiguous", "at": marked_at.isoformat(), "what": f"the venue's order read has no order {_TXID}"}
+    ]
+
+
+def test_a_fill_after_the_re_cancel_on_a_cache_behind_the_venues_report_is_credited_beyond_the_caches_lag_alone(tmp_path):
+    """The cut's partial never reaches the stream, so the Cache's order holds nothing of the 0.0004
+    the pass repaired the row to from the report; a 0.0003 fill landing between the pass's read and
+    its cancel is then delivered, and the cap credits what the Cache holds beyond the row -- nothing,
+    the Cache behind by more than the fill, the cap unable to tell it from a replay. The row keeps
+    the report's figure with the `fill` line carrying the fill and `credited` 0.0: the shortfall the
+    row keeps, and a reader counting the line by `credited` with it."""
+    venue = _VenueOrders()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
+    ordered = executor_module._ordered_qty(_record(tmp_path)["submitted"][0])
+    venue.reports.append(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.00040000", quantity=f"{ordered:.8f}"))
+    _reconnect(ex)
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("canceled", 0.0004)
+
+    order = client.cache.order(ClientOrderId("O-1"))
+    later = _fill("O-1", 0.0003, venue_order_id=VenueOrderId(_TXID), trade_id="T-2")
+    order.apply(later)
+    ex.on_order_event(later)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"], float(order.filled_qty)) == ("canceled", 0.0004, 0.0003)
+    moving = [(e["event"], e["qty"], e.get("credited")) for e in row["events"] if e.get("event") in ("fill", "reconciled")]
+    assert moving == [("reconciled", 0.0004, None), ("fill", 0.0003, 0.0)]
+
+
+def test_a_plan_dropped_during_a_cut_starts_behind_the_re_cancel_on_the_same_tick(tmp_path):
+    """The tick runs the pass before the pickup and the pump: a plan dropped while the sockets were
+    down starts on the tick after the return, once the pass has re-cancelled the order the cut left
+    resting, and never ahead of it. The pump first would arm its intent, and the pass, which waits
+    for nothing of this process in flight, would wait behind that plan's every intent."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=cancel)
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED))
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", created_at=clock.now))
+    ex.on_socket_state(_socket(SocketState.CONNECTED))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")] and ex._active is not None
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
 
 
 class _UnreadableOrderCache(StubCache):
@@ -5721,6 +6520,35 @@ def test_read_venue_orders_refuses_without_credentials_before_building_a_client(
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
     with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
         read_venue_orders(NOW, base_url="http://127.0.0.1:9")
+
+
+def test_cancel_venue_order_sends_the_txid_on_the_real_client_and_returns_on_count_1_and_count_0_alike(_loopback_credentials):
+    """The re-cancel's whole contract on the pinned wheel, offline: the listing is cached first, the
+    cancel names the order by its txid alone, and the client returns on the venue's answer without
+    reading its `count` -- so `_recancel` writes `canceled` on a `{"count": 0}`, the answer Kraken may
+    give for an order gone between the read and the cancel, exactly as on a `{"count": 1}`."""
+    with kraken_loopback.serve() as venue:
+        _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url=venue.base_url)
+        venue.cancel_count = 0
+        _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url=venue.base_url)
+
+    assert [form["txid"] for form in venue.cancel_forms] == [_TXID, _TXID]
+    assert venue.private_calls[-1] == "CancelOrder"
+
+
+def test_cancel_venue_order_raises_on_the_venues_refusal(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        venue.errors["CancelOrder"] = "EOrder:Unknown order"
+        with pytest.raises(Exception, match="Unknown order"):
+            _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url=venue.base_url)
+    assert venue.private_calls[-1] == "CancelOrder"  # the refusal came from the venue, not from the client
+
+
+def test_cancel_venue_order_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url="http://127.0.0.1:9")
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------
