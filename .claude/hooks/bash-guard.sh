@@ -639,29 +639,30 @@ def among(flag, names):
 
 def reader_files(p, args):
     # The files a READERS printer reads: its operands but the program word and, for awk, a `name=value` operand, which
-    # POSIX awk takes as an assignment; and each program file an option names.
+    # POSIX awk takes as an assignment; and each program file an option names, mawk's `-W exec <file>` (`-W e`,
+    # `-Wexec=<file>`) among them.
     *walk, programs, files = READERS[p]
     flags, values, ops = option_walk(args, *walk)
-    ops = ops if any(among(f, programs) for f in flags) else ops[1:]
-    named = [v for f, v in zip(flags, values, strict=True) if v and among(f, files)]
-    return named + [a for a in ops if p != "awk" or not ASSIGN.match(a)]
+    named, given = [], any(among(f, programs) for f in flags)
+    for f, v in zip(flags, values, strict=True):
+        name, eq, file = (v or "").partition("=")
+        if p == "awk" and f == "W" and name and "exec".startswith(name):
+            given, named = True, named + ([file] if eq else [])
+        elif v and among(f, files):
+            named.append(v)
+    return named + [a for a in (ops if given else ops[1:]) if p != "awk" or not ASSIGN.match(a)]
 
 
 def opened(code):
-    # A name no call is made through, inside an opener's call, can carry the path: then every literal counts.
+    # A name inside an opener's call that is neither called nor imported can carry the path: then every literal counts.
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
         return re.findall(r"[^\s'\"(),;]+", code) if OPENS.search(code) else []
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and OPENERS & {getattr(n.func, "attr", None), getattr(n.func, "id", None)}]
-    callees = set()
-    for n in ast.walk(tree):
-        f = n.func if isinstance(n, ast.Call) else None
-        while isinstance(f, ast.Attribute):
-            f = f.value
-        if isinstance(f, ast.Name):
-            callees.add(id(f))
-    held = any(isinstance(n, ast.Name) and id(n) not in callees for c in calls for n in ast.walk(c))
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    imported = {a.asname or a.name.partition(".")[0] for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
+    held = any(isinstance(n, ast.Name) and id(n) not in called and n.id not in imported for c in calls for n in ast.walk(c))
     return [n.value for s in ([tree] if held else calls) for n in ast.walk(s) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
