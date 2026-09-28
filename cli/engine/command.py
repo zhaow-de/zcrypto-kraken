@@ -1492,7 +1492,7 @@ def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
     return {
         **cost,
         "proposed_fee_per_side": None,
-        "basis": f"{len(reconciliation['unmatched'])} ledger trade row(s) matched no journaled fill -- no rate "
+        "basis": f"{len(reconciliation['unmatched'])} ledger trade or margin row(s) matched no journaled fill -- no rate "
         "proposed over a book the ledger could not reconcile",
     }
 
@@ -1600,23 +1600,35 @@ def _render_tracking(payload: dict) -> str:
         lines += [
             "",
             f"Ledger export: {reconciliation['status']} -- {reconciliation['n_rows']} row(s) read, of which "
-            f"{reconciliation['matched']} ledger trade row(s) matched a journaled fill.",
+            f"{reconciliation['matched']} ledger trade or margin row(s) matched a journaled fill.",
         ]
         if payload["simulated"]:
             lines.append(
-                "  SIMULATED FILLS were compared against a real export, so every ledger trade row below is unmatched "
-                "by construction -- a modelled fill carries no venue trade id. Nothing in this block is a finding."
+                "  SIMULATED FILLS were compared against a real export, so every ledger trade or margin row below is "
+                "unmatched by construction -- a modelled fill carries no venue trade id. Nothing in this block is a finding."
             )
+        # Four decimals: the export's own precision for a euro fee, so the figure can equal the hand read it is compared with.
         lines.append(
-            f"  rollover fees {reconciliation['rollover_fees_eur']:,.2f} EUR -- charged against the POSITION rather "
+            f"  rollover fees {reconciliation['rollover_fees_eur']:,.4f} EUR -- charged against the POSITION rather "
             "than against a fill, so no execution record carries them and the blend above omits them."
         )
+        if reconciliation["matched"]:
+            lines.append(
+                f"  fees on the matched rows {reconciliation['matched_fees_eur']:,.4f} EUR -- the venue's own figure "
+                "over the journaled fills the export's rows matched, a fee charged in EURC counted at par; the journal's "
+                "fills carry each fee cent-rounded, and a margin row's amount is its realized PnL, summed nowhere."
+            )
+        if reconciliation["known"]:
+            lines.append(
+                "  rows with no fill behind them by construction: "
+                + ", ".join(f"{kind} {count}" for kind, count in sorted(reconciliation["known"].items()))
+                + " -- counted, never matched."
+            )
         if reconciliation["ignored"]:
             lines.append(
                 "  row types this reader places nowhere: "
                 + ", ".join(f"{kind} {count}" for kind, count in sorted(reconciliation["ignored"].items()))
-                + " -- counted, never matched. A margin position writes rows sharing its trade's id, and what those "
-                "mean is settled against a real export rather than guessed here."
+                + " -- counted, never matched; a type this reader has not met, to settle against the export that carries it."
             )
         if reconciliation["unmatched"]:
             lines += [
