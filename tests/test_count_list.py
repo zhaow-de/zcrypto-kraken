@@ -741,3 +741,65 @@ def test_drills_on_the_primary_reports_a_log_it_cannot_read_as_an_error(tmp_path
         timeout=120,
     )
     assert "ERROR" in done.stdout and not done.stdout.strip().endswith("\t0"), done.stdout + done.stderr
+
+
+ROUND_CLOSED = "2026-09-24T18:01:00+02:00"  # 16:01:00Z, 61 s past a 4-hourly boundary
+BEFORE, AT = "2026-09-24T16:00:59Z", "2026-09-24T16:01:00Z"
+WINDOWED = {
+    "canary-bypasses-on-the-primary": [
+        {"ts": ts, "limit": "zcrypto", "tags": "capture", "rc": 0, "extra_vars": {"canary_override": "an approved rollback"}}
+        for ts in (BEFORE, AT)
+    ],
+    "engine-rows-outside-the-gap": [
+        {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}} for ts in (BEFORE, AT)
+    ],
+    "capture-hosts-converged-within-an-hour": [
+        {"ts": BEFORE, "limit": "zcrypto", "tags": "capture", "rc": 0},
+        {"ts": AT, "limit": "zcrypto-red", "tags": "capture", "rc": 0},
+        {"ts": "2026-09-24T16:30:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0},
+    ],
+}
+
+
+def _history(tmp_path: pathlib.Path, closes_a_round: bool) -> pathlib.Path:
+    # The author date and the trailer's value both sit earlier than the commit date, so only the commit date anchors.
+    git_dir = tmp_path / "history"
+    subprocess.run(["git", "init", "-q", "-b", "develop", str(git_dir)], check=True)
+    message = ["-m", "claude(refine): round closes", "-m", "Refine-Round-Closed: 2026-09-01T00:00:00Z"]
+    subprocess.run(
+        ["git", "-C", str(git_dir), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty"]
+        + (message if closes_a_round else ["-m", "chore: no round has closed"]),
+        check=True,
+        env={**os.environ, "GIT_AUTHOR_DATE": "2026-09-23T18:01:00+02:00", "GIT_COMMITTER_DATE": ROUND_CLOSED},
+    )
+    return git_dir / ".git"
+
+
+def _windowed(tmp_path: pathlib.Path, entry: str, git_dir: pathlib.Path, **env: str) -> subprocess.CompletedProcess:
+    log = tmp_path / "deploy-log.jsonl"
+    log.write_text("".join(json.dumps(row) + "\n" for row in WINDOWED[entry]))
+    return subprocess.run(
+        ["bash", str(SCRIPT), entry],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        # GIT_DIR points the anchor's `git log` at the scratch history; the entries still run from this checkout.
+        env={**os.environ, "GIT_DIR": str(git_dir), "COUNT_LIST_DEPLOY_LOG": str(log), **env},
+        timeout=120,
+    )
+
+
+@pytest.mark.parametrize("entry", sorted(WINDOWED))
+def test_a_deploy_log_count_reads_the_rows_since_the_round_closed_and_every_row_under_all(tmp_path, entry):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    assert _windowed(tmp_path, entry, git_dir).stdout == f"{entry}\t1\n"
+    assert _windowed(tmp_path, entry, git_dir, COUNT_LIST_ALL="1").stdout == f"{entry}\t2\n"
+
+
+@pytest.mark.parametrize("entry", sorted(WINDOWED))
+def test_a_deploy_log_count_with_no_closed_round_is_an_error_and_all_still_counts(tmp_path, entry):
+    git_dir = _history(tmp_path, closes_a_round=False)
+    done = _windowed(tmp_path, entry, git_dir)
+    assert (done.returncode, done.stdout) == (2, f"{entry}\tERROR\n"), done.stderr
+    assert "Refine-Round-Closed" in done.stderr
+    assert _windowed(tmp_path, entry, git_dir, COUNT_LIST_ALL="1").stdout == f"{entry}\t2\n"

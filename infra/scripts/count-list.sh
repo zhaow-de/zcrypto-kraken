@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One line per entry -- its name and today's value -- for every count the corpus and the contracts name by entry; a universal with no entry beside it is the finding.
 # Usage: count-list.sh [entry...] -- every entry, or only the named ones; a name no entry answers to is exit 2.
+# COUNT_LIST_ALL=1 counts every deploy-log row where an entry reads only those since the last refine round closed.
 set -uo pipefail
 
 errors=()
@@ -311,10 +312,29 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
+# The three deploy-log counts that name a violation read the rows stamped at or after the previous refine round's
+# closing commit -- its commit date, the anchor `c_claude_commits_since_the_round_closed` finds -- so a row a round has
+# read is not counted again in the next. No closing commit is an error, never a count over the whole log.
+# COUNT_LIST_DEPLOY_LOG names another log for these three, which is how a test drives the window.
+round_closed_at() {
+  [ "${COUNT_LIST_ALL:-}" = 1 ] && return 0
+  local closed
+  closed="$(git log -1 --grep='^Refine-Round-Closed:' --format=%cI)" || return 2
+  if [ -z "$closed" ]; then
+    echo "count-list: no commit carries a Refine-Round-Closed: trailer, so the deploy-log window has no start" >&2
+    return 2
+  fi
+  date -u -d "$closed" +%Y-%m-%dT%H:%M:%SZ || return 2
+}
+
 # The bypasses the ROW names. `converge.sh` accepts an override as JSON and refuses every other
 # spelling before the pass, so every bypass THROUGH IT is here; `run.sh` takes raw ansible argv and
 # writes no row at all, which is the hole this count cannot see and the confirm gate is why.
-c_canary_bypasses() { jq -c 'select(.limit=="zcrypto" and .extra_vars.canary_override!=null)' docs/reference/deploy-log.jsonl | wc -l; }
+c_canary_bypasses() {
+  local since
+  since="$(round_closed_at)" || return 2
+  jq -c --arg since "$since" 'select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .limit=="zcrypto" and .extra_vars.canary_override!=null)' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | wc -l
+}
 
 # COUNT_LIST_FEED_SNAPSHOT is the snapshot arm of the audit: set it and the count reads a recorded
 # feed instead of the network, which is how a test runs this line and how a rolled feed keeps its
@@ -338,7 +358,12 @@ c_drills_on_the_primary() {
 # empty `tags` and its own `skip_tags` cell; counting it here would read a violation that never was.
 c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="" and (.skip_tags // "")=="")' docs/reference/deploy-log.jsonl | wc -l; }
 
-c_engine_rows_outside_the_gap() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'; }
+c_engine_rows_outside_the_gap() {
+  local since window=()
+  since="$(round_closed_at)" || return 2
+  if [ -n "$since" ]; then window=(--since "$since"); fi
+  uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'
+}
 
 # A watch number, not a gate: the log cannot read the journal, so the band is what `on_the_completion_floor` infers.
 c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows .*on the completion floor \([0-9][0-9]*\)$/\1/p'; }
@@ -381,7 +406,11 @@ c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | gr
 # pairs of events on different hosts within an hour of each other; a group row pairs with itself.
 # The `capture_host` arm below is for the rows already written: `converge.sh` refuses a group limit
 # now — `--limit capture_host` restarts both capture hosts close together, which the rule forbids.
-c_capture_hosts_converged_within_an_hour() { jq -s '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600)] | length' docs/reference/deploy-log.jsonl; }
+c_capture_hosts_converged_within_an_hour() {
+  local since
+  since="$(round_closed_at)" || return 2
+  jq -s --arg since "$since" '[.[] | select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600)] | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+}
 
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
 
