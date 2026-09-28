@@ -513,6 +513,7 @@ AGENT_ADMITTED = [
     ("git tag --list --sort=-v:refname --contains HEAD", WORKTREE),
     ("git tag -a v1 -m -fixed", WORKTREE),
     ("git tag -a v1 -mdraft", WORKTREE),
+    ("git tag -a v1 --message -fixed", WORKTREE),
     ("git symbolic-ref HEAD", WORKTREE),
     ("git symbolic-ref --short HEAD", WORKTREE),
     ("git symbolic-ref -q HEAD", MAIN),
