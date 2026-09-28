@@ -70,6 +70,16 @@ def test_append_creates_the_ledger_and_appends_one_row_per_call(tmp_path: Path):
     assert all(TS.match(r["ts"]) for r in rows), rows
 
 
+def test_append_row_appends_one_object_as_given_on_a_line_of_its_own(tmp_path: Path):
+    row = {"label": "t1", "kind": "task", "range": "develop..abcdef0", "note": "é"}
+    done = _ledger("append", str(tmp_path), "--row", json.dumps(row, indent=2))
+    assert (done.returncode, done.stdout, done.stderr) == (0, "", ""), done
+    assert _ledger("append", str(tmp_path), "--kind", "pre-review", "--range", "a..b", "--tip", "abcdef0").returncode == 0
+    first, second = (tmp_path / "ledger.jsonl").read_text().splitlines()
+    assert json.loads(first) == row and list(json.loads(first)) == list(row)
+    assert json.loads(second)["kind"] == "pre-review"
+
+
 def test_append_starts_its_row_on_a_line_of_its_own(tmp_path: Path):
     (tmp_path / "ledger.jsonl").write_text('{"kind":"task","label":"t1","range":"develop..abcdef0"}')
     assert _ledger("append", str(tmp_path), "--kind", "pre-review", "--range", "a..b", "--tip", "abcdef0").returncode == 0
@@ -86,6 +96,12 @@ def test_append_starts_its_row_on_a_line_of_its_own(tmp_path: Path):
         ["--kind", "review", "--range", "a..b", "--tip", "abcde"],
         ["--kind", "pre-review", "--range", "a..b", "--tip", "abcdef0", "--refutation", "f.md", "--report", "r.md"],
         ["--kind", "review", "--range", "a..b", "--tip", "abcdef0", "--report", "r.md"],
+        ["--range", "a..b", "--tip", "abcdef0"],
+        ["--row", "not json"],
+        ["--row", '["kind", "task"]'],
+        ["--row", '{"kind": "task"}', "--kind", "review", "--range", "a..b", "--tip", "abcdef0"],
+        ["--row", '{"kind": "task"}', "--tip", "abcdef0"],
+        ["--row", '{"kind": "task"}', "--refutation", "f.md", "--report", "r.md"],
     ],
 )
 def test_append_refuses_what_is_not_a_row_and_writes_nothing(tmp_path: Path, bad: list[str]):
