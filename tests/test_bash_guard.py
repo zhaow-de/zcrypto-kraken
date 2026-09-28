@@ -427,12 +427,31 @@ AGENT_REF_WRITES = [
     ("git branch --move x y", MAIN, "git branch --move x y", "renames a branch"),
     ("git branch --mo x y", "/tmp/elsewhere", "git branch --mo x y", "renames a branch"),
     (f"git -C {WORKTREE} branch -M develop", MAIN, f"git -C {WORKTREE} branch -M develop", "renames a branch"),
+    ("git branch -c x y", WORKTREE, "git branch -c x y", "copies a branch"),
+    ("git branch -C x develop", WORKTREE, "git branch -C x develop", "copies a branch"),
+    ("git branch --copy x y", MAIN, "git branch --copy x y", "copies a branch"),
     ("git branch -f develop origin/develop", WORKTREE, "git branch -f develop origin/develop", "forces a branch"),
     ("git branch --force x develop", WORKTREE, "git branch --force x develop", "forces a branch"),
     ("git branch -vf x develop", MAIN, "git branch -vf x develop", "forces a branch"),
-    ("git update-ref -d refs/heads/develop", WORKTREE, "git update-ref -d refs/heads/develop", "deletes a ref"),
-    ("git update-ref -m why -d refs/heads/x", MAIN, "git update-ref -m why -d refs/heads/x", "deletes a ref"),
-    ("git -C ../../.. update-ref -d refs/heads/x", WORKTREE, "git -C ../../.. update-ref -d refs/heads/x", "deletes a ref"),
+    ("git branch --sort -committerdate -D x", WORKTREE, "git branch --sort -committerdate -D x", "deletes a branch"),
+    ("git tag -d v1", WORKTREE, "git tag -d v1", "deletes a tag"),
+    ("git tag --delete v1 v2", MAIN, "git tag --delete v1 v2", "deletes a tag"),
+    ("git tag -f v1 origin/develop", WORKTREE, "git tag -f v1 origin/develop", "forces a tag"),
+    ("git tag --force -a v1 -m x", WORKTREE, "git tag --force -a v1 -m x", "forces a tag"),
+    ("git tag -af v1 -m x", "/tmp/elsewhere", "git tag -af v1 -m x", "forces a tag"),
+    ("git tag -m -fixed -f v1", WORKTREE, "git tag -m -fixed -f v1", "forces a tag"),
+    ("git update-ref refs/heads/agent-y HEAD", WORKTREE, "git update-ref refs/heads/agent-y HEAD", "rewrites a ref"),
+    ("git update-ref -d refs/heads/develop", WORKTREE, "git update-ref -d refs/heads/develop", "rewrites a ref"),
+    ("git update-ref -m why -d refs/heads/x", MAIN, "git update-ref -m why -d refs/heads/x", "rewrites a ref"),
+    ("git -C ../../.. update-ref --stdin", WORKTREE, "git -C ../../.. update-ref --stdin", "rewrites a ref"),
+    ("git symbolic-ref HEAD refs/heads/develop", WORKTREE, "git symbolic-ref HEAD refs/heads/develop", "rewrites a symbolic ref"),
+    ("git symbolic-ref -m why HEAD refs/heads/x", MAIN, "git symbolic-ref -m why HEAD refs/heads/x", "rewrites a symbolic ref"),
+    ("git symbolic-ref -- HEAD refs/heads/x", WORKTREE, "git symbolic-ref -- HEAD refs/heads/x", "rewrites a symbolic ref"),
+    ("git symbolic-ref -d HEAD", WORKTREE, "git symbolic-ref -d HEAD", "deletes a symbolic ref"),
+    ("git symbolic-ref --delete -q HEAD", MAIN, "git symbolic-ref --delete -q HEAD", "deletes a symbolic ref"),
+    ("git symbolic-ref -qd HEAD", WORKTREE, "git symbolic-ref -qd HEAD", "deletes a symbolic ref"),
+    ("git reflog expire --expire=now --all", WORKTREE, "git reflog expire --expire=now --all", "expires reflog entries"),
+    ("git reflog delete HEAD@{1}", MAIN, "git reflog delete 'HEAD@{1}'", "deletes reflog entries"),
     (
         f"git worktree move {MAIN}/.claude/worktrees/refine-17 /tmp/x",
         WORKTREE,
@@ -487,8 +506,22 @@ AGENT_ADMITTED = [
     ("git branch -uorigin/develop", WORKTREE),
     ("git branch -tdirect agent-y origin/develop", WORKTREE),
     ("git branch --format=%(refname:short) --sort=-committerdate", WORKTREE),
-    ("git update-ref refs/heads/agent-y HEAD", WORKTREE),
-    ("git update-ref -mmade refs/heads/agent-y HEAD", WORKTREE),
+    ("git branch --sort -committerdate", WORKTREE),
+    ("git tag", WORKTREE),
+    ("git tag -l", WORKTREE),
+    ("git tag -l 'v*' -n3", WORKTREE),
+    ("git tag --list --sort=-v:refname --contains HEAD", WORKTREE),
+    ("git tag -a v1 -m -fixed", WORKTREE),
+    ("git tag -a v1 -mdraft", WORKTREE),
+    ("git symbolic-ref HEAD", WORKTREE),
+    ("git symbolic-ref --short HEAD", WORKTREE),
+    ("git symbolic-ref -q HEAD", MAIN),
+    ("git symbolic-ref -m why HEAD", WORKTREE),
+    ("git reflog", WORKTREE),
+    ("git reflog show", WORKTREE),
+    ("git reflog show --date=iso develop", WORKTREE),
+    ("git reflog exists refs/heads/develop", MAIN),
+    ("git reflog list", WORKTREE),
     ("git stash", WORKTREE),
     ("git rebase develop", WORKTREE),
     (f"cd {WORKTREE} && git commit -m x", MAIN),
@@ -653,7 +686,7 @@ def test_a_dispatched_agents_branch_delete_is_blocked_wherever_it_runs(tmp_path:
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "deletes a branch" in r.stderr, r.stderr
-    assert "a dispatched agent deletes, renames or forces no branch, deletes no ref and moves no worktree" in r.stderr
+    assert "a dispatched agent rewrites none of them and moves no worktree" in r.stderr
     assert r.stdout == ""
 
 
@@ -666,7 +699,7 @@ def test_a_dispatched_agents_ref_rename_force_or_delete_or_worktree_move_is_bloc
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and f"` {claim} from a dispatched agent" in r.stderr, r.stderr
-    assert "a dispatched agent deletes, renames or forces no branch, deletes no ref and moves no worktree" in r.stderr
+    assert "a dispatched agent rewrites none of them and moves no worktree" in r.stderr
     assert r.stdout == ""
 
 
