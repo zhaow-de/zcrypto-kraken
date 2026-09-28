@@ -650,6 +650,11 @@ class _ActiveIntent:
     # the kill file revoked it -- and only the first is `rest_hold_expired`. Matching on
     # `revoke_reasons`' text instead would tie the outcome to a string written for a human.
     hold_expired: bool = False
+    # `quote_seq` counts the ticks stored since the intent started and `priced_seq` is its value when
+    # the live order was priced, so a reprice can tell a tick that arrived after that order from the
+    # one that priced it.
+    quote_seq: int = 0
+    priced_seq: int = 0
 
 
 class ProbeExecutor:
@@ -1464,13 +1469,29 @@ class ProbeExecutor:
             self._start_intent(now)
 
     def _poll(self, now: datetime, verdict: GateVerdict) -> None:
-        """The timer's whole authority over an in-flight intent. Only a RESTING order is revocable
-        or time-boxable: a cancel is already outstanding in `cancelling`, and an IOC resolves at the
-        venue within the tick rather than sitting there."""
+        """The timer's whole authority over an in-flight intent. A RESTING order, or a reprice
+        waiting for its tick, is revocable or time-boxable: a cancel is already outstanding in
+        `cancelling`, and an IOC resolves at the venue within the tick rather than sitting there."""
         active = self._active
         if active.phase == "awaiting_quote":
             if now > active.quote_deadline:
                 self._finish_active("refused", (f"no quote within {int(_QUOTE_WAIT.total_seconds())}s",))
+            return
+        if active.phase == "awaiting_reprice":
+            # Nothing rests, so a revoke ends the intent on this tick with no cancel to wait on; the
+            # checks are `resting`'s, in `resting`'s order, after `_resubmit`'s completion test: a
+            # detached fill can complete the intent inside the wait, and a feed silent from then on
+            # would otherwise revoke what has already filled.
+            if active.target_qty - active.filled < active.constraints.lot_step:
+                self._finish_active("filled", (), active.filled)
+            elif not _level_permits(verdict.level, active.intent):
+                active.revoke_reasons = tuple(verdict.reasons)
+                self._finish_revoked(active)
+            elif active.last_quote_at is not None and now - active.last_quote_at > _QUOTE_SILENCE:
+                active.revoke_reasons = ("quote_silence",)
+                self._finish_revoked(active)
+            elif now > active.timebox_at:
+                self._time_box_with_nothing_resting(active)
             return
         if active.phase != "resting":
             # `cancelling` and `ioc` are both waiting on the venue. An answer that never comes is an
@@ -1499,6 +1520,16 @@ class ProbeExecutor:
             active.revoke_reasons = ("time box elapsed",)
             self._enter(active, "cancelling")
             self._cancel(active)
+
+    def _time_box_with_nothing_resting(self, active: _ActiveIntent) -> None:
+        """The time-box elapsing while a reprice waits: `_on_cancel_ack`'s requested arm less the
+        cancel, since no order is out to cancel."""
+        if active.intent.mode == "execute":
+            self._fallback(active)
+        elif active.intent.mode == "rest-cancel":
+            self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
+        else:
+            self._finish_active("rest_hold_expired" if active.filled == 0.0 else "partial", (), active.filled)
 
     def _start_intent(self, now: datetime) -> None:
         """Always either arms `_active` or advances `_index` -- `_pump`'s loop depends on it."""
@@ -1598,17 +1629,23 @@ class ProbeExecutor:
                 return
             bid = _as_price(getattr(tick, "bid_price", None))
             ask = _as_price(getattr(tick, "ask_price", None))
-            if bid is not None and ask is not None:
+            stored = bid is not None and ask is not None
+            if stored:
                 # Both sides or neither: a reprice needs the near touch and the IOC fallback the
                 # far one, and half a book is not a book to price either against.
                 active.bid, active.ask = bid, ask
                 active.last_quote_at = self._now()
+                active.quote_seq += 1
             if active.phase == "awaiting_quote":
                 self._first_submission(active)
+            elif active.phase == "awaiting_reprice" and stored:
+                self._reprice_at_touch(active)
         except Exception:
             logger.exception("executor quote handling raised -- refusing the intent")
             if self._active is not None:
-                self._finish_active("refused", ("quote handling failed",))
+                # `filled` carried, `_submit`'s rule: a resubmission runs here now, and a raise after
+                # earlier orders filled must not erase what was bought from the operator's summary.
+                self._finish_active("refused", ("quote handling failed",), self._active.filled)
 
     def _limit_price(self, active: _ActiveIntent) -> float | None:
         """The resting price for this intent's side and mode, or None when no usable touch is known.
@@ -1707,7 +1744,12 @@ class ProbeExecutor:
             "leverage": intent.leverage,
             # The startup pass's ONLY witness: whether the order this row stands for was a reducer.
             "reduce_only": active.reduce_only,
+            # The quote this order was priced from: two rows of one intent sharing a `quote_seq` were priced off one tick.
+            "bid": active.bid,
+            "ask": active.ask,
+            "quote_seq": active.quote_seq,
         }
+        active.priced_seq = active.quote_seq
         params = {"leverage": intent.leverage} if intent.leverage is not None else None
         return self._submit(active, order, params), ""
 
@@ -1743,14 +1785,19 @@ class ProbeExecutor:
         self._enter(active, "resting")
 
     def _reprice(self, active: _ActiveIntent) -> None:
-        """Two callers, not two universally-reachable ones: the venue's synchronous post-only
-        rejection and its accept-then-cancel. The rejection arm is unconditional -- nothing was ever
-        resting, so the recomputed price is simply this intent's own offset off the CURRENT touch,
-        and a tight-offset intent needs that recovery to get resting at all. The accept-then-cancel
-        arm is filtered before it arrives: a rest-hold order is a drill's subject and its
-        venue-originated cancel is terminal there (spec 00108 D5), never a reprice. The counter
-        counts RESUBMISSIONS -- the first submission was never a reprice -- so `_MAX_REPRICES` of
-        them happen and the next one refuses."""
+        """Two callers: the venue's synchronous post-only rejection and its accept-then-cancel. The
+        rejection arm is unconditional; the accept-then-cancel arm is filtered before it arrives,
+        since a rest-hold order's venue cancel is terminal. The counter counts RESUBMISSIONS -- the
+        first submission was never a reprice -- so `_MAX_REPRICES` of them happen; the next crossing
+        spends the maker budget, and in `execute` mode that crosses through the bounded IOC rather
+        than ending the intent, since an unfilled leg strands the probe.
+
+        A crossing says the stored touch is behind the venue's book, so the resubmission prices off
+        a tick newer than the one that priced the order it replaces: at once when one has already
+        arrived, else from `awaiting_reprice` when `on_quote` stores one; without the wait the whole
+        budget goes in one dispatch. The wait is entered with the ended order detached, so a fill
+        racing the cancel or a replayed ack takes the detached path -- a row append with no state
+        claim, the fill credited to the intent -- and spends no budget."""
         if active.cancel_requested:
             # A cancel is already out, so this order is over either way -- but WHY it is out decides
             # what happens next, and the two answers are opposites. A revoke (kill file, disarm,
@@ -1766,8 +1813,18 @@ class ProbeExecutor:
             return
         active.reprices += 1
         if active.reprices > _MAX_REPRICES:
-            self._finish_active("unfilled", ("reprice budget exhausted",), active.filled)
+            if active.intent.mode == "execute":
+                self._fallback(active)
+            else:
+                self._finish_active("unfilled", ("reprice budget exhausted",), active.filled)
             return
+        if active.quote_seq > active.priced_seq:
+            self._reprice_at_touch(active)
+            return
+        active.client_order_id = active.order = None
+        self._enter(active, "awaiting_reprice")
+
+    def _reprice_at_touch(self, active: _ActiveIntent) -> None:
         price = self._limit_price(active)
         if price is None:
             self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",), active.filled)
@@ -1794,6 +1851,11 @@ class ProbeExecutor:
         already got. A remainder the venue cannot accept is a terminal `partial` -- a legitimate end
         state -- never an order that would only be rejected.
         """
+        if active.target_qty - active.filled < active.constraints.lot_step:
+            # A late fill on the order this one replaces can complete the intent before the tick
+            # arrives: `_on_fill`'s completion test, so no order below the venue's minimum goes out.
+            self._finish_active("filled", (), active.filled)
+            return
         remainder = active.target_qty - active.filled
         result, detail = self._place(active, remainder, price, time_in_force=time_in_force, post_only=post_only)
         if result == "below_minimum":

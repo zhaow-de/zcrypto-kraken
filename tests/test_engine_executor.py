@@ -2075,7 +2075,8 @@ def test_a_late_fill_on_a_superseded_order_is_published_too(tmp_path):
     actually paid while every test stayed green."""
     ex, client, _ = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     ex.on_order_event(_accepted("O-1"))
-    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel -> reprice
+    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel -> the reprice waits for a tick
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
     assert len(client.submitted) == 2
 
     metrics = RecordingMetrics()
@@ -2128,22 +2129,354 @@ def test_the_verdict_hook_sees_every_evaluation_and_a_raising_hook_never_stops_a
 # --- the maker-first ladder -----------------------------------------------------------------------
 
 
-def test_both_crossing_surfaces_count_one_reprice_and_the_sixth_refuses(tmp_path):
-    """Surface 1: OrderRejected(due_post_only=True) -- the adapter's synchronous mapping.
-    Surface 2: accept-then-venue-cancel (OrderCanceled with no cancel requested). Alternate them:
-    5 reprices happen (6 submissions total), the 6th reprice is refused and the intent halts
-    unfilled with NO 7th order."""
-    ex, client, now = _resting_executor(tmp_path)  # helper: plan accepted, first order submitted
+def test_a_venue_cancel_off_the_priced_tick_waits_for_the_next_quote_before_repricing(tmp_path):
+    """The stored quote priced the order the venue just cancelled as crossing, so repricing off it
+    is the same order again. The resubmission waits for a newer tick and prices off that; both
+    rows record the tick that priced them."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+
+    ex.on_order_event(_canceled(client.last_order_id))  # unrequested: the venue's post-only cancel
+
+    assert len(client.submitted) == 1, "a second order means it repriced off the tick that priced the first"
+    assert ex._active.phase == "awaiting_reprice"
+    assert _record(tmp_path)["submitted"][0]["state"] == "venue_canceled"
+
+    ex.on_quote(_quote(bid=29990.0, ask=29991.0))
+
+    assert len(client.submitted) == 2
+    second, _ = client.submitted[1]
+    assert (second.price, second.time_in_force, second.post_only) == (29990.0, TimeInForce.GTC, True)
+    assert ex._active.phase == "resting"
+    rows = _record(tmp_path)["submitted"]
+    assert [(r["order"]["bid"], r["order"]["ask"], r["order"]["quote_seq"]) for r in rows] == [
+        (30000.0, 30001.0, 1),
+        (29990.0, 29991.0, 2),
+    ]
+
+
+def test_a_tick_that_landed_before_the_cancel_reprices_on_the_cancel_itself(tmp_path):
+    """The other arm of the comparison: a tick newer than the priced one has already arrived, so
+    nothing is waited for. A rule that always waited would pass the case above and lose a tick."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_quote(_quote(bid=29990.0, ask=29991.0))
+
+    ex.on_order_event(_canceled(client.last_order_id))
+
+    assert len(client.submitted) == 2
+    assert client.submitted[1][0].price == 29990.0
+    assert ex._active.phase == "resting"
+
+
+def test_alternating_crossings_place_one_order_per_tick_and_the_sixth_crossing_crosses_through_the_ioc(tmp_path):
+    """Both crossing surfaces alternated, each answered by one new tick: one order per tick, five
+    reprices, six post-only orders. The sixth crossing spends the maker budget and, in `execute`
+    mode, crosses through the bounded IOC at the opposite touch instead of ending `unfilled`; three
+    returned remainders end it `unfilled` with the fallback's own reason, nine orders in all."""
+    ex, client, clock = _resting_executor(tmp_path)
     for i in range(5):
         if i % 2 == 0:
             ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
         else:
             ex.on_order_event(_canceled(client.last_order_id))
-        ex.on_quote(_quote(bid=30000.0, ask=30001.0))
-    assert len(client.submitted) == 6  # initial + 5 reprices
+        assert len(client.submitted) == i + 1, "the reprice fired before its tick"
+        ex.on_quote(_quote(bid=30000.0 - i, ask=30001.0 - i))
+        assert len(client.submitted) == i + 2
+    assert all(order.post_only is True for order, _ in client.submitted)
+
     ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
-    assert len(client.submitted) == 6  # the sixth reprice refused, nothing new
-    assert _intent_outcome(tmp_path) == "unfilled"
+
+    assert len(client.submitted) == 7
+    ioc, _ = client.submitted[6]
+    assert (ioc.price, ioc.time_in_force, ioc.post_only) == (29997.0, TimeInForce.IOC, False)  # the last tick's ask
+    assert ex._active.phase == "ioc"
+
+    for _ in range(3):
+        ex.on_order_event(_canceled(client.last_order_id))
+    assert len(client.submitted) == 9
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "unfilled" and intent["reasons"] == ["the bounded fallback did not fill"]
+
+
+def test_a_rest_hold_ladder_spent_by_rejections_ends_unfilled_and_never_crosses(tmp_path):
+    """The rest modes keep the ladder's old end: a spent budget is `unfilled` with no IOC, since a
+    mode built never to fill may not take."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    for i in range(5):
+        ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+        ex.on_quote(_quote(bid=30000.0 - i, ask=30001.0 - i))
+    assert len(client.submitted) == 6
+
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+
+    assert len(client.submitted) == 6
+    assert all(order.post_only is True for order, _ in client.submitted)
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "unfilled" and intent["reasons"] == ["reprice budget exhausted"]
+
+
+def test_a_kill_file_landing_while_a_reprice_waits_revokes_on_the_tick_with_no_cancel(tmp_path):
+    """No order rests while the reprice waits, so the revoke has nothing to cancel and ends the
+    intent on the tick itself; the plan halts as every revoke halts it."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)])
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert ex._active.phase == "awaiting_reprice"
+
+    (exec_dir(tmp_path) / KILL_FILE).touch()
+    clock.now = NOW + timedelta(seconds=5)
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "revoked" and "kill_switch" in intent["reasons"]
+    assert _intent_outcome(tmp_path, 1) == "refused"
+
+
+def test_quote_silence_while_a_reprice_waits_revokes_on_the_tick_with_no_cancel(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert ex._active.phase == "awaiting_reprice"
+
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "revoked" and intent["reasons"] == ["quote_silence"]
+
+
+def test_the_time_box_elapsing_while_a_reprice_waits_fires_the_ioc_with_no_cancel(tmp_path):
+    """The box declares the maker attempt over; with nothing resting there is nothing to cancel,
+    so the IOC fires on the tick, at the opposite touch of the stored quote. The box is reached
+    inside the quote-silence bound because the last tick landed ten seconds before the box."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=14.75)
+    assert clock.now == NOW + timedelta(minutes=14, seconds=50)
+    ex.on_order_event(_canceled(client.last_order_id))  # ticks have arrived since the first order: repriced at once
+    assert len(client.submitted) == 2
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))  # none since the second: the reprice waits
+    assert ex._active.phase == "awaiting_reprice"
+
+    clock.now = NOW + timedelta(minutes=15, seconds=5)
+    ex.on_timer(clock.now)
+
+    assert client.canceled == []
+    assert len(client.submitted) == 3
+    ioc, _ = client.submitted[2]
+    assert (ioc.price, ioc.time_in_force, ioc.post_only) == (30001.0, TimeInForce.IOC, False)
+
+
+def test_the_hold_elapsing_while_a_rest_hold_reprice_waits_ends_it_expired_with_no_cancel(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=15)])
+    _advance_with_quotes(ex, client, clock, minutes=14.75)
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+    assert len(client.submitted) == 2
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+    assert ex._active.phase == "awaiting_reprice"
+
+    clock.now = NOW + timedelta(minutes=15, seconds=5)
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 2
+    assert _intent_outcome(tmp_path) == "rest_hold_expired"
+
+
+def test_a_sell_closes_six_accept_then_cancel_crossings_end_in_an_ioc_at_the_bid(tmp_path):
+    """A sell, accepted and then cancelled by the venue as crossing six times, each crossing answered
+    by one tick, so each order is priced off a newer ask; the sixth crossing's IOC is bounded by the
+    last tick's bid, the opposite touch on this side. A margin close, so the IOC also carries the
+    closer's reduce-only flag."""
+    client = StubClient(StubCache(positions=_held(**{"BTC/EUR": 0.001})))
+    ex, client, clock = _resting_executor(
+        tmp_path, client=client, intents=[_intent(side="sell", action="close", notional_eur=90.0, leverage=2)]
+    )
+    for i in range(5):
+        ex.on_order_event(_accepted(client.last_order_id))
+        ex.on_order_event(_canceled(client.last_order_id))
+        assert len(client.submitted) == i + 1, "the reprice fired before its tick"
+        ex.on_quote(_quote(bid=30000.0 + i, ask=30001.0 + i))
+    assert [order.price for order, _ in client.submitted] == [30001.0, 30001.0, 30002.0, 30003.0, 30004.0, 30005.0]
+
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
+
+    assert len(client.submitted) == 7
+    ioc, _ = client.submitted[6]
+    assert (ioc.price, ioc.time_in_force, ioc.post_only, ioc.reduce_only) == (30004.0, TimeInForce.IOC, False, True)
+
+
+def test_a_fill_racing_the_venue_cancel_lands_detached_while_the_reprice_waits(tmp_path):
+    """`ownTrades` and `openOrders` have no cross-stream ordering, so a fill on the cancelled order can
+    land inside the wait. That order is no longer in flight: the fill takes the detached path, which
+    appends without a state claim and credits the intent, so the row keeps `venue_canceled` and the
+    replacement is sized to the remainder."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_canceled("O-1"))
+    assert ex._active.phase == "awaiting_reprice"
+
+    _deliver_fill(ex, client, "O-1", 0.1, px=30.0)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("venue_canceled", 0.5)
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
+    assert client.submitted[1][0].quantity == 0.5
+
+
+def test_a_replayed_cancel_ack_while_the_reprice_waits_counts_no_crossing(tmp_path):
+    """A second `OrderCanceled` for the order the venue already ended is evidence on its row, not a
+    crossing: it takes the detached path, and the maker budget is not spent on a replay."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted("O-1"))
+    ex.on_order_event(_canceled("O-1"))
+    assert (ex._active.phase, ex._active.reprices) == ("awaiting_reprice", 1)
+
+    ex.on_order_event(_canceled("O-1"))
+
+    assert (ex._active.phase, ex._active.reprices, len(client.submitted)) == ("awaiting_reprice", 1, 1)
+    assert [e["type"] for e in _record(tmp_path)["submitted"][0]["events"]] == ["OrderAccepted", "OrderCanceled", "OrderCanceled"]
+
+
+def test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_tick(tmp_path):
+    """The cancelled order's late fills reach the target inside the wait, so the tick has nothing left
+    to order: the intent ends `filled` with the whole quantity, where a remainder below one lot step
+    would otherwise go out as an order the venue refuses."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_canceled("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.6, px=30.0)
+
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", 1.0)
+
+
+def test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_timer_too(tmp_path):
+    """The completing fill can be the last thing the feed delivers for a while: the timer ends the
+    intent `filled` on its next tick, where the wait's revoke arms would otherwise end it `revoked`
+    on silence or the kill file, its whole quantity in `filled_qty`, and halt the plan."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_canceled("O-1"))
+    assert ex._active.phase == "awaiting_reprice"
+    _deliver_fill(ex, client, "O-1", 0.6, px=30.0)
+
+    clock.now = NOW + timedelta(seconds=31)  # past the silence bound, and no tick since the fill
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == ("filled", 1.0)
+
+
+def test_a_half_book_tick_while_a_reprice_waits_prices_nothing(tmp_path):
+    """A tick carrying one side is not stored, so it is not the newer tick the reprice waits for:
+    priced off the stale touch, the resubmission would be the crossing order again."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert ex._active.phase == "awaiting_reprice"
+
+    ex.on_quote(SimpleNamespace(instrument_id="BTC/EUR.KRAKEN", bid_price=Price(29990.0, 1), ask_price=None))
+
+    assert len(client.submitted) == 1 and ex._active.phase == "awaiting_reprice"
+    ex.on_quote(_quote(bid=29990.0, ask=29991.0))
+    assert len(client.submitted) == 2 and client.submitted[1][0].price == 29990.0
+
+
+def test_a_half_book_tick_while_the_order_rests_is_not_the_newer_tick_a_reprice_waits_for(tmp_path):
+    """A one-sided tick landing while the order rests advances no count, so the crossing after it
+    still waits: counted, it would reprice at once off the touch it crossed on."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_quote(SimpleNamespace(instrument_id="BTC/EUR.KRAKEN", bid_price=Price(29990.0, 1), ask_price=None))
+
+    ex.on_order_event(_canceled(client.last_order_id))
+
+    assert len(client.submitted) == 1 and ex._active.phase == "awaiting_reprice"
+
+
+def test_quote_silence_outranks_the_time_box_while_a_reprice_waits(tmp_path):
+    """The checks are `resting`'s, in `resting`'s order: a feed dead for longer than the silence bound
+    ends the intent `revoked` before the box can fire an IOC off that stale quote."""
+    ex, client, clock = _resting_executor(tmp_path)
+    ex.on_order_event(_accepted(client.last_order_id))
+    _advance_with_quotes(ex, client, clock, minutes=14.75)
+    ex.on_order_event(_canceled(client.last_order_id))  # ticks have arrived since the first order: repriced at once
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))
+    assert ex._active.phase == "awaiting_reprice"
+
+    clock.now = NOW + timedelta(minutes=15, seconds=25)  # 35 s after the last tick, and past the box
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 2
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "revoked" and intent["reasons"] == ["quote_silence"]
+
+
+def test_a_rest_cancel_ladder_spent_by_rejections_ends_unfilled_and_never_crosses(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-cancel")])
+    for i in range(5):
+        ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+        ex.on_quote(_quote(bid=30000.0 - i, ask=30001.0 - i))
+    assert len(client.submitted) == 6
+
+    ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+
+    assert len(client.submitted) == 6 and client.canceled == []
+    intent = _intent_entry(tmp_path, 0)
+    assert intent["outcome"] == "unfilled" and intent["reasons"] == ["reprice budget exhausted"]
+
+
+@pytest.mark.parametrize("filled_before, outcome", [(0.0, "rest_cancel_ok"), (0.2, "partial")])
+def test_the_time_box_elapsing_while_a_rest_cancel_reprice_waits_ends_it_rest_cancel_ok_or_partial_with_no_cancel(
+    tmp_path, filled_before, outcome
+):
+    """A mode built never to fill takes no IOC when its box elapses inside the wait; a fill that
+    landed ahead of the acceptance makes the end `partial`, since the name alone says nothing filled."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05, intents=[_intent(mode="rest-cancel")])
+    if filled_before:
+        _deliver_fill(ex, client, "O-1", filled_before, px=30.0)  # ahead of the acceptance: the streams' own ordering
+    _advance_with_quotes(ex, client, clock, minutes=14.75, bid=30.0, ask=30.05)
+    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel; ticks have arrived since: repriced at once
+    assert len(client.submitted) == 2
+    ex.on_order_event(_canceled(client.last_order_id))  # none since the second: the reprice waits
+    assert ex._active.phase == "awaiting_reprice"
+
+    clock.now = NOW + timedelta(minutes=15, seconds=5)
+    ex.on_timer(clock.now)
+
+    assert client.canceled == [] and len(client.submitted) == 2
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["filled_qty"]) == (outcome, filled_before)
+
+
+def test_a_raise_inside_a_waiting_reprice_journals_the_fills_that_already_happened(tmp_path):
+    """A raise inside the resubmission refuses the intent on the tick, and the refusal carries
+    `filled`, so a real partial is not erased from the summary."""
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    ex.on_order_event(_canceled("O-1"))
+    assert ex._active.phase == "awaiting_reprice"
+    client.cache._raises = True  # the Cache's instrument read raises on the tick
+
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
+
+    assert len(client.submitted) == 1
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["quote handling failed"], 0.4)
 
 
 def test_an_ambiguous_rejection_halts_with_no_second_order(tmp_path):
@@ -2523,6 +2856,7 @@ def test_a_resting_orders_placement_time_belongs_to_the_order_and_to_no_other_ph
 
     clock.now = NOW + timedelta(minutes=7)
     ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
+    ex.on_quote(_quote())  # the tick the reprice waits for, newer than the one that priced the rejected order
     assert len(client.submitted) == 2  # the rejection repriced: nothing was ever resting
     assert ex._active.placed_at == clock.now, "the replacement order's age starts with it"
 
@@ -2781,6 +3115,7 @@ def test_a_refused_resubmission_journals_the_fills_that_already_happened(tmp_pat
 
     (exec_dir(tmp_path) / KILL_FILE).touch()
     ex.on_order_event(_canceled(client.last_order_id))  # the venue's own cancel
+    ex.on_quote(_quote(bid=30.0, ask=30.05))  # the tick the reprice waits for
 
     assert len(client.submitted) == 1  # the gate refused the reprice
     intent = _intent_entry(tmp_path, 0)
@@ -4815,7 +5150,8 @@ def test_an_intents_orders_filling_past_its_target_between_them_trips(tmp_path, 
     ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
 
-    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel -> reprice
+    ex.on_order_event(_canceled("O-1"))  # the venue's own cancel -> the reprice waits for a tick
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
     resting = client.submitted[1][0]
     assert resting.quantity == 0.6
 
@@ -4901,7 +5237,8 @@ def test_a_superseded_orders_late_fills_are_summed_against_that_orders_own_quant
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
-    ex.on_order_event(_canceled("O-1"))  # superseded by the reprice
+    ex.on_order_event(_canceled("O-1"))  # superseded by the reprice, once its tick arrives
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
 
     _deliver_fill(ex, client, "O-1", 0.3, px=30.0)
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
@@ -4966,7 +5303,8 @@ def test_the_chokepoint_refuses_once_this_process_has_tripped(tmp_path):
     ex.on_order_event(_accepted(client.last_order_id))
     ex._kill_tripped = True
 
-    ex.on_order_event(_canceled(client.last_order_id))  # would reprice
+    ex.on_order_event(_canceled(client.last_order_id))  # would reprice, once its tick arrives
+    ex.on_quote(_quote())
 
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
