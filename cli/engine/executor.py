@@ -2913,6 +2913,18 @@ class ProbeExecutor:
             # dropping a plan whose order may be live.
             logger.exception("executor order-event handling raised -- continuing")
 
+    def _resubmit_on_event(self, active: _ActiveIntent, resubmission) -> None:
+        """The order-event dispatch's resubmissions -- `_reprice`, and `_fallback` on the time-box
+        cancel's ack or an IOC's returned remainder -- take the quote handler's rule for a raise, the
+        intent refused with `filled` carried: `on_order_event`'s catch-all refuses nothing, and would
+        leave the intent on the order the venue has just ended."""
+        try:
+            resubmission(active)
+        except Exception:
+            logger.exception("executor order-event resubmission raised -- refusing the intent")
+            if self._active is not None:
+                self._finish_active("refused", ("order-event handling failed",), self._active.filled)
+
     def _on_order_event(self, event) -> None:
         # D11's fill-time trips run FIRST, before any row update and before the in-flight/detached
         # split: an unknown order has no row to update, and an overfill must not be credited to a
@@ -3039,7 +3051,7 @@ class ProbeExecutor:
         if due_post_only or _POST_ONLY_MARKER in reason:
             self._update_row(active, state="rejected", event=payload)
             _inc_order("rejected")
-            self._reprice(active)
+            self._resubmit_on_event(active, self._reprice)
             return
         if any(marker in reason for marker in _KRAKEN_ERROR_MARKERS):
             self._update_row(active, state="rejected", event=payload)
@@ -3061,7 +3073,7 @@ class ProbeExecutor:
             self._update_row(active, state="canceled", event=payload)
             _inc_order("canceled")
             if active.falling_back:
-                self._fallback(active)
+                self._resubmit_on_event(active, self._fallback)
                 return
             if active.intent.mode == "rest-cancel":
                 self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
@@ -3080,7 +3092,7 @@ class ProbeExecutor:
         self._update_row(active, state="venue_canceled", event=payload)
         _inc_order("venue_canceled")
         if active.phase == "ioc":
-            self._fallback(active)
+            self._resubmit_on_event(active, self._fallback)
             return
         if active.intent.mode == "rest-hold":
             # Spec 00108 D5. This arm runs for ANY venue-originated cancel or expiry while the
@@ -3090,7 +3102,7 @@ class ProbeExecutor:
             # venue, and contaminates exactly the continuity drill G exists to measure.
             self._finish_active("rest_hold_venue_canceled" if active.filled == 0.0 else "partial", (), active.filled)
             return
-        self._reprice(active)
+        self._resubmit_on_event(active, self._reprice)
 
     def on_external_order_event(self, event) -> None:
         try:

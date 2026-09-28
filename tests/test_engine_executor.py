@@ -2742,6 +2742,61 @@ def test_a_raise_inside_a_waiting_reprices_time_box_ioc_refuses_the_intent_with_
     assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["time-box handling failed"], 0.4)
 
 
+_CROSSING = "POST_ONLY_REJECTED: would cross"
+
+
+def _crossed_with_a_newer_tick(ex, client, clock):
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
+    return _canceled(client.last_order_id)
+
+
+def _crossed_for_the_sixth_time(ex, client, clock):
+    ex.on_order_event(_canceled(client.last_order_id))
+    for _ in range(4):
+        ex.on_quote(_quote(bid=30.0, ask=30.05))
+        ex.on_order_event(_rejected(client.last_order_id, _CROSSING, due_post_only=True))
+    ex.on_quote(_quote(bid=30.0, ask=30.05))
+    assert len(client.submitted) == 6
+    return _rejected(client.last_order_id, _CROSSING, due_post_only=True)
+
+
+def _ioc_remainder_returned(ex, client, clock):
+    ex.on_order_event(_crossed_for_the_sixth_time(ex, client, clock))
+    assert ex._active.phase == "ioc"
+    return _canceled(client.last_order_id)
+
+
+def _time_box_cancel_answered(ex, client, clock):
+    _advance_with_quotes(ex, client, clock, minutes=15.5, bid=30.0, ask=30.05)
+    assert client.canceled
+    return _canceled(client.last_order_id)
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [_crossed_with_a_newer_tick, _crossed_for_the_sixth_time, _ioc_remainder_returned, _time_box_cancel_answered],
+    ids=["reprice_at_once", "sixth_crossing_ioc", "next_ioc", "time_box_ioc"],
+)
+def test_a_raise_inside_a_resubmission_the_order_event_dispatch_runs_refuses_the_intent_with_its_fills(tmp_path, arrange):
+    ex, client, clock = _resting_executor(
+        tmp_path, bid=30.0, ask=30.05, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]
+    )
+    ex.on_order_event(_accepted(client.last_order_id))
+    _deliver_fill(ex, client, client.last_order_id, 0.4, px=30.0)
+    event = arrange(ex, client, clock)
+    placed = len(client.submitted)
+    client.cache._raises = True  # the Cache's instrument read raises inside the resubmission's placement
+
+    with _executor_errors() as records:
+        ex.on_order_event(event)
+
+    assert len(client.submitted) == placed
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["order-event handling failed"], 0.4)
+    assert ex._plan is not None and ex._index == 1  # not dropped: the next tick starts intent 1
+    assert [r.getMessage() for r in records] == ["executor order-event resubmission raised -- refusing the intent"]
+
+
 def test_an_ambiguous_rejection_halts_with_no_second_order(tmp_path):
     """The double-submit construction, seen refused: a timeout surfaced as a rejection carrying no
     Kraken error code and no post-only marker. The intent halts ambiguous; no reprice, no IOC."""
@@ -5288,7 +5343,7 @@ def test_a_fill_beyond_the_passs_repair_that_the_cache_holds_whole_is_credited_w
 def test_a_mint_landing_detached_after_the_ack_deadline_stranded_the_intent_arms_the_pass_which_re_cancels_the_order(
     tmp_path,
 ):
-    """The third mint site: the ack deadline fires on the first tick at or after 30 s and the
+    """The third mint site: the ack deadline fires on the first tick after 30 s and the
     library's mint, past its own in-flight budget, can land later, so a tick between the two strands
     the intent first and the minted terminal lands detached, for an order no intent holds. It arms
     the pass as the other two sites do, and the next tick reads the venue and re-cancels the order
@@ -6705,11 +6760,9 @@ def test_every_basket_base_has_a_euro_pair_that_carries_its_spot_balance():
 
 
 def test_the_startup_pass_keeps_a_hand_settled_lot_on_the_gauge_from_the_venues_holdings_until_the_engines_own_sale(tmp_path):
-    """The 2026-09-25 shape: a hand settle of the engine's BTC/EUR long delivers the lot to the spot
-    balance and the state machine refuses the settle's fill, so the Cache keeps the long, and the
-    account holds the lot until the engine's own sale. The holdings read counts the lot with the
-    margin positions, so the gauge keeps reading it and no disagreement is logged; the engine's sale
-    then moves the Cache to flat and the gauge with it."""
+    """A hand settle of the engine's BTC/EUR long delivers the lot to the spot balance and the state
+    machine refuses the settle's fill, so the Cache keeps the long and the account holds the lot until
+    the engine's own sale."""
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     cache = StubCache()
