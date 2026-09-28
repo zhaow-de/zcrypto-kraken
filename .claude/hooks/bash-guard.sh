@@ -301,6 +301,14 @@ def cut_heredocs(text):
             out.append(ch)
             i += 1
             continue
+        if ch.isdigit() and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            j = i
+            while j < n and text[j].isdigit():
+                j += 1
+            if j < n and text[j] in "<>":
+                # an fd number is its redirection's, no word of the stage: `2>/dev/null git push` runs git
+                i = j
+                continue
         if ch == "'" or ch == '"':
             stack.append(("sq" if ch == "'" else "dq", i))
         elif ch == "(" and st in ("sub", "paren"):
@@ -673,9 +681,10 @@ def command_at(words, is_prog):
     return None
 
 
-def git_sub(words):
-    # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them.
-    at = command_at(words, is_git)
+def git_sub(words, anywhere=False):
+    # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them; the git is the
+    # stage's command word, or with `anywhere` its first git word.
+    at = next((i for i, w in enumerate(words) if is_git(w)), None) if anywhere else command_at(words, is_git)
     if at is None:
         return None, [], []
     argv, i, chdirs = words[at:], 1, []
@@ -704,7 +713,7 @@ def judge_vault(words, raw):
             hit = next((tok for tok in opened(code) if vaulted(tok)), None)
             if hit:
                 refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
-    sub, rest, _ = git_sub(words)
+    sub, rest, _ = git_sub(words, anywhere=True)  # a vaulted file printed at a revision, whatever runs the git
     hit = next((a for a in rest if ":" in a and vaulted(a.partition(":")[2])), None) if sub in ("show", "cat-file") else None
     if hit:
         refuse_vault(words, f"prints the vaulted file `{hit.partition(':')[2]}` at a revision", raw)
