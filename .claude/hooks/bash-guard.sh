@@ -27,12 +27,11 @@
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. Its directory is the payload's `cwd` moved by
-# each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; one arriving through a variable, `cd -`
-# or `popd` is judged as nothing, and scope is not tracked, so a `cd` outlives its subshell. The main checkout is the
-# parent of the git common dir of the repository this file lives in: the payload's `cwd` can sit in any repository.
-# Outside it: `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory that is no repository of its own, where
-# git reaches the main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL
-# mutation) and every `gh` verb the family does not name.
+# each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; scope is not tracked, so a `cd` outlives
+# its subshell. The main checkout is the parent of the git common dir of the repository this file lives in: the
+# payload's `cwd` can sit in any repository. Outside it: `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory
+# that is no repository of its own, where git reaches the main checkout's; a `gh api` write through fields with no
+# `-X` (its implicit POST, a GraphQL mutation) and every `gh` verb the family does not name.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -528,9 +527,8 @@ def could_end(name, tail):
 
 
 def vaulted(word):
-    # A private key or a `.vault` file in a `files` directory, or named bare from inside one; any `vault.yml`; any
-    # `<name>.sops.<ext>`. A glob is judged only where it names a directory, and a `vault.yml` glob only under
-    # group_vars or host_vars: a bare `*` names whatever the working directory holds, which the hook cannot see.
+    # A glob is judged only where it names a directory -- a bare `*` names whatever the working directory holds, which
+    # the hook cannot see -- and a `vault.yml` glob only under group_vars or host_vars, since any `*.yml` could end in it.
     if not word:
         return False
     head, _, name = posixpath.normpath(word).rpartition("/")
