@@ -2914,10 +2914,8 @@ class ProbeExecutor:
             logger.exception("executor order-event handling raised -- continuing")
 
     def _resubmit_on_event(self, active: _ActiveIntent, resubmission) -> None:
-        """The order-event dispatch's resubmissions -- `_reprice`, and `_fallback` on the time-box
-        cancel's ack or an IOC's returned remainder -- take the quote handler's rule for a raise, the
-        intent refused with `filled` carried: `on_order_event`'s catch-all refuses nothing, and would
-        leave the intent on the order the venue has just ended."""
+        """The quote handler's rule for a raise inside a resubmission: `on_order_event`'s catch-all
+        refuses nothing, and would leave the intent on the order the venue has just ended."""
         try:
             resubmission(active)
         except Exception:
@@ -3161,15 +3159,16 @@ class ProbeExecutor:
         map (every OPEN one, PENDING_CANCEL among them, the status behind the `OrderPendingCancel`
         the adopt pass's and a trip's cancels put on this path), an order the Cache does not hold,
         and a Cache that cannot be read at all; a refused cancel writes nothing too, decided before
-        the read and logged CRITICAL, since the venue positively says the order rests where the
-        cancel is not re-sent and, where the pass cancelled it and its sweep ran, after the sweep has
-        written its intent. The read goes through the handle taken at construction and not through
-        the client: `OrderPendingCancel` is dispatched while the client's own `cancel_order` still
-        runs, and the client's `cache` getter raises `Already mutably borrowed` there -- the
-        strategy's PyO3 cell is what that command holds; the Cache itself is free, and the handle
-        reads PENDING_CANCEL. A read that raises all the same is caught rather than let escape,
-        which would abandon the whole handler and cost the row its event payload -- the forensic
-        record this path exists to keep -- to decide a state those events never carried anyway.
+        the read and logged CRITICAL, since the order may still rest where the cancel is not re-sent
+        and, where the pass cancelled it and its sweep ran, after the sweep has written its intent;
+        absent from Kraken's open orders, the venue had already ended it. The read goes through the
+        handle taken at construction and not through the client: `OrderPendingCancel` is dispatched
+        while the client's own `cancel_order` still runs, and the client's `cache` getter raises
+        `Already mutably borrowed` there -- the strategy's PyO3 cell is what that command holds; the
+        Cache itself is free, and the handle reads PENDING_CANCEL. A read that raises all the same
+        is caught rather than let escape, which would abandon the whole handler and cost the row its
+        event payload -- the forensic record this path exists to keep -- to decide a state those
+        events never carried anyway.
         """
         if type(event).__name__ in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
             logger.warning(
@@ -3181,9 +3180,9 @@ class ProbeExecutor:
             self._arm_reread_after_mint()
             return "ambiguous"
         if type(event).__name__ == "OrderCancelRejected":
-            # The venue positively says the cancel did not take, so the order rests where the cancel is not re-sent and,
-            # where the pass cancelled it and its sweep ran, after the sweep has written its intent: the hand cancel is
-            # the operator's, the own-order path's line.
+            # The venue positively says the cancel did not take, so the order may still rest where the cancel is not re-sent
+            # and, where the pass cancelled it and its sweep ran, after the sweep has written its intent; absent from Kraken's
+            # open orders, the venue had already ended it. The hand cancel is the operator's, the own-order path's line.
             logger.critical(
                 "cancel of adopted order %s was REJECTED by the venue -- the order may still rest, and the cancel is not "
                 "re-sent: cancel it by hand on Kraken's open-orders page",

@@ -1178,7 +1178,7 @@ def test_a_failed_reconciliation_withdraws_the_proposed_rate_from_the_payload(tm
     assert cost["proposed_fee_per_side"] is None
     assert cost["realized_fee_per_side"] is not None
     assert "1" in cost["basis"] and "no rate proposed" in cost["basis"]  # the unmatched count, named
-    assert "trade or margin row(s) matched no journaled fill" in cost["basis"]
+    assert "venue trade id(s) matched no journaled fill" in cost["basis"]
 
 
 def test_a_rollover_only_export_exits_zero_and_keeps_the_proposed_rate(tmp_path, mixed_schema_fixture):

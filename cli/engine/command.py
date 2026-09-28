@@ -1524,7 +1524,7 @@ def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
     return {
         **cost,
         "proposed_fee_per_side": None,
-        "basis": f"{len(reconciliation['unmatched'])} ledger trade or margin row(s) matched no journaled fill -- no rate "
+        "basis": f"{len(reconciliation['unmatched'])} venue trade id(s) matched no journaled fill -- no rate "
         "proposed over a book the ledger could not reconcile",
     }
 

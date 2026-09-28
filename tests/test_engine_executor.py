@@ -6700,6 +6700,27 @@ def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_positio
     assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
 
 
+def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book_and_the_settle_publishes_the_coins_spot_lot(
+    tmp_path, _loopback_credentials
+):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    reads = []
+    with kraken_loopback.serve() as venue:
+        venue.balances = {"XXBT": kraken_loopback.balance("0.0003000000"), "ZEUR": kraken_loopback.balance("100.0000")}
+
+        def _holdings():
+            reads.append(_read_venue_holdings(base_url=venue.base_url))
+            return reads[-1]
+
+        ex = _executor(tmp_path, venue_holdings=_holdings)
+        ex.on_timer(NOW)
+
+    assert reads == [pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0003})]
+    assert metrics.positions == sorted(reads[0].items())
+    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+
+
 def test_read_venue_holdings_refuses_without_credentials_before_building_a_client(monkeypatch):
     monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
