@@ -1,14 +1,8 @@
-"""The PreToolUse[Bash] guard's four arms -- the git hook bypasses, a stream a cap has already shortened being
-counted or compared, a vaulted file printed, and a dispatched agent's push, GitHub write or git that moves the main
-checkout -- driven with synthetic stdin JSON.
+"""The PreToolUse[Bash] guard's families, driven with synthetic stdin JSON.
 
 The hook is `.claude/hooks/bash-guard.sh`; its header carries only what this corpus and the code cannot say. Every
 family is driven in both directions: the spelling an arm refuses (exit 2, `BLOCKED` and the spelling on stderr) beside
-the ordinary shape nearest to it that it must admit (exit 0, silent) -- the flag as message text, in a heredoc body, in a
-comment, after `--`, or on a subcommand where it means something else; the `head` that opens a file rather than a
-pipe, the `tail -n +2` that caps nothing, the count before the cap, and the pipe into `head` that only looks; the
-count, the hash and the public half beside a vaulted file; the read, the worktree and the main loop beside a dispatched
-agent's write.
+the ordinary shape nearest to it that it must admit (exit 0, silent).
 """
 
 from __future__ import annotations
@@ -168,7 +162,6 @@ REFUSED = [
 
 # (command, the vaulted file or the decrypting program the message must name)
 VAULTED = [
-    # the 2026-09-24 shape, and every reader the family names, over each kind of vaulted file
     ("head -1 infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("tail -n 3 infra/ansible/host_vars/zcrypto-ops/vault.yml", "infra/ansible/host_vars/zcrypto-ops/vault.yml"),
@@ -183,7 +176,6 @@ VAULTED = [
     ("base64 infra/ansible/files/deploy_zcrypto-red_ed25519", "infra/ansible/files/deploy_zcrypto-red_ed25519"),
     ("tac infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("hexdump -C infra/ansible/files/deploy_zcrypto-valkey1_ed25519", "infra/ansible/files/deploy_zcrypto-valkey1_ed25519"),
-    # relative to another directory, bare, globbed, redirected, wrapped, substituted
     ("cd infra/ansible && cat files/deploy_zcrypto_ed25519", "files/deploy_zcrypto_ed25519"),
     ("cat deploy_zcrypto_ed25519", "deploy_zcrypto_ed25519"),
     ("cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
@@ -194,7 +186,6 @@ VAULTED = [
     ("sudo cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("timeout 5 head -1 infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("x=$(cat infra/ansible/files/deploy_zaccess_ed25519)", "infra/ansible/files/deploy_zaccess_ed25519"),
-    # python -c opening one, a copy of one elsewhere, a decrypt, a revision's copy
     (
         "python3 -c \"print(open('infra/ansible/files/deploy_zaccess_ed25519').read())\"",
         "infra/ansible/files/deploy_zaccess_ed25519",
@@ -320,7 +311,6 @@ ADMITTED = [
     'echo "git log | head -5 | wc -l"',
     "cat <<'EOF'\nls | head -2 | wc -l\nEOF",
     'uv run pytest tests/test_bash_guard.py -k "head or tail"',  # the ids are the commands, so this is the selector
-    # a vaulted file counted, hashed, listed or logged; its public half, its neighbours, its path as text
     "grep -c ANSIBLE_VAULT infra/ansible/files/deploy_zaccess_ed25519",
     "grep -c '^\\$ANSIBLE_VAULT' infra/ansible/group_vars/all/vault.yml",
     "sha256sum infra/ansible/files/deploy_zaccess_ed25519",
@@ -337,7 +327,6 @@ ADMITTED = [
     "echo infra/ansible/group_vars/all/vault.yml",
     "grep -rn 'cat infra/ansible/group_vars/all/vault.yml' docs/",
     "python3 -c \"print(open('README.md').read())\"",
-    # the vault's own consumers: its password script, the playbook, a value read into a variable, a write to one
     "cat infra/ansible/scripts/vault-pass.sh",
     "bash -n infra/ansible/scripts/vault-pass.sh",
     "cd infra/ansible && uv run ansible-playbook --vault-password-file scripts/vault-pass.sh site.yml --list-tags",
