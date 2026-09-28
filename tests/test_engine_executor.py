@@ -714,6 +714,7 @@ def _submitted_row(
     when: datetime = NOW,
     index: int = 0,
     venue_order_id: str | None = None,
+    qty: float | None = 0.001,
 ) -> dict:
     """A write-ahead row a previous process left behind, through the real `append_submitted_row` --
     `state` is one of `_OPEN_ORDER_STATES`, so the row is in the re-attach set. With `venue_order_id`
@@ -727,7 +728,7 @@ def _submitted_row(
         "order": {
             "symbol": "BTC/EUR",
             "side": "sell",
-            "qty": 0.001,
+            "qty": qty,
             "price": 30000.0,
             "notional": 30.0,
             "time_in_force": "GTC",
@@ -3212,6 +3213,7 @@ def _time_boxed_cancel_answered_by(tmp_path, event) -> dict:
         "row_state": _record(tmp_path)["submitted"][0]["state"],
         "intent": _intent_outcome(tmp_path),
         "next_intent": _intent_outcome(tmp_path, 1),
+        "flagged": _record(tmp_path)["submitted"][0]["events"][-1].get("reconciliation"),
     }
 
 
@@ -3230,10 +3232,10 @@ def test_a_cancel_ack_the_engine_minted_halts_where_the_venues_own_ack_falls_bac
         lambda coid: _event(OrderCanceled, client_order_id=coid, reconciliation=True),
     )
 
-    assert venue == {"submissions": 2, "row_state": "canceled", "intent": "pending", "next_intent": "pending"}
+    assert venue == {"submissions": 2, "row_state": "canceled", "intent": "pending", "next_intent": "pending", "flagged": None}
     # No IOC, the row stays OPEN for re-attach because the order may still rest, and the ETH intent
-    # never runs: the venue state that authorized it is no longer known.
-    assert minted == {"submissions": 1, "row_state": "ambiguous", "intent": "ambiguous", "next_intent": "refused"}
+    # never runs: the venue state that authorized it is no longer known. The row's event carries the flag.
+    assert minted == {"submissions": 1, "row_state": "ambiguous", "intent": "ambiguous", "next_intent": "refused", "flagged": True}
 
 
 def test_a_kraken_coded_rejection_the_engine_minted_is_ambiguous_rather_than_terminal(tmp_path):
@@ -3252,8 +3254,8 @@ def test_a_kraken_coded_rejection_the_engine_minted_is_ambiguous_rather_than_ter
     # The venue's coded rejection is a positive verdict: the intent ends `rejected` and the ETH
     # intent stays runnable -- it is `pending` rather than submitted only because starting it is the
     # next tick's business. The minted one halts the plan instead, and ETH never runs at all.
-    assert venue == {"submissions": 1, "row_state": "rejected", "intent": "rejected", "next_intent": "pending"}
-    assert minted == {"submissions": 1, "row_state": "ambiguous", "intent": "ambiguous", "next_intent": "refused"}
+    assert venue == {"submissions": 1, "row_state": "rejected", "intent": "rejected", "next_intent": "pending", "flagged": None}
+    assert minted == {"submissions": 1, "row_state": "ambiguous", "intent": "ambiguous", "next_intent": "refused", "flagged": True}
 
 
 def test_a_fill_the_engine_reconciled_still_gets_its_row_its_credit_and_its_counter(tmp_path):
@@ -4092,8 +4094,9 @@ def test_a_stale_terminal_ack_never_overwrites_the_state_the_venues_order_actual
 def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_row(tmp_path):
     """The venue positively says the cancel did NOT take, so the order may still rest: the event is
     evidence, the row keeps its open state, and the entry stays attached for the fill that can still
-    arrive. Nothing special-cases it -- the venue's order is still ACCEPTED after a refused cancel
-    and no OPEN status is in the terminal map."""
+    arrive. The row is not special-cased -- the venue's order is still ACCEPTED after a refused
+    cancel and no OPEN status is in the terminal map -- and the CRITICAL the refusal logs here too,
+    unasserted, is pinned by the cancelled opener's case below."""
     ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
@@ -4114,23 +4117,27 @@ def test_an_external_cancel_rejection_is_recorded_without_closing_the_adopted_ro
         # the same row, driving the same order to the same CANCELED status -- and the two arms end on
         # DIFFERENT states, one of them terminal and one of them re-attachable.
         (False, "canceled", []),
-        (True, "accepted", ["O-opener"]),
+        (True, "ambiguous", ["O-opener"]),
     ],
 )
-def test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venues_ack_closes_it(
+def test_a_terminal_the_engine_minted_marks_the_adopted_row_ambiguous_where_the_venues_ack_closes_it(
     tmp_path, reconciled, expected_state, expected_open
 ):
-    """A terminal the execution engine minted for itself is not a venue outcome, so it writes no venue
-    outcome down -- the adopted surface's half of the property the own-order surface holds.
+    """A terminal the execution engine minted for itself is not a venue outcome, so the row takes the
+    active path's word for an outcome the venue never established, `ambiguous`, and no venue claim.
 
-    The construction is the production one: the startup pass cancels an adopted non-reducer, the
-    venue never answers, and past the in-flight retry budget the engine publishes the `OrderCanceled`
-    itself. It is applied to the order before dispatch, so the Cache says CANCELED either way and
-    only the flag can tell the two apart. Closing the row on it would put a venue claim in the ledger
-    nobody made, and `_OPEN_ORDER_STATES` holds no terminal state, so the row would never re-attach.
+    The construction is the production one: the startup pass cancels an adopted opener, the venue
+    never answers on the stream, and past the in-flight retry budget the
+    engine publishes the `OrderCanceled` itself. It is applied to the order before dispatch, so the
+    Cache says CANCELED either way and only the flag can tell the two apart. `canceled` on it would
+    put a venue claim in the ledger nobody made; `accepted` would claim the order still rests where
+    the venue may have cancelled it. `ambiguous` keeps the row open, so a startup inside the
+    re-attach window re-attaches and settles it. The line is a WARNING, the mint being the expected
+    end of an adopt-pass cancel on this wheel, and the row's event records the flag so the ledger
+    can tell the mint once the row is settled.
 
     Read as a pair: the false arm is the true positive, and the `open_submitted_rows` reading IS what
-    the next startup re-attaches from."""
+    a startup inside the re-attach window re-attaches from."""
     ex, client, earlier = _adopted_executor(tmp_path, client_order_id="O-opener", reduce_only=False)
     assert [str(cid) for cid in client.canceled] == ["O-opener"]  # this process asked; the venue is what did not answer
     metrics = RecordingMetrics()
@@ -4142,16 +4149,409 @@ def test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venu
     assert client.cache.order(ClientOrderId("O-opener")).status == OrderStatus.CANCELED  # both arms, so the status cannot decide
     row = _record(tmp_path, earlier)["submitted"][0]
     assert row["state"] == expected_state
-    assert row["events"] == [{"type": "OrderCanceled", "at": NOW.isoformat()}]  # evidence, either way
+    assert row["events"] == [  # evidence either way, the flag recorded where the engine minted it
+        {"type": "OrderCanceled", "at": NOW.isoformat(), **({"reconciliation": True} if reconciled else {})}
+    ]
     assert ex._attached["O-opener"][1]["state"] == expected_state  # the mirror stays with the row
     assert [r["client_order_id"] for _, r in open_submitted_rows(tmp_path / "journal", NOW)] == expected_open
-    assert [r.getMessage() for r in records] == (
-        ["OrderCanceled for O-opener was reconciled, not received -- the venue never answered, so its row keeps the state it has"]
+    assert [(r.levelno, r.getMessage()) for r in records] == (
+        [
+            (
+                logging.WARNING,
+                "OrderCanceled for O-opener was reconciled, not received -- no venue answer reached this engine; its row "
+                "reads ambiguous until the venue's own report settles it",
+            )
+        ]
         if reconciled
         else []
     )
     assert metrics.external == ["matched"]
     assert not _kill_file(tmp_path).exists()
+
+
+def _pending_plan_entry(tmp_path, when, *, plan_id="p-before-the-restart", n_intents=2, settled=None):
+    """The plan entry a previous process journaled at pickup and never finished: every intent still
+    `pending`, under the same boundary `_submitted_row` files that plan's rows; `settled` is one
+    more intent, already terminal, that the sweep must leave as it is."""
+    intents = [{"index": i, "intent": {}, "outcome": "pending", "reasons": [], "filled_qty": 0.0} for i in range(n_intents)]
+    append_plan_entry(
+        tmp_path / "journal",
+        _boundary(when),
+        {
+            "plan_id": plan_id,
+            "received_at": when.isoformat(),
+            "disposition": "accepted",
+            "reasons": [],
+            "plan": {},
+            "intents": intents + ([settled] if settled is not None else []),
+        },
+        verdict=GateVerdict(level=GateLevel.FULL, reasons=(), inputs={}),
+        evaluated_at=when,
+    )
+
+
+def test_the_startup_pass_settles_the_intent_of_the_opener_it_cancels_and_the_ones_that_never_ran(tmp_path):
+    """A rest-hold opener cancelled by the pass leaves its intent `pending` for good: the hold's timer
+    died with the old process and nothing else writes an intent after a restart. The pass writes it
+    `revoked` at its own boundary, and the plan's later intent, which no process will ever start,
+    `refused` as not run."""
+    earlier = NOW - timedelta(hours=4)
+    done = {"index": 2, "intent": {}, "outcome": "filled", "reasons": [], "filled_qty": 0.001}
+    _pending_plan_entry(tmp_path, earlier, settled=done)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID]
+    assert _intent_entry(tmp_path, 2, earlier) == done  # an intent already terminal is not the sweep's to rewrite
+    first = _intent_entry(tmp_path, 0, earlier)
+    assert (first["outcome"], first["reasons"], first["filled_qty"]) == (
+        "revoked",
+        ["the engine restarted while the intent was in flight"],
+        0.0,
+    )
+    second = _intent_entry(tmp_path, 1, earlier)
+    assert (second["outcome"], second["reasons"]) == ("refused", ["not run -- the engine restarted before it ran"])
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "accepted"  # the row still waits on the venue's answer
+
+
+def test_the_startup_pass_leaves_the_intent_of_a_reducer_it_keeps_pending(tmp_path):
+    """A kept reducer's order is live and its row is the record of it; the intent stays `pending`
+    beside that open row, while the plan's later intent is still refused as never run."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert client.canceled == []
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+    assert _intent_outcome(tmp_path, 1, earlier) == "refused"
+
+
+def test_a_restart_with_nothing_resting_still_settles_the_windows_pending_intents(tmp_path):
+    """The intent that was awaiting its first quote when the process stopped has no row at all, so no
+    order-side event will ever reach it; the pass's early return on an empty Cache must not skip it."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["reasons"]) == ("refused", ["not run -- the engine restarted before it ran"])
+
+
+@pytest.mark.parametrize(
+    "status, venue_filled, outcome, filled_qty",
+    [
+        (OrderStatus.CANCELED, "0", "revoked", 0.0),
+        (OrderStatus.CANCELED, "0.0004", "revoked", 0.0004),
+        (OrderStatus.FILLED, "0.001", "filled", 0.001),
+    ],
+)
+def test_an_intent_whose_order_closed_while_down_is_settled_from_its_rows(tmp_path, status, venue_filled, outcome, filled_qty):
+    """The row sweep reads the venue's own figure into the row first; the intent is then written
+    from the rows -- `filled` once they carry the first order's quantity, `revoked` otherwise, a
+    partial's fills carried either way."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    venue = _VenueOrders(_report(_TXID, status, filled_qty=venue_filled))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"]) == (outcome, filled_qty)
+
+
+def test_a_failed_venue_read_leaves_the_pending_intents_as_they_are(tmp_path):
+    """With the venue unread the rows' fills were never compared -- a finished row's for a withdrawal,
+    an open row's against its venue figure -- so an intent written from them would carry a figure
+    nobody checked; the pending intents wait for the restart that reads again. The row here is
+    already closed on its fill, the one shape the open-row rule alone would settle."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-opener", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(raises=RuntimeError("the venue read failed"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_failed_ledger_read_leaves_the_pending_intents_as_they_are(tmp_path, monkeypatch):
+    """The pass's row read raised, so it holds no rows at all; run over none, the sweep would write
+    every intent `refused` as never run, an intent that filled included. The rows were never read,
+    the venue-read skip's own reason, and the pending intents wait for the restart that reads again."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+
+    def _unreadable(journal_dir, now):
+        raise OSError("the exec ledger could not be read")
+
+    monkeypatch.setattr(executor_module, "open_submitted_rows", _unreadable)
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_an_intents_two_orders_closed_while_down_are_summed_against_the_first_orders_quantity(tmp_path):
+    """A first order of 0.001 filled 0.0004 and was cancelled as crossing; its reprice, a remainder of
+    0.0006, filled 0.0003 and closed while the engine was down. The target is the first order's
+    quantity, the largest among the intent's rows, and 0.0007 against it is `revoked` with the sum
+    carried -- read off the remainder row it would be `filled`."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-first", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-remainder", reduce_only=False, when=earlier, venue_order_id="OREMDR-AAAAA-BBBBBB", qty=0.0006)
+    venue = _VenueOrders(
+        _report(_TXID, OrderStatus.CANCELED, filled_qty="0.0004"),
+        _report("OREMDR-AAAAA-BBBBBB", OrderStatus.CANCELED, filled_qty="0.0003", quantity="0.0006"),
+    )
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"]) == ("revoked", pytest.approx(0.0007))
+
+
+def test_a_row_with_no_readable_quantity_settles_its_intent_revoked_never_filled(tmp_path):
+    """A row whose `order.qty` is unreadable reads 0.0, and nothing filled against 0.0 must not read
+    as complete: `revoked`, since such a row is not one to reason from."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID, qty=None)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+
+def test_an_order_resting_at_kraken_outside_the_cache_leaves_its_intent_pending(tmp_path):
+    """The venue read returns the order still open and the Cache does not hold it: the pass can send
+    it no cancel, so the order is live and its intent is not the sweep's to end."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "accepted"
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_cancelled_row_beside_an_order_resting_outside_the_cache_leaves_its_intent_pending(tmp_path):
+    """The rule is per row: the pass's cancel of one of an intent's orders does not end the intent
+    while another of its rows rests where no cancel of this pass reached."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-outside", reduce_only=False, when=earlier, venue_order_id="OOUTSD-AAAAA-BBBBBB")
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(_report("OOUTSD-AAAAA-BBBBBB", OrderStatus.ACCEPTED))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID] and venue.calls != []
+    assert [row["state"] for row in _record(tmp_path, earlier)["submitted"]] == ["accepted", "accepted"]
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_row_the_venue_read_does_not_return_leaves_its_intent_pending(tmp_path):
+    """The row's txid is in neither the Cache nor the venue's read, so the order may rest where no
+    cancel of this process reaches it; the row reads `ambiguous` and the intent waits with it."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    ex = _executor(
+        tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=_VenueOrders()
+    )
+
+    ex.on_timer(NOW)
+
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "ambiguous"
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_cancel_that_raised_leaves_its_intent_pending(tmp_path):
+    """The pass's own cancel raised, so the opener may still rest: an intent is settled once a cancel
+    went out, never on the attempt."""
+
+    class _CancelRaises(StubClient):
+        def cancel_order(self, client_order_id):
+            raise RuntimeError("the cancel could not be sent")
+
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = _CancelRaises(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_reducer_cancelled_on_a_latched_kill_has_its_intent_revoked(tmp_path):
+    """At level NONE the pass cancels ledgered reducers too, and a cancelled reducer's intent is
+    settled like an opener's: keeping is what leaves an intent `pending`, not the row's flag."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.NONE))
+
+    ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID]
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+
+def test_a_flagged_non_terminal_on_an_adopted_row_leaves_its_state_as_it_is(tmp_path):
+    """The `reconciliation` flag rides on the library's non-terminals too, `OrderAccepted` among
+    them, and only a minted TERMINAL says the venue never answered: a flagged acceptance on a kept
+    reducer's row appends as evidence and moves nothing."""
+    ex, client, earlier = _adopted_executor(tmp_path)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _deliver_external_event(ex, client, _event(OrderAccepted, client_order_id="O-attached", reconciliation=True))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == "accepted" and [e["type"] for e in row["events"]] == ["OrderAccepted"]
+    assert records == [] and metrics.external == ["matched"]
+
+
+def test_a_failed_ledger_read_with_an_opener_resting_cancels_it_and_leaves_the_pending_intents_as_they_are(tmp_path, monkeypatch):
+    """The restart every drill takes: an opener rests, and the row read raises. The pass cancels the
+    opener as unmatched, and the sweep, run over no rows, would write its intent `refused` as never
+    run -- it is skipped, and the intent stays `pending`."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+
+    def _unreadable(journal_dir, now):
+        raise OSError("the exec ledger could not be read")
+
+    monkeypatch.setattr(executor_module, "open_submitted_rows", _unreadable)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+
+    ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID]
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_failed_venue_read_with_an_opener_resting_cancels_it_and_leaves_the_pending_intents_as_they_are(tmp_path):
+    """The same restart with a second row whose txid the Cache lacks, so the pass reaches the venue,
+    and the read raises: the opener is cancelled, and both intents stay `pending` -- the sweep run
+    over the rows would write the cancelled opener's `revoked` from fills the venue never vouched
+    for."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    _submitted_row(tmp_path, "O-gone", reduce_only=False, when=earlier, index=1, venue_order_id="OGONE0-AAAAA-BBBBBB")
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    venue = _VenueOrders(raises=RuntimeError("the venue read failed"))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID] and venue.calls != []
+    assert (_intent_outcome(tmp_path, 0, earlier), _intent_outcome(tmp_path, 1, earlier)) == ("pending", "pending")
+
+
+def test_a_withdrawal_the_pass_latched_the_kill_switch_on_leaves_the_pending_intents_as_they_are(tmp_path, kill_trip_expected):
+    """The venue reports less filled than the finished row carries, so the pass latches the kill
+    switch and repairs nothing; the rows' figures are the ones the venue just refuted, and an intent
+    written from them would read `filled` for a leg the venue says never filled."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-opener", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert _kill_file(tmp_path).exists()  # the withdrawal tripped
+    assert _intent_outcome(tmp_path, 0, earlier) == "pending"
+
+
+def test_a_cancel_the_venue_refused_on_an_adopted_order_logs_the_hand_cancel_and_leaves_the_row_accepted(tmp_path):
+    """The pass cancelled the opener and wrote its intent `revoked` before the venue answered; the
+    venue then refuses the cancel, so the order rests beside a terminal-looking intent and no cancel
+    is re-sent. The own-order path's CRITICAL is the precedent: the line names the hand cancel, the
+    row keeps its open state, and the intent stands as the pass wrote it."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == [_TXID] and _intent_outcome(tmp_path, 0, earlier) == "revoked"
+
+    with _executor_errors(level=logging.WARNING) as records:
+        _deliver_external_event(ex, client, _event(OrderCancelRejected, client_order_id=_TXID, reason="EService:Busy"))
+
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (
+            logging.CRITICAL,
+            f"cancel of adopted order {_TXID} was REJECTED by the venue -- the order may still rest, and the cancel is "
+            "not re-sent: cancel it by hand on Kraken's open-orders page",
+        )
+    ]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], [e["type"] for e in row["events"]]) == ("accepted", ["OrderAccepted", "OrderCancelRejected"])
+    assert client.cache.order(ClientOrderId(_TXID)).status == OrderStatus.ACCEPTED
+    assert _intent_outcome(tmp_path, 0, earlier) == "revoked"  # the pass's write stands; the line sends the operator to the page
+
+
+def test_a_mint_landing_detached_after_the_ack_deadline_stranded_the_intent_records_the_flag_on_its_row(tmp_path):
+    """The third mint site. The ack deadline fires on the first tick after 30 s, and the library's
+    mint, past its own in-flight budget, can land later, so a tick between the two strands the intent
+    first and the minted terminal then lands detached, for an order no intent holds: the row keeps
+    its state, no state claim being the detached path's rule, and the event carries the flag as at
+    the other two sites, so the ledger tells the mint from the venue's own ack once the row is
+    settled."""
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    client.cache._open_orders.append(order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    clock.now = NOW + timedelta(seconds=31)
+    ex.on_timer(clock.now)  # quote silence: the cancel goes out
+    assert [str(cid) for cid in client.canceled] == ["O-1"]
+    for _ in range(7):  # 35 s on, past `_ACK_WAIT`: the deadline strands the intent first
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)
+    assert (_intent_outcome(tmp_path), ex._active) == ("ambiguous", None)
+
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    ex.on_order_event(minted)
+
+    row = _record(tmp_path)["submitted"][0]
+    assert row["state"] == "accepted"
+    assert row["events"][-1] == {"type": "OrderCanceled", "at": clock.now.isoformat(), "reconciliation": True}
 
 
 def test_the_adopt_pass_cancel_of_a_matched_opener_reads_its_pending_cancel_through_the_handle_and_logs_no_traceback(

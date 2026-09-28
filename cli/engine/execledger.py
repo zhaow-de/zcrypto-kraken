@@ -268,6 +268,16 @@ def ledgered_intent_keys(journal_dir: Path, now: datetime) -> frozenset[tuple[st
     return frozenset(keys)
 
 
+def pending_plan_intents(journal_dir: Path, now: datetime) -> list[tuple[datetime, str, int]]:
+    """Every (boundary, plan_id, index) whose intent still reads `pending`, over the same window as `open_submitted_rows`."""
+    out: list[tuple[datetime, str, int]] = []
+    for doc in _exec_records_in_window(journal_dir, now):
+        boundary = datetime.fromisoformat(doc["cycle_ts"])
+        for entry in doc.get("plans", []):
+            out.extend((boundary, entry["plan_id"], i["index"]) for i in entry["intents"] if i["outcome"] == "pending")
+    return out
+
+
 def open_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime, dict]]:
     out: list[tuple[datetime, dict]] = []
     for doc in _exec_records_in_window(journal_dir, now):

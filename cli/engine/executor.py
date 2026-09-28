@@ -36,6 +36,7 @@ from cli.config import EngineConfig
 from cli.engine.errors import EngineError
 from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
+    _OPEN_ORDER_STATES,
     append_plan_entry,
     append_submitted_row,
     closed_submitted_rows,
@@ -43,6 +44,7 @@ from cli.engine.execledger import (
     ledgered_intent_keys,
     ledgered_plan_ids,
     open_submitted_rows,
+    pending_plan_intents,
     update_plan_intent,
     update_submitted_row,
 )
@@ -926,6 +928,11 @@ class ProbeExecutor:
         filled, was canceled or expired while this process was down is not in the Cache at all -- the
         startup reconciliation reads open orders only -- so the pass cannot return early when nothing
         is resting: an idle startup can still owe row repairs.
+
+        LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
+        their plans, so each is written terminal from what its rows show, except one with an open row
+        this pass sent no cancel for -- kept, or beyond its reach -- and none when either read above
+        failed or a sweep above latched the kill switch.
         """
         try:
             resting = list(self._cache.orders_open(venue=_VENUE))
@@ -938,6 +945,7 @@ class ProbeExecutor:
             return
         self._adopted = True  # the read succeeded: this pass classified what there was to classify
 
+        ledger_read = True
         try:
             rows = {row["client_order_id"]: (boundary, row) for boundary, row in open_submitted_rows(self._journal_dir, now)}
             # The two reads partition the same window's rows and come from the same records, so one
@@ -954,11 +962,12 @@ class ProbeExecutor:
                 " and every resting order the Cache holds will be canceled" if resting else "",
                 exc_info=True,
             )
-            rows, finished = {}, {}
+            rows, finished, ledger_read = {}, {}, False
         venue_orders = self._read_venue_orders(rows, finished)
         self._reconcile_adopted_rows(rows, venue_orders)
         self._reconcile_finished_rows(finished, venue_orders)
         if not resting:
+            self._settle_pending_intents(now, rows, finished, set(), venue_orders, ledger_read=ledger_read)
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
         # Read AFTER both sweeps: a repair or a withdrawal that latched the kill switch above makes
@@ -975,6 +984,7 @@ class ProbeExecutor:
             venue_order_id = _row_venue_order_id(entry[1])
             if venue_order_id is not None:
                 rows_by_venue[venue_order_id] = entry
+        cancelled: set[str] = set()
         for order in resting:
             client_order_id = str(getattr(order, "client_order_id", ""))
             venue_order_id = _venue_order_id_of(order)
@@ -999,6 +1009,68 @@ class ProbeExecutor:
             except Exception:
                 logger.critical(
                     "cancel of adopted order %s raised -- it may still rest at the venue", client_order_id, exc_info=True
+                )
+                continue
+            if attached is not None:
+                # The cancel went out, so this row holds its intent `pending` no longer; a fill racing the ack lands on the row.
+                cancelled.add(attached[1]["client_order_id"])
+        self._settle_pending_intents(now, rows, finished, cancelled, venue_orders, ledger_read=ledger_read)
+
+    def _settle_pending_intents(
+        self,
+        now: datetime,
+        rows: dict,
+        finished: dict,
+        cancelled: set,
+        venue_orders: dict | None,
+        *,
+        ledger_read: bool,
+    ) -> None:
+        """A `pending` intent in the window belongs to a plan no process runs, so nothing else would
+        ever end it. Each is written from what its rows show -- `filled` when they carry the first
+        order's quantity, `revoked` when it ran and its order did not survive the restart, `refused`
+        when it never ran -- except one with an open row this pass sent no cancel for: an order left
+        resting, kept as a reducer or beyond the pass's reach, is still live and its row the live
+        record. Skipped whole when either read failed or this pass latched the kill switch, since
+        the rows' fills were then never compared, never read, or refuted by the venue, and are no
+        figure to journal."""
+        if venue_orders is None or not ledger_read or self._kill_tripped:
+            return
+        try:
+            pending = pending_plan_intents(self._journal_dir, now)
+        except Exception:
+            logger.critical(
+                "the plan entries could not be read at startup -- pending intents keep the state they have", exc_info=True
+            )
+            return
+        filled: dict[tuple[str, int], float] = {}
+        ordered: dict[tuple[str, int], float] = {}
+        left: set[tuple[str, int]] = set()
+        for _, row in [*rows.values(), *finished.values()]:
+            key = (row["plan_id"], row["intent_index"])
+            filled[key] = filled.get(key, 0.0) + float(row["filled_qty"])
+            # The first order carries the intent's whole quantity and every later one a remainder, so
+            # the largest of them is the target.
+            ordered[key] = max(ordered.get(key, 0.0), _ordered_qty(row))
+            if row.get("state") in _OPEN_ORDER_STATES and row["client_order_id"] not in cancelled:
+                left.add(key)
+        for boundary, plan_id, index in pending:
+            key = (plan_id, index)
+            if key in left:
+                continue
+            if key not in filled:
+                outcome, reasons = "refused", ("not run -- the engine restarted before it ran",)
+            elif ordered[key] > 0.0 and filled[key] >= ordered[key] - _OVERFILL_TOLERANCE:
+                outcome, reasons = "filled", ()
+            else:
+                outcome, reasons = "revoked", ("the engine restarted while the intent was in flight",)
+            try:
+                update_plan_intent(
+                    self._journal_dir, boundary, plan_id, index, outcome=outcome, reasons=reasons, filled_qty=filled.get(key, 0.0)
+                )
+            except Exception:
+                logger.critical(
+                    "intent %d of plan %s could not be journaled as %s at startup", index, plan_id, outcome, exc_info=True
                 )
 
     def _reconcile_adopted_rows(self, rows: dict, venue_orders: dict | None) -> None:
@@ -2486,6 +2558,7 @@ class ProbeExecutor:
             # that comparison holds it against by the same amount, and the check passes. A phantom
             # INSIDE the remaining quantity, born of a venue misreport, is past every guard this
             # process has.
+            payload["reconciliation"] = True  # the ledger's own evidence of the mint, once the venue's report settles the row
             self._update_row(active, state="ambiguous", event=payload)
             self._strand_ambiguous(active, f"{name} was reconciled, not received -- the venue never answered")
             return
@@ -2626,23 +2699,35 @@ class ProbeExecutor:
             logger.exception("executor external-order-event handling raised -- continuing")
 
     def _venue_terminal_state(self, event) -> str | None:
-        """The row state a non-fill event writes, read off the VENUE's own order.
+        """The row state a non-fill event writes: `ambiguous` for a terminal the engine minted, else
+        read off the VENUE's own order, and none for a refused cancel, which logs CRITICAL.
 
-        An event the execution engine MINTED for itself writes none, and that is decided first,
-        before the order is even read. Past its in-flight retry budget the engine stops waiting on an
-        unanswered order and publishes that order's terminal itself, flagged `reconciliation`; the
-        Cache's order has already taken it, so its status reads CANCELED or EXPIRED or REJECTED
-        exactly as a venue answer would. It is not one. Nobody at the venue confirmed anything and
-        the adopted order may still be resting, so a terminal state here would put a venue claim in
-        the ledger on this engine's own authority -- and close a row that `_OPEN_ORDER_STATES` then
-        never re-attaches, leaving a live order untracked for the life of the process. Left open, the
-        event still appends as evidence, the entry stays in `_attached` for a fill that can still
-        arrive, and the next startup's sweep settles the row against the order's own status. Keyed on
-        the FLAG and never on the mechanism that set it, so a synthesis route nothing here enumerates
-        is covered by construction; the cost when the flag sits on a venue-derived terminal is one
-        row settled a restart later, which is the direction to be wrong in. `OrderFilled` never
-        reaches this method -- the caller's fill branch returns above it -- so a reconciled fill
-        keeps its row, its credit and its counter without anything here having to exempt it.
+        An event the execution engine MINTED for itself writes `ambiguous`, and that is decided
+        first, before the order is even read. Past its in-flight retry budget the engine stops
+        waiting on an unanswered order and publishes that order's terminal itself, flagged
+        `reconciliation`; the Cache's order has already taken it, so its status reads CANCELED or
+        EXPIRED or REJECTED exactly as a venue answer would. It is not one. Nobody at the venue
+        confirmed anything and the adopted order may still be resting, so a terminal state here
+        would put a venue claim in the ledger on this engine's own authority -- and close a row that
+        `_OPEN_ORDER_STATES` then never re-attaches, leaving a live order untracked for the life of
+        the process. `ambiguous` claims nothing about the venue, is the active path's word for the
+        same event, and keeps the row in the re-attach set: the event appends as evidence, with the
+        flag recorded so the ledger can tell the mint from the venue's own ack once the row is
+        settled, the entry stays in `_attached` for a fill that can still arrive, and the venue's own
+        report settles the row -- a startup inside the re-attach window reads it against the order's
+        own status; until then the pages have the operator read Kraken's open orders, which tell a
+        cancel the venue executed unacknowledged from one that did not reach it, and cancel by hand
+        there an order still resting, since no cancel of this process reaches it. The line is a
+        WARNING and pages nothing: on the pinned wheel the venue's answer to a cancel of an order
+        reconciled as external is not one this engine applies, so the mint is the expected end of an
+        adopt-pass cancel and not a fault. Keyed on the flag and the terminal's name, as the
+        own-order path is, and never on the mechanism that set the flag: a synthesis route nothing
+        here enumerates is covered by construction, while the library's non-terminals carry the flag
+        too and a flagged acceptance or cancel-side event writes nothing; the cost when the flag
+        sits on a venue-derived terminal is one row settled a restart later, which is the direction
+        to be wrong in. `OrderFilled` never reaches this method -- the caller's fill branch returns
+        above it -- so a reconciled fill keeps its row, its credit and its counter without anything
+        here having to exempt it.
 
         The order already carries the event by the time this runs -- an order event is applied to the
         order and to the Cache before it is dispatched, which tests/test_engine_executor.py measures
@@ -2656,23 +2741,35 @@ class ProbeExecutor:
         and got: the name claims the venue ended the order, the order says CANCELED, and the order
         is right.
 
-        Three further things mean the same thing here -- no terminal state, row untouched: a status
-        outside the map (every OPEN one, PENDING_CANCEL among them, the status behind the
-        `OrderPendingCancel` the adopt pass's and a trip's cancels put on this path, so a refused
-        cancel leaves the row pointing at a live order), an order the Cache does not hold, and a
-        Cache that cannot be read at all. The read goes through the handle taken at construction and
-        not through the client: `OrderPendingCancel` is dispatched while the client's own
-        `cancel_order` still runs, and the client's `cache` getter raises `Already mutably borrowed`
-        there -- the strategy's PyO3 cell is what that command holds; the Cache itself is free, and
-        the handle reads PENDING_CANCEL. A read that raises all the same is caught rather than let
-        escape, which would abandon the whole handler and cost the row its event payload -- the
-        forensic record this path exists to keep -- to decide a state those events never carried
-        anyway.
+        Three things write nothing here -- no terminal state, row untouched: a status outside the
+        map (every OPEN one, PENDING_CANCEL among them, the status behind the `OrderPendingCancel`
+        the adopt pass's and a trip's cancels put on this path), an order the Cache does not hold,
+        and a Cache that cannot be read at all; a refused cancel writes nothing too, decided before
+        the read and logged CRITICAL, since the venue positively says the order rests where the
+        cancel is not re-sent and, where the pass cancelled it and its sweep ran, after the sweep has
+        written its intent. The read goes through the handle taken at construction and not through
+        the client: `OrderPendingCancel` is dispatched while the client's own `cancel_order` still
+        runs, and the client's `cache` getter raises `Already mutably borrowed` there -- the
+        strategy's PyO3 cell is what that command holds; the Cache itself is free, and the handle
+        reads PENDING_CANCEL. A read that raises all the same is caught rather than let escape,
+        which would abandon the whole handler and cost the row its event payload -- the forensic
+        record this path exists to keep -- to decide a state those events never carried anyway.
         """
-        if getattr(event, "reconciliation", False):
+        if type(event).__name__ in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
             logger.warning(
-                "%s for %s was reconciled, not received -- the venue never answered, so its row keeps the state it has",
+                "%s for %s was reconciled, not received -- no venue answer reached this engine; its row reads ambiguous "
+                "until the venue's own report settles it",
                 type(event).__name__,
+                getattr(event, "client_order_id", "?"),
+            )
+            return "ambiguous"
+        if type(event).__name__ == "OrderCancelRejected":
+            # The venue positively says the cancel did not take, so the order rests where the cancel is not re-sent and,
+            # where the pass cancelled it and its sweep ran, after the sweep has written its intent: the hand cancel is
+            # the operator's, the own-order path's line.
+            logger.critical(
+                "cancel of adopted order %s was REJECTED by the venue -- the order may still rest, and the cancel is not "
+                "re-sent: cancel it by hand on Kraken's open-orders page",
                 getattr(event, "client_order_id", "?"),
             )
             return None
@@ -2755,6 +2852,8 @@ class ProbeExecutor:
         reason = getattr(event, "reason", None)
         if reason is not None:
             payload["reason"] = str(reason)
+        if name in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
+            payload["reconciliation"] = True  # the flag a minted terminal carries: the ledger's own evidence of the mint
         boundary, row = attached
         terminal_state = self._venue_terminal_state(event)
         if row.get("state") == "filled":
@@ -2895,6 +2994,10 @@ class ProbeExecutor:
         boundary, row = attached
         is_fill = type(event).__name__ == "OrderFilled"
         payload = self._fill_payload(event) if is_fill else {"type": type(event).__name__, "at": self._now().isoformat()}
+        if not is_fill and type(event).__name__ in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
+            # The third mint site: the engine minted a terminal for an order no intent holds -- the ack
+            # deadline stranded the intent first, or a reprice superseded the order -- and it lands here.
+            payload["reconciliation"] = True  # the mint's own evidence on the detached path
         if type(event).__name__ == "OrderAccepted":
             # A superseded order's acceptance can land after the order it was replaced by: the same
             # record `_on_order_event` writes for the one in flight.
