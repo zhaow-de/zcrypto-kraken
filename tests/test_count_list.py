@@ -753,10 +753,11 @@ WINDOWED = {
     "engine-rows-outside-the-gap": [
         {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}} for ts in (BEFORE, AT)
     ],
-    "capture-hosts-converged-within-an-hour": [
+    "capture-hosts-converged-within-an-hour": [  # a pair wholly before the close, and a pair whose later row is at it
+        {"ts": "2026-09-24T14:00:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0},
+        {"ts": "2026-09-24T14:30:00Z", "limit": "zcrypto-red", "tags": "capture", "rc": 0},
         {"ts": BEFORE, "limit": "zcrypto", "tags": "capture", "rc": 0},
         {"ts": AT, "limit": "zcrypto-red", "tags": "capture", "rc": 0},
-        {"ts": "2026-09-24T16:30:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0},
     ],
 }
 
@@ -775,9 +776,11 @@ def _history(tmp_path: pathlib.Path, closes_a_round: bool) -> pathlib.Path:
     return git_dir / ".git"
 
 
-def _windowed(tmp_path: pathlib.Path, entry: str, git_dir: pathlib.Path, **env: str) -> subprocess.CompletedProcess:
+def _windowed(
+    tmp_path: pathlib.Path, entry: str, git_dir: pathlib.Path, rows: list[dict] | None = None, **env: str
+) -> subprocess.CompletedProcess:
     log = tmp_path / "deploy-log.jsonl"
-    log.write_text("".join(json.dumps(row) + "\n" for row in WINDOWED[entry]))
+    log.write_text("".join(json.dumps(row) + "\n" for row in (WINDOWED[entry] if rows is None else rows)))
     return subprocess.run(
         ["bash", str(SCRIPT), entry],
         cwd=REPO,
@@ -794,6 +797,16 @@ def test_a_deploy_log_count_reads_the_rows_since_the_round_closed_and_every_row_
     git_dir = _history(tmp_path, closes_a_round=True)
     assert _windowed(tmp_path, entry, git_dir).stdout == f"{entry}\t1\n"
     assert _windowed(tmp_path, entry, git_dir, COUNT_LIST_ALL="1").stdout == f"{entry}\t2\n"
+
+
+def test_a_capture_pair_straddling_the_round_close_is_counted_once_in_the_round_its_later_row_falls_in(tmp_path):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    entry = "capture-hosts-converged-within-an-hour"
+    first = {"ts": "2026-09-24T15:51:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0}
+    second = {"ts": "2026-09-24T16:11:00Z", "limit": "zcrypto-red", "tags": "capture", "rc": 0}
+    assert _windowed(tmp_path, entry, git_dir, rows=[first], COUNT_LIST_ALL="1").stdout == f"{entry}\t0\n"
+    assert _windowed(tmp_path, entry, git_dir, rows=[first, second]).stdout == f"{entry}\t1\n"
+    assert _windowed(tmp_path, entry, git_dir, rows=[first, second], COUNT_LIST_ALL="1").stdout == f"{entry}\t1\n"
 
 
 @pytest.mark.parametrize("entry", sorted(WINDOWED))

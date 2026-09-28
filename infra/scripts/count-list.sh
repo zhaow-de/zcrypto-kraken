@@ -314,7 +314,9 @@ c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' 
 
 # A deploy-log count that calls this reads the rows stamped at or after the previous refine round's closing commit --
 # its commit date, the anchor `c_claude_commits_since_the_round_closed` finds -- so a row a round has read is not
-# counted again in the next. COUNT_LIST_DEPLOY_LOG names another log for them, which is how a test drives the window.
+# counted again in the next; the capture-pair count pairs every row first and keeps a pair whose later row is so
+# stamped, so a pair straddling the close counts once. COUNT_LIST_DEPLOY_LOG names another log for them, which is how
+# a test drives the window.
 round_closed_at() {
   [ "${COUNT_LIST_ALL:-}" = 1 ] && return 0
   local closed
@@ -408,7 +410,7 @@ c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | gr
 c_capture_hosts_converged_within_an_hour() {
   local since
   since="$(round_closed_at)" || return 2
-  jq -s --arg since "$since" '[.[] | select(($since == "" or (.ts | fromdate) >= ($since | fromdate)) and .rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600)] | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+  jq -s --arg since "$since" '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600 and ($since == "" or .[$j].t >= ($since | fromdate)))] | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
 }
 
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }
