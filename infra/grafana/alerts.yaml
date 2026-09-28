@@ -821,7 +821,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-engine-exec-not-evaluated
-    title: "Engine · the execution safety gate has stopped being evaluated"
+    title: "Engine · the execution gate's heartbeat has stopped: no boundary, plan or trip evaluation in 4h45m"
     ruleGroup: zcrypto-gate
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1

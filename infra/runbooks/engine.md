@@ -110,7 +110,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A warning-severity Grafana alert (`Engine · the execution safety gate has stopped being evaluated`): `time() - zcrypto_exec_last_evaluation_timestamp_seconds{host="zcrypto"}` has read above 17100 s (4h45m) for 10 minutes, or the series is missing entirely.
+A warning-severity Grafana alert (`Engine · the execution gate's heartbeat has stopped: no boundary, plan or trip evaluation in 4h45m`): `time() - zcrypto_exec_last_evaluation_timestamp_seconds{host="zcrypto"}` has read above 17100 s (4h45m) for 10 minutes, or the series is missing entirely.
 
 ### What it means
 
