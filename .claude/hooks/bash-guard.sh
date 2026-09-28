@@ -114,8 +114,9 @@ CHECKOUT_REMEDY = (
 )
 BRANCH_REMEDY = "Branches are the repository's, one set for every worktree: a dispatched agent deletes none and reports the ones it made."
 WORKTREE_REMEDY = (
-    "A dispatched agent removes only a scratch tree it made under the main checkout's .tmp/ or under its session's "
-    "directory in Claude Code's temp root, named by a path and not a variable; every other worktree is a session's."
+    "A dispatched agent removes only a scratch tree it made, named by a path and not a variable: one under the .tmp/ "
+    "of this repository's main checkout or of one of its worktrees, or under its session's directory in Claude Code's "
+    "temp root; a worktree, and another session's directory, are that session's."
 )
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
@@ -718,21 +719,41 @@ def in_main_checkout(path):
     return not p.startswith(tuple(f"{main}/{d}" for d in AGENT_DIRS))
 
 
+@functools.cache
+def top_and_common(where):
+    done = subprocess.run(
+        ["git", "-C", where, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+    )
+    return tuple(os.path.realpath(line) for line in done.stdout.splitlines()) if done.returncode == 0 else None
+
+
+def worktree_top(path):
+    main = main_checkout()
+    if not main:
+        return None
+    ours, here = os.path.realpath(f"{main}/.git"), path
+    while here != "/":
+        here = posixpath.dirname(here)
+        if top_and_common(here) == (here, ours):
+            return here
+    return None
+
+
 def scratch_tree(path, session):
-    # Under the main checkout's .tmp/, or under the payload's session directory in a temp root -- `/tmp` or
-    # CLAUDE_CODE_TMPDIR, then `claude-<uid>/<project>/<session_id>/`. Not the whole temp root: a payload session's
-    # worktree is cut there too (docs/reference/multi-agent-protocol.md).
+    # A temp root holds `claude-<uid>/<project>/<session_id>/`; only the payload's session directory is scratch, not the
+    # whole root, because a payload session's worktree is cut in it too (docs/reference/multi-agent-protocol.md).
     if not path:
         return False
-    p, main = os.path.realpath(path), main_checkout()
-    if main and p.startswith(os.path.realpath(f"{main}/.tmp") + "/"):
-        return True
+    p = os.path.realpath(path)
     for root in {"/tmp", os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp"}:
         base = os.path.realpath(f"{root}/claude-{os.getuid()}") + "/"
         parts = p[len(base) :].split("/") if p.startswith(base) else []
         if len(parts) > 2 and parts[1] == session:
             return True
-    return False
+    top = worktree_top(p)
+    return top is not None and p.startswith(os.path.realpath(f"{top}/.tmp") + "/")
 
 
 def judge_agent(words, here, raw, session):
@@ -745,8 +766,6 @@ def judge_agent(words, here, raw, session):
         return
     for d in chdirs:
         here = resolve(here, d)
-    # Refs and the worktree list are the repository's, shared by every worktree: these two are judged by what they
-    # act on, never by the directory they run in.
     if sub == "branch" and deletes_branch(rest):
         refuse(
             f"`{spelled(words)}` deletes a branch from a dispatched agent, whatever directory it runs in; in `{raw}`. "
