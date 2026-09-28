@@ -23,7 +23,9 @@
 # or a substitution, a cap first in its pipeline, which truncates what it opened rather than what the command
 # computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a program no
 # family names (`grep` without `-c`, `diff`, `git log -p`) or reached through `xargs`, `find -exec` or a copy of its
-# whole directory -- none is an argv this guard judges.
+# whole directory -- none is an argv this guard judges. Refused deliberately, the cost of judging a word wherever it
+# stands rather than reading what precedes it: a dispatched agent's `echo git push` or `grep -n git f`, whose first
+# `git` or `gh` word is read as the one its stage runs.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. Its directory is the payload's `cwd` moved by
@@ -31,9 +33,7 @@
 # its subshell. The main checkout is the parent of the git common dir of the repository this file lives in: the
 # payload's `cwd` can sit in any repository. Outside it: `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory
 # that is no repository of its own, where git reaches the main checkout's; a `gh api` write through fields with no
-# `-X` (its implicit POST, a GraphQL mutation) and every `gh` verb the family does not name; a `git` or `gh` whose
-# stage's command word is neither and no wrapper -- `echo git push`, `xargs git push`, `eval git push`, and a `case`
-# arm's command, whose pattern the lexer leaves at the head of its stage.
+# `-X` (its implicit POST, a GraphQL mutation) and every `gh` verb the family does not name.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -306,7 +306,7 @@ def cut_heredocs(text):
             while j < n and text[j].isdigit():
                 j += 1
             if j < n and text[j] in "<>":
-                # an fd number is its redirection's, no word of the stage: `2>/dev/null git push` runs git
+                # an fd number is its redirection's, no word of the stage
                 i = j
                 continue
         if ch == "'" or ch == '"':
@@ -666,26 +666,9 @@ def opened(code):
     return [n.value for s in ([tree] if held else calls) for n in ast.walk(s) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
-def command_at(words, is_prog):
-    # The index of a stage's command word where is_prog holds for it, past assignments and keywords; behind a wrapper,
-    # the first word is_prog holds for, since a wrapper's option can take a word of its own (`sudo -u x git`).
-    i = 0
-    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS):
-        i += 1
-    if i == len(words):
-        return None
-    if is_prog(words[i]):
-        return i
-    base = words[i].rpartition("/")[2]
-    if base in WRAPPERS or (base == "uv" and words[i + 1 : i + 2] == ["run"]):
-        return next((j for j in range(i + 1, len(words)) if is_prog(words[j])), None)
-    return None
-
-
-def git_sub(words, anywhere=False):
-    # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them; the git is the
-    # stage's command word, or with `anywhere` its first git word.
-    at = next((i for i, w in enumerate(words) if is_git(w)), None) if anywhere else command_at(words, is_git)
+def git_sub(words):
+    # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them.
+    at = next((i for i, w in enumerate(words) if is_git(w)), None)
     if at is None:
         return None, [], []
     argv, i, chdirs = words[at:], 1, []
@@ -714,7 +697,7 @@ def judge_vault(words, raw):
             hit = next((tok for tok in opened(code) if vaulted(tok)), None)
             if hit:
                 refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
-    sub, rest, _ = git_sub(words, anywhere=True)  # a vaulted file printed at a revision, whatever runs the git
+    sub, rest, _ = git_sub(words)
     hit = next((a for a in rest if ":" in a and vaulted(a.partition(":")[2])), None) if sub in ("show", "cat-file") else None
     if hit:
         refuse_vault(words, f"prints the vaulted file `{hit.partition(':')[2]}` at a revision", raw)
@@ -742,7 +725,7 @@ def is_gh(w):
 
 
 def gh_writes(words):
-    at = command_at(words, is_gh)
+    at = next((i for i, w in enumerate(words) if is_gh(w)), None)
     if at is None:
         return False
     rest, pos, j = words[at + 1 :], [], 0
