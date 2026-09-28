@@ -43,18 +43,20 @@
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
 # class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
-# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged.
+# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged. Past the
+# tokeniser, an error or a judging over its budget admits the main loop's call the same way and refuses a dispatched
+# agent's: this hook is that agent's fence, and a fence that fails is off.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
 import functools
 import glob
-import itertools
 import json
 import os
 import posixpath
 import re
 import shlex
+import signal
 import subprocess
 import sys
 
@@ -223,7 +225,8 @@ def ansi_decode(raw):
             out.append(chr(int(m.group(), 8) & 0xFF))
             i += 1 + m.end()
         elif nxt in "uU" and (m := re.match(r"[0-9A-Fa-f]{1,%d}" % (4 if nxt == "u" else 8), raw[i + 2 : i + 10])):
-            out.append(chr(int(m.group(), 16)))
+            code = int(m.group(), 16)
+            out.append(chr(code) if code <= sys.maxunicode else "")  # past Unicode, where chr() raises: read as nothing
             i += 2 + m.end()
         else:
             out.append(raw[i : i + 2])
@@ -585,37 +588,75 @@ def held(path, where):
     return os.path.isfile(posixpath.join(where, path)) and vault_path(os.path.realpath(posixpath.join(where, path)))
 
 
+def alternatives(text):
+    # A brace group's words -- its comma list, or its `..` sequence of numbers or letters with an optional step, `*`
+    # for a sequence past 256 words, counted from its ends and step -- and whether it is that `*`; None for a group bash
+    # leaves as text.
+    if "," in text:
+        return text.split(","), False
+    seq = SEQUENCE.fullmatch(text)
+    if not seq or seq[1].isalpha() != seq[2].isalpha():
+        return None
+    a, b = (ord(seq[1]), ord(seq[2])) if seq[1].isalpha() else (int(seq[1]), int(seq[2]))
+    step = abs(int(seq[3] or 1)) or 1
+    if abs(b - a) // step >= 256:
+        return ["*"], True
+    sign = 1 if a <= b else -1
+    return [chr(v) if seq[1].isalpha() else str(v) for v in range(a, b + sign, sign * step)], False
+
+
+def starred(word):
+    # The word with every brace group, a nested one whole, read as `*`.
+    out, opens = [], []
+    for ch in word:
+        if ch == "}" and opens:
+            del out[opens.pop() :]
+            ch = "*"
+        elif ch == "{":
+            opens.append(len(out))
+        out.append(ch)
+    return "".join(out)
+
+
 def braces(word):
-    # The words bash's brace expansion makes of one, innermost group first: a group with a comma or a `..` sequence
-    # expands, and `{x}` stays. Past 256 words the groups read as `*`, which the glob expands to no fewer files.
-    for m in BRACE.finditer(word):
-        seq = SEQUENCE.fullmatch(m[1])
-        if "," in m[1]:
-            items = m[1].split(",")
-        elif seq and seq[1].isalpha() == seq[2].isalpha():
-            a, b = (ord(seq[1]), ord(seq[2])) if seq[1].isalpha() else (int(seq[1]), int(seq[2]))
-            sign = 1 if a <= b else -1
-            steps = range(a, b + sign, sign * (abs(int(seq[3] or 1)) or 1))
-            items = [chr(v) if seq[1].isalpha() else str(v) for v in steps] if len(steps) <= 256 else ["*"]
-        else:
+    # The words bash's brace expansion makes of one, innermost group first, each with whether a group was read as `*`
+    # on the way to it: a group with a comma or a `..` sequence expands, and `{x}` stays. A sequence past 256 words,
+    # counted from its ends and step, reads as `*`; past 256 words in all, every group does, a nested one whole. Such a
+    # `*` is no glob bash sees and can sit inside an option's value (`--file=`), so the caller globs every tail of the
+    # word, a leading dot included: that refuses more than bash's words name, and only on a word past 256 as counted
+    # here -- one bash expands past 256 ways, the same quoted, or one with a sequence bash leaves as text for its size.
+    # A `*` stays inside a path component, so where every group reads as `*`, an alternative with a `/` is read short.
+    todo, done = [(word, False)], []
+    while todo:
+        w, star = todo.pop()
+        group = next(((m, alt) for m in BRACE.finditer(w) if (alt := alternatives(m[1]))), None)
+        if group is None:
+            done.append((w, star))
             continue
-        out = list(itertools.islice((w for item in items for w in braces(word[: m.start()] + item + word[m.end() :])), 257))
-        return out if len(out) <= 256 else [BRACE.sub("*", word)]
-    return [word]
+        m, (items, read_as_star) = group
+        if len(items) + len(todo) + len(done) > 256:
+            return [(starred(word), True)]
+        todo.extend((w[: m.start()] + item + w[m.end() :], star or read_as_star) for item in reversed(items))
+    return done
+
+
+def globbed(pattern, where, hidden=False):
+    return glob.glob(posixpath.join(glob.escape(where), posixpath.expanduser(pattern)), include_hidden=hidden)
 
 
 def vaulted(word, where):
     # The word, or the first tail of it -- an option's attached value, a `name=value`'s value -- that names an existing
     # file in the vaulted set from `where`, or None: no option or program is parsed, so a pattern names no file and the
     # operand beside it does. The word expands as bash expands it: braces, then a glob, which is the files it matches,
-    # or its own text where it matches none.
-    for w in braces(word.partition("\0")[0]):
-        found = glob.glob(posixpath.join(glob.escape(where), posixpath.expanduser(w))) if WILD.search(w) else []
-        if found:
-            if any(held(p, where) for p in found):
-                return w
-            continue
-        hit = next((w[k:] for k in range(len(w)) if held(posixpath.expanduser(w[k:]), where)), None)
+    # or its own text where it matches none; a word braces() read a group of as `*` has every tail globbed instead.
+    for w, star in braces(word.partition("\0")[0]):
+        tails = (w[k:] for k in range(len(w)))
+        if star:
+            hit = next((t for t in tails if any(held(p, where) for p in globbed(t, where, hidden=True))), None)
+        elif WILD.search(w) and (found := globbed(w, where)):
+            hit = w if any(held(p, where) for p in found) else None
+        else:
+            hit = next((t for t in tails if held(posixpath.expanduser(t), where)), None)
         if hit:
             return hit
     return None
@@ -978,6 +1019,13 @@ def judge(words):
         judge_options(sub, rest, words)
 
 
+def overrun(*_):
+    raise TimeoutError(f"the judging ran past {BUDGET} seconds")
+
+
+BUDGET = 5  # under the 10 seconds .claude/settings.json gives this hook: a hook the harness ends has not refused
+sys.stdout.reconfigure(errors="backslashreplace")  # a refusal naming a lone surrogate (`$'\uD800'`) still prints
+sys.set_int_max_str_digits(0)  # a `..` sequence's ends are read whatever their length
 try:
     call = json.load(sys.stdin)
     command = call.get("tool_input", {}).get("command", "")
@@ -986,24 +1034,36 @@ try:
 except (ValueError, AttributeError) as exc:
     print(f"stdin is not the tool call's JSON ({exc})")
     sys.exit(3)
-try:
-    commands = pipelines(command)
-except ValueError as exc:
-    print(f"the command does not tokenise ({exc})")
-    sys.exit(3)
 raw = clip(" ".join(command.split()))
 agent = bool(call.get("agent_id"))
-cwd = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
-here = cwd
-for pipe in commands:
-    for words in pipe:
-        judge(words)
-        judge_vault(words, raw, here or cwd)
-        if agent:
-            judge_agent(words, here, raw, call.get("session_id"))
-    judge_cap(pipe, raw)
-    if len(pipe) == 1:
-        here = moved(pipe[0], here)
+signal.signal(signal.SIGALRM, overrun)
+signal.alarm(BUDGET)
+try:
+    try:
+        commands = pipelines(command)
+    except ValueError as exc:
+        print(f"the command does not tokenise ({exc})")
+        sys.exit(3)
+    cwd = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
+    here = cwd
+    for pipe in commands:
+        for words in pipe:
+            judge(words)
+            judge_vault(words, raw, here or cwd)
+            if agent:
+                judge_agent(words, here, raw, call.get("session_id"))
+        judge_cap(pipe, raw)
+        if len(pipe) == 1:
+            here = moved(pipe[0], here)
+except Exception as exc:
+    if agent:
+        refuse(
+            f"the hook could not judge the command ({type(exc).__name__}: {clip(str(exc))}), and a dispatched agent's "
+            f"command it cannot judge is refused; in `{raw}`. Run it as simpler calls, or report it and stop."
+        )
+    raise
+finally:
+    signal.alarm(0)
 PY
 )"
 if out="$(printf '%s' "$input" | python3 -c "$prog" "${BASH_SOURCE[0]}" 2>/dev/null)"; then
