@@ -1491,7 +1491,16 @@ class ProbeExecutor:
                 active.revoke_reasons = ("quote_silence",)
                 self._finish_revoked(active)
             elif now > active.timebox_at:
-                self._time_box_with_nothing_resting(active)
+                try:
+                    self._time_box_with_nothing_resting(active)
+                except Exception:
+                    # In `execute` mode the box fires the IOC, a resubmission, so a raise takes the quote
+                    # handler's refusal, `filled` carried, and stops the plan as the tick's catch-all
+                    # would, with every later intent journaled rather than left `pending`.
+                    logger.exception("executor time-box handling raised -- refusing the intent and stopping the plan")
+                    if self._active is not None:
+                        self._finish_active("refused", ("time-box handling failed",), self._active.filled)
+                    self._halt_plan(active.index, f"not run -- intent {active.index} was refused mid-flight")
             return
         if active.phase != "resting":
             # `cancelling` and `ioc` are both waiting on the venue. An answer that never comes is an
@@ -1643,7 +1652,7 @@ class ProbeExecutor:
         except Exception:
             logger.exception("executor quote handling raised -- refusing the intent")
             if self._active is not None:
-                # `filled` carried, `_submit`'s rule: a resubmission runs here now, and a raise after
+                # `filled` carried, `_submit`'s rule: a resubmission runs here, and a raise after
                 # earlier orders filled must not erase what was bought from the operator's summary.
                 self._finish_active("refused", ("quote handling failed",), self._active.filled)
 
@@ -1794,10 +1803,11 @@ class ProbeExecutor:
 
         A crossing says the stored touch is behind the venue's book, so the resubmission prices off
         a tick newer than the one that priced the order it replaces: at once when one has already
-        arrived, else from `awaiting_reprice` when `on_quote` stores one; without the wait the whole
-        budget goes in one dispatch. The wait is entered with the ended order detached, so a fill
-        racing the cancel or a replayed ack takes the detached path -- a row append with no state
-        claim, the fill credited to the intent -- and spends no budget."""
+        arrived, else from `awaiting_reprice` when `on_quote` stores one; without the wait each
+        resubmission rides its own rejection or cancel dispatch, and the whole budget is spent off
+        one tick. The wait is entered with the ended order detached, so a fill racing the cancel or
+        a replayed ack takes the detached path -- a row append with no state claim, the fill
+        credited to the intent -- and spends no budget."""
         if active.cancel_requested:
             # A cancel is already out, so this order is over either way -- but WHY it is out decides
             # what happens next, and the two answers are opposites. A revoke (kill file, disarm,
@@ -1853,7 +1863,9 @@ class ProbeExecutor:
         """
         if active.target_qty - active.filled < active.constraints.lot_step:
             # A late fill on the order this one replaces can complete the intent before the tick
-            # arrives: `_on_fill`'s completion test, so no order below the venue's minimum goes out.
+            # arrives: `_on_fill`'s completion test, so the intent ends `filled`, where sizing would
+            # refuse the zero remainder as below the minimum and end it `partial` carrying its whole
+            # quantity.
             self._finish_active("filled", (), active.filled)
             return
         remainder = active.target_qty - active.filled

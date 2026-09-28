@@ -2200,8 +2200,8 @@ def test_alternating_crossings_place_one_order_per_tick_and_the_sixth_crossing_c
 
 
 def test_a_rest_hold_ladder_spent_by_rejections_ends_unfilled_and_never_crosses(tmp_path):
-    """The rest modes keep the ladder's old end: a spent budget is `unfilled` with no IOC, since a
-    mode built never to fill may not take."""
+    """The rest modes end `unfilled` on the budget, with no IOC, since a mode built never to fill may
+    not take."""
     ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
     for i in range(5):
         ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
@@ -2287,10 +2287,10 @@ def test_the_hold_elapsing_while_a_rest_hold_reprice_waits_ends_it_expired_with_
 
 
 def test_a_sell_closes_six_accept_then_cancel_crossings_end_in_an_ioc_at_the_bid(tmp_path):
-    """A sell, accepted and then cancelled by the venue as crossing six times, each crossing answered
-    by one tick, so each order is priced off a newer ask; the sixth crossing's IOC is bounded by the
-    last tick's bid, the opposite touch on this side. A margin close, so the IOC also carries the
-    closer's reduce-only flag."""
+    """A sell, accepted and then cancelled by the venue as crossing six times: the first five
+    crossings are each answered by one tick, so each replacement is priced off a newer ask, and the
+    sixth fires the IOC, bounded by the last tick's bid, the opposite touch on this side. A margin
+    close, so the IOC also carries the closer's reduce-only flag."""
     client = StubClient(StubCache(positions=_held(**{"BTC/EUR": 0.001})))
     ex, client, clock = _resting_executor(
         tmp_path, client=client, intents=[_intent(side="sell", action="close", notional_eur=90.0, leverage=2)]
@@ -2345,8 +2345,8 @@ def test_a_replayed_cancel_ack_while_the_reprice_waits_counts_no_crossing(tmp_pa
 
 def test_a_late_fill_completing_the_intent_while_the_reprice_waits_ends_it_filled_on_the_tick(tmp_path):
     """The cancelled order's late fills reach the target inside the wait, so the tick has nothing left
-    to order: the intent ends `filled` with the whole quantity, where a remainder below one lot step
-    would otherwise go out as an order the venue refuses."""
+    to order: the intent ends `filled` with the whole quantity, where sizing would refuse the zero
+    remainder as below the minimum and end it `partial` carrying that quantity."""
     ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
@@ -2477,6 +2477,28 @@ def test_a_raise_inside_a_waiting_reprice_journals_the_fills_that_already_happen
     assert len(client.submitted) == 1
     intent = _intent_entry(tmp_path, 0)
     assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["quote handling failed"], 0.4)
+
+
+def test_a_raise_inside_a_waiting_reprices_time_box_ioc_refuses_the_intent_with_its_fills_and_halts_the_plan(tmp_path):
+    ex, client, clock = _resting_executor(
+        tmp_path, bid=30.0, ask=30.05, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]
+    )
+    ex.on_order_event(_accepted("O-1"))
+    _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
+    _advance_with_quotes(ex, client, clock, minutes=14.75, bid=30.0, ask=30.05)
+    ex.on_order_event(_canceled("O-1"))  # ticks have arrived since the first order: repriced at once
+    ex.on_order_event(_accepted(client.last_order_id))
+    ex.on_order_event(_canceled(client.last_order_id))  # none since the second: the reprice waits
+    assert ex._active.phase == "awaiting_reprice"
+    client.cache._raises = True  # the Cache's instrument read raises inside the IOC's placement
+
+    clock.now = NOW + timedelta(minutes=15, seconds=5)
+    ex.on_timer(clock.now)
+
+    assert len(client.submitted) == 2
+    intent = _intent_entry(tmp_path, 0)
+    assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["time-box handling failed"], 0.4)
+    assert _intent_outcome(tmp_path, 1) == "refused"
 
 
 def test_an_ambiguous_rejection_halts_with_no_second_order(tmp_path):
