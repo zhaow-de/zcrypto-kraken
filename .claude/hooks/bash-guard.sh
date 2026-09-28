@@ -25,8 +25,7 @@
 # program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through `xargs`,
 # `find -exec` or a copy of its whole directory -- none is an argv this guard judges; nor is a vaulted file the command
 # makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs.
-# A vault tool's verb that writes or inspects a vaulted file without printing its plaintext is admitted
-# (`ansible-vault encrypt|rekey|edit`, `sops -e|updatekeys|rotate|edit|filestatus`): a key rotation runs them.
+# A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
 # A stage's directory, for the vaulted-file family and the dispatched-agent family, is the payload's `cwd` moved by
@@ -207,9 +206,9 @@ def expansions(body):
 
 
 def ansi_decode(raw):
-    # The escapes bash decodes inside $'..' -- \xHH, \NNN, \uHHHH, \UHHHHHHHH and the letter escapes -- so
-    # $'\x2dn' reaches the judge as the -n bash hands git; an escape this decoder does not know (`\cX`, a control
-    # character, never a `-`) stays as written.
+    # The escapes bash decodes inside $'..' -- \xHH, \NNN, \uHHHH, \UHHHHHHHH, \cX and the letter escapes -- so
+    # $'\x2dn' reaches the judge as the -n bash hands git, and the text ends at its first NUL, as bash's does:
+    # `vault$'\0'.yml` is `vault.yml`. An escape this decoder does not know stays as written.
     out, i, n = [], 0, len(raw)
     while i < n:
         ch = raw[i]
@@ -231,10 +230,14 @@ def ansi_decode(raw):
             code = int(m.group(), 16)
             out.append(chr(code) if code <= sys.maxunicode else "")  # past Unicode, where chr() raises: read as nothing
             i += 2 + m.end()
+        elif nxt == "c" and i + 2 < n:
+            ctl = raw[i + 2]
+            out.append(chr(0x7F if ctl == "?" else ctl.encode("utf-8", "surrogatepass")[0] & 0x1F))
+            i += 3
         else:
             out.append(raw[i : i + 2])
             i += 2
-    return "".join(out)
+    return "".join(out).partition("\0")[0]
 
 
 def cut_heredocs(text):
@@ -652,7 +655,7 @@ def vaulted(word, where):
     # file in the vaulted set from `where`, or None: no option or program is parsed, so a pattern names no file and the
     # operand beside it does. The word expands as bash expands it: braces, then a glob, which is the files it matches,
     # or its own text where it matches none; a word braces() read a group of as `*` has every tail globbed instead.
-    for w, star in braces(word.partition("\0")[0]):
+    for w, star in braces(word):
         tails = (w[k:] for k in range(len(w)))
         if star:
             hit = next((t for t in tails if any(held(p, where) for p in globbed(t, where, hidden=True))), None)
@@ -1037,6 +1040,7 @@ try:
 except (ValueError, AttributeError) as exc:
     print(f"stdin is not the tool call's JSON ({exc})")
     sys.exit(3)
+command = command.replace("\0", "")  # as bash reads a command from stdin; no argv carries a NUL
 raw = clip(" ".join(command.split()))
 agent = bool(call.get("agent_id"))
 signal.signal(signal.SIGALRM, overrun)
