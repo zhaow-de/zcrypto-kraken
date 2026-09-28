@@ -212,6 +212,21 @@ def update_plan_intent(
     _store(path, doc)
 
 
+# A folded sum of per-fill floats lands an ulp off an exact figure, so a reader that must agree with the gauge's exact 0
+# on a flat book snaps within this to 0.0; the executor's `_OVERFILL_TOLERANCE` bounds an overfill on the same
+# arithmetic. Absolute, while the residue grows with the position's size in base units: a position of thousands of
+# units would owe a relative snap.
+FLAT_TOLERANCE = 1e-12
+
+
+def credited_qty(event: dict) -> float:
+    """What a `fill` or `reconciled` event moved its row's `filled_qty` by: the `credited` a writer set beside `qty` where
+    its cap moved the row by less -- 0.0 on a replay of a fill a `reconciled` repair already carried, short of `qty` on a
+    fill after a repair the Cache lagged (the re-read pass's `_fill_credit`) -- else `qty`; the one reader of that key,
+    so a reader of the line counts what moved the row and not the stream's quantity twice."""
+    return float(event.get("credited", event["qty"]))
+
+
 def _day_dirs(journal_dir: Path, now: datetime) -> list[Path]:
     """`now` must be UTC: its date names the day dir."""
     today = now.date()
@@ -266,6 +281,16 @@ def ledgered_intent_keys(journal_dir: Path, now: datetime) -> frozenset[tuple[st
     for doc in _exec_records_in_window(journal_dir, now):
         keys.update((row["plan_id"], row["intent_index"]) for row in doc["submitted"])
     return frozenset(keys)
+
+
+def pending_plan_intents(journal_dir: Path, now: datetime) -> list[tuple[datetime, str, int]]:
+    """Every (boundary, plan_id, index) whose intent still reads `pending`, over the same window as `open_submitted_rows`."""
+    out: list[tuple[datetime, str, int]] = []
+    for doc in _exec_records_in_window(journal_dir, now):
+        boundary = datetime.fromisoformat(doc["cycle_ts"])
+        for entry in doc.get("plans", []):
+            out.extend((boundary, entry["plan_id"], i["index"]) for i in entry["intents"] if i["outcome"] == "pending")
+    return out
 
 
 def open_submitted_rows(journal_dir: Path, now: datetime) -> list[tuple[datetime, dict]]:

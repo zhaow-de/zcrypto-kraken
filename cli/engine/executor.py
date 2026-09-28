@@ -30,12 +30,25 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from nautilus_trader.model import AccountId, ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue, VenueOrderId
+from nautilus_trader.common import SocketState
+from nautilus_trader.model import (
+    AccountId,
+    AccountType,
+    ClientOrderId,
+    InstrumentId,
+    OrderSide,
+    OrderStatus,
+    TimeInForce,
+    Venue,
+    VenueOrderId,
+)
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
 from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
+    _OPEN_ORDER_STATES,
+    FLAT_TOLERANCE,
     append_plan_entry,
     append_submitted_row,
     closed_submitted_rows,
@@ -43,6 +56,7 @@ from cli.engine.execledger import (
     ledgered_intent_keys,
     ledgered_plan_ids,
     open_submitted_rows,
+    pending_plan_intents,
     update_plan_intent,
     update_submitted_row,
 )
@@ -164,6 +178,9 @@ _VENUE = Venue("KRAKEN")
 # map rather than string-split off the id, so an id this engine never ratified raises instead of
 # inventing a label.
 _SYMBOL_BY_INSTRUMENT_ID = {instrument_id: symbol for symbol, instrument_id in INSTRUMENT_IDS.items()}
+# The one symbol a traded coin's spot balance is counted under by the venue's holdings read, its EUR pair, so a base
+# with two pairs is counted once.
+_SPOT_SYMBOL_BY_BASE = {symbol.split("/")[0]: symbol for symbol in INSTRUMENT_IDS if symbol.endswith("/EUR")}
 # Kraken spells one asset three ways across its surfaces; the balance read tries them in order.
 # Every other base gets the plain code plus its `X`-prefixed classic spelling.
 _BTC_BALANCE_ALIASES = ("BTC", "XBT", "XXBT")
@@ -174,6 +191,17 @@ _VENUE_READ_TIMEOUT_SECONDS = 30.0
 # How far before the earliest row's boundary that read reaches. A row's order is submitted after the
 # boundary it is filed under; the margin covers clock skew against the venue, not a real gap.
 _VENUE_READ_MARGIN = timedelta(hours=1)
+# How many ticks the re-read pass may fail to read the venue before it stops asking: the sockets'
+# return says the host's network is back, not that Kraken's REST edge answers yet, and a pass that
+# asked on every tick until it did would be the retry storm the engine runbook's socket section
+# forbids. Past the budget the rows keep their state and the line names the hand cancel.
+_REREAD_ATTEMPTS = 3
+# The idle cadence the gate is re-evaluated and its readings republished at, against the kill-switch
+# rule's `for: 5m`: a refresh, a scrape and the rule's evaluation are a minute each at most, so a
+# switch removed on an idle engine reaches the rule within three minutes, and one removed inside the
+# first two minutes of the rule's pending period pages no one. While a plan runs the tick evaluates
+# anyway. The refresh moves no heartbeat: `_ExecGauges.update`'s `heartbeat` says why.
+_GATE_REFRESH = timedelta(seconds=60)
 # Why a row that names no venue order cannot be matched after a restart: written into the row as the
 # `what` of its `ambiguous` event, and compared there so a later restart does not append it again.
 _NO_VENUE_ORDER_ID = "no Kraken order id is recorded for it, so a restart cannot match it to a venue order"
@@ -187,7 +215,8 @@ _metrics = None
 
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
-    called `(verdict, evaluated_at=...)` after EVERY gate evaluation, `metrics` is an object with
+    called `(verdict, evaluated_at=..., heartbeat=...)` after EVERY gate evaluation, `heartbeat`
+    False on the idle refresh alone, `metrics` is an object with
     `inc_order(outcome)`, `inc_external(disposition)`, `inc_fill(liquidity, fee_eur)`,
     `set_position(symbol, qty)` and `set_realized(value)` (`command._ExecutionMetrics`). Neither can
     affect an order -- both are wrapped."""
@@ -196,11 +225,11 @@ def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     _metrics = metrics
 
 
-def _publish(verdict: GateVerdict, evaluated_at: datetime) -> None:
+def _publish(verdict: GateVerdict, evaluated_at: datetime, *, heartbeat: bool = True) -> None:
     if _publish_verdict is None:
         return
     try:
-        _publish_verdict(verdict, evaluated_at=evaluated_at)
+        _publish_verdict(verdict, evaluated_at=evaluated_at, heartbeat=heartbeat)
     except Exception:
         logger.exception("executor verdict hook raised -- continuing")
 
@@ -354,6 +383,41 @@ def _ordered_qty(row: dict) -> float:
         return 0.0
 
 
+def _minted_terminal(order) -> bool:
+    """Whether `order` was closed by a terminal the execution engine minted rather than received: it
+    is closed and an event in its history is one of `_RECONCILED_TERMINALS` carrying the
+    `reconciliation` flag -- the set the two minted arms key on; an `OrderFillVoided` carries the
+    flag from the venue's own report and is not one. The history, not the last event: the state
+    machine refuses a venue's later cancel ack of an order already closed but applies a later fill,
+    which leaves a whole fill FILLED and a partial one CANCELED with `last_event` `OrderFilled`, so a
+    last-event test would drop from the re-read pass the maker order that part-filled during the
+    cut, the one it exists for. A stand-in without those attributes reads as not minted."""
+    if order is None or not bool(getattr(order, "is_closed", False)):
+        return False
+    events = getattr(order, "events", None)
+    return any(
+        type(event).__name__ in _RECONCILED_TERMINALS and bool(getattr(event, "reconciliation", False))
+        for event in (events() if callable(events) else ())
+    )
+
+
+def _unread_what(venue_order_id: str) -> str:
+    """The `what` of the `ambiguous` mark on a row whose recorded txid the venue read does not return."""
+    return f"the venue's order read has no order {venue_order_id}"
+
+
+def _marked_unmatched(row: dict, what: str | None = None) -> bool:
+    """Whether `row` carries `_mark_unmatched`'s `ambiguous` event for `what` -- with none given, for
+    the `what` a read would write for it now, the row's own txid deciding which (`_unmatchable_what`
+    or `_unread_what`): the re-read pass leaves such a row out of its later arms, since no read of
+    this process settles it and each arm would re-read it and page the same line, where a startup
+    inside the re-attach window reads it again. The strand's `ambiguous` event carries another `what`."""
+    if what is None:
+        venue_order_id = _row_venue_order_id(row)
+        what = _unmatchable_what(row) if venue_order_id is None else _unread_what(venue_order_id)
+    return any(isinstance(e, dict) and e.get("type") == "ambiguous" and e.get("what") == what for e in row.get("events") or ())
+
+
 def _venue_order_id_of(order_or_event) -> str | None:
     venue_order_id = getattr(order_or_event, "venue_order_id", None)
     return None if venue_order_id is None else str(venue_order_id)
@@ -423,9 +487,14 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
 
     A second client on one key is a nonce hazard: the adapter serialises signed requests per client,
     so this client's can reach the venue out of order against the execution client's, and one of them
-    is answered `Invalid nonce`. The caller therefore makes this read once per process, before this
-    process has sent anything -- the startup pass reads it before its own cancels, and no plan is
-    picked up before the pass has run -- and never retries it.
+    is answered `Invalid nonce`. The startup pass therefore makes this read once, before this process
+    has sent anything -- before its own cancels, and no plan is picked up before the pass has run --
+    and never retries it; the re-read pass reads again on a tick with no intent live and no order
+    of this process in flight in the Cache's terms (`_nothing_in_flight`), and `cancel_venue_order`
+    follows it on the same terms. What that gate cannot see is the execution client's own signed
+    token request while its socket is still reconnecting: a collision there costs the library one
+    reconnect attempt or this pass one try, and the library's retry of an `Invalid nonce` is
+    unmeasured.
 
     The listing is cached into the client first because the order read resolves every row through
     that cache and its altname index: an open order it cannot resolve fails the whole read, and a
@@ -433,16 +502,10 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     thread: the node runs the strategy's timer callbacks on its main thread, with no asyncio loop
     running there. If that ever changes, this raises and the caller fails closed. Anything short of a
     complete answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
-    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
-
     # Imported here rather than at the top: node.py imports this module.
-    from cli.engine.node import _ACCOUNT_ID, _credentials
+    from cli.engine.node import _ACCOUNT_ID
 
-    credentials = _credentials()
-    if credentials is None:
-        raise EngineError("the trade credentials are not in this environment")
-    api_key, api_secret = credentials
-    client = KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+    client = _bare_client(base_url)
 
     async def _read():
         for instrument in await client.request_instruments() or ():
@@ -450,6 +513,95 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
         return await client.request_order_status_reports(AccountId(_ACCOUNT_ID), start=since, open_only=False)
 
     return list(asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS)) or ())
+
+
+def cancel_venue_order(venue_order_id: str, instrument_id: str, *, base_url: str | None = None) -> None:
+    """Cancel one order at the venue by its txid, on a client of its own (`_bare_client`) and on
+    `read_venue_orders`' terms: the re-read pass's cancel of an order the Cache holds closed by a
+    terminal this engine minted, which the strategy handle refuses to cancel
+    (`Cannot cancel order: state is ...`, sent nowhere). The listing is cached first because the client
+    resolves the pair through it. Returns on the venue's answer without reading its `count` --
+    `{"count": 0}` and `{"count": 1}` return alike, which the loopback cases pin -- and raises on a
+    refusal the venue phrases as an error, or on anything short of an answer inside
+    `_VENUE_READ_TIMEOUT_SECONDS`. Which of the two Kraken gives for a txid already closed is
+    unmeasured; drill F2's record reads it."""
+    from cli.engine.node import _ACCOUNT_ID
+
+    client = _bare_client(base_url)
+
+    async def _cancel():
+        for instrument in await client.request_instruments() or ():
+            client.cache_instrument(instrument)
+        await client.cancel_order(
+            AccountId(_ACCOUNT_ID), InstrumentId.from_str(instrument_id), venue_order_id=VenueOrderId(venue_order_id)
+        )
+
+    asyncio.run(asyncio.wait_for(_cancel(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+
+
+def _bare_client(base_url: str | None):
+    """The bare `KrakenSpotHttpClient` the three venue functions beside this one build, on the trade
+    credentials -- the construction `zcrypto engine flatten` uses -- refused before it is built when
+    the environment lacks them. `base_url` is None on the engine, which is the venue's own."""
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    # Imported here rather than at the top: node.py imports this module.
+    from cli.engine.node import _credentials
+
+    credentials = _credentials()
+    if credentials is None:
+        raise EngineError("the trade credentials are not in this environment")
+    api_key, api_secret = credentials
+    return KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+
+
+def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
+    """What the account holds under every `INSTRUMENT_IDS` symbol, from the venue's own two reads on a
+    client each call builds for itself (`_bare_client`): each margin position, signed by its side, under
+    its instrument, and each traded coin's spot balance -- its total, the part held against a resting
+    order included -- under the coin's EUR pair (`_SPOT_SYMBOL_BY_BASE`), so a base is counted once and
+    `ETH/BTC` carries its margin positions alone. The balances are read beside the positions because a
+    settled margin position is a spot lot the account holds until it is sold. A margin position on a
+    pair outside the basket, and a coin outside it, are not read: the gauge's children are the basket's.
+    A symbol within `FLAT_TOLERANCE` of zero reads 0.0, the seed's own snap. The listing is cached first
+    because the position read resolves its rows through it. Anything short of both answers inside
+    `_VENUE_READ_TIMEOUT_SECONDS` raises, and so does a position side that is not LONG, SHORT or FLAT.
+    An empty listing, through which no margin position resolves, and a positions answer of `None` raise
+    too, the two shapes `zcrypto engine flatten` refuses: neither is read as a flat margin book, which
+    an empty positions list from a venue that answered is."""
+    from cli.engine.flatten import QUOTE_CURRENCY, resolve_base
+    from cli.engine.node import _ACCOUNT_ID
+
+    client = _bare_client(base_url)
+
+    async def _read():
+        instruments = await client.request_instruments()
+        if not instruments:
+            raise EngineError("the venue's instrument listing came back empty -- no margin position resolves through it")
+        for instrument in instruments:
+            client.cache_instrument(instrument)
+        positions = await client.request_position_status_reports(
+            AccountId(_ACCOUNT_ID), account_type=AccountType.MARGIN, use_spot_position_reports=False, quote_currency=QUOTE_CURRENCY
+        )
+        if positions is None:
+            raise EngineError("the venue answered nothing for the margin positions -- it is never read as a flat margin book")
+        state = await client.request_account_state(AccountId(_ACCOUNT_ID), account_type=AccountType.CASH)
+        return list(positions), state
+
+    positions, state = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    held = dict.fromkeys(INSTRUMENT_IDS, 0.0)
+    for report in positions:
+        symbol = _SYMBOL_BY_INSTRUMENT_ID.get(str(report.instrument_id))
+        if symbol is None:
+            continue
+        qty = float(report.quantity)
+        held[symbol] += {"LONG": qty, "SHORT": -qty, "FLAT": 0.0}[str(report.position_side).rsplit(".", 1)[-1]]
+    bases = frozenset(_SPOT_SYMBOL_BY_BASE)
+    for balance in state.balances:
+        symbol = _SPOT_SYMBOL_BY_BASE.get(resolve_base(balance.currency.code, bases))
+        if symbol is not None:
+            held[symbol] += float(balance.total)
+    return {symbol: 0.0 if abs(qty) <= FLAT_TOLERANCE else qty for symbol, qty in held.items()}
 
 
 def _newest_venue_balances(journal_dir: Path) -> dict:
@@ -650,6 +802,11 @@ class _ActiveIntent:
     # the kill file revoked it -- and only the first is `rest_hold_expired`. Matching on
     # `revoke_reasons`' text instead would tie the outcome to a string written for a human.
     hold_expired: bool = False
+    # `quote_seq` counts the ticks stored since the intent started and `priced_seq` is its value when
+    # the live order was priced, so a reprice can tell a tick that arrived after that order from the
+    # one that priced it.
+    quote_seq: int = 0
+    priced_seq: int = 0
 
 
 class ProbeExecutor:
@@ -659,16 +816,59 @@ class ProbeExecutor:
     `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(client_order_id)`,
     `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
 
-    `venue_orders` is `read_venue_orders`' signature. None, the engine's construction, reads the
-    module's own at call time, so a test can replace it before any executor exists.
+    `venue_orders` is `read_venue_orders`' signature, `venue_cancel` is `cancel_venue_order`'s and
+    `venue_holdings` is `read_venue_holdings`'. None, the engine's construction, reads the module's
+    own at call time, so a test can replace it before any executor exists.
     """
 
-    def __init__(self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now, venue_orders=None) -> None:
+    def __init__(
+        self,
+        *,
+        client,
+        gate: ExecutionGate,
+        config: EngineConfig,
+        clock=_utc_now,
+        venue_orders=None,
+        venue_cancel=None,
+        venue_holdings=None,
+    ) -> None:
         self._client = client
+        # The Cache and the strategy id, taken here, inside `on_start`, where the strategy is not
+        # borrowed, and read through these handles ever after: `client.cache` is a getter on the
+        # strategy, and inside the dispatch of an event the strategy's own command publishes before
+        # it returns -- `OrderPendingCancel` from `cancel_order`, `OrderInitialized` from
+        # `submit_order` -- it raises `Already mutably borrowed`, the strategy's PyO3 cell being held
+        # by that command, while the Cache itself is free and a handle taken earlier reads it
+        # (tests/test_engine_executor.py measures both against a real engine).
+        self._cache = client.cache
+        self._strategy_id = client.strategy_id
         self._gate = gate
         self._config = config
         self._now = clock
         self._venue_orders = venue_orders
+        self._venue_cancel = venue_cancel
+        self._venue_holdings = venue_holdings
+        # The venue's figure less the Cache's, per symbol, at the last settle of the position gauge
+        # (`_settle_positions_from_venue`): `_publish_fill` adds it to the Cache's net, so a fill
+        # between two passes moves the gauge from the venue's figure and not from a position the
+        # Cache never let go -- a hand close the state machine refused, or a settled lot the Cache
+        # holds as a margin position.
+        self._venue_correction: dict[str, float] = {}
+        # The socket endpoints the client has reported down and not yet back, and the re-read pass's
+        # tries left, set by an endpoint's return and by a mint with no endpoint down: the pass runs
+        # on the next tick with nothing in flight, and a read that fails spends one try, or closes the
+        # arm while an endpoint is held down (`_reread_pass`). A `DISCONNECTED` clears a mint's arm,
+        # and a return's the pass has not run on when it is the drop of the endpoint whose return set
+        # it, `_reread_armed_by` (`on_socket_state`).
+        self._sockets_down: set[str] = set()
+        self._reread_tries = 0
+        self._reread_armed_by: str | None = None
+        # The rows the re-read pass repaired from the venue's report in this process, whose later
+        # fills `_fill_credit` caps at what the Cache's order holds beyond the row.
+        self._rows_the_pass_repaired: set[str] = set()
+        # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
+        # published moments before this construction.
+        self._gate_evaluated_at: datetime = self._now()
         # Set once, when the startup pass could not read the venue's orders, and never cleared: every
         # plan is refused with it for the life of this process, and a restart is the retry.
         self._reconciliation_refusal: str | None = None
@@ -708,12 +908,16 @@ class ProbeExecutor:
 
     # --- the gate ------------------------------------------------------------------------------
 
-    def _evaluate(self, now: datetime) -> GateVerdict:
+    def _evaluate(self, now: datetime, *, heartbeat: bool = True) -> GateVerdict:
         """The ONE gate read. Every evaluation reaches the publish hook (D4's cadence ruling), so
-        the gate's published state is seconds-fresh for as long as a plan is running and reverts to
-        the between-cycles cadence the moment one is not."""
+        the gate's published state is seconds-fresh for as long as a plan is running and at most
+        `_GATE_REFRESH` old while none is (`_refresh_gate`), since the board's kill-switch rule reads
+        the gauge and a switch removed on an idle engine would otherwise page until the boundary.
+        `heartbeat` False, the refresh's, publishes the readings and not the staleness rule's
+        series, which stays the boundary path's."""
         verdict = self._gate.evaluate(now)
-        _publish(verdict, now)
+        self._gate_evaluated_at = now
+        _publish(verdict, now, heartbeat=heartbeat)
         return verdict
 
     # --- the chokepoint ------------------------------------------------------------------------
@@ -794,6 +998,11 @@ class ProbeExecutor:
             now = _aware_utc(now)
             if not self._adopted:
                 self._adopt_resting_orders(now)
+            # Before the pickup and the pump, so a plan dropped during a cut starts behind the re-cancel
+            # on this tick and never ahead of it, where the pass would wait behind its every intent;
+            # with nothing in flight, `read_venue_orders`' nonce terms.
+            if self._reread_tries and self._nothing_in_flight():
+                self._reread_pass(now)
             # No plan before the startup pass has run: until it has, no row is reconciled against the
             # venue, and the pass's one venue read must reach the venue before any order of this
             # process does (`read_venue_orders` says why).
@@ -801,6 +1010,7 @@ class ProbeExecutor:
                 self._pickup(now)
             self._pump(now)
             self._publish_resting_age(now)
+            self._refresh_gate(now)
         except Exception:
             # Refusal by default: whatever broke, stop running this plan. Anything already resting
             # at the venue stays in the ledger as an open row for reconciliation to pick up.
@@ -831,6 +1041,83 @@ class ProbeExecutor:
                 _set_resting_age(mode, age)
         except Exception:
             logger.exception("executor resting-age publish raised -- continuing")
+
+    def _refresh_gate(self, now: datetime) -> None:
+        """The idle refresh: one evaluation, published, once `_GATE_REFRESH` has passed since the last
+        -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
+        reads, its own fail-closed readings included, and not the heartbeat, which stays the boundary
+        path's so the staleness rule keeps watching the sink and its exec record; it journals
+        nothing, since the exec record's verdict is the boundary sink's alone. Wrapped as
+        `_publish_resting_age` is: telemetry may never end a plan."""
+        try:
+            if now - self._gate_evaluated_at >= _GATE_REFRESH:
+                self._evaluate(now, heartbeat=False)
+        except Exception:
+            logger.exception("executor gate refresh raised -- continuing")
+
+    # --- the sockets ---------------------------------------------------------------------------
+
+    def on_socket_state(self, event) -> None:
+        """The client's socket-state stream, the strategy's `on_socket_state` once it subscribed:
+        `DISCONNECTED` names an endpoint down, `CONNECTED` one back. The re-read pass is owed on each
+        return of an endpoint held down -- the data socket's, whatever the execution socket reports, and
+        a second socket's later return owes it again, an empty population consuming that arm with the
+        holdings read alone -- and runs on the tick, never here: it reads the Cache and the venue, which
+        the tick does on the main thread with no loop running (`read_venue_orders`). A `CONNECTED` for
+        no endpoint held down, the connect itself, owes nothing; a `DISCONNECTED` holds off a pass a
+        mint armed (`_arm_reread_after_mint`), so a mint inside a cut reads at most once, on a tick inside the
+        mint-to-`DISCONNECTED` gap, and the return arms it again; a pass a return armed that has not run
+        yet it clears only when the endpoint whose return set it (`_reread_armed_by`) drops again -- a
+        cut drops both endpoints, so an arm left pending behind a live intent goes with the cut; where
+        the other endpoint's drop leads and the mint has ended the intent, the arm stands until the
+        first read that fails with an endpoint held down closes it (`_reread_pass`) -- and never on
+        another endpoint's drop, since the execution socket drops about hourly on this wheel and a drop
+        of it behind the data socket's return would otherwise hold that return's pass off until a
+        `CONNECTED` under its own string. Arming once the set empties, both sockets resubscribed, was
+        set aside: it rests on the execution client reporting `CONNECTED` under the string its
+        `DISCONNECTED` carried, unmeasured offline, and an entry whose return never comes under that
+        string would hold the pass off for the life of the process. Bookkeeping, never a submission: log
+        and continue."""
+        try:
+            endpoint = str(getattr(event, "endpoint", "?"))
+            state = getattr(event, "state", None)
+            if state == SocketState.DISCONNECTED:
+                self._sockets_down.add(endpoint)
+                if self._reread_armed_by in (None, endpoint):
+                    self._reread_tries = 0  # a mint's arm, or this endpoint's own return's: a return arms the pass again
+                    self._reread_armed_by = None
+                logger.warning(
+                    "socket %s is down -- an order whose terminal this engine mints meanwhile is re-read at the venue "
+                    "once a socket is back",
+                    endpoint,
+                )
+            elif state == SocketState.CONNECTED and endpoint in self._sockets_down:
+                self._sockets_down.discard(endpoint)
+                self._reread_tries = _REREAD_ATTEMPTS
+                self._reread_armed_by = endpoint
+                logger.warning(
+                    "socket %s is back%s -- the re-read pass runs on the next tick with nothing in flight",
+                    endpoint,
+                    f" ({', '.join(sorted(self._sockets_down))} still down)" if self._sockets_down else " and none is down",
+                )
+        except Exception:
+            logger.exception("executor socket-state handling raised -- continuing")
+
+    def _arm_reread_after_mint(self) -> None:
+        """The re-read pass's second trigger: a terminal this engine minted, on the plan's own order, on
+        one no intent holds any more (`_on_detached_event`) or on one the startup pass adopted, with no
+        socket held down -- the adopted path's shape on this wheel, where each adopt-pass cancel's ack
+        goes unapplied and the mint lands about 31 s on with the sockets up (drills G and A1). A mint
+        while a socket is held down arms nothing: the socket's return does (`on_socket_state`), so a
+        mint inside a cut reads at most once, on a tick inside the mint-to-`DISCONNECTED` gap, one try
+        spent at WARNING and the tick held up to `_VENUE_READ_TIMEOUT_SECONDS` -- F2's shape, where the
+        mint lands before the socket's own deadline reports the cut and the `DISCONNECTED` then holds
+        the arm this sets. The cost is a stale entry, an endpoint whose `CONNECTED` never comes under
+        its `DISCONNECTED`'s string, unmeasured offline, holding every later mint's settlement off until
+        a startup inside the re-attach window; the rollout's first hour of socket lines, and F2's next
+        run, measure the execution socket's name."""
+        if not self._sockets_down:
+            self._reread_tries = _REREAD_ATTEMPTS
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this
@@ -884,9 +1171,14 @@ class ProbeExecutor:
         filled, was canceled or expired while this process was down is not in the Cache at all -- the
         startup reconciliation reads open orders only -- so the pass cannot return early when nothing
         is resting: an idle startup can still owe row repairs.
+
+        LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
+        their plans, so each is written terminal from what its rows show, except one with an open row
+        this pass sent no cancel for -- kept, or beyond its reach -- and none when either read above
+        failed or a sweep above latched the kill switch.
         """
         try:
-            resting = list(self._client.cache.orders_open(venue=_VENUE))
+            resting = list(self._cache.orders_open(venue=_VENUE))
         except Exception:
             # Nothing can be adopted OR canceled without the list, and nothing has been touched --
             # so the pass does NOT latch: leaving a previous process's orders unclassified for the
@@ -896,6 +1188,7 @@ class ProbeExecutor:
             return
         self._adopted = True  # the read succeeded: this pass classified what there was to classify
 
+        ledger_read = True
         try:
             rows = {row["client_order_id"]: (boundary, row) for boundary, row in open_submitted_rows(self._journal_dir, now)}
             # The two reads partition the same window's rows and come from the same records, so one
@@ -912,11 +1205,13 @@ class ProbeExecutor:
                 " and every resting order the Cache holds will be canceled" if resting else "",
                 exc_info=True,
             )
-            rows, finished = {}, {}
+            rows, finished, ledger_read = {}, {}, False
         venue_orders = self._read_venue_orders(rows, finished)
+        self._settle_positions_from_venue("the startup pass")
         self._reconcile_adopted_rows(rows, venue_orders)
         self._reconcile_finished_rows(finished, venue_orders)
         if not resting:
+            self._settle_pending_intents(now, rows, finished, set(), venue_orders, ledger_read=ledger_read)
             return  # nothing adopted -- and no gate read, so an idle startup stays the cheap path
 
         # Read AFTER both sweeps: a repair or a withdrawal that latched the kill switch above makes
@@ -933,6 +1228,7 @@ class ProbeExecutor:
             venue_order_id = _row_venue_order_id(entry[1])
             if venue_order_id is not None:
                 rows_by_venue[venue_order_id] = entry
+        cancelled: set[str] = set()
         for order in resting:
             client_order_id = str(getattr(order, "client_order_id", ""))
             venue_order_id = _venue_order_id_of(order)
@@ -958,10 +1254,164 @@ class ProbeExecutor:
                 logger.critical(
                     "cancel of adopted order %s raised -- it may still rest at the venue", client_order_id, exc_info=True
                 )
+                continue
+            if attached is not None:
+                # The cancel went out, so this row holds its intent `pending` no longer; a fill racing the ack lands on the row.
+                cancelled.add(attached[1]["client_order_id"])
+        self._settle_pending_intents(now, rows, finished, cancelled, venue_orders, ledger_read=ledger_read)
 
-    def _reconcile_adopted_rows(self, rows: dict, venue_orders: dict | None) -> None:
+    def _settle_pending_intents(
+        self,
+        now: datetime,
+        rows: dict,
+        finished: dict,
+        cancelled: set,
+        venue_orders: dict | None,
+        *,
+        ledger_read: bool,
+    ) -> None:
+        """A `pending` intent in the window belongs to a plan no process runs, so nothing else would
+        ever end it. Each is written from what its rows show -- `filled` when they carry the first
+        order's quantity, `revoked` when it ran and its order did not survive the restart, `refused`
+        when it never ran -- except one with an open row this pass sent no cancel for: an order left
+        resting, kept as a reducer or beyond the pass's reach, is still live and its row the live
+        record. Skipped whole when either read failed or this pass latched the kill switch, since
+        the rows' fills were then never compared, never read, or refuted by the venue, and are no
+        figure to journal."""
+        if venue_orders is None or not ledger_read or self._kill_tripped:
+            return
+        try:
+            pending = pending_plan_intents(self._journal_dir, now)
+        except Exception:
+            logger.critical(
+                "the plan entries could not be read at startup -- pending intents keep the state they have", exc_info=True
+            )
+            return
+        filled: dict[tuple[str, int], float] = {}
+        ordered: dict[tuple[str, int], float] = {}
+        left: set[tuple[str, int]] = set()
+        for _, row in [*rows.values(), *finished.values()]:
+            key = (row["plan_id"], row["intent_index"])
+            filled[key] = filled.get(key, 0.0) + float(row["filled_qty"])
+            # The first order carries the intent's whole quantity and every later one a remainder, so
+            # the largest of them is the target.
+            ordered[key] = max(ordered.get(key, 0.0), _ordered_qty(row))
+            if row.get("state") in _OPEN_ORDER_STATES and row["client_order_id"] not in cancelled:
+                left.add(key)
+        for boundary, plan_id, index in pending:
+            key = (plan_id, index)
+            if key in left:
+                continue
+            if key not in filled:
+                outcome, reasons = "refused", ("not run -- the engine restarted before it ran",)
+            elif ordered[key] > 0.0 and filled[key] >= ordered[key] - _OVERFILL_TOLERANCE:
+                outcome, reasons = "filled", ()
+            else:
+                outcome, reasons = "revoked", ("the engine restarted while the intent was in flight",)
+            try:
+                update_plan_intent(
+                    self._journal_dir, boundary, plan_id, index, outcome=outcome, reasons=reasons, filled_qty=filled.get(key, 0.0)
+                )
+            except Exception:
+                logger.critical(
+                    "intent %d of plan %s could not be journaled as %s at startup", index, plan_id, outcome, exc_info=True
+                )
+
+    def _nothing_in_flight(self) -> bool:
+        """No intent of this process live, and no order of it in flight in the Cache's own terms --
+        `orders_inflight`, the set the library's in-flight check queries -- so the pass's signed
+        requests race nothing of the execution client's: `_active` None alone leaves the startup
+        pass's cancels of adopted orders, and a trip's, PENDING_CANCEL with no intent live. A Cache
+        that cannot be read holds the pass, never a plan."""
+        try:
+            return self._active is None and not list(self._cache.orders_inflight(venue=_VENUE))
+        except Exception:
+            logger.exception("executor in-flight read raised -- the re-read pass waits for the next tick")
+            return False
+
+    def _reread_pass(self, now: datetime) -> None:
+        """The startup sweep at one more moment -- after the sockets come back, or after a terminal this
+        engine minted with no socket held down -- over every open row of the window whose Cache order
+        was closed by a terminal this engine minted: the cancel the venue never acknowledged, on the
+        plan's own order (drill F2's shape: the REST cancel fails in the cut and the engine mints
+        `OrderCanceled` while the order rests at Kraken) or on one the startup pass adopted (drills G's
+        and A1's: the venue cancels at the second asked and answers nothing this engine applies, the
+        mint landing about 31 s on with the sockets up). The venue's report settles each: a closed
+        report as at startup, an open one by a cancel, since the Cache's own order is the guess the
+        venue must answer. The rows are read from the ledger and the Cache when the pass runs, not
+        collected at the mint: a mint can land before the socket's own deadline reports the cut, F2's
+        order, and a mint the ack deadline had already stranded lands detached. No intent is written:
+        each is terminal at its mint or by the startup sweep, and a plan may be running beside the pass.
+        A read that fails spends one try and the tick asks again; past the budget the rows keep their
+        state and the line names the hand cancel and, when the ledger read succeeded, each row it could
+        not read for, and a startup inside the re-attach window reads them too, under the restart rule
+        the error-logs page names. A read that fails while an endpoint is held down closes the arm at
+        WARNING instead of spending a try: the cut stands and a socket's return arms three again, so a
+        return's arm the other endpoint's drop left standing -- F2's order, the mint ahead of the first
+        `DISCONNECTED` and the execution socket's own drop later -- spends no budget into the cut; a
+        stale entry, an endpoint whose `CONNECTED` never comes under its drop's string, then closes
+        every return's arm at its first failed read, the read's CRITICAL never reaching the page while
+        it stands. A row a pass already marked unmatched (`_marked_unmatched`) is left out: no read of
+        this process settles it, and each arm would re-read it and page the same line. A run whose reads
+        answer -- the ledger's, and the venue's orders when the population is not empty -- ends by
+        settling the position gauge from the venue's holdings (`_settle_positions_from_venue`), so an
+        opposing hand trade the state machine refused settles at the next such arm; a run whose read
+        fails returns before the settle. Wrapped whole: a raise here may never drop a plan."""
+        self._reread_armed_by = None  # a return's arm is consumed by this run, whatever it reads
+        rows: dict = {}
+        try:
+            rows = {
+                row["client_order_id"]: (boundary, row)
+                for boundary, row in open_submitted_rows(self._journal_dir, now)
+                if self._minted_closed(row) and not _marked_unmatched(row)
+            }
+            reports = []
+            if rows:
+                since = min(boundary for boundary, _ in rows.values()) - _VENUE_READ_MARGIN
+                reports = (self._venue_orders or read_venue_orders)(since)
+        except Exception:
+            if self._sockets_down:
+                self._reread_tries = 0
+                self._reread_armed_by = None
+                logger.warning(
+                    "the re-read pass could not read the ledger or the venue while socket %s is down -- the arm closes, and "
+                    "a socket's return arms it again",
+                    ", ".join(sorted(self._sockets_down)),
+                    exc_info=True,
+                )
+                return
+            self._reread_tries -= 1
+            if self._reread_tries:
+                logger.warning("the re-read pass could not read the ledger or the venue -- asking again next tick", exc_info=True)
+            else:
+                labels = ", ".join(_row_label(row, _row_venue_order_id(row)) for _, row in rows.values())
+                logger.critical(
+                    "the re-read pass could not read the ledger or the venue on %d ticks -- an order this engine minted "
+                    "terminal may still rest at Kraken%s: cancel it by hand on Kraken's open-orders page",
+                    _REREAD_ATTEMPTS,
+                    f" ({labels})" if labels else " (the ledger read failed, so no row is named)",
+                    exc_info=True,
+                )
+            return
+        self._reread_tries = 0
+        if rows:
+            logger.warning("the re-read pass reads %d row(s) this engine minted terminal against the venue", len(rows))
+            self._reconcile_adopted_rows(rows, {str(report.venue_order_id): report for report in reports}, recancel=True)
+        self._settle_positions_from_venue("the re-read pass")
+
+    def _minted_closed(self, row: dict) -> bool:
+        """Whether the Cache's order for `row` was closed by a terminal this engine minted, read off its
+        history (`_minted_terminal`). A Cache that cannot be read answers no."""
+        try:
+            order = self._cache_lookup(row, _row_venue_order_id(row))
+        except Exception:
+            return False
+        return _minted_terminal(order)
+
+    def _reconcile_adopted_rows(self, rows: dict, venue_orders: dict | None, *, recancel: bool = False) -> None:
         """The startup reconciliation sweep (spec 00098 D7): every open ledgered row, compared
-        against its order's own quantity and status, before anything is classified.
+        against its order's own quantity and status, before anything is classified -- and the
+        re-read pass's, with `recancel`, over the rows this engine minted terminal.
 
         The ROWS drive it, and each asks for exactly the order it names. The alternative -- reading
         the account's whole order history and matching it against the rows -- reads a population with
@@ -975,7 +1425,10 @@ class ProbeExecutor:
         startup reconciliation never puts in the Cache because it reads open orders only. Both answers
         take the same arms in `_reconcile_adopted_row`, so a closed-while-down order gets its repair,
         its terminal state and both trips exactly as a resting one does. A report that is still open
-        is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL.
+        is an order reconciliation dropped, which `_log_resting_outside_the_cache` logs CRITICAL at
+        startup; the re-read pass cancels it instead (`_recancel`), by txid on the bare client, since
+        the row is this engine's own record of an order it placed or adopted and the Cache's closed
+        copy is why no cancel through the strategy handle reaches it.
 
         A row neither answers is never given a venue truth nobody read: `_mark_unmatched` marks it
         `ambiguous` unless the venue read itself failed, which `_read_venue_orders` has already turned
@@ -1016,9 +1469,18 @@ class ProbeExecutor:
                         continue  # the read failed: unread, not unknowable, and every plan is refused
                     report = venue_orders.get(venue_order_id)
                     if report is None:
-                        self._mark_unmatched(
-                            boundary, row, f"the venue's order read has no order {venue_order_id}", open_row=True, critical=True
-                        )
+                        self._mark_unmatched(boundary, row, _unread_what(venue_order_id), open_row=True, critical=True)
+                        continue
+                    # The pass's row is in the Cache under the id it was minted closed by, which
+                    # `_attached` still maps to the mirror the startup built: re-attached under that id
+                    # too, this fresh dict is what a later fill's completion guard and trip read. At
+                    # startup the Cache holds none of these rows, and the id stays None.
+                    order = self._cache_lookup(row, venue_order_id) if recancel else None
+                    order_id = None if order is None else str(order.client_order_id)
+                    if recancel:
+                        self._rows_the_pass_repaired.add(client_order_id)
+                    if recancel and report.order_status not in _ADOPTED_TERMINAL_STATES:
+                        self._recancel(boundary, row, venue_order_id, report, order_id=order_id)
                         continue
                     _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
                     self._reconcile_adopted_row(
@@ -1026,13 +1488,57 @@ class ProbeExecutor:
                         row,
                         float(report.filled_qty),
                         report.order_status,
-                        order_id=None,
+                        order_id=order_id,
                         venue_order_id=venue_order_id,
                     )
                 except Exception:
                     logger.critical("adopted row %s could not be reconciled against the venue", client_order_id, exc_info=True)
         except Exception:
             logger.critical("the startup reconciliation sweep raised -- classifying resting orders anyway", exc_info=True)
+
+    def _recancel(self, boundary: datetime, row: dict, venue_order_id: str, report, *, order_id: str | None = None) -> None:
+        """The re-read pass's cancel of an order the venue still reports open: the report's fills
+        repair the row first, through the arms and trips a startup's repair takes, the row re-attached
+        under the Cache order's own id (`order_id`) so a later fill reads this row, then the cancel
+        goes out by txid on the bare client, and its return writes the row `canceled` with a
+        `recancelled` event -- the client reads no `count` from the venue's answer and the library
+        drops the stream's later event for an order it already holds closed, so `canceled` says the
+        pass read the order open and its cancel returned; a fill landing between the two is in the
+        row once the stream delivers it, `_fill_credit` crediting what the Cache's order holds beyond
+        the repair -- the fill whole where the Cache had the report's fills, only what exceeds the
+        Cache's lag where the stream never delivered them -- and on the adopted path completes it
+        `filled` off this pass's own mirror, and one the stream never delivers is on Kraken's closed
+        orders alone, which the page has the operator read. A cancel
+        that raises -- the cut not over for REST, or a refusal the venue phrases as an error --
+        leaves the row and names the hand cancel, the refused-cancel arm's precedent. No counter
+        moves for the re-cancel and no intent is written; a closed report that completes the row
+        counts `filled` through `_reconcile_adopted_row`'s arm, the startup's rule."""
+        label = _row_label(row, venue_order_id)
+        self._reconcile_adopted_row(
+            boundary, row, float(report.filled_qty), report.order_status, order_id=order_id, venue_order_id=venue_order_id
+        )
+        try:
+            (self._venue_cancel or cancel_venue_order)(venue_order_id, str(report.instrument_id))
+        except Exception:
+            logger.critical(
+                "the re-read pass's cancel of %s raised or was refused -- the order may still rest at Kraken: cancel it "
+                "by hand on Kraken's open-orders page",
+                label,
+                exc_info=True,
+            )
+            return
+        event = {"event": "recancelled", "at": self._now().isoformat(), "venue_order_id": venue_order_id}
+        try:
+            update_submitted_row(self._journal_dir, boundary, row["client_order_id"], state="canceled", event=event)
+        except Exception:
+            logger.critical("the re-cancel of %s could not be journaled -- its row keeps the state it has", label, exc_info=True)
+            return
+        row["state"] = "canceled"
+        logger.warning(
+            "re-cancelled %s -- it rested at Kraken (%s) after a terminal this engine minted; its row reads canceled",
+            label,
+            report.order_status.name,
+        )
 
     def _mark_unmatched(self, boundary: datetime, row: dict, what: str, *, open_row: bool, critical: bool = False) -> None:
         """A row this pass cannot match to any venue order, marked in the ledger's own word for an
@@ -1050,21 +1556,17 @@ class ProbeExecutor:
         (`_cancel_resting`), so the order may still rest at Kraken, where no cancel this process can
         issue reaches it.
 
-        A row already carrying the mark is left alone, so a row that stays unmatched does not gain an
-        event every restart; its line is logged every restart all the same. Nothing is refused and
-        nothing trips: the operator reads the row against Kraken's own open and closed orders. The
-        write is not wrapped: the caller's per-row `try` logs its failure, and no trip stands behind
-        it."""
+        A row already carrying the mark -- the event, for this `what` (`_marked_unmatched`) -- is left
+        alone, so a row that stays unmatched does not gain an event every restart; its line is logged
+        every restart all the same, and the re-read pass reads the event to leave the row out of its
+        later arms, an open row's `ambiguous` state being the mint's or the strand's as readily as a
+        mark's. Nothing is refused and nothing trips: the operator reads the row against Kraken's own
+        open and closed orders. The write is not wrapped: the caller's per-row `try` logs its failure,
+        and no trip stands behind it."""
         client_order_id = row["client_order_id"]
         log = logger.critical if critical else logger.warning
         log("ledgered order %s matches no venue order -- %s; its row is marked ambiguous", client_order_id, what)
-        if open_row:
-            marked = row.get("state") == "ambiguous"
-        else:
-            marked = any(
-                isinstance(e, dict) and e.get("type") == "ambiguous" and e.get("what") == what for e in row.get("events") or ()
-            )
-        if marked:
+        if _marked_unmatched(row, what):
             return
         event = {"type": "ambiguous", "at": self._now().isoformat(), "what": what}
         update_submitted_row(self._journal_dir, boundary, client_order_id, state="ambiguous" if open_row else None, event=event)
@@ -1073,7 +1575,9 @@ class ProbeExecutor:
 
     def _read_venue_orders(self, rows: dict, finished: dict) -> dict | None:
         """The venue's own orders by txid, for the rows the Cache cannot answer: `{}` when no row
-        needs them, which is every startup with nothing ledgered to compare, and so no second client.
+        needs them, which is every startup with nothing ledgered to compare, and so no order read; the
+        holdings read the pass makes next (`_settle_positions_from_venue`) builds a client of its own at
+        every startup.
 
         A row needs them when it recorded a txid and the Cache holds no order under either of its
         ids -- an open row whose order closed while this process was down, or a finished row with
@@ -1114,13 +1618,22 @@ class ProbeExecutor:
             return None
 
     def _cached_order(self, row: dict, venue_order_id: str | None):
+        """The Cache's answer for `row`: its order (`_cache_lookup`), unless that order was closed by
+        a terminal this engine minted (`_minted_terminal`), when the Cache holds this engine's own
+        guess and answers nothing, so the venue is asked. At startup no order is closed that way --
+        reconciliation adopts open orders, and the void it can mint is not one of those terminals --
+        so the startup sweeps read as before."""
+        order = self._cache_lookup(row, venue_order_id)
+        return None if _minted_terminal(order) else order
+
+    def _cache_lookup(self, row: dict, venue_order_id: str | None):
         """The Cache's order for `row`: by the id this engine minted, then by the txid the row
         recorded. The second lookup is the one every order a restart reconciled needs, since the
         adapter's reports carry no client order id and reconciliation names the order by its txid;
         it goes through the Cache's own venue-order-id index rather than an assumption about how
         reconciliation names what it adopts. `cache.order` serves closed orders as readily as open
         ones, and both accessors are typed and refuse a plain str."""
-        cache = self._client.cache
+        cache = self._cache
         order = cache.order(ClientOrderId(row["client_order_id"]))
         if order is None and venue_order_id is not None:
             client_order_id = cache.client_order_id(VenueOrderId(venue_order_id))
@@ -1340,7 +1853,9 @@ class ProbeExecutor:
         try:
             os.lstat(path)
         except FileNotFoundError:
-            return  # the cheap idle path: no gate read, no venue read, nothing published
+            # The cheap idle path: no gate read, no venue read, nothing published here -- the tick's
+            # `_refresh_gate` is the idle path's one gate read, once a period.
+            return
         except OSError, ValueError:
             logger.warning("probe plan %s cannot be stat'd -- no pickup this tick", path, exc_info=True)
             return
@@ -1398,7 +1913,7 @@ class ProbeExecutor:
             return
 
         try:
-            state = venue_state_from_cache(self._client.cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now)
         except Exception:
             logger.warning("venue truth unavailable -- refusing plan %s", plan.plan_id, exc_info=True)
             if self._journal_plan(
@@ -1464,13 +1979,36 @@ class ProbeExecutor:
             self._start_intent(now)
 
     def _poll(self, now: datetime, verdict: GateVerdict) -> None:
-        """The timer's whole authority over an in-flight intent. Only a RESTING order is revocable
-        or time-boxable: a cancel is already outstanding in `cancelling`, and an IOC resolves at the
-        venue within the tick rather than sitting there."""
+        """The timer's whole authority over an in-flight intent. A RESTING order, or a reprice
+        waiting for its tick, is revocable or time-boxable: a cancel is already outstanding in
+        `cancelling`, and an IOC resolves at the venue within the tick rather than sitting there."""
         active = self._active
         if active.phase == "awaiting_quote":
             if now > active.quote_deadline:
                 self._finish_active("refused", (f"no quote within {int(_QUOTE_WAIT.total_seconds())}s",))
+            return
+        if active.phase == "awaiting_reprice":
+            # Nothing rests, so a revoke ends the intent on this tick with no cancel to wait on; the
+            # checks are `resting`'s, in `resting`'s order, after `_resubmit`'s completion test: a
+            # detached fill can complete the intent inside the wait, and a feed silent from then on
+            # would otherwise revoke what has already filled.
+            if active.target_qty - active.filled < active.constraints.lot_step:
+                self._finish_active("filled", (), active.filled)
+            elif not _level_permits(verdict.level, active.intent):
+                active.revoke_reasons = tuple(verdict.reasons)
+                self._finish_revoked(active)
+            elif active.last_quote_at is not None and now - active.last_quote_at > _QUOTE_SILENCE:
+                active.revoke_reasons = ("quote_silence",)
+                self._finish_revoked(active)
+            elif now > active.timebox_at:
+                try:
+                    self._time_box_with_nothing_resting(active)
+                except Exception:
+                    # In `execute` mode the box fires the IOC, a resubmission, so a raise takes the quote
+                    # handler's refusal, `filled` carried, `_submit`'s rule.
+                    logger.exception("executor time-box handling raised -- refusing the intent")
+                    if self._active is not None:
+                        self._finish_active("refused", ("time-box handling failed",), self._active.filled)
             return
         if active.phase != "resting":
             # `cancelling` and `ioc` are both waiting on the venue. An answer that never comes is an
@@ -1500,6 +2038,16 @@ class ProbeExecutor:
             self._enter(active, "cancelling")
             self._cancel(active)
 
+    def _time_box_with_nothing_resting(self, active: _ActiveIntent) -> None:
+        """The time-box elapsing while a reprice waits: `_on_cancel_ack`'s requested arm less the
+        cancel, since no order is out to cancel."""
+        if active.intent.mode == "execute":
+            self._fallback(active)
+        elif active.intent.mode == "rest-cancel":
+            self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
+        else:
+            self._finish_active("rest_hold_expired" if active.filled == 0.0 else "partial", (), active.filled)
+
     def _start_intent(self, now: datetime) -> None:
         """Always either arms `_active` or advances `_index` -- `_pump`'s loop depends on it."""
         plan = self._plan
@@ -1520,7 +2068,7 @@ class ProbeExecutor:
             return
 
         try:
-            state = venue_state_from_cache(self._client.cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now)
         except Exception:
             logger.warning("venue truth unavailable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
             self._refuse_intent(index, ("no venue truth",))
@@ -1544,8 +2092,7 @@ class ProbeExecutor:
             # Cache read of the same instant, and a raise after subscribing would leak the quote
             # subscription until restart.
             own_position_before = sum(
-                float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.strategy_id)
+                float(p.signed_qty) for p in self._cache.positions_open(instrument_id=instrument_id, strategy_id=self._strategy_id)
             )
         except Exception:
             logger.warning("own position unreadable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
@@ -1598,17 +2145,23 @@ class ProbeExecutor:
                 return
             bid = _as_price(getattr(tick, "bid_price", None))
             ask = _as_price(getattr(tick, "ask_price", None))
-            if bid is not None and ask is not None:
+            stored = bid is not None and ask is not None
+            if stored:
                 # Both sides or neither: a reprice needs the near touch and the IOC fallback the
                 # far one, and half a book is not a book to price either against.
                 active.bid, active.ask = bid, ask
                 active.last_quote_at = self._now()
+                active.quote_seq += 1
             if active.phase == "awaiting_quote":
                 self._first_submission(active)
+            elif active.phase == "awaiting_reprice" and stored:
+                self._reprice_at_touch(active)
         except Exception:
             logger.exception("executor quote handling raised -- refusing the intent")
             if self._active is not None:
-                self._finish_active("refused", ("quote handling failed",))
+                # `filled` carried, `_submit`'s rule: a resubmission runs here, and a raise after
+                # earlier orders filled must not erase what was bought from the operator's summary.
+                self._finish_active("refused", ("quote handling failed",), self._active.filled)
 
     def _limit_price(self, active: _ActiveIntent) -> float | None:
         """The resting price for this intent's side and mode, or None when no usable touch is known.
@@ -1668,7 +2221,7 @@ class ProbeExecutor:
         if isinstance(sized, BelowMinimum):
             return "below_minimum", sized.reason
 
-        instrument = self._client.cache.instrument(active.instrument_id)
+        instrument = self._cache.instrument(active.instrument_id)
         if instrument is None:
             return "error", f"{intent.symbol}: instrument not found in Cache"
 
@@ -1707,7 +2260,12 @@ class ProbeExecutor:
             "leverage": intent.leverage,
             # The startup pass's ONLY witness: whether the order this row stands for was a reducer.
             "reduce_only": active.reduce_only,
+            # The quote this order was priced from: two rows of one intent sharing a `quote_seq` were priced off one tick.
+            "bid": active.bid,
+            "ask": active.ask,
+            "quote_seq": active.quote_seq,
         }
+        active.priced_seq = active.quote_seq
         params = {"leverage": intent.leverage} if intent.leverage is not None else None
         return self._submit(active, order, params), ""
 
@@ -1743,14 +2301,20 @@ class ProbeExecutor:
         self._enter(active, "resting")
 
     def _reprice(self, active: _ActiveIntent) -> None:
-        """Two callers, not two universally-reachable ones: the venue's synchronous post-only
-        rejection and its accept-then-cancel. The rejection arm is unconditional -- nothing was ever
-        resting, so the recomputed price is simply this intent's own offset off the CURRENT touch,
-        and a tight-offset intent needs that recovery to get resting at all. The accept-then-cancel
-        arm is filtered before it arrives: a rest-hold order is a drill's subject and its
-        venue-originated cancel is terminal there (spec 00108 D5), never a reprice. The counter
-        counts RESUBMISSIONS -- the first submission was never a reprice -- so `_MAX_REPRICES` of
-        them happen and the next one refuses."""
+        """Two callers: the venue's synchronous post-only rejection and its accept-then-cancel. The
+        rejection arm is unconditional; the accept-then-cancel arm is filtered before it arrives,
+        since a rest-hold order's venue cancel is terminal. The counter counts RESUBMISSIONS -- the
+        first submission was never a reprice -- so `_MAX_REPRICES` of them happen; the next crossing
+        spends the maker budget, and in `execute` mode that crosses through the bounded IOC rather
+        than ending the intent, since an unfilled leg strands the probe.
+
+        A crossing says the stored touch is behind the venue's book, so the resubmission prices off
+        a tick newer than the one that priced the order it replaces: at once when one has already
+        arrived, else from `awaiting_reprice` when `on_quote` stores one; without the wait each
+        resubmission rides its own rejection or cancel dispatch, and the whole budget is spent off
+        one tick. The wait is entered with the ended order detached, so a fill racing the cancel or
+        a replayed ack takes the detached path -- a row append with no state claim, the fill
+        credited to the intent -- and spends no budget."""
         if active.cancel_requested:
             # A cancel is already out, so this order is over either way -- but WHY it is out decides
             # what happens next, and the two answers are opposites. A revoke (kill file, disarm,
@@ -1766,8 +2330,18 @@ class ProbeExecutor:
             return
         active.reprices += 1
         if active.reprices > _MAX_REPRICES:
-            self._finish_active("unfilled", ("reprice budget exhausted",), active.filled)
+            if active.intent.mode == "execute":
+                self._fallback(active)
+            else:
+                self._finish_active("unfilled", ("reprice budget exhausted",), active.filled)
             return
+        if active.quote_seq > active.priced_seq:
+            self._reprice_at_touch(active)
+            return
+        active.client_order_id = active.order = None
+        self._enter(active, "awaiting_reprice")
+
+    def _reprice_at_touch(self, active: _ActiveIntent) -> None:
         price = self._limit_price(active)
         if price is None:
             self._finish_active("refused", (f"no usable touch price for {active.intent.symbol}",), active.filled)
@@ -1794,6 +2368,13 @@ class ProbeExecutor:
         already got. A remainder the venue cannot accept is a terminal `partial` -- a legitimate end
         state -- never an order that would only be rejected.
         """
+        if active.target_qty - active.filled < active.constraints.lot_step:
+            # A late fill on the order this one replaces can complete the intent before the tick
+            # arrives: `_on_fill`'s completion test, so the intent ends `filled`, where sizing would
+            # refuse the zero remainder as below the minimum and end it `partial` carrying its whole
+            # quantity.
+            self._finish_active("filled", (), active.filled)
+            return
         remainder = active.target_qty - active.filled
         result, detail = self._place(active, remainder, price, time_in_force=time_in_force, post_only=post_only)
         if result == "below_minimum":
@@ -2122,9 +2703,10 @@ class ProbeExecutor:
         self._active = None
         self._plan = None
         self._index = 0
-        # Publish now rather than waiting for a tick that may never evaluate again: with no plan
-        # running, `on_timer` takes the idle path and reads no gate at all, so the trip gauge would
-        # otherwise sit at its pre-trip value until the next cycle happens to publish one.
+        # Publish now rather than waiting for the tick: with no plan running, the idle path reads
+        # the gate once a period (`_refresh_gate`), so the trip gauge would otherwise sit at its
+        # pre-trip value for up to `_GATE_REFRESH`. This evaluation stamps the heartbeat too, its
+        # `heartbeat` left at the default True.
         self._evaluate(self._now())
 
     def _write_kill_file(self, reason: str) -> None:
@@ -2177,7 +2759,7 @@ class ProbeExecutor:
             requested.add(str(active.client_order_id))
             self._cancel(active)
         try:
-            resting = list(self._client.cache.orders_open(venue=_VENUE))
+            resting = list(self._cache.orders_open(venue=_VENUE))
         except Exception:
             logger.critical("open orders could not be read while tripping -- others may still rest at the venue", exc_info=True)
             return
@@ -2221,7 +2803,7 @@ class ProbeExecutor:
             self._trip_kill(f"a fill arrived for order {client_order_id}, for which this engine holds no open order record")
             return True
         boundary, row = attached
-        qty = float(event.last_qty)
+        qty = self._fill_credit(event, row, float(event.last_qty))
         ordered = _ordered_qty(row)
         if row["filled_qty"] + qty > ordered + _OVERFILL_TOLERANCE:
             self._record_trip_fill(boundary, row, event, qty)
@@ -2249,7 +2831,9 @@ class ProbeExecutor:
         """
         client_order_id = row["client_order_id"]
         try:
-            update_submitted_row(self._journal_dir, boundary, client_order_id, event=self._fill_payload(event), add_filled_qty=qty)
+            update_submitted_row(
+                self._journal_dir, boundary, client_order_id, event=self._fill_payload(event, qty), add_filled_qty=qty
+            )
         except Exception:
             logger.critical("the fill that tripped the kill switch could not be journaled for %s", client_order_id, exc_info=True)
         row["filled_qty"] = row["filled_qty"] + qty
@@ -2301,7 +2885,7 @@ class ProbeExecutor:
         try:
             actual = sum(
                 float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._client.strategy_id)
+                for p in self._cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._strategy_id)
             )
         except Exception:
             # The venue-truth read at intent start proved this same Cache readable minutes ago, so a
@@ -2328,6 +2912,16 @@ class ProbeExecutor:
             # Bookkeeping, not a submission: log it and leave the row as it stands rather than
             # dropping a plan whose order may be live.
             logger.exception("executor order-event handling raised -- continuing")
+
+    def _resubmit_on_event(self, active: _ActiveIntent, resubmission) -> None:
+        """The quote handler's rule for a raise inside a resubmission: `on_order_event`'s catch-all
+        refuses nothing, and would leave the intent on the order the venue has just ended."""
+        try:
+            resubmission(active)
+        except Exception:
+            logger.exception("executor order-event resubmission raised -- refusing the intent")
+            if self._active is not None:
+                self._finish_active("refused", ("order-event handling failed",), self._active.filled)
 
     def _on_order_event(self, event) -> None:
         # D11's fill-time trips run FIRST, before any row update and before the in-flight/detached
@@ -2375,7 +2969,9 @@ class ProbeExecutor:
             # that comparison holds it against by the same amount, and the check passes. A phantom
             # INSIDE the remaining quantity, born of a venue misreport, is past every guard this
             # process has.
+            payload["reconciliation"] = True  # the ledger's own evidence of the mint, once the venue's report settles the row
             self._update_row(active, state="ambiguous", event=payload)
+            self._arm_reread_after_mint()  # the plan's own order: F2's shape, where the cut's DISCONNECTED then holds it
             self._strand_ambiguous(active, f"{name} was reconciled, not received -- the venue never answered")
             return
 
@@ -2453,7 +3049,7 @@ class ProbeExecutor:
         if due_post_only or _POST_ONLY_MARKER in reason:
             self._update_row(active, state="rejected", event=payload)
             _inc_order("rejected")
-            self._reprice(active)
+            self._resubmit_on_event(active, self._reprice)
             return
         if any(marker in reason for marker in _KRAKEN_ERROR_MARKERS):
             self._update_row(active, state="rejected", event=payload)
@@ -2475,7 +3071,7 @@ class ProbeExecutor:
             self._update_row(active, state="canceled", event=payload)
             _inc_order("canceled")
             if active.falling_back:
-                self._fallback(active)
+                self._resubmit_on_event(active, self._fallback)
                 return
             if active.intent.mode == "rest-cancel":
                 self._finish_active("rest_cancel_ok" if active.filled == 0.0 else "partial", (), active.filled)
@@ -2494,7 +3090,7 @@ class ProbeExecutor:
         self._update_row(active, state="venue_canceled", event=payload)
         _inc_order("venue_canceled")
         if active.phase == "ioc":
-            self._fallback(active)
+            self._resubmit_on_event(active, self._fallback)
             return
         if active.intent.mode == "rest-hold":
             # Spec 00108 D5. This arm runs for ANY venue-originated cancel or expiry while the
@@ -2504,7 +3100,7 @@ class ProbeExecutor:
             # venue, and contaminates exactly the continuity drill G exists to measure.
             self._finish_active("rest_hold_venue_canceled" if active.filled == 0.0 else "partial", (), active.filled)
             return
-        self._reprice(active)
+        self._resubmit_on_event(active, self._reprice)
 
     def on_external_order_event(self, event) -> None:
         try:
@@ -2515,23 +3111,37 @@ class ProbeExecutor:
             logger.exception("executor external-order-event handling raised -- continuing")
 
     def _venue_terminal_state(self, event) -> str | None:
-        """The row state a non-fill event writes, read off the VENUE's own order.
+        """The row state a non-fill event writes: `ambiguous` for a terminal the engine minted, else
+        read off the VENUE's own order, and none for a refused cancel, which logs CRITICAL.
 
-        An event the execution engine MINTED for itself writes none, and that is decided first,
-        before the order is even read. Past its in-flight retry budget the engine stops waiting on an
-        unanswered order and publishes that order's terminal itself, flagged `reconciliation`; the
-        Cache's order has already taken it, so its status reads CANCELED or EXPIRED or REJECTED
-        exactly as a venue answer would. It is not one. Nobody at the venue confirmed anything and
-        the adopted order may still be resting, so a terminal state here would put a venue claim in
-        the ledger on this engine's own authority -- and close a row that `_OPEN_ORDER_STATES` then
-        never re-attaches, leaving a live order untracked for the life of the process. Left open, the
-        event still appends as evidence, the entry stays in `_attached` for a fill that can still
-        arrive, and the next startup's sweep settles the row against the order's own status. Keyed on
-        the FLAG and never on the mechanism that set it, so a synthesis route nothing here enumerates
-        is covered by construction; the cost when the flag sits on a venue-derived terminal is one
-        row settled a restart later, which is the direction to be wrong in. `OrderFilled` never
-        reaches this method -- the caller's fill branch returns above it -- so a reconciled fill
-        keeps its row, its credit and its counter without anything here having to exempt it.
+        An event the execution engine MINTED for itself writes `ambiguous`, and that is decided
+        first, before the order is even read. Past its in-flight retry budget the engine stops
+        waiting on an unanswered order and publishes that order's terminal itself, flagged
+        `reconciliation`; the Cache's order has already taken it, so its status reads CANCELED or
+        EXPIRED or REJECTED exactly as a venue answer would. It is not one. Nobody at the venue
+        confirmed anything and the adopted order may still be resting, so a terminal state here
+        would put a venue claim in the ledger on this engine's own authority -- and close a row that
+        `_OPEN_ORDER_STATES` then never re-attaches, leaving a live order untracked for the life of
+        the process. `ambiguous` claims nothing about the venue, is the active path's word for the
+        same event, and keeps the row in the re-attach set: the event appends as evidence, with the
+        flag recorded so the ledger can tell the mint from the venue's own ack once the row is
+        settled, the entry stays in `_attached` for a fill that can still arrive, and the venue's own
+        report settles the row -- the re-read pass's on the next tick with nothing in flight
+        (`_arm_reread_after_mint`), or a startup's inside the re-attach window where the pass could
+        not read; until then the pages have the operator read Kraken's open orders, which tell a
+        cancel the venue executed unacknowledged from one that did not reach it, and the pass cancels
+        one still resting by txid on the bare client, the hand cancel being the fallback its CRITICAL
+        lines name. The line is a
+        WARNING and pages nothing: on the pinned wheel the venue's answer to a cancel of an order
+        reconciled as external is not one this engine applies, so the mint is the expected end of an
+        adopt-pass cancel and not a fault. Keyed on the flag and the terminal's name, as the
+        own-order path is, and never on the mechanism that set the flag: a synthesis route nothing
+        here enumerates is covered by construction, while the library's non-terminals carry the flag
+        too and a flagged acceptance or cancel-side event writes nothing; the cost when the flag
+        sits on a venue-derived terminal is one row the re-read pass settles on its next tick, the direction
+        to be wrong in. `OrderFilled` never reaches this method -- the caller's fill branch returns
+        above it -- so a reconciled fill keeps its row, its credit and its counter without anything
+        here having to exempt it.
 
         The order already carries the event by the time this runs -- an order event is applied to the
         order and to the Cache before it is dispatched, which tests/test_engine_executor.py measures
@@ -2545,25 +3155,42 @@ class ProbeExecutor:
         and got: the name claims the venue ended the order, the order says CANCELED, and the order
         is right.
 
-        Three further things mean the same thing here -- no terminal state, row untouched: a status
-        outside the map (every OPEN one, so a refused cancel leaves the row pointing at a live
-        order), an order the Cache does not hold, and a Cache that cannot be read at all. The last is
-        not hypothetical: a read inside the handler for an event a command of this process emits
-        itself -- `OrderPendingCancel`, which the adopt pass's and a trip's cancels put on this path
-        -- raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the
-        write that produced it. Letting that escape would abandon the whole handler and cost the row
-        its event payload -- the forensic record this path exists to keep -- to decide a state those
+        Three things write nothing here -- no terminal state, row untouched: a status outside the
+        map (every OPEN one, PENDING_CANCEL among them, the status behind the `OrderPendingCancel`
+        the adopt pass's and a trip's cancels put on this path), an order the Cache does not hold,
+        and a Cache that cannot be read at all; a refused cancel writes nothing too, decided before
+        the read and logged CRITICAL, since the order may still rest where the cancel is not re-sent
+        and, where the pass cancelled it and its sweep ran, after the sweep has written its intent;
+        absent from Kraken's open orders, the venue had already ended it. The read goes through the
+        handle taken at construction and not through the client: `OrderPendingCancel` is dispatched
+        while the client's own `cancel_order` still runs, and the client's `cache` getter raises
+        `Already mutably borrowed` there -- the strategy's PyO3 cell is what that command holds; the
+        Cache itself is free, and the handle reads PENDING_CANCEL. A read that raises all the same
+        is caught rather than let escape, which would abandon the whole handler and cost the row its
+        event payload -- the forensic record this path exists to keep -- to decide a state those
         events never carried anyway.
         """
-        if getattr(event, "reconciliation", False):
+        if type(event).__name__ in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
             logger.warning(
-                "%s for %s was reconciled, not received -- the venue never answered, so its row keeps the state it has",
+                "%s for %s was reconciled, not received -- no venue answer reached this engine; its row reads ambiguous "
+                "until the re-read pass settles it from the venue's own report",
                 type(event).__name__,
+                getattr(event, "client_order_id", "?"),
+            )
+            self._arm_reread_after_mint()
+            return "ambiguous"
+        if type(event).__name__ == "OrderCancelRejected":
+            # The venue positively says the cancel did not take, so the order may still rest where the cancel is not re-sent
+            # and, where the pass cancelled it and its sweep ran, after the sweep has written its intent; absent from Kraken's
+            # open orders, the venue had already ended it. The hand cancel is the operator's, the own-order path's line.
+            logger.critical(
+                "cancel of adopted order %s was REJECTED by the venue -- the order may still rest, and the cancel is not "
+                "re-sent: cancel it by hand on Kraken's open-orders page",
                 getattr(event, "client_order_id", "?"),
             )
             return None
         try:
-            order = self._client.cache.order(event.client_order_id)
+            order = self._cache.order(event.client_order_id)
         except Exception:
             logger.warning(
                 "the venue order behind %s could not be read -- its row keeps the state it has",
@@ -2641,6 +3268,8 @@ class ProbeExecutor:
         reason = getattr(event, "reason", None)
         if reason is not None:
             payload["reason"] = str(reason)
+        if name in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
+            payload["reconciliation"] = True  # the flag a minted terminal carries: the ledger's own evidence of the mint
         boundary, row = attached
         terminal_state = self._venue_terminal_state(event)
         if row.get("state") == "filled":
@@ -2651,6 +3280,51 @@ class ProbeExecutor:
         update_submitted_row(self._journal_dir, boundary, row["client_order_id"], state=terminal_state, event=payload)
         if terminal_state is not None:
             row["state"] = terminal_state  # the mirror the completion guard and D7 both read
+
+    def _cache_net(self, symbol: str) -> float:
+        """The Cache's instrument-scoped net position under `symbol`, the gauge's own basis."""
+        held = self._cache.positions_open(instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
+        return sum(float(p.signed_qty) for p in held)
+
+    def _settle_positions_from_venue(self, moment: str) -> None:
+        """The venue's own holdings settle the position gauge where the Cache disagrees: at the startup
+        pass, after its order read and before its cancels, and at the end of every re-read pass whose reads
+        answered -- on the two passes' nonce terms, nothing of this process sent or in flight -- the venue's
+        figure is published for every symbol the read answers, and its difference from the Cache's net is
+        kept for `_publish_fill`, so a fill between two passes moves the gauge from the venue's figure. What
+        the Cache never took, a hand margin open or a fill made while the engine was down, reads here; what
+        it never let go, a hand close it refused or a settled lot it holds as a margin position, reads here
+        too, the settled lot by the coin's spot balance. A read that fails logs WARNING and the gauge keeps
+        its reading until the next pass, the seed's fold at the first; a disagreement logs WARNING per
+        symbol, since it names a hand act or a fill this engine never saw. The read serves the gauge alone,
+        so with no metrics hook installed, the exporter off, nothing is read. Wrapped as `_publish_fill` is:
+        telemetry never alters what this engine does."""
+        if _metrics is None:
+            return
+        try:
+            held = (self._venue_holdings or read_venue_holdings)()
+        except Exception:
+            logger.warning(
+                "the venue's holdings could not be read at %s -- the position gauge keeps its reading until the next pass",
+                moment,
+                exc_info=True,
+            )
+            return
+        try:
+            for symbol, venue_qty in sorted(held.items()):
+                cache_qty = self._cache_net(symbol)
+                self._venue_correction[symbol] = venue_qty - cache_qty
+                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE:
+                    logger.warning(
+                        "the venue holds %s %s where the Cache reads %s -- the position gauge takes the venue's figure at %s",
+                        venue_qty,
+                        symbol,
+                        cache_qty,
+                        moment,
+                    )
+                _metrics.set_position(symbol, venue_qty)
+        except Exception:
+            logger.exception("executor position settle raised -- continuing")
 
     def _publish_fill(self, event) -> None:
         """The live view of the fill that just went into the ledger row -- same event, same numbers.
@@ -2673,9 +3347,11 @@ class ProbeExecutor:
         leg whose only fill happened while this process was down does not enter the realized-PnL
         gauge until it fills live again.
 
-        The position comes from the CACHE, never from this process's own running total. Note this
-        read is instrument-scoped, so it carries any holding this engine never ordered too --
-        `_reconcile_terminal` doubts the strategy-scoped quantity, not this one.
+        The position comes from the CACHE, never from this process's own running total, plus the
+        correction the last venue settle left (`_settle_positions_from_venue`): the venue's figure
+        then, carried through what the Cache took since. Note this read is instrument-scoped, so it
+        carries any holding this engine never ordered too -- `_reconcile_terminal` doubts the
+        strategy-scoped quantity, not this one.
 
         Wrapped whole, `_inc_order`'s contract: the Cache reads here are telemetry and a metrics
         failure may never alter what this engine does with a fill. `inc_fill` runs first, so a
@@ -2687,8 +3363,8 @@ class ProbeExecutor:
             _metrics.inc_fill(_liquidity(event.liquidity_side).lower(), _fee_eur(event.commission))
             instrument_id = event.instrument_id
             self._traded.add(instrument_id)
-            held = self._client.cache.positions_open(instrument_id=instrument_id)
-            _metrics.set_position(_SYMBOL_BY_INSTRUMENT_ID[str(instrument_id)], sum(float(p.signed_qty) for p in held))
+            symbol = _SYMBOL_BY_INSTRUMENT_ID[str(instrument_id)]
+            _metrics.set_position(symbol, self._cache_net(symbol) + self._venue_correction.get(symbol, 0.0))
             _metrics.set_realized(self._realized_eur())
         except Exception:
             logger.exception("executor fill metrics hook raised -- continuing")
@@ -2705,7 +3381,7 @@ class ProbeExecutor:
         leg this engine opened realizes an outcome that is genuinely this engine's, and scoping to
         our own strategy would systematically miss exactly that case. Telemetry answers what the
         account did; the reconciliation answers what our own orders did."""
-        cache = self._client.cache
+        cache = self._cache
         total = 0.0
         for instrument_id in self._traded:
             positions = list(cache.positions_open(instrument_id=instrument_id)) + list(
@@ -2726,16 +3402,19 @@ class ProbeExecutor:
                 total += float(pnl)
         return total
 
-    def _fill_payload(self, event) -> dict:
+    def _fill_payload(self, event, credited: float | None = None) -> dict:
         """The forensic shape of one fill. Shared by the in-flight path and the detached one so an
         adopted order's fill is recorded in exactly the same terms as an order this process placed.
 
         It carries the venue order id beside the acceptance's copy: an order can reach FILLED with no
         acceptance in the ledger -- the library admits SUBMITTED to FILLED, and an acceptance whose
         write failed leaves none -- and a filled row with no venue id cannot be checked for a
-        withdrawn fill after a restart."""
+        withdrawn fill after a restart. `credited` is what the fill moved the row's `filled_qty` by
+        where `_fill_credit` capped it below the event's quantity, written as `credited` beside `qty`
+        and only then, so every line whose quantity moved the row whole reads as before and the
+        ledger's readers count what moved the row (`execledger.credited_qty`)."""
         commission = event.commission
-        return {
+        payload = {
             "event": "fill",
             "at": self._now().isoformat(),
             "qty": float(event.last_qty),
@@ -2752,6 +3431,43 @@ class ProbeExecutor:
             "trade_id": str(event.trade_id),
             "venue_order_id": _venue_order_id_of(event),
         }
+        if credited is not None and credited != payload["qty"]:
+            payload["credited"] = credited
+        return payload
+
+    def _fill_credit(self, event, row: dict, qty: float) -> float:
+        """What a fill adds to `row`'s `filled_qty`: the event's own quantity, capped, for a row the
+        re-read pass repaired from the venue's report in this process, at what the Cache's order has
+        filled beyond the row -- so that fill, should the stream replay it after the pass (F2's shape,
+        the execution socket resubscribing behind the data socket's return; whether it replays is
+        unmeasured on this wheel, and F2's Record reads it), adds nothing, where the event's quantity
+        would count it twice, a false overfill trip on a whole fill and a false withdrawal trip at the
+        next startup on a partial. The `fill` line keeps the event's own quantity either way, the
+        stream's record, and carries `credited` where the cap moved the row by less (`_fill_payload`),
+        the figure the ledger's readers count into `held` beside the repair's `reconciled` line. The cap
+        under-credits a fill the Cache is behind on, the safe direction: a fill after the pass on an
+        order whose cut fills the stream never delivered is credited only beyond the Cache's lag,
+        nothing where the lag exceeds it, and the row keeps the shortfall with the `fill` line carrying
+        the fill -- a row whose re-cancel returned, or whose closed report settled it, being terminal,
+        outside the open rows a startup repairs and read at a startup for a withdrawal alone, which a
+        shortfall never trips, while one whose re-cancel raised stays open, a row a startup inside the
+        re-attach window reads against the venue's report. Every other row, and a Cache that
+        cannot be read or does not hold the order, credits the event's quantity: the startup's repair
+        rebuilds the Cache from the venue first, so nothing replays behind it."""
+        if row["client_order_id"] not in self._rows_the_pass_repaired:
+            return qty
+        try:
+            held = self._cache.order(event.client_order_id)
+        except Exception:
+            return qty
+        if held is None:
+            return qty
+        beyond = float(held.filled_qty) - row["filled_qty"]
+        # The sweep's dead band: the two figures are float sums a rounding apart, and a credit that rounding short of
+        # the event's quantity would write a `credited` saying the fill moved the row by less than it did.
+        if beyond >= qty - _OVERFILL_TOLERANCE:
+            return qty
+        return max(0.0, min(qty, beyond))
 
     def _on_detached_event(self, event) -> None:
         """An event for an order that is not the one in flight: an order this process superseded, one
@@ -2780,12 +3496,17 @@ class ProbeExecutor:
             return  # an order this process never ledgered -- nothing to append to
         boundary, row = attached
         is_fill = type(event).__name__ == "OrderFilled"
-        payload = self._fill_payload(event) if is_fill else {"type": type(event).__name__, "at": self._now().isoformat()}
+        qty = self._fill_credit(event, row, float(event.last_qty)) if is_fill else 0.0
+        payload = self._fill_payload(event, qty) if is_fill else {"type": type(event).__name__, "at": self._now().isoformat()}
+        if not is_fill and type(event).__name__ in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
+            # The third mint site: the engine minted a terminal for an order no intent holds -- the ack
+            # deadline stranded the intent first, or a reprice superseded the order -- and it lands here.
+            payload["reconciliation"] = True  # the mint's own evidence on the detached path
+            self._arm_reread_after_mint()  # the detached site: the order may rest, and no intent of this process will ask
         if type(event).__name__ == "OrderAccepted":
             # A superseded order's acceptance can land after the order it was replaced by: the same
             # record `_on_order_event` writes for the one in flight.
             payload["venue_order_id"] = str(event.venue_order_id)
-        qty = float(event.last_qty) if is_fill else 0.0
         update_submitted_row(self._journal_dir, boundary, row["client_order_id"], event=payload, add_filled_qty=qty)
         if qty:
             # The mirror `_mirror_row_fill` makes, on the row already in hand: the event's own id

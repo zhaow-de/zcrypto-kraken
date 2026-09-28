@@ -170,6 +170,10 @@ TABLE: dict[str, dict[str, Standin]] = {
         "RecordingMetrics": Standin(OURS, "cli.engine.command._ExecutionMetrics", ()),
         # Answers REAL `OrderStatusReport`s; what it restates is this repo's reader, not the library.
         "_VenueOrders": Standin(OURS, "cli.engine.executor.read_venue_orders, the venue_orders ProbeExecutor is built with", ()),
+        "_VenueCancel": Standin(OURS, "cli.engine.executor.cancel_venue_order, the venue_cancel ProbeExecutor is built with", ()),
+        "_VenueHoldings": Standin(
+            OURS, "cli.engine.executor.read_venue_holdings, the venue_holdings ProbeExecutor is built with", ()
+        ),
     },
     "test_engine_command.py": {
         "_FakeNode": Standin(LIBRARY, "nautilus_trader.live.LiveNode", (_NODE_SURFACE, _NODE_OFFERS)),

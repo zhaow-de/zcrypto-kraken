@@ -206,6 +206,19 @@ def test_a_lifecycle_event_that_moves_no_quantity_is_skipped():
     assert notes == []
 
 
+def test_a_fill_line_carrying_credited_is_read_by_what_it_moved_the_row():
+    """A line carries `credited` beside `qty` where a writer's cap moved the row by less than the fill -- 0.0 for a
+    replay of the fill a `reconciled` repair already carried -- and nowhere else. `Fill.credited` is that figure, or
+    `qty` where the line carries none, so `held` counts each fill once while `qty` stays the blend's weight and the
+    venue's figure; a repair's is its own quantity."""
+    fills, _ = extract_fills([_rec([_repair(), _fill(credited=0.0), _fill(trade_id="T-2", at="2026-09-01T00:03:00+00:00")])])
+    assert [(f.trade_id[:10], f.qty, f.credited) for f in fills] == [
+        ("reconciled", 0.002, 0.002),
+        ("T-1", 0.001, 0.0),
+        ("T-2", 0.001, 0.001),
+    ]
+
+
 # --- realized drift, ISO weeks, and the rung boundary ---------------------------------------------
 
 _MINIMUMS = {"BTC": (0.00005, 0.45)}
@@ -227,14 +240,22 @@ def _stage(ts, *, weight=1.0, close=50000.0):
     )
 
 
-def _mk(boundary, qty, side="buy", px=50000.0):
+def _mk(boundary, qty, side="buy", px=50000.0, credited=None):
     b = datetime.fromisoformat(boundary)
-    return Fill(b, b, "BTC", side, qty, px, 0.05, "MAKER", f"T-{boundary}-{side}")
+    return Fill(b, b, "BTC", side, qty, px, 0.05, "MAKER", f"T-{boundary}-{side}", credited=credited)
 
 
 def test_a_fill_matching_the_target_leaves_zero_drift():
     # NAV 1000 at 50k -> target 0.02 BTC.
     out = realized_drift([_stage("2026-08-31T00:00:00+00:00")], [_mk("2026-08-31T00:00:00+00:00", 0.02)], 1000.0)
+    assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+
+
+def test_realized_drift_sums_what_a_fill_credited_the_row_not_the_streams_quantity():
+    # The target's fill, then the stream's replay of it credited nothing: `held` stays at the target, where summing
+    # the replay's quantity would count the fill twice and read a drift of the target's own size.
+    b = "2026-08-31T00:00:00+00:00"
+    out = realized_drift([_stage(b)], [_mk(b, 0.02), _mk(b, 0.02, credited=0.0)], 1000.0)
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
 
 
@@ -672,38 +693,110 @@ def test_an_unmatched_trade_row_does_not_hide_a_matched_one(tmp_path):
     assert out["status"] == "FAILED" and out["matched"] == 2 and out["unmatched"] == ["T-UNKNOWN"]
 
 
-def test_a_non_trade_non_rollover_row_is_neither_matched_nor_unmatched(tmp_path):
+def test_a_no_fill_row_type_is_counted_as_known_never_matched(tmp_path):
     # A deposit has no fill behind it by construction; failing the reconciliation on one would make
-    # every real export FAILED and the signal worthless. It is on the known-irrelevant list, so it
-    # is not reported as a type this reader could not place either.
+    # every real export FAILED and the signal worthless. It is counted under `known`, apart from a
+    # type the reader has not met.
     p = _export(tmp_path, ['"L6","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1350.0"'])
     out = reconcile_ledger(read_ledger_export(p), [])
     assert out["status"] == "insufficient-data" and out["matched"] == 0 and out["unmatched"] == []
-    assert out["ignored"] == {}
+    assert out["known"] == {"deposit": 1} and out["ignored"] == {}
 
 
-def test_a_row_type_this_reader_places_nowhere_is_counted_by_type(tmp_path):
-    # `margin` is the one that matters: a margin position writes rows carrying the SAME refid as its
-    # trade, and the first export this reader will ever see is a margin export. Consuming it would
-    # guess semantics nobody has verified; accepting it silently would hide a whole class of row
-    # exactly where the reader is first used. So it is counted and named.
+def test_a_row_type_this_reader_has_not_met_is_counted_by_type(tmp_path):
     p = _export(
         tmp_path,
         [
-            '"L7","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-2.0","0.0","848.0"',
-            '"L8","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-3.0","0.0","845.0"',
-            '"L9","S1","2026-08-31 04:00:00","settled","","currency","XXBT","0.001","0.0","0.001"',
+            '"L7","X1","2026-08-31 00:00:00","staking","","currency","ZEUR","0.01","0.0","848.0"',
             '"LA","Q1","2026-08-31 04:00:00","withdrawal","","currency","ZEUR","-10.0","0.0","835.0"',
         ],
     )
     out = reconcile_ledger(read_ledger_export(p), [])
-    assert out["ignored"] == {"margin": 2, "settled": 1}  # the withdrawal is known-irrelevant
+    assert out["ignored"] == {"staking": 1} and out["known"] == {"withdrawal": 1}
     assert out["status"] == "insufficient-data" and out["matched"] == 0 and out["unmatched"] == []
+
+
+def test_a_margin_row_matching_a_journaled_fill_reconciles_and_carries_its_fee_not_its_pnl(tmp_path):
+    # A margin open or close writes no `trade` row: its `margin` row carries the fill's own trade id,
+    # the realized PnL as `amount` and the fill's fee as `fee`. The PnL is positive on purpose, so a
+    # reader summing `amount` as a cost reads 0.1379 where 0.0795 belongs.
+    p = _export(tmp_path, ['"L8","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","0.1379","0.0795","848.0"'])
+    out = reconcile_ledger(read_ledger_export(p), [_lfill("T-1")])
+    assert out["status"] == "ok" and out["matched"] == 1 and out["unmatched"] == []
+    assert out["matched_fees_eur"] == pytest.approx(0.0795)
+    assert out["known"] == {} and out["ignored"] == {}
+
+
+def test_a_margin_row_matching_no_journaled_fill_FAILS_the_reconciliation(tmp_path):
+    p = _export(tmp_path, ['"L8","T-UNKNOWN","2026-08-31 00:00:00","margin","","currency","ZEUR","-0.2","0.08","848.0"'])
+    out = reconcile_ledger(read_ledger_export(p), [_lfill("T-1")])
+    assert out["status"] == "FAILED" and out["unmatched"] == ["T-UNKNOWN"] and out["matched_fees_eur"] == 0.0
+
+
+def test_a_rollover_charged_in_eurc_is_summed_at_par_beside_a_euro_one(tmp_path):
+    # The rollover arm reads the same asset set as the matched arm: a EURC rollover counts at par
+    # rather than falling out of the figure.
+    p = _export(
+        tmp_path,
+        [
+            '"L5","T-2","2026-08-31 14:33:50","rollover","","currency","EUR","-0.0040","0.0040","900.0"',
+            '"L6","T-2","2026-08-31 18:33:52","rollover","","currency","EURC","-0.0040","0.0040","0.0800"',
+        ],
+    )
+    out = reconcile_ledger(read_ledger_export(p), [])
+    assert out["rollover_fees_eur"] == pytest.approx(0.0080)
+
+
+_REAL_HEADER = (
+    "txid,refid,time,type,subtype,aclass,subclass,asset,wallet,amount,fee,balance,amountusd,feeusd,balanceusd,feecurrency"
+)
+
+
+def _real_row(txid, refid, time, type_, subtype, asset, amount, fee, feecurrency="EUR"):
+    """One line in the shape of the venue's own export, all sixteen columns, the usd columns blank."""
+    return (
+        f'"{txid}","{refid}","{time}","{type_}","{subtype}","currency","","{asset}","spot / main",'
+        f'"{amount}","{fee}","0","","","","{feecurrency}"'
+    )
+
+
+def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
+    """The closed world: the six row types the venue's export carries, one arm each -- `trade` and
+    `margin` matched by trade id, `rollover` summed, `settled` and `collateralconversion` known
+    no-fill types beside `deposit`, nothing left for `ignored`. A journaled spot fill T-1 and two
+    margin fills, T-2 charged in euro and T-3 in EURC after the venue's par conversion beside it;
+    the rollovers carry T-2, the position's opening trade, and the settle an id of its own; the spot
+    fill's BTC leg carries a fee in BTC, outside the euro figure. The shape and the asset spellings
+    are the export's; the figures are synthetic."""
+    p = _export(
+        tmp_path,
+        [
+            _real_row("L1", "T-1", "2026-09-25 20:44:53", "trade", "tradespot", "EUR", "19.86", "0.0800"),
+            _real_row("L2", "T-1", "2026-09-25 20:44:53", "trade", "tradespot", "BTC", "-0.00027", "0.0000027", "BTC"),
+            _real_row("L3", "T-2", "2026-09-25 10:32:05", "margin", "", "EUR", "0", "0.0800"),
+            _real_row("L4", "T-3", "2026-09-25 10:32:03", "margin", "", "EURC", "0", "0.084000", "EURC"),
+            _real_row("L5", "T-2", "2026-09-25 14:33:50", "rollover", "", "EUR", "-0.0040", "0.0040"),
+            _real_row("L6", "T-2", "2026-09-25 18:33:52", "rollover", "", "EUR", "-0.0040", "0.0040"),
+            _real_row("L7", "T-3", "2026-09-25 10:32:03", "collateralconversion", "", "EUR", "-0.0840", "0", ""),
+            _real_row("L8", "T-3", "2026-09-25 10:32:03", "collateralconversion", "", "EURC", "0.084000", "0", ""),
+            _real_row("L9", "S-1", "2026-09-25 20:30:26", "settled", "", "EUR", "-20.00", "0", ""),
+            _real_row("LA", "S-1", "2026-09-25 20:30:26", "settled", "", "BTC", "0.00027", "0", ""),
+            _real_row("LB", "Q-1", "2026-07-01 09:00:00", "deposit", "", "EUR", "100.0", "0", ""),
+        ],
+        header=_REAL_HEADER,
+    )
+    out = reconcile_ledger(read_ledger_export(p), [_lfill("T-1"), _lfill("T-2"), _lfill("T-3")])
+    assert out["status"] == "ok" and out["n_rows"] == 11
+    assert out["matched"] == 4 and out["unmatched"] == []
+    assert out["matched_fees_eur"] == pytest.approx(0.2440)
+    assert out["rollover_fees_eur"] == pytest.approx(0.0080)
+    assert out["known"] == {"collateralconversion": 2, "settled": 2, "deposit": 1}
+    assert out["ignored"] == {}
 
 
 def test_a_header_only_export_reads_no_rows_and_decides_nothing(tmp_path):
     # "ok" here would be a clean bill over a comparison that never happened, indistinguishable from an
-    # export whose every trade row matched; `n_rows` separates it from one carrying no trade rows.
+    # export whose every trade or margin row matched; `n_rows` separates it from one carrying neither.
     empty = reconcile_ledger(read_ledger_export(_export(tmp_path, [])), [])
     assert empty["n_rows"] == 0
     assert empty["status"] == "insufficient-data" and empty["rollover_fees_eur"] == pytest.approx(0.0)
@@ -1085,11 +1178,13 @@ def test_a_failed_reconciliation_withdraws_the_proposed_rate_from_the_payload(tm
     assert cost["proposed_fee_per_side"] is None
     assert cost["realized_fee_per_side"] is not None
     assert "1" in cost["basis"] and "no rate proposed" in cost["basis"]  # the unmatched count, named
+    assert "venue trade id(s) matched no journaled fill" in cost["basis"]
 
 
 def test_a_rollover_only_export_exits_zero_and_keeps_the_proposed_rate(tmp_path, mixed_schema_fixture):
     # The negative the FAILED tests need: a block that always failed, or a proposal always withdrawn,
-    # would pass both tests above. Only a FAILED match moves either, never a no-trade-row export.
+    # would pass both tests above. Only a FAILED match moves either, never an export with no trade or
+    # margin row to compare.
     p = _export(tmp_path, ['"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"'])
     argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
     run = _invoke(mixed_schema_fixture, argv)
@@ -1102,27 +1197,68 @@ def test_a_rollover_only_export_exits_zero_and_keeps_the_proposed_rate(tmp_path,
     assert "0.12" in run.stdout and "1 row(s) read" in run.stdout
 
 
-def test_a_row_type_the_reader_places_nowhere_is_named_in_the_report(tmp_path, mixed_schema_fixture):
+def test_a_row_type_the_reader_has_not_met_is_named_in_the_report(tmp_path, mixed_schema_fixture):
     # Carried in the payload AND printed: the operator reading the rendered block is the one who has
-    # to decide whether the match widens, and a count only a `--json` consumer sees is invisible.
-    p = _export(tmp_path, ['"L7","T-1","2026-08-31 00:00:00","margin","","currency","ZEUR","-2.0","0.0","848.0"'])
+    # to decide what a type the reader has not met means, and a count only a `--json` consumer sees
+    # is invisible.
+    p = _export(tmp_path, ['"L7","X1","2026-08-31 00:00:00","staking","","currency","ZEUR","0.01","0.0","848.0"'])
     argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
     run = _invoke(mixed_schema_fixture, argv)
     assert run.exit_code == 0, run.stdout
-    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"margin": 1}
-    assert "margin 1" in run.stdout
+    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"staking": 1}
+    assert "staking 1" in run.stdout
+
+
+def test_the_rollover_figure_prints_at_four_decimals_and_the_no_fill_rows_are_named(tmp_path, mixed_schema_fixture):
+    # Four rollover rows of 0.0040 sum to 0.016, which a two-decimal print shows as 0.02, a figure the
+    # runbook's equality check with the hand read cannot accept. A deposit lands on the known no-fill line.
+    rows = [
+        f'"L{i}","T-OPEN","2026-08-31 0{i}:00:00","rollover","","currency","ZEUR","-0.0040","0.0040","900.0"' for i in range(1, 5)
+    ]
+    rows.append('"L9","Q1","2026-08-31 00:00:00","deposit","","currency","ZEUR","500.0","0.0","1400.0"')
+    p = _export(tmp_path, rows)
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
+    assert run.exit_code == 0, run.stdout
+    assert "rollover fees 0.0160 EUR" in run.stdout
+    assert "rows with no fill behind them by construction: deposit 1" in run.stdout
+    assert "fees on the matched rows" not in run.stdout  # nothing matched: a 0.0000 there would mean nothing
+
+
+def test_the_matched_fee_figure_is_rendered_beside_the_rollover_line(tmp_path, mixed_schema_fixture, monkeypatch):
+    # No synthetic journal carries a venue trade id, so the reconciliation is stood in for by what a
+    # matched export produces; the render path under it is the real one.
+    import cli.engine.command as command_module
+
+    matched = {
+        "status": "ok",
+        "n_rows": 5,
+        "matched": 3,
+        "matched_fees_eur": 0.1594,
+        "rollover_fees_eur": 0.016,
+        "unmatched": [],
+        "known": {"settled": 2},
+        "ignored": {},
+    }
+    monkeypatch.setattr(command_module, "reconcile_ledger", lambda rows, fills: matched)
+    p = _export(tmp_path, ['"L1","R1","2026-08-31 00:00:00","rollover","","currency","ZEUR","-0.12","0.12","900.0"'])
+    run = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
+    assert run.exit_code == 0, run.stdout
+    assert "3 ledger trade or margin row(s) matched a journaled fill" in run.stdout
+    assert "rollover fees 0.0160 EUR" in run.stdout
+    assert "fees on the matched rows 0.1594 EUR" in run.stdout
+    assert "rows with no fill behind them by construction: settled 2" in run.stdout
 
 
 def test_a_simulated_run_says_its_reconciliation_cannot_mean_anything(tmp_path, mixed_schema_fixture):
     # `--simulated-fills` + `--ledger-export` is a guaranteed FAILED: the modelled fills carry no
-    # venue trade id, so every real ledger trade row is unmatched by construction.
+    # venue trade id, so every real ledger trade or margin row is unmatched by construction.
     p = _export(tmp_path, ['"L2","T-UNKNOWN","2026-08-31 00:00:00","trade","","currency","ZEUR","-50.0","0.05","850.0"'])
     simulated = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p)))
     real = _invoke(mixed_schema_fixture, _tracking_argv(mixed_schema_fixture, "--ledger-export", str(p)))
-    assert "by construction" in simulated.stdout
+    assert "a modelled fill carries no venue trade id" in simulated.stdout
     # The negative: on a real run the same export is a genuine finding, and an unconditional
     # disclaimer would explain the one alarm this component exists to raise away.
-    assert "by construction" not in real.stdout and real.exit_code != 0
+    assert "a modelled fill carries no venue trade id" not in real.stdout and real.exit_code != 0
 
 
 def test_without_an_export_the_report_omits_the_reconciliation(mixed_schema_fixture):

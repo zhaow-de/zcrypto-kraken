@@ -1,3 +1,4 @@
+import logging
 import sys
 
 import pytest
@@ -25,6 +26,23 @@ def _reset_executor_hooks():
     module = sys.modules.get("cli.engine.executor")
     if module is not None:
         module.set_executor_hooks()
+
+
+@pytest.fixture(autouse=True)
+def _restore_zcrypto_logger():
+    """`cli.logging.config.configure`, which the app's callback runs on every `CliRunner` invoke, gives the `zcrypto`
+    logger a handler of its own -- stdout without `-l`, the invoke's captured stream -- and turns `propagate` off, and
+    nothing undoes either: a later test's record then writes to a closed stream, and `caplog` never sees it. Put back
+    what the test found."""
+    logger = logging.getLogger("zcrypto")
+    handlers, level, propagate = list(logger.handlers), logger.level, logger.propagate
+    yield
+    for handler in logger.handlers:
+        if handler not in handlers:
+            handler.close()
+    logger.handlers[:] = handlers
+    logger.setLevel(level)
+    logger.propagate = propagate
 
 
 @pytest.hookimpl(wrapper=True)

@@ -17,6 +17,7 @@ Applying the tracking report's proposed rate to the builder default invalidates 
 
 - The venue's fee on a margin open is the spot fee plus a 2 bps margin-opening fee that the fee term does not carry; a re-pricing states which fees the term covers.
 - The engine journal rounds a fill's fee to the cent — up to ±2.5 bps on a 20 EUR leg — so the re-pricing reads the fee from the venue's rows, or from fills large enough that the cent does not move the figure.
+- A margin open's fee can be charged in EURC: the venue converts euro to EURC at par beside the row (a `collateralconversion` pair) and charges the fee in EURC, seen on the 2026-09-24 hand open and the 2026-09-25 BTC/EUR open. The tracking report's `fees on the matched rows` figure counts such a fee at par under `_EURO_FEE_ASSETS` in `cli/engine/tracking.py` (spec `00119` D8), and the journal reports that fill's fee in euro, so the re-pricing reads one euro figure; a rollover charged in EURC has not been seen, and the same set would count it.
 
 ## Suggested next steps
 

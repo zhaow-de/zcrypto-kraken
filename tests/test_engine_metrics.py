@@ -55,6 +55,23 @@ NOW = datetime(2026, 7, 10, 8, 3, tzinfo=UTC)
 # `cycle._metrics_sink` is reset after every test by `_reset_metrics_sink` in tests/conftest.py.
 
 
+@pytest.fixture(autouse=True)
+def _no_production_venue_read(monkeypatch):
+    """The executor's default venue read and holdings read are a real client on the trade credentials,
+    and a developer's shell may hold them; a case here that ticks an executor runs its startup pass.
+    Reaching either fails the test through every `except Exception` on the way, because `pytest.fail`
+    raises a BaseException."""
+
+    def _refuse(*args, **kwargs):
+        pytest.fail("a test reached the production venue read -- pass venue_orders")
+
+    def _refuse_holdings(*args, **kwargs):
+        pytest.fail("a test reached the production venue holdings read -- pass venue_holdings")
+
+    monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
+    monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
+
+
 def _base(asset: str) -> float:
     return 100.0 * (1 + ASSETS.index(asset))
 
@@ -685,6 +702,7 @@ def _write_venue_record_v2(
     *,
     status: str = "ok",
     positions: dict[str, float] | None = None,
+    snapshot_at: datetime | None = None,
 ) -> None:
     """A raw **schema-2** venue-<HH>.json, written directly for the same avoid-nautilus reason
     `_write_venue_record` documents above -- symbol-keyed instruments/positions (the shape
@@ -697,7 +715,7 @@ def _write_venue_record_v2(
     if status == "ok":
         pos = positions if positions is not None else {"BTC/EUR": 0.0}
         doc["state"] = {
-            "snapshot_at": cycle_ts.isoformat(),
+            "snapshot_at": (snapshot_at if snapshot_at is not None else cycle_ts).isoformat(),
             "instruments": {
                 symbol: {
                     "symbol": symbol,
@@ -896,6 +914,149 @@ def test_seed_exec_positions_refuses_a_shape_invalid_record(tmp_path):
     # Same D9 guard, this function's own call site -- must be independently erasable-proof.
     journal_dir = tmp_path / "journal"
     _write_shape_invalid_venue_record(journal_dir, datetime(2026, 7, 10, 4, 0, tzinfo=UTC))
+
+    with pytest.raises(EngineJournalError):
+        _seed_exec_positions(journal_dir)
+
+
+def _exec_row_with_fills(journal_dir: Path, cycle_ts: datetime, client_order_id: str, symbol: str, side: str, fills) -> None:
+    """One submitted row of an `exec-<HH>.json`, written through the ledger's own writers, with its `fill` and
+    `reconciled` lines: each of `fills` is `(kind, at, qty)` or `(kind, at, qty, credited)`, the last a writer's cap
+    on the fill below its quantity, written beside `qty` as the writer does."""
+    from cli.engine.execledger import append_submitted_row, update_submitted_row
+
+    verdict = GateVerdict(level=GateLevel.FULL, reasons=(), inputs={})
+    row = {
+        "plan_id": "p-seed",
+        "intent_index": 0,
+        "client_order_id": client_order_id,
+        "intent": {"symbol": symbol, "side": side},
+        "order": {"symbol": symbol, "side": side, "qty": sum(entry[2] for entry in fills)},
+        "state": "filled",
+        "filled_qty": 0.0,
+        "events": [],
+    }
+    append_submitted_row(journal_dir, cycle_ts, row, verdict=verdict, evaluated_at=cycle_ts)
+    for n, entry in enumerate(fills):
+        kind, at, qty = entry[:3]
+        event = {"event": kind, "at": at.isoformat(), "qty": qty}
+        if kind == "fill":
+            event.update(
+                px=50000.0,
+                fee=0.05,
+                fee_currency="EUR",
+                liquidity="MAKER",
+                trade_id=f"T-{client_order_id}-{n}",
+                venue_order_id=None,
+            )
+        else:
+            event["venue_filled_qty"] = qty
+        moved = entry[3] if len(entry) == 4 else qty
+        if len(entry) == 4:
+            event["credited"] = entry[3]
+        update_submitted_row(journal_dir, cycle_ts, client_order_id, event=event, add_filled_qty=moved)
+
+
+def test_seed_exec_positions_carries_the_newest_record_forward_through_the_fills_journaled_after_its_snapshot(tmp_path):
+    """A record carrying two positions and the engine's own fills closing both before a restart: the
+    opening fills stamped before the record's snapshot are in it already, so the fold reads only the
+    fills after it and the seed reads the book the fills left, not the record's figures."""
+    journal_dir = tmp_path / "journal"
+    day = datetime(2026, 9, 25, tzinfo=UTC)
+    positions = {"BTC/EUR": 0.00026906, "ETH/EUR": -0.00840738}
+    _write_venue_record_v2(journal_dir, day.replace(hour=16), positions=positions)
+    _write_venue_record_v2(
+        journal_dir, day.replace(hour=20), positions=positions, snapshot_at=day.replace(hour=20, minute=1, second=30)
+    )
+    opened = day.replace(hour=10, minute=32)
+    _exec_row_with_fills(journal_dir, day.replace(hour=8), "O-btc-open", "BTC/EUR", "buy", [("fill", opened, 0.00026906)])
+    _exec_row_with_fills(journal_dir, day.replace(hour=8), "O-eth-open", "ETH/EUR", "sell", [("fill", opened, 0.00840738)])
+    _exec_row_with_fills(
+        journal_dir, day.replace(hour=20), "O-eth-close", "ETH/EUR", "buy", [("fill", day.replace(hour=20, minute=21), 0.00840738)]
+    )
+    _exec_row_with_fills(
+        journal_dir, day.replace(hour=20), "O-btc-sell", "BTC/EUR", "sell", [("fill", day.replace(hour=20, minute=44), 0.00026906)]
+    )
+
+    seed = _seed_exec_positions(journal_dir)
+
+    assert seed == {"BTC/EUR": 0.0, "ETH/EUR": 0.0}
+
+
+def test_seed_exec_positions_folds_a_fill_by_the_quantity_the_cache_applied_and_no_repair(tmp_path):
+    """The fold's basis is the Cache's, the gauge's own. A `reconciled` line is a repair the Cache never took -- the
+    re-read pass's, from the venue's report -- and moves nothing here; the stream's replay of that fill is one event
+    the Cache applied whole, credited 0.0 on the row, and moves the fold by its quantity. On the row's basis the
+    never-replayed repair counts and the replay does not: 0.0018 against the Cache's 0.0014."""
+    journal_dir = tmp_path / "journal"
+    boundary = datetime(2026, 9, 25, 20, 0, tzinfo=UTC)
+    _write_venue_record_v2(journal_dir, boundary, positions={"BTC/EUR": 0.001})
+    _exec_row_with_fills(
+        journal_dir, boundary, "O-repaired", "BTC/EUR", "buy", [("reconciled", boundary + timedelta(minutes=10), 0.0004)]
+    )
+    _exec_row_with_fills(
+        journal_dir,
+        boundary,
+        "O-replayed",
+        "BTC/EUR",
+        "buy",
+        [("reconciled", boundary + timedelta(minutes=12), 0.0004), ("fill", boundary + timedelta(minutes=13), 0.0004, 0.0)],
+    )
+
+    assert _seed_exec_positions(journal_dir) == pytest.approx({"BTC/EUR": 0.0014})
+
+
+def test_seed_exec_positions_after_a_catch_up_restart_folds_no_repair_of_a_fill_the_record_already_carries(tmp_path):
+    """The engine restarts at 20:05 inside the passable window with an opener that part-filled while it was down: the
+    catch-up cycle's snapshot is taken in `on_start`, after the library's reconciliation applied the fill to the Cache
+    and before the executor is built, so the record carries it, and the first tick's adopt pass then journals the
+    same fill as a `reconciled` line stamped after the snapshot. The fold reads the record and the fill once; the
+    plan's sell at 21:00 then leaves a flat book, where folding the repair would leave 0.0004 on it."""
+    journal_dir = tmp_path / "journal"
+    day = datetime(2026, 9, 25, tzinfo=UTC)
+    _write_venue_record_v2(
+        journal_dir, day.replace(hour=20), positions={"BTC/EUR": 0.0004}, snapshot_at=day.replace(hour=20, minute=5)
+    )
+    _exec_row_with_fills(
+        journal_dir,
+        day.replace(hour=16),
+        "O-opener",
+        "BTC/EUR",
+        "buy",
+        [("reconciled", day.replace(hour=20, minute=5, second=5), 0.0004)],
+    )
+    assert _seed_exec_positions(journal_dir) == {"BTC/EUR": 0.0004}
+    _exec_row_with_fills(journal_dir, day.replace(hour=20), "O-sell", "BTC/EUR", "sell", [("fill", day.replace(hour=21), 0.0004)])
+
+    assert _seed_exec_positions(journal_dir) == {"BTC/EUR": 0.0}
+
+
+def test_seed_exec_positions_reads_a_book_closed_by_a_split_fill_as_exactly_flat(tmp_path):
+    """The record's 0.001 closed by a maker's 0.0007 and the fallback's 0.0003 folds to 5.4e-20, which the
+    dark-with-exposure rule reads as exposure and the gauge never shows, its flat reading an exact 0 over an empty
+    `positions_open`; the fold snaps a symbol within `FLAT_TOLERANCE` of zero to 0.0, and the assertion is exact."""
+    journal_dir = tmp_path / "journal"
+    boundary = datetime(2026, 9, 25, 20, 0, tzinfo=UTC)
+    _write_venue_record_v2(journal_dir, boundary, positions={"BTC/EUR": 0.001}, snapshot_at=boundary + timedelta(seconds=90))
+    _exec_row_with_fills(
+        journal_dir,
+        boundary,
+        "O-close",
+        "BTC/EUR",
+        "sell",
+        [("fill", boundary + timedelta(minutes=21), 0.0007), ("fill", boundary + timedelta(minutes=22), 0.0003)],
+    )
+
+    assert _seed_exec_positions(journal_dir) == {"BTC/EUR": 0.0}
+
+
+def test_seed_exec_positions_refuses_a_shape_invalid_exec_record(tmp_path):
+    # The exec records join the seed's read under the venue records' contract: a malformed one raises out of it.
+    journal_dir = tmp_path / "journal"
+    _write_venue_record_v2(journal_dir, CYCLE_TS, positions={"BTC/EUR": 1.0})
+    (journal_dir / f"{CYCLE_TS:%Y-%m-%d}" / "exec-08.json").write_text(
+        json.dumps({"schema_version": 2, "cycle_ts": CYCLE_TS.isoformat(), "submitted": [{"state": "filled"}]})
+    )
 
     with pytest.raises(EngineJournalError):
         _seed_exec_positions(journal_dir)
@@ -1310,7 +1471,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
     assert list((engine_cfg.journal_dir / f"{CYCLE_TS:%Y-%m-%d}").glob("exec-*.json")), "the sink never wrote an exec record"
     # the startup evaluation alone -- before the cycle above ever ran -- must already have
     # published a truthful restart hold, or a kill switch tripped across a restart would resolve
-    # the alert for up to 4h until the next cycle completes.
+    # the alert until the executor's first idle refresh, a minute after its construction.
     assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
     assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
     # The venue half of the same sink closure: _VenueGauges.update is tested
@@ -1323,8 +1484,9 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
 def test_the_startup_evaluation_alone_seeds_the_latch_gauges(tmp_path, monkeypatch):
     # Isolates the startup-evaluation property from the sink: no cycle ever completes here (the
     # node's run() is the file's ordinary no-op stub), so if run() dropped the startup evaluation
-    # every latch gauge would sit at its seeded 0 for up to 4h -- a kill switch engaged across a
-    # restart would read zcrypto_exec_kill_tripped=0, resolving the alert, until the next cycle.
+    # every latch gauge would sit at its seeded 0 until the executor's first idle refresh, a minute
+    # after its construction -- a kill switch engaged across a restart would read
+    # zcrypto_exec_kill_tripped=0 meanwhile, resolving the alert.
     registry = CollectorRegistry()
     monkeypatch.setattr(command, "build_registry", lambda: registry)
     monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
@@ -1596,12 +1758,22 @@ def _sink_result(cycle_ts: datetime) -> CycleResult:
     )
 
 
-def test_a_raising_ledger_writer_freezes_the_heartbeat_and_the_staleness_condition_goes_true(tmp_path, monkeypatch):
+def test_a_raising_ledger_writer_freezes_the_heartbeat_while_the_idle_refresh_moves_the_readings_and_the_staleness_condition_goes_true(
+    tmp_path, monkeypatch
+):
     """The monitoring-gap discharge, read by VALUE: the sink writes the ledger BEFORE any gauge, so
     a persistently failing `write_exec_record` starves
     `zcrypto_exec_last_evaluation_timestamp_seconds` and the deployed staleness rule's condition
-    goes true. That ordering is the whole reason the gap is monitored rather than merely documented
-    -- reverse it and the ledger could fail silently for days behind a heartbeat that keeps ticking."""
+    goes true -- while the executor's idle refresh, on the hook `run()` installs, keeps the five
+    readings moving and leaves the heartbeat alone. The ordering and the exemption are together the
+    reason the gap is monitored rather than merely documented: reverse the first and the ledger
+    could fail silently for days behind a heartbeat that keeps ticking; drop the second and the
+    refresh would tick it for the ledger."""
+    from test_engine_executor import StubClient
+
+    from cli.engine.execgate import KILL_FILE, exec_dir
+    from cli.engine.executor import ProbeExecutor, set_executor_hooks
+
     registry = CollectorRegistry()
     gate = ExecutionGate(
         armed_in_config=False,
@@ -1611,17 +1783,28 @@ def test_a_raising_ledger_writer_freezes_the_heartbeat_and_the_staleness_conditi
     exec_gauges = _ExecGauges(registry)
     t0 = datetime(2026, 8, 11, 8, 0, tzinfo=UTC)
     sink = command._make_exec_sink(gate, tmp_path / "journal", None, exec_gauges, None)
-
-    sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
-    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t0.timestamp()
-
-    monkeypatch.setattr(command, "write_exec_record", _raise)
-    t1 = t0 + timedelta(hours=8)
+    clock = types.SimpleNamespace(now=t0)
+    config = EngineConfig(journal_dir=tmp_path / "journal", store_dir=tmp_path / "store")
+    executor = ProbeExecutor(client=StubClient(), gate=gate, config=config, clock=lambda: clock.now)
+    set_executor_hooks(publish_verdict=exec_gauges.update)
     try:
-        sink(_sink_result(t1), t1, 1.0)
-    except OSError:
-        pass  # in production cycle.py's _update_metrics swallows exactly this raise -- same effect
+        sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
+        assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t0.timestamp()
 
+        monkeypatch.setattr(command, "write_exec_record", _raise)
+        t1 = t0 + timedelta(hours=8)
+        try:
+            sink(_sink_result(t1), t1, 1.0)
+        except OSError:
+            pass  # in production cycle.py's _update_metrics swallows exactly this raise -- same effect
+        exec_dir(tmp_path).mkdir(parents=True, exist_ok=True)
+        (exec_dir(tmp_path) / KILL_FILE).touch()  # what the refresh must publish, so its run is read by value
+        clock.now = t1 + timedelta(seconds=5)
+        executor.on_timer(clock.now)  # the idle tick, its refresh period long past
+    finally:
+        set_executor_hooks()
+
+    assert registry.get_sample_value("zcrypto_exec_kill_tripped") == 1, "the idle refresh never published the readings"
     frozen = registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds")
     assert frozen == t0.timestamp(), "the heartbeat moved past a cycle whose ledger record was never written"
     assert t1.timestamp() - frozen > _staleness_threshold_seconds()
@@ -1648,6 +1831,17 @@ def test_the_sink_moves_the_heartbeat_when_the_ledger_write_succeeds():
 
     assert len(writes) == 2
     assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t1.timestamp()
+
+
+def test_a_production_venue_read_is_refused_here_before_any_client_is_built(monkeypatch):
+    """The trade credentials are cleared first, so a read that got past the refusal refuses on them
+    before building a client."""
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(pytest.fail.Exception, match="the production venue read"):
+        executor_module.read_venue_orders(NOW)
+    with pytest.raises(pytest.fail.Exception, match="the production venue holdings read"):
+        executor_module.read_venue_holdings()
 
 
 # --- run(): the execution metrics, their seed, and the executor hooks ---------------------------

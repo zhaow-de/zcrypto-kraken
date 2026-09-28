@@ -946,9 +946,16 @@ def test_the_unwitnessed_finding_is_announced_once_not_every_cycle(tmp_path, mon
     _healthy(pri, sec, H)
     _unwitnessed(pri, sec, H, "BTC/EUR")
 
-    with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
-        _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
-        _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    # On the `zcrypto` logger itself: the invoke's `configure` turns its propagation off, so the root handler caplog
+    # reads through sees nothing the command logs.
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="zcrypto.archive.command"):
+            _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+            _run([str(pri), str(sec), str(rec)], now=SETTLED, monkeypatch=monkeypatch)
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
 
     announced = [r for r in caplog.records if "unwitnessed" in r.message]
     assert len(announced) == 1, [r.message for r in announced]

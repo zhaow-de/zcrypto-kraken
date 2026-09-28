@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from cli.engine.errors import EngineError
+from cli.engine.execledger import credited_qty
 from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload
 from cli.engine.instruments import EUR_CODES
 from cli.engine.store import BASKET
@@ -41,6 +42,9 @@ class Fill(NamedTuple):
     fee: float | None  # None when not euro-denominated or the side is unpriceable
     liquidity: str
     trade_id: str
+    # What the fill moved its row's `filled_qty` by (`execledger.credited_qty`), the figure `held` sums, where `qty` stays
+    # the blend's weight and the venue's figure; None on a Fill built by hand, which moved its row by `qty`.
+    credited: float | None = None
 
 
 def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
@@ -98,6 +102,7 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                             # A repair carries no venue trade id; this one is unique per row and
                             # timestamp, and unmistakable for the venue id the ledger match keys on.
                             f"reconciled:{client_order_id}:{ev['at']}",
+                            credited=qty,
                         )
                     )
                     continue
@@ -130,6 +135,7 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                         fee,
                         liq,
                         str(ev["trade_id"]),
+                        credited=credited_qty(ev),
                     )
                 )
     return out, notes
@@ -191,7 +197,8 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
     rows: list[dict] = []
     for s in ordered:
         for f in by_boundary.get(s.cycle_ts, []):
-            held[f.base] = held.get(f.base, 0.0) + (f.qty if f.side == "buy" else -f.qty)
+            moved = f.qty if f.credited is None else f.credited
+            held[f.base] = held.get(f.base, 0.0) + (moved if f.side == "buy" else -moved)
         # Each cycle is scored under the NAV that was LIVE for it (T0150): a `shadow_nav_eur` change
         # must not re-price a closed week, and the caller's scalar is the fallback for older records.
         cycle_nav = nav if s.nav is None else s.nav
@@ -323,7 +330,9 @@ def cost_blend(fills: list[Fill]) -> dict:
 
 class LedgerRow(NamedTuple):
     txid: str
-    refid: str  # the venue trade id a `trade` row belongs to -- what `Fill.trade_id` carries
+    # The venue trade id a `trade` or `margin` row belongs to -- what `Fill.trade_id` carries; a
+    # `rollover` or `collateralconversion` row carries its position's OPENING trade id instead.
+    refid: str
     at: datetime
     type: str
     asset: str
@@ -334,9 +343,17 @@ class LedgerRow(NamedTuple):
 # The columns this reader USES, not the whole documented header: a venue that ADDS a column must
 # not break the read, while one that drops a column the arithmetic depends on must.
 _LEDGER_COLUMNS = ("txid", "refid", "time", "type", "asset", "amount", "fee")
+# The assets a fee is summed under as euro: the venue's two spellings, and EURC, which it charges a margin open's fee in
+# after converting euro to it at par beside the row, the export's `collateralconversion` pair, so a EURC fee counts at par.
+_EURO_FEE_ASSETS = frozenset(EUR_CODES) | {"EURC"}
+# The row types a journaled fill is matched by: a spot fill writes `trade` rows and a margin open or close writes a
+# `margin` row, each under the fill's own trade id and a margin fill with no `trade` row beside it.
+_MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})
 # Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
-# over (`margin` shares its trade's refid: counted, never matched), while failing on a deposit would fail every export.
-_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer"})
+# over, while failing on a deposit would fail every export. `settled` is a hand settle's delivery pair, which the journal
+# holds no row for; `collateralconversion` is the venue's own currency swap for a margin fee, keyed to the position's
+# opening trade.
+_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion"})
 
 
 def read_ledger_export(path: Path) -> list[LedgerRow]:
@@ -380,37 +397,49 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
 
 
 def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
-    """An unmatched venue trade FAILS the comparison; an export with no trade row decides nothing; unknown types are only counted."""
+    """An unmatched venue trade or margin row FAILS the comparison; an export with neither decides nothing; a known
+    no-fill type is counted under `known`, an unknown type under `ignored`."""
     journaled = {f.trade_id for f in fills}
     matched = 0
-    trade_rows = 0
+    compared = 0
     unmatched: list[str] = []
+    known: dict[str, int] = {}
     ignored: dict[str, int] = {}
     rollover_fees_eur = 0.0
+    matched_fees_eur = 0.0
     for row in rows:
         # Rollover is why the function exists: the venue charges it against the POSITION, so a fill-based cost basis omits it.
         if row.type == "rollover":
-            # `EUR_CODES`: the venue spells the euro two ways, and `== "EUR"` would drop every ZEUR row.
-            if row.asset in EUR_CODES:
+            # `_EURO_FEE_ASSETS`: the venue spells the euro two ways and charges some fees in EURC, and `== "EUR"` would
+            # drop the rest.
+            if row.asset in _EURO_FEE_ASSETS:
                 rollover_fees_eur += row.fee
-        elif row.type == "trade":
-            trade_rows += 1
+        elif row.type in _MATCHED_LEDGER_TYPES:
+            compared += 1
             if row.refid in journaled:
                 # ROWS, not fills: one venue trade writes one ledger row per asset leg.
                 matched += 1
+                # The row's `fee` is the venue's own figure for the fill; its `amount` is a margin row's realized
+                # PnL, a result and never a cost, so it is summed nowhere.
+                if row.asset in _EURO_FEE_ASSETS:
+                    matched_fees_eur += row.fee
             # Venue activity the journal does not know about is the one thing
             # this comparison exists to detect: it FAILS, and each id is named.
             elif row.refid not in unmatched:
                 unmatched.append(row.refid)
-        elif row.type not in _NO_FILL_LEDGER_TYPES:
+        elif row.type in _NO_FILL_LEDGER_TYPES:
+            known[row.type] = known.get(row.type, 0) + 1
+        else:
             ignored[row.type] = ignored.get(row.type, 0) + 1
     return {
-        # A third value, never "ok": with no trade row compared, "every venue trade matched" claims nothing.
-        "status": "FAILED" if unmatched else "ok" if trade_rows else "insufficient-data",
-        # Every row read: what separates an empty export from one carrying no trade rows.
+        # A third value, never "ok": with no trade or margin row compared, "every venue trade matched" claims nothing.
+        "status": "FAILED" if unmatched else "ok" if compared else "insufficient-data",
+        # Every row read: what separates an empty export from one carrying no trade or margin rows.
         "n_rows": len(rows),
         "matched": matched,
+        "matched_fees_eur": matched_fees_eur,
         "rollover_fees_eur": rollover_fees_eur,
         "unmatched": unmatched,
+        "known": known,
         "ignored": ignored,
     }

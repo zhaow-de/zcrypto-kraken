@@ -494,7 +494,10 @@ class _CycleGauges:
 
 
 class _ExecGauges:
-    """The execution envelope's published state, updated from the gate's verdict every cycle. `gate_level` and the presence gauges
+    """The execution envelope's published state, updated at every gate evaluation: the boundary sink's, the executor's on its
+    tick while a plan runs, and its idle refresh once a minute, so a control file moved by hand reaches the board within that
+    minute; the heartbeat, `last_evaluation`, moves at all of those but the refresh, so it stays the boundary path's.
+    `gate_level` and the presence gauges
     are eager and seeded at 0 -- "nothing may be submitted" is true before anything is evaluated -- and `run()` evaluates once at
     startup so none sits at that default: a `kill_tripped` reading 0 beside an existing kill file is a false statement.
     `last_evaluation` is lazy: the staleness alert reads it, and a seeded 0 would claim the epoch and page every fresh process."""
@@ -520,22 +523,29 @@ class _ExecGauges:
         self.venue_ok = Gauge(
             "zcrypto_exec_venue_ok", "Whether the last venue reading said the exchange is online.", registry=registry
         )
-        # The envelope's heartbeat, and the ONLY series that can answer "is the gate still being evaluated at all". An age gauge was
-        # rejected: evaluations are hours apart and the snapshot bound is 30 s, so every one re-reads and the age would publish ~0
-        # forever -- a constant in measurement's clothes.
+        # The envelope's heartbeat, the series that answers "is the boundary path still evaluating the gate": it moves at startup,
+        # in the boundary sink, on a running plan's evaluations and on a kill trip's, and the idle refresh moves the five readings
+        # and leaves it alone (`update`'s `heartbeat`). An age gauge was rejected: evaluations are a minute apart while idle and the
+        # snapshot bound is 30 s, so every one re-reads and the age would publish ~0 forever -- a constant in measurement's clothes.
         self.last_evaluation: Gauge | None = None
 
-    def update(self, verdict: GateVerdict, *, evaluated_at: datetime) -> None:
+    def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True) -> None:
+        """`heartbeat` False publishes the five readings and leaves `last_evaluation` where it was: the executor's idle
+        refresh, whose evaluation is not the boundary path's, so the staleness rule keeps watching the sink and the exec
+        record it writes before it."""
         i = verdict.inputs
         self.gate_level.set(LEVEL_CODE[verdict.level])
         self.armed.set(1 if (i["armed_in_config"] and i["arm_file"]) else 0)
         self.kill_tripped.set(1 if i["kill_file"] else 0)
         self.restart_hold.set(1 if i["restart_hold"] else 0)
         self.venue_ok.set(1 if i["venue_status"] == "online" else 0)
+        if not heartbeat:
+            return
         if self.last_evaluation is None:
             self.last_evaluation = Gauge(
                 "zcrypto_exec_last_evaluation_timestamp_seconds",
-                "Unix timestamp the execution gate was last evaluated.",
+                "Unix timestamp the execution gate was last evaluated at startup, in the boundary sink, on a running plan's"
+                " evaluations or on a kill trip's; the idle refresh moves the other five gate gauges and leaves this one.",
                 registry=self._registry,
             )
         self.last_evaluation.set(evaluated_at.timestamp())
@@ -733,9 +743,17 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
 
 def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
     """The startup seed for the symbol-labelled positions gauge: the newest `venue-<HH>.json` that is
-    both `"ok"` and `schema_version == 2`. A base-keyed v1 record is skipped even when `"ok"`, never
+    both `"ok"` and `schema_version == 2`, carried forward through every `fill` line the `exec-*.json`
+    rows stamp after its `state.snapshot_at`, the event's `qty` signed by the row's side under its
+    symbol. The basis is the Cache's, the gauge's own: a `reconciled` line is a repair the Cache took at a
+    restart ahead of a catch-up record's snapshot, or never, so folding it would count a catch-up
+    restart's fill twice; and a fill credited below its quantity still moved the Cache by `qty`. A symbol
+    within `FLAT_TOLERANCE` of zero reads 0.0, since the dark-with-exposure rule reads a float residue as
+    exposure. The fold is the gauge's reading until the first tick settles it from the venue's holdings,
+    and its fallback when that read fails. A base-keyed v1 record is skipped even when `"ok"`, never
     coerced, because it cannot honestly produce a symbol label. Same no-try/except and
-    validate-before-`status` contract as `_seed_venue_state`."""
+    validate-before-`status` contract as `_seed_venue_state`, the exec records under it too."""
+    from cli.engine.execledger import FLAT_TOLERANCE, read_exec_record, validate_exec_record
     from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     newest: tuple[datetime, dict] | None = None
@@ -749,12 +767,25 @@ def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
             newest = (cycle_ts, doc)
     if newest is None:
         return None
-    return dict(newest[1]["state"]["positions"])
+    positions = dict(newest[1]["state"]["positions"])
+    snapshot_at = datetime.fromisoformat(newest[1]["state"]["snapshot_at"])
+    for _, path in _journal_artifacts(journal_dir, "*", "exec-*.json"):
+        doc = read_exec_record(path)
+        validate_exec_record(doc)
+        for row in doc["submitted"]:
+            for event in row["events"]:
+                if event.get("event") != "fill" or datetime.fromisoformat(event["at"]) <= snapshot_at:
+                    continue
+                moved = float(event["qty"])
+                symbol = row["intent"]["symbol"]
+                positions[symbol] = positions.get(symbol, 0.0) + (moved if row["intent"]["side"] == "buy" else -moved)
+    return {symbol: 0.0 if abs(qty) <= FLAT_TOLERANCE else qty for symbol, qty in positions.items()}
 
 
 def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_gauges):
     """`run()`'s per-cycle metrics sink, at module level rather than inline so a test can reach the closure and prove the ORDER
-    inside it: a failing ledger write starves the heartbeat rather than being masked by a gauge that keeps ticking."""
+    inside it: a failing ledger write starves the heartbeat rather than being masked by a gauge that keeps ticking -- the
+    executor's idle refresh included, which publishes with `heartbeat` False."""
 
     def _sink(result, completed_at, duration_seconds):
         # The ledger is a forensic artifact, not a metric: compute the verdict and write it before
@@ -1493,7 +1524,7 @@ def _cost_over(fills: list[Fill], reconciliation: dict | None) -> dict:
     return {
         **cost,
         "proposed_fee_per_side": None,
-        "basis": f"{len(reconciliation['unmatched'])} ledger trade row(s) matched no journaled fill -- no rate "
+        "basis": f"{len(reconciliation['unmatched'])} venue trade id(s) matched no journaled fill -- no rate "
         "proposed over a book the ledger could not reconcile",
     }
 
@@ -1601,23 +1632,35 @@ def _render_tracking(payload: dict) -> str:
         lines += [
             "",
             f"Ledger export: {reconciliation['status']} -- {reconciliation['n_rows']} row(s) read, of which "
-            f"{reconciliation['matched']} ledger trade row(s) matched a journaled fill.",
+            f"{reconciliation['matched']} ledger trade or margin row(s) matched a journaled fill.",
         ]
         if payload["simulated"]:
             lines.append(
-                "  SIMULATED FILLS were compared against a real export, so every ledger trade row below is unmatched "
-                "by construction -- a modelled fill carries no venue trade id. Nothing in this block is a finding."
+                "  SIMULATED FILLS were compared against a real export, so every ledger trade or margin row below is "
+                "unmatched by construction -- a modelled fill carries no venue trade id. Nothing in this block is a finding."
             )
+        # Four decimals: the export's own precision for a euro fee, so the figure can equal the hand read it is compared with.
         lines.append(
-            f"  rollover fees {reconciliation['rollover_fees_eur']:,.2f} EUR -- charged against the POSITION rather "
+            f"  rollover fees {reconciliation['rollover_fees_eur']:,.4f} EUR -- charged against the POSITION rather "
             "than against a fill, so no execution record carries them and the blend above omits them."
         )
+        if reconciliation["matched"]:
+            lines.append(
+                f"  fees on the matched rows {reconciliation['matched_fees_eur']:,.4f} EUR -- the venue's own figure "
+                "over the journaled fills the export's rows matched, a fee charged in EURC counted at par; the journal's "
+                "fills carry each fee cent-rounded, and a margin row's amount is its realized PnL, summed nowhere."
+            )
+        if reconciliation["known"]:
+            lines.append(
+                "  rows with no fill behind them by construction: "
+                + ", ".join(f"{kind} {count}" for kind, count in sorted(reconciliation["known"].items()))
+                + " -- counted, never matched."
+            )
         if reconciliation["ignored"]:
             lines.append(
                 "  row types this reader places nowhere: "
                 + ", ".join(f"{kind} {count}" for kind, count in sorted(reconciliation["ignored"].items()))
-                + " -- counted, never matched. A margin position writes rows sharing its trade's id, and what those "
-                "mean is settled against a real export rather than guessed here."
+                + " -- counted, never matched; a type this reader has not met, to settle against the export that carries it."
             )
         if reconciliation["unmatched"]:
             lines += [
