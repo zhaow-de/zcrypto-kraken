@@ -31,6 +31,7 @@ from nautilus_trader.model import (
     OrderExpired,
     OrderFilled,
     OrderFillVoided,
+    OrderPendingCancel,
     OrderRejected,
     OrderSide,
     OrderStatus,
@@ -783,6 +784,7 @@ _EVENT_DEFAULTS = {
     OrderAccepted: {"account_id": _ACCOUNT_ID, "reconciliation": False},
     OrderCanceled: {"reconciliation": False},
     OrderExpired: {"reconciliation": False},
+    OrderPendingCancel: {"account_id": _ACCOUNT_ID, "reconciliation": False},
     OrderRejected: {"account_id": _ACCOUNT_ID, "reason": "the venue said no", "reconciliation": False},
     OrderCancelRejected: {"reason": "the venue said no", "reconciliation": False},
     OrderFilled: {
@@ -1765,9 +1767,10 @@ def _cache_reads_at_dispatch() -> dict:
             name = type(event).__name__
             if name not in ("OrderFilled", "OrderCanceled"):
                 # The event a command emits itself -- `OrderInitialized` at submit, `OrderPendingCancel`
-                # at cancel -- is dispatched while the Cache is still mutably borrowed for the write
-                # that produced it, and a read there raises `Already mutably borrowed`. Only the
-                # venue's own answers are read here.
+                # at cancel -- is dispatched while this strategy's own command still runs, so `self.cache`
+                # raises `Already mutably borrowed` there: the strategy's PyO3 cell is what the command
+                # holds, not the Cache (`_pending_cancel_read_at_dispatch` reads it through a handle).
+                # Only the venue's own answers are read here.
                 return
             order = self.cache.order(event.client_order_id)
             readings[name] = {
@@ -1834,6 +1837,129 @@ def test_the_cache_already_carries_the_fill_when_the_strategy_handler_sees_it():
     assert canceled["status"] == OrderStatus.CANCELED
     assert canceled["filled_qty"] == 0.0
     assert canceled["in_orders_open"] == []  # a settled order has already left the open index
+
+
+def _pending_cancel_read_at_dispatch(tmp_path) -> dict:
+    """Run the adopt pass's cancel through a real engine: an observer strategy holds a resting order
+    under its own id, as `node.py`'s external order observer holds an adopted one, and a second
+    strategy, the executor's client, cancels it from a tick. The `OrderPendingCancel` that
+    `cancel_order` publishes reaches the observer's handler while the client's own PyO3 cell is still
+    held by that command -- the strategy's own cell, not the Cache --
+    and a REAL engine is the only construction that reaches it. The executor is built inside the
+    observer's `on_start`, where the client is not borrowed, as the node's factory builds it.
+    Recorded, never asserted here: the library swallows a raising handler."""
+    from nautilus_trader.backtest import BacktestEngine, BacktestEngineConfig
+    from nautilus_trader.model import AccountType, OmsType, StrategyId, Venue
+    from nautilus_trader.trading import Strategy, StrategyConfig
+
+    venue = Venue("KRAKEN")
+    instrument_id = InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"])
+    instrument = _real_instrument("BTC/EUR")
+    readings: dict = {}
+
+    def _config(tag):
+        return StrategyConfig(strategy_id=StrategyId(f"PROBE-{tag}"), order_id_tag=tag)
+
+    class _Canceller(Strategy):
+        def __new__(cls):
+            return super().__new__(cls, _config("002"))
+
+        def __init__(self):
+            super().__init__(config=_config("002"))
+            self.target = None
+            self.ticks = 0
+
+        def on_start(self):
+            self.subscribe_quotes(instrument_id)
+
+        def on_quote(self, tick):
+            self.ticks += 1
+            if self.ticks == 3 and self.target is not None:
+                self.cancel_order(self.target)
+
+    class _Observer(Strategy):
+        def __new__(cls, canceller):
+            return super().__new__(cls, _config("001"))
+
+        def __init__(self, canceller):
+            super().__init__(config=_config("001"))
+            self.canceller = canceller
+            self.executor = None
+
+        def on_start(self):
+            self.executor = _executor(tmp_path, client=self.canceller)
+            self.subscribe_quotes(instrument_id)
+            order = self.order_factory.limit(
+                instrument_id=instrument_id,
+                order_side=OrderSide.BUY,
+                quantity=instrument.make_qty(0.001),
+                price=instrument.make_price(1000.0),  # far below: it rests untouched
+            )
+            self.submit_order(order)
+            self.canceller.target = order.client_order_id
+
+        def on_order_event(self, event):
+            if type(event).__name__ != "OrderPendingCancel":
+                return
+            try:
+                self.canceller.cache
+                readings["client_cache"] = "readable"
+            except RuntimeError as exc:
+                readings["client_cache"] = str(exc)
+            with _executor_errors(level=logging.WARNING) as records:
+                readings["terminal_state"] = self.executor._venue_terminal_state(event)
+            readings["warnings"] = [r.getMessage() for r in records]
+            readings["status"] = self.cache.order(event.client_order_id).status
+            readings["handle_status"] = self.executor._cache.order(event.client_order_id).status
+
+    canceller = _Canceller()
+    engine = BacktestEngine(config=BacktestEngineConfig(trader_id=TraderId("PROBE-000")))
+    engine.add_venue(
+        venue=venue,
+        oms_type=OmsType.NETTING,
+        account_type=AccountType.CASH,
+        base_currency=None,
+        starting_balances=[Money(100_000, Currency.from_str("EUR")), Money(10, Currency.from_str("BTC"))],
+    )
+    engine.add_instrument(instrument)
+    engine.add_strategy(_Observer(canceller))
+    engine.add_strategy(canceller)
+    engine.add_data(
+        [
+            QuoteTick(
+                instrument_id,
+                instrument.make_price(bid),
+                instrument.make_price(bid + 1.0),
+                instrument.make_qty(1.0),
+                instrument.make_qty(1.0),
+                ts,
+                ts,
+            )
+            for ts, bid in ((1, 30001.0), (2_000_000_000, 29998.0), (3_000_000_000, 29998.0), (4_000_000_000, 29998.0))
+        ]
+    )
+    try:
+        engine.run()
+    finally:
+        engine.dispose()
+    return readings
+
+
+def test_the_pending_cancel_of_an_adopted_order_is_read_through_the_handle_taken_at_construction(tmp_path):
+    """The adopt pass's cancel of a matched adopted order dispatches `OrderPendingCancel` inside the
+    client's own `cancel_order`, where a read through the client's `cache` raises
+    `RuntimeError: Already mutably borrowed`. The borrow is the client's, not the Cache's: the first reading pins
+    that the construction reaches it, the second that the Cache is free and a handle not held by the
+    command reads PENDING_CANCEL -- the observer's own and the executor's, taken in `on_start` before
+    the order existed, alike -- and the third that the executor reads through that handle, answers no
+    state, and logs nothing. A wheel that moved the borrow onto the
+    Cache turns the second reading red rather than surfacing as a `PanicException` that no
+    `except Exception` catches."""
+    readings = _pending_cancel_read_at_dispatch(tmp_path)
+
+    assert readings["client_cache"] == "Already mutably borrowed"
+    assert (readings["status"], readings["handle_status"]) == (OrderStatus.PENDING_CANCEL, OrderStatus.PENDING_CANCEL)
+    assert (readings["terminal_state"], readings["warnings"]) == (None, [])
 
 
 def test_an_acceptance_then_a_full_fill_closes_the_intent_and_the_next_one_starts(tmp_path):
@@ -3997,12 +4123,82 @@ def test_a_terminal_the_engine_minted_leaves_the_adopted_row_open_where_the_venu
     assert not _kill_file(tmp_path).exists()
 
 
+def test_the_adopt_pass_cancel_of_a_matched_opener_reads_its_pending_cancel_through_the_handle_and_logs_no_traceback(
+    tmp_path,
+):
+    """The stub twin of the real-engine reading: the client refuses the two attributes the executor
+    reads, `cache` and `strategy_id`, while its own `cancel_order` runs and dispatches the
+    `OrderPendingCancel` inside it, as the library does. The row keeps `accepted` with the event
+    appended, the pass's own line is the one WARNING, and the client's refusal is not reached: the
+    read went through the handle taken at construction."""
+
+    class _HeldByItsOwnCancel(StubClient):
+        def __init__(self, cache):
+            self._held = False
+            super().__init__(cache)
+            self.executor = None
+
+        @property
+        def cache(self):
+            if self._held:
+                raise RuntimeError("Already mutably borrowed")
+            return self._cache
+
+        @cache.setter
+        def cache(self, value):
+            self._cache = value
+
+        @property
+        def strategy_id(self):
+            if self._held:
+                raise RuntimeError("Already mutably borrowed")
+            return self._strategy_id
+
+        @strategy_id.setter
+        def strategy_id(self, value):
+            self._strategy_id = value
+
+        def cancel_order(self, client_order_id):
+            super().cancel_order(client_order_id)
+            self._held = True
+            try:
+                event = _event(OrderPendingCancel, client_order_id=str(client_order_id))
+                self._cache.order(client_order_id).apply(event)
+                self.executor.on_external_order_event(event)
+            finally:
+                self._held = False
+
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = _HeldByItsOwnCancel(StubCache(open_orders=[_resting_limit_order(_TXID, venue_order_id=_TXID)]))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY))
+    client.executor = ex
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID]
+    assert client.cache.order(ClientOrderId(_TXID)).status == OrderStatus.PENDING_CANCEL  # applied inside the cancel
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (logging.WARNING, f"canceling adopted resting order {_TXID} -- the ledger does not carry it as a resting reducer")
+    ]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], [e["type"] for e in row["events"]]) == ("accepted", ["OrderAccepted", "OrderPendingCancel"])
+
+
+def test_every_cache_and_strategy_id_read_in_the_executor_goes_through_the_handles():
+    """The rule the real-engine case and its stub twin prove at one site, held over the module: a read
+    through the client inside its own command's dispatch raises, and on `_reconcile_terminal`'s path
+    a raise latches a false kill, so no site reads through the client."""
+    source = Path(executor_module.__file__).read_text()
+    assert (source.count("self._client.cache"), source.count("self._client.strategy_id")) == (0, 0)
+
+
 class _UnreadableOrderCache(StubCache):
-    """A Cache whose `order()` refuses the way the real one does from INSIDE an order-event handler:
-    `RuntimeError("Already mutably borrowed")`, because the Cache is still mutably borrowed for the
-    write that produced the event -- which this process's own cancel command generates, from the
-    adopt pass and from a trip. Switchable, because the startup pass reads the same accessor and the
-    row has to attach against a readable Cache first."""
+    """A Cache whose `order()` refuses, with the text the client's `cache` getter raises inside its own
+    command's dispatch -- raised here by the Cache itself, so the except arm for a read failing for any
+    reason has a case. Switchable, because the startup pass reads the same accessor and the row has to
+    attach against a readable Cache first."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -4028,12 +4224,13 @@ class _UnreadableOrderCache(StubCache):
 def test_an_unreadable_cache_costs_the_terminal_state_and_never_the_event(tmp_path, unreadable, expected_state, expected_warnings):
     """A Cache read that RAISES must cost the row its terminal state and nothing else.
 
-    The dominant source of a terminal ack on this path is a cancel this very process sent, and a read
-    taken inside that handler finds the Cache still mutably borrowed for the write that produced it.
-    Letting it escape would abandon the whole handler, and with it the forensic event payload, to
-    decide a state the event never carried -- so the event still appends, the entry stays attached,
-    and the row keeps the state it has. Read as a pair: without the readable arm an unconditional
-    `None` would pass, and without the raising arm a narrowed `except` is invisible."""
+    No read here raises in production, since the executor reads through the handle taken at
+    construction -- the borrow was the client's, inside its own command's dispatch, never the
+    Cache's -- so this is the arm for a read failing for any other reason. Letting it escape would
+    abandon the whole handler, and with it the forensic event payload, to decide a state the event
+    never carried -- so the event still appends, the entry stays attached, and the row keeps the
+    state it has. Read as a pair: without the readable arm an unconditional `None` would pass, and
+    without the raising arm a narrowed `except` is invisible."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-attached", reduce_only=True, when=earlier)
     cache = _UnreadableOrderCache(open_orders=[_resting_limit_order("O-attached")])
@@ -6039,8 +6236,9 @@ def test_every_client_surface_the_executor_reaches_exists_on_the_real_strategy()
 
 def _cache_accessors_the_engine_reaches() -> set[str]:
     """Every accessor production calls through a nautilus `Cache`, read off the two modules that
-    hold one: the executor (through `self._client.cache`) and the venue-state reader (through its
-    `cache` argument). Derived rather than listed, for the same reason the client surface is."""
+    hold one: the executor (through the handle `self._cache` taken at construction, and the local
+    `cache` it aliases it to) and the venue-state reader (through its `cache` argument). Derived
+    rather than listed, for the same reason the client surface is."""
     reached: set[str] = set()
     for module in (executor_module, venuestate_module):
         tree = ast.parse(Path(module.__file__).read_text())
@@ -6048,7 +6246,7 @@ def _cache_accessors_the_engine_reaches() -> set[str]:
             if not isinstance(n, ast.Attribute):
                 continue
             holder = n.value
-            if (isinstance(holder, ast.Attribute) and holder.attr == "cache") or (
+            if (isinstance(holder, ast.Attribute) and holder.attr in ("cache", "_cache")) or (
                 isinstance(holder, ast.Name) and holder.id == "cache"
             ):
                 reached.add(n.attr)

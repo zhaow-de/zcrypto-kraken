@@ -670,6 +670,15 @@ class ProbeExecutor:
 
     def __init__(self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now, venue_orders=None) -> None:
         self._client = client
+        # The Cache and the strategy id, taken here, inside `on_start`, where the strategy is not
+        # borrowed, and read through these handles ever after: `client.cache` is a getter on the
+        # strategy, and inside the dispatch of an event the strategy's own command publishes before
+        # it returns -- `OrderPendingCancel` from `cancel_order`, `OrderInitialized` from
+        # `submit_order` -- it raises `Already mutably borrowed`, the strategy's PyO3 cell being held
+        # by that command, while the Cache itself is free and a handle taken earlier reads it
+        # (tests/test_engine_executor.py measures both against a real engine).
+        self._cache = client.cache
+        self._strategy_id = client.strategy_id
         self._gate = gate
         self._config = config
         self._now = clock
@@ -891,7 +900,7 @@ class ProbeExecutor:
         is resting: an idle startup can still owe row repairs.
         """
         try:
-            resting = list(self._client.cache.orders_open(venue=_VENUE))
+            resting = list(self._cache.orders_open(venue=_VENUE))
         except Exception:
             # Nothing can be adopted OR canceled without the list, and nothing has been touched --
             # so the pass does NOT latch: leaving a previous process's orders unclassified for the
@@ -1125,7 +1134,7 @@ class ProbeExecutor:
         it goes through the Cache's own venue-order-id index rather than an assumption about how
         reconciliation names what it adopts. `cache.order` serves closed orders as readily as open
         ones, and both accessors are typed and refuse a plain str."""
-        cache = self._client.cache
+        cache = self._cache
         order = cache.order(ClientOrderId(row["client_order_id"]))
         if order is None and venue_order_id is not None:
             client_order_id = cache.client_order_id(VenueOrderId(venue_order_id))
@@ -1403,7 +1412,7 @@ class ProbeExecutor:
             return
 
         try:
-            state = venue_state_from_cache(self._client.cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now)
         except Exception:
             logger.warning("venue truth unavailable -- refusing plan %s", plan.plan_id, exc_info=True)
             if self._journal_plan(
@@ -1558,7 +1567,7 @@ class ProbeExecutor:
             return
 
         try:
-            state = venue_state_from_cache(self._client.cache, clock=self._now)
+            state = venue_state_from_cache(self._cache, clock=self._now)
         except Exception:
             logger.warning("venue truth unavailable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
             self._refuse_intent(index, ("no venue truth",))
@@ -1582,8 +1591,7 @@ class ProbeExecutor:
             # Cache read of the same instant, and a raise after subscribing would leak the quote
             # subscription until restart.
             own_position_before = sum(
-                float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=instrument_id, strategy_id=self._client.strategy_id)
+                float(p.signed_qty) for p in self._cache.positions_open(instrument_id=instrument_id, strategy_id=self._strategy_id)
             )
         except Exception:
             logger.warning("own position unreadable -- refusing intent %d of plan %s", index, plan.plan_id, exc_info=True)
@@ -1712,7 +1720,7 @@ class ProbeExecutor:
         if isinstance(sized, BelowMinimum):
             return "below_minimum", sized.reason
 
-        instrument = self._client.cache.instrument(active.instrument_id)
+        instrument = self._cache.instrument(active.instrument_id)
         if instrument is None:
             return "error", f"{intent.symbol}: instrument not found in Cache"
 
@@ -2249,7 +2257,7 @@ class ProbeExecutor:
             requested.add(str(active.client_order_id))
             self._cancel(active)
         try:
-            resting = list(self._client.cache.orders_open(venue=_VENUE))
+            resting = list(self._cache.orders_open(venue=_VENUE))
         except Exception:
             logger.critical("open orders could not be read while tripping -- others may still rest at the venue", exc_info=True)
             return
@@ -2373,7 +2381,7 @@ class ProbeExecutor:
         try:
             actual = sum(
                 float(p.signed_qty)
-                for p in self._client.cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._client.strategy_id)
+                for p in self._cache.positions_open(instrument_id=active.instrument_id, strategy_id=self._strategy_id)
             )
         except Exception:
             # The venue-truth read at intent start proved this same Cache readable minutes ago, so a
@@ -2618,14 +2626,17 @@ class ProbeExecutor:
         is right.
 
         Three further things mean the same thing here -- no terminal state, row untouched: a status
-        outside the map (every OPEN one, so a refused cancel leaves the row pointing at a live
-        order), an order the Cache does not hold, and a Cache that cannot be read at all. The last is
-        not hypothetical: a read inside the handler for an event a command of this process emits
-        itself -- `OrderPendingCancel`, which the adopt pass's and a trip's cancels put on this path
-        -- raises `Already mutably borrowed`, because the Cache is still mutably borrowed for the
-        write that produced it. Letting that escape would abandon the whole handler and cost the row
-        its event payload -- the forensic record this path exists to keep -- to decide a state those
-        events never carried anyway.
+        outside the map (every OPEN one, PENDING_CANCEL among them, the status behind the
+        `OrderPendingCancel` the adopt pass's and a trip's cancels put on this path, so a refused
+        cancel leaves the row pointing at a live order), an order the Cache does not hold, and a
+        Cache that cannot be read at all. The read goes through the handle taken at construction and
+        not through the client: `OrderPendingCancel` is dispatched while the client's own
+        `cancel_order` still runs, and the client's `cache` getter raises `Already mutably borrowed`
+        there -- the strategy's PyO3 cell is what that command holds; the Cache itself is free, and
+        the handle reads PENDING_CANCEL. A read that raises all the same is caught rather than let
+        escape, which would abandon the whole handler and cost the row its event payload -- the
+        forensic record this path exists to keep -- to decide a state those events never carried
+        anyway.
         """
         if getattr(event, "reconciliation", False):
             logger.warning(
@@ -2635,7 +2646,7 @@ class ProbeExecutor:
             )
             return None
         try:
-            order = self._client.cache.order(event.client_order_id)
+            order = self._cache.order(event.client_order_id)
         except Exception:
             logger.warning(
                 "the venue order behind %s could not be read -- its row keeps the state it has",
@@ -2759,7 +2770,7 @@ class ProbeExecutor:
             _metrics.inc_fill(_liquidity(event.liquidity_side).lower(), _fee_eur(event.commission))
             instrument_id = event.instrument_id
             self._traded.add(instrument_id)
-            held = self._client.cache.positions_open(instrument_id=instrument_id)
+            held = self._cache.positions_open(instrument_id=instrument_id)
             _metrics.set_position(_SYMBOL_BY_INSTRUMENT_ID[str(instrument_id)], sum(float(p.signed_qty) for p in held))
             _metrics.set_realized(self._realized_eur())
         except Exception:
@@ -2777,7 +2788,7 @@ class ProbeExecutor:
         leg this engine opened realizes an outcome that is genuinely this engine's, and scoping to
         our own strategy would systematically miss exactly that case. Telemetry answers what the
         account did; the reconciliation answers what our own orders did."""
-        cache = self._client.cache
+        cache = self._cache
         total = 0.0
         for instrument_id in self._traded:
             positions = list(cache.positions_open(instrument_id=instrument_id)) + list(

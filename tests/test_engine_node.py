@@ -729,7 +729,11 @@ def test_a_quote_for_another_instrument_does_not_disturb_the_running_intent(tmp_
 
     config = _config(tmp_path)
     strategy = ShadowStrategy(config)
-    strategy._executor = node._probe_executor_factory(config)(strategy)
+    # Unregistered, the strategy refuses its `cache`, which the constructor reads; a registered one
+    # answers it in `on_start`, and the tick forwarding under test reads no client.
+    strategy._executor = node._probe_executor_factory(config)(
+        types.SimpleNamespace(cache=object(), strategy_id=strategy.strategy_id)
+    )
     now = B08 + timedelta(minutes=5)
     active = _ActiveIntent(
         index=0,
@@ -771,10 +775,12 @@ def test_probe_executor_factory_shape(tmp_path):
     from cli.engine.venue import read_system_status
 
     config = _config(tmp_path, exec_armed=True)
-    client = object()
+    # The two reads the constructor takes, as a registered strategy answers them inside `on_start`.
+    client = types.SimpleNamespace(cache=object(), strategy_id=object())
     executor = node._probe_executor_factory(config)(client)
     assert isinstance(executor, ProbeExecutor)
     assert executor._client is client
+    assert (executor._cache, executor._strategy_id) == (client.cache, client.strategy_id)
     assert executor._config is config
     assert executor._gate._armed_in_config is True
     assert executor._gate._dir == exec_dir(config.journal_dir.parent)
