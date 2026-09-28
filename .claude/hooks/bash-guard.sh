@@ -40,6 +40,7 @@
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
+import ast
 import functools
 import json
 import os
@@ -90,6 +91,20 @@ REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
+# Per printer whose program is a word of its argv: its options in VALUE's three kinds; then the options that give the
+# program, which leave no program word, and the options naming a program file, which it opens and echoes a line of on a
+# parse error.
+READERS = {
+    "awk": (
+        "FvfeEilW",
+        "dDopL",
+        {"field-separator", "assign", "file", "source", "exec", "include", "load"},
+        {"f", "e", "E", "--file", "--source", "--exec"},
+        {"f", "E", "i", "--file", "--exec", "--include"},
+    ),
+    "sed": ("efl", "i", {"expression", "file", "line-length"}, {"e", "f", "--expression", "--file"}, {"f", "--file"}),
+}
+OPENERS = {"open", "read_text", "read_bytes"}
 COPIERS = {"cp", "scp", "rsync"}
 WRAPPERS = {"sudo", "doas", "timeout", "nice", "env", "setsid", "nohup", "command", "exec", "time", "stdbuf"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
@@ -598,6 +613,43 @@ def operands(args):
     return out
 
 
+def among(flag, names):
+    # A short option's letter, or a long option's name or the prefix getopt takes for it, is one of names.
+    if flag[:2] != "--":
+        return flag in names
+    return len(flag) > 2 and any(n.startswith(flag) for n in names if n[:2] == "--")
+
+
+def reader_files(p, args):
+    # The files a READERS printer reads: its operands but the program word and, for awk, a `name=value` operand, which
+    # POSIX awk takes as an assignment; and each program file an option names.
+    *walk, programs, files = READERS[p]
+    flags, values, ops = option_walk(args, *walk)
+    ops = ops if any(among(f, programs) for f in flags) else ops[1:]
+    named = [v for f, v in zip(flags, values, strict=True) if v and among(f, files)]
+    return named + [a for a in ops if p != "awk" or not ASSIGN.match(a)]
+
+
+def opened(code):
+    # The strings a `python -c` code can open a file by: the literals inside each call of an opener, its receiver
+    # included; every literal of the code where such a call holds a name no call is made through, which can carry the
+    # path; and every token where the code does not parse.
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError):
+        return re.findall(r"[^\s'\"(),;]+", code) if OPENS.search(code) else []
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and OPENERS & {getattr(n.func, "attr", None), getattr(n.func, "id", None)}]
+    callees = set()
+    for n in ast.walk(tree):
+        f = n.func if isinstance(n, ast.Call) else None
+        while isinstance(f, ast.Attribute):
+            f = f.value
+        if isinstance(f, ast.Name):
+            callees.add(id(f))
+    held = any(isinstance(n, ast.Name) and id(n) not in callees for c in calls for n in ast.walk(c))
+    return [n.value for s in ([tree] if held else calls) for n in ast.walk(s) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+
+
 def git_sub(words):
     # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them.
     at = next((i for i, w in enumerate(words) if is_git(w)), None)
@@ -626,7 +678,7 @@ def judge_vault(words, raw):
         if INTERPRETER.match(p):
             rest = words[i + 1 :]
             code = next((rest[j + 1] for j, a in enumerate(rest[:-1]) if re.fullmatch(r"-[A-Za-z]*c", a)), "")
-            hit = next((tok for tok in re.findall(r"[^\s'\"(),;]+", code) if vaulted(tok)), None) if OPENS.search(code) else None
+            hit = next((tok for tok in opened(code) if vaulted(tok)), None)
             if hit:
                 refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
     sub, rest, _ = git_sub(words)
@@ -641,7 +693,8 @@ def judge_vault(words, raw):
     if p == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in args):
         return  # in place: sed writes the file back and prints nothing
     if p in PRINTERS:
-        hit = next((a for a in ops + getattr(words, "inputs", []) if vaulted(a)), None)
+        files = reader_files(p, args) if p in READERS else ops
+        hit = next((a for a in files + getattr(words, "inputs", []) if vaulted(a)), None)
         if hit:
             refuse_vault(words, f"prints the vaulted file `{hit}`", raw)
     if p in COPIERS:
@@ -693,9 +746,9 @@ def moves_checkout(sub, rest):
 
 
 def option_walk(rest, short_value, short_attached, long_value):
-    # A subcommand's options -- a short one as its letter, a long one as its name -- and its operands; an option's value
-    # is neither.
-    flags, ops, j = [], [], 0
+    # A subcommand's options -- a short one as its letter, a long one as its name -- each with its value or None, and
+    # its operands; an option's value is no operand.
+    flags, values, ops, j = [], [], [], 0
     while j < len(rest):
         tok = rest[j]
         j += 1
@@ -703,20 +756,25 @@ def option_walk(rest, short_value, short_attached, long_value):
             ops.extend(rest[j:])
             break
         if tok.startswith("--"):
-            name = tok.partition("=")[0]
+            name, eq, value = tok.partition("=")
+            takes = not eq and any(o.startswith(name[2:]) for o in long_value)
             flags.append(name)
-            if "=" not in tok and any(o.startswith(name[2:]) for o in long_value):
-                j += 1
+            values.append(value if eq else rest[j] if takes and j < len(rest) else None)
+            j += takes
         elif tok.startswith("-") and len(tok) > 1:
             for k, ch in enumerate(tok[1:], 1):
                 flags.append(ch)
-                if ch in short_value and k == len(tok) - 1:
-                    j += 1
-                if ch in short_value or ch in short_attached:
-                    break
+                if ch not in short_value and ch not in short_attached:
+                    values.append(None)
+                    continue
+                value = tok[k + 1 :]
+                if not value and ch in short_value and j < len(rest):
+                    value, j = rest[j], j + 1
+                values.append(value)
+                break
         else:
             ops.append(tok)
-    return flags, ops
+    return flags, values, ops
 
 
 def ref_write(sub, rest):
@@ -729,7 +787,7 @@ def ref_write(sub, rest):
     if sub not in REF_OPTIONS:
         return None
     what, shorts, longs, *values = REF_OPTIONS[sub]
-    flags, ops = option_walk(rest, *values)
+    flags, _, ops = option_walk(rest, *values)
     for f in flags:
         verb = next((v for o, v in longs.items() if o.startswith(f)), None) if f.startswith("--") else shorts.get(f)
         if verb:
