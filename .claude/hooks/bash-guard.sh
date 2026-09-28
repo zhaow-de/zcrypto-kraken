@@ -45,9 +45,9 @@
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
 # class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
-# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged. Past the
-# tokeniser, an error or a judging over its budget admits the main loop's call the same way and refuses a dispatched
-# agent's: this hook is that agent's fence, and a fence that fails is off.
+# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged. Any other error,
+# or a judging past its budget, admits the main loop's call the same way and refuses a dispatched agent's: this hook
+# is that agent's fence, and a fence that fails is off.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
