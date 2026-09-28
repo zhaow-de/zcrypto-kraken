@@ -99,6 +99,8 @@ REFUSED = [
     ("git -C . commit -n -m $'don\\'t'", "-n"),
     ("git commit --no-veri -m $'don\\'t'", "--no-veri"),
     ("git commit -n -m $'\\uD800'", "-n"),
+    ("git commit -m x $'--no-verify\\0'", "--no-verify"),
+    ("git commit -m x $'--no-verify\\c`'", "--no-verify"),
     # a command substitution: $( .. ) and backticks, bare, assigned, double-quoted, inside a heredoc bash expands
     ("x=$(git commit -n)", "-n"),
     ('echo "$(git commit -n)"', "-n"),
@@ -188,6 +190,10 @@ VAULTED = [
     ("cat infra/ansible/files/deploy_{nas,zaccess}_ed25519", "infra/ansible/files/deploy_nas_ed25519"),
     ("cat infra/ansible/files/deploy_zcrypto-valkey{3..1}_ed25519", "infra/ansible/files/deploy_zcrypto-valkey3_ed25519"),
     ("cat infra/ansible/group_vars/all/vault.yml $'\\uD800'", "infra/ansible/group_vars/all/vault.yml"),
+    ("cat infra/ansible/group_vars/all/vault$'\\0x'.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("cat infra/ansible/group_vars/all/vault.yml$'\\c@'", "infra/ansible/group_vars/all/vault.yml"),
+    ("cat infra/ansible/group_vars/all/vault.yml$'\\c\u0801'", "infra/ansible/group_vars/all/vault.yml"),
+    ("cat infra/ansible/group_vars/all/vault.ym\x00l", "infra/ansible/group_vars/all/vault.yml"),
     (
         "awk --file=infra/ansible/files/deploy_{nas,zaccess}_ed25519 docs/reference/fleet.md",
         "infra/ansible/files/deploy_nas_ed25519",
@@ -479,7 +485,8 @@ ADMITTED = [
     "git show HEAD:infra/ansible/files/no_such_ed25519",
     "cd infra/ansible/files && head -3 README*",
     "cat infra/ansible/files/{README.md,rrsync-shell}",
-    "awk --file=infra/ansible/files/deploy_* docs/reference/fleet.md",  # bash globs the whole word: awk gets `deploy_*`
+    "awk --file=infra/ansible/files/deploy_* docs/reference/fleet.md",
+    "cat infra/ansible/group_vars/all/vault.yml$'\\0'x",
 ]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
