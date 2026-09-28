@@ -356,3 +356,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #619 | 2026-09-26 | fix(ansible): fresh-node previews, and cache Alloy at a real 384m cap | — | 00118 | — |
 | #620 | 2026-09-27 | fix(cache): R8 findings, the fleet time sources and log gaps | — | 00118 | — |
 | #621 | 2026-09-27 | chore(fleet): the engine cache records — first pins, pruner, dark rules | — | 00118 | — |
+| #627 | 2026-09-28 | feat(engine): 00119 — Rung 1 execution findings on the live trade path | — | 00119 | — |
