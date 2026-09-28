@@ -31,7 +31,9 @@
 # its subshell. The main checkout is the parent of the git common dir of the repository this file lives in: the
 # payload's `cwd` can sit in any repository. Outside it: `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory
 # that is no repository of its own, where git reaches the main checkout's; a `gh api` write through fields with no
-# `-X` (its implicit POST, a GraphQL mutation) and every `gh` verb the family does not name.
+# `-X` (its implicit POST, a GraphQL mutation) and every `gh` verb the family does not name; a `git` or `gh` whose
+# stage's command word is neither and no wrapper -- `echo git push`, `xargs git push`, `eval git push`, and a `case`
+# arm's command, whose pattern the lexer leaves at the head of its stage.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -82,7 +84,7 @@ GREPS = {"grep", "egrep", "fgrep", "rg"}
 COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
 TESTS = {"[", "[[", "test"}
 COMPARE = {"=", "==", "!="}
-KEYWORDS = {"if", "elif", "while", "until", "then", "do", "!", "{"}
+KEYWORDS = {"if", "elif", "else", "while", "until", "then", "do", "!", "{"}
 TERMINATORS = {"]", "]]"} | COMPARE  # the test's own words an unquoted `$( .. )` inside it leaves glued to the last stage
 OPS = ["&>>", ";;&", "<<<", "&&", "||", "|&", ";;", ";&", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "|", "&", ";", "\n", "<", ">", "(", ")"]
 SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
@@ -142,9 +144,8 @@ CHECKOUT_REMEDY = (
     ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's, where an agent's git is held to a list of "
     "reads, `fetch` and `worktree list|add|remove`."
 )
-# Per subcommand whose options decide whether it rewrites a ref: what it rewrites; those options, short and long, each
-# with its verb; then, as VALUE reads them, short options whose value is the rest of the bundle or else the next token,
-# short options whose value is attached only, and long options taking a value.
+# Per subcommand: what it rewrites; its ref-writing options, short and long, each with its verb; then its valued
+# options in VALUE's three kinds.
 REF_OPTIONS = {
     "branch": (
         "a branch",
@@ -167,13 +168,14 @@ REF_OPTIONS = {
 }
 REFLOG_WRITES = {"delete", "expire"}
 REFS_REMEDY = (
-    "Refs, reflogs and the worktree list are the repository's, one set for every worktree: a dispatched agent rewrites "
-    "none of them and moves no worktree; it creates the branches it needs and reports them."
+    "A dispatched agent deletes, renames, copies or forces no branch through `git branch` and no tag through `git tag`, "
+    "and runs no `update-ref`, no `symbolic-ref` write, no `reflog delete` or `expire` and no `worktree move`; it "
+    "creates the branches it needs and reports them."
 )
 WORKTREE_REMEDY = (
-    "A dispatched agent removes only a scratch tree it made, named by a path and not a variable: one under the .tmp/ "
-    "of this repository's main checkout or of one of its worktrees, or under its session's directory in Claude Code's "
-    "temp root; a worktree, and another session's directory, are that session's."
+    "A dispatched agent removes only a scratch tree, named by a path and not a variable: one under the .tmp/ of this "
+    "repository's main checkout or of one of its worktrees, whoever made it, or under its session's directory in "
+    "Claude Code's temp root; a worktree, and another session's directory, are that session's."
 )
 HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
 
@@ -665,9 +667,25 @@ def opened(code):
     return [n.value for s in ([tree] if held else calls) for n in ast.walk(s) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
+def command_at(words, is_prog):
+    # The index of a stage's command word where is_prog holds for it, past assignments and keywords; behind a wrapper,
+    # the first word is_prog holds for, since a wrapper's option can take a word of its own (`sudo -u x git`).
+    i = 0
+    while i < len(words) and (ASSIGN.match(words[i]) or words[i] in KEYWORDS):
+        i += 1
+    if i == len(words):
+        return None
+    if is_prog(words[i]):
+        return i
+    base = words[i].rpartition("/")[2]
+    if base in WRAPPERS or (base == "uv" and words[i + 1 : i + 2] == ["run"]):
+        return next((j for j in range(i + 1, len(words)) if is_prog(words[j])), None)
+    return None
+
+
 def git_sub(words):
     # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them.
-    at = next((i for i, w in enumerate(words) if is_git(w)), None)
+    at = command_at(words, is_git)
     if at is None:
         return None, [], []
     argv, i, chdirs = words[at:], 1, []
@@ -724,7 +742,7 @@ def is_gh(w):
 
 
 def gh_writes(words):
-    at = next((i for i, w in enumerate(words) if is_gh(w)), None)
+    at = command_at(words, is_gh)
     if at is None:
         return False
     rest, pos, j = words[at + 1 :], [], 0
