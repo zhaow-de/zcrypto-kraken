@@ -405,6 +405,9 @@ AGENT_WRITES = [
     ("gh api -X post repos/o/r/pulls", "gh api -X post repos/o/r/pulls"),
     ("gh cache delete --all", "gh cache delete --all"),
     ("cd /tmp && timeout 30 gh pr create --fill", "timeout 30 gh pr create --fill"),
+    ("sudo -u zhaow git push", "sudo -u zhaow git push"),
+    ("if false; then :; else git push; fi", "else git push"),
+    ("nice -n 5 gh pr merge 624", "nice -n 5 gh pr merge 624"),
 ]
 
 # (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
@@ -541,6 +544,10 @@ AGENT_ADMITTED = [
     ("git fetch origin develop", WORKTREE),
     ('git commit -m "then git push"', WORKTREE),
     ('echo "git push"', WORKTREE),
+    ("echo git push origin x", WORKTREE),
+    ("echo git branch -D x", WORKTREE),
+    ("echo gh pr merge 624", WORKTREE),
+    ("echo git clean -fdx", MAIN),
     ("gh pr view 624 --json body", WORKTREE),
     ("gh pr list --state merged", WORKTREE),
     ("gh pr diff 624", WORKTREE),
@@ -797,7 +804,7 @@ def test_a_dispatched_agents_branch_delete_is_blocked_wherever_it_runs(tmp_path:
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "deletes a branch" in r.stderr, r.stderr
-    assert "a dispatched agent rewrites none of them and moves no worktree" in r.stderr
+    assert "and no `worktree move`; it creates the branches it needs and reports them." in r.stderr
     assert r.stdout == ""
 
 
@@ -810,7 +817,7 @@ def test_a_dispatched_agents_ref_rename_force_or_delete_or_worktree_move_is_bloc
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and f"` {claim} from a dispatched agent" in r.stderr, r.stderr
-    assert "a dispatched agent rewrites none of them and moves no worktree" in r.stderr
+    assert "and no `worktree move`; it creates the branches it needs and reports them." in r.stderr
     assert r.stdout == ""
 
 
@@ -854,8 +861,7 @@ def test_a_scratchpad_removal_is_the_payload_sessions_under_the_hooks_temp_root(
 
 @pytest.fixture(scope="module")
 def repository(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
-    """A repository holding a copy of the hook, whose worktrees exist on disk: `wt` in `.claude/worktrees/`, `scratch`
-    in its `.tmp/`, `session_wt` under a temp root; `other` is a repository of its own."""
+    """A repository whose worktrees exist on disk, holding the copy of the hook the calls below run."""
     base = tmp_path_factory.mktemp("repository").resolve()
     main, root = base / "main", base / "root"
     paths = {"main": main, "root": root, "wt": main / ".claude/worktrees/agent-y", "other": base / "other"}
