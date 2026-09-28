@@ -184,7 +184,13 @@ VAULTED = [
     ("cd infra/ansible && cat files/deploy_zcrypto_ed25519", "files/deploy_zcrypto_ed25519"),
     ("cd infra/ansible/files && cat deploy_zcrypto_ed25519", "deploy_zcrypto_ed25519"),
     ("cd infra/ansible && cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
-    ("cat infra/ansible/files/deploy_{nas,zaccess}_ed25519", "infra/ansible/files/deploy_*_ed25519"),
+    ("cat infra/ansible/files/deploy_{nas,zaccess}_ed25519", "infra/ansible/files/deploy_nas_ed25519"),
+    ("cat infra/ansible/files/deploy_zcrypto-valkey{3..1}_ed25519", "infra/ansible/files/deploy_zcrypto-valkey3_ed25519"),
+    (
+        "awk --file=infra/ansible/files/deploy_{nas,zaccess}_ed25519 docs/reference/fleet.md",
+        "infra/ansible/files/deploy_nas_ed25519",
+    ),
+    ("cd infra/ansible/files && head -3 deploy_*", "deploy_*"),
     ("{fd}>/dev/null cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("coproc cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("flock /tmp/l cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
@@ -445,6 +451,9 @@ ADMITTED = [
     'python3 -c "exec(\\"print(open(\'infra/ansible/group_vars/no_such/vault.yml\').read())\\")"',
     "cat deploy_zcrypto_ed25519",  # a key's name where no such file is
     "git show HEAD:infra/ansible/files/no_such_ed25519",
+    "cd infra/ansible/files && head -3 README*",
+    "cat infra/ansible/files/{README.md,rrsync-shell}",
+    "awk --file=infra/ansible/files/deploy_* docs/reference/fleet.md",  # bash globs the whole word: awk gets `deploy_*`
 ]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
