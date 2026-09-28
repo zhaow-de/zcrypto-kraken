@@ -49,6 +49,7 @@ input="$(cat)"
 prog="$(cat <<'PY'
 import functools
 import glob
+import itertools
 import json
 import os
 import posixpath
@@ -103,7 +104,8 @@ INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
 KEYS_DIR = "/infra/ansible/files"
 SOPS_VAULT = "/infra/ansible/vault-password.sops.yaml"
 WILD = re.compile(r"[*?[]")
-BRACE = re.compile(r"\{[^{}]*(,|\.\.)[^{}]*\}")  # a group bash expands: `{x}`, with no comma or `..`, is a literal
+BRACE = re.compile(r"\{([^{}]*)\}")
+SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
 VAULT_REMEDY = (
     "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
@@ -583,24 +585,44 @@ def held(path, where):
     return os.path.isfile(posixpath.join(where, path)) and vault_path(os.path.realpath(posixpath.join(where, path)))
 
 
+def braces(word):
+    # The words bash's brace expansion makes of one, innermost group first: a group with a comma or a `..` sequence
+    # expands, and `{x}` stays. Past 256 words the groups read as `*`, which the glob expands to no fewer files.
+    for m in BRACE.finditer(word):
+        seq = SEQUENCE.fullmatch(m[1])
+        if "," in m[1]:
+            items = m[1].split(",")
+        elif seq and seq[1].isalpha() == seq[2].isalpha():
+            a, b = (ord(seq[1]), ord(seq[2])) if seq[1].isalpha() else (int(seq[1]), int(seq[2]))
+            sign = 1 if a <= b else -1
+            steps = range(a, b + sign, sign * (abs(int(seq[3] or 1)) or 1))
+            items = [chr(v) if seq[1].isalpha() else str(v) for v in steps] if len(steps) <= 256 else ["*"]
+        else:
+            continue
+        out = list(itertools.islice((w for item in items for w in braces(word[: m.start()] + item + word[m.end() :])), 257))
+        return out if len(out) <= 256 else [BRACE.sub("*", word)]
+    return [word]
+
+
 def vaulted(word, where):
-    # The first tail of a word -- the word, an option's attached value, a `name=value`'s value -- that names an existing
+    # The word, or the first tail of it -- an option's attached value, a `name=value`'s value -- that names an existing
     # file in the vaulted set from `where`, or None: no option or program is parsed, so a pattern names no file and the
-    # operand beside it does. A tail is globbed as bash globs a word, a brace group read as `*`: never fewer files.
-    word = word.partition("\0")[0]
-    while BRACE.search(word):
-        word = BRACE.sub("*", word)
-    for k in range(len(word)):
-        tail = posixpath.expanduser(word[k:])
-        found = glob.glob(posixpath.join(glob.escape(where), tail)) if WILD.search(tail) else [tail]
-        if any(held(p, where) for p in found):
-            return word[k:]
+    # operand beside it does. The word expands as bash expands it: braces, then a glob, which is the files it matches,
+    # or its own text where it matches none.
+    for w in braces(word.partition("\0")[0]):
+        found = glob.glob(posixpath.join(glob.escape(where), posixpath.expanduser(w))) if WILD.search(w) else []
+        if found:
+            if any(held(p, where) for p in found):
+                return w
+            continue
+        hit = next((w[k:] for k in range(len(w)) if held(posixpath.expanduser(w[k:]), where)), None)
+        if hit:
+            return hit
     return None
 
 
 def composed(parts, where):
-    # The paths a program's words compose, each joined under a directory the words name or compose:
-    # `os.path.join('infra/ansible/group_vars/all', 'vault.yml')` is judged whole.
+    # The paths a program's words compose, each joined under a directory the words name or compose.
     dirs, out = [""], []
     for d in dirs:
         for part in parts:
