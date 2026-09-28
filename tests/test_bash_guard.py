@@ -14,6 +14,7 @@ agent's write.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -34,6 +35,11 @@ MAIN = str(
 )
 WORKTREE = f"{MAIN}/.claude/worktrees/agent-x"
 SCRATCH = f"{MAIN}/.tmp/scratch"
+SESSION, OTHER_SESSION = "0a1b2c3d-0000-4000-8000-000000000001", "0a1b2c3d-0000-4000-8000-000000000002"
+TMP_ROOT = "/home/u/.cache/claude-tmp"  # the hook's CLAUDE_CODE_TMPDIR on every dispatched-agent call below
+PROJECT = f"claude-{os.getuid()}/-home-u-Projects-zcrypto-kraken"
+SCRATCHPAD = f"{TMP_ROOT}/{PROJECT}/{SESSION}/scratchpad"
+AGENT_ENV = {**os.environ, "CLAUDE_CODE_TMPDIR": TMP_ROOT}
 
 HEREDOC_MESSAGE = (
     "$(cat <<'EOF'\nclaude(settings): --no-verify and -n are refused\n\n-n in a bundle too, and \"--no-verify\" quoted\nEOF\n)"
@@ -385,11 +391,6 @@ AGENT_IN_MAIN = [
     ("git rebase develop", MAIN, "git rebase develop"),
     ("git merge --ff-only origin/develop", MAIN, "git merge --ff-only origin/develop"),
     ("git cherry-pick abc1234", MAIN, "git cherry-pick abc1234"),
-    ("git branch -d x", MAIN, "git branch -d x"),
-    ("git branch -D x", MAIN, "git branch -D x"),
-    ("git branch --delete x", MAIN, "git branch --delete x"),
-    ("git branch -rd origin/x", MAIN, "git branch -rd origin/x"),
-    ("git worktree remove .claude/worktrees/agent-x", MAIN, "git worktree remove .claude/worktrees/agent-x"),
     ("git add x.py", f"{MAIN}/cli", "git add x.py"),  # below the main checkout
     ("git commit -m x", f"{MAIN}/.claude/worktrees", "git commit -m x"),  # the directory holding the worktrees
     (f"git -C {MAIN} commit -m x", WORKTREE, f"git -C {MAIN} commit -m x"),
@@ -402,6 +403,37 @@ AGENT_IN_MAIN = [
     (f"cd {WORKTREE}/../../.. && git add f", "/tmp", "git add f"),
     (f"pushd {MAIN} && git commit -m x", WORKTREE, "git commit -m x"),
     (f'cd "$WT" && git -C {MAIN} commit -m x', WORKTREE, f"git -C {MAIN} commit -m x"),  # an absolute -C past an unknown cd
+]
+
+# (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent wherever it runs
+AGENT_BRANCH_DELETES = [
+    ("git branch -d x", MAIN, "git branch -d x"),
+    ("git branch -D x", MAIN, "git branch -D x"),
+    ("git branch --delete x", MAIN, "git branch --delete x"),
+    ("git branch -rd origin/x", MAIN, "git branch -rd origin/x"),
+    ("git branch -D x", WORKTREE, "git branch -D x"),
+    (f"git -C {WORKTREE} branch -D develop", MAIN, f"git -C {WORKTREE} branch -D develop"),
+    ("git branch --del x", "/tmp/elsewhere", "git branch --del x"),
+]
+
+# (command, the payload's cwd, the path the message must name) -- refused from a dispatched agent wherever it runs
+AGENT_WORKTREE_REMOVES = [
+    ("git worktree remove .claude/worktrees/agent-x", MAIN, ".claude/worktrees/agent-x"),
+    (
+        f"git -C {WORKTREE} worktree remove --force {MAIN}/.claude/worktrees/refine-17",
+        WORKTREE,
+        f"{MAIN}/.claude/worktrees/refine-17",
+    ),
+    (f"git -C {WORKTREE} worktree remove --force {WORKTREE}", MAIN, WORKTREE),
+    ("git worktree remove .tmp/reads/x/wt", WORKTREE, ".tmp/reads/x/wt"),  # the worktree's own .tmp/
+    (f"git worktree remove {MAIN}/.tmpx/wt", MAIN, f"{MAIN}/.tmpx/wt"),
+    (f"git worktree remove {MAIN}/.tmp", MAIN, f"{MAIN}/.tmp"),
+    ('git worktree remove --force "$WT"', WORKTREE, "$WT"),
+    (f"git worktree remove --force {TMP_ROOT}/{PROJECT}/wt-b", WORKTREE, f"{TMP_ROOT}/{PROJECT}/wt-b"),  # a payload session's
+    (f"git worktree remove {TMP_ROOT}/{PROJECT}/{OTHER_SESSION}/wt", WORKTREE, f"{TMP_ROOT}/{PROJECT}/{OTHER_SESSION}/wt"),
+    (f"git worktree remove {TMP_ROOT}/{PROJECT}/{SESSION}", WORKTREE, f"{TMP_ROOT}/{PROJECT}/{SESSION}"),
+    (f"cd {MAIN} && git worktree remove .claude/worktrees/y", "/tmp", ".claude/worktrees/y"),
+    ('cd "$WT" && git worktree remove wt', MAIN, "wt"),  # relative to a directory the hook cannot know
 ]
 
 # (command, the payload's cwd) -- admitted silently from a dispatched agent
@@ -423,7 +455,8 @@ AGENT_ADMITTED = [
     ("git add -A", WORKTREE),
     ("git reset --soft HEAD~1", WORKTREE),
     ("git checkout -b y", WORKTREE),
-    ("git branch -D x", WORKTREE),
+    ("git branch --merged develop", WORKTREE),
+    ("git branch -vv", WORKTREE),
     ("git stash", WORKTREE),
     ("git rebase develop", WORKTREE),
     (f"cd {WORKTREE} && git commit -m x", MAIN),
@@ -432,7 +465,12 @@ AGENT_ADMITTED = [
     ("cd .claude/worktrees/agent-x && git commit -m x", MAIN),
     (f"git -C {SCRATCH} commit -m x", MAIN),
     ("cd .tmp/scratch && git init -q && git add . && git commit -m x", MAIN),
-    (f"git -C {WORKTREE} worktree remove --force {WORKTREE}", MAIN),
+    (f"git -C {MAIN} worktree remove --force {MAIN}/.tmp/reads/x/wt-pre-head", MAIN),
+    ("git worktree remove --force .tmp/reads/x/wt-pre-head", MAIN),
+    (f"git worktree remove --force {MAIN}/.tmp/reads/x/wt-pre-head", WORKTREE),
+    ("git worktree remove ../../../.tmp/reads/x/wt", WORKTREE),
+    (f"git -C {WORKTREE} worktree remove --force {SCRATCHPAD}/wt", WORKTREE),
+    (f"git -C {MAIN} worktree remove /tmp/{PROJECT}/{SESSION}/wt", "/tmp"),
     ("git status", MAIN),
     ("git log --oneline -3", MAIN),
     ("git diff develop...HEAD", MAIN),
@@ -454,7 +492,7 @@ AGENT_ADMITTED = [
 ]
 
 
-def run_hook(payload: dict | str, cwd: Path) -> subprocess.CompletedProcess:
+def run_hook(payload: dict | str, cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess:
     """Dicts are JSON-encoded; strings pass through verbatim so the malformed-input cases can hand the hook
     something that is not JSON."""
     return subprocess.run(
@@ -463,6 +501,7 @@ def run_hook(payload: dict | str, cwd: Path) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         cwd=cwd,
+        env=env,
     )
 
 
@@ -548,7 +587,7 @@ def test_hook_is_wired_as_a_pretooluse_bash_hook():
 
 
 def agent_call(command: str, cwd: str, **extra: str) -> dict:
-    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd, **extra}
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd, "session_id": SESSION, **extra}
 
 
 def _named(stderr: str) -> str:
@@ -557,7 +596,7 @@ def _named(stderr: str) -> str:
 
 @pytest.mark.parametrize(("command", "spelling"), AGENT_WRITES, ids=[c for c, _ in AGENT_WRITES])
 def test_a_dispatched_agents_push_or_github_write_is_blocked_with_the_remedy(tmp_path: Path, command: str, spelling: str):
-    r = run_hook(agent_call(command, WORKTREE, agent_id="a1", agent_type="general-purpose"), cwd=tmp_path)
+    r = run_hook(agent_call(command, WORKTREE, agent_id="a1", agent_type="general-purpose"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling, r.stderr
     assert "a dispatched agent reports and stops" in r.stderr
@@ -568,24 +607,71 @@ def test_a_dispatched_agents_push_or_github_write_is_blocked_with_the_remedy(tmp
 def test_a_dispatched_agents_git_that_moves_the_main_checkout_is_blocked_with_the_remedy(
     tmp_path: Path, command: str, where: str, spelling: str
 ):
-    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path)
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "in the main checkout" in r.stderr, r.stderr
     assert "the main checkout is the coordinator's" in r.stderr
     assert r.stdout == ""
 
 
+@pytest.mark.parametrize(
+    ("command", "where", "spelling"), AGENT_BRANCH_DELETES, ids=[f"{c} @ {w}" for c, w, _ in AGENT_BRANCH_DELETES]
+)
+def test_a_dispatched_agents_branch_delete_is_blocked_wherever_it_runs(tmp_path: Path, command: str, where: str, spelling: str):
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "deletes a branch" in r.stderr, r.stderr
+    assert "a dispatched agent deletes none" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "where", "path"), AGENT_WORKTREE_REMOVES, ids=[f"{c} @ {w}" for c, w, _ in AGENT_WORKTREE_REMOVES]
+)
+def test_a_dispatched_agents_worktree_remove_outside_its_scratch_is_blocked_wherever_it_runs(
+    tmp_path: Path, command: str, where: str, path: str
+):
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and f"removes the worktree `{path}` from a dispatched agent" in r.stderr, r.stderr
+    assert "every other worktree is a session's" in r.stderr
+    assert r.stdout == ""
+
+
 @pytest.mark.parametrize(("command", "where"), AGENT_ADMITTED, ids=[f"{c} @ {w}" for c, w in AGENT_ADMITTED])
 def test_a_dispatched_agents_read_and_worktree_git_are_admitted_silently(tmp_path: Path, command: str, where: str):
-    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path)
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
 
 
-MAIN_LOOP = [(c, WORKTREE) for c, _ in AGENT_WRITES] + [(c, w) for c, w, _ in AGENT_IN_MAIN]
+@pytest.mark.parametrize(
+    ("session", "env"),
+    [
+        (None, AGENT_ENV),
+        ("", AGENT_ENV),
+        (OTHER_SESSION, AGENT_ENV),
+        (SESSION, {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_TMPDIR"}),
+    ],
+    ids=["no session_id", "an empty session_id", "another session", "no CLAUDE_CODE_TMPDIR"],
+)
+def test_a_scratchpad_removal_is_the_payload_sessions_under_the_hooks_temp_root(tmp_path: Path, session: str | None, env: dict):
+    payload = agent_call(f"git worktree remove --force {SCRATCHPAD}/wt", WORKTREE, agent_id="a1")
+    del payload["session_id"]
+    if session is not None:
+        payload["session_id"] = session
+    r = run_hook(payload, cwd=tmp_path, env=env)
+    assert r.returncode == 2 and f"removes the worktree `{SCRATCHPAD}/wt`" in r.stderr, r.stderr
+
+
+MAIN_LOOP = (
+    [(c, WORKTREE) for c, _ in AGENT_WRITES]
+    + [(c, w) for c, w, _ in AGENT_IN_MAIN]
+    + [(c, w) for c, w, _ in AGENT_BRANCH_DELETES + AGENT_WORKTREE_REMOVES]
+)
 
 
 @pytest.mark.parametrize(("command", "where"), MAIN_LOOP, ids=[f"{c} @ {w}" for c, w in MAIN_LOOP])
 @pytest.mark.parametrize("extra", [{}, {"agent_type": "reviewer"}], ids=["bare", "agent_type alone"])
 def test_the_main_loop_runs_what_a_dispatched_agent_may_not(tmp_path: Path, command: str, where: str, extra: dict):
-    r = run_hook(agent_call(command, where, **extra), cwd=tmp_path)
+    r = run_hook(agent_call(command, where, **extra), cwd=tmp_path, env=AGENT_ENV)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
