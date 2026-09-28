@@ -43,8 +43,6 @@ def _git(repo: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
 
 
 def same_tree_and_messages(repo: pathlib.Path, theirs: object, ours: str) -> bool:
-    """A pre-review of `theirs` covers `ours` when both commits hold one tree and the commit messages from their
-    merge base to each are the same bytes; an id git cannot resolve is false."""
     if not (isinstance(theirs, str) and SHA.match(theirs)):
         return False
     trees = [_git(repo, "rev-parse", "--verify", "--quiet", f"{sha}^{{tree}}") for sha in (theirs, ours)]
