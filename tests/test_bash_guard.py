@@ -98,6 +98,7 @@ REFUSED = [
     ("git commit --amend -n -m $'it\\'s'", "-n"),
     ("git -C . commit -n -m $'don\\'t'", "-n"),
     ("git commit --no-veri -m $'don\\'t'", "--no-veri"),
+    ("git commit -n -m $'\\uD800'", "-n"),
     # a command substitution: $( .. ) and backticks, bare, assigned, double-quoted, inside a heredoc bash expands
     ("x=$(git commit -n)", "-n"),
     ('echo "$(git commit -n)"', "-n"),
@@ -186,6 +187,7 @@ VAULTED = [
     ("cd infra/ansible && cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
     ("cat infra/ansible/files/deploy_{nas,zaccess}_ed25519", "infra/ansible/files/deploy_nas_ed25519"),
     ("cat infra/ansible/files/deploy_zcrypto-valkey{3..1}_ed25519", "infra/ansible/files/deploy_zcrypto-valkey3_ed25519"),
+    ("cat infra/ansible/group_vars/all/vault.yml $'\\uD800'", "infra/ansible/group_vars/all/vault.yml"),
     (
         "awk --file=infra/ansible/files/deploy_{nas,zaccess}_ed25519 docs/reference/fleet.md",
         "infra/ansible/files/deploy_nas_ed25519",
@@ -294,6 +296,30 @@ READER_PROGRAMS = [
     ("less +/vault.yml docs/reference/fleet.md", "less +/vault.yml infra/ansible/host_vars/nas/vault.yml"),
     ("more +/vault.yml docs/reference/fleet.md", "more +/vault.yml infra/ansible/group_vars/all/vault.yml"),
 ]
+
+# (a word past the brace cap, the glob or file the message must name)
+PAST_THE_BRACE_CAP = [
+    (
+        "awk --file=infra/ansible/files/deploy_zcrypto-valkey{1..257}_ed25519 docs/reference/fleet.md",
+        "infra/ansible/files/deploy_zcrypto-valkey*_ed25519",
+    ),
+    (
+        "awk --file=infra/ansible/files/deploy_{zcrypto-valkey{1..300},nas}_ed25519 docs/reference/fleet.md",
+        "infra/ansible/files/deploy_zcrypto-valkey*_ed25519",
+    ),
+    (
+        "awk --file=infra/ansible/files/deploy_nas_ed25519{,}{,}{,}{,}{,}{,}{,}{,}{,} docs/reference/fleet.md",
+        "infra/ansible/files/deploy_nas_ed25519*********",
+    ),
+    ("cat infra/ansible/files/{deploy_nas,{x,y}}_ed25519{,}{,}{,}{,}{,}{,}{,}{,}", "infra/ansible/files/*_ed25519********"),
+    ("cat {infra/ansible/files/deploy_nas_ed25519,{1..300}}", "infra/ansible/files/deploy_nas_ed25519"),
+    ("cat {1..99999999999999999999} infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+]
+
+PAST_THE_BRACE_CAP_ADMITTED = {
+    "a thousand groups": "cat " + "{a,b}" * 1000,
+    "a sequence end of 5000 digits": "cat {1.." + "9" * 5000 + "}",
+}
 
 ADMITTED = [
     # commit without the flag; the flag as message text, in a heredoc, in a comment, after --
@@ -504,6 +530,8 @@ AGENT_WRITES = [
     ("case x in x) git push;; esac", "case x in x git push"),
     ("echo git push origin x", "echo git push origin x"),
     ("echo gh pr merge 624", "echo gh pr merge 624"),
+    ("cat {1..99999999999999999999}; git push origin x", "git push origin x"),
+    ("git commit -m x $'\\UFFFFFFFF'; git push origin x", "git push origin x"),
 ]
 
 # (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
@@ -827,6 +855,29 @@ def test_a_readers_program_naming_vault_yml_is_admitted_and_the_vaulted_file_it_
     assert r.returncode == 2 and f"prints the vaulted file `{refused.split()[-1]}`;" in r.stderr, r.stderr
 
 
+@pytest.mark.parametrize(("command", "spelling"), PAST_THE_BRACE_CAP, ids=[c for c, _ in PAST_THE_BRACE_CAP])
+@pytest.mark.parametrize("extra", [{}, {"agent_id": "a1"}], ids=["main loop", "dispatched agent"])
+def test_a_word_past_the_brace_cap_is_refused_by_a_tail_that_globs_to_a_vaulted_file(
+    tmp_path: Path, command: str, spelling: str, extra: dict
+):
+    r = run_hook(agent_call(command, str(REPO), **extra), cwd=tmp_path, env=AGENT_ENV)
+    assert r.returncode == 2 and f"prints the vaulted file `{spelling}`;" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("command", PAST_THE_BRACE_CAP_ADMITTED.values(), ids=PAST_THE_BRACE_CAP_ADMITTED.keys())
+@pytest.mark.parametrize("extra", [{}, {"agent_id": "a1"}], ids=["main loop", "dispatched agent"])
+def test_a_word_past_the_brace_cap_naming_no_vaulted_file_is_admitted(tmp_path: Path, command: str, extra: dict):
+    r = run_hook(agent_call(command, str(REPO), **extra), cwd=tmp_path, env=AGENT_ENV)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_a_star_read_for_a_brace_group_matches_a_leading_dot(tmp_path: Path):
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "vault.yml").write_text("")
+    r = run_hook(agent_call("cat {.,x}hidden/vault.yml{,}{,}{,}{,}{,}{,}{,}{,}", str(tmp_path)), cwd=tmp_path)
+    assert r.returncode == 2 and "prints the vaulted file `*hidden/vault.yml********`;" in r.stderr, r.stderr
+
+
 @pytest.mark.parametrize("command", ADMITTED)
 def test_an_ordinary_command_is_admitted_silently(tmp_path: Path, command: str):
     r = run_hook(call(command), cwd=tmp_path)
@@ -856,6 +907,29 @@ def test_a_command_that_does_not_tokenise_admits_with_a_note(tmp_path: Path):
     r = run_hook(call('git commit -n -m "unterminated'), cwd=tmp_path)
     assert r.returncode == 0
     assert "bash-guard: NOTE" in r.stderr
+
+
+@pytest.mark.parametrize(
+    ("first_line", "budget", "error"),
+    [
+        ('raise RuntimeError("probe")', 5, "RuntimeError: probe"),
+        ("signal.pause()", 1, "TimeoutError: the judging ran past 1 seconds"),
+    ],
+    ids=["an error", "an overrun"],
+)
+def test_a_judging_that_fails_refuses_a_dispatched_agent_and_admits_the_main_loop_with_a_note(
+    tmp_path: Path, first_line: str, budget: int, error: str
+):
+    probed = HOOK.read_text().replace("def judge(words):\n", f"def judge(words):\n    {first_line}\n", 1)
+    probed = probed.replace("BUDGET = 5 ", f"BUDGET = {budget} ", 1)
+    assert probed.count(f"    {first_line}\n") == 1 and f"BUDGET = {budget} " in probed
+    hook = tmp_path / "bash-guard.sh"
+    hook.write_text(probed)
+    r = run_hook(agent_call("git status", WORKTREE, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV, hook=hook)
+    assert r.returncode == 2 and f"BLOCKED — the hook could not judge the command ({error})" in r.stderr, r.stderr
+    assert "a dispatched agent's command it cannot judge is refused; in `git status`." in r.stderr
+    r = run_hook(agent_call("git status", WORKTREE), cwd=tmp_path, env=AGENT_ENV, hook=hook)
+    assert r.returncode == 0 and "NOTE — the hook failed on its own (rc 1); the command runs unjudged." in r.stderr, r.stderr
 
 
 def test_hook_is_executable():
