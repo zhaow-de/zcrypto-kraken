@@ -16,7 +16,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 HOOK = REPO / ".claude" / "hooks" / "bash-guard.sh"
-# The hook judges these paths as text and never touches them, so a worktree need not exist to be one.
+# Judged as text but for a worktree remove's operand, whose ancestors the hook reads for a worktree of this
+# repository: agent-x is none.
 MAIN = str(
     Path(
         subprocess.run(
@@ -30,7 +31,7 @@ MAIN = str(
 WORKTREE = f"{MAIN}/.claude/worktrees/agent-x"
 SCRATCH = f"{MAIN}/.tmp/scratch"
 SESSION, OTHER_SESSION = "0a1b2c3d-0000-4000-8000-000000000001", "0a1b2c3d-0000-4000-8000-000000000002"
-TMP_ROOT = "/home/u/.cache/claude-tmp"  # the hook's CLAUDE_CODE_TMPDIR on every dispatched-agent call below
+TMP_ROOT = "/home/u/.cache/claude-tmp"
 PROJECT = f"claude-{os.getuid()}/-home-u-Projects-zcrypto-kraken"
 SCRATCHPAD = f"{TMP_ROOT}/{PROJECT}/{SESSION}/scratchpad"
 AGENT_ENV = {**os.environ, "CLAUDE_CODE_TMPDIR": TMP_ROOT}
@@ -407,7 +408,7 @@ AGENT_IN_MAIN = [
     (f'cd "$WT" && git -C {MAIN} commit -m x', WORKTREE, f"git -C {MAIN} commit -m x"),  # an absolute -C past an unknown cd
 ]
 
-# (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent wherever it runs
+# (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
 AGENT_BRANCH_DELETES = [
     ("git branch -d x", MAIN, "git branch -d x"),
     ("git branch -D x", MAIN, "git branch -D x"),
@@ -418,7 +419,7 @@ AGENT_BRANCH_DELETES = [
     ("git branch --del x", "/tmp/elsewhere", "git branch --del x"),
 ]
 
-# (command, the payload's cwd, the path the message must name) -- refused from a dispatched agent wherever it runs
+# (command, the payload's cwd, the path the message must name) -- refused from a dispatched agent
 AGENT_WORKTREE_REMOVES = [
     ("git worktree remove .claude/worktrees/agent-x", MAIN, ".claude/worktrees/agent-x"),
     (
@@ -427,7 +428,7 @@ AGENT_WORKTREE_REMOVES = [
         f"{MAIN}/.claude/worktrees/refine-17",
     ),
     (f"git -C {WORKTREE} worktree remove --force {WORKTREE}", MAIN, WORKTREE),
-    ("git worktree remove .tmp/reads/x/wt", WORKTREE, ".tmp/reads/x/wt"),  # the worktree's own .tmp/
+    ("git worktree remove .tmp/reads/x/wt", WORKTREE, ".tmp/reads/x/wt"),  # a .tmp/ of a directory that is no worktree
     (f"git worktree remove {MAIN}/.tmpx/wt", MAIN, f"{MAIN}/.tmpx/wt"),
     (f"git worktree remove {MAIN}/.tmp", MAIN, f"{MAIN}/.tmp"),
     ('git worktree remove --force "$WT"', WORKTREE, "$WT"),
@@ -494,11 +495,11 @@ AGENT_ADMITTED = [
 ]
 
 
-def run_hook(payload: dict | str, cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess:
+def run_hook(payload: dict | str, cwd: Path, env: dict | None = None, hook: Path = HOOK) -> subprocess.CompletedProcess:
     """Dicts are JSON-encoded; strings pass through verbatim so the malformed-input cases can hand the hook
     something that is not JSON."""
     return subprocess.run(
-        ["bash", str(HOOK)],
+        ["bash", str(hook)],
         input=payload if isinstance(payload, str) else json.dumps(payload),
         capture_output=True,
         text=True,
@@ -636,7 +637,7 @@ def test_a_dispatched_agents_worktree_remove_outside_its_scratch_is_blocked_wher
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and f"removes the worktree `{path}` from a dispatched agent" in r.stderr, r.stderr
-    assert "every other worktree is a session's" in r.stderr
+    assert "a worktree, and another session's directory, are that session's" in r.stderr
     assert r.stdout == ""
 
 
@@ -663,6 +664,70 @@ def test_a_scratchpad_removal_is_the_payload_sessions_under_the_hooks_temp_root(
         payload["session_id"] = session
     r = run_hook(payload, cwd=tmp_path, env=env)
     assert r.returncode == 2 and f"removes the worktree `{SCRATCHPAD}/wt`" in r.stderr, r.stderr
+
+
+@pytest.fixture(scope="module")
+def repository(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+    """A repository holding a copy of the hook, whose worktrees exist on disk: `wt` in `.claude/worktrees/`, `scratch`
+    in its `.tmp/`, `session_wt` under a temp root; `other` is a repository of its own."""
+    base = tmp_path_factory.mktemp("repository").resolve()
+    main, root = base / "main", base / "root"
+    paths = {"main": main, "root": root, "wt": main / ".claude/worktrees/agent-y", "other": base / "other"}
+    paths |= {"scratch": paths["wt"] / ".tmp/reads/pre-review-abc1234", "session_wt": root / PROJECT / "wt-b"}
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid"}
+    env |= {"GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], env=env, input="", capture_output=True, text=True, check=True).stdout.strip()
+
+    git("init", "-q", str(main))
+    git("init", "-q", str(paths["other"]))
+    (main / ".claude/hooks").mkdir(parents=True)
+    (main / ".claude/hooks/bash-guard.sh").write_bytes(HOOK.read_bytes())
+    commit = git("-C", str(main), "commit-tree", "--no-gpg-sign", "-m", "base", git("-C", str(main), "mktree"))
+    for name in ("wt", "scratch", "session_wt"):
+        git("-C", str(main), "worktree", "add", "-q", "--no-checkout", "--detach", str(paths[name]), commit)
+    return {k: str(v) for k, v in paths.items()}
+
+
+# (command, the payload's cwd) in `repository` -- admitted from a dispatched agent
+SCRATCH_IN_A_WORKTREE = [
+    ("git -C {wt} worktree remove --force {scratch}", "{wt}"),
+    ("git -C {main} worktree remove --force {scratch}", "{main}"),
+    ("git worktree remove --force .tmp/reads/pre-review-abc1234", "{wt}"),
+    ("git worktree remove {session_wt}/.tmp/reads/x", "{wt}"),
+    ("git worktree remove {main}/.tmp/reads/x/wt", "{wt}"),
+]
+
+# (command, the payload's cwd, the path the message must name) in `repository` -- refused from a dispatched agent
+NO_SCRATCH_IN_A_WORKTREE = [
+    ("git -C {main} worktree remove --force {wt}", "{main}", "{wt}"),
+    ("git worktree remove {session_wt}", "{wt}", "{session_wt}"),
+    ("git worktree remove {wt}/.tmp", "{wt}", "{wt}/.tmp"),
+    ("git worktree remove {other}/.tmp/x", "{wt}", "{other}/.tmp/x"),
+]
+
+
+def repository_call(repository: dict[str, str], tmp_path: Path, command: str, where: str) -> subprocess.CompletedProcess:
+    payload = agent_call(command.format(**repository), where.format(**repository), agent_id="a1")
+    env = {**os.environ, "CLAUDE_CODE_TMPDIR": repository["root"]}
+    return run_hook(payload, cwd=tmp_path, env=env, hook=Path(repository["main"]) / ".claude/hooks/bash-guard.sh")
+
+
+@pytest.mark.parametrize(("command", "where"), SCRATCH_IN_A_WORKTREE, ids=[f"{c} @ {w}" for c, w in SCRATCH_IN_A_WORKTREE])
+def test_a_scratch_tree_under_any_worktrees_tmp_is_admitted(repository: dict[str, str], tmp_path: Path, command: str, where: str):
+    r = repository_call(repository, tmp_path, command, where)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+@pytest.mark.parametrize(
+    ("command", "where", "path"), NO_SCRATCH_IN_A_WORKTREE, ids=[f"{c} @ {w}" for c, w, _ in NO_SCRATCH_IN_A_WORKTREE]
+)
+def test_a_worktree_or_a_tmp_no_worktree_of_this_repository_holds_is_refused(
+    repository: dict[str, str], tmp_path: Path, command: str, where: str, path: str
+):
+    r = repository_call(repository, tmp_path, command, where)
+    assert r.returncode == 2 and f"removes the worktree `{path.format(**repository)}`" in r.stderr, r.stderr
 
 
 MAIN_LOOP = (
