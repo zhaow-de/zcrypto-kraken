@@ -2,7 +2,8 @@
 """The review ledger, `<reportDir>/ledger.jsonl`, kept by this script and never by a workflow agent.
 
 `append` writes the row a pre-review, review or re-review returns, and for a review or re-review appends the
-refutation block it returns to each report it names. `read` prints the entries a review or re-review takes as its
+refutation block it returns to each report it names; with `--row` it appends any one-object row as given, a
+controller's task rows among them. `read` prints the entries a review or re-review takes as its
 `ledger` argument, each pre-review entry at another tip carrying `sameTreeAndMessages` and the tip it was compared
 against, which the workflows refuse when it is not their own.
 """
@@ -36,6 +37,16 @@ def _range(value: str) -> str:
     if len(ends) != 2 or not all(ends) or "..." in value or any(c.isspace() for c in value):
         raise argparse.ArgumentTypeError(f"{value!r} is not a two-dot range `a..b`")
     return value
+
+
+def _row(value: str) -> dict:
+    try:
+        row = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not JSON ({exc.msg})") from exc
+    if not isinstance(row, dict):
+        raise argparse.ArgumentTypeError(f"{value!r} is not one JSON object")
+    return row
 
 
 def _git(repo: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
@@ -109,9 +120,10 @@ def run(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     add = sub.add_parser("append")
     add.add_argument("report_dir", type=pathlib.Path)
-    add.add_argument("--kind", required=True, choices=KINDS)
-    add.add_argument("--range", required=True, type=_range)
-    add.add_argument("--tip", required=True, type=_sha)
+    add.add_argument("--kind", choices=KINDS)
+    add.add_argument("--range", type=_range)
+    add.add_argument("--tip", type=_sha)
+    add.add_argument("--row", type=_row, help="a one-object JSON row, appended as given in place of the three above")
     add.add_argument("--refutation", type=pathlib.Path, help="a file holding the `refutation` a review returned")
     add.add_argument("--report", action="append", default=[], type=pathlib.Path, help="a report it is appended to")
     get = sub.add_parser("read")
@@ -124,12 +136,18 @@ def run(argv: list[str]) -> int:
         if args.command == "read":
             print(json.dumps(read(args.report_dir, args.tip, args.repo), ensure_ascii=False))
             return 0
+        read_row = (args.kind, args.range, args.tip)
+        if args.row is not None:
+            if any(read_row) or args.refutation is not None or args.report:
+                raise LedgerError("--row stands alone: a row as given, or --kind, --range and --tip")
+        elif not all(read_row):
+            raise LedgerError("append takes --kind, --range and --tip together, or --row alone")
         if (args.refutation is None) != (not args.report):
             raise LedgerError("--refutation and --report go together: the block and the reports it is appended to")
         if args.refutation is not None and args.kind == "pre-review":
             raise LedgerError("a pre-review returns no refutation block")
         stamp = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        row = {"kind": args.kind, "range": args.range, "tip": args.tip, "ts": stamp}
+        row = args.row if args.row is not None else {"kind": args.kind, "range": args.range, "tip": args.tip, "ts": stamp}
         for note in append(args.report_dir, row, args.refutation, args.report):
             print(f"review-ledger: {note}", file=sys.stderr)
     except (LedgerError, OSError) as exc:
