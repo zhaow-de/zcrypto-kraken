@@ -729,8 +729,6 @@ def scratch_tree(path, session):
     p, main = os.path.realpath(path), main_checkout()
     if main and p.startswith(os.path.realpath(f"{main}/.tmp") + "/"):
         return True
-    if not isinstance(session, str) or not session or "/" in session or session in (".", ".."):
-        return False
     for root in {"/tmp", os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp"}:
         base = os.path.realpath(f"{root}/claude-{os.getuid()}") + "/"
         parts = p[len(base) :].split("/") if p.startswith(base) else []
