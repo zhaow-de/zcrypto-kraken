@@ -25,10 +25,9 @@
 # program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through `xargs`,
 # `find -exec` or a copy of its whole directory -- none is an argv this guard judges; nor is a vaulted file the command
 # makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs.
-# Refused deliberately, the cost of judging a word wherever it stands rather than parsing what precedes it or what
-# the program makes of it: a dispatched agent's `echo git push` or `grep -n git f`, whose first `git` or `gh` word is
-# read as the one its stage runs; and `echo cat <vaulted file>`, `awk -v x=<vaulted file>` or
-# `sops filestatus <vaulted file>`, whose word names a vaulted file that exists whether or not the program prints it.
+# A vault tool's verb that writes or inspects a vaulted file without printing its plaintext is admitted
+# (`ansible-vault encrypt|rekey|edit`, `sops -e|updatekeys|rotate|edit|filestatus`): a key rotation runs them.
+# Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
 # A stage's directory, for the vaulted-file family and the dispatched-agent family, is the payload's `cwd` moved by
 # each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; scope is not tracked, so a `cd` outlives
@@ -99,7 +98,6 @@ REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
-DECRYPTERS = {"sops", "ansible-vault"}
 COPIERS = {"cp", "scp", "rsync"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
 KEYS_DIR = "/infra/ansible/files"
@@ -670,14 +668,14 @@ def judge_vault(words, raw, where):
         p, rest = w.rpartition("/")[2], words[i + 1 :]
         if p == "ansible-vault" and any(a in ("view", "decrypt") for a in rest):
             refuse_vault(words, "decrypts a vaulted file to the terminal", raw)
-        if p == "sops" and any(a in ("-d", "--decrypt", "decrypt") for a in rest):
-            refuse_vault(words, "decrypts a sops file to the terminal", raw)
+        if p == "sops" and any(a in ("-d", "--decrypt", "decrypt", "exec-env", "exec-file") for a in rest):
+            refuse_vault(words, "decrypts a sops file to the terminal or a command", raw)
         if p == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in rest):
             continue  # in place: sed writes the file back and prints nothing
-        if p in PRINTERS | DECRYPTERS:
-            hit = first_vaulted(rest + (getattr(words, "inputs", []) if p in PRINTERS else []), where)
+        if p in PRINTERS:
+            hit = first_vaulted(rest + getattr(words, "inputs", []), where)
             if hit:
-                refuse_vault(words, f"{'prints' if p in PRINTERS else 'opens'} the vaulted file `{hit}`", raw)
+                refuse_vault(words, f"prints the vaulted file `{hit}`", raw)
         if p in COPIERS:
             ops = operands(rest)
             sources = ops if p == "cp" and any(a == "-t" or a.startswith("--target-directory") for a in rest) else ops[:-1]
