@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**, or because **a guard in the code pointed you here**. Find the section whose anchor matches the alert `uid` or the anchor in the comment that sent you. Each section is written to be actioned without opening any other document.
 
-Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Seven systemd timers come from this role (`ls infra/ansible/roles/ops/templates/*.timer.j2`), each firing a `Type=oneshot` unit; the host itself shows one more, `zaccess-probe-ops.timer` from the `access_ops` role, so `systemctl list-timers` there lists eight project timers and not seven. Five of those units run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`; the two `grafana-*` units are plain scripts. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average. The host has **no `uv`** — it runs containers, not the repo CLI.
+Everything below is produced on one host, `zcrypto-ops`, reached as `ssh hp`. Its project timers are this role's, each firing a `Type=oneshot` unit — rendered from `infra/ansible/roles/ops/templates/*.timer.j2`, plus `zcrypto-clock-offset.timer` from its `files/` — beside `zaccess-probe-ops.timer`, which the `access_ops` role owns. The two `grafana-*` units and `zcrypto-clock-offset` are plain scripts; the rest run the repo CLI as an ephemeral, digest-pinned `docker run --rm --pull never`. All but `grafana-watchdog` publish a node-exporter textfile under `/var/lib/zcrypto-ops/textfile/`; the host's Alloy scrapes those files and ships their series to Grafana Cloud, and ships the units' journal lines to Loki. Every rule in this file reads one of those textfile series, or those log lines, or the host's own load average and filesystems. The host has **no `uv`** — it runs containers, not the repo CLI.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 
@@ -24,7 +24,7 @@ Two Grafana alerts on the same unit, `zcrypto-archive-pull.service` — despite 
 
 `zcrypto-archive-pull.timer` fires at `*-*-* *:12,42:00` with `Persistent=true`, so 3 h is about six missed half-hourly ticks. Each tick reads the NAS's canonical trees through the read-only NFS automount at `/mnt/zhao-crypto` and writes the overlay locally under `/var/lib/zcrypto-ops/capture-reconciled`.
 
-**The two rules partition the failure, and a gate-skip is in neither of them.** The cycle opens with a fail-closed gate: it reads `/mnt/zhao-crypto/.pull-status` — written by the NAS right after its own capture pulls — and skips reconcile *and* backfill unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 14400 s and no more than 600 s in the future. A skip is a state, not a fault: it exits 0, bumps `ops_archive_pull_last_success_timestamp`, and echoes `WARNING: writer cycle SKIPPED (fail-closed gate): <reason>` to the journal. So **stalled firing is never a skip** — it is the unit itself not completing.
+**The two rules partition the failure, and a gate-skip is in neither of them.** The cycle opens with a fail-closed gate: it reads `/mnt/zhao-crypto/.pull-status` — written by the NAS right after its own capture pulls — and skips reconcile *and* backfill unless `capture_ok=1`, `secondary_ok=1`, and `ts_epoch` is younger than 14400 s and no more than 600 s in the future. A skip is a state, not a fault: it exits 0, bumps `ops_archive_pull_last_success_timestamp`, and logs `writer cycle SKIPPED (fail-closed gate): <reason>` at WARNING to the journal. So **stalled firing is never a skip** — it is the unit itself not completing.
 
 `rc=1` is set in exactly one place in `infra/ansible/roles/ops/templates/archive-pull.sh.j2`: the reconcile `docker run` failing. A trade-backfill failure leaves rc at 0 and pages through its own exit-code rule instead.
 
@@ -78,7 +78,7 @@ Only the trade tape is affected. Book data — the unbackfillable part — is un
 
 ### What to do
 
-1. **Read the day's attempt.** `ssh hp`, then `sudo journalctl -u zcrypto-archive-pull.service --since -48h --no-pager | grep -iE 'backfill|SKIPPED'` — the script echoes `trade backfill failed (exit=<n>), continuing` and replays the CLI's whole output into the journal, including the `errors=` summary line.
+1. **Read the day's attempt.** `ssh hp`, then `sudo journalctl -u zcrypto-archive-pull.service --since -48h --no-pager | grep -iE 'backfill|SKIPPED'` — the script logs `trade backfill failed (exit=<n>), continuing` at WARNING and replays the CLI's whole output into the journal, including the `errors=` summary line.
 2. **Read the stamp and the textfile.** `cat /var/lib/zcrypto-ops/.trade-backfill-last-utc-day` — today's date means today's attempt has already happened. `cat /var/lib/zcrypto-ops/textfile/trade-backfill.prom` for the exit code, last run and last success as published.
 3. **Exit 2 → the mount.** `ls /mnt/zhao-crypto/capture-segments`. Treat it exactly as the writer cycle's mount check above.
 4. **Exit 1 → read the errors.** Fetch failures against Kraken's REST point at the venue (check its status page and the capture-side venue-status signals); unreadable segments point at the NAS or the mount.
@@ -121,7 +121,7 @@ Two Grafana alerts on `zcrypto-verified-replay.service`, the daily verified-path
 - **`days_behind > 0`, exit code 0** — the loop stopped short, for one of three reasons, each logged verbatim — **the first two stop *without advancing the watermark*, the third advances and resumes tomorrow**: the day's directory under `/mnt/zhao-crypto/engine-journal/<day>/` holds no `cycle-*.json` or `failed-cycle-*.json` (`journal has not caught up`); the **successor** day holds none either, so the day may be only partly pulled (`journal freshness unproven` — that successor-day probe stands in for a journal freshness signal, since `.pull-status` attests `capture_ok`/`secondary_ok` and nothing about the journal) (no count command: a day's pull state lives on the NAS, not in the tree); or the 30-day budget ran out (`capped at 30 day(s)`).
 - **Exit code non-zero** — a day genuinely mismatched, the run was **refused** before it started, or a day verified but its watermark could not be persisted.
 
-**A refused run touches neither the watermark nor the textfile**, exits 1, and prints its own reason at ERROR: the watermark is not a `YYYY-MM-DD` day, is a shape-valid but nonexistent calendar date, is beyond yesterday (clock skew or a manual edit), or the seed could not be persisted. An **empty** watermark file is the one to know: it parses as *tomorrow*, would skip the loop forever and read fully healthy while doing so — hence the refusal.
+**A refused run touches neither the watermark nor the textfile**, exits 1, and logs its own reason at WARNING (the dead man's silence and `-stale` page it, not `Ops · ERROR logs`): the watermark is not a `YYYY-MM-DD` day, is a shape-valid but nonexistent calendar date, is beyond yesterday (clock skew or a manual edit), or the seed could not be persisted. An **empty** watermark file is the one to know: it parses as *tomorrow*, would skip the loop forever and read fully healthy while doing so — hence the refusal.
 
 **A mismatch is retried nightly and blocks everything after it.** The loop breaks on the first failing day without advancing, so no later day is verified past the gap — which is why `-stale` follows about 48 h behind a persistent `-exit-nonzero`.
 
@@ -129,7 +129,7 @@ The healthchecks.io dead-man for this timer is fed only on a clean, fully-caught
 
 ### What to do
 
-1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the three stop messages above and for `verified-replay: ERROR:`.
+1. **`ssh hp`, then read the unit and its last three days**: `systemctl status zcrypto-verified-replay.service`, then `sudo journalctl -u zcrypto-verified-replay.service --since -3d --no-pager` — confirm the output is non-empty before reading anything into it. Grep for the three stop messages above and for `WARNING zcrypto.verified-replay`.
 2. **Read the watermark and the journal tree.** `cat /var/lib/zcrypto-ops/.verified-replay-watermark`; `ls /mnt/zhao-crypto/engine-journal/ | tail -3`. The day after the watermark **and** its successor must each hold `cycle-*.json` or `failed-cycle-*.json`.
 3. **Journal not arriving is a NAS-side finding**, not this unit's. Nothing here can fix a stalled journal pull, and the fail-closed stop is correct behaviour.
 4. **Repair a refused run with a tmp+mv write, matching the script** — an in-place truncate is what the script's own comment rules out:
@@ -227,7 +227,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 
 The load is Alloy plus the timers under `infra/ansible/roles/ops/`; the overlay writer is one of them, not a service beside them. Read the schedules from those templates, or from `systemctl list-timers 'zcrypto-*'` on the host; no list written here is the authority. The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
 
-**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and five of the seven timers are `Persistent=true` (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`), so a post-boot catch-up burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
+**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and the role's `Persistent=true` timers (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`) run their missed ticks after it, so a post-boot burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
 ### What to do
 
@@ -241,6 +241,59 @@ The load is Alloy plus the timers under `infra/ansible/roles/ops/`; the overlay 
 ### Retire when
 
 `zcrypto-ops-load-high` is absent from `infra/grafana/alerts.yaml`. The metric itself is node-exporter's and will not stop existing.
+
+______________________________________________________________________
+
+<a name="zcrypto-ops-disk-low"></a>
+
+## zcrypto-ops-disk-low — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert (`Ops · root filesystem low`): `node_filesystem_avail_bytes / node_filesystem_size_bytes` on `host="ops"`, `mountpoint="/"`, below 0.15 for 30 minutes. `noDataState: OK`, since a dark host is `zcrypto-alloy-dark-ops`'s page. The `Fleet health` board's *Filesystem free % by mountpoint* panel (301) draws the ops line against its red line at 0.15.
+
+### What it means
+
+The root filesystem holds `/home` as well as the system. On it sit the Docker images the ops timers run from, under `/var/lib/docker`; the timers' own state under `/var/lib/zcrypto-ops`, the reconcile ledger among it; the journal; and the operator's checkouts of this repository with their worktrees and their gitignored `data/`. A full disk fails the timers' textfile and ledger writes and the next image pull. `/mnt/zhao-crypto` is the NAS's export on a filesystem of its own, which `zcrypto-nas-disk-low` watches, and `/tmp` is a tmpfs whose inodes `zcrypto-ops-inodes-low` below watches.
+
+### What to do
+
+1. **Read what fills it**, on the host (`ssh hp`): `df -h /`, then `sudo du -xh -d 2 / 2>/dev/null | sort -h | tail -25`. `-x` keeps the walk on this filesystem, so the NFS mount and the tmpfs stay out of it.
+2. **Removing anything is the operator's decision**, and this section names candidates, not steps to run. The usual ones: stale images, listed by `uv run python infra/scripts/prune-host-images.py zcrypto-ops` from a checkout (`--apply` is what removes them, and `--keep <digest12>` spares one staged for a converge); the journal, `sudo journalctl --vacuum-size=<size>`; a finished session's worktree or a checkout's `.tmp/`.
+3. **A checkout's `data/` is the owner's alone to touch**: those datasets are unversioned and exist nowhere else.
+4. **`/var/lib/zcrypto-ops` is not reclaimable space.** The reconcile ledger is the record of what each hour's reconcile decided, and a verify-replay state directory lost is a rebuild that takes nights (`zcrypto-ops-load-high` step 4).
+5. **Confirm by value**: panel 301's ops line back above 0.15, and the rule back to Normal.
+
+### Retire when
+
+`zcrypto-ops-disk-low` is absent from `infra/grafana/alerts.yaml`.
+
+______________________________________________________________________
+
+<a name="zcrypto-ops-inodes-low"></a>
+
+## zcrypto-ops-inodes-low — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert (`Ops · inodes low`): free inodes over total, `node_filesystem_files_free / node_filesystem_files` on `host="ops"` for the mountpoints `/` and `/tmp`, below 0.25 for 10 minutes. One instance per mountpoint, and the notification's `mountpoint` label names which. `noDataState: OK`, since a dark host is `zcrypto-alloy-dark-ops`'s page. The `Fleet health` board's *Ops inodes free* panel (305) draws both against the red line at 0.25.
+
+### What it means
+
+A filesystem out of inodes refuses to create a file however many bytes it still has free, and the free-space panels cannot show it. `/tmp` is the one at risk: a tmpfs capped at 1,048,576 inodes, and the Claude Code sessions' default temp root, where a checkout or a dependency tree in a session's scratch costs hundreds of thousands. When it runs out, a `docker run` fails before its container starts (`failed to create temp dir: mkdir /tmp/containerd-mount…: no space left on device`), so the ops timers' runs fail with it and `zcrypto-ops-archive-pull-exit-nonzero` is the usual first page. The overlay writer reconciles a 48 h window, so ticks lost this way are made good by the first clean one inside it. `/` is ext4, its inode table sized with the disk, and is watched for the same failure.
+
+The bar leaves time to act: at the fastest fill seen on `/tmp`, the page lands with a little under two hours to go.
+
+### What to do
+
+1. **Read which filesystem and how full**, on the host (`ssh hp`): `df -i / /tmp`.
+2. **Find what holds the inodes**: `sudo du --inodes -x -d 2 /tmp 2>/dev/null | sort -n | tail -20`, or over `/` with `-d 3` when `/` is the one named. The sessions' scratch trees sit under their temp root: `/tmp/claude-<uid>/`, or `claude-<uid>/` under the directory `CLAUDE_CODE_TMPDIR` names in the environment the session was launched in (the owner's shell startup exports it).
+3. **Removing files is the operator's decision.** A scratch tree belongs to a session that may still be reading it: ask the session that owns it, or the owner, before anything under a session's temp root goes. A reboot empties the tmpfs, but it also ends the sessions and restarts the host's timers mid-run, so it is not the remedy here.
+4. **Confirm by value**: `df -i / /tmp` and panel 305 above 0.25; the next `:12`/`:42` writer tick exits 0, which clears `zcrypto-ops-archive-pull-exit-nonzero` if it paged.
+
+### Retire when
+
+`zcrypto-ops-inodes-low` is absent from `infra/grafana/alerts.yaml`, or `node_filesystem_files_free` is no longer admitted by the keep regex in `infra/ansible/roles/ops/files/config.alloy`.
 
 ______________________________________________________________________
 
@@ -265,7 +318,7 @@ The `container` label names the source, and that is your routing:
 - **`alloy`** — Alloy's own logfmt `level=error`, typically a remote-write or Loki-push failure. The telemetry plane is complaining about itself.
 - **`liquidations`** — the poller. **This rule is the only channel its ERROR lines have**: it is a long-lived daemon that flips no exit-code metric, and it direct-ships its own lines to Loki without passing through Alloy at all (no count command: `alerts.yaml` selects its ERROR lines in `zcrypto-ops-error-logs` alone).
 
-**Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the CLI's Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). The runner scripts' own `echo` lines never match it and ship unleveled — including the load-bearing `WARNING: writer cycle SKIPPED (fail-closed gate): …`. A gate-skip streak produces no ERROR page by construction.
+**Silence here is not a clean bill, and the reason is mechanical.** The `level` label is set by Alloy's parse stage, which matches only the Python-logging line shape (`YYYY-MM-DD HH:MM:SS,mmm LEVEL …`). `archive-pull.sh` and `verified-replay.sh` write that shape for their own warnings, at **WARNING**, so they show under the board's WARNING filter and never page here; every other runner `echo` still ships unleveled. A gate-skip streak produces no ERROR page by construction.
 
 The scope is the journal keep-regex in `infra/ansible/roles/ops/files/config.alloy`; the rule's selector is `zcrypto-.*`, so a unit the keep-regex does not admit produces no page here — extend the regex, not the selector.
 

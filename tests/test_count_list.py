@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 
 import pytest
@@ -95,6 +96,78 @@ def test_the_prose_only_entry_reads_the_ref_predicate_and_exclusions_its_clause_
     )
     assert re.search(left, fn.group(0), re.M), "the left arm no longer reads as the clause states"
     assert re.search(right, fn.group(0), re.M), "the right arm no longer reads as the clause states"
+
+
+PROTOCOL = REPO / "docs" / "reference" / "multi-agent-protocol.md"
+
+
+def _worktree_pipeline() -> str:
+    fn = re.search(r"^c_worktree_processes\(\) \{ (?P<pipe>.*); \}$", SCRIPT.read_text(), re.M)
+    assert fn, "the worktrees entry's function is gone, renamed or no longer one line"
+    return fn.group("pipe")
+
+
+def test_the_worktree_count_counts_a_cwd_inside_any_linked_worktree_and_not_the_main_checkout(tmp_path):
+    main = tmp_path.resolve() / "main"
+    root = tmp_path.resolve() / "claude-tmp"
+    slug = "-home-zhaow-Projects-zcrypto-kraken"
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    harness = main / ".claude" / "worktrees" / "x"
+    payload = root / "claude-1000" / slug / "wt-b"
+    for worktree in (harness, payload):
+        subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
+    cwds = [
+        str(harness / "sub"),  # below a worktree cut under the checkout, where the harness cuts its own: counted
+        str(payload),  # a payload worktree under a temp root, the cwd its own top: counted
+        str(main),  # the main checkout
+        str(harness) + "y",  # a sibling sharing a worktree's path as a prefix
+        str(root / "claude-1000" / slug / "scratch"),  # a scratchpad beside a worktree, under the per-uid directory
+    ]
+    stage = _worktree_pipeline().rsplit(" | ", 1)[1]
+    done = subprocess.run(["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main)
+    assert done.stdout.strip() == "2", done.stdout + done.stderr
+
+
+def test_the_worktree_count_sees_a_cwd_the_kernel_renders_deleted_under_a_worktree_git_still_lists(tmp_path):
+    main = tmp_path.resolve() / "main"
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "init", "-q", str(main)], check=True)
+    subprocess.run([*git, "-C", str(main), "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    prunable, unregistered = tmp_path.resolve() / "wt-rm", tmp_path.resolve() / "wt-gitrm"
+    for worktree in (prunable, unregistered):
+        subprocess.run([*git, "-C", str(main), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
+    (prunable / "sub").mkdir()
+    parked = [subprocess.Popen(["sleep", "60"], cwd=str(d)) for d in (prunable, prunable / "sub", unregistered)]
+    try:
+        shutil.rmtree(prunable)
+        subprocess.run([*git, "-C", str(main), "worktree", "remove", "--force", str(unregistered)], check=True)
+        cwds = [os.readlink(f"/proc/{p.pid}/cwd") for p in parked]
+        assert [c.endswith(" (deleted)") for c in cwds] == [True] * 3, cwds
+        listed = subprocess.run(
+            [*git, "-C", str(main), "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True
+        ).stdout
+        assert f"worktree {prunable}\n" in listed and f"worktree {unregistered}\n" not in listed, listed
+        stage = _worktree_pipeline().rsplit(" | ", 1)[1]
+        done = subprocess.run(
+            ["bash", "-c", f"printf '%s\\n' \"$@\" | {stage}", "_", *cwds], capture_output=True, text=True, cwd=main
+        )
+        # The prunable worktree's two count; the unregistered one's is inside no worktree the list names.
+        assert done.stdout.strip() == "2", done.stdout + done.stderr
+    finally:
+        for p in parked:
+            p.kill()
+            p.wait()
+
+
+def test_the_protocols_worktree_count_is_the_scripts_own_pipeline():
+    line = next(
+        l for l in PROTOCOL.read_text().splitlines() if l.startswith("- A worktree is removed when its branch merges; the count")
+    )
+    copy = re.search(r"\(`(?P<pipe>for l in /proc/\[0-9\]\*/cwd; [^`]*)`\)", line)
+    assert copy, "the protocol's worktree line no longer carries the count in a code span"
+    assert copy.group("pipe") == _worktree_pipeline(), "the protocol's copy and the script's function differ"
 
 
 def _set_clause(entry: str) -> str:
@@ -668,3 +741,78 @@ def test_drills_on_the_primary_reports_a_log_it_cannot_read_as_an_error(tmp_path
         timeout=120,
     )
     assert "ERROR" in done.stdout and not done.stdout.strip().endswith("\t0"), done.stdout + done.stderr
+
+
+ROUND_CLOSED = "2026-09-24T18:01:00+02:00"  # 16:01:00Z, 61 s past a 4-hourly boundary
+BEFORE, AT = "2026-09-24T16:00:59Z", "2026-09-24T16:01:00Z"
+WINDOWED = {
+    "canary-bypasses-on-the-primary": [
+        {"ts": ts, "limit": "zcrypto", "tags": "capture", "rc": 0, "extra_vars": {"canary_override": "an approved rollback"}}
+        for ts in (BEFORE, AT)
+    ],
+    "engine-rows-outside-the-gap": [
+        {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}} for ts in (BEFORE, AT)
+    ],
+    "capture-hosts-converged-within-an-hour": [  # a pair wholly before the close, and a pair whose later row is at it
+        {"ts": "2026-09-24T14:00:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0},
+        {"ts": "2026-09-24T14:30:00Z", "limit": "zcrypto-red", "tags": "capture", "rc": 0},
+        {"ts": BEFORE, "limit": "zcrypto", "tags": "capture", "rc": 0},
+        {"ts": AT, "limit": "zcrypto-red", "tags": "capture", "rc": 0},
+    ],
+}
+
+
+def _history(tmp_path: pathlib.Path, closes_a_round: bool) -> pathlib.Path:
+    # The author date and the trailer's value both sit earlier than the commit date, so only the commit date anchors.
+    git_dir = tmp_path / "history"
+    subprocess.run(["git", "init", "-q", "-b", "develop", str(git_dir)], check=True)
+    message = ["-m", "claude(refine): round closes", "-m", "Refine-Round-Closed: 2026-09-01T00:00:00Z"]
+    subprocess.run(
+        ["git", "-C", str(git_dir), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty"]
+        + (message if closes_a_round else ["-m", "chore: no round has closed"]),
+        check=True,
+        env={**os.environ, "GIT_AUTHOR_DATE": "2026-09-23T18:01:00+02:00", "GIT_COMMITTER_DATE": ROUND_CLOSED},
+    )
+    return git_dir / ".git"
+
+
+def _windowed(
+    tmp_path: pathlib.Path, entry: str, git_dir: pathlib.Path, rows: list[dict] | None = None, **env: str
+) -> subprocess.CompletedProcess:
+    log = tmp_path / "deploy-log.jsonl"
+    log.write_text("".join(json.dumps(row) + "\n" for row in (WINDOWED[entry] if rows is None else rows)))
+    return subprocess.run(
+        ["bash", str(SCRIPT), entry],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        # GIT_DIR points the anchor's `git log` at the scratch history; the entries still run from this checkout.
+        env={**os.environ, "GIT_DIR": str(git_dir), "COUNT_LIST_DEPLOY_LOG": str(log), **env},
+        timeout=120,
+    )
+
+
+@pytest.mark.parametrize("entry", sorted(WINDOWED))
+def test_a_deploy_log_count_reads_the_rows_since_the_round_closed_and_every_row_under_all(tmp_path, entry):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    assert _windowed(tmp_path, entry, git_dir).stdout == f"{entry}\t1\n"
+    assert _windowed(tmp_path, entry, git_dir, COUNT_LIST_ALL="1").stdout == f"{entry}\t2\n"
+
+
+def test_a_capture_pair_straddling_the_round_close_is_counted_once_in_the_round_its_later_row_falls_in(tmp_path):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    entry = "capture-hosts-converged-within-an-hour"
+    first = {"ts": "2026-09-24T15:51:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0}
+    second = {"ts": "2026-09-24T16:11:00Z", "limit": "zcrypto-red", "tags": "capture", "rc": 0}
+    assert _windowed(tmp_path, entry, git_dir, rows=[first], COUNT_LIST_ALL="1").stdout == f"{entry}\t0\n"
+    assert _windowed(tmp_path, entry, git_dir, rows=[first, second]).stdout == f"{entry}\t1\n"
+    assert _windowed(tmp_path, entry, git_dir, rows=[first, second], COUNT_LIST_ALL="1").stdout == f"{entry}\t1\n"
+
+
+@pytest.mark.parametrize("entry", sorted(WINDOWED))
+def test_a_deploy_log_count_with_no_closed_round_is_an_error_and_all_still_counts(tmp_path, entry):
+    git_dir = _history(tmp_path, closes_a_round=False)
+    done = _windowed(tmp_path, entry, git_dir)
+    assert (done.returncode, done.stdout) == (2, f"{entry}\tERROR\n"), done.stderr
+    assert "Refine-Round-Closed" in done.stderr
+    assert _windowed(tmp_path, entry, git_dir, COUNT_LIST_ALL="1").stdout == f"{entry}\t2\n"

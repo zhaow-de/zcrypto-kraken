@@ -138,7 +138,7 @@ A **critical** Grafana alert, one of three — `Fleet · Alloy dark — Cache 1`
 
 1. **Is the node up at all?** Log in with its alias, `db<N>`. No answer is a node incident, not an Alloy one: read `sn SENTINEL get-master-addr-by-name zcache` on the other two nodes to learn whether the set failed over, and the Linode console for the node.
 2. **Is the container running?** `sudo docker ps --filter name=grafana-alloy` on the node.
-3. **Read the container's state through named fields** — its environment holds the Grafana Cloud push credentials and the two cache passwords, so read these fields by name and not `.Config` whole, `.Config.Env`, `docker exec … env` or `docker compose config`: `sudo docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}} oom={{.State.OOMKilled}}'`. `oom=true` means it hit its 256 MiB cap; `fleet.md#zcrypto-fleet-alloy-memory-headroom` is the warning that precedes it.
+3. **Read the container's state through named fields** — its environment holds the Grafana Cloud push credentials and the two cache passwords, so read these fields by name and not `.Config` whole, `.Config.Env`, `docker exec … env` or `docker compose config`: `sudo docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.RestartCount}} started={{.State.StartedAt}} oom={{.State.OOMKilled}}'`. `oom=true` means it hit its 384 MiB cap; `fleet.md#zcrypto-fleet-alloy-memory-headroom` is the warning that precedes it.
 4. **Read its logs:** `sudo docker logs grafana-alloy --since 1h 2>&1 | tail -100`. A config parse error names the line; a remote_write auth failure names the credential; a Redis exporter error naming `NOAUTH` or `WRONGPASS` is the exporter password and the node's ACL disagreeing, which leaves `up` present and is `zcrypto-cache-daemon-down` below, not this alert.
 5. **Restart it, the usual fix:** `sudo docker restart grafana-alloy`. The `alloy-data` volume keeps the remote_write WAL and the journal cursor.
 6. **A recreate is needed when the container is absent or its env or cap changed:** `cd /opt/zcrypto-cache/alloy && sudo docker compose up -d`. `sudo` is needed because `alloy-secrets.env` is 0600 and owned by `zcrypto-alloy`.
@@ -266,9 +266,10 @@ Valkey's append-only file and snapshots live on this filesystem, under `/var/lib
 
 1. **Read what fills it**, on the node: `df -h /`, then `sudo du -xsh /var/lib/zcrypto-cache /var/log/journal /var/lib/docker`.
 2. **The journal:** `sudo journalctl --vacuum-size=500M` on the node removes its oldest archived files until they hold 500M.
-3. **The cache's own directory growing** is Valkey's AOF between rewrites: `zcrypto-cache-aof-not-ok` above reads the rewrite's state.
-4. **Read Valkey on the node:** `vk INFO persistence`. No Valkey to answer is one that exited on the full disk and was not brought back: restart the node's containers, `sudo systemctl restart zcrypto-cache.service`, then confirm by `cache-rejoin-node` steps 3 and 4. An answer reading `rdb_last_bgsave_status:err` is a Valkey still refusing writes, which reads `ok` once a snapshot succeeds on the freed disk.
-5. **Confirm by value:** the Cache board's panel 104 reads above 0.15 for the node, `vk INFO persistence` on it reads `rdb_last_bgsave_status:ok`, and the rule is back to **Normal**.
+3. **Stale images**, from the workstation: `uv run python infra/scripts/prune-host-images.py zcrypto-valkey<N>` lists what it would remove; `--apply` removes it, and `--keep <digest12>` spares one staged for a converge.
+4. **The cache's own directory growing** is Valkey's AOF between rewrites: `zcrypto-cache-aof-not-ok` above reads the rewrite's state.
+5. **Read Valkey on the node:** `vk INFO persistence`. No Valkey to answer is one that exited on the full disk and was not brought back: restart the node's containers, `sudo systemctl restart zcrypto-cache.service`, then confirm by `cache-rejoin-node` steps 3 and 4. An answer reading `rdb_last_bgsave_status:err` is a Valkey still refusing writes, which reads `ok` once a snapshot succeeds on the freed disk.
+6. **Confirm by value:** the Cache board's panel 104 reads above 0.15 for the node, `vk INFO persistence` on it reads `rdb_last_bgsave_status:ok`, and the rule is back to **Normal**.
 
 ### Retire when
 
@@ -282,11 +283,11 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member, the engine host `zcrypto` or a cache node, has not completed a WireGuard handshake with one of its peers for more than three minutes. The host the notification names is the end reporting it; the `peer` label is the other end's mesh address — `10.98.0.1` the engine host, `10.98.0.11` to `10.98.0.13` Cache 1 to Cache 3. A stopped probe timer reads the same way, since the rule adds the probe file's own age.
+A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member, the engine host `zcrypto` or a cache node, reads a WireGuard handshake age past five minutes with one of its peers. The host the notification names is the end reporting it; the `peer` label is the other end's mesh address — `10.98.0.1` the engine host, `10.98.0.11` to `10.98.0.13` Cache 1 to Cache 3. A stopped probe timer reads the same way, since the rule adds the probe file's own age.
 
 ### What it means
 
-`PersistentKeepalive 25` keeps traffic on every link, so a healthy peer re-handshakes about every two minutes. Past three, the link is down: replication between two nodes, or the engine's cache traffic to one node, is not flowing. A link seen from both ends fires twice, once per reporting end.
+`PersistentKeepalive 25` keeps traffic on every link, so a healthy peer re-handshakes about every two minutes, and the reading runs up to two minutes behind the tunnel, the probe's minute and the scrape's. Past 300 the link has missed WireGuard's 180 s key lifetime and is down: replication between two nodes, or the engine's cache traffic to one node, is not flowing. A link seen from both ends fires twice, once per reporting end.
 
 ### What to do
 
@@ -294,7 +295,7 @@ A **warning** Grafana alert, `Cache · mesh peer handshake stale`: a mesh member
 2. **Read the tunnel on both ends:** `sudo wg show zcache0` on the reporting host and on the peer, the engine host (alias `zcrypto`) for `10.98.0.1`. A peer with no `latest handshake` line has not reached it since the interface came up.
 3. **Is the peer's port open?** Both layers carry `51821/udp`: the host's nftables, which the firewall role renders and `sudo systemctl status nftables` shows loaded on each end; and the Linode Cloud Firewall, managed by hand, in the Linode console for each end.
 4. **Restart the tunnel on the reporting host:** `sudo systemctl restart wg-quick@zcache0`; it restarts no container and drops the link's traffic for the seconds the interface is down.
-5. **Confirm by value:** the Cache board's panel 105 falls below 180 for the pair, and the rule is back to **Normal**.
+5. **Confirm by value:** `sudo wg show zcache0` on both ends reads the pair's `latest handshake` under three minutes, the key lifetime; the Cache board's panel 105 falls below 300 for the pair, and the rule is back to **Normal**.
 
 ### Retire when
 

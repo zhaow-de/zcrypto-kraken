@@ -17,6 +17,15 @@
 # false verdict.
 set -u
 
+# The line shape `zcrypto`'s Python logging emits, comma before the milliseconds included, so the
+# ops Alloy parse stage attaches the `level` label: a bare `echo` ships with none and is invisible
+# to every level-keyed query and filter. `%N` and a six-digit strip rather than `%3N`, the NAS
+# entrypoint's portable form.
+log() {
+    _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+    printf '%s %s zcrypto.archive-pull [archive-pull.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
+
 PROM="{{ ops_textfile_dir }}/ops-archive-pull.prom"
 URL="{{ ops_archive_pull_healthcheck_url }}"
 STATUS="{{ ops_nas_mount }}/.pull-status"
@@ -88,9 +97,9 @@ if [ -n "$skip_reason" ]; then
     # A skipped cycle is a STATE, not a fault: rc stays 0 (no unit failure, no exit-code alert).
     # A PERSISTENT skip surfaces via the reconcile-staleness alert
     # (zcrypto-reconcile-exporter-stale, 3h): a skipped cycle never rewrites reconcile.prom, so
-    # zcrypto_reconcile_last_success_timestamp_seconds ages until it pages. The WARNING below ships
-    # to Loki via this unit's journal (T0060).
-    echo "zcrypto-archive-pull: WARNING: writer cycle SKIPPED (fail-closed gate): $skip_reason"
+    # zcrypto_reconcile_last_success_timestamp_seconds ages until it pages. WARNING, not ERROR:
+    # `Ops · ERROR logs` selects ERROR and CRITICAL, and a skip must not page through it.
+    log WARNING "writer cycle SKIPPED (fail-closed gate): $skip_reason"
 else
     # Role C (spec 00050), on this host since OPS-5 (spec 00054 D2). The mode is whatever
     # `ops_reconcile_mint` selects; DETECT-ONLY is the role default, and it ledgers every
@@ -130,7 +139,8 @@ else
             --min-gap-seconds "{{ ops_reconcile_min_gap_seconds }}" \
             {{ '--mint' if ops_reconcile_mint | default(false) | bool else '--detect-only' }} \
             --textfile /textfile/reconcile.prom; then
-        echo "zcrypto-archive-pull: reconcile failed, continuing"
+        # WARNING: the failure pages through the unit's exit code, not through the ERROR-logs rule.
+        log WARNING "reconcile failed, continuing"
         rc=1
     fi
 
@@ -161,7 +171,8 @@ else
             backfill_rc=0
         else
             backfill_rc=$?
-            echo "zcrypto-archive-pull: trade backfill failed (exit=$backfill_rc), continuing"
+            # WARNING: the failure pages through zcrypto_trade_backfill_exit_code, not the ERROR-logs rule.
+            log WARNING "trade backfill failed (exit=$backfill_rc), continuing"
         fi
         # Output is captured rather than streamed so the repair count can be read out of it, then
         # replayed to the journal unchanged. No pipe on the run itself: this script sets `set -u`

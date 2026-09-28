@@ -24,9 +24,7 @@ _SD_FAILURES = "prometheus_sd_refresh_failures_total"
 # (`count(up{...}) or on() vector(0)` below 1). Dropping it from any keep-list would leave that
 # host's rule permanently unable to fire while still provisioned: green-when-blind.
 
-# 00069 T6/T7: the six ProcessCollector families are shared by every app endpoint AND (per each
-# config.alloy's own `exporter.self "alloy"` comment) admitted uniformly for Alloy's own
-# self-scrape too, so all three hosts admit the same six names (spec 00069 D5).
+# Every app endpoint's six ProcessCollector families, also admitted for Alloy's own self-scrape on the NAS, ops and capture.
 PROCESS_FAMILIES = [
     "process_cpu_seconds_total",
     "process_max_fds",
@@ -176,6 +174,8 @@ OPS_REQUIRED = [
     "up",
     "node_load1",
     "node_filesystem_avail_bytes",
+    "node_filesystem_files",
+    "node_filesystem_files_free",
     "ops_archive_pull_exit_code",
     "ops_archive_pull_last_success_timestamp",
     "ops_panel_exit_code",
@@ -235,6 +235,10 @@ OPS_REQUIRED = [
     # bridgehead does (ACCESS_APP_SERIES below) -- host="ops" vs host="zaccess" tells them apart.
     "zaccess_wireguard_handshake_age_seconds",
     "zaccess_tls_not_after_seconds",
+    # The clock exporter, a copy of the capture role's on this host; both are alert-bearing
+    # (zcrypto-node-clock-skew), so dropping either leaves that rule unable to see ops.
+    "zcrypto_clock_offset_seconds",
+    "zcrypto_clock_synchronised",
 ]
 # One-off timers publish a .prom, not a /metrics endpoint (spec 00071 D1) -- a daily oneshot runs
 # for a second and has no process to scrape. The keep-regex is an ALLOW-list with no `node_.*`
@@ -349,7 +353,12 @@ CACHE_REQUIRED = [
     "node_textfile_mtime_seconds",
     "node_textfile_scrape_error",
     "zcache_wireguard_handshake_age_seconds",
-    "process_resident_memory_bytes",
+    # The clock exporter, a copy of the capture role's on each node (zcrypto-node-clock-skew).
+    "zcrypto_clock_offset_seconds",
+    "zcrypto_clock_synchronised",
+    # The two families the fleet's Alloy headroom rule reads on a cache node, in place of RSS.
+    "go_memstats_sys_bytes",
+    "go_memstats_heap_released_bytes",
     *CACHE_REDIS_SERIES,
 ]
 
@@ -551,6 +560,7 @@ _OPS_ROLE = REPO / "infra/ansible/roles/ops"
 _JOURNAL_NOT_SHIPPED = {
     "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
     "zcrypto-grafana-keepalive": "a shell curl call; its one line a run is read on the host, which stays readable while Grafana is dark",
+    "zcrypto-clock-offset": "a shell probe; its output is the .prom it writes, and a chronyc failure is the unknown offset it publishes",
 }
 
 
@@ -707,3 +717,18 @@ def test_the_cache_textfile_collector_reads_where_the_mesh_probe_writes():
     for role, var in (("cache_link", "cache_link_textfile_dir"), ("cache", "cache_textfile_dir")):
         written = re.search(rf"^{var}: (\S+)$", (REPO / f"infra/ansible/roles/{role}/defaults/main.yml").read_text(), re.M)
         assert written and directory.group(1) == "/host/root" + written.group(1), (role, written, directory.group(1))
+
+
+def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_nothing_else():
+    pipeline = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', CACHE_ALLOY.read_text(), re.M | re.S)
+    assert pipeline, 'no loki.process "parse" in the cache config'
+    drops = [
+        block
+        for block in re.findall(r"^  stage\.match \{\n(.*?)\n  \}", pipeline.group(1), re.M | re.S)
+        if re.search(r'^\s*action\s*=\s*"drop"$', block, re.M)
+    ]
+    assert len(drops) == 1, f"{len(drops)} drop stages in the cache log pipeline"
+    selector = re.search(r'^\s*selector\s*=\s*"(.*)"$', drops[0], re.M)
+    assert selector and selector.group(1) == '{container=\\"alloy\\"} |= \\"ERR unknown command \'LATENCY\'\\"', drops[0]
+    assert re.search(r'^\s*drop_counter_reason\s*=\s*"\w+"$', drops[0], re.M), drops[0]
+    assert not re.search(r"^\s*stage\.", drops[0], re.M), drops[0]

@@ -1308,7 +1308,7 @@ _CACHE_SENTINEL_UNLEGGED = "Sentinel's `INFO` carries no memory section, so its 
 # (host, job) with a limit and no headroom leg, each with the reason it is left out.
 _HEADROOM_DELIBERATELY_ABSENT: dict[tuple[str, str], str] = {
     ("ops", "zaccess-agentboard"): (
-        "No headroom leg is possible: the rules divide `process_resident_memory_bytes` by a limit, and "
+        "No headroom leg is possible: the rules divide a memory family the process publishes by a limit, and "
         "agentboard publishes no /metrics and is scraped by nothing, so no such series exists. The cap "
         "is a systemd `MemoryMax=`, which no metric on this fleet carries either -- cadvisor is "
         "deliberately absent and the ops unix exporter runs no systemd collector. What watches it "
@@ -1364,7 +1364,8 @@ def test_every_memory_limited_job_has_a_headroom_leg_or_a_recorded_absence():
         for n in _rule(uid)["data"]
     )
     legs = re.findall(r"(?:process_resident_memory_bytes|redis_memory_used_rss_bytes)\{([^}]*)\}\s*/\s*\d+", exprs)
-    assert len(legs) >= 5, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
+    legs += re.findall(r"\(go_memstats_sys_bytes\{([^}]*)\}\s*-\s*go_memstats_heap_released_bytes\{[^}]*\}\)\s*/\s*\d+", exprs)
+    assert len(legs) >= 6, f"the headroom rules carry only {len(legs)} legs -- the parse is broken"
 
     def covered(host: str, job: str) -> bool:
         for leg in legs:
@@ -1388,9 +1389,9 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     separately by `Fleet · Alloy dark`."""
     rule = _rule(_ALLOY_HEADROOM)
     expr = " ".join(str(n.get("model", {}).get("expr", "")) for n in rule["data"])
-    # ops divides by its OWN cap: it runs too close to the 512m every other Alloy carries, and ops is
-    # the one host where margin is free. Read the number back from the ansible var so raising the cap
-    # without the rule fails here.
+    # ops divides by its OWN cap: it runs too close to the 512m the capture pair and the NAS carry,
+    # and ops is the one host where margin is free. Read the number back from the ansible var so
+    # raising the cap without the rule fails here.
     ops_cap = _ansible_memory_limit_bytes(ANSIBLE / "roles/ops/defaults/main.yml", "ops_alloy_memory_limit")
     assert re.search(rf'host="ops", job="integrations/self"\}}\s*/\s*{ops_cap}\b', expr), (
         f"the ops leg must divide by ops_alloy_memory_limit ({ops_cap}); a cap raised without this ratio lies: {expr!r}"
@@ -1409,11 +1410,16 @@ def test_alloy_has_its_own_headroom_bar_because_it_runs_near_its_ceiling():
     assert re.search(rf'host=~"zcrypto\|zcrypto-red\|nas", job="integrations/self"\}}\s*/\s*{shared}\b', expr), (
         f"the shared leg must divide by the compose literal ({shared}); found: {expr!r}"
     )
-    # The cache nodes' own cap, half the shared one on a 1 GB node, read back from its compose literal.
+    # The cache nodes' own cap, read back from its compose literal.
     cache_cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+    cache_nodes = r'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"'
     assert re.search(
-        rf'host=~"zcrypto-valkey1\|zcrypto-valkey2\|zcrypto-valkey3", job="integrations/self"\}}\s*/\s*{cache_cap}\b', expr
-    ), f"the cache leg must divide by the cache compose literal ({cache_cap}); found: {expr!r}"
+        rf"\(go_memstats_sys_bytes\{{{cache_nodes}\}}\s*-\s*go_memstats_heap_released_bytes\{{{cache_nodes}\}}\)\s*/\s*{cache_cap}\b",
+        expr,
+    ), f"the cache leg must divide the Go runtime's memory by the cache compose literal ({cache_cap}); found: {expr!r}"
+    assert not re.search(r"process_resident_memory_bytes\{[^}]*zcrypto-valkey", expr), (
+        f"a cache node's Alloy is read by RSS, which counts its binary's file-mapped pages: {expr!r}"
+    )
     assert rule["data"][-1]["model"]["conditions"][0]["evaluator"]["params"] == [0.9]
     assert rule["for"] != "0s" and rule["noDataState"] == "OK"
 
@@ -1426,7 +1432,7 @@ _HOST_VOCABULARY = re.compile(r'eq \. "([^"]+)" \}\}([^\n{]+)')
 
 def test_the_headroom_summary_names_the_hosts_its_expression_actually_reads():
     """A summary is read on a phone with nothing open, so "512 MiB elsewhere" promised every other
-    Alloy host while the expression selects four by name. The edge runs the apt Alloy under no
+    Alloy host while the expression selects its hosts by name. The edge runs the apt Alloy under no
     container and no cap, so this ratio has no denominator for it and `zcrypto-alloy-dark-zaccess`
     owns its OOM; a CAPPED host is forced in by the memory-limited-job test above."""
     vocabulary = dict(_HOST_VOCABULARY.findall(_SLACK_TEMPLATE.read_text()))
@@ -1463,9 +1469,8 @@ def test_ops_alloy_memory_limit_has_no_override_the_pin_above_would_miss():
 
 def test_gomemlimit_is_the_same_fraction_of_the_cap_on_every_alloy_host():
     """The 0.9 headroom bar means "the runtime lost its soft limit" only if GOMEMLIMIT sits at the
-    same fraction of the container cap on every host -- ops's 920MiB/1g and the other three's
-    460MiB/512m both land at 0.898. [0.88, 0.92] tolerates the MiB-vs-binary-GiB rounding without
-    tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
+    same fraction of the container cap on every host. [0.88, 0.92] tolerates the MiB-vs-binary-GiB
+    rounding without tolerating a cap raised (or a GOMEMLIMIT left behind) without its ratio partner."""
     ops_defaults = ANSIBLE / "roles/ops/defaults/main.yml"
     ops_soft = _parse_size_bytes(yaml.safe_load(ops_defaults.read_text())["ops_alloy_gomemlimit"])
     ops_cap = _ansible_memory_limit_bytes(ops_defaults, "ops_alloy_memory_limit")
@@ -1865,3 +1870,143 @@ def test_every_rule_routes_to_its_OWN_runbook_section() -> None:
 # LogQL, and every partial parser built for it shipped a hole while reading as complete, which is
 # worse than nothing because it licenses the belief that the class is covered. Re-measure the widest
 # window in an audit; do not add a regex that claims to settle it.
+
+
+def _cache_board_panels() -> list[dict]:
+    board = json.loads((REPO / "infra/grafana/cache-dashboard.json").read_text())
+    stack, panels = list(board["panels"]), []
+    while stack:
+        panel = stack.pop()
+        stack.extend(panel.get("panels", []))
+        panels.append(panel)
+    return panels
+
+
+def test_the_cache_board_draws_alloy_against_the_cache_compose_cap():
+    cap = _compose_alloy_limit_bytes(ANSIBLE / "roles/cache/templates/alloy-compose.yaml.j2")
+    drawn = [
+        (panel, target["expr"])
+        for panel in _cache_board_panels()
+        for target in panel.get("targets", [])
+        if "go_memstats_sys_bytes" in target.get("expr", "") and 'job="integrations/self"' in target["expr"]
+    ]
+    assert drawn, "no Alloy Go runtime memory panel on the Cache board"
+    selector = r'\{host=~"\$host", job="integrations/self"\}'
+    for panel, expr in drawn:
+        assert re.fullmatch(rf"\(go_memstats_sys_bytes{selector} - go_memstats_heap_released_bytes{selector}\) / {cap}", expr), (
+            panel["id"],
+            expr,
+            cap,
+        )
+        assert f"{cap // 2**20} MiB" in panel["title"] and "Go runtime" in panel["title"], (panel["id"], panel["title"])
+
+
+_HANDSHAKE_STALE = "zcrypto-cache-wg-handshake-stale"
+_WIREGUARD_KEY_LIFETIME_S = 180
+PROBE_TIMER = ANSIBLE / "roles/cache_link/templates/zcache-probe.timer.j2"
+CACHE_ALLOY = ANSIBLE / "roles/cache/files/config.alloy"
+
+
+def _timer_period_seconds(path: Path) -> int:
+    calendar = re.search(r"^OnCalendar=(.+)$", path.read_text(), re.M).group(1).strip()
+    if re.fullmatch(r"\*:\*:\d{1,2}", calendar):
+        return 60
+    if re.fullmatch(r"\*:\d{1,2}:\d{1,2}", calendar):
+        return 3600
+    raise AssertionError(f"{path.name}: OnCalendar={calendar!r} is a shape this reader derives no period from")
+
+
+def _textfile_scrape_interval_seconds(path: Path) -> int:
+    text = path.read_text()
+    exporter = re.search(r'^prometheus\.exporter\.unix "(\w+)" \{\n(.*?)\n\}', text, re.M | re.S)
+    assert exporter and '"textfile"' in exporter.group(2), f"{path}: no unix exporter with the textfile collector"
+    jobs = [
+        body
+        for body in re.findall(r'^prometheus\.scrape "\w+" \{\n(.*?)\n\}', text, re.M | re.S)
+        if f"prometheus.exporter.unix.{exporter.group(1)}.targets" in body
+    ]
+    assert len(jobs) == 1, f"{path}: {len(jobs)} scrape jobs read the unix exporter"
+    return _duration_seconds(re.search(r'^\s*scrape_interval\s*=\s*"(\w+)"', jobs[0], re.M).group(1))
+
+
+def test_the_handshake_bar_is_the_key_lifetime_plus_the_two_sampling_steps_and_the_board_draws_it():
+    rule = _rule(_HANDSHAKE_STALE)
+    period = _timer_period_seconds(PROBE_TIMER)
+    scrape = max(_textfile_scrape_interval_seconds(CACHE_ALLOY), _textfile_scrape_interval_seconds(CAPTURE_ALLOY))
+    bar = _WIREGUARD_KEY_LIFETIME_S + period + scrape
+    evaluator = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+    assert evaluator == {"type": "gt", "params": [bar]}, (
+        f"{evaluator}: the key lifetime plus the probe's {period} s plus the scrape's {scrape} s is {bar}"
+    )
+    assert rule["for"] == "2m" and rule["noDataState"] == "OK"
+    panel = next(p for p in _cache_board_panels() if str(p["id"]) == rule["annotations"]["__panelId__"])
+    steps = panel["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    assert [step["value"] for step in steps if step["color"] == "red"] == [bar], (panel["id"], steps)
+
+
+# --- the node clock pair: the capture rules' twins on the hosts that copy the exporter ------------
+_NODE_CLOCK_SKEW = "zcrypto-node-clock-skew"
+_NODE_CLOCK_STALE = "zcrypto-node-clock-exporter-stale"
+# The hosts whose roles install a copy of the capture role's clock exporter; the capture pair keeps
+# its own critical pair.
+_NODE_CLOCK_HOSTS = frozenset({"ops", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
+
+
+def _prom_exprs(rule: dict) -> list[str]:
+    return [q["model"]["expr"] for q in rule["data"] if q.get("datasourceUid") == "${GRAFANA_PROM_DS_UID}"]
+
+
+@pytest.mark.parametrize("uid", [_NODE_CLOCK_SKEW, _NODE_CLOCK_STALE])
+def test_the_node_clock_rules_select_exactly_the_hosts_that_copy_the_exporter(uid):
+    rule = _rule(uid)
+    matchers = [m.group(1) for expr in _prom_exprs(rule) for m in re.finditer(r'host=~"([^"]+)"', expr)]
+    assert matchers, f"{uid} carries no host matcher, so it would claim the capture pair's series too"
+    for matcher in matchers:
+        assert frozenset(matcher.split("|")) == _NODE_CLOCK_HOSTS, f"{uid} selects {matcher!r}"
+    assert rule["labels"]["severity"] == "warning", "no archive hour closes on these clocks"
+
+
+def test_the_node_clock_skew_rule_reads_an_unsynchronised_clock_as_one():
+    """A bare `== 0` filter returns the left operand's VALUE, 0, which no `gt 0` evaluator can see;
+    `== bool 0` yields 1."""
+    (expr,) = _prom_exprs(_rule(_NODE_CLOCK_SKEW))
+    assert "zcrypto_clock_synchronised" in expr and "== bool 0" in expr, expr
+    assert "abs(zcrypto_clock_offset_seconds" in expr and ") > 10" in expr, expr
+
+
+def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
+    rule = _rule(_NODE_CLOCK_STALE)
+    (expr,) = _prom_exprs(rule)
+    assert 'file=~".*/clock-offset.prom"' in expr and "node_textfile_mtime_seconds" in expr, expr
+    threshold = next(q for q in rule["data"] if q["model"].get("type") == "threshold")
+    assert threshold["model"]["conditions"][0]["evaluator"] == {"type": "gt", "params": [1800]}
+    assert rule["noDataState"] == "OK", "the series is absent until the roles converge; NoData must not page"
+
+
+# --- ops' inode rule: sized against the fastest fill seen on its tmpfs ----------------------------
+_OPS_INODES = "zcrypto-ops-inodes-low"
+# `/tmp` on ops is a tmpfs of `nr_inodes=1048576`, and the rate is the fastest refill of it read so far,
+# which the commit that sized the rule derives.
+_TMP_INODES = 1_048_576
+_FILL_PER_HOUR = 127_000
+
+
+def test_the_ops_inode_rule_reads_free_over_total_per_mountpoint_on_root_and_tmp():
+    rule = _rule(_OPS_INODES)
+    (expr,) = _prom_exprs(rule)
+    # Bare selectors on both sides, so no aggregation folds the two mountpoints into one instance.
+    free, total = (part.strip() for part in expr.split(" / "))
+    assert free.startswith("node_filesystem_files_free{") and total.startswith("node_filesystem_files{"), expr
+    for side in (free, total):
+        assert 'host="ops"' in side and 'mountpoint=~"/|/tmp"' in side, side
+    assert rule["noDataState"] == "OK", "the pair is absent until ops' Alloy ships it, and a dark host is alloy-dark-ops's page"
+
+
+def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_seen():
+    rule = _rule(_OPS_INODES)
+    evaluator = next(q for q in rule["data"] if q["model"].get("type") == "threshold")["model"]["conditions"][0]["evaluator"]
+    assert evaluator["type"] == "lt", evaluator
+    # Pending waits up to one scrape and one evaluation after the crossing, then `for` runs.
+    late = _duration_seconds(rule["for"]) + 60 + 60
+    left_at_page = evaluator["params"][0] * _TMP_INODES - _FILL_PER_HOUR * late / 3600
+    assert left_at_page >= _FILL_PER_HOUR, f"{left_at_page:.0f} inodes left at the page, under an hour at {_FILL_PER_HOUR}/h"

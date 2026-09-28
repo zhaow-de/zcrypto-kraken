@@ -415,8 +415,9 @@ class ExternalOrderObserver(Strategy):
 
 
 def _logging_config() -> LoggerConfig:
-    """Stdout at INFO, stated explicitly: it is the engine's only log sink and docker collects it."""
-    return LoggerConfig(stdout_level=LogLevel.INFO)
+    """Stdout at INFO, stated explicitly: it is the engine's only log sink and docker collects it.
+    No colours: the unit's journal is read by the primary's Alloy, which keys on the line's shape."""
+    return LoggerConfig(stdout_level=LogLevel.INFO, is_colored=False)
 
 
 def _exec_engine_config() -> LiveExecutionEngineConfig:

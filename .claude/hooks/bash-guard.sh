@@ -19,20 +19,47 @@
 #
 # Outside, deliberately: `git push --no-verify` (no hook runs at push here), the pre-commit framework's
 # `SKIP=<hook>` door (used on purpose), an edit of `.git/hooks/` or of this file, a git alias, a shell string
-# handed to `sh -c`, `eval` or a Python subprocess, a program or a flag arriving through a variable or a
-# substitution, a cap first in its pipeline, which truncates what it opened rather than what the command computed
-# (`head -1 VERSION`), and a truncation that is neither head nor tail -- none is an argv this guard judges.
+# handed to `sh -c`, `eval` or a Python subprocess, a program, a flag or a vaulted path arriving through a variable,
+# a substitution or an encoding, a cap first in its pipeline, which truncates what it opened rather than what the
+# command computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a
+# program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through `xargs`,
+# `find -exec` or a copy of its whole directory -- none is an argv this guard judges; nor is a vaulted file the command
+# makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs.
+# A vault tool's writing verb is admitted over a vaulted file: a key rotation runs `ansible-vault encrypt|rekey`.
+# Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
+#
+# A stage's directory, for the vaulted-file family and the dispatched-agent family, is the payload's `cwd` moved by
+# each pipeline before it that is one stage whose command word is `cd` or `pushd` with a literal first operand, or
+# none, then by git's `-C`s. Every other change of directory is unfollowed: `builtin cd`, `command cd`, `{fd}>x cd`
+# and a `cd` inside a pipeline leave the directory where the hook had it; `cd -`, `popd` and an operand through a
+# variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file family
+# reads an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
+#
+# The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
+# subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
+# common dir of the repository this file lives in: the payload's `cwd` can sit in any repository. Outside it:
+# `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory that is no repository of its own, where git reaches the
+# main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL mutation) and every `gh`
+# verb the family does not name.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
 # class is wider than an unbalanced quote: `shlex` does not parse `$( .. )`, so a quote inside a substitution
-# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged.
+# pairs with one outside it, and a command bash accepts and runs can leave the whole guard unjudged. Any other error,
+# or a judging past its budget, admits the main loop's call the same way and refuses a dispatched agent's: this hook
+# is that agent's fence, and a fence that fails is off.
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
+import functools
+import glob
 import json
+import os
+import posixpath
 import re
 import shlex
+import signal
+import subprocess
 import sys
 
 KEY = "core.hookspath"
@@ -67,13 +94,87 @@ GREPS = {"grep", "egrep", "fgrep", "rg"}
 COUNT_FLAGS = {"--count", "--count-matches"}  # --count-matches is ripgrep's own: another number, capped the same
 TESTS = {"[", "[[", "test"}
 COMPARE = {"=", "==", "!="}
-KEYWORDS = {"if", "elif", "while", "until", "then", "do", "!", "{"}
+KEYWORDS = {"if", "elif", "else", "while", "until", "then", "do", "!", "{"}
 TERMINATORS = {"]", "]]"} | COMPARE  # the test's own words an unquoted `$( .. )` inside it leaves glued to the last stage
 OPS = ["&>>", ";;&", "<<<", "&&", "||", "|&", ";;", ";&", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "|", "&", ";", "\n", "<", ">", "(", ")"]
 SEP = {"&&", "||", "|&", ";;", ";&", ";;&", "|", "&", ";", "\n"}
 PIPE = {"|", "|&"}  # one more stage of the same pipeline; every other separator starts a new one
 REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
+INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
+PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
+COPIERS = {"cp", "scp", "rsync"}
+INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
+KEYS_DIR = "/infra/ansible/files"
+SOPS_VAULT = "/infra/ansible/vault-password.sops.yaml"
+WILD = re.compile(r"[*?[]")
+BRACE = re.compile(r"\{([^{}]*)\}")
+SEQUENCE = re.compile(r"(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?")
+VAULT_REMEDY = (
+    "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
+    "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
+)
+GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
+GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
+GH_VALUE = {"-R", "--repo"}
+MAIN_READS = {
+    "status", "log", "show", "diff", "diff-tree", "rev-parse", "rev-list", "ls-files", "ls-tree", "ls-remote", "cat-file",
+    "grep", "blame", "describe", "name-rev", "merge-base", "merge-tree", "for-each-ref", "count-objects", "check-ignore",
+}
+BRANCH_LISTS = {"--list", "a", "r", "--show-current", "--contains", "--merged", "--no-merged"}
+TAG_LISTS = {"l", "--list", "--contains"}
+LIST_MODE = {"l", "--list", "--contains", "--merged", "--no-merged"}  # the options that make a branch or tag operand a pattern
+FETCH_VALUE = (
+    "jo",
+    "",
+    {"depth", "deepen", "shallow-since", "shallow-exclude", "upload-pack", "refmap", "negotiation-tip", "filter", "jobs",
+     "server-option", "submodule-prefix", "recurse-submodules-default"},
+)
+FETCH_REWRITES = {"p", "P", "--prune", "--prune-tags", "--refmap"}
+AGENT_DIRS = (".claude/worktrees/", ".tmp/")
+PUSH_REMEDY = "The coordinator pushes and opens PRs after the read; a dispatched agent reports and stops."
+CHECKOUT_REMEDY = (
+    "A dispatched agent works in its worktree -- `git -C <worktree>` or `cd <worktree> &&`, a path under "
+    ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's, where an agent's git is held to a list of "
+    "reads, `fetch` and `worktree list|add|remove`."
+)
+# Per subcommand: what it rewrites; its ref-writing options, short and long, each with its verb; then its valued
+# options in VALUE's three kinds.
+REF_OPTIONS = {
+    "branch": (
+        "a branch",
+        {"d": "deletes", "D": "deletes", "m": "renames", "M": "renames", "c": "copies", "C": "copies", "f": "forces"},
+        {"--delete": "deletes", "--move": "renames", "--copy": "copies", "--force": "forces"},
+        "u",
+        "t",
+        {"set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"},
+    ),
+    "tag": (
+        "a tag",
+        {"d": "deletes", "f": "forces"},
+        {"--delete": "deletes", "--force": "forces"},
+        "mFu",
+        "n",
+        {"message", "file", "trailer", "cleanup", "local-user", "contains", "no-contains", "merged", "no-merged",
+         "points-at", "sort", "format"},
+    ),
+    "symbolic-ref": ("a symbolic ref", {"d": "deletes"}, {"--delete": "deletes"}, "m", "", set()),
+}
+REFLOG_WRITES = {"delete", "expire"}
+REFS_REMEDY = "A dispatched agent creates the branches it needs and reports them."
+WORKTREE_REMEDY = (
+    "A dispatched agent removes only a scratch tree, named by a path and not a variable: one under the .tmp/ of this "
+    "repository's main checkout or of one of its worktrees, whoever made it, or under its session's directory in "
+    "Claude Code's temp root; a worktree, and another session's directory, are that session's."
+)
+HOOK_DIR = posixpath.dirname(os.path.abspath(sys.argv[1]))
+
+
+class Stage(list):
+    # A stage's words, and the files its `<` redirects feed it, which are no word of its argv.
+    def __init__(self):
+        super().__init__()
+        self.inputs = []
 
 
 def expansions(body):
@@ -105,9 +206,9 @@ def expansions(body):
 
 
 def ansi_decode(raw):
-    # The escapes bash decodes inside $'..' -- \xHH, \NNN, \uHHHH, \UHHHHHHHH and the letter escapes -- so
-    # $'\x2dn' reaches the judge as the -n bash hands git; an escape this decoder does not know (`\cX`, a control
-    # character, never a `-`) stays as written.
+    # The escapes bash decodes inside $'..' -- \xHH, \NNN, \uHHHH, \UHHHHHHHH, \cX and the letter escapes -- so
+    # $'\x2dn' reaches the judge as the -n bash hands git, and the text ends at its first NUL, as bash's does:
+    # `vault$'\0'.yml` is `vault.yml`. An escape this decoder does not know stays as written.
     out, i, n = [], 0, len(raw)
     while i < n:
         ch = raw[i]
@@ -126,12 +227,17 @@ def ansi_decode(raw):
             out.append(chr(int(m.group(), 8) & 0xFF))
             i += 1 + m.end()
         elif nxt in "uU" and (m := re.match(r"[0-9A-Fa-f]{1,%d}" % (4 if nxt == "u" else 8), raw[i + 2 : i + 10])):
-            out.append(chr(int(m.group(), 16)))
+            code = int(m.group(), 16)
+            out.append(chr(code) if code <= sys.maxunicode else "")  # past Unicode, where chr() raises: read as nothing
             i += 2 + m.end()
+        elif nxt == "c" and i + 2 < n:
+            ctl = raw[i + 2]
+            out.append(chr(0x7F if ctl == "?" else ctl.encode("utf-8", "surrogatepass")[0] & 0x1F))
+            i += 3
         else:
             out.append(raw[i : i + 2])
             i += 2
-    return "".join(out)
+    return "".join(out).partition("\0")[0]
 
 
 def cut_heredocs(text):
@@ -198,6 +304,14 @@ def cut_heredocs(text):
             out.append(ch)
             i += 1
             continue
+        if ch.isdigit() and (i == 0 or text[i - 1] in " \t\n;&|()"):
+            j = i
+            while j < n and text[j].isdigit():
+                j += 1
+            if j < n and text[j] in "<>":
+                # an fd number is its redirection's, no word of the stage
+                i = j
+                continue
         if ch == "'" or ch == '"':
             stack.append(("sq" if ch == "'" else "dq", i))
         elif ch == "(" and st in ("sub", "paren"):
@@ -250,10 +364,12 @@ def pipelines(text):
     lex.commenters = ""  # bash's comments are cut above; a `#` inside a word (issue#42) is text
     lex.whitespace = " \t\r"
     lex.whitespace_split = True
-    pipes, skip = [[[]]], False
+    pipes, skip = [[Stage()]], ""
     for tok in lex:
         if skip:
-            skip = False
+            if skip in INPUT:
+                pipes[-1][-1].inputs.append(tok)
+            skip = ""
             continue
         if not tok or not set(tok) <= PUNCT:
             pipes[-1][-1].append(tok)
@@ -262,11 +378,11 @@ def pipelines(text):
         while tok:
             last = next(op for op in OPS if tok.startswith(op))
             if last in PIPE and pipes[-1][-1]:
-                pipes[-1].append([])
+                pipes[-1].append(Stage())
             elif last in SEP and pipes[-1][-1]:
-                pipes.append([[]])
+                pipes.append([Stage()])
             tok = tok[len(last) :]
-        skip = last in REDIRECT
+        skip = last if last in REDIRECT else ""
     out = [[stage for stage in pipe if stage] for pipe in pipes]
     out = [pipe for pipe in out if pipe]
     for body in bodies:
@@ -466,6 +582,406 @@ def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
 
+def vault_path(path):
+    # The vaulted set, read from a path whose every directory is spelled: a realpath, or `/` and a path under a
+    # repository.
+    head, _, name = path.rpartition("/")
+    keys = name.endswith("_ed25519") and head.endswith(KEYS_DIR)
+    return name == "vault.yml" or name.endswith(".vault") or keys or path.endswith(SOPS_VAULT)
+
+
+def held(path, where):
+    return os.path.isfile(posixpath.join(where, path)) and vault_path(os.path.realpath(posixpath.join(where, path)))
+
+
+def alternatives(text):
+    # A brace group's words -- its comma list, or its `..` sequence of numbers or letters with an optional step, `*`
+    # for a sequence past 256 words, counted from its ends and step -- and whether it is that `*`; None for a group bash
+    # leaves as text.
+    if "," in text:
+        return text.split(","), False
+    seq = SEQUENCE.fullmatch(text)
+    if not seq or seq[1].isalpha() != seq[2].isalpha():
+        return None
+    a, b = (ord(seq[1]), ord(seq[2])) if seq[1].isalpha() else (int(seq[1]), int(seq[2]))
+    step = abs(int(seq[3] or 1)) or 1
+    if abs(b - a) // step >= 256:
+        return ["*"], True
+    sign = 1 if a <= b else -1
+    return [chr(v) if seq[1].isalpha() else str(v) for v in range(a, b + sign, sign * step)], False
+
+
+def starred(word):
+    # The word with every brace group, a nested one whole, read as `*`.
+    out, opens = [], []
+    for ch in word:
+        if ch == "}" and opens:
+            del out[opens.pop() :]
+            ch = "*"
+        elif ch == "{":
+            opens.append(len(out))
+        out.append(ch)
+    return "".join(out)
+
+
+def braces(word):
+    # The words bash's brace expansion makes of one, innermost group first, each with whether a group was read as `*`
+    # on the way to it: a group with a comma or a `..` sequence expands, and `{x}` stays. A sequence past 256 words,
+    # counted from its ends and step, reads as `*`; past 256 words in all, every group does, a nested one whole. Such a
+    # `*` is no glob bash sees and can sit inside an option's value (`--file=`), so the caller globs every tail of the
+    # word, a leading dot included: that refuses more than bash's words name, and only on a word past 256 as counted
+    # here -- one bash expands past 256 ways, the same quoted, or one with a sequence bash leaves as text for its size.
+    # A `*` stays inside a path component, so where every group reads as `*`, an alternative with a `/` is read short.
+    todo, done = [(word, False)], []
+    while todo:
+        w, star = todo.pop()
+        group = next(((m, alt) for m in BRACE.finditer(w) if (alt := alternatives(m[1]))), None)
+        if group is None:
+            done.append((w, star))
+            continue
+        m, (items, read_as_star) = group
+        if len(items) + len(todo) + len(done) > 256:
+            return [(starred(word), True)]
+        todo.extend((w[: m.start()] + item + w[m.end() :], star or read_as_star) for item in reversed(items))
+    return done
+
+
+def globbed(pattern, where, hidden=False):
+    return glob.glob(posixpath.join(glob.escape(where), posixpath.expanduser(pattern)), include_hidden=hidden)
+
+
+def vaulted(word, where):
+    # The word, or the first tail of it -- an option's attached value, a `name=value`'s value -- that names an existing
+    # file in the vaulted set from `where`, or None: no option or program is parsed, so a pattern names no file and the
+    # operand beside it does. The word expands as bash expands it: braces, then a glob, which is the files it matches,
+    # or its own text where it matches none; a word braces() read a group of as `*` has every tail globbed instead.
+    for w, star in braces(word):
+        tails = (w[k:] for k in range(len(w)))
+        if star:
+            hit = next((t for t in tails if any(held(p, where) for p in globbed(t, where, hidden=True))), None)
+        elif WILD.search(w) and (found := globbed(w, where)):
+            hit = w if any(held(p, where) for p in found) else None
+        else:
+            hit = next((t for t in tails if held(posixpath.expanduser(t), where)), None)
+        if hit:
+            return hit
+    return None
+
+
+def composed(parts, where):
+    # The paths a program's words compose, each joined under a directory the words name or compose.
+    dirs, out = [""], []
+    for d in dirs:
+        for part in parts:
+            path = posixpath.normpath(posixpath.join(d, part)) if d else part
+            out.append(path)
+            if path not in dirs and len(dirs) < 16 and os.path.isdir(posixpath.join(where, path)):
+                dirs.append(path)
+    return out[len(parts) :]
+
+
+def at_revision(where, operand):
+    # Whether a `<rev>:<path>` operand is a vaulted file in the tree at that revision: git resolves it from `where`, and
+    # the path is read under the repository, a `./` or `../` one from the directory git runs in.
+    done = subprocess.run(["git", "-C", where, "cat-file", "-t", operand], capture_output=True, text=True)
+    if done.returncode or done.stdout.strip() != "blob":
+        return False
+    path = operand.rpartition(":")[2]
+    if path.startswith(("./", "../")):
+        prefix = subprocess.run(["git", "-C", where, "rev-parse", "--show-prefix"], capture_output=True, text=True)
+        path = posixpath.normpath(prefix.stdout.strip() + path)
+    return vault_path("/" + path)
+
+
+def operands(args):
+    out, ended = [], False
+    for a in args:
+        if a == "--" and not ended:
+            ended = True
+        elif ended or a == "-" or not a.startswith("-"):
+            out.append(a)
+    return out
+
+
+def among(flag, names):
+    # A short option's letter, or a long option's name or the prefix getopt takes for it, is one of names.
+    if flag[:2] != "--":
+        return flag in names
+    return len(flag) > 2 and any(n.startswith(flag) for n in names if n[:2] == "--")
+
+
+def git_sub(words):
+    # The subcommand, its arguments, and the `-C` paths before it in the order git chdirs through them.
+    at = next((i for i, w in enumerate(words) if is_git(w)), None)
+    if at is None:
+        return None, [], []
+    argv, i, chdirs = words[at:], 1, []
+    while i < len(argv) and argv[i].startswith("-") and len(argv[i]) > 1:
+        name, eq, _ = argv[i].partition("=")
+        if name == "-C" and not eq and i + 1 < len(argv):
+            chdirs.append(argv[i + 1])
+        i += 2 if name in GLOBAL_VALUE and not eq else 1
+    return (argv[i], argv[i + 1 :], chdirs) if i < len(argv) else (None, [], chdirs)
+
+
+def refuse_vault(words, what, raw):
+    refuse(f"`{spelled(words)}` {what}; in `{raw}`. {VAULT_REMEDY}")
+
+
+def first_vaulted(args, where):
+    return next((hit for a in args if (hit := vaulted(a, where))), None)
+
+
+def judge_vault(words, raw, where):
+    for i, w in enumerate(words):
+        p, rest = w.rpartition("/")[2], words[i + 1 :]
+        if p == "ansible-vault" and any(a in ("view", "decrypt") for a in rest):
+            refuse_vault(words, "decrypts a vaulted file to the terminal", raw)
+        if p == "sops" and any(a in ("-d", "--decrypt", "decrypt", "exec-env", "exec-file") for a in rest):
+            refuse_vault(words, "decrypts a sops file to the terminal or a command", raw)
+        if p == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in rest):
+            continue  # in place: sed writes the file back and prints nothing
+        if p in PRINTERS:
+            hit = first_vaulted(rest + getattr(words, "inputs", []), where)
+            if hit:
+                refuse_vault(words, f"prints the vaulted file `{hit}`", raw)
+        if p in COPIERS:
+            ops = operands(rest)
+            sources = ops if p == "cp" and any(a == "-t" or a.startswith("--target-directory") for a in rest) else ops[:-1]
+            hit = first_vaulted(sources, where)
+            if hit:
+                refuse_vault(words, f"copies the vaulted file `{hit}` to another path", raw)
+        if INTERPRETER.match(p):
+            code = next((rest[j + 1] for j, a in enumerate(rest[:-1]) if re.fullmatch(r"-[A-Za-z]*c", a)), "")
+            parts = re.findall(r"[^\s'\"(),;]+", code)
+            hit = first_vaulted(parts, where) or next((path for path in composed(parts, where) if held(path, where)), None)
+            if hit:
+                refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
+    sub, rest, chdirs = git_sub(words)
+    for d in chdirs:
+        where = resolve(where, d)
+    if sub in ("show", "cat-file") and where:
+        hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
+        if hit:
+            refuse_vault(words, f"prints the vaulted file `{hit.rpartition(':')[2]}` at a revision", raw)
+
+
+def is_gh(w):
+    return w == "gh" or (w.endswith("/gh") and not ASSIGN.match(w))
+
+
+def gh_writes(words):
+    at = next((i for i, w in enumerate(words) if is_gh(w)), None)
+    if at is None:
+        return False
+    rest, pos, j = words[at + 1 :], [], 0
+    while j < len(rest):
+        if rest[j] in GH_VALUE:
+            j += 2
+            continue
+        if not rest[j].startswith("-"):
+            pos.append(rest[j])
+        j += 1
+    if pos[:1] == ["pr"]:
+        return pos[1:2] != [] and pos[1] in GH_PR_WRITES
+    if pos[:2] == ["cache", "delete"]:
+        return True
+    if pos[:1] != ["api"]:
+        return False
+    for j, a in enumerate(rest):
+        name, eq, value = a.partition("=")
+        if a in ("-X", "--method"):
+            value = rest[j + 1] if j + 1 < len(rest) else ""
+        elif a.startswith("-X"):
+            value = a[2:].removeprefix("=")
+        elif name != "--method" or not eq:
+            continue
+        if value.upper() in GH_WRITE_METHODS:
+            return True
+    return False
+
+
+def main_admits(sub, rest):
+    if sub in MAIN_READS:
+        return True
+    positional = [a for a in rest if not a.startswith("-")]
+    if sub == "config":
+        return any(a in ("--get", "--list", "-l") for a in rest) or positional[:1] in (["get"], ["list"])
+    if sub == "remote":
+        return positional[:1] in ([], ["show"])
+    if sub in ("branch", "tag"):
+        flags, _, ops = option_walk(rest, *REF_OPTIONS[sub][3:])
+        return set(flags) <= (BRANCH_LISTS if sub == "branch" else TAG_LISTS) and (not ops or bool(set(flags) & LIST_MODE))
+    if sub == "stash":
+        return rest[:1] in (["list"], ["show"])
+    if sub == "reflog":
+        return rest[:1] in ([], ["show"])
+    if sub == "symbolic-ref":
+        return not ref_write(sub, rest)
+    if sub == "fetch":
+        flags, _, ops = option_walk(rest, *FETCH_VALUE)
+        return not any(among(f, FETCH_REWRITES) for f in flags) and not any(":" in a for a in ops[1:])
+    if sub == "worktree":
+        return rest[:1] in (["list"], ["add"], ["remove"])
+    return False
+
+
+def option_walk(rest, short_value, short_attached, long_value):
+    # A subcommand's options -- a short one as its letter, a long one as its name -- each with its value or None, and
+    # its operands; an option's value is no operand.
+    flags, values, ops, j = [], [], [], 0
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--":
+            ops.extend(rest[j:])
+            break
+        if tok.startswith("--"):
+            name, eq, value = tok.partition("=")
+            takes = not eq and any(o.startswith(name[2:]) for o in long_value)
+            flags.append(name)
+            values.append(value if eq else rest[j] if takes and j < len(rest) else None)
+            j += takes
+        elif tok.startswith("-") and len(tok) > 1:
+            for k, ch in enumerate(tok[1:], 1):
+                flags.append(ch)
+                if ch not in short_value and ch not in short_attached:
+                    values.append(None)
+                    continue
+                value = tok[k + 1 :]
+                if not value and ch in short_value and j < len(rest):
+                    value, j = rest[j], j + 1
+                values.append(value)
+                break
+        else:
+            ops.append(tok)
+    return flags, values, ops
+
+
+def ref_write(sub, rest):
+    if sub == "update-ref":
+        return "rewrites a ref"
+    if sub == "reflog" and rest[:1] and rest[0] in REFLOG_WRITES:
+        return f"{rest[0]}s reflog entries"
+    if sub == "worktree" and rest[:1] == ["move"]:
+        return "moves a worktree"
+    if sub not in REF_OPTIONS:
+        return None
+    what, shorts, longs, *values = REF_OPTIONS[sub]
+    flags, _, ops = option_walk(rest, *values)
+    for f in flags:
+        verb = next((v for o, v in longs.items() if o.startswith(f)), None) if f.startswith("--") else shorts.get(f)
+        if verb:
+            return f"{verb} {what}"
+    return f"rewrites {what}" if sub == "symbolic-ref" and len(ops) > 1 else None
+
+
+def resolve(here, target):
+    # The directory `cd <target>` or `git -C <target>` leaves from `here`, None where the hook cannot know it.
+    if target == "":
+        return here
+    if target == "-" or "$" in target or "`" in target:
+        return None
+    if target.startswith("~"):
+        target = posixpath.expanduser(target)
+    if target.startswith("/"):
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(here, target)) if here else None
+
+
+def moved(words, here):
+    p, args = argv_of(words)
+    if p == "popd":
+        return None
+    if p not in ("cd", "pushd"):
+        return here
+    ops = [a for a in args if a == "-" or not a.startswith(("-", "+"))]
+    return resolve(here, ops[0] if ops else "~")
+
+
+@functools.cache
+def main_checkout():
+    done = subprocess.run(
+        ["git", "-C", HOOK_DIR, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True
+    )
+    common = done.stdout.strip()
+    return os.path.realpath(posixpath.dirname(common)) if done.returncode == 0 and posixpath.basename(common) == ".git" else None
+
+
+def in_main_checkout(path):
+    main = main_checkout()
+    if not path or not main:
+        return False
+    p = os.path.realpath(path)
+    if p != main and not p.startswith(main + "/"):
+        return False
+    return not p.startswith(tuple(f"{main}/{d}" for d in AGENT_DIRS))
+
+
+@functools.cache
+def top_and_common(where):
+    done = subprocess.run(
+        ["git", "-C", where, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+    )
+    return tuple(os.path.realpath(line) for line in done.stdout.splitlines()) if done.returncode == 0 else None
+
+
+def worktree_top(path):
+    main = main_checkout()
+    if not main:
+        return None
+    ours, here = os.path.realpath(f"{main}/.git"), path
+    while here != "/":
+        here = posixpath.dirname(here)
+        if top_and_common(here) == (here, ours):
+            return here
+    return None
+
+
+def scratch_tree(path, session):
+    # A temp root holds `claude-<uid>/<project>/<session_id>/`; only the payload's session directory is scratch, not the
+    # whole root, because a payload session's worktree is cut in it too (docs/reference/multi-agent-protocol.md).
+    if not path:
+        return False
+    p = os.path.realpath(path)
+    for root in {"/tmp", os.environ.get("CLAUDE_CODE_TMPDIR") or "/tmp"}:
+        base = os.path.realpath(f"{root}/claude-{os.getuid()}") + "/"
+        parts = p[len(base) :].split("/") if p.startswith(base) else []
+        if len(parts) > 2 and parts[1] == session:
+            return True
+    top = worktree_top(p)
+    return top is not None and p.startswith(os.path.realpath(f"{top}/.tmp") + "/")
+
+
+def judge_agent(words, here, raw, session):
+    sub, rest, chdirs = git_sub(words)
+    if sub == "push":
+        refuse(f"`{spelled(words)}` pushes from a dispatched agent; in `{raw}`. {PUSH_REMEDY}")
+    if gh_writes(words):
+        refuse(f"`{spelled(words)}` writes to GitHub from a dispatched agent; in `{raw}`. {PUSH_REMEDY}")
+    if not sub:
+        return
+    for d in chdirs:
+        here = resolve(here, d)
+    writes = ref_write(sub, rest)
+    if writes:
+        refuse(f"`{spelled(words)}` {writes} from a dispatched agent, whatever directory it runs in; in `{raw}`. {REFS_REMEDY}")
+    if sub == "worktree" and rest[:1] == ["remove"]:
+        hit = next((a for a in operands(rest[1:]) if not scratch_tree(resolve(here, a), session)), None)
+        if hit is not None:
+            refuse(
+                f"`{spelled(words)}` removes the worktree `{hit}` from a dispatched agent, whatever directory it runs in; "
+                f"in `{raw}`. {WORKTREE_REMEDY}"
+            )
+    if in_main_checkout(here) and not main_admits(sub, rest):
+        refuse(
+            f"`{spelled(words)}` runs `git {sub}` in the main checkout, at `{here}`, from a dispatched agent; in "
+            f"`{raw}`. {CHECKOUT_REMEDY}"
+        )
+
+
 def env_assignments(words):
     at = next((i for i, w in enumerate(words) if is_git(w)), None)
     prefix = words[:at] if at is not None else []
@@ -509,6 +1025,13 @@ def judge(words):
         judge_options(sub, rest, words)
 
 
+def overrun(*_):
+    raise TimeoutError(f"the judging ran past {BUDGET} seconds")
+
+
+BUDGET = 5  # under the 10 seconds .claude/settings.json gives this hook: a hook the harness ends has not refused
+sys.stdout.reconfigure(errors="backslashreplace")  # a refusal naming a lone surrogate (`$'\uD800'`) still prints
+sys.set_int_max_str_digits(0)  # a `..` sequence's ends are read whatever their length
 try:
     call = json.load(sys.stdin)
     command = call.get("tool_input", {}).get("command", "")
@@ -517,19 +1040,40 @@ try:
 except (ValueError, AttributeError) as exc:
     print(f"stdin is not the tool call's JSON ({exc})")
     sys.exit(3)
-try:
-    commands = pipelines(command)
-except ValueError as exc:
-    print(f"the command does not tokenise ({exc})")
-    sys.exit(3)
+command = command.replace("\0", "")  # as bash reads a command from stdin; no argv carries a NUL
 raw = clip(" ".join(command.split()))
-for pipe in commands:
-    for words in pipe:
-        judge(words)
-    judge_cap(pipe, raw)
+agent = bool(call.get("agent_id"))
+signal.signal(signal.SIGALRM, overrun)
+signal.alarm(BUDGET)
+try:
+    try:
+        commands = pipelines(command)
+    except ValueError as exc:
+        print(f"the command does not tokenise ({exc})")
+        sys.exit(3)
+    cwd = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
+    here = cwd
+    for pipe in commands:
+        for words in pipe:
+            judge(words)
+            judge_vault(words, raw, here or cwd)
+            if agent:
+                judge_agent(words, here, raw, call.get("session_id"))
+        judge_cap(pipe, raw)
+        if len(pipe) == 1:
+            here = moved(pipe[0], here)
+except Exception as exc:
+    if agent:
+        refuse(
+            f"the hook could not judge the command ({type(exc).__name__}: {clip(str(exc))}), and a dispatched agent's "
+            f"command it cannot judge is refused; in `{raw}`. Run it as simpler calls, or report it and stop."
+        )
+    raise
+finally:
+    signal.alarm(0)
 PY
 )"
-if out="$(printf '%s' "$input" | python3 -c "$prog" 2>/dev/null)"; then
+if out="$(printf '%s' "$input" | python3 -c "$prog" "${BASH_SOURCE[0]}" 2>/dev/null)"; then
   exit 0
 else
   rc=$?

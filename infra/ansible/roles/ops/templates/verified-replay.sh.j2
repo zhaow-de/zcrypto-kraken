@@ -3,19 +3,20 @@
 # on the host, edit infra/ansible/roles/ops/templates/verified-replay.sh.j2 and re-converge instead.
 #
 # Verified-path replay of the engine journal (spec 00051 OPS-3): replays every still-unverified
-# UTC day (watermark catch-up loop, T0059) by running `zcrypto engine replay --path verified`
-# (the oracle builder) in the digest-pinned default-AVX image, reading the journal straight from
-# the NAS's read-only NFS export (T0058 — the local engine-journal mirror is retired), publishes
-# the outcome as a node-exporter textfile (ops_verified_replay_*; a non-zero exit_code is the
-# CLI's own mismatch/validation-failure verdict), and pings the dead-man URL only on a clean,
-# fully-caught-up run — an empty URL skips the ping (the CLI's optional `ping_healthcheck`
-# semantics, shell edition).
+# UTC day from the watermark (T0059), reading the journal through the NAS's read-only NFS export
+# (T0058), and publishes the outcome as a node-exporter textfile.
 #
 # A REFUSED run (invalid or future watermark below) exits non-zero without touching the watermark
-# or the textfile: the unit goes red, the error line ships to Loki via the unit journal (T0060),
-# the dead man misses its ping (healthchecks.io pages on the silence), and the 48h staleness
-# alert backs both.
+# or the textfile: the unit goes red, the dead man misses its ping (healthchecks.io pages on the
+# silence), and the 48h staleness alert backs both.
 set -u
+
+# archive-pull.sh.j2's log(): the shape the ops Alloy parse stage levels. WARNING, never ERROR, for
+# a line the exit code, the dead man or the staleness rule already pages on.
+log() {
+    _ts=$(date -u +'%Y-%m-%d %H:%M:%S,%N')
+    printf '%s %s zcrypto.verified-replay [verified-replay.sh] - %s\n' "${_ts%??????}" "$1" "$2" >&2
+}
 
 PROM="{{ ops_textfile_dir }}/ops-verified-replay.prom"
 URL="{{ ops_verified_replay_healthcheck_url }}"
@@ -56,7 +57,7 @@ if [ -f "$WATERMARK" ]; then
     # past both guards and die deep in the loop on a bewildering arithmetic error — with docker
     # already invoked on an empty --date (review 2026-07-17, minor) — instead of refusing here.
     if ! [[ "$WM" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -u -d "$WM" +%F 2>/dev/null)" != "$WM" ]; then
-        echo "verified-replay: ERROR: watermark file $WATERMARK does not hold a valid YYYY-MM-DD day (got '$WM'); refusing to run — restore it to the last verified day, or delete it to re-seed from yesterday-1" >&2
+        log WARNING "watermark file $WATERMARK does not hold a valid YYYY-MM-DD day (got '$WM'); refusing to run — restore it to the last verified day, or delete it to re-seed from yesterday-1"
         exit 1
     fi
 else
@@ -68,7 +69,7 @@ else
     # potentially a real MISMATCH day, the highest-value verdict this pipeline produces — was
     # never replayed at all, while everything read caught-up.
     if ! write_watermark "$WM"; then
-        echo "verified-replay: ERROR: cannot persist the seed watermark $WM to $WATERMARK; refusing to run without a durable anchor" >&2
+        log WARNING "cannot persist the seed watermark $WM to $WATERMARK; refusing to run without a durable anchor"
         exit 1
     fi
 fi
@@ -78,7 +79,7 @@ fi
 # garbage state, and the CLI's rc-0-on-empty-day behaviour would even "verify" the nonexistent
 # future days. Same loud refused-run contract as the format check above; watermark untouched.
 if [[ "$WM" > "$YESTERDAY" ]]; then
-    echo "verified-replay: ERROR: watermark $WM is beyond yesterday ($YESTERDAY) — clock skew or a manual edit; refusing to run, watermark left untouched" >&2
+    log WARNING "watermark $WM is beyond yesterday ($YESTERDAY) — clock skew or a manual edit; refusing to run, watermark left untouched"
     exit 1
 fi
 
@@ -161,7 +162,7 @@ while [[ ! "$day" > "$YESTERDAY" ]]; do
     fi
 
     if ! write_watermark "$day"; then
-        echo "verified-replay: ERROR: $day verified but its watermark could not be persisted; stopping so the day is retried rather than silently re-lost" >&2
+        log WARNING "$day verified but its watermark could not be persisted; stopping so the day is retried rather than silently re-lost"
         rc=1
         break
     fi

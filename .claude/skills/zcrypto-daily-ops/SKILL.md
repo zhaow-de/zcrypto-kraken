@@ -39,7 +39,7 @@ Exit **0** autonomous · **3** prepared. **`prepared` means prepare the action a
 
 **The classifier is default-deny over an enumerated table of command shapes, so `prepared` also means *not yet enumerated*** — a diagnostic a runbook gained after the table was written is refused exactly like a destructive one. That is the safe direction and never a reason to widen the table in the moment: prepare the step, then add the shape and its fixture through the normal fix branch.
 
-**The host comes from the report's `Alert.hosts`, never from the step.** One runbook body serves all four Alloy hosts, and the same restart is routine on ops and attended on the capture pair. **A rule firing on several hosts is classified once PER HOST** — the report names every host with a firing instance, the tier can differ between them, and the silence the capture runbook prescribes is created and deleted per host too.
+**The host comes from the report's `Alert.hosts`, never from the step.** The same Alloy restart is routine on ops and attended on the capture pair. **A rule firing on several hosts is classified once PER HOST** — the report names every host with a firing instance, the tier can differ between them, and the silence the capture runbook prescribes is created and deleted per host too.
 
 **Done is an outcome, never a merge.** A fix whose effect needs a converge is not done when it merges: the entry names it as owed to an attended converge.
 
@@ -70,7 +70,7 @@ Take the Open and Partially-done bullets of `docs/open-topics/README.md` — the
   unevaluated.
 - **another topic's resolution** — run the check the trigger carries, against the topic's own definitions: a change-index cell is a parse of a PR body, not the spec listing — open the topic and the spec listing before reading a cell or a word match as fired.
 - **an alert** — the report already says whether it fired; a trigger naming one is answered by the section you have just read.
-- **a file being touched** — `git -C <main checkout> log --name-only --since=<the last journal entry's date> --format= develop`
+- **a file being touched** — `git -C <main checkout> log --name-only --since=<the last journal entry's date>T00:00:00Z --format= develop`
   against the paths the trigger names in backticks. Report it only when one of them is in that list: a
   standing line saying a topic waits is wallpaper within a week, and the daily pass is the backstop here,
   not the primary reader — `open-pr`'s rider clause is what keeps these from being written at all.

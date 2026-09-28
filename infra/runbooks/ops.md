@@ -335,10 +335,10 @@ The overlay-writer cycle runs at `*:12` and `*:42`, so 3 h is roughly six missed
 **What a persistent gate skip looks like, because nothing else says it out loud:** the unit is green, `ops_archive_pull_exit_code` is 0, `ops_archive_pull_last_success_timestamp` keeps advancing, the healthchecks.io dead-man keeps being pinged, and one line per tick goes into the unit journal —
 
 ```
-zcrypto-archive-pull: WARNING: writer cycle SKIPPED (fail-closed gate): <reason>
+YYYY-MM-DD HH:MM:SS,mmm WARNING zcrypto.archive-pull [archive-pull.sh] - writer cycle SKIPPED (fail-closed gate): <reason>
 ```
 
-That line is a shell `echo`, so it carries **no `level` label** in Loki (the ops Alloy parse stage labels only Python-logging-shaped lines) and can never reach `Ops · ERROR logs`. The skip is a state, not a fault: the hours reconcile on the next healthy cycle.
+The script writes that line in the Python-logging shape the ops Alloy parse stage reads, so it carries **`level="WARNING"`** in Loki: the Logs board's WARNING filter shows it, and `Ops · ERROR logs`, which selects ERROR and CRITICAL, never pages on it. The skip is a state, not a fault: the hours reconcile on the next healthy cycle.
 
 The gate's conditions, read from `/mnt/zhao-crypto/.pull-status`, are enumerated in [`ops-node.md#zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled). The file is written by the NAS's own pull loop immediately after its primary and secondary capture pulls, so a stale one means the NAS's VPS pulls are broken or its loop is dead — **the fault is upstream, on the NAS, not here.**
 
@@ -366,7 +366,7 @@ ______________________________________________________________________
 
 A **warning** Grafana alert (`Reconciler · capture mirror lagging`): `max by (source) (zcrypto_reconcile_source_lag_seconds)` above 10800 s (3 h) for 10 minutes. **One instance per mirror** — the `source` label reads `primary` or `secondary` and names which one, and the two fire independently.
 
-The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so 1–2 h is the healthy steady state.
+The value is the age of that mirror's **newest committed final of any pair, book or trades**, measured from the hour that final covers. A final only commits after its hour closes and the NAS pulls roughly hourly (`ARCHIVE_PULL_INTERVAL`, default 3600 s, plus the loop's own work), so the healthy steady state is a sawtooth from a little over 1 h, at the writer tick after a pull, to under 20 minutes below the 3 h bar just before the next one.
 
 ### What it means
 
@@ -376,7 +376,7 @@ Read the `source` label first, because the two directions mean very different th
 
 - **`secondary` lagging ⇒ the fleet has no witness.** Nothing is lost yet, and it is still a warning, but until it recovers **any** primary silence every book stream shares, longer than `--min-gap-seconds`, books as `both_streams_silent` — permanent, paged, never revisited (no count command: `fleet_dark_windows` in `cli/archive/settle.py`; `_ledger` decides the hour once). Treat it with more urgency than its severity suggests.
 - **`primary` lagging while the secondary is fresh ⇒ every affected hour is being covered from the secondary** (no count command: `cli/archive/command.py` heals a late primary-absent hour whole from the secondary). Expect `zcrypto-reconcile-healable-gap-rate` to follow.
-- **Both lagging ⇒ look at the transport, not the fleet** — the NAS's pull loop or the ops node's NFS view of it, since both mirrors are read through the same `/mnt/zhao-crypto` mount.
+- **Both lagging ⇒ look at the transport, not the fleet** — the NAS's pull loop or the ops node's NFS view of it, since both mirrors are read through the same `/mnt/zhao-crypto` mount. Within a few hours of a NAS apply that recreated `zcrypto-archive-pull`, the transport is the cold gate replay the recreate bought, with the loop's capture pulls waiting behind it ([`nas.md#zcrypto-nas-load-high`](nas.md#zcrypto-nas-load-high)): expected, and it clears by value once the pulls run.
 
 **A reading of `+Inf` is not lag — it means that mirror is EMPTY.** The reconciler scanned the mirror's root and found no committed final for any pair at all, and `+Inf` is published deliberately (omitting the series would leave the rule with nothing to evaluate and nothing would fire). Operationally: the tree was wiped, re-rooted, or never populated, or the NFS view resolved to an empty directory. It is not the "root is missing" case — a missing root makes the cycle exit 2 before publishing anything, which surfaces as `Ops · archive-pull non-zero exit` and then `Reconciler · exporter stale` instead.
 
@@ -394,7 +394,7 @@ Read the `source` label first, because the two directions mean very different th
 3. **Discriminate the capture host from its pull channel.** The host's own signals answer the first half — `zcrypto-capture-all-streams-silent` / `-stream-silent` and [`capture.md`](capture.md). `cat /mnt/zhao-crypto/.pull-status` answers the second: `capture_ok=0` or `secondary_ok=0` is the NAS telling you which pull failed, and its `zcrypto-nas-archive-pull-errors` / `-stalled` rules carry the reason.
 4. **`+Inf`: do not attempt to repopulate the tree from ops.** The mount is read-only by role and writing through a soft mount can corrupt silently; the mirror is the NAS's to restore, and pushes go only through its own rrsync channel (no count command: the nas role's hot-push key, an rrsync forced command, is its one write path).
 5. **Do not converge or restart a capture host on this signal alone** (`.claude/rules/fleet-deploys.md`) — a converge on the primary restarts live, unbackfillable capture, and this alert has not yet said the daemon is at fault.
-6. **All-clear by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_reconcile_source_lag_seconds'` shows both sources back under ~7200 after the next NAS pull plus the next `:12`/`:42` writer tick.
+6. **All-clear by value**: `uv run python infra/scripts/grafana-query.py 'zcrypto_reconcile_source_lag_seconds'` shows both sources back under the 10800 s bar, and a little over 1 h at the first `:12`/`:42` writer tick after the next NAS pull.
 
 ### Retire when
 

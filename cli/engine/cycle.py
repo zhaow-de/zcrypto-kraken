@@ -34,6 +34,7 @@ from cli.engine.journal import (
 )
 from cli.engine.store import BASKET, GRID_INTERVALS, PAIR_KEYS, read_store_series, refresh_store
 from cli.logging import get_logger
+from cli.logging.redact import ping_failure
 from cli.ohlc.dataset import write_parquet
 from cli.ohlc.errors import OHLCError
 from cli.ohlc.fetch import fetch_ohlc
@@ -125,7 +126,7 @@ def _ping_healthcheck(success: bool) -> None:
         with _hc_opener(url, timeout=10):
             pass
     except Exception as exc:
-        logger.warning("healthcheck ping failed url=%s error=%s", url, exc)
+        logger.warning(ping_failure(url, exc))
 
 
 @dataclass(frozen=True)

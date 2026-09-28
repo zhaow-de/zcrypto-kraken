@@ -11,6 +11,16 @@
       -e cache_config_reset=true re-renders this node's configs only on a converge that also carries
       -e cache_image_digest=sha256:<...>, the digest docs/reference/fleet-pins.md records for this node.
 
+# Under the kernel's heuristic mode Valkey's fork on a 1 GB node can be refused. Set here, beside what
+# needs it, rather than as a group_vars copy of the hardening role's fleet keys.
+- name: enable memory overcommit for Valkey's forks (AOF rewrite, RDB save, replica sync)
+  ansible.posix.sysctl:
+    name: vm.overcommit_memory
+    value: "1"
+    sysctl_set: true
+    sysctl_file: /etc/sysctl.d/99-zcrypto-cache.conf
+    state: present
+
 - name: install Valkey and Sentinel (needs the pinned image digest)
   when: cache_image_digest is defined
   block:
@@ -235,6 +245,7 @@
         daemon_reload: true
         enabled: true
         state: started
+      register: cache_service_start
       # A first-install preview never wrote the unit, so systemd cannot find it.
       when: not (ansible_check_mode and cache_unit_install is changed)
 
@@ -280,6 +291,42 @@
     enabled: true
     state: started
   when: not (ansible_check_mode and cache_reboot_timer_install is changed)
+
+# The host clock's offset and sync state, a copy of the capture role's exporter, so a node whose
+# chrony lost its sources is seen rather than free-running unwatched.
+- name: install the clock-offset script
+  ansible.builtin.copy:
+    src: zcrypto-clock-offset.sh
+    dest: /usr/local/sbin/zcrypto-clock-offset
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the clock-offset systemd unit
+  ansible.builtin.template:
+    src: zcrypto-clock-offset.service.j2
+    dest: /etc/systemd/system/zcrypto-clock-offset.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: install the clock-offset systemd timer
+  ansible.builtin.copy:
+    src: zcrypto-clock-offset.timer
+    dest: /etc/systemd/system/zcrypto-clock-offset.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: cache_clock_timer_install
+
+# A first-install preview never wrote the timer, so systemd cannot find it there.
+- name: enable + start the clock-offset timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-clock-offset.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and cache_clock_timer_install is changed)
 
 # ---- The node's telemetry ---------------------------------------------------------------------------
 - name: read the deployed alloy config's checksum (drift check, never gated on the digest)

@@ -195,15 +195,18 @@ loki.process "parse" {
       expression = "^(?P<ts>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3}) (?P<level>[A-Z]+) (?P<rest>.*)$"
     }
 
-    // Use the app's own stamp as the entry time (Go layout; the comma is literal). A line the regex
-    // missed keeps `ts` unset, and the stage's default action_on_failure ("fudge") then stamps it at
-    // the stream's last good timestamp + 1ns -- NOT at the journal's arrival time. That is the
-    // behaviour we want: a traceback's continuation lines land immediately after the record they
-    // belong to instead of being scattered. Either way the line is passed through, never dropped.
+    // Use the app's own stamp as the entry time (Go layout; the comma is literal). "skip", not the
+    // default "fudge", for a line the regex above misses -- rsync and ssh stderr, a traceback's
+    // continuation lines, the entrypoint's own echoes: "fudge" stamps such a line at the stream's
+    // LAST PARSED timestamp plus 1ns, which on the pull loop's failure path dates a stderr line to
+    // the previous cycle. "skip" keeps the journal's capture time, so a traceback still lands beside
+    // its record and a stderr line beside the failure it caused.
+    // tests/test_infra_alloy_stages.py holds every stage.timestamp under infra/ to this.
     stage.timestamp {
-      source   = "ts"
-      format   = "2006-01-02 15:04:05,000"
-      location = "UTC"
+      source            = "ts"
+      format            = "2006-01-02 15:04:05,000"
+      location          = "UTC"
+      action_on_failure = "skip"
     }
 
     // Canonical level spelling = Python's own level names (DEBUG/INFO/WARNING/ERROR/CRITICAL), so

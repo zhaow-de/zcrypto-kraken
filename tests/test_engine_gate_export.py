@@ -462,3 +462,20 @@ def test_gate_ping_swallows_opener_errors(monkeypatch):
     monkeypatch.setattr(command, "_urlopen", boom)
 
     command._gate_ping("http://hc", True)  # must not raise
+
+
+def test_a_failed_gate_ping_logs_the_host_and_never_the_check_path(monkeypatch):
+    import http.client
+
+    from tests.logcapture import messages_of
+
+    uuid = "1c1ab0a3-0d68-4c47-9a67-3b8c0f0e7c9d"
+
+    def quoting(url, timeout):
+        raise http.client.InvalidURL(f"nonnumeric port: {url}")
+
+    monkeypatch.setattr(command, "_urlopen", quoting)
+    with messages_of(command.logger) as lines:
+        command._gate_ping(f"https://hc-ping.com/{uuid}", False)
+    assert lines == ["gate-export healthcheck ping failed target=hc-ping.com/fail error=InvalidURL"]
+    assert uuid not in "".join(lines)

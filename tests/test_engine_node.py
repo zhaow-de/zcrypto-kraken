@@ -1934,3 +1934,9 @@ def test_every_clock_call_the_strategy_makes_lands_on_the_same_parameters_as_the
         assert bound[0] == bound[1], (
             f"clock.{method}(...) lands on {sorted(bound[0])} on the real Clock and {sorted(bound[1])} on FakeClock"
         )
+
+
+def test_the_node_logs_without_colours():
+    config = node._logging_config()
+    assert config.is_colored is False
+    assert config.stdout_level == LogLevel.INFO

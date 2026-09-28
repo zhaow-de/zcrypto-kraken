@@ -18,14 +18,8 @@
 #
 # Placeholders are literal `${VAR}` tokens that infra/scripts/grafana-push.sh substitutes from its
 # own environment before sending each rule -- the alert-rule provisioning API has no server-side
-# template substitution (unlike the dashboard JSON's `${DS_PROMETHEUS}`/`${DS_LOKI}` variables,
-# which Grafana itself resolves on dashboard import):
-#   - `${GRAFANA_PROM_DS_UID}` / `${GRAFANA_LOKI_DS_UID}` -- the two datasource UIDs.
-#   - `${GRAFANA_ALERT_FOLDER_UID}` -- the folder UID the rules provision into (the API needs
-#     the folder's UID, not its display name).
-#   - `notification_settings.receiver: metrics` (or `logs` for the Loki-sourced ERROR-log rules;
-#     the `logs` receiver disables resolve messages -- a log alert resolves by ageing, so a
-#     resolve ping is noise) (both receivers' Slack webhook is provisioned separately, not here).
+# template substitution. A rule pins `notification_settings.receiver: metrics`, or `logs` for the
+# Loki-sourced ERROR-log rules; grafana-push.sh mints both.
 #
 # noDataState is per-rule, not boilerplate: Alerting only where nothing else owns the series'
 # absence; OK wherever a dead-man or canary already does, or where absence is legitimate.
@@ -1479,13 +1473,7 @@ rules:
     orgId: 1
     condition: C
     data:
-      # Per-mirror, so the alert instance names WHICH host went quiet -- `source="primary"` and
-      # `source="secondary"` fire independently. This is dataflow-based and therefore independent of
-      # both hosts' healthchecks.io dead-men: a host can keep pinging while its capture writes nothing.
-      #
-      # Threshold 3h against a measured normal of ~1h: a final only commits after its hour closes and
-      # the NAS pulls hourly, so ~1-2h of lag is the healthy steady state. 3h means a mirror has missed
-      # a whole cycle beyond that.
+      # Threshold 3h sits just above the healthy sawtooth's peak; ops.md#zcrypto-reconcile-source-lag sizes the margin.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -2336,6 +2324,93 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-ops-disk-low
+    title: "Ops · root filesystem low"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The threshold and the duration are zaccess-disk-high's. `/mnt/zhao-crypto` is the NAS's export,
+      # which zcrypto-nas-disk-low watches, and `/tmp` is a tmpfs, whose inodes zcrypto-ops-inodes-low watches.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_avail_bytes{host="ops", mountpoint="/"}
+            / node_filesystem_size_bytes{host="ops", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.15]}  # < 15% free
+    # A dark host is zcrypto-alloy-dark-ops's page.
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The ops node's root filesystem has been below 15% free for 30+ minutes. It holds the ops timers' images and state, the reconcile ledger among it, and the operator's checkouts with their datasets; on a full disk the timers' writes fail. Removing anything is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-disk-low"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "301"
+      unit: "of the root filesystem still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-ops-inodes-low
+    title: "Ops · inodes low"
+    ruleGroup: zcrypto-ops
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The bar and `for` are sized in tests/test_infra_alert_rules.py against the fastest fill seen on `/tmp`.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            node_filesystem_files_free{host="ops", mountpoint=~"/|/tmp"}
+            / node_filesystem_files{host="ops", mountpoint=~"/|/tmp"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.25]}  # < 25% of the inodes free
+    # A dark host is zcrypto-alloy-dark-ops's page.
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "A filesystem on the ops node has had under 25% of its inodes free for 10+ minutes; the notification names the mountpoint. The Claude Code sessions' scratch trees are the usual holder, and a full inode table on /tmp fails every ops timer's docker run while bytes remain free. Removing files is the operator's decision. Runbook: infra/runbooks/ops-node.md#zcrypto-ops-inodes-low"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "305"
+      unit: "of the filesystem's inodes still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-ops-error-logs
     title: "Ops · ERROR logs"
     ruleGroup: zcrypto-ops
@@ -2436,9 +2511,7 @@ rules:
       # (config.alloy's `{container="alloy"}` parse stage) is continuous while Alloy lives and cannot
       # be faked by anything the poller does, so the absence of ANY parsed line on it in 6h means
       # Alloy itself, or its own parse/ship path, is dead. Deliberately NOT `container=~"zcrypto-.*"`
-      # either: on a fail-closed skip-gate streak (archive-pull.sh.j2) the unit emits only unleveled
-      # echoes, so a level-filtered 6h query on the units alone would false-fire during a legitimate
-      # long streak -- `zcrypto-ops-unit-parse-dead` below covers that stream at a wider 26h window.
+      # either: the unit streams are `zcrypto-ops-unit-parse-dead`'s below, at its wider 26h window.
       # `zcrypto-ops-journal-transport-dead` and `zcrypto-ops-poller-log-dead` below own the journal
       # transport and the poller's direct-ship path respectively. `or on() vector(0)` keeps the query
       # returning data while it is intact; execErrState Alerting still covers "Loki unreachable".
@@ -2562,12 +2635,8 @@ rules:
       # selector, the label scheme) leaves Alloy itself alive and its OWN logfmt stream flowing, so
       # that canary never notices while `Ops · ERROR logs` reads 0 = healthy for the unit streams.
       #
-      # Deliberately level-filtered AND a wide 26h window (matching `zcrypto-ops-journal-transport-
-      # dead`'s window below, for the same reason): during a fail-closed skip-gate streak archive-pull
-      # emits only unleveled echoes, but panel-materialize (hourly) and verify-replay/verified-replay
-      # (daily) run on independent schedules unaffected by that gate, so at least one `zcrypto-*` unit
-      # produces a leveled line well within 26h even through an extended streak -- a 6h window on this
-      # same selector would false-fire and was rejected for that reason.
+      # Level-filtered, over `zcrypto-ops-journal-transport-dead`'s 26h window below: every
+      # archive-pull tick logs a leveled line, a gate skip at WARNING, so a streak cannot false-fire it.
       #
       # `by (host, container)` -- container is a REGEX here, so it is real information on the label
       # line rather than something the rule already knows. It does not change when this rule fires:
@@ -2639,10 +2708,10 @@ rules:
       # config.alloy) -- their stdout is journal-stamped as part of the unit's own log stream, never a
       # separately discoverable container. So 26h of silence from this stream isolates the journal
       # transport specifically. Count ANY line, NOT level-parsed: the unit writes at least one line in
-      # every code path (reconcile CLI INFO on the happy path, the skip-gate/failure echoes
-      # otherwise), but its own echoes carry no level label, so a level-filtered query would
-      # false-fire during a pull-failure streak. 26h = a full day of runs plus headroom. `by (host)`
-      # is inert at fire time -- see `zcrypto-ops-log-pipeline-dead` above.
+      # every code path (reconcile CLI INFO on the happy path, the skip-gate and failure warnings
+      # otherwise), and a parse regression is `zcrypto-ops-unit-parse-dead`'s, not this transport
+      # canary's. 26h = a full day of runs plus headroom. `by (host)` is inert at fire time -- see
+      # `zcrypto-ops-log-pipeline-dead` above.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 93600, to: 0}
@@ -3627,6 +3696,91 @@ rules:
     notification_settings:
       receiver: metrics
 
+  - uid: zcrypto-node-clock-skew
+    title: "Node · the host clock cannot be trusted (ops, cache)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-capture-clock-skew for the hosts that publish the same pair through a copy of the
+      # capture role's exporter: ops, whose writer cycle's fail-closed gate reads the NAS's stamp
+      # against this clock, and the three cache nodes. Warning, not critical: no archive hour closes
+      # on these clocks. The capture rule's comment carries why each leg is shaped as it is.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'abs(zcrypto_clock_offset_seconds{host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"}) > 10 or (zcrypto_clock_synchronised{host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3"} == bool 0) > 0'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The clock on ops or a cache node is more than 10 seconds from true time, or the host reports it unsynchronised. On ops the writer cycle's fail-closed gate reads the NAS's stamp against this clock (600 s of skew holds it closed). Check `chronyc -N sources` on the host; the repair is a `--tags chrony` converge. Runbook: infra/runbooks/hosts.md#zcrypto-node-clock-skew"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "504"
+      unit: "seconds of clock offset (or 1 when the host reports itself unsynchronised)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-node-clock-exporter-stale
+    title: "Node · the clock reading has stopped refreshing (ops, cache)"
+    ruleGroup: zcrypto-fleet
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # zcrypto-capture-clock-exporter-stale's twin for the same four hosts: the textfile collector
+      # re-serves the last file forever, so a dead timer reads as a healthy clock to the skew rule
+      # above until this one says the reading is frozen.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", file=~".*/clock-offset.prom"})'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [1800]}  # 30 min ~= 6 missed runs at the 5-min cadence
+    noDataState: OK
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The clock reading on ops or a cache node has not refreshed in over 30 min (it writes every 5 min), so that host's offset and synchronised gauges are frozen at their last values and `Node · the host clock cannot be trusted (ops, cache)` is blind for it. Check `systemctl list-timers zcrypto-clock-offset` on the host. Runbook: infra/runbooks/hosts.md#zcrypto-node-clock-exporter-stale"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "504"
+      unit: "seconds since the clock exporter last wrote its file"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
   - uid: zcrypto-logship-lines-dropped
     title: "Logs · lines dropped before reaching Loki"
     ruleGroup: zcrypto-capture
@@ -4145,7 +4299,7 @@ rules:
   # The four rules below replace the capture-image bake's hand-read RSS rows, which every converge
   # voided and which never found a real leak (T0151). They run regardless of converges and across the
   # FLEET: both capture daemons, the engine, and the ops liquidations poller -- the app-daemon
-  # headroom rule below excludes Alloy, which gets its own rule covering the four Alloy containers.
+  # headroom rule below excludes Alloy, which gets its own rule over every capped Alloy container.
   # A bake owes no memory read; a rollout is closed at gate-close.
   - uid: zcrypto-fleet-memory-headroom
     title: "Fleet · a daemon is near its memory limit"
@@ -4222,15 +4376,12 @@ rules:
       # a shared 0.7 bar with them would page ops on a HEALTHY fleet, at every evaluation. ops took a
       # LARGER CAP rather than a looser bar -- `ops_alloy_memory_limit` is 1g and this leg divides by
       # it -- because ops reads the most journal (reconcile, panel, verify-replay, tape-bars,
-      # liquidations). The capture pair and the NAS -- this leg's own `host=~` -- stay at 512m: the
-      # CAPTURE hosts already commit most of their RAM in caps, so headroom is not free there, and the
-      # NAS's Alloy measured 0.1441-0.1561 of its 512m over 24 h on 2026-08-28, nowhere near the
-      # ceiling -- re-measure with
-      # `max_over_time(process_resident_memory_bytes{host="nas", job="integrations/self"}[24h]) / 536870912`
-      # before reading a higher value as staleness rather than growth. The
+      # liquidations). The capture pair and the NAS stay at 512m: the CAPTURE hosts already commit
+      # most of their RAM in caps, so headroom is not free there. The cache nodes' Alloy is 384m on
+      # a 1 GB node, and its leg reads the Go runtime's memory -- go_memstats_sys_bytes less
+      # go_memstats_heap_released_bytes, the quantity GOMEMLIMIT governs -- not RSS, which also
+      # counts the binary's file-mapped pages, outside what GOMEMLIMIT governs. The
       # bridgehead runs Alloy from apt with no container cap, which is why it is outside the leg.
-      # The three cache nodes are 1 GB machines, so their Alloy is capped at 256m with GOMEMLIMIT at
-      # the same 0.9 of it.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 600, to: 0}
@@ -4239,7 +4390,7 @@ rules:
           expr: >-
             (process_resident_memory_bytes{host="ops", job="integrations/self"} / 1073741824)
             or (process_resident_memory_bytes{host=~"zcrypto|zcrypto-red|nas", job="integrations/self"} / 536870912)
-            or (process_resident_memory_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} / 268435456)
+            or ((go_memstats_sys_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"} - go_memstats_heap_released_bytes{host=~"zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3", job="integrations/self"}) / 402653184)
           instant: true
           refId: A
       - refId: C
@@ -4252,10 +4403,10 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means RSS has passed the Go
-            # soft limit and is heading for the cgroup limit. The consequence of the ceiling
-            # is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at 10 m --
-            # so this is the EARLY warning for that fault, not its detector.
+            # 0.9 = GOMEMLIMIT / container cap on every host: crossing it means the leg's reading has
+            # passed the Go soft limit and is heading for the cgroup limit. The consequence of the
+            # ceiling is an OOM-kill taking telemetry dark, which `Fleet · Alloy dark` already owns at
+            # 10 m -- so this is the EARLY warning for that fault, not its detector.
             - evaluator: {type: gt, params: [0.9]}
     noDataState: OK
     execErrState: Alerting
@@ -4263,7 +4414,8 @@ rules:
     annotations:
       summary: >-
         Grafana Alloy on a fleet host is using more than 90% of its container memory limit — 1 GiB on Ops, 512 MiB on the Capture
-        primary, the Capture secondary and the NAS, 256 MiB on Cache 1, Cache 2 and Cache 3. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
+        primary, the Capture secondary and the NAS, and 384 MiB on Cache 1, Cache 2 and Cache 3, where the reading is the Go
+        runtime's memory rather than resident memory. Alloy runs closer to its ceiling than the app daemons do by design, and the `host`
         label says which machine. If it is OOM-killed that host's telemetry goes dark, which `Fleet · Alloy dark` reports separately;
         this is the warning before that.
         Runbook: infra/runbooks/fleet.md#zcrypto-fleet-alloy-memory-headroom
@@ -4827,10 +4979,6 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
-    # Paused while no cache node has a pin row in docs/reference/fleet-pins.md: each would otherwise
-    # page critical before any node runs Alloy. tests/test_infra_alert_rules.py refuses the pause once
-    # one has.
-    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -4870,7 +5018,6 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
-    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -4910,7 +5057,6 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     condition: C
-    isPaused: true
     data:
       - refId: A
         queryType: ""
@@ -5184,14 +5330,13 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            # PersistentKeepalive 25 keeps traffic flowing, so WireGuard re-handshakes about every
-            # 120 s plus one keepalive; 180 s is a missed handshake, not the normal cycle.
-            - evaluator: {type: gt, params: [180]}
+            # The reading runs up to the probe's minute and the scrape's past the true age, so the bar is WireGuard's 180 s key lifetime plus both: 300.
+            - evaluator: {type: gt, params: [300]}
     noDataState: OK
     execErrState: Alerting
     for: 2m
     annotations:
-      summary: "A zcache mesh member, the engine host or a cache node, has not completed a WireGuard handshake with one of its peers for more than three minutes. The host this notification names is the end that reports it, and the `peer` label is the other end's mesh address: 10.98.0.1 is the engine host, 10.98.0.11 to 10.98.0.13 are Cache 1 to Cache 3. Replication or the engine's cache traffic over that link is down. Runbook: infra/runbooks/cache.md#zcrypto-cache-wg-handshake-stale"
+      summary: "A zcache mesh member, the engine host or a cache node, reads a WireGuard handshake age past five minutes with one of its peers, which even after the probe's and the scrape's minute puts the true age past WireGuard's 180 s key lifetime. The host this notification names is the end that reports it, and the `peer` label is the other end's mesh address: 10.98.0.1 is the engine host, 10.98.0.11 to 10.98.0.13 are Cache 1 to Cache 3. Replication or the engine's cache traffic over that link is down. Runbook: infra/runbooks/cache.md#zcrypto-cache-wg-handshake-stale"
       __dashboardUid__: "zcrypto-cache"
       __panelId__: "105"
       unit: "seconds since the last handshake with that peer"

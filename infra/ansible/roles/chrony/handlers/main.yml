@@ -2,3 +2,4 @@
   ansible.builtin.systemd:
     name: chrony
     state: restarted
+  when: not (ansible_check_mode and chrony_install is changed)

@@ -840,7 +840,7 @@
       "id": 301,
       "type": "timeseries",
       "title": "Filesystem free % by mountpoint",
-      "description": "Which mountpoint on which machine is filling, and how fast. Three alerts watch three different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`. The ops root filesystem is drawn for context and has **no** alert behind it, so its line is deliberately unmarked. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
+      "description": "Which mountpoint on which machine is filling, and how fast. Four alerts watch four different mountpoints at two different bars, so each is drawn against its own line: the capture spool (the root filesystem, which holds unbackfillable order-book data) pages below 10% free after `for: 5m`; the NAS archive volume pages below 10% free after `for: 5m`; the edge machine pages below 15% free after `for: 30m`; the ops root filesystem, which holds the ops timers' state and the operator's checkouts, pages below 15% free after `for: 30m`. The archive-volume series carries no machine matcher because that mountpoint name exists on the NAS only — that is the alert's own expression, unchanged.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -886,7 +886,7 @@
           },
           "expr": "node_filesystem_avail_bytes{host=\"ops\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"ops\", mountpoint=\"/\"}",
           "refId": "D",
-          "legendFormat": "{{host}} {{mountpoint}} (no alert)"
+          "legendFormat": "{{host}} {{mountpoint}}"
         }
       ],
       "fieldConfig": {
@@ -972,6 +972,36 @@
             "matcher": {
               "id": "byFrameRefID",
               "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.15
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
             },
             "properties": [
               {
@@ -1085,7 +1115,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 6,
         "x": 0,
         "y": 38
       },
@@ -1118,6 +1148,70 @@
               {
                 "color": "green",
                 "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 305,
+      "type": "timeseries",
+      "title": "Ops inodes free — / and /tmp",
+      "description": "The share of each filesystem's inodes still free on the ops machine, against the alert's red line at 25% after `for: 10m`. A filesystem out of inodes refuses new files while it still reports free bytes, so the free-space panels above cannot show it. `/tmp` is a memory-backed filesystem capped at 1,048,576 inodes and the Claude Code sessions' default temp root; when it runs out, every container the ops timers start fails before it runs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 38
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_files_free{host=\"ops\", mountpoint=~\"/|/tmp\"} / node_filesystem_files{host=\"ops\", mountpoint=~\"/|/tmp\"}",
+          "refId": "A",
+          "legendFormat": "{{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.25
               }
             ]
           }
@@ -1833,6 +1927,163 @@
       }
     },
     {
+      "id": 504,
+      "type": "timeseries",
+      "title": "Clock — offset, sync and exporter age (ops and cache nodes)",
+      "description": "Is the clock on ops or a cache node disciplined? A copy of the capture hosts' clock exporter writes clock-offset.prom every 5 min on each of the four. Offset is the clock's own error in seconds, positive when it runs ahead, drawn here as its magnitude with the 10 s bar `zcrypto-node-clock-skew` pages on; synchronised is 0 when chrony reports no reference, the same rule's other leg; exporter age is how long since the file was rewritten, the 1800 s bar `zcrypto-node-clock-exporter-stale` pages on, while a frozen reading keeps the skew rule blind. The capture pair's clock is on the data-integrity board with its own critical rules. Runbook: infra/runbooks/hosts.md#zcrypto-node-clock-skew",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "abs(zcrypto_clock_offset_seconds{host=~\"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\"})",
+          "refId": "A",
+          "legendFormat": "{{host}} |offset|"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_clock_synchronised{host=~\"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\"}",
+          "refId": "B",
+          "legendFormat": "{{host}} synchronised"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"ops|zcrypto-valkey1|zcrypto-valkey2|zcrypto-valkey3\", file=~\".*/clock-offset.prom\"})",
+          "refId": "C",
+          "legendFormat": "{{host}} exporter age"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1800
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 600,
       "type": "row",
       "title": "Daemon processes",
@@ -1842,7 +2093,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 71
       }
     },
     {
@@ -1858,7 +2109,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 64
+        "y": 72
       },
       "targets": [
         {
@@ -1923,7 +2174,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 71
+        "y": 79
       },
       "targets": [
         {
@@ -1976,7 +2227,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 71
+        "y": 79
       },
       "targets": [
         {
@@ -2029,7 +2280,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 86
       },
       "targets": [
         {
@@ -2082,7 +2333,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 86
       },
       "targets": [
         {
@@ -2132,7 +2383,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 85
+        "y": 93
       }
     },
     {
@@ -2148,7 +2399,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 94
       },
       "targets": [
         {
@@ -2210,7 +2461,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 94
       },
       "targets": [
         {
@@ -2269,7 +2520,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 102
       }
     },
     {
@@ -2285,7 +2536,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 95
+        "y": 103
       },
       "targets": [
         {
@@ -2338,7 +2589,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 95
+        "y": 103
       },
       "targets": [
         {
@@ -2391,7 +2642,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 95
+        "y": 103
       },
       "targets": [
         {

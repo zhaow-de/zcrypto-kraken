@@ -61,10 +61,32 @@ _UNREACHABLE = (OSError, http.client.HTTPException, KeyError, ValueError, IndexE
 HISTORY_CHUNK = timedelta(hours=6)
 HISTORY_PAGE_LIMIT = 5000
 
-# These rules aggregate the host away in their own expr (`count(up{host="ops"}) or on() vector(0)`),
-# so the firing instance carries only `severity`. Without this map the pass cannot tell an Alloy
-# restart that is routine on ops from the same restart on the capture pair, which is attended.
+# These rules pin one host and can fire with no `host` label, so without this map the pass cannot tell
+# an Alloy restart that is routine on ops from the same restart on the capture pair, which is attended.
 _UID_HOST = {
+    "zcrypto-engine-dark-with-exposure": "zcrypto",
+    "zcrypto-engine-log-dead": "zcrypto",
+    "zcrypto-engine-cycle-stale": "zcrypto",
+    "zcrypto-engine-cycle-failed": "zcrypto",
+    "zcrypto-engine-error-logs": "zcrypto",
+    "zcrypto-engine-exec-armed-too-long": "zcrypto",
+    "zcrypto-engine-exec-kill-tripped": "zcrypto",
+    "zcrypto-engine-exec-not-evaluated": "zcrypto",
+    "zcrypto-engine-journal-prune-dead": "zcrypto",
+    "zcrypto-venue-concordance-failed": "zcrypto",
+    "zcrypto-venue-snapshot-stale": "zcrypto",
+    "zcrypto-capture-log-dead-primary": "zcrypto",
+    "zcrypto-capture-log-dead-secondary": "zcrypto-red",
+    "zcrypto-nas-load-high": "nas",
+    "zcrypto-ops-log-pipeline-dead": "ops",
+    "zcrypto-ops-poller-log-dead": "ops",
+    "zcrypto-ops-unit-parse-dead": "ops",
+    "zcrypto-ops-journal-transport-dead": "ops",
+    "zcrypto-ops-load-high": "ops",
+    "zcrypto-ops-disk-low": "ops",
+    "zcrypto-ops-inodes-low": "ops",
+    "zcrypto-ops-error-logs": "ops",
+    "zaccess-disk-high": "zaccess",
     "zcrypto-alloy-dark-ops": "ops",
     "zcrypto-alloy-dark-nas": "nas",
     "zcrypto-alloy-dark-zaccess": "zaccess",
@@ -724,20 +746,18 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
         status = fields["ExecMainStatus"]
         # systemd's human form, not ISO. The weekday is dropped rather than matched with `%a`, whose
         # abbreviations follow the RUNNER's locale and would make this parse fail off an English one.
-        # A field systemd leaves empty raises here, and a record this cannot read is the same finding
-        # as a host it cannot reach -- the convention `read_verdict` already follows.
-        ran = datetime.strptime(fields["ExecMainExitTimestamp"].split(" ", 1)[-1], "%Y-%m-%d %H:%M:%S %Z").replace(
-            tzinfo=timezone.utc
-        )
+        # systemd empties the field at boot and at each start until that run exits, so empty is a
+        # reading; a value this cannot parse raises, and a record this cannot read is the same
+        # finding as a host it cannot reach.
+        exited = fields["ExecMainExitTimestamp"]
+        ran = datetime.strptime(exited.split(" ", 1)[-1], "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc) if exited else None
         age = now - datetime.fromtimestamp(int(fields["StampEpoch"]), timezone.utc)
     # An unreachable host, a timeout and a non-zero ssh are all `unreadable`, never a FAIL: a FAIL
     # here says the host's patching is broken, which is not what a dropped connection shows.
     except (*_UNREACHABLE, subprocess.SubprocessError) as exc:
         return Check(UPGRADE_CHECK, " ".join(UPGRADE_COMMAND), ok=False, value=f"unreadable: {exc}")
-    value = (
-        f"Result={result}, ExecMainStatus={status}, "
-        f"last run {ran:%Y-%m-%dT%H:%M:%SZ}, stamp {int(age.total_seconds() // 3600)} h old"
-    )
+    last = f"last run {ran:%Y-%m-%dT%H:%M:%SZ}" if ran else "no exit recorded"
+    value = f"Result={result}, ExecMainStatus={status}, {last}, stamp {int(age.total_seconds() // 3600)} h old"
     # Informational, and deliberately not a Check of its own: a row that can never read FAIL is a
     # guard that cannot fail. The operator choosing an attended reboot window wants WHICH packages
     # `node_reboot_required` is already flagging.
@@ -746,10 +766,11 @@ def read_unattended_upgrades(*, now: datetime, runner) -> Check:
     # A pending reboot is the normal state between a kernel patch and its attended window, so it is
     # absent from `ok` by design: conflating it with a failed upgrade would report attention on every
     # one of those days and bury the failed patch this check exists to surface.
+    ran_ok = result == "success" and status == "0"
     return Check(
         UPGRADE_CHECK,
         " ".join(UPGRADE_COMMAND),
-        ok=result == "success" and status == "0" and age <= UPGRADE_STALE_AFTER,
+        ok=ran_ok and age <= UPGRADE_STALE_AFTER,
         value=value,
     )
 
@@ -1042,7 +1063,11 @@ class Report:
         # Named separately from `fired`: "it is still firing" and "it fired and went away" are
         # different findings and take different runbook dispositions.
         cleared = ", ".join(f"`{a.uid}`" for a in self.cleared_in_window)
-        failed = ", ".join(c.name for c in self.verdict if not c.ok) or "all pass"
+        # A failing check carries the value it read, or the read's error, since the entry is what outlives
+        # the report; the soak row's value is the soak clause below.
+        failed = (
+            ", ".join(c.name if c.name == SOAK_CHECK else f"{c.name} ({c.value})" for c in self.verdict if not c.ok) or "all pass"
+        )
         # Carried whole and on a PASS too: these entries are where `SOAK_OUTSIDE_FAILS_AT`'s history lives.
         soak = next((c.value for c in self.verdict if c.name == SOAK_CHECK), None)
         errors = sum(c.count for c in self.logs.counts if c.level in ("ERROR", "CRITICAL"))

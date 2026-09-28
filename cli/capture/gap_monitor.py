@@ -10,6 +10,7 @@ from pathlib import Path
 
 from cli.capture.errors import CaptureError
 from cli.logging import get_logger
+from cli.logging.redact import ping_failure
 
 logger = get_logger("capture.gap_monitor")
 
@@ -152,7 +153,7 @@ def ping_healthcheck(url: str | None, *, timeout: int = DEFAULT_HEALTHCHECK_TIME
     try:
         urllib.request.urlopen(url, timeout=timeout)  # noqa: S310 - fixed https healthchecks.io URL from env
     except (urllib.error.URLError, OSError) as exc:
-        logger.warning("healthcheck ping failed url=%s error=%s", url, exc)
+        logger.warning(ping_failure(url, exc))
 
 
 @dataclass
