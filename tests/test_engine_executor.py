@@ -561,7 +561,15 @@ def _config(tmp_path: Path, **overrides) -> EngineConfig:
 
 
 def _executor(
-    tmp_path: Path, *, client=None, gate=None, config=None, clock=None, venue_orders=None, venue_cancel=None
+    tmp_path: Path,
+    *,
+    client=None,
+    gate=None,
+    config=None,
+    clock=None,
+    venue_orders=None,
+    venue_cancel=None,
+    venue_holdings=None,
 ) -> ProbeExecutor:
     client = client if client is not None else StubClient()
     return ProbeExecutor(
@@ -571,16 +579,20 @@ def _executor(
         clock=clock if clock is not None else (lambda: NOW),
         venue_orders=venue_orders,
         venue_cancel=venue_cancel,
+        # An empty answer unless a case hands one in: the settle then publishes nothing, and the read
+        # every startup pass makes reaches no venue.
+        venue_holdings=venue_holdings if venue_holdings is not None else _VenueHoldings(),
     )
 
 
 @pytest.fixture(autouse=True)
 def _no_production_venue_read(monkeypatch):
-    """The executor's default venue read and venue cancel are a real client on the trade credentials,
-    and a developer's shell may hold them. A test that needs the venue's orders hands the executor
-    its own reader, and one that needs the re-cancel its own canceller; reaching a default fails the
-    test through every `except Exception` on the way, because `pytest.fail` raises a BaseException.
-    The cancel's wrap lets a call with a `base_url` through, the loopback cases' own, since those
+    """The executor's default venue read, venue cancel and holdings read are a real client on the
+    trade credentials, and a developer's shell may hold them. A test that needs the venue's orders
+    hands the executor its own reader, one that needs the re-cancel its own canceller, and `_executor`
+    hands every case an empty holdings answer; reaching a default fails the test through every
+    `except Exception` on the way, because `pytest.fail` raises a BaseException. The cancel's and the
+    holdings read's wraps let a call with a `base_url` through, the loopback cases' own, since those
     reach the real client on purpose."""
 
     def _refuse(since, **kwargs):
@@ -593,8 +605,16 @@ def _no_production_venue_read(monkeypatch):
             pytest.fail(f"a test reached the production venue cancel ({venue_order_id}) -- pass venue_cancel")
         return cancel(venue_order_id, instrument_id, base_url=base_url)
 
+    holdings = executor_module.read_venue_holdings
+
+    def _refuse_holdings(*, base_url=None):
+        if base_url is None:
+            pytest.fail("a test reached the production venue holdings read -- pass venue_holdings")
+        return holdings(base_url=base_url)
+
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "cancel_venue_order", _refuse_cancel)
+    monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
 
 
 def _intent(**overrides):
@@ -733,6 +753,28 @@ def _cancel_venue_order(*args, **kwargs):
     """`cancel_venue_order` through the module's attribute at the call, the one the autouse refusal
     wraps: a loopback `base_url` passes that wrap, so these cases prove the wrap lets one through."""
     return executor_module.cancel_venue_order(*args, **kwargs)
+
+
+class _VenueHoldings:
+    """The executor's `venue_holdings` reader: answers `held`, which a test moves between two passes
+    as the account moves, or raises `raises` instead, and counts its calls."""
+
+    def __init__(self, held=None, *, raises=None):
+        self.held = {} if held is None else dict(held)
+        self.calls = 0
+        self._raises = raises
+
+    def __call__(self):
+        self.calls += 1
+        if self._raises is not None:
+            raise self._raises
+        return dict(self.held)
+
+
+def _read_venue_holdings(**kwargs):
+    """`read_venue_holdings` through the module's attribute at the call, the one the autouse refusal
+    wraps, as `_cancel_venue_order` is."""
+    return executor_module.read_venue_holdings(**kwargs)
 
 
 def _closed_order(client_order_id, status, *, filled_qty=0.0, venue_order_id=None):
@@ -4877,7 +4919,7 @@ def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_conne
     down, the first back owes the pass whatever the second reports -- the execution socket's name,
     and whether its return arrives under the string its drop carried, are unmeasured offline, and the
     data socket reports its return under its own name -- and the second back owes it again, an empty
-    population consuming that arm with no read. A socket reported down first holds the arm the
+    population consuming that arm with no order read. A socket reported down first holds the arm the
     mint set, so the first tick measures the connect's `CONNECTED` alone. Each drop and return logs
     its endpoint, the line F2's Record and the rollout's first hour read the execution socket's off."""
     venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED))
@@ -4899,7 +4941,7 @@ def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_conne
         assert ex._reread_tries == executor_module._REREAD_ATTEMPTS  # armed again
         clock.now += timedelta(seconds=5)
         ex.on_timer(clock.now)
-        assert len(venue.calls) == 1  # nothing left minted terminal: the arm is consumed with no read
+        assert len(venue.calls) == 1  # nothing left minted terminal: the arm is consumed with no order read
 
     assert [r.getMessage() for r in records if r.getMessage().startswith("socket ")] == [
         "socket a-second-endpoint is down -- an order whose terminal this engine mints meanwhile is re-read at the venue "
@@ -5214,6 +5256,33 @@ def test_a_fill_after_the_pass_re_cancelled_an_adopted_order_completes_its_row_o
     # `credited` only where the cap moved the row by less: the replay's line carries 0.0, the fill beyond it none.
     assert [(e["qty"], e.get("credited")) for e in row["events"] if e.get("event") == "fill"] == [(0.0006, 0.0), (0.0004, None)]
     assert not _kill_file(tmp_path).exists()
+
+
+def test_a_fill_beyond_the_passs_repair_that_the_cache_holds_whole_is_credited_whole_and_its_line_carries_no_credited(tmp_path):
+    """The cap reads the Cache order's figure less the row's, two sums a float's rounding apart: the
+    Cache at 0.0003 after a 0.0001 fill, less the row's 0.0002, reads 9.999999999999996e-05, which
+    written as `credited` would tell the ledger's readers the fill moved the row by less than it did.
+    A credit within `_OVERFILL_TOLERANCE` of the fill's quantity is that quantity, the sweep's own dead
+    band, so the line carries none."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-opener", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    order = _resting_limit_order(_TXID, quantity="0.001", venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[order]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0002", quantity="0.001"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, venue_cancel=_VenueCancel()
+    )
+    ex.on_timer(NOW)
+    _deliver_external_event(ex, client, _event(OrderCanceled, client_order_id=_TXID, reconciliation=True))
+    ex.on_timer(NOW + timedelta(seconds=5))  # the mint armed the pass: the row is repaired to 0.0002 and re-cancelled
+
+    _deliver_external_event(ex, client, _fill(_TXID, 0.0002, venue_order_id=VenueOrderId(_TXID)))  # the replay
+    _deliver_external_event(ex, client, _fill(_TXID, 0.0001, venue_order_id=VenueOrderId(_TXID), trade_id="T-2"))  # beyond it
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [(e["qty"], e.get("credited")) for e in row["events"] if e.get("event") == "fill"] == [(0.0002, 0.0), (0.0001, None)]
+    assert row["filled_qty"] == pytest.approx(0.0003)
 
 
 def test_a_mint_landing_detached_after_the_ack_deadline_stranded_the_intent_arms_the_pass_which_re_cancels_the_order(
@@ -6549,6 +6618,205 @@ def test_cancel_venue_order_refuses_without_credentials_before_building_a_client
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
     with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
         _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url="http://127.0.0.1:9")
+
+
+# --- read_venue_holdings against the loopback, and the settle it feeds at the two passes ------------
+
+
+def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_position_and_the_coins_spot_lot(_loopback_credentials):
+    """The reader's contract on the pinned wheel, offline: the listing is cached first, so a position
+    Kraken spells by its altname resolves; a margin position is signed by its side under its
+    instrument; a traded coin's spot balance -- its total, the part held against a resting order
+    included, under the code the adapter strips the venue's prefix to -- lands under the coin's EUR
+    pair; and every basket symbol is answered, 0.0 where the account holds nothing. SOL's short
+    against its held lot nets to zero by the total alone: the free part would read -0.01."""
+    with kraken_loopback.serve() as venue:
+        venue.positions["TPOSAA-BBBBB-CCCCC1"] = kraken_loopback.margin_position("XBTEUR", volume="0.00100000")
+        venue.positions["TPOSAA-BBBBB-CCCCC2"] = kraken_loopback.margin_position("SOLEUR", volume="0.06000000", side="sell")
+        venue.balances = {
+            "XXBT": kraken_loopback.balance("0.0003000000"),
+            "ZEUR": kraken_loopback.balance("100.0000"),
+            "SOL": kraken_loopback.balance("0.0600000000", hold="0.0100000000"),
+            "XXDG": kraken_loopback.balance("12.5000000000"),
+        }
+        held = _read_venue_holdings(base_url=venue.base_url)
+
+    assert held == pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0013, "DOGE/EUR": 12.5})
+    assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
+
+
+def test_read_venue_holdings_refuses_without_credentials_before_building_a_client(monkeypatch):
+    monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
+    monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
+    with pytest.raises(EngineError, match="the trade credentials are not in this environment"):
+        _read_venue_holdings(base_url="http://127.0.0.1:9")
+
+
+def test_read_venue_holdings_refuses_an_empty_instrument_listing_and_the_settle_publishes_nothing(tmp_path, _loopback_credentials):
+    """An empty listing is a read through which no margin position resolves, not a flat margin book:
+    the reader refuses it before any private call, and the startup pass's settle takes its failed-read
+    arm, so the gauge keeps its reading. Read through, the spot lot alone would be published over a
+    margin book nobody read."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    with kraken_loopback.serve(asset_pairs={}) as venue:
+        venue.balances = {"XXBT": kraken_loopback.balance("0.0003000000")}
+        ex = _executor(tmp_path, venue_holdings=lambda: _read_venue_holdings(base_url=venue.base_url))
+        with _executor_errors(logging.WARNING) as warnings:
+            ex.on_timer(NOW)
+
+    assert (metrics.positions, venue.private_calls) == ([], [])
+    assert [(r.getMessage(), str(r.exc_info[1])) for r in warnings if "holdings" in r.getMessage()] == [
+        (
+            "the venue's holdings could not be read at the startup pass -- the position gauge keeps its reading until the next pass",
+            "the venue's instrument listing came back empty -- no margin position resolves through it",
+        )
+    ]
+
+
+def test_read_venue_holdings_refuses_a_positions_answer_of_none_and_the_settle_publishes_nothing(tmp_path, monkeypatch):
+    """`None` for the margin positions is a venue that answered nothing, not an account holding none,
+    and `zcrypto engine flatten` refuses it for the same reason. The adapter answers the loopback with a
+    list, so the flatten suite's registered stand-in for the client answers the `None` here; the reader
+    refuses it before the balances are asked for, and the settle publishes nothing."""
+    from test_engine_flatten import FakeClient, _Instrument
+
+    client = FakeClient(instruments=[_Instrument("BTC/EUR")], positions=[None])
+    monkeypatch.setattr(executor_module, "_bare_client", lambda base_url: client)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(tmp_path, venue_holdings=lambda: _read_venue_holdings(base_url="http://127.0.0.1:9"))
+    with _executor_errors(logging.WARNING) as warnings:
+        ex.on_timer(NOW)
+
+    assert metrics.positions == []
+    assert [name for name, _ in client.calls] == ["request_instruments", "request_position_status_reports"]
+    assert [(r.getMessage(), str(r.exc_info[1])) for r in warnings if "holdings" in r.getMessage()] == [
+        (
+            "the venue's holdings could not be read at the startup pass -- the position gauge keeps its reading until the next pass",
+            "the venue answered nothing for the margin positions -- it is never read as a flat margin book",
+        )
+    ]
+
+
+def test_every_basket_base_has_a_euro_pair_that_carries_its_spot_balance():
+    # A base without one would have its lot unread, and the read says nothing about it.
+    assert set(executor_module._SPOT_SYMBOL_BY_BASE) == {symbol.split("/")[0] for symbol in INSTRUMENT_IDS}
+
+
+def test_the_startup_pass_keeps_a_hand_settled_lot_on_the_gauge_from_the_venues_holdings_until_the_engines_own_sale(tmp_path):
+    """The 2026-09-25 shape: a hand settle of the engine's BTC/EUR long delivers the lot to the spot
+    balance and the state machine refuses the settle's fill, so the Cache keeps the long, and the
+    account holds the lot until the engine's own sale. The holdings read counts the lot with the
+    margin positions, so the gauge keeps reading it and no disagreement is logged; the engine's sale
+    then moves the Cache to flat and the gauge with it."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = StubCache()
+    cache.set_position("BTC/EUR", 0.00026906)
+    holdings = _VenueHoldings({"BTC/EUR": 0.00026906})
+    ex = _executor(tmp_path, client=StubClient(cache), venue_holdings=holdings)
+    with _executor_errors(logging.WARNING) as warnings:
+        ex.on_timer(NOW)
+    assert (metrics.positions, holdings.calls) == ([("BTC/EUR", 0.00026906)], 1)
+    assert [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()] == []
+
+    cache.set_position("BTC/EUR", 0.0)
+    ex._publish_fill(_fill("O-sale", 0.00026906, side="sell"))
+
+    assert metrics.positions[-1] == ("BTC/EUR", 0.0)
+
+
+def test_the_start_after_a_red_button_flatten_publishes_the_venues_holdings_flat_over_the_seeds_record(tmp_path):
+    """The red button stops the engine before it places anything and writes no exec row, so the next
+    start's seed republishes the pre-flatten record's positions while the rebuilt Cache holds none;
+    the startup pass's holdings read publishes the flat book over the seed's figures, for every symbol
+    the read answers, and logs no disagreement: the Cache and the venue agree, the seed alone was
+    behind."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    holdings = _VenueHoldings({"BTC/EUR": 0.0, "ETH/EUR": 0.0})
+    ex = _executor(tmp_path, client=StubClient(StubCache()), venue_holdings=holdings)
+
+    ex.on_timer(NOW)
+
+    assert (metrics.positions, holdings.calls) == ([("BTC/EUR", 0.0), ("ETH/EUR", 0.0)], 1)
+
+
+def test_a_close_filled_while_the_engine_was_down_with_no_catch_up_reads_flat_from_the_venues_holdings_at_the_startup_pass(
+    tmp_path,
+):
+    """The reduce-only close rested at Kraken through a crash-restart inside the gap and filled while
+    the engine was down: the seed folds no `reconciled` line, so it republished the record's long, and
+    the startup sweep repairs the row from the venue's report over a Cache rebuilt flat. The holdings
+    read, made after that report's read and before any cancel, publishes the venue's flat book over
+    the seed's long, and the row reads `filled` beside it."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-close", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.FILLED, filled_qty="0.001"))
+    holdings = _VenueHoldings({"BTC/EUR": 0.0})
+    ex = _executor(
+        tmp_path,
+        client=StubClient(StubCache()),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        venue_holdings=holdings,
+    )
+
+    ex.on_timer(NOW)
+
+    assert (metrics.positions, len(venue.calls), holdings.calls) == ([("BTC/EUR", 0.0)], 1, 1)
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "filled"
+
+
+def test_an_opposing_hand_trade_the_running_engine_refused_settles_from_the_venues_holdings_at_the_re_read_pass_and_the_next_fill_moves_from_that_figure(
+    tmp_path,
+):
+    """The engine's long closed by an opposing trade on Kraken's page: the state machine refuses the
+    EXTERNAL fill, the Cache keeps the long and the gauge with it. The next re-read pass -- a socket's
+    return arms it here, a mint arms it too -- reads the venue flat, logs the disagreement and publishes
+    the venue's figure; the engine's next fill on the instrument then moves the gauge from that figure
+    through what the Cache took since, not from the long the Cache never let go: the Cache reads 0.002
+    after a fresh 0.001 long, the gauge 0.001."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    cache = StubCache()
+    holdings = _VenueHoldings({"BTC/EUR": 0.0})
+    ex = _executor(tmp_path, client=StubClient(cache), venue_holdings=holdings)
+    ex.on_timer(NOW)
+    cache.set_position("BTC/EUR", 0.001)  # the engine's own long, which the hand trade then closes at the venue
+    _reconnect(ex)
+    with _executor_errors(logging.WARNING) as warnings:
+        ex.on_timer(NOW + timedelta(seconds=5))
+    assert (metrics.positions, holdings.calls) == ([("BTC/EUR", 0.0), ("BTC/EUR", 0.0)], 2)
+    assert [r.getMessage() for r in warnings if "the venue holds" in r.getMessage()] == [
+        "the venue holds 0.0 BTC/EUR where the Cache reads 0.001 -- the position gauge takes the venue's figure at the re-read pass"
+    ]
+
+    cache.set_position("BTC/EUR", 0.002)
+    ex._publish_fill(_fill("O-next", 0.001))
+
+    assert metrics.positions[-1] == ("BTC/EUR", pytest.approx(0.001))
+
+
+def test_the_venues_holdings_failing_to_read_keeps_the_gauges_reading_and_logs_a_warning(tmp_path):
+    """The venue unreachable at the startup pass: nothing is published, so the gauge keeps the seed's
+    fold, and the WARNING says the next pass reads again; the pass's own order read is untouched."""
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    holdings = _VenueHoldings(raises=RuntimeError("dns"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), venue_holdings=holdings)
+
+    with _executor_errors(logging.WARNING) as warnings:
+        ex.on_timer(NOW)
+
+    assert (metrics.positions, holdings.calls) == ([], 1)
+    assert [r.getMessage() for r in warnings if "holdings" in r.getMessage()] == [
+        "the venue's holdings could not be read at the startup pass -- the position gauge keeps its reading until the next pass"
+    ]
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------

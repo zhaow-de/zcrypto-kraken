@@ -2080,7 +2080,7 @@
       "id": 64,
       "type": "timeseries",
       "title": "Position by symbol (base units)",
-      "description": "Net position held per symbol, in base units. Seeded from the engine journal at startup, so a routine engine restart does not reset it to zero. Published only by the trading engine on the capture primary.",
+      "description": "Net position held per symbol, in base units. Seeded at engine startup from the newest venue record in the journal, carried forward through the engine's own fills the journal holds after that record's snapshot, then settled from Kraken's own positions and balances on the engine's first tick and again on each of its later venue re-reads: a position closed by hand, or a lot a hand settle delivered, reads as Kraken holds it from that read on, and a coin's spot balance counts with its margin position under the coin's EUR pair. Between two such reads the engine's own fills move it from Kraken's last figure, and a fill that figure already carried which the engine's stream delivers after the read counts twice until the next read. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

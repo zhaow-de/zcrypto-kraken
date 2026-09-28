@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from cli.engine.errors import EngineError
+from cli.engine.execledger import credited_qty
 from cli.engine.feeders import CycleStages, _median, _p95, _weekly_drift, accumulation_payload
 from cli.engine.instruments import EUR_CODES
 from cli.engine.store import BASKET
@@ -41,6 +42,9 @@ class Fill(NamedTuple):
     fee: float | None  # None when not euro-denominated or the side is unpriceable
     liquidity: str
     trade_id: str
+    # What the fill moved its row's `filled_qty` by (`execledger.credited_qty`), the figure `held` sums, where `qty` stays
+    # the blend's weight and the venue's figure; None on a Fill built by hand, which moved its row by `qty`.
+    credited: float | None = None
 
 
 def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
@@ -98,6 +102,7 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                             # A repair carries no venue trade id; this one is unique per row and
                             # timestamp, and unmistakable for the venue id the ledger match keys on.
                             f"reconciled:{client_order_id}:{ev['at']}",
+                            credited=qty,
                         )
                     )
                     continue
@@ -130,6 +135,7 @@ def extract_fills(records: list[dict]) -> tuple[list[Fill], list[str]]:
                         fee,
                         liq,
                         str(ev["trade_id"]),
+                        credited=credited_qty(ev),
                     )
                 )
     return out, notes
@@ -191,7 +197,8 @@ def realized_drift(stages: list[CycleStages], fills: list[Fill], nav: float) -> 
     rows: list[dict] = []
     for s in ordered:
         for f in by_boundary.get(s.cycle_ts, []):
-            held[f.base] = held.get(f.base, 0.0) + (f.qty if f.side == "buy" else -f.qty)
+            moved = f.qty if f.credited is None else f.credited
+            held[f.base] = held.get(f.base, 0.0) + (moved if f.side == "buy" else -moved)
         # Each cycle is scored under the NAV that was LIVE for it (T0150): a `shadow_nav_eur` change
         # must not re-price a closed week, and the caller's scalar is the fallback for older records.
         cycle_nav = nav if s.nav is None else s.nav

@@ -212,6 +212,22 @@ def update_plan_intent(
     _store(path, doc)
 
 
+# A folded sum of per-fill floats lands an ulp off an exact figure -- 0.001 closed by 0.0007 and 0.0003 reads 5.4e-20 --
+# so a reader that must agree with the gauge's exact 0 on a flat book snaps within this to 0.0; the executor's
+# `_OVERFILL_TOLERANCE` bounds an overfill on the same arithmetic. Absolute, so the residue it covers grows with the
+# position's size in base units: an eight-decimal close lands past it from about 5000 units on, where a relative snap
+# would be owed.
+FLAT_TOLERANCE = 1e-12
+
+
+def credited_qty(event: dict) -> float:
+    """What a `fill` or `reconciled` event moved its row's `filled_qty` by: the `credited` a writer set beside `qty` where
+    its cap moved the row by less -- 0.0 on a replay of a fill a `reconciled` repair already carried, short of `qty` on a
+    fill after a repair the Cache lagged (the re-read pass's `_fill_credit`) -- else `qty`; the one reader of that key,
+    so a reader of the line counts what moved the row and not the stream's quantity twice."""
+    return float(event.get("credited", event["qty"]))
+
+
 def _day_dirs(journal_dir: Path, now: datetime) -> list[Path]:
     """`now` must be UTC: its date names the day dir."""
     today = now.date()

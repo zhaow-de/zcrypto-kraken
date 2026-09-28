@@ -206,6 +206,19 @@ def test_a_lifecycle_event_that_moves_no_quantity_is_skipped():
     assert notes == []
 
 
+def test_a_fill_line_carrying_credited_is_read_by_what_it_moved_the_row():
+    """A line carries `credited` beside `qty` where a writer's cap moved the row by less than the fill -- 0.0 for a
+    replay of the fill a `reconciled` repair already carried -- and nowhere else. `Fill.credited` is that figure, or
+    `qty` where the line carries none, so `held` counts each fill once while `qty` stays the blend's weight and the
+    venue's figure; a repair's is its own quantity."""
+    fills, _ = extract_fills([_rec([_repair(), _fill(credited=0.0), _fill(trade_id="T-2", at="2026-09-01T00:03:00+00:00")])])
+    assert [(f.trade_id[:10], f.qty, f.credited) for f in fills] == [
+        ("reconciled", 0.002, 0.002),
+        ("T-1", 0.001, 0.0),
+        ("T-2", 0.001, 0.001),
+    ]
+
+
 # --- realized drift, ISO weeks, and the rung boundary ---------------------------------------------
 
 _MINIMUMS = {"BTC": (0.00005, 0.45)}
@@ -227,14 +240,22 @@ def _stage(ts, *, weight=1.0, close=50000.0):
     )
 
 
-def _mk(boundary, qty, side="buy", px=50000.0):
+def _mk(boundary, qty, side="buy", px=50000.0, credited=None):
     b = datetime.fromisoformat(boundary)
-    return Fill(b, b, "BTC", side, qty, px, 0.05, "MAKER", f"T-{boundary}-{side}")
+    return Fill(b, b, "BTC", side, qty, px, 0.05, "MAKER", f"T-{boundary}-{side}", credited=credited)
 
 
 def test_a_fill_matching_the_target_leaves_zero_drift():
     # NAV 1000 at 50k -> target 0.02 BTC.
     out = realized_drift([_stage("2026-08-31T00:00:00+00:00")], [_mk("2026-08-31T00:00:00+00:00", 0.02)], 1000.0)
+    assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
+
+
+def test_realized_drift_sums_what_a_fill_credited_the_row_not_the_streams_quantity():
+    # The target's fill, then the stream's replay of it credited nothing: `held` stays at the target, where summing
+    # the replay's quantity would count the fill twice and read a drift of the target's own size.
+    b = "2026-08-31T00:00:00+00:00"
+    out = realized_drift([_stage(b)], [_mk(b, 0.02), _mk(b, 0.02, credited=0.0)], 1000.0)
     assert out["cycles"][0]["drift_bps"] == pytest.approx(0.0)
 
 

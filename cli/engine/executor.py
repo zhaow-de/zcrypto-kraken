@@ -31,13 +31,24 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from nautilus_trader.common import SocketState
-from nautilus_trader.model import AccountId, ClientOrderId, InstrumentId, OrderSide, OrderStatus, TimeInForce, Venue, VenueOrderId
+from nautilus_trader.model import (
+    AccountId,
+    AccountType,
+    ClientOrderId,
+    InstrumentId,
+    OrderSide,
+    OrderStatus,
+    TimeInForce,
+    Venue,
+    VenueOrderId,
+)
 
 from cli.config import EngineConfig
 from cli.engine.errors import EngineError
 from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
     _OPEN_ORDER_STATES,
+    FLAT_TOLERANCE,
     append_plan_entry,
     append_submitted_row,
     closed_submitted_rows,
@@ -167,6 +178,9 @@ _VENUE = Venue("KRAKEN")
 # map rather than string-split off the id, so an id this engine never ratified raises instead of
 # inventing a label.
 _SYMBOL_BY_INSTRUMENT_ID = {instrument_id: symbol for symbol, instrument_id in INSTRUMENT_IDS.items()}
+# The one symbol a traded coin's spot balance is counted under by the venue's holdings read, its EUR pair, so a base
+# with two pairs is counted once.
+_SPOT_SYMBOL_BY_BASE = {symbol.split("/")[0]: symbol for symbol in INSTRUMENT_IDS if symbol.endswith("/EUR")}
 # Kraken spells one asset three ways across its surfaces; the balance read tries them in order.
 # Every other base gets the plain code plus its `X`-prefixed classic spelling.
 _BTC_BALANCE_ALIASES = ("BTC", "XBT", "XXBT")
@@ -488,16 +502,10 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
     thread: the node runs the strategy's timer callbacks on its main thread, with no asyncio loop
     running there. If that ever changes, this raises and the caller fails closed. Anything short of a
     complete answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
-    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
-
     # Imported here rather than at the top: node.py imports this module.
-    from cli.engine.node import _ACCOUNT_ID, _credentials
+    from cli.engine.node import _ACCOUNT_ID
 
-    credentials = _credentials()
-    if credentials is None:
-        raise EngineError("the trade credentials are not in this environment")
-    api_key, api_secret = credentials
-    client = KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+    client = _bare_client(base_url)
 
     async def _read():
         for instrument in await client.request_instruments() or ():
@@ -508,23 +516,18 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
 
 
 def cancel_venue_order(venue_order_id: str, instrument_id: str, *, base_url: str | None = None) -> None:
-    """Cancel one order at the venue by its txid, on `read_venue_orders`' client and terms: the
-    re-read pass's cancel of an order the Cache holds closed by a terminal this engine minted,
-    which the strategy handle refuses to cancel (`Cannot cancel order: state is ...`, sent nowhere).
-    The listing is cached first because the client resolves the pair through it. Returns on the
-    venue's answer without reading its `count` -- `{"count": 0}` and `{"count": 1}` return alike,
-    which the loopback cases pin -- and raises on a refusal the venue phrases as an error, or on
-    anything short of an answer inside `_VENUE_READ_TIMEOUT_SECONDS`. Which of the two Kraken gives
-    for a txid already closed is unmeasured; drill F2's record reads it."""
-    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+    """Cancel one order at the venue by its txid, on a client of its own (`_bare_client`) and on
+    `read_venue_orders`' terms: the re-read pass's cancel of an order the Cache holds closed by a
+    terminal this engine minted, which the strategy handle refuses to cancel
+    (`Cannot cancel order: state is ...`, sent nowhere). The listing is cached first because the client
+    resolves the pair through it. Returns on the venue's answer without reading its `count` --
+    `{"count": 0}` and `{"count": 1}` return alike, which the loopback cases pin -- and raises on a
+    refusal the venue phrases as an error, or on anything short of an answer inside
+    `_VENUE_READ_TIMEOUT_SECONDS`. Which of the two Kraken gives for a txid already closed is
+    unmeasured; drill F2's record reads it."""
+    from cli.engine.node import _ACCOUNT_ID
 
-    from cli.engine.node import _ACCOUNT_ID, _credentials
-
-    credentials = _credentials()
-    if credentials is None:
-        raise EngineError("the trade credentials are not in this environment")
-    api_key, api_secret = credentials
-    client = KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+    client = _bare_client(base_url)
 
     async def _cancel():
         for instrument in await client.request_instruments() or ():
@@ -534,6 +537,71 @@ def cancel_venue_order(venue_order_id: str, instrument_id: str, *, base_url: str
         )
 
     asyncio.run(asyncio.wait_for(_cancel(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+
+
+def _bare_client(base_url: str | None):
+    """The bare `KrakenSpotHttpClient` the three venue functions beside this one build, on the trade
+    credentials -- the construction `zcrypto engine flatten` uses -- refused before it is built when
+    the environment lacks them. `base_url` is None on the engine, which is the venue's own."""
+    from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
+
+    # Imported here rather than at the top: node.py imports this module.
+    from cli.engine.node import _credentials
+
+    credentials = _credentials()
+    if credentials is None:
+        raise EngineError("the trade credentials are not in this environment")
+    api_key, api_secret = credentials
+    return KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
+
+
+def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
+    """What the account holds under every `INSTRUMENT_IDS` symbol, from the venue's own two reads on a
+    client each call builds for itself (`_bare_client`): each margin position, signed by its side, under
+    its instrument, and each traded coin's spot balance -- its total, the part held against a resting
+    order included -- under the coin's EUR pair (`_SPOT_SYMBOL_BY_BASE`), so a base is counted once and
+    `ETH/BTC` carries its margin positions alone. The balances are read beside the positions because a
+    settled margin position is a spot lot the account holds until it is sold. A margin position on a
+    pair outside the basket, and a coin outside it, are not read: the gauge's children are the basket's.
+    A symbol within `FLAT_TOLERANCE` of zero reads 0.0, the seed's own snap. The listing is cached first
+    because the position read resolves its rows through it. Anything short of both answers inside
+    `_VENUE_READ_TIMEOUT_SECONDS` raises, and so does a position side that is not LONG, SHORT or FLAT.
+    An empty listing, through which no margin position resolves, and a positions answer of `None` raise
+    too, the two shapes `zcrypto engine flatten` refuses: neither is read as a flat margin book, which
+    an empty positions list from a venue that answered is."""
+    from cli.engine.flatten import QUOTE_CURRENCY, resolve_base
+    from cli.engine.node import _ACCOUNT_ID
+
+    client = _bare_client(base_url)
+
+    async def _read():
+        instruments = await client.request_instruments()
+        if not instruments:
+            raise EngineError("the venue's instrument listing came back empty -- no margin position resolves through it")
+        for instrument in instruments:
+            client.cache_instrument(instrument)
+        positions = await client.request_position_status_reports(
+            AccountId(_ACCOUNT_ID), account_type=AccountType.MARGIN, use_spot_position_reports=False, quote_currency=QUOTE_CURRENCY
+        )
+        if positions is None:
+            raise EngineError("the venue answered nothing for the margin positions -- it is never read as a flat margin book")
+        state = await client.request_account_state(AccountId(_ACCOUNT_ID), account_type=AccountType.CASH)
+        return list(positions), state
+
+    positions, state = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    held = dict.fromkeys(INSTRUMENT_IDS, 0.0)
+    for report in positions:
+        symbol = _SYMBOL_BY_INSTRUMENT_ID.get(str(report.instrument_id))
+        if symbol is None:
+            continue
+        qty = float(report.quantity)
+        held[symbol] += {"LONG": qty, "SHORT": -qty, "FLAT": 0.0}[str(report.position_side).rsplit(".", 1)[-1]]
+    bases = frozenset(_SPOT_SYMBOL_BY_BASE)
+    for balance in state.balances:
+        symbol = _SPOT_SYMBOL_BY_BASE.get(resolve_base(balance.currency.code, bases))
+        if symbol is not None:
+            held[symbol] += float(balance.total)
+    return {symbol: 0.0 if abs(qty) <= FLAT_TOLERANCE else qty for symbol, qty in held.items()}
 
 
 def _newest_venue_balances(journal_dir: Path) -> dict:
@@ -748,13 +816,21 @@ class ProbeExecutor:
     `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(client_order_id)`,
     `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
 
-    `venue_orders` is `read_venue_orders`' signature and `venue_cancel` is `cancel_venue_order`'s.
-    None, the engine's construction, reads the module's own at call time, so a test can replace it
-    before any executor exists.
+    `venue_orders` is `read_venue_orders`' signature, `venue_cancel` is `cancel_venue_order`'s and
+    `venue_holdings` is `read_venue_holdings`'. None, the engine's construction, reads the module's
+    own at call time, so a test can replace it before any executor exists.
     """
 
     def __init__(
-        self, *, client, gate: ExecutionGate, config: EngineConfig, clock=_utc_now, venue_orders=None, venue_cancel=None
+        self,
+        *,
+        client,
+        gate: ExecutionGate,
+        config: EngineConfig,
+        clock=_utc_now,
+        venue_orders=None,
+        venue_cancel=None,
+        venue_holdings=None,
     ) -> None:
         self._client = client
         # The Cache and the strategy id, taken here, inside `on_start`, where the strategy is not
@@ -771,6 +847,13 @@ class ProbeExecutor:
         self._now = clock
         self._venue_orders = venue_orders
         self._venue_cancel = venue_cancel
+        self._venue_holdings = venue_holdings
+        # The venue's figure less the Cache's, per symbol, at the last settle of the position gauge
+        # (`_settle_positions_from_venue`): `_publish_fill` adds it to the Cache's net, so a fill
+        # between two passes moves the gauge from the venue's figure and not from a position the
+        # Cache never let go -- a hand close the state machine refused, or a settled lot the Cache
+        # holds as a margin position.
+        self._venue_correction: dict[str, float] = {}
         # The socket endpoints the client has reported down and not yet back, and the re-read pass's
         # tries left, set by an endpoint's return and by a mint with no endpoint down: the pass runs
         # on the next tick with nothing in flight, and a read that fails spends one try, or closes the
@@ -978,11 +1061,11 @@ class ProbeExecutor:
         """The client's socket-state stream, the strategy's `on_socket_state` once it subscribed:
         `DISCONNECTED` names an endpoint down, `CONNECTED` one back. The re-read pass is owed on each
         return of an endpoint held down -- the data socket's, whatever the execution socket reports, and
-        a second socket's later return owes it again, an empty population consuming that arm with no
-        read -- and runs on the tick, never here: it reads the Cache and the venue, which the tick does
-        on the main thread with no loop running (`read_venue_orders`). A `CONNECTED` for no endpoint
-        held down, the connect itself, owes nothing; a `DISCONNECTED` holds off a pass a mint armed
-        (`_arm_reread_after_mint`), so a mint inside a cut reads at most once, on a tick inside the
+        a second socket's later return owes it again, an empty population consuming that arm with the
+        holdings read alone -- and runs on the tick, never here: it reads the Cache and the venue, which
+        the tick does on the main thread with no loop running (`read_venue_orders`). A `CONNECTED` for
+        no endpoint held down, the connect itself, owes nothing; a `DISCONNECTED` holds off a pass a
+        mint armed (`_arm_reread_after_mint`), so a mint inside a cut reads at most once, on a tick inside the
         mint-to-`DISCONNECTED` gap, and the return arms it again; a pass a return armed that has not run
         yet it clears only when the endpoint whose return set it (`_reread_armed_by`) drops again -- a
         cut drops both endpoints, so an arm left pending behind a live intent goes with the cut; where
@@ -1124,6 +1207,7 @@ class ProbeExecutor:
             )
             rows, finished, ledger_read = {}, {}, False
         venue_orders = self._read_venue_orders(rows, finished)
+        self._settle_positions_from_venue("the startup pass")
         self._reconcile_adopted_rows(rows, venue_orders)
         self._reconcile_finished_rows(finished, venue_orders)
         if not resting:
@@ -1268,8 +1352,11 @@ class ProbeExecutor:
         stale entry, an endpoint whose `CONNECTED` never comes under its drop's string, then closes
         every return's arm at its first failed read, the read's CRITICAL never reaching the page while
         it stands. A row a pass already marked unmatched (`_marked_unmatched`) is left out: no read of
-        this process settles it, and each arm would re-read it and page the same line. Wrapped whole: a
-        raise here may never drop a plan."""
+        this process settles it, and each arm would re-read it and page the same line. A run whose reads
+        answer -- the ledger's, and the venue's orders when the population is not empty -- ends by
+        settling the position gauge from the venue's holdings (`_settle_positions_from_venue`), so an
+        opposing hand trade the state machine refused settles at the next such arm; a run whose read
+        fails returns before the settle. Wrapped whole: a raise here may never drop a plan."""
         self._reread_armed_by = None  # a return's arm is consumed by this run, whatever it reads
         rows: dict = {}
         try:
@@ -1278,11 +1365,10 @@ class ProbeExecutor:
                 for boundary, row in open_submitted_rows(self._journal_dir, now)
                 if self._minted_closed(row) and not _marked_unmatched(row)
             }
-            if not rows:
-                self._reread_tries = 0
-                return
-            since = min(boundary for boundary, _ in rows.values()) - _VENUE_READ_MARGIN
-            reports = (self._venue_orders or read_venue_orders)(since)
+            reports = []
+            if rows:
+                since = min(boundary for boundary, _ in rows.values()) - _VENUE_READ_MARGIN
+                reports = (self._venue_orders or read_venue_orders)(since)
         except Exception:
             if self._sockets_down:
                 self._reread_tries = 0
@@ -1308,8 +1394,10 @@ class ProbeExecutor:
                 )
             return
         self._reread_tries = 0
-        logger.warning("the re-read pass reads %d row(s) this engine minted terminal against the venue", len(rows))
-        self._reconcile_adopted_rows(rows, {str(report.venue_order_id): report for report in reports}, recancel=True)
+        if rows:
+            logger.warning("the re-read pass reads %d row(s) this engine minted terminal against the venue", len(rows))
+            self._reconcile_adopted_rows(rows, {str(report.venue_order_id): report for report in reports}, recancel=True)
+        self._settle_positions_from_venue("the re-read pass")
 
     def _minted_closed(self, row: dict) -> bool:
         """Whether the Cache's order for `row` was closed by a terminal this engine minted, read off its
@@ -1487,7 +1575,9 @@ class ProbeExecutor:
 
     def _read_venue_orders(self, rows: dict, finished: dict) -> dict | None:
         """The venue's own orders by txid, for the rows the Cache cannot answer: `{}` when no row
-        needs them, which is every startup with nothing ledgered to compare, and so no second client.
+        needs them, which is every startup with nothing ledgered to compare, and so no order read; the
+        holdings read the pass makes next (`_settle_positions_from_venue`) builds a client of its own at
+        every startup.
 
         A row needs them when it recorded a txid and the Cache holds no order under either of its
         ids -- an open row whose order closed while this process was down, or a finished row with
@@ -3180,6 +3270,51 @@ class ProbeExecutor:
         if terminal_state is not None:
             row["state"] = terminal_state  # the mirror the completion guard and D7 both read
 
+    def _cache_net(self, symbol: str) -> float:
+        """The Cache's instrument-scoped net position under `symbol`, the gauge's own basis."""
+        held = self._cache.positions_open(instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
+        return sum(float(p.signed_qty) for p in held)
+
+    def _settle_positions_from_venue(self, moment: str) -> None:
+        """The venue's own holdings settle the position gauge where the Cache disagrees: at the startup
+        pass, after its order read and before its cancels, and at the end of every re-read pass whose reads
+        answered -- on the two passes' nonce terms, nothing of this process sent or in flight -- the venue's
+        figure is published for every symbol the read answers, and its difference from the Cache's net is
+        kept for `_publish_fill`, so a fill between two passes moves the gauge from the venue's figure. What
+        the Cache never took, a hand margin open or a fill made while the engine was down, reads here; what
+        it never let go, a hand close it refused or a settled lot it holds as a margin position, reads here
+        too, the settled lot by the coin's spot balance. A read that fails logs WARNING and the gauge keeps
+        its reading until the next pass, the seed's fold at the first; a disagreement logs WARNING per
+        symbol, since it names a hand act or a fill this engine never saw. The read serves the gauge alone,
+        so with no metrics hook installed, the exporter off, nothing is read. Wrapped as `_publish_fill` is:
+        telemetry never alters what this engine does."""
+        if _metrics is None:
+            return
+        try:
+            held = (self._venue_holdings or read_venue_holdings)()
+        except Exception:
+            logger.warning(
+                "the venue's holdings could not be read at %s -- the position gauge keeps its reading until the next pass",
+                moment,
+                exc_info=True,
+            )
+            return
+        try:
+            for symbol, venue_qty in sorted(held.items()):
+                cache_qty = self._cache_net(symbol)
+                self._venue_correction[symbol] = venue_qty - cache_qty
+                if abs(venue_qty - cache_qty) > FLAT_TOLERANCE:
+                    logger.warning(
+                        "the venue holds %s %s where the Cache reads %s -- the position gauge takes the venue's figure at %s",
+                        venue_qty,
+                        symbol,
+                        cache_qty,
+                        moment,
+                    )
+                _metrics.set_position(symbol, venue_qty)
+        except Exception:
+            logger.exception("executor position settle raised -- continuing")
+
     def _publish_fill(self, event) -> None:
         """The live view of the fill that just went into the ledger row -- same event, same numbers.
 
@@ -3201,9 +3336,11 @@ class ProbeExecutor:
         leg whose only fill happened while this process was down does not enter the realized-PnL
         gauge until it fills live again.
 
-        The position comes from the CACHE, never from this process's own running total. Note this
-        read is instrument-scoped, so it carries any holding this engine never ordered too --
-        `_reconcile_terminal` doubts the strategy-scoped quantity, not this one.
+        The position comes from the CACHE, never from this process's own running total, plus the
+        correction the last venue settle left (`_settle_positions_from_venue`): the venue's figure
+        then, carried through what the Cache took since. Note this read is instrument-scoped, so it
+        carries any holding this engine never ordered too -- `_reconcile_terminal` doubts the
+        strategy-scoped quantity, not this one.
 
         Wrapped whole, `_inc_order`'s contract: the Cache reads here are telemetry and a metrics
         failure may never alter what this engine does with a fill. `inc_fill` runs first, so a
@@ -3215,8 +3352,8 @@ class ProbeExecutor:
             _metrics.inc_fill(_liquidity(event.liquidity_side).lower(), _fee_eur(event.commission))
             instrument_id = event.instrument_id
             self._traded.add(instrument_id)
-            held = self._cache.positions_open(instrument_id=instrument_id)
-            _metrics.set_position(_SYMBOL_BY_INSTRUMENT_ID[str(instrument_id)], sum(float(p.signed_qty) for p in held))
+            symbol = _SYMBOL_BY_INSTRUMENT_ID[str(instrument_id)]
+            _metrics.set_position(symbol, self._cache_net(symbol) + self._venue_correction.get(symbol, 0.0))
             _metrics.set_realized(self._realized_eur())
         except Exception:
             logger.exception("executor fill metrics hook raised -- continuing")
@@ -3314,7 +3451,12 @@ class ProbeExecutor:
             return qty
         if held is None:
             return qty
-        return max(0.0, min(qty, float(held.filled_qty) - row["filled_qty"]))
+        beyond = float(held.filled_qty) - row["filled_qty"]
+        # The sweep's dead band: the two figures are float sums a rounding apart, and a credit that rounding short of
+        # the event's quantity would write a `credited` saying the fill moved the row by less than it did.
+        if beyond >= qty - _OVERFILL_TOLERANCE:
+            return qty
+        return max(0.0, min(qty, beyond))
 
     def _on_detached_event(self, event) -> None:
         """An event for an order that is not the one in flight: an order this process superseded, one
