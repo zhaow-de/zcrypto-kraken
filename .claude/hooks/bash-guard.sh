@@ -93,9 +93,7 @@ REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
-# Per printer whose program is a word of its argv: its options in VALUE's three kinds; then the options that give the
-# program, which leave no program word, and the options naming a program file, which it opens and echoes part of on a
-# parse error.
+# Per argv-program printer: VALUE's three kinds, the program-giving options, the program-file options (echoed in part).
 READERS = {
     "awk": (
         "FvfeEilW",
@@ -121,8 +119,6 @@ VAULT_REMEDY = (
 GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
 GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 GH_VALUE = {"-R", "--repo"}
-# What a dispatched agent's git runs in the main checkout, an allowlist: these verbs whole, and the verbs main_admits
-# reads the arguments of; every other verb is refused there.
 MAIN_READS = {
     "status", "log", "show", "diff", "diff-tree", "rev-parse", "rev-list", "ls-files", "ls-tree", "ls-remote", "cat-file",
     "grep", "blame", "describe", "name-rev", "merge-base", "merge-tree", "for-each-ref", "count-objects", "check-ignore",
@@ -167,11 +163,7 @@ REF_OPTIONS = {
     "symbolic-ref": ("a symbolic ref", {"d": "deletes"}, {"--delete": "deletes"}, "m", "", set()),
 }
 REFLOG_WRITES = {"delete", "expire"}
-REFS_REMEDY = (
-    "A dispatched agent deletes, renames, copies or forces no branch through `git branch` and no tag through `git tag`, "
-    "and runs no `update-ref`, no `symbolic-ref` write, no `reflog delete` or `expire` and no `worktree move`; it "
-    "creates the branches it needs and reports them."
-)
+REFS_REMEDY = "A dispatched agent creates the branches it needs and reports them."
 WORKTREE_REMEDY = (
     "A dispatched agent removes only a scratch tree, named by a path and not a variable: one under the .tmp/ of this "
     "repository's main checkout or of one of its worktrees, whoever made it, or under its session's directory in "
@@ -648,9 +640,7 @@ def reader_files(p, args):
 
 
 def opened(code):
-    # The strings a `python -c` code can open a file by: the literals inside each call of an opener, its receiver
-    # included; every literal of the code where such a call holds a name no call is made through, which can carry the
-    # path; and, where the code does not parse, every token of it if it names an opener.
+    # A name no call is made through, inside an opener's call, can carry the path: then every literal counts.
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
