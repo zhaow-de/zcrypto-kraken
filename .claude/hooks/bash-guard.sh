@@ -112,7 +112,21 @@ CHECKOUT_REMEDY = (
     "A dispatched agent works in its worktree -- `git -C <worktree>` or `cd <worktree> &&`, a path under "
     ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's."
 )
-BRANCH_REMEDY = "Branches are the repository's, one set for every worktree: a dispatched agent deletes none and reports the ones it made."
+# Per subcommand: what it writes; its short options that write it, each with its verb; the long ones; and the short
+# options whose value is the rest of their bundle.
+REF_WRITES = {
+    "branch": (
+        "a branch",
+        {"d": "deletes", "D": "deletes", "m": "renames", "M": "renames", "f": "forces"},
+        {"--delete": "deletes", "--move": "renames", "--force": "forces"},
+        "ut",
+    ),
+    "update-ref": ("a ref", {"d": "deletes"}, {}, "m"),
+}
+REFS_REMEDY = (
+    "Refs and the worktree list are the repository's, one set for every worktree: a dispatched agent deletes, renames "
+    "or forces no branch, deletes no ref and moves no worktree; it reports the branches it made."
+)
 WORKTREE_REMEDY = (
     "A dispatched agent removes only a scratch tree it made, named by a path and not a variable: one under the .tmp/ "
     "of this repository's main checkout or of one of its worktrees, or under its session's directory in Claude Code's "
@@ -665,16 +679,21 @@ def moves_checkout(sub, rest):
     return sub in MOVES
 
 
-def deletes_branch(rest):
+def ref_write(sub, rest):
+    what, shorts, longs, valued = REF_WRITES[sub]
     for a in rest:
         if a == "--":
-            return False
+            return None
         name = a.partition("=")[0]
-        if name.startswith("--") and len(name) > 2 and "--delete".startswith(name):
-            return True
-        if a.startswith("-") and not a.startswith("--") and ("d" in a or "D" in a):
-            return True
-    return False
+        if name.startswith("--"):
+            verb = next((v for opt, v in longs.items() if opt.startswith(name)), None)
+        elif a.startswith("-"):
+            verb = next((shorts[c] for c in re.split(f"[{valued}]", a[1:])[0] if c in shorts), None)
+        else:
+            verb = None
+        if verb:
+            return f"{verb} {what}"
+    return None
 
 
 def resolve(here, target):
@@ -766,10 +785,13 @@ def judge_agent(words, here, raw, session):
         return
     for d in chdirs:
         here = resolve(here, d)
-    if sub == "branch" and deletes_branch(rest):
+    writes = ref_write(sub, rest) if sub in REF_WRITES else None
+    if writes:
+        refuse(f"`{spelled(words)}` {writes} from a dispatched agent, whatever directory it runs in; in `{raw}`. {REFS_REMEDY}")
+    if sub == "worktree" and rest[:1] == ["move"]:
         refuse(
-            f"`{spelled(words)}` deletes a branch from a dispatched agent, whatever directory it runs in; in `{raw}`. "
-            f"{BRANCH_REMEDY}"
+            f"`{spelled(words)}` moves a worktree from a dispatched agent, whatever directory it runs in; in `{raw}`. "
+            f"{REFS_REMEDY}"
         )
     if sub == "worktree" and rest[:1] == ["remove"]:
         hit = next((a for a in operands(rest[1:]) if not scratch_tree(resolve(here, a), session)), None)
