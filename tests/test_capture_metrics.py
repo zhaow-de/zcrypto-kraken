@@ -381,8 +381,15 @@ def test_collector_registration_failure_does_not_stop_the_message_handler_path(t
         raise RuntimeError("collector construction boom")
 
     monkeypatch.setattr(cmd, "CaptureCollector", _boom)
-    with caplog.at_level(logging.ERROR):
-        result = runner.invoke(app, ["capture", "--pairs", "BTC/EUR", "--data-dir", str(tmp_path), "--duration", "1"])
+    # On the `zcrypto` logger itself: the invoke's `configure` turns its propagation off, so the root handler caplog
+    # reads through sees nothing the command logs.
+    zcrypto_logger = logging.getLogger("zcrypto")
+    zcrypto_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.ERROR):
+            result = runner.invoke(app, ["capture", "--pairs", "BTC/EUR", "--data-dir", str(tmp_path), "--duration", "1"])
+    finally:
+        zcrypto_logger.removeHandler(caplog.handler)
     assert result.exit_code == 0, result.output
     parts = list((tmp_path / "BTC/EUR" / "trades" / "2026" / "07" / "08").glob("14.part*.parquet"))
     assert parts, "the message-handler path must complete its real work despite a raising collector"

@@ -2516,14 +2516,14 @@ def test_the_time_box_elapsing_while_a_reprice_waits_fires_the_ioc_with_no_cance
 
 
 def test_the_hold_elapsing_while_a_rest_hold_reprice_waits_ends_it_expired_with_no_cancel(tmp_path):
-    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=15)])
-    _advance_with_quotes(ex, client, clock, minutes=14.75)
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=10)])
+    _advance_with_quotes(ex, client, clock, minutes=9.75)
     ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
     assert len(client.submitted) == 2
     ex.on_order_event(_rejected(client.last_order_id, "POST_ONLY_REJECTED: would cross", due_post_only=True))
     assert ex._active.phase == "awaiting_reprice"
 
-    clock.now = NOW + timedelta(minutes=15, seconds=5)
+    clock.now = NOW + timedelta(minutes=10, seconds=5)
     ex.on_timer(clock.now)
 
     assert client.canceled == [] and len(client.submitted) == 2
