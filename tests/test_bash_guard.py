@@ -226,6 +226,16 @@ VAULTED = [
     ("sed -e p infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("sed -n 's/x/vault.yml/p' infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("sed -f infra/ansible/files/deploy_zaccess_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_zaccess_ed25519"),
+    (
+        "awk -W exec infra/ansible/files/deploy_zaccess_ed25519 docs/reference/fleet.md",
+        "infra/ansible/files/deploy_zaccess_ed25519",
+    ),
+    ("awk -We infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
+    ("awk -Wexec=infra/ansible/files/sync_ed25519 docs/reference/fleet.md", "infra/ansible/files/sync_ed25519"),
+    (
+        "python3 -c \"p='infra/ansible/group_vars/all/vault.yml'; print(open(p.strip()).read())\"",
+        "infra/ansible/group_vars/all/vault.yml",
+    ),
     ("python3 -c \"import os; print(open(os.path.join('infra/ansible/group_vars/all', 'vault.yml')).read())\"", "vault.yml"),
     (
         "python3 -c \"p = 'infra/ansible/files/deploy_zaccess_ed25519'; print(open(p).read())\"",
@@ -378,6 +388,8 @@ ADMITTED = [
     "sed -n -e 's/a/vault.yml/' docs/reference/fleet.md",
     "sed --expression='s/a/vault.yml/' docs/reference/fleet.md",
     "python3 -c \"print('vault.yml' in open('docs/reference/fleet.md').read())\"",
+    "python3 -c \"import pathlib; print('vault.yml' in pathlib.Path('docs/reference/fleet.md').read_text())\"",
+    "awk -W interactive '/vault.yml/' docs/reference/fleet.md",
 ]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
