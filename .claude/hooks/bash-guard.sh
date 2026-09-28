@@ -19,21 +19,27 @@
 #
 # Outside, deliberately: `git push --no-verify` (no hook runs at push here), the pre-commit framework's
 # `SKIP=<hook>` door (used on purpose), an edit of `.git/hooks/` or of this file, a git alias, a shell string
-# handed to `sh -c`, `eval` or a Python subprocess, a program, a flag or a vaulted path arriving through a variable
-# or a substitution, a cap first in its pipeline, which truncates what it opened rather than what the command
-# computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a program no
-# family names (`grep` without `-c`, `diff`, `git log -p`) or reached through `xargs`, `find -exec` or a copy of its
-# whole directory -- none is an argv this guard judges. Refused deliberately, the cost of judging a word wherever it
-# stands rather than reading what precedes it: a dispatched agent's `echo git push` or `grep -n git f`, whose first
-# `git` or `gh` word is read as the one its stage runs.
+# handed to `sh -c`, `eval` or a Python subprocess, a program, a flag or a vaulted path arriving through a variable,
+# a substitution or an encoding, a cap first in its pipeline, which truncates what it opened rather than what the
+# command computed (`head -1 VERSION`), a truncation that is neither head nor tail, and a vaulted file read by a
+# program no family names (`grep` without `-c`, `diff`, `git log -p`, a Python script) or reached through `xargs`,
+# `find -exec` or a copy of its whole directory -- none is an argv this guard judges; nor is a vaulted file the command
+# makes before it reads it (`ln -s <vaulted file> x && cat x`), since a file's existence is read before anything runs.
+# Refused deliberately, the cost of judging a word wherever it stands rather than parsing what precedes it or what
+# the program makes of it: a dispatched agent's `echo git push` or `grep -n git f`, whose first `git` or `gh` word is
+# read as the one its stage runs; and `echo cat <vaulted file>`, `awk -v x=<vaulted file>` or
+# `sops filestatus <vaulted file>`, whose word names a vaulted file that exists whether or not the program prints it.
+#
+# A stage's directory, for the vaulted-file family and the dispatched-agent family, is the payload's `cwd` moved by
+# each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; scope is not tracked, so a `cd` outlives
+# its subshell, and the vaulted-file family reads a directory the hook cannot follow as the payload's `cwd`.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
-# subagent alone, so the main loop's pushes and merges never reach it. Its directory is the payload's `cwd` moved by
-# each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; scope is not tracked, so a `cd` outlives
-# its subshell. The main checkout is the parent of the git common dir of the repository this file lives in: the
-# payload's `cwd` can sit in any repository. Outside it: `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory
-# that is no repository of its own, where git reaches the main checkout's; a `gh api` write through fields with no
-# `-X` (its implicit POST, a GraphQL mutation) and every `gh` verb the family does not name.
+# subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
+# common dir of the repository this file lives in: the payload's `cwd` can sit in any repository. Outside it:
+# `--git-dir`, `--work-tree` and `GIT_DIR`; a `.tmp/` directory that is no repository of its own, where git reaches the
+# main checkout's; a `gh api` write through fields with no `-X` (its implicit POST, a GraphQL mutation) and every `gh`
+# verb the family does not name.
 #
 # A failure of the hook's own -- stdin that is not the tool call's JSON, a command `shlex` cannot tokenise --
 # admits with a note on stderr, never blocks: exit 2 would refuse every Bash call in the session. That second
@@ -42,8 +48,8 @@
 set -euo pipefail
 input="$(cat)"
 prog="$(cat <<'PY'
-import ast
 import functools
+import glob
 import json
 import os
 import posixpath
@@ -93,25 +99,13 @@ REDIRECT = {"&>>", "<<<", "<<", "<>", "<&", ">&", "&>", ">>", ">|", "<", ">"}
 PUNCT = set("();<>|&\n")
 INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
-# Per argv-program printer: VALUE's three kinds, the program-giving options, the program-file options (echoed in part).
-READERS = {
-    "awk": (
-        "FvfeEilW",
-        "dDopL",
-        {"field-separator", "assign", "file", "source", "exec", "include", "load"},
-        {"f", "e", "E", "--file", "--source", "--exec"},
-        {"f", "E", "i", "--file", "--exec", "--include"},
-    ),
-    "sed": ("efl", "i", {"expression", "file", "line-length"}, {"e", "f", "--expression", "--file"}, {"f", "--file"}),
-}
-OPENERS = {"open", "read_text", "read_bytes"}
+DECRYPTERS = {"sops", "ansible-vault"}
 COPIERS = {"cp", "scp", "rsync"}
-WRAPPERS = {"sudo", "doas", "timeout", "nice", "env", "setsid", "nohup", "command", "exec", "time", "stdbuf"}
 INTERPRETER = re.compile(r"^python(\d+(\.\d+)?)?$")
-OPENS = re.compile(r"\b(open|read_text|read_bytes)\(")
-SOPS_FILE = re.compile(r"^[^.].*\.sops\.(ya?ml|json)$")
-KEY_TAILS = ("_ed25519", ".vault")
+KEYS_DIR = "/infra/ansible/files"
+SOPS_VAULT = "/infra/ansible/vault-password.sops.yaml"
 WILD = re.compile(r"[*?[]")
+BRACE = re.compile(r"\{[^{}]*(,|\.\.)[^{}]*\}")  # a group bash expands: `{x}`, with no comma or `..`, is a literal
 VAULT_REMEDY = (
     "A vaulted value is read by `vault_var` through command substitution, never printed; a header or a count by "
     "`grep -c`, `sha256sum`, `wc`, `stat`, `ls` or `git log --`."
@@ -579,45 +573,57 @@ def is_git(w):
     return w == "git" or (w.endswith("/git") and not ASSIGN.match(w))
 
 
-def could_end(name, tail):
-    # A glob can name a file ending in `tail` when the literal text after its last wildcard is a suffix of `tail`, or
-    # ends with it: `deploy_*` can, `*.pub` cannot.
-    rest = re.split(r"[*?]|\[[^]]*\]", name)[-1]
-    return tail.endswith(rest) or rest.endswith(tail)
+def vault_path(path):
+    # The vaulted set, read from a path whose every directory is spelled: a realpath, or `/` and a path under a
+    # repository.
+    head, _, name = path.rpartition("/")
+    keys = name.endswith("_ed25519") and head.endswith(KEYS_DIR)
+    return name == "vault.yml" or name.endswith(".vault") or keys or path.endswith(SOPS_VAULT)
 
 
-def vaulted(word):
-    # A glob is judged only where it names a directory -- a bare `*` names whatever the working directory holds, which
-    # the hook cannot see -- and a `vault.yml` glob only under group_vars or host_vars, since any `*.yml` could end in it.
-    if not word:
-        return False
-    head, _, name = posixpath.normpath(word).rpartition("/")
-    dirs = head.split("/") if head else []
-    if WILD.search(name):
-        if not dirs:
-            return False
-        vault_yml = could_end(name, "vault.yml") and ("group_vars" in dirs or "host_vars" in dirs)
-        return vault_yml or (dirs[-1] == "files" and any(could_end(name, t) for t in KEY_TAILS))
-    if name.endswith("vault.yml") or SOPS_FILE.match(name):
-        return True
-    return name.endswith(KEY_TAILS) and (not dirs or dirs[-1] == "files")
+def held(path, where):
+    return os.path.isfile(posixpath.join(where, path)) and vault_path(os.path.realpath(posixpath.join(where, path)))
 
 
-def program_at(words):
-    # The index of a stage's program, past assignments, keywords and a wrapper with its options (`sudo`, `timeout 5`,
-    # `uv run`); a wrapper option that takes a word of its own leaves that word read as the program.
-    i = 0
-    while i < len(words):
-        base = words[i].rpartition("/")[2]
-        if ASSIGN.match(words[i]) or words[i] in KEYWORDS:
-            i += 1
-        elif base in WRAPPERS or (base == "uv" and words[i + 1 : i + 2] == ["run"]):
-            i += 2 if base == "uv" else 1
-            while i < len(words) and (words[i].startswith("-") or ASSIGN.match(words[i]) or words[i][:1].isdigit()):
-                i += 1
-        else:
-            return i
+def vaulted(word, where):
+    # The first tail of a word -- the word, an option's attached value, a `name=value`'s value -- that names an existing
+    # file in the vaulted set from `where`, or None: no option or program is parsed, so a pattern names no file and the
+    # operand beside it does. A tail is globbed as bash globs a word, a brace group read as `*`: never fewer files.
+    word = word.partition("\0")[0]
+    while BRACE.search(word):
+        word = BRACE.sub("*", word)
+    for k in range(len(word)):
+        tail = posixpath.expanduser(word[k:])
+        found = glob.glob(posixpath.join(glob.escape(where), tail)) if WILD.search(tail) else [tail]
+        if any(held(p, where) for p in found):
+            return word[k:]
     return None
+
+
+def composed(parts, where):
+    # The paths a program's words compose, each joined under a directory the words name or compose:
+    # `os.path.join('infra/ansible/group_vars/all', 'vault.yml')` is judged whole.
+    dirs, out = [""], []
+    for d in dirs:
+        for part in parts:
+            path = posixpath.normpath(posixpath.join(d, part)) if d else part
+            out.append(path)
+            if path not in dirs and len(dirs) < 16 and os.path.isdir(posixpath.join(where, path)):
+                dirs.append(path)
+    return out[len(parts) :]
+
+
+def at_revision(where, operand):
+    # Whether a `<rev>:<path>` operand is a vaulted file in the tree at that revision: git resolves it from `where`, and
+    # the path is read under the repository, a `./` or `../` one from the directory git runs in.
+    done = subprocess.run(["git", "-C", where, "cat-file", "-t", operand], capture_output=True, text=True)
+    if done.returncode or done.stdout.strip() != "blob":
+        return False
+    path = operand.rpartition(":")[2]
+    if path.startswith(("./", "../")):
+        prefix = subprocess.run(["git", "-C", where, "rev-parse", "--show-prefix"], capture_output=True, text=True)
+        path = posixpath.normpath(prefix.stdout.strip() + path)
+    return vault_path("/" + path)
 
 
 def operands(args):
@@ -635,35 +641,6 @@ def among(flag, names):
     if flag[:2] != "--":
         return flag in names
     return len(flag) > 2 and any(n.startswith(flag) for n in names if n[:2] == "--")
-
-
-def reader_files(p, args):
-    # The files a READERS printer reads: its operands but the program word and, for awk, a `name=value` operand, which
-    # POSIX awk takes as an assignment; and each program file an option names, mawk's `-W exec <file>` (`-W e`,
-    # `-Wexec=<file>`) among them.
-    *walk, programs, files = READERS[p]
-    flags, values, ops = option_walk(args, *walk)
-    named, given = [], any(among(f, programs) for f in flags)
-    for f, v in zip(flags, values, strict=True):
-        name, eq, file = (v or "").partition("=")
-        if p == "awk" and f == "W" and name and "exec".startswith(name):
-            given, named = True, named + ([file] if eq else [])
-        elif v and among(f, files):
-            named.append(v)
-    return named + [a for a in (ops if given else ops[1:]) if p != "awk" or not ASSIGN.match(a)]
-
-
-def opened(code):
-    # A name inside an opener's call that is neither called nor imported can carry the path: then every literal counts.
-    try:
-        tree = ast.parse(code)
-    except (SyntaxError, ValueError):
-        return re.findall(r"[^\s'\"(),;]+", code) if OPENS.search(code) else []
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and OPENERS & {getattr(n.func, "attr", None), getattr(n.func, "id", None)}]
-    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-    imported = {a.asname or a.name.partition(".")[0] for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
-    held = any(isinstance(n, ast.Name) and id(n) not in called and n.id not in imported for c in calls for n in ast.walk(c))
-    return [n.value for s in ([tree] if held else calls) for n in ast.walk(s) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
 
 
 def git_sub(words):
@@ -684,40 +661,42 @@ def refuse_vault(words, what, raw):
     refuse(f"`{spelled(words)}` {what}; in `{raw}`. {VAULT_REMEDY}")
 
 
-def judge_vault(words, raw):
+def first_vaulted(args, where):
+    return next((hit for a in args if (hit := vaulted(a, where))), None)
+
+
+def judge_vault(words, raw, where):
     for i, w in enumerate(words):
-        p = w.rpartition("/")[2]
-        if p == "ansible-vault" and any(a in ("view", "decrypt") for a in words[i + 1 :]):
+        p, rest = w.rpartition("/")[2], words[i + 1 :]
+        if p == "ansible-vault" and any(a in ("view", "decrypt") for a in rest):
             refuse_vault(words, "decrypts a vaulted file to the terminal", raw)
-        if p == "sops" and any(a in ("-d", "--decrypt", "decrypt") for a in words[i + 1 :]):
+        if p == "sops" and any(a in ("-d", "--decrypt", "decrypt") for a in rest):
             refuse_vault(words, "decrypts a sops file to the terminal", raw)
+        if p == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in rest):
+            continue  # in place: sed writes the file back and prints nothing
+        if p in PRINTERS | DECRYPTERS:
+            hit = first_vaulted(rest + (getattr(words, "inputs", []) if p in PRINTERS else []), where)
+            if hit:
+                refuse_vault(words, f"{'prints' if p in PRINTERS else 'opens'} the vaulted file `{hit}`", raw)
+        if p in COPIERS:
+            ops = operands(rest)
+            sources = ops if p == "cp" and any(a == "-t" or a.startswith("--target-directory") for a in rest) else ops[:-1]
+            hit = first_vaulted(sources, where)
+            if hit:
+                refuse_vault(words, f"copies the vaulted file `{hit}` to another path", raw)
         if INTERPRETER.match(p):
-            rest = words[i + 1 :]
             code = next((rest[j + 1] for j, a in enumerate(rest[:-1]) if re.fullmatch(r"-[A-Za-z]*c", a)), "")
-            hit = next((tok for tok in opened(code) if vaulted(tok)), None)
+            parts = re.findall(r"[^\s'\"(),;]+", code)
+            hit = first_vaulted(parts, where) or next((path for path in composed(parts, where) if held(path, where)), None)
             if hit:
                 refuse_vault(words, f"opens the vaulted file `{hit}`", raw)
-    sub, rest, _ = git_sub(words)
-    hit = next((a for a in rest if ":" in a and vaulted(a.partition(":")[2])), None) if sub in ("show", "cat-file") else None
-    if hit:
-        refuse_vault(words, f"prints the vaulted file `{hit.partition(':')[2]}` at a revision", raw)
-    at = program_at(words)
-    if at is None:
-        return
-    p, args = words[at].rpartition("/")[2], words[at + 1 :]
-    ops = operands(args)
-    if p == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in args):
-        return  # in place: sed writes the file back and prints nothing
-    if p in PRINTERS:
-        files = reader_files(p, args) if p in READERS else ops
-        hit = next((a for a in files + getattr(words, "inputs", []) if vaulted(a)), None)
+    sub, rest, chdirs = git_sub(words)
+    for d in chdirs:
+        where = resolve(where, d)
+    if sub in ("show", "cat-file") and where:
+        hit = next((a for a in rest if ":" in a and a[:1] != "-" and at_revision(where, a)), None)
         if hit:
-            refuse_vault(words, f"prints the vaulted file `{hit}`", raw)
-    if p in COPIERS:
-        sources = ops if p == "cp" and any(a == "-t" or a.startswith("--target-directory") for a in args) else ops[:-1]
-        hit = next((a for a in sources if vaulted(a)), None)
-        if hit:
-            refuse_vault(words, f"copies the vaulted file `{hit}` to another path", raw)
+            refuse_vault(words, f"prints the vaulted file `{hit.rpartition(':')[2]}` at a revision", raw)
 
 
 def is_gh(w):
@@ -994,15 +973,16 @@ except ValueError as exc:
     sys.exit(3)
 raw = clip(" ".join(command.split()))
 agent = bool(call.get("agent_id"))
-here = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
+cwd = call.get("cwd") if isinstance(call.get("cwd"), str) and call.get("cwd") else os.getcwd()
+here = cwd
 for pipe in commands:
     for words in pipe:
         judge(words)
-        judge_vault(words, raw)
+        judge_vault(words, raw, here or cwd)
         if agent:
             judge_agent(words, here, raw, call.get("session_id"))
     judge_cap(pipe, raw)
-    if agent and len(pipe) == 1:
+    if len(pipe) == 1:
         here = moved(pipe[0], here)
 PY
 )"
