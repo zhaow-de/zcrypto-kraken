@@ -41,6 +41,16 @@ def at(stamp: str) -> dt.datetime:
     return dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
+def instant(value: str) -> dt.datetime:
+    try:
+        moment = at(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not an ISO 8601 instant: {value!r}") from exc
+    if moment.tzinfo is None:
+        raise argparse.ArgumentTypeError(f"{value!r} carries no offset or Z, so it names no instant")
+    return moment
+
+
 def load_rows(path: pathlib.Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
@@ -148,9 +158,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=f"count only rows whose host has venue exposure (excludes {', '.join(sorted(NO_VENUE_EXPOSURE))})",
     )
+    parser.add_argument("--since", type=instant, help="count only the rows stamped at or after this instant")
     args = parser.parse_args(argv)
 
     rows = load_rows(pathlib.Path(args.log))
+    if args.since:
+        rows = [row for row in rows if at(row["ts"]) >= args.since]
     if args.arm == "engine-window":
         if args.snapshot or args.from_snapshot or args.venue_facing:
             parser.error("--snapshot, --from-snapshot and --venue-facing belong to the maintenance arm")
