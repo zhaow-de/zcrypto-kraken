@@ -216,6 +216,24 @@ VAULTED = [
     ("git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("git -C /repo show develop:infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("git cat-file -p HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("awk -f prog.awk infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("awk -f infra/ansible/files/deploy_zaccess_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("awk --file=infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
+    ("sed -e p infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("sed -n 's/x/vault.yml/p' infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("sed -f infra/ansible/files/deploy_zaccess_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("python3 -c \"import os; print(open(os.path.join('infra/ansible/group_vars/all', 'vault.yml')).read())\"", "vault.yml"),
+    (
+        "python3 -c \"p = 'infra/ansible/files/deploy_zaccess_ed25519'; print(open(p).read())\"",
+        "infra/ansible/files/deploy_zaccess_ed25519",
+    ),
+]
+
+# (a reader's program or option value naming vault.yml over an ordinary file, the same reader over a vaulted one)
+READER_PROGRAMS = [
+    ("awk '/vault.yml/' docs/reference/fleet.md", "awk '/vault.yml/' infra/ansible/group_vars/all/vault.yml"),
+    ("awk '$0 ~ /vault.yml/' infra/runbooks/fleet.md", "awk '$0 ~ /vault.yml/' infra/ansible/host_vars/zcrypto-ops/vault.yml"),
+    ("awk -v f=vault.yml '$2 == f' docs/reference/fleet.md", "awk -v f=vault.yml '$2 == f' infra/ansible/group_vars/all/vault.yml"),
 ]
 
 ADMITTED = [
@@ -349,6 +367,13 @@ ADMITTED = [
     "uv run ansible-vault encrypt_string --stdin-name x",
     "cp /tmp/new_key infra/ansible/files/deploy_zaccess_ed25519",
     "sed -i 's/old_name:/new_name:/' infra/ansible/group_vars/all/vault.yml",
+    "awk -v n=1 '/vault.yml/' docs/reference/fleet.md",
+    "awk -F , '/vault.yml/' docs/reference/fleet.md",
+    "awk '{print v}' v=vault.yml docs/reference/fleet.md",
+    "sed 's/secrets.yml/vault.yml/' docs/reference/fleet.md",
+    "sed -n -e 's/a/vault.yml/' docs/reference/fleet.md",
+    "sed --expression='s/a/vault.yml/' docs/reference/fleet.md",
+    "python3 -c \"print('vault.yml' in open('docs/reference/fleet.md').read())\"",
 ]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
@@ -607,6 +632,17 @@ def test_a_command_that_prints_a_vaulted_file_is_blocked_with_the_remedy(tmp_pat
     assert "BLOCKED" in claim
     assert "`vault_var` through command substitution" in r.stderr and "`grep -c`" in r.stderr
     assert r.stdout == ""
+
+
+@pytest.mark.parametrize(("admitted", "refused"), READER_PROGRAMS, ids=[a for a, _ in READER_PROGRAMS])
+@pytest.mark.parametrize("extra", [{}, {"agent_id": "a1"}], ids=["main loop", "dispatched agent"])
+def test_a_readers_program_naming_vault_yml_is_admitted_and_the_vaulted_file_it_reads_is_refused(
+    tmp_path: Path, admitted: str, refused: str, extra: dict
+):
+    r = run_hook(agent_call(admitted, WORKTREE, **extra), cwd=tmp_path, env=AGENT_ENV)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    r = run_hook(agent_call(refused, WORKTREE, **extra), cwd=tmp_path, env=AGENT_ENV)
+    assert r.returncode == 2 and f"prints the vaulted file `{refused.split()[-1]}`;" in r.stderr, r.stderr
 
 
 @pytest.mark.parametrize("command", ADMITTED)
