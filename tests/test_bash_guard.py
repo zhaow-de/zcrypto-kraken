@@ -419,6 +419,29 @@ AGENT_BRANCH_DELETES = [
     ("git branch --del x", "/tmp/elsewhere", "git branch --del x"),
 ]
 
+# (command, the payload's cwd, the stage the message must name, what it says the stage does) -- refused from a
+# dispatched agent
+AGENT_REF_WRITES = [
+    ("git branch -m x y", WORKTREE, "git branch -m x y", "renames a branch"),
+    ("git branch -M develop x", WORKTREE, "git branch -M develop x", "renames a branch"),
+    ("git branch --move x y", MAIN, "git branch --move x y", "renames a branch"),
+    ("git branch --mo x y", "/tmp/elsewhere", "git branch --mo x y", "renames a branch"),
+    (f"git -C {WORKTREE} branch -M develop", MAIN, f"git -C {WORKTREE} branch -M develop", "renames a branch"),
+    ("git branch -f develop origin/develop", WORKTREE, "git branch -f develop origin/develop", "forces a branch"),
+    ("git branch --force x develop", WORKTREE, "git branch --force x develop", "forces a branch"),
+    ("git branch -vf x develop", MAIN, "git branch -vf x develop", "forces a branch"),
+    ("git update-ref -d refs/heads/develop", WORKTREE, "git update-ref -d refs/heads/develop", "deletes a ref"),
+    ("git update-ref -m why -d refs/heads/x", MAIN, "git update-ref -m why -d refs/heads/x", "deletes a ref"),
+    ("git -C ../../.. update-ref -d refs/heads/x", WORKTREE, "git -C ../../.. update-ref -d refs/heads/x", "deletes a ref"),
+    (
+        f"git worktree move {MAIN}/.claude/worktrees/refine-17 /tmp/x",
+        WORKTREE,
+        f"git worktree move {MAIN}/.claude/worktrees/refine-17 /tmp/x",
+        "moves a worktree",
+    ),
+    ("git worktree move .tmp/reads/x/wt .tmp/reads/y", MAIN, "git worktree move .tmp/reads/x/wt .tmp/reads/y", "moves a worktree"),
+]
+
 # (command, the payload's cwd, the path the message must name) -- refused from a dispatched agent
 AGENT_WORKTREE_REMOVES = [
     ("git worktree remove .claude/worktrees/agent-x", MAIN, ".claude/worktrees/agent-x"),
@@ -460,6 +483,12 @@ AGENT_ADMITTED = [
     ("git checkout -b y", WORKTREE),
     ("git branch --merged develop", WORKTREE),
     ("git branch -vv", WORKTREE),
+    ("git branch agent-y develop", WORKTREE),
+    ("git branch -uorigin/develop", WORKTREE),
+    ("git branch -tdirect agent-y origin/develop", WORKTREE),
+    ("git branch --format=%(refname:short) --sort=-committerdate", WORKTREE),
+    ("git update-ref refs/heads/agent-y HEAD", WORKTREE),
+    ("git update-ref -mmade refs/heads/agent-y HEAD", WORKTREE),
     ("git stash", WORKTREE),
     ("git rebase develop", WORKTREE),
     (f"cd {WORKTREE} && git commit -m x", MAIN),
@@ -624,7 +653,20 @@ def test_a_dispatched_agents_branch_delete_is_blocked_wherever_it_runs(tmp_path:
     r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2, r.stderr
     assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and "deletes a branch" in r.stderr, r.stderr
-    assert "a dispatched agent deletes none" in r.stderr
+    assert "a dispatched agent deletes, renames or forces no branch, deletes no ref and moves no worktree" in r.stderr
+    assert r.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "where", "spelling", "claim"), AGENT_REF_WRITES, ids=[f"{c} @ {w}" for c, w, _, _ in AGENT_REF_WRITES]
+)
+def test_a_dispatched_agents_ref_rename_force_or_delete_or_worktree_move_is_blocked_wherever_it_runs(
+    tmp_path: Path, command: str, where: str, spelling: str, claim: str
+):
+    r = run_hook(agent_call(command, where, agent_id="a1"), cwd=tmp_path, env=AGENT_ENV)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and _named(r.stderr) == spelling and f"` {claim} from a dispatched agent" in r.stderr, r.stderr
+    assert "a dispatched agent deletes, renames or forces no branch, deletes no ref and moves no worktree" in r.stderr
     assert r.stdout == ""
 
 
@@ -734,6 +776,7 @@ MAIN_LOOP = (
     [(c, WORKTREE) for c, _ in AGENT_WRITES]
     + [(c, w) for c, w, _ in AGENT_IN_MAIN]
     + [(c, w) for c, w, _ in AGENT_BRANCH_DELETES + AGENT_WORKTREE_REMOVES]
+    + [(c, w) for c, w, _, _ in AGENT_REF_WRITES]
 )
 
 
