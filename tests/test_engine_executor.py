@@ -2479,10 +2479,8 @@ def test_a_raise_inside_a_waiting_reprice_journals_the_fills_that_already_happen
     assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["quote handling failed"], 0.4)
 
 
-def test_a_raise_inside_a_waiting_reprices_time_box_ioc_refuses_the_intent_with_its_fills_and_halts_the_plan(tmp_path):
-    ex, client, clock = _resting_executor(
-        tmp_path, bid=30.0, ask=30.05, intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]
-    )
+def test_a_raise_inside_a_waiting_reprices_time_box_ioc_refuses_the_intent_with_its_fills(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, bid=30.0, ask=30.05)
     ex.on_order_event(_accepted("O-1"))
     _deliver_fill(ex, client, "O-1", 0.4, px=30.0)
     _advance_with_quotes(ex, client, clock, minutes=14.75, bid=30.0, ask=30.05)
@@ -2498,7 +2496,6 @@ def test_a_raise_inside_a_waiting_reprices_time_box_ioc_refuses_the_intent_with_
     assert len(client.submitted) == 2
     intent = _intent_entry(tmp_path, 0)
     assert (intent["outcome"], intent["reasons"], intent["filled_qty"]) == ("refused", ["time-box handling failed"], 0.4)
-    assert _intent_outcome(tmp_path, 1) == "refused"
 
 
 def test_an_ambiguous_rejection_halts_with_no_second_order(tmp_path):

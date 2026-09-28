@@ -1495,12 +1495,10 @@ class ProbeExecutor:
                     self._time_box_with_nothing_resting(active)
                 except Exception:
                     # In `execute` mode the box fires the IOC, a resubmission, so a raise takes the quote
-                    # handler's refusal, `filled` carried, and stops the plan as the tick's catch-all
-                    # would, with every later intent journaled rather than left `pending`.
-                    logger.exception("executor time-box handling raised -- refusing the intent and stopping the plan")
+                    # handler's refusal, `filled` carried, `_submit`'s rule.
+                    logger.exception("executor time-box handling raised -- refusing the intent")
                     if self._active is not None:
                         self._finish_active("refused", ("time-box handling failed",), self._active.filled)
-                    self._halt_plan(active.index, f"not run -- intent {active.index} was refused mid-flight")
             return
         if active.phase != "resting":
             # `cancelling` and `ioc` are both waiting on the venue. An answer that never comes is an
