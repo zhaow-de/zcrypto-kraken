@@ -30,8 +30,11 @@
 # Refused deliberately, as a word is judged wherever it stands: an agent's `echo git push`, `echo cat <vaulted file>`.
 #
 # A stage's directory, for the vaulted-file family and the dispatched-agent family, is the payload's `cwd` moved by
-# each `cd` or `pushd` the command runs before the stage, then by git's `-C`s; scope is not tracked, so a `cd` outlives
-# its subshell, and the vaulted-file family reads a directory the hook cannot follow as the payload's `cwd`.
+# each pipeline before it that is one stage whose command word is `cd` or `pushd` with a literal first operand, or
+# none, then by git's `-C`s. Every other change of directory is unfollowed: `builtin cd`, `command cd`, `{fd}>x cd`
+# and a `cd` inside a pipeline leave the directory where the hook had it; `cd -`, `popd` and an operand through a
+# variable or a substitution leave it unknown, a relative `cd` after them keeps it so, and the vaulted-file family
+# reads an unknown directory as the payload's `cwd`. Scope is not tracked, so a `cd` outlives its subshell.
 #
 # The dispatched-agent family judges only a call whose payload carries `agent_id`, which the harness sets inside a
 # subagent alone, so the main loop's pushes and merges never reach it. The main checkout is the parent of the git
