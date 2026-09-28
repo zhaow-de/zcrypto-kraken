@@ -826,8 +826,10 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     # The rule that catches the one failure nothing else can see: a regression that drops the
-    # gate evaluation from the cycle path freezes all six gauges at their last values, cycle
-    # telemetry stays healthy, and every dashboard reads green while the envelope is gone.
+    # gate evaluation from the cycle path, or a ledger write failing at every boundary, freezes
+    # this heartbeat -- the executor's idle refresh moves the five readings and never this series,
+    # so they read live while the boundary's exec record is gone -- cycle telemetry stays healthy,
+    # and every dashboard reads green while the envelope's record is gone.
     # Follows zcrypto-gate-exporter-stale's shape. Threshold = one cycle interval plus slack.
     condition: C
     data:
@@ -856,7 +858,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The engine has not evaluated its execution safety gate for more than four and three quarter hours, so every published value describing whether it may trade is frozen at whatever it last read. Nothing else reports this: the cycle metrics can look perfectly healthy while the safety gate is no longer consulted at all, and a stale reading of `disarmed` is indistinguishable from a live one. Check that cycles are still completing, then read the current state directly on the engine host with the exec-status command rather than trusting the dashboard. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-not-evaluated"
+      summary: "The execution safety gate's heartbeat has not moved for more than four and three quarter hours: the engine's boundary path has stopped evaluating the gate and writing the exec record beside that evaluation, or that record's write has been failing at every boundary. The gate readings on this board keep moving on the executor's idle refresh while the process ticks, so they do not show this, and cycle telemetry can look perfectly healthy through it. Check that cycles are still completing, then read the engine journal on the host for the boundary's exec record and the engine log for a `metrics sink raised` line, and read the current state directly on the engine host with the exec-status command before trusting a gate tile. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-not-evaluated"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "56"
     labels:

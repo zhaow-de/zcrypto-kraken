@@ -493,7 +493,10 @@ class _CycleGauges:
 
 
 class _ExecGauges:
-    """The execution envelope's published state, updated from the gate's verdict every cycle. `gate_level` and the presence gauges
+    """The execution envelope's published state, updated at every gate evaluation: the boundary sink's, the executor's on its
+    tick while a plan runs, and its idle refresh once a minute, so a control file moved by hand reaches the board within that
+    minute; the heartbeat, `last_evaluation`, moves at all of those but the refresh, so it stays the boundary path's.
+    `gate_level` and the presence gauges
     are eager and seeded at 0 -- "nothing may be submitted" is true before anything is evaluated -- and `run()` evaluates once at
     startup so none sits at that default: a `kill_tripped` reading 0 beside an existing kill file is a false statement.
     `last_evaluation` is lazy: the staleness alert reads it, and a seeded 0 would claim the epoch and page every fresh process."""
@@ -519,22 +522,29 @@ class _ExecGauges:
         self.venue_ok = Gauge(
             "zcrypto_exec_venue_ok", "Whether the last venue reading said the exchange is online.", registry=registry
         )
-        # The envelope's heartbeat, and the ONLY series that can answer "is the gate still being evaluated at all". An age gauge was
-        # rejected: evaluations are hours apart and the snapshot bound is 30 s, so every one re-reads and the age would publish ~0
-        # forever -- a constant in measurement's clothes.
+        # The envelope's heartbeat, the series that answers "is the boundary path still evaluating the gate": it moves at startup,
+        # in the boundary sink, on a running plan's evaluations and on a kill trip's, and the idle refresh moves the five readings
+        # and leaves it alone (`update`'s `heartbeat`). An age gauge was rejected: evaluations are a minute apart while idle and the
+        # snapshot bound is 30 s, so every one re-reads and the age would publish ~0 forever -- a constant in measurement's clothes.
         self.last_evaluation: Gauge | None = None
 
-    def update(self, verdict: GateVerdict, *, evaluated_at: datetime) -> None:
+    def update(self, verdict: GateVerdict, *, evaluated_at: datetime, heartbeat: bool = True) -> None:
+        """`heartbeat` False publishes the five readings and leaves `last_evaluation` where it was: the executor's idle
+        refresh, whose evaluation is not the boundary path's, so the staleness rule keeps watching the sink and the exec
+        record it writes before it."""
         i = verdict.inputs
         self.gate_level.set(LEVEL_CODE[verdict.level])
         self.armed.set(1 if (i["armed_in_config"] and i["arm_file"]) else 0)
         self.kill_tripped.set(1 if i["kill_file"] else 0)
         self.restart_hold.set(1 if i["restart_hold"] else 0)
         self.venue_ok.set(1 if i["venue_status"] == "online" else 0)
+        if not heartbeat:
+            return
         if self.last_evaluation is None:
             self.last_evaluation = Gauge(
                 "zcrypto_exec_last_evaluation_timestamp_seconds",
-                "Unix timestamp the execution gate was last evaluated.",
+                "Unix timestamp the execution gate was last evaluated at startup, in the boundary sink, on a running plan's"
+                " evaluations or on a kill trip's; the idle refresh moves the other five gate gauges and leaves this one.",
                 registry=self._registry,
             )
         self.last_evaluation.set(evaluated_at.timestamp())
@@ -753,7 +763,8 @@ def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
 
 def _make_exec_sink(gate, journal_dir: Path, cycle_gauges, exec_gauges, venue_gauges):
     """`run()`'s per-cycle metrics sink, at module level rather than inline so a test can reach the closure and prove the ORDER
-    inside it: a failing ledger write starves the heartbeat rather than being masked by a gauge that keeps ticking."""
+    inside it: a failing ledger write starves the heartbeat rather than being masked by a gauge that keeps ticking -- the
+    executor's idle refresh included, which publishes with `heartbeat` False."""
 
     def _sink(result, completed_at, duration_seconds):
         # The ledger is a forensic artifact, not a metric: compute the verdict and write it before

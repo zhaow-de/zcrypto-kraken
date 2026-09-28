@@ -530,8 +530,9 @@ def _gate(tmp_path: Path, level: str = GateLevel.FULL) -> ExecutionGate:
 
 
 class CountingGate:
-    """Counts evaluations. The idle-tick claim -- that no gate is read with no plan on disk -- is
-    only checkable against something that records being asked."""
+    """Counts evaluations. The idle-tick claim -- that with no plan on disk no gate is read inside
+    the refresh period and one is per period past it -- is only checkable against something that
+    records being asked."""
 
     def __init__(self, level=GateLevel.FULL):
         self.calls = 0
@@ -1156,19 +1157,49 @@ def test_pickup_journals_the_plan_verbatim_then_deletes_the_file(tmp_path):
     assert [i["index"] for i in entry["intents"]] == [0]
 
 
-def test_an_idle_tick_reads_no_gate_at_all(tmp_path):
-    """The cheap-lstat claim: with no plan file there is no gate evaluation and therefore no venue
-    read. The second half is what stops this passing vacuously against an executor that never
+def test_an_idle_tick_reads_no_gate_inside_the_refresh_period_and_one_per_period_past_it(tmp_path):
+    """The cheap-lstat claim, bounded: with no plan file there is no gate evaluation and no venue
+    read inside the refresh period, then one per period -- the tick a plan runs on evaluates anyway.
+    The plan-file half is what stops this passing vacuously against an executor that never
     evaluates anything."""
     gate = CountingGate()
     ex = _executor(tmp_path, gate=gate)
 
     ex.on_timer(NOW)
+    ex.on_timer(NOW + timedelta(seconds=55))
     assert gate.calls == 0
+    ex.on_timer(NOW + timedelta(seconds=60))
+    ex.on_timer(NOW + timedelta(seconds=65))
+    assert gate.calls == 1
+    ex.on_timer(NOW + timedelta(seconds=120))
+    assert gate.calls == 2
 
-    _drop_plan(tmp_path, _plan_dict())
+    _drop_plan(tmp_path, _plan_dict(created_at=NOW + timedelta(seconds=120)))
+    ex.on_timer(NOW + timedelta(seconds=125))
+    assert gate.calls > 2
+
+
+def test_a_kill_file_removed_on_an_idle_engine_is_republished_within_the_refresh_period(tmp_path):
+    """Drill D's shape: the boot publishes the switch as tripped and the file goes with no intent
+    live. The idle tick re-evaluates the gate once a minute and the publish hook --
+    `_ExecGauges.update` in production -- sees the file gone within it, with `heartbeat` False, so
+    the staleness rule's series stays the boundary path's; the refresh journals nothing."""
+    published = []
+    set_executor_hooks(
+        publish_verdict=lambda verdict, *, evaluated_at, heartbeat: published.append((evaluated_at, verdict, heartbeat))
+    )
+    ex = _executor(tmp_path, gate=_gate(tmp_path, GateLevel.NONE))  # the kill file stands at the boot
+
     ex.on_timer(NOW)
-    assert gate.calls > 0
+    _kill_file(tmp_path).unlink()
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert published == []
+    ex.on_timer(NOW + timedelta(seconds=60))
+
+    assert [(at, v.level, v.inputs["kill_file"], hb) for at, v, hb in published] == [
+        (NOW + timedelta(seconds=60), GateLevel.FULL, False, False)
+    ]
+    assert not (tmp_path / "journal").exists()
 
 
 # --- the gate refusals --------------------------------------------------------------------------
@@ -2234,8 +2265,8 @@ def test_a_rejection_closes_the_intent_as_rejected(tmp_path):
 def test_the_verdict_hook_sees_every_evaluation_and_a_raising_hook_never_stops_a_submission(tmp_path):
     seen = []
 
-    def _publish(verdict, *, evaluated_at):
-        seen.append((verdict.level, evaluated_at))
+    def _publish(verdict, *, evaluated_at, heartbeat):
+        seen.append((verdict.level, evaluated_at, heartbeat))
         raise RuntimeError("gauge registry is gone")
 
     metrics = RecordingMetrics()
@@ -2248,7 +2279,7 @@ def test_the_verdict_hook_sees_every_evaluation_and_a_raising_hook_never_stops_a
     ex.on_quote(_quote())
 
     assert len(client.submitted) == 1
-    assert seen and all(level == GateLevel.FULL for level, _ in seen)
+    assert seen and all(level == GateLevel.FULL and heartbeat for level, _, heartbeat in seen)  # a plan's evaluations stamp it
     assert metrics.orders == ["submitted"]
 
 
@@ -5786,9 +5817,9 @@ def _tracking_states(tmp_path, boundary=_TRACK_EVAL, mint_at=_MINT_AT, **kwargs)
 
 def test_the_boundary_alert_reaches_the_executors_tracking_trip_with_no_plan_file(tmp_path, kill_trip_expected):
     """The whole design in one test: the strategy's 4-hourly alert, with NO probe plan on disk, no
-    resting order and nothing in flight, reaches the executor and latches the kill file. Every
-    `_evaluate` on the tick path is gated behind that absent plan file, so a trip hooked there
-    could not fire here -- and the kill file has no other producer in this construction."""
+    resting order and nothing in flight, reaches the executor and latches the kill file. No tick is
+    driven here, so a trip hooked on the tick's `_evaluate` could not fire here -- and the kill file
+    has no other producer in this construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
     _mint_birth(tmp_path)
     assert not _plan_path(tmp_path).exists()
@@ -5978,8 +6009,9 @@ def test_the_trip_keeps_the_first_reason_across_a_restart(tmp_path, kill_trip_ex
 
 def test_the_idle_tick_never_evaluates_tracking(tmp_path):
     """`on_timer` is not a call site for this. A week-wide read on a 5-second tick would be 17280
-    journal scans a day, and `_pickup`'s idle path is contracted to read no gate and no venue at
-    all."""
+    journal scans a day, and the idle tick is contracted to read no gate inside the refresh period
+    (`_refresh_gate`); the three ticks here precede the period's first elapse from the executor's
+    construction."""
     _journal_week(tmp_path, fills=_BREACH_FILLS, lead=6)
     gate = CountingGate()
     executor = _tracking_executor(tmp_path)
@@ -5989,7 +6021,7 @@ def test_the_idle_tick_never_evaluates_tracking(tmp_path):
         executor.on_timer(_TRACK_EVAL + timedelta(minutes=minute))
 
     assert not _kill_file(tmp_path).exists()
-    assert gate.calls == 0  # the idle path reads nothing at all
+    assert gate.calls == 0  # the three ticks fall before the first refresh
 
 
 # The ramp an operator arming exactly ON a week boundary produces: the first slice lands at the

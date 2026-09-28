@@ -1310,7 +1310,7 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
     assert list((engine_cfg.journal_dir / f"{CYCLE_TS:%Y-%m-%d}").glob("exec-*.json")), "the sink never wrote an exec record"
     # the startup evaluation alone -- before the cycle above ever ran -- must already have
     # published a truthful restart hold, or a kill switch tripped across a restart would resolve
-    # the alert for up to 4h until the next cycle completes.
+    # the alert until the executor's first idle refresh, a minute after its construction.
     assert registry.get_sample_value("zcrypto_exec_restart_hold") == 1
     assert registry.get_sample_value("zcrypto_exec_gate_level") == LEVEL_CODE[GateLevel.REDUCE_ONLY]
     # The venue half of the same sink closure: _VenueGauges.update is tested
@@ -1323,8 +1323,9 @@ def test_a_completed_cycle_writes_an_exec_record_and_moves_the_gauges(tmp_path, 
 def test_the_startup_evaluation_alone_seeds_the_latch_gauges(tmp_path, monkeypatch):
     # Isolates the startup-evaluation property from the sink: no cycle ever completes here (the
     # node's run() is the file's ordinary no-op stub), so if run() dropped the startup evaluation
-    # every latch gauge would sit at its seeded 0 for up to 4h -- a kill switch engaged across a
-    # restart would read zcrypto_exec_kill_tripped=0, resolving the alert, until the next cycle.
+    # every latch gauge would sit at its seeded 0 until the executor's first idle refresh, a minute
+    # after its construction -- a kill switch engaged across a restart would read
+    # zcrypto_exec_kill_tripped=0 meanwhile, resolving the alert.
     registry = CollectorRegistry()
     monkeypatch.setattr(command, "build_registry", lambda: registry)
     monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
@@ -1596,12 +1597,22 @@ def _sink_result(cycle_ts: datetime) -> CycleResult:
     )
 
 
-def test_a_raising_ledger_writer_freezes_the_heartbeat_and_the_staleness_condition_goes_true(tmp_path, monkeypatch):
+def test_a_raising_ledger_writer_freezes_the_heartbeat_while_the_idle_refresh_moves_the_readings_and_the_staleness_condition_goes_true(
+    tmp_path, monkeypatch
+):
     """The monitoring-gap discharge, read by VALUE: the sink writes the ledger BEFORE any gauge, so
     a persistently failing `write_exec_record` starves
     `zcrypto_exec_last_evaluation_timestamp_seconds` and the deployed staleness rule's condition
-    goes true. That ordering is the whole reason the gap is monitored rather than merely documented
-    -- reverse it and the ledger could fail silently for days behind a heartbeat that keeps ticking."""
+    goes true -- while the executor's idle refresh, on the hook `run()` installs, keeps the five
+    readings moving and leaves the heartbeat alone. The ordering and the exemption are together the
+    reason the gap is monitored rather than merely documented: reverse the first and the ledger
+    could fail silently for days behind a heartbeat that keeps ticking; drop the second and the
+    refresh would tick it for the ledger."""
+    from test_engine_executor import StubClient
+
+    from cli.engine.execgate import KILL_FILE, exec_dir
+    from cli.engine.executor import ProbeExecutor, set_executor_hooks
+
     registry = CollectorRegistry()
     gate = ExecutionGate(
         armed_in_config=False,
@@ -1611,17 +1622,28 @@ def test_a_raising_ledger_writer_freezes_the_heartbeat_and_the_staleness_conditi
     exec_gauges = _ExecGauges(registry)
     t0 = datetime(2026, 8, 11, 8, 0, tzinfo=UTC)
     sink = command._make_exec_sink(gate, tmp_path / "journal", None, exec_gauges, None)
-
-    sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
-    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t0.timestamp()
-
-    monkeypatch.setattr(command, "write_exec_record", _raise)
-    t1 = t0 + timedelta(hours=8)
+    clock = types.SimpleNamespace(now=t0)
+    config = EngineConfig(journal_dir=tmp_path / "journal", store_dir=tmp_path / "store")
+    executor = ProbeExecutor(client=StubClient(), gate=gate, config=config, clock=lambda: clock.now)
+    set_executor_hooks(publish_verdict=exec_gauges.update)
     try:
-        sink(_sink_result(t1), t1, 1.0)
-    except OSError:
-        pass  # in production cycle.py's _update_metrics swallows exactly this raise -- same effect
+        sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
+        assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == t0.timestamp()
 
+        monkeypatch.setattr(command, "write_exec_record", _raise)
+        t1 = t0 + timedelta(hours=8)
+        try:
+            sink(_sink_result(t1), t1, 1.0)
+        except OSError:
+            pass  # in production cycle.py's _update_metrics swallows exactly this raise -- same effect
+        exec_dir(tmp_path).mkdir(parents=True, exist_ok=True)
+        (exec_dir(tmp_path) / KILL_FILE).touch()  # what the refresh must publish, so its run is read by value
+        clock.now = t1 + timedelta(seconds=5)
+        executor.on_timer(clock.now)  # the idle tick, its refresh period long past
+    finally:
+        set_executor_hooks()
+
+    assert registry.get_sample_value("zcrypto_exec_kill_tripped") == 1, "the idle refresh never published the readings"
     frozen = registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds")
     assert frozen == t0.timestamp(), "the heartbeat moved past a cycle whose ledger record was never written"
     assert t1.timestamp() - frozen > _staleness_threshold_seconds()

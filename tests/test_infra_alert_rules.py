@@ -420,14 +420,13 @@ NOT_A_FAULT_SIGNAL = {
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
     # order filling, and `unmatched` says an order event no entry in this engine's ledger vouches for
     # arrived and was acted on nowhere. NO rule, deliberately and not by omission: the candidate --
-    # `unmatched` rising while `zcrypto_exec_armed` is 0 -- is unsound, because `zcrypto_exec_armed`
-    # is published only when the gate is EVALUATED (engine start, then each 4-hourly cycle), so it is
-    # a snapshot rather than an attendance signal and is stale in BOTH directions: loud during the
-    # owner's own attended activity, mute through the hours after a window closes. What would make
-    # the candidate work is one change: publish `zcrypto_exec_armed` on the executor's 5s tick --
-    # engine code on the live trade path, so a decision of its own. The silent failure no rule could
-    # catch either way -- an adopted order whose events fail to key into `_attached` -- is a
-    # by-value reading in T0018.
+    # `unmatched` rising while `zcrypto_exec_armed` is 0 -- pages on the owner's own account
+    # activity, since a hand-placed order while the engine is disarmed is exactly an unmatched
+    # external event, and a rule on a forensic counter is a decision of its own. `zcrypto_exec_armed`
+    # itself is not the obstacle: it is published at every gate evaluation, the executor's idle
+    # refresh once a minute included, so it follows an arm or a disarm within that minute. The silent
+    # failure no rule could catch either way -- an adopted order whose events fail to key into
+    # `_attached` -- is a by-value reading in T0018.
     "zcrypto_exec_external_events_total",
     # The weekly tracking-error verdict. NO rule, deliberately and not by omission: the only value
     # that is a fault -- the band breached -- latches the kill file, which

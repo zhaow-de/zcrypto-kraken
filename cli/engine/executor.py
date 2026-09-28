@@ -174,6 +174,12 @@ _VENUE_READ_TIMEOUT_SECONDS = 30.0
 # How far before the earliest row's boundary that read reaches. A row's order is submitted after the
 # boundary it is filed under; the margin covers clock skew against the venue, not a real gap.
 _VENUE_READ_MARGIN = timedelta(hours=1)
+# The idle cadence the gate is re-evaluated and its readings republished at, against the kill-switch
+# rule's `for: 5m`: a refresh, a scrape and the rule's evaluation are a minute each at most, so a
+# switch removed on an idle engine reaches the rule within three minutes, and one removed inside the
+# first two minutes of the rule's pending period pages no one. While a plan runs the tick evaluates
+# anyway. The refresh moves no heartbeat: `_ExecGauges.update`'s `heartbeat` says why.
+_GATE_REFRESH = timedelta(seconds=60)
 # Why a row that names no venue order cannot be matched after a restart: written into the row as the
 # `what` of its `ambiguous` event, and compared there so a later restart does not append it again.
 _NO_VENUE_ORDER_ID = "no Kraken order id is recorded for it, so a restart cannot match it to a venue order"
@@ -187,7 +193,8 @@ _metrics = None
 
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
-    called `(verdict, evaluated_at=...)` after EVERY gate evaluation, `metrics` is an object with
+    called `(verdict, evaluated_at=..., heartbeat=...)` after EVERY gate evaluation, `heartbeat`
+    False on the idle refresh alone, `metrics` is an object with
     `inc_order(outcome)`, `inc_external(disposition)`, `inc_fill(liquidity, fee_eur)`,
     `set_position(symbol, qty)` and `set_realized(value)` (`command._ExecutionMetrics`). Neither can
     affect an order -- both are wrapped."""
@@ -196,11 +203,11 @@ def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     _metrics = metrics
 
 
-def _publish(verdict: GateVerdict, evaluated_at: datetime) -> None:
+def _publish(verdict: GateVerdict, evaluated_at: datetime, *, heartbeat: bool = True) -> None:
     if _publish_verdict is None:
         return
     try:
-        _publish_verdict(verdict, evaluated_at=evaluated_at)
+        _publish_verdict(verdict, evaluated_at=evaluated_at, heartbeat=heartbeat)
     except Exception:
         logger.exception("executor verdict hook raised -- continuing")
 
@@ -683,6 +690,9 @@ class ProbeExecutor:
         self._config = config
         self._now = clock
         self._venue_orders = venue_orders
+        # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
+        # published moments before this construction.
+        self._gate_evaluated_at: datetime = self._now()
         # Set once, when the startup pass could not read the venue's orders, and never cleared: every
         # plan is refused with it for the life of this process, and a restart is the retry.
         self._reconciliation_refusal: str | None = None
@@ -722,12 +732,16 @@ class ProbeExecutor:
 
     # --- the gate ------------------------------------------------------------------------------
 
-    def _evaluate(self, now: datetime) -> GateVerdict:
+    def _evaluate(self, now: datetime, *, heartbeat: bool = True) -> GateVerdict:
         """The ONE gate read. Every evaluation reaches the publish hook (D4's cadence ruling), so
-        the gate's published state is seconds-fresh for as long as a plan is running and reverts to
-        the between-cycles cadence the moment one is not."""
+        the gate's published state is seconds-fresh for as long as a plan is running and at most
+        `_GATE_REFRESH` old while none is (`_refresh_gate`), since the board's kill-switch rule reads
+        the gauge and a switch removed on an idle engine would otherwise page until the boundary.
+        `heartbeat` False, the refresh's, publishes the readings and not the staleness rule's
+        series, which stays the boundary path's."""
         verdict = self._gate.evaluate(now)
-        _publish(verdict, now)
+        self._gate_evaluated_at = now
+        _publish(verdict, now, heartbeat=heartbeat)
         return verdict
 
     # --- the chokepoint ------------------------------------------------------------------------
@@ -815,6 +829,7 @@ class ProbeExecutor:
                 self._pickup(now)
             self._pump(now)
             self._publish_resting_age(now)
+            self._refresh_gate(now)
         except Exception:
             # Refusal by default: whatever broke, stop running this plan. Anything already resting
             # at the venue stays in the ledger as an open row for reconciliation to pick up.
@@ -845,6 +860,19 @@ class ProbeExecutor:
                 _set_resting_age(mode, age)
         except Exception:
             logger.exception("executor resting-age publish raised -- continuing")
+
+    def _refresh_gate(self, now: datetime) -> None:
+        """The idle refresh: one evaluation, published, once `_GATE_REFRESH` has passed since the last
+        -- the tick a plan runs on evaluates anyway and stamps it. What it publishes is what the gate
+        reads, its own fail-closed readings included, and not the heartbeat, which stays the boundary
+        path's so the staleness rule keeps watching the sink and its exec record; it journals
+        nothing, since the exec record's verdict is the boundary sink's alone. Wrapped as
+        `_publish_resting_age` is: telemetry may never end a plan."""
+        try:
+            if now - self._gate_evaluated_at >= _GATE_REFRESH:
+                self._evaluate(now, heartbeat=False)
+        except Exception:
+            logger.exception("executor gate refresh raised -- continuing")
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this
@@ -1354,7 +1382,9 @@ class ProbeExecutor:
         try:
             os.lstat(path)
         except FileNotFoundError:
-            return  # the cheap idle path: no gate read, no venue read, nothing published
+            # The cheap idle path: no gate read, no venue read, nothing published here -- the tick's
+            # `_refresh_gate` is the idle path's one gate read, once a period.
+            return
         except OSError, ValueError:
             logger.warning("probe plan %s cannot be stat'd -- no pickup this tick", path, exc_info=True)
             return
@@ -2202,9 +2232,10 @@ class ProbeExecutor:
         self._active = None
         self._plan = None
         self._index = 0
-        # Publish now rather than waiting for a tick that may never evaluate again: with no plan
-        # running, `on_timer` takes the idle path and reads no gate at all, so the trip gauge would
-        # otherwise sit at its pre-trip value until the next cycle happens to publish one.
+        # Publish now rather than waiting for the tick: with no plan running, the idle path reads
+        # the gate once a period (`_refresh_gate`), so the trip gauge would otherwise sit at its
+        # pre-trip value for up to `_GATE_REFRESH`. This evaluation stamps the heartbeat too, its
+        # `heartbeat` left at the default True.
         self._evaluate(self._now())
 
     def _write_kill_file(self, reason: str) -> None:
