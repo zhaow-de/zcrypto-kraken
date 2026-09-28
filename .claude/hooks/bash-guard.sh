@@ -94,7 +94,7 @@ PUNCT = set("();<>|&\n")
 INPUT = {"<", "<>"}  # a redirect whose target is a file the stage reads
 PRINTERS = {"cat", "head", "tail", "less", "more", "sed", "awk", "cut", "strings", "xxd", "od", "base64", "tac", "nl", "hexdump", "hd"}
 # Per printer whose program is a word of its argv: its options in VALUE's three kinds; then the options that give the
-# program, which leave no program word, and the options naming a program file, which it opens and echoes a line of on a
+# program, which leave no program word, and the options naming a program file, which it opens and echoes part of on a
 # parse error.
 READERS = {
     "awk": (
@@ -650,7 +650,7 @@ def reader_files(p, args):
 def opened(code):
     # The strings a `python -c` code can open a file by: the literals inside each call of an opener, its receiver
     # included; every literal of the code where such a call holds a name no call is made through, which can carry the
-    # path; and every token where the code does not parse.
+    # path; and, where the code does not parse, every token of it if it names an opener.
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError):
