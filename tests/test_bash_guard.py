@@ -182,8 +182,13 @@ VAULTED = [
     ("nl -ba infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
     ("hd infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("cd infra/ansible && cat files/deploy_zcrypto_ed25519", "files/deploy_zcrypto_ed25519"),
-    ("cat deploy_zcrypto_ed25519", "deploy_zcrypto_ed25519"),
-    ("cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
+    ("cd infra/ansible/files && cat deploy_zcrypto_ed25519", "deploy_zcrypto_ed25519"),
+    ("cd infra/ansible && cat group_vars/all/vault.yml", "group_vars/all/vault.yml"),
+    ("cat infra/ansible/files/deploy_{nas,zaccess}_ed25519", "infra/ansible/files/deploy_*_ed25519"),
+    ("{fd}>/dev/null cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("coproc cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("flock /tmp/l cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
+    ("echo cat infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("cat infra/ansible/files/deploy_*", "infra/ansible/files/deploy_*"),
     ("head -2 infra/ansible/group_vars/*/vault.yml", "infra/ansible/group_vars/*/vault.yml"),
     ("cat infra/ansible/group_vars/all/*", "infra/ansible/group_vars/all/*"),
@@ -215,8 +220,13 @@ VAULTED = [
     ("sops -d infra/ansible/vault-password.sops.yaml", "sops -d"),
     ("sops --decrypt --extract '[\"vault_password\"]' infra/ansible/vault-password.sops.yaml", "sops --decrypt"),
     ("sops decrypt infra/ansible/vault-password.sops.yaml", "sops decrypt"),
+    ("sops filestatus infra/ansible/vault-password.sops.yaml", "infra/ansible/vault-password.sops.yaml"),
+    ("sops exec-env infra/ansible/vault-password.sops.yaml env", "infra/ansible/vault-password.sops.yaml"),
+    ("ansible-vault edit infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
-    ("git -C /repo show develop:infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("git -C infra show HEAD:infra/ansible/files/deploy_zaccess_ed25519", "infra/ansible/files/deploy_zaccess_ed25519"),
+    ("git -C infra/ansible show HEAD:./files/deploy_zaccess_ed25519", "./files/deploy_zaccess_ed25519"),
+    ("git show :infra/ansible/vault-password.sops.yaml", "infra/ansible/vault-password.sops.yaml"),
     ("git cat-file -p HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("2>/dev/null git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
     ("flock /tmp/l git show HEAD:infra/ansible/group_vars/all/vault.yml", "infra/ansible/group_vars/all/vault.yml"),
@@ -232,11 +242,38 @@ VAULTED = [
     ),
     ("awk -We infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
     ("awk -Wexec=infra/ansible/files/sync_ed25519 docs/reference/fleet.md", "infra/ansible/files/sync_ed25519"),
+    ("awk -W EXEC infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
+    (
+        "awk -W interactive,exec infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md",
+        "infra/ansible/files/deploy_nas_ed25519",
+    ),
+    ("awk -Wi,e infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
+    ("sed -nf infra/ansible/files/deploy_nas_ed25519 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
+    ("awk -v x=infra/ansible/files/deploy_nas_ed25519 1 docs/reference/fleet.md", "infra/ansible/files/deploy_nas_ed25519"),
     (
         "python3 -c \"p='infra/ansible/group_vars/all/vault.yml'; print(open(p.strip()).read())\"",
         "infra/ansible/group_vars/all/vault.yml",
     ),
-    ("python3 -c \"import os; print(open(os.path.join('infra/ansible/group_vars/all', 'vault.yml')).read())\"", "vault.yml"),
+    (
+        "python3 -c \"import os; print(open(os.path.join('infra/ansible/group_vars/all', 'vault.yml')).read())\"",
+        "infra/ansible/group_vars/all/vault.yml",
+    ),
+    (
+        "python3 -c \"import os; print(open(os.path.join('infra', 'ansible', 'group_vars', 'all', 'vault.yml')).read())\"",
+        "infra/ansible/group_vars/all/vault.yml",
+    ),
+    (
+        "python3 -c \"import pathlib; print((pathlib.Path('infra/ansible/files') / 'sync_ed25519').read_text())\"",
+        "infra/ansible/files/sync_ed25519",
+    ),
+    (
+        "python3 -c \"f=lambda: 'infra/ansible/group_vars/all/vault.yml'; print(open(f()).read())\"",
+        "infra/ansible/group_vars/all/vault.yml",
+    ),
+    (
+        'python3 -c "exec(\\"print(open(\'infra/ansible/group_vars/all/vault.yml\').read())\\")"',
+        "infra/ansible/group_vars/all/vault.yml",
+    ),
     (
         "python3 -c \"p = 'infra/ansible/files/deploy_zaccess_ed25519'; print(open(p).read())\"",
         "infra/ansible/files/deploy_zaccess_ed25519",
@@ -248,6 +285,9 @@ READER_PROGRAMS = [
     ("awk '/vault.yml/' docs/reference/fleet.md", "awk '/vault.yml/' infra/ansible/group_vars/all/vault.yml"),
     ("awk '$0 ~ /vault.yml/' infra/runbooks/fleet.md", "awk '$0 ~ /vault.yml/' infra/ansible/host_vars/zcrypto-ops/vault.yml"),
     ("awk -v f=vault.yml '$2 == f' docs/reference/fleet.md", "awk -v f=vault.yml '$2 == f' infra/ansible/group_vars/all/vault.yml"),
+    ("less -p vault.yml docs/reference/fleet.md", "less -p vault.yml infra/ansible/group_vars/all/vault.yml"),
+    ("less +/vault.yml docs/reference/fleet.md", "less +/vault.yml infra/ansible/host_vars/nas/vault.yml"),
+    ("more +/vault.yml docs/reference/fleet.md", "more +/vault.yml infra/ansible/group_vars/all/vault.yml"),
 ]
 
 ADMITTED = [
@@ -365,7 +405,6 @@ ADMITTED = [
     "hd infra/ansible/files/deploy_zaccess_ed25519.pub",
     "git show HEAD:infra/ansible/files/deploy_zaccess_ed25519.pub",
     "git cat-file -p HEAD:infra/ansible/files/deploy_zaccess_ed25519.pub",
-    "sops filestatus infra/ansible/vault-password.sops.yaml",
     "head -3 infra/ansible/files/README.md",
     "cat infra/ansible/.sops.yaml",
     "head -5 .github/workflows/*.yml",
@@ -390,6 +429,13 @@ ADMITTED = [
     "python3 -c \"print('vault.yml' in open('docs/reference/fleet.md').read())\"",
     "python3 -c \"import pathlib; print('vault.yml' in pathlib.Path('docs/reference/fleet.md').read_text())\"",
     "awk -W interactive '/vault.yml/' docs/reference/fleet.md",
+    "awk -W EXEC infra/ansible/files/no_such_ed25519 docs/reference/fleet.md",
+    "awk -W interactive,exec infra/ansible/files/no_such_ed25519 docs/reference/fleet.md",
+    "awk -Wi,e infra/ansible/files/no_such_ed25519 docs/reference/fleet.md",
+    "python3 -c \"f=lambda: 'infra/ansible/group_vars/no_such/vault.yml'; print(open(f()).read())\"",
+    'python3 -c "exec(\\"print(open(\'infra/ansible/group_vars/no_such/vault.yml\').read())\\")"',
+    "cat deploy_zcrypto_ed25519",  # a key's name where no such file is
+    "git show HEAD:infra/ansible/files/no_such_ed25519",
 ]
 
 # (command, the stage the message must name) -- refused from a dispatched agent in its own worktree
@@ -715,7 +761,7 @@ def run_hook(payload: dict | str, cwd: Path, env: dict | None = None, hook: Path
 
 
 def call(command: str) -> dict:
-    return {"tool_name": "Bash", "tool_input": {"command": command}}
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(REPO)}
 
 
 @pytest.mark.parametrize(("command", "spelling"), REFUSED, ids=[c for c, _ in REFUSED])
@@ -757,9 +803,9 @@ def test_a_command_that_prints_a_vaulted_file_is_blocked_with_the_remedy(tmp_pat
 def test_a_readers_program_naming_vault_yml_is_admitted_and_the_vaulted_file_it_reads_is_refused(
     tmp_path: Path, admitted: str, refused: str, extra: dict
 ):
-    r = run_hook(agent_call(admitted, WORKTREE, **extra), cwd=tmp_path, env=AGENT_ENV)
+    r = run_hook(agent_call(admitted, str(REPO), **extra), cwd=tmp_path, env=AGENT_ENV)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
-    r = run_hook(agent_call(refused, WORKTREE, **extra), cwd=tmp_path, env=AGENT_ENV)
+    r = run_hook(agent_call(refused, str(REPO), **extra), cwd=tmp_path, env=AGENT_ENV)
     assert r.returncode == 2 and f"prints the vaulted file `{refused.split()[-1]}`;" in r.stderr, r.stderr
 
 
