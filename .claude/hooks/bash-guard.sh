@@ -119,13 +119,28 @@ VAULT_REMEDY = (
 GH_PR_WRITES = {"create", "ready", "merge", "edit", "close", "comment", "review"}
 GH_WRITE_METHODS = {"POST", "PATCH", "PUT", "DELETE"}
 GH_VALUE = {"-R", "--repo"}
-MOVES = {"commit", "add", "checkout", "switch", "reset", "stash", "rebase", "merge", "cherry-pick"}
-STASH_READS = {"list", "show"}
+# What a dispatched agent's git runs in the main checkout, an allowlist: these verbs whole, and the verbs main_admits
+# reads the arguments of; every other verb is refused there.
+MAIN_READS = {
+    "status", "log", "show", "diff", "diff-tree", "rev-parse", "rev-list", "ls-files", "ls-tree", "ls-remote", "cat-file",
+    "grep", "blame", "describe", "name-rev", "merge-base", "merge-tree", "for-each-ref", "count-objects", "check-ignore",
+}
+BRANCH_LISTS = {"--list", "a", "r", "--show-current", "--contains", "--merged", "--no-merged"}
+TAG_LISTS = {"l", "--list", "--contains"}
+LIST_MODE = {"l", "--list", "--contains", "--merged", "--no-merged"}  # the options that make a branch or tag operand a pattern
+FETCH_VALUE = (
+    "jo",
+    "",
+    {"depth", "deepen", "shallow-since", "shallow-exclude", "upload-pack", "refmap", "negotiation-tip", "filter", "jobs",
+     "server-option", "submodule-prefix", "recurse-submodules-default"},
+)
+FETCH_REWRITES = {"p", "P", "--prune", "--prune-tags", "--refmap"}
 AGENT_DIRS = (".claude/worktrees/", ".tmp/")
 PUSH_REMEDY = "The coordinator pushes and opens PRs after the read; a dispatched agent reports and stops."
 CHECKOUT_REMEDY = (
     "A dispatched agent works in its worktree -- `git -C <worktree>` or `cd <worktree> &&`, a path under "
-    ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's."
+    ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's, where an agent's git is held to a list of "
+    "reads, `fetch` and `worktree list|add|remove`."
 )
 # Per subcommand whose options decide whether it rewrites a ref: what it rewrites; those options, short and long, each
 # with its verb; then, as VALUE reads them, short options whose value is the rest of the bundle or else the next token,
@@ -739,10 +754,29 @@ def gh_writes(words):
     return False
 
 
-def moves_checkout(sub, rest):
+def main_admits(sub, rest):
+    if sub in MAIN_READS:
+        return True
+    positional = [a for a in rest if not a.startswith("-")]
+    if sub == "config":
+        return any(a in ("--get", "--list", "-l") for a in rest) or positional[:1] in (["get"], ["list"])
+    if sub == "remote":
+        return positional[:1] in ([], ["show"])
+    if sub in ("branch", "tag"):
+        flags, _, ops = option_walk(rest, *REF_OPTIONS[sub][3:])
+        return set(flags) <= (BRANCH_LISTS if sub == "branch" else TAG_LISTS) and (not ops or bool(set(flags) & LIST_MODE))
     if sub == "stash":
-        return rest[:1] == [] or rest[0] not in STASH_READS
-    return sub in MOVES
+        return rest[:1] in (["list"], ["show"])
+    if sub == "reflog":
+        return rest[:1] in ([], ["show"])
+    if sub == "symbolic-ref":
+        return not ref_write(sub, rest)
+    if sub == "fetch":
+        flags, _, ops = option_walk(rest, *FETCH_VALUE)
+        return not any(among(f, FETCH_REWRITES) for f in flags) and not any(":" in a for a in ops[1:])
+    if sub == "worktree":
+        return rest[:1] in (["list"], ["add"], ["remove"])
+    return False
 
 
 def option_walk(rest, short_value, short_attached, long_value):
@@ -894,7 +928,7 @@ def judge_agent(words, here, raw, session):
                 f"`{spelled(words)}` removes the worktree `{hit}` from a dispatched agent, whatever directory it runs in; "
                 f"in `{raw}`. {WORKTREE_REMEDY}"
             )
-    if moves_checkout(sub, rest) and in_main_checkout(here):
+    if in_main_checkout(here) and not main_admits(sub, rest):
         refuse(
             f"`{spelled(words)}` runs `git {sub}` in the main checkout, at `{here}`, from a dispatched agent; in "
             f"`{raw}`. {CHECKOUT_REMEDY}"
