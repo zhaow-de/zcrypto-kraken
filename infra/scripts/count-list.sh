@@ -312,10 +312,9 @@ c_topics_without_a_trigger() { grep -L '^ripe_when: *[^ ]' docs/open-topics/T*.m
 # bullets to fix and not tokens.
 c_runbook_bullets_with_an_internal_token() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/runbook-internal-tokens.py | wc -l; }
 
-# The three deploy-log counts that name a violation read the rows stamped at or after the previous refine round's
-# closing commit -- its commit date, the anchor `c_claude_commits_since_the_round_closed` finds -- so a row a round has
-# read is not counted again in the next. No closing commit is an error, never a count over the whole log.
-# COUNT_LIST_DEPLOY_LOG names another log for these three, which is how a test drives the window.
+# A deploy-log count that calls this reads the rows stamped at or after the previous refine round's closing commit --
+# its commit date, the anchor `c_claude_commits_since_the_round_closed` finds -- so a row a round has read is not
+# counted again in the next. COUNT_LIST_DEPLOY_LOG names another log for them, which is how a test drives the window.
 round_closed_at() {
   [ "${COUNT_LIST_ALL:-}" = 1 ] && return 0
   local closed
