@@ -1,19 +1,17 @@
 export const meta = {
   name: 'review',
   description: 'The wide review of a whole branch: two lenses, one skeptic per Critical or Important',
-  whenToUse: 'The wide review a branch owes once it is complete, after its pre-review; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, lenses?, drive?, model?}',
+  whenToUse: 'The wide review a branch owes once it is complete; again only when a fix adds a door, a guard or files outside the first read’s range. args: {repo, range, tip, reportDir, ledger, lenses?, drive?, model?}',
   phases: [
-    { title: 'Ledger', detail: 'the order of reviews, refused rather than remembered' },
     { title: 'Read', detail: 'one read-only reader per lens, in parallel' },
     { title: 'Refute', detail: 'one skeptic per Critical and Important' },
-    { title: 'Record', detail: 'the row that says this review happened, written once it has' },
   ],
 }
 
 // --- inputs ------------------------------------------------------------------------------------
-const { repo, range, tip, reportDir, drive, model } = args || {}
+const { repo, range, tip, reportDir, ledger, drive, model } = args || {}
 const badModel = model != null && model !== 'opus' && model !== 'fable' // the gate's own floor for a whole-branch read; a grader's cap is the pre-review's
-if (!repo || !range || !tip || !reportDir || badModel) throw new Error('args: {repo, range, tip, reportDir, lenses?, drive?, model?: opus or fable, the read floor merge-gate.py holds}')
+if (!repo || !range || !tip || !reportDir || badModel) throw new Error('args: {repo, range, tip, reportDir, ledger, lenses?, drive?, model?: opus or fable, the read floor merge-gate.py holds}')
 if (drive && drive.length > 400) throw new Error(`drive is ${drive.length} characters, at most 400: one sentence naming what the standing brief does not cover — cut every clause that names a figure, a path or a command, the brief re-measures those itself`)
 const DEFAULT_LENSES = [
   { name: 'behaviour', brief: 'What the range changes, driven: each door, refusal, count or guard the messages claim, exercised with the input it names on every grid or path it applies to; anything legitimate now refused; any live-path behaviour changed where no test drives it; every citation of a spec, rule or topic read as written.' },
@@ -81,28 +79,13 @@ Its consequence: ${f.consequence}
 
 Try to REFUTE it: reproduce what the evidence claims, and decide whether the claim holds as stated at this tip — including whether its consequence follows (a test that stops it, a pre-branch behaviour that was no better). Default to refuted=true when you cannot make it hold. Return the structured output; write nothing to the repo.`
 
-// --- Ledger -------------------------------------------------------------------------------------
-const LEDGER_ENTRY = {
-  type: 'object',
-  properties: {
-    kind: { type: 'string' }, range: { type: 'string' }, tip: { type: 'string' }, ts: { type: 'string' },
-    sameTreeAndMessages: { type: 'boolean', description: 'for a pre-review row whose tip is not this run’s: whether `git diff --quiet <row tip> <this tip>` exits 0 and `git log --format=%B` from their merge base has the same sha256sum for both' },
-  },
-  required: ['kind', 'range', 'tip', 'ts'],
-}
-const LEDGER = { type: 'object', properties: { entries: { type: 'array', items: LEDGER_ENTRY } }, required: ['entries'] }
-const RECORDED = { type: 'object', properties: { appended: { type: 'boolean' }, note: { type: 'string', description: 'only when a report file had to be created rather than appended to' } }, required: ['appended'] }
+// --- Ledger: the order of reviews, refused rather than remembered --------------------------------------
 const ledgerPath = `${reportDir}/ledger.jsonl`
-phase('Ledger')
-const ledger = await agent(
-  `Bookkeeping only. Read ${ledgerPath} if it exists — one JSON object per line, {kind, range, tip, ts}; a missing file is an empty ledger. For each pre-review entry whose tip is not \`${tip}\`: run \`git -C ${repo} diff --quiet <its tip> ${tip}\`, then \`git -C ${repo} merge-base <its tip> ${tip}\`, then \`git -C ${repo} log --format=%B <that merge base>..<its tip> | sha256sum\` and \`git -C ${repo} log --format=%B <that merge base>..${tip} | sha256sum\`; set sameTreeAndMessages true when the diff exits 0 and the two sums are equal, false otherwise, an unknown sha included. Return the entries as they are with that one field added. Write nothing; no other command.`,
-  { label: 'ledger', phase: 'Ledger', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: LEDGER },
-)
-if (!ledger) throw new Error(`review refuses ${tip}: the ledger agent returned nothing — a failed bookkeeping step, not a missing pre-review; retry`)
-const entries = ledger.entries || []
+if (!Array.isArray(ledger) || ledger.some((e) => !e || typeof e !== 'object')) throw new Error(`review refuses ${tip}: \`ledger\` is not the array \`uv run python infra/scripts/review-ledger.py read ${reportDir} --tip ${tip}\` prints — pass it`)
 // A pre-review covers one tip: the one it read, compared as written, short or long — never an ancestor of it — or a later tip whose tree and commit messages are that tip's, a re-dated or re-signed commit having moved the name and nothing the pre-review grades.
 const sameTip = (e) => typeof e.tip === 'string' && (e.tip === tip || (e.tip.length >= 7 && tip.length >= 7 && (e.tip.startsWith(tip) || tip.startsWith(e.tip))))
-if (!entries.some((e) => e.kind === 'pre-review' && (sameTip(e) || e.sameTreeAndMessages === true))) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on it first, over the amended commit alone after a message-only amend`)
+if (ledger.some((e) => e.against !== undefined && !sameTip({ tip: e.against }))) throw new Error(`review refuses ${tip}: ${ledgerPath} was read against another tip — read it again with --tip ${tip}`)
+if (!ledger.some((e) => e.kind === 'pre-review' && (sameTip(e) || e.sameTreeAndMessages === true))) throw new Error(`review refuses ${tip}: ${ledgerPath} records no pre-review of this tip — run pre-review on it first, over the amended commit alone after a message-only amend, and append the row it returns`)
 
 // --- Read: one reader per lens; the union needs all of them, so the barrier is right ------------
 phase('Read')
@@ -150,10 +133,9 @@ const graded = (
 const standing = graded.filter((f) => !f.refuted)
 log(`after refutation: ${count('Critical', standing)} Critical / ${count('Important', standing)} Important / ${count('Minor', standing)} Minor standing, ${graded.length - standing.length} refuted`)
 
-// --- Record -------------------------------------------------------------------------------------
+// --- Refutation: returned for the caller to append ------------------------------------------------
 // The lenses write their reports before any skeptic runs, and a skeptic writes nothing to the repo, so without this block
 // each lens report heads every refuted finding by its first severity, and its next reader reports one this read answered.
-phase('Record')
 const oneLine = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').replace(/\|/g, '\\|').slice(0, 300)
 const refutation = graded.length
   ? `## Refutation\n\nWritten after the skeptics ran, over the union of every lens; a row here outranks the severity in a heading above.\n\n| # | severity | site | lenses | verdict |\n| --- | --- | --- | --- | --- |\n${graded
@@ -161,18 +143,14 @@ const refutation = graded.length
       .join('\n')}`
   : '## Refutation\n\nNo finding was graded, so no skeptic ran.'
 const lensReports = live.map((r) => lensPath(r.lens))
-const recorded = await agent(
-  `Bookkeeping only. (1) Append exactly one line to ${ledgerPath}, creating the file if absent: {"kind":"review","range":"${range}","tip":"${tip}","ts":"<date -u +%Y-%m-%dT%H:%M:%SZ>"}. (2) Append the block below to each of ${lensReports.join(', ')}, preceded by a blank line, byte for byte as given — do not reword it, re-sort it, or renumber it, and do not touch anything already in those files; a file that does not exist is created holding the block alone, and \`note\` names it. Return appended true once the ledger line and every block are on disk.\n\nThe block:\n\n${refutation}\n\nNo other file, no other command.`,
-  { label: 'record', phase: 'Record', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: RECORDED },
-)
-if (!recorded || !recorded.appended) log(`${ledgerPath} or a lens report did not take this review's rows — a re-review of this branch refuses until a review row exists, and a lens report may still head a refuted finding by its first severity; write them by hand`)
-if (recorded && recorded.note) log(`record: ${recorded.note}`)
-for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block went to the path this workflow names`)
+log(`ledger: write the returned refutation to a file, then uv run python infra/scripts/review-ledger.py append ${reportDir} --kind review --range ${range} --tip ${tip} --refutation <that file> ${lensReports.map((p) => `--report ${p}`).join(' ')}`)
+for (const r of live) if (r.reportPath && r.reportPath !== lensPath(r.lens)) log(`lens ${r.lens} says it wrote ${r.reportPath}, not ${lensPath(r.lens)}: the refutation block goes to the path this workflow names`)
 
 return {
   range,
   tip,
-  recorded: Boolean(recorded && recorded.appended),
+  row: { kind: 'review', range, tip },
+  refutation,
   lenses: live.map((r) => ({ name: r.lens, verdict: r.verdict, reportPath: lensPath(r.lens), executed: r.executed })),
   droppedLenses: dropped,
   counts: { Critical: count('Critical', standing), Important: count('Important', standing), Minor: count('Minor', standing), refuted: graded.length - standing.length },

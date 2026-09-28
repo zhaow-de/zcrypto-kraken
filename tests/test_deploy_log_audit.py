@@ -225,3 +225,36 @@ def test_the_feed_flags_are_refused_where_they_would_do_nothing(tmp_path, argv):
     with pytest.raises(SystemExit) as raised:
         audit.main([*argv, "--log", _log(tmp_path, [_row("2026-09-01T01:00:00Z", tags="engine")])])
     assert raised.value.code == 2
+
+
+def test_since_counts_the_engine_rows_stamped_at_or_after_it(tmp_path, capsys):
+    """All three rows sit 200 s past a boundary, outside the gap; the instant is the second row's, once at an offset."""
+    log = _log(
+        tmp_path,
+        [
+            _row("2026-09-01T00:03:20Z", tags="engine"),
+            _row("2026-09-01T04:03:20Z", tags="engine"),
+            _row("2026-09-01T08:03:20Z", tags="engine"),
+        ],
+    )
+    for since in ("2026-09-01T04:03:20Z", "2026-09-01T06:03:20+02:00"):
+        assert audit.main(["engine-window", "--log", log, "--since", since]) == 0
+        assert capsys.readouterr().out.strip() == "engine rows 2 outside window 2 failed 0 on the completion floor 0", since
+    assert audit.main(["engine-window", "--log", log]) == 0
+    assert capsys.readouterr().out.strip() == "engine rows 3 outside window 3 failed 0 on the completion floor 0"
+
+
+def test_since_narrows_the_maintenance_arm_too(tmp_path, capsys):
+    log = _log(tmp_path, [_row("2026-08-28T23:40:17Z"), _row("2026-09-01T00:30:00Z")])
+    assert audit.main(["maintenance", "--log", log, "--from-snapshot", str(FEED), "--since", "2026-09-01T00:30:00Z"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "rows inside an API-impacting window 1 of 1",
+        "  2026-09-01T00:30:00Z zcrypto REST API rate-limit change",
+    ]
+
+
+@pytest.mark.parametrize("since", ["2026-09-01T04:03:20", "2026-09-01", "yesterday"])
+def test_since_refuses_a_value_that_names_no_instant(tmp_path, since):
+    with pytest.raises(SystemExit) as raised:
+        audit.main(["engine-window", "--log", _log(tmp_path, [_row("2026-09-01T01:00:00Z", tags="engine")]), "--since", since])
+    assert raised.value.code == 2
