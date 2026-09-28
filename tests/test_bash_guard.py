@@ -84,7 +84,7 @@ REFUSED = [
     ("git add . ; git commit -n -m msg", "-n"),
     ("git add x\ngit commit -n -m x", "-n"),
     ("git commit -m msg --no-verify >/dev/null 2>&1", "--no-verify"),
-    ("git 2>/dev/null commit -n", "-n"),  # an fd number is its redirection's, and no subcommand
+    ("git 2>/dev/null commit -n", "-n"),
     ("git commit -m 2 > /dev/null -n", "-n"),  # a number apart from its redirection is a word: here -m's value
     (f'git commit -m "{HEREDOC_MESSAGE}" --no-verify', "--no-verify"),
     (f'git commit --no-verify -m "{HEREDOC_MESSAGE}"', "--no-verify"),
@@ -429,6 +429,17 @@ AGENT_WRITES = [
     ("0<&- git push origin x", "git push origin x"),
     ("git 2>/dev/null push origin x", "git push origin x"),
     ("2>/dev/null gh pr merge 624", "gh pr merge 624"),
+    ("{fd}>/dev/null git push origin x", "'{fd}' git push origin x"),
+    ("{fd}>&- git push origin x", "'{fd}' git push origin x"),
+    ("2>/dev/null {fd}>x git push origin x", "'{fd}' git push origin x"),
+    ("{fd}>/dev/null gh pr merge 624", "'{fd}' gh pr merge 624"),
+    ("coproc git push origin x", "coproc git push origin x"),
+    ("flock /tmp/l git push origin x", "flock /tmp/l git push origin x"),
+    ("xargs git push origin x", "xargs git push origin x"),
+    ("eval git push origin x", "eval git push origin x"),
+    ("case x in x) git push;; esac", "case x in x git push"),
+    ("echo git push origin x", "echo git push origin x"),
+    ("echo gh pr merge 624", "echo gh pr merge 624"),
 ]
 
 # (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
@@ -484,6 +495,10 @@ AGENT_IN_MAIN = [
     ("git fetch origin develop:develop", MAIN, "git fetch origin develop:develop"),
     ("git worktree prune", MAIN, "git worktree prune"),
     ("2>/dev/null git clean -fdx", MAIN, "git clean -fdx"),
+    ("{fd}>&- git reset --hard", MAIN, "'{fd}' git reset --hard"),
+    ("flock /tmp/l git clean -fdx", MAIN, "flock /tmp/l git clean -fdx"),
+    ("echo git clean -fdx", MAIN, "echo git clean -fdx"),
+    ("grep -n git README.md", MAIN, "grep -n git README.md"),
 ]
 
 # (command, the payload's cwd, the stage the message must name) -- refused from a dispatched agent
@@ -496,6 +511,8 @@ AGENT_BRANCH_DELETES = [
     (f"git -C {WORKTREE} branch -D develop", MAIN, f"git -C {WORKTREE} branch -D develop"),
     ("git branch --del x", "/tmp/elsewhere", "git branch --del x"),
     ("2>/dev/null git branch -D x", WORKTREE, "git branch -D x"),
+    ("{fd}>/dev/null git branch -D x", WORKTREE, "'{fd}' git branch -D x"),
+    ("echo git branch -D x", WORKTREE, "echo git branch -D x"),
 ]
 
 # (command, the payload's cwd, the stage the message must name, what it says the stage does) -- refused from a
@@ -567,10 +584,6 @@ AGENT_ADMITTED = [
     ("git fetch origin develop", WORKTREE),
     ('git commit -m "then git push"', WORKTREE),
     ('echo "git push"', WORKTREE),
-    ("echo git push origin x", WORKTREE),
-    ("echo git branch -D x", WORKTREE),
-    ("echo gh pr merge 624", WORKTREE),
-    ("echo git clean -fdx", MAIN),
     (">out git status", MAIN),
     ("gh pr view 624 --json body", WORKTREE),
     ("gh pr list --state merged", WORKTREE),
