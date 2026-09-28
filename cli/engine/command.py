@@ -744,26 +744,15 @@ def _seed_venue_state(journal_dir: Path) -> dict | None:
 def _seed_exec_positions(journal_dir: Path) -> dict[str, float] | None:
     """The startup seed for the symbol-labelled positions gauge: the newest `venue-<HH>.json` that is
     both `"ok"` and `schema_version == 2`, carried forward through every `fill` line the `exec-*.json`
-    rows stamp after its `state.snapshot_at` -- the event's `qty`, signed by the row's side under its
-    symbol -- so a restart republishes what the gauge last read and not a position the engine's own
-    fills have since closed. The basis is the Cache's, the gauge's own: the record is the Cache's
-    positions at the snapshot and a `fill` line is one event the Cache applied, stamped in the
-    dispatch that applied it, both on the one thread, so a fill the Cache took before the snapshot is
-    in the record and stamped before it. A `reconciled` line is not folded: it is a ledger repair the
-    Cache took at a restart's reconciliation, ahead of a catch-up record's snapshot, or never, the
-    re-read pass's, or after the newest record's snapshot at a restart that took no catch-up --
-    folded, a catch-up restart would read the opener's fill twice; unfolded, the no-catch-up shape reads
-    the record's figure over what that fill changed. A fill credited below its quantity moved the
-    Cache by its quantity all the same, so `qty` and not `credited_qty`. A symbol within
-    `FLAT_TOLERANCE` of zero reads 0.0, the gauge's reading over an empty `positions_open`, since the
-    dark-with-exposure rule reads a float residue as exposure. What the Cache never took is not here,
-    and what it never let go, a position closed by hand, stays as the gauge kept it: this fold is the
-    gauge's reading for the seconds before the executor's first tick settles it from the venue's own
-    holdings, and its fallback when that read fails. A base-keyed v1 record is skipped even when
-    `"ok"`, never coerced, because it
-    cannot honestly produce a symbol label. Same no-try/except and validate-before-`status` contract
-    as `_seed_venue_state`, the exec records under it too: a malformed one raises rather than being
-    skipped."""
+    rows stamp after its `state.snapshot_at`, the event's `qty` signed by the row's side under its
+    symbol. The basis is the Cache's, the gauge's own: a `reconciled` line is a repair the Cache took at a
+    restart ahead of a catch-up record's snapshot, or never, so folding it would count a catch-up
+    restart's fill twice; and a fill credited below its quantity still moved the Cache by `qty`. A symbol
+    within `FLAT_TOLERANCE` of zero reads 0.0, since the dark-with-exposure rule reads a float residue as
+    exposure. The fold is the gauge's reading until the first tick settles it from the venue's holdings,
+    and its fallback when that read fails. A base-keyed v1 record is skipped even when `"ok"`, never
+    coerced, because it cannot honestly produce a symbol label. Same no-try/except and
+    validate-before-`status` contract as `_seed_venue_state`, the exec records under it too."""
     from cli.engine.execledger import FLAT_TOLERANCE, read_exec_record, validate_exec_record
     from cli.engine.venueledger import read_venue_record, validate_venue_record
 

@@ -821,9 +821,8 @@ rules:
     orgId: 1
     # The rule that catches the one failure nothing else can see: a regression that drops the
     # gate evaluation from the cycle path, or a ledger write failing at every boundary, freezes
-    # this heartbeat -- the executor's idle refresh moves the five readings and never this series,
-    # so they read live while the boundary's exec record is gone -- cycle telemetry stays healthy,
-    # and every dashboard reads green while the envelope's record is gone.
+    # this heartbeat while the idle refresh keeps the five readings moving and cycle telemetry
+    # stays healthy, so every dashboard reads green while the envelope's record is gone.
     # Follows zcrypto-gate-exporter-stale's shape. Threshold = one cycle interval plus slack.
     condition: C
     data:

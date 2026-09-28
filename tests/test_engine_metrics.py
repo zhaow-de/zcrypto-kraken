@@ -958,10 +958,9 @@ def _exec_row_with_fills(journal_dir: Path, cycle_ts: datetime, client_order_id:
 
 
 def test_seed_exec_positions_carries_the_newest_record_forward_through_the_fills_journaled_after_its_snapshot(tmp_path):
-    """The 2026-09-25 shape: a 20:00Z record carrying two positions, and the engine's own fills closing both before
-    a 20:52Z restart. The fold reads the record's positions through every fill the exec rows stamp after its snapshot
-    -- the opening fills before it are in the record already -- so the seed reads what the gauge read before the
-    restart, the venue's own state, and not the record's figures."""
+    """A record carrying two positions and the engine's own fills closing both before a restart: the
+    opening fills stamped before the record's snapshot are in it already, so the fold reads only the
+    fills after it and the seed reads the book the fills left, not the record's figures."""
     journal_dir = tmp_path / "journal"
     day = datetime(2026, 9, 25, tzinfo=UTC)
     positions = {"BTC/EUR": 0.00026906, "ETH/EUR": -0.00840738}
@@ -1835,11 +1834,8 @@ def test_the_sink_moves_the_heartbeat_when_the_ledger_write_succeeds():
 
 
 def test_a_production_venue_read_is_refused_here_before_any_client_is_built(monkeypatch):
-    """The freeze test's tick runs the startup pass, whose settle returns before the holdings read
-    while `_metrics` is None, so the autouse refusal guards every case this file gains later that
-    ticks an executor with the hooks installed, and is not a fix for that one. The trade credentials
-    are cleared first, so a read that got past the refusal would refuse on them before building a
-    client."""
+    """The trade credentials are cleared first, so a read that got past the refusal refuses on them
+    before building a client."""
     monkeypatch.delenv("KRAKEN_SPOT_API_KEY", raising=False)
     monkeypatch.delenv("KRAKEN_SPOT_API_SECRET", raising=False)
     with pytest.raises(pytest.fail.Exception, match="the production venue read"):

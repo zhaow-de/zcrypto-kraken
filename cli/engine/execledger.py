@@ -212,11 +212,10 @@ def update_plan_intent(
     _store(path, doc)
 
 
-# A folded sum of per-fill floats lands an ulp off an exact figure -- 0.001 closed by 0.0007 and 0.0003 reads 5.4e-20 --
-# so a reader that must agree with the gauge's exact 0 on a flat book snaps within this to 0.0; the executor's
-# `_OVERFILL_TOLERANCE` bounds an overfill on the same arithmetic. Absolute, so the residue it covers grows with the
-# position's size in base units: an eight-decimal close lands past it from about 5000 units on, where a relative snap
-# would be owed.
+# A folded sum of per-fill floats lands an ulp off an exact figure, so a reader that must agree with the gauge's exact 0
+# on a flat book snaps within this to 0.0; the executor's `_OVERFILL_TOLERANCE` bounds an overfill on the same
+# arithmetic. Absolute, while the residue grows with the position's size in base units: a position of thousands of
+# units would owe a relative snap.
 FLAT_TOLERANCE = 1e-12
 
 
