@@ -112,20 +112,33 @@ CHECKOUT_REMEDY = (
     "A dispatched agent works in its worktree -- `git -C <worktree>` or `cd <worktree> &&`, a path under "
     ".claude/worktrees/ or .tmp/; the main checkout is the coordinator's."
 )
-# Per subcommand: what it writes; its short options that write it, each with its verb; the long ones; and the short
-# options whose value is the rest of their bundle.
-REF_WRITES = {
+# Per subcommand whose options decide whether it rewrites a ref: what it rewrites; those options, short and long, each
+# with its verb; then, as VALUE reads them, short options whose value is the rest of the bundle or else the next token,
+# short options whose value is attached only, and long options taking a value.
+REF_OPTIONS = {
     "branch": (
         "a branch",
-        {"d": "deletes", "D": "deletes", "m": "renames", "M": "renames", "f": "forces"},
-        {"--delete": "deletes", "--move": "renames", "--force": "forces"},
-        "ut",
+        {"d": "deletes", "D": "deletes", "m": "renames", "M": "renames", "c": "copies", "C": "copies", "f": "forces"},
+        {"--delete": "deletes", "--move": "renames", "--copy": "copies", "--force": "forces"},
+        "u",
+        "t",
+        {"set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"},
     ),
-    "update-ref": ("a ref", {"d": "deletes"}, {}, "m"),
+    "tag": (
+        "a tag",
+        {"d": "deletes", "f": "forces"},
+        {"--delete": "deletes", "--force": "forces"},
+        "mFu",
+        "n",
+        {"message", "file", "trailer", "cleanup", "local-user", "contains", "no-contains", "merged", "no-merged",
+         "points-at", "sort", "format"},
+    ),
+    "symbolic-ref": ("a symbolic ref", {"d": "deletes"}, {"--delete": "deletes"}, "m", "", set()),
 }
+REFLOG_WRITES = {"delete", "expire"}
 REFS_REMEDY = (
-    "Refs and the worktree list are the repository's, one set for every worktree: a dispatched agent deletes, renames "
-    "or forces no branch, deletes no ref and moves no worktree; it reports the branches it made."
+    "Refs, reflogs and the worktree list are the repository's, one set for every worktree: a dispatched agent rewrites "
+    "none of them and moves no worktree; it creates the branches it needs and reports them."
 )
 WORKTREE_REMEDY = (
     "A dispatched agent removes only a scratch tree it made, named by a path and not a variable: one under the .tmp/ "
@@ -679,21 +692,49 @@ def moves_checkout(sub, rest):
     return sub in MOVES
 
 
-def ref_write(sub, rest):
-    what, shorts, longs, valued = REF_WRITES[sub]
-    for a in rest:
-        if a == "--":
-            return None
-        name = a.partition("=")[0]
-        if name.startswith("--"):
-            verb = next((v for opt, v in longs.items() if opt.startswith(name)), None)
-        elif a.startswith("-"):
-            verb = next((shorts[c] for c in re.split(f"[{valued}]", a[1:])[0] if c in shorts), None)
+def option_walk(rest, short_value, short_attached, long_value):
+    # A subcommand's options -- a short one as its letter, a long one as its name -- and its operands; an option's value
+    # is neither.
+    flags, ops, j = [], [], 0
+    while j < len(rest):
+        tok = rest[j]
+        j += 1
+        if tok == "--":
+            ops.extend(rest[j:])
+            break
+        if tok.startswith("--"):
+            name = tok.partition("=")[0]
+            flags.append(name)
+            if "=" not in tok and any(o.startswith(name[2:]) for o in long_value):
+                j += 1
+        elif tok.startswith("-") and len(tok) > 1:
+            for k, ch in enumerate(tok[1:], 1):
+                flags.append(ch)
+                if ch in short_value and k == len(tok) - 1:
+                    j += 1
+                if ch in short_value or ch in short_attached:
+                    break
         else:
-            verb = None
+            ops.append(tok)
+    return flags, ops
+
+
+def ref_write(sub, rest):
+    if sub == "update-ref":
+        return "rewrites a ref"
+    if sub == "reflog" and rest[:1] and rest[0] in REFLOG_WRITES:
+        return f"{rest[0]}s reflog entries"
+    if sub == "worktree" and rest[:1] == ["move"]:
+        return "moves a worktree"
+    if sub not in REF_OPTIONS:
+        return None
+    what, shorts, longs, *values = REF_OPTIONS[sub]
+    flags, ops = option_walk(rest, *values)
+    for f in flags:
+        verb = next((v for o, v in longs.items() if o.startswith(f)), None) if f.startswith("--") else shorts.get(f)
         if verb:
             return f"{verb} {what}"
-    return None
+    return f"rewrites {what}" if sub == "symbolic-ref" and len(ops) > 1 else None
 
 
 def resolve(here, target):
@@ -785,14 +826,9 @@ def judge_agent(words, here, raw, session):
         return
     for d in chdirs:
         here = resolve(here, d)
-    writes = ref_write(sub, rest) if sub in REF_WRITES else None
+    writes = ref_write(sub, rest)
     if writes:
         refuse(f"`{spelled(words)}` {writes} from a dispatched agent, whatever directory it runs in; in `{raw}`. {REFS_REMEDY}")
-    if sub == "worktree" and rest[:1] == ["move"]:
-        refuse(
-            f"`{spelled(words)}` moves a worktree from a dispatched agent, whatever directory it runs in; in `{raw}`. "
-            f"{REFS_REMEDY}"
-        )
     if sub == "worktree" and rest[:1] == ["remove"]:
         hit = next((a for a in operands(rest[1:]) if not scratch_tree(resolve(here, a), session)), None)
         if hit is not None:
