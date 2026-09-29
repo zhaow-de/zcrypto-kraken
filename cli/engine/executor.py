@@ -574,7 +574,7 @@ def cancel_venue_order(venue_order_id: str, instrument_id: str, *, base_url: str
 
 
 def _bare_client(base_url: str | None):
-    """The bare `KrakenSpotHttpClient` the three venue functions beside this one build, on the trade
+    """The bare `KrakenSpotHttpClient` the venue functions beside this one build, on the trade
     credentials -- the construction `zcrypto engine flatten` uses -- refused before it is built when
     the environment lacks them. `base_url` is None on the engine, which is the venue's own."""
     from nautilus_trader.adapters.kraken import KrakenSpotHttpClient
@@ -1395,14 +1395,6 @@ class ProbeExecutor:
             venue_order_id = _row_venue_order_id(entry[1])
             if venue_order_id is not None:
                 rows_by_venue[venue_order_id] = entry
-        # The window's closed rows by txid: a restored own order whose row a previous startup wrote
-        # terminal from the venue's report is still listed open by the Cache at every later restart
-        # (spec 00120 D7), unattached here since the rows above are the open ones.
-        finished_by_venue = {}
-        for _, row in finished.values():
-            venue_order_id = _row_venue_order_id(row)
-            if venue_order_id is not None:
-                finished_by_venue[venue_order_id] = row
         cancelled: set[str] = set()
         for order in resting:
             client_order_id = str(getattr(order, "client_order_id", ""))
@@ -1413,21 +1405,17 @@ class ProbeExecutor:
             if attached is not None:
                 self._attach(attached, client_order_id, venue_order_id=venue_order_id)
             own = self._cache_enabled and str(getattr(order, "strategy_id", "")) == str(self._strategy_id)
-            if attached is None and own and venue_order_id in finished_by_venue:
+            report = None if not venue_orders or venue_order_id is None else venue_orders.get(venue_order_id)
+            if client_order_id in self._restored and report is not None and report.order_status in _ADOPTED_TERMINAL_STATES:
+                # The venue holds the order closed: it ended while this engine was down, and the open
+                # copy is a previous process's, own or EXTERNAL, listed by `orders_open` at this and
+                # every later restart (spec 00120 D7). The venue's report decides, never the copy's id
+                # or the ledger's closed row: a row a mint closed can stand for an order still resting,
+                # and without a report the order is classified and cancelled as an open one is.
                 logger.warning(
                     "restored order %s is %s at the venue -- its stale open copy stays in the Cache and no cancel is sent",
                     client_order_id,
-                    finished_by_venue[venue_order_id].get("state"),
-                )
-                continue
-            if attached is not None and attached[1].get("state") not in _OPEN_ORDER_STATES:
-                # The sweep above wrote the row terminal from the venue's report: the order ended while
-                # this engine was down, and the open copy is the previous process's, listed by
-                # `orders_open` for the process's life (spec 00120 D7).
-                logger.warning(
-                    "restored order %s is %s at the venue -- its stale open copy stays in the Cache and no cancel is sent",
-                    client_order_id,
-                    attached[1].get("state"),
+                    _ADOPTED_TERMINAL_STATES[report.order_status],
                 )
                 continue
             payload = attached[1].get("order") if attached is not None else None
@@ -1725,6 +1713,12 @@ class ProbeExecutor:
                         self._rows_the_pass_repaired.add(client_order_id)
                     if recancel and report.order_status not in _ADOPTED_TERMINAL_STATES:
                         self._recancel(boundary, row, venue_order_id, report, order_id=order_id)
+                        if self._restored_row(row):
+                            # A restored row whose minted terminal stood for an order still resting: the
+                            # re-cancel writes it `canceled` from the repaired figure, and its intent is
+                            # written then, as the closed report's arm below writes it.
+                            self._restored_fills.discard(client_order_id)
+                            self._settle_restored_intent(boundary, row)
                         continue
                     _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
                     self._reconcile_adopted_row(
@@ -1761,7 +1755,8 @@ class ProbeExecutor:
         orders alone, which the page has the operator read. A cancel
         that raises -- the cut not over for REST, or a refusal the venue phrases as an error --
         leaves the row and names the hand cancel, the refused-cancel arm's precedent. No counter
-        moves for the re-cancel and no intent is written; a closed report that completes the row
+        moves for the re-cancel and no intent is written here -- a restored row's the caller writes
+        once the row reads `canceled` (`_settle_restored_intent`); a closed report that completes the row
         counts `filled` through `_reconcile_adopted_row`'s arm, the startup's rule."""
         label = _row_label(row, venue_order_id)
         self._reconcile_adopted_row(
@@ -1834,7 +1829,9 @@ class ProbeExecutor:
         fills, the only kind a withdrawal can show on -- and, with the cache enabled, when the Cache's
         order is one it held at construction (`_venue_answers`): every order of the restored set, this
         engine's own and the EXTERNAL copies, whatever its Cache copy's status, and every finished row
-        with fills whatever the Cache holds, so the venue is asked at every restart that held anything. The read reaches back to the earliest such row's
+        with fills whatever the Cache holds, so the venue is asked at every restart that held anything. A
+        finished row of the restored set is asked with no fills too: its stale open copy is withheld from
+        the startup pass's cancel on the venue's report alone. The read reaches back to the earliest such row's
         boundary.
 
         A read that fails leaves those rows unread and returns None, and that is a refusal, not a
@@ -1845,7 +1842,7 @@ class ProbeExecutor:
         for is_finished, entries in ((False, rows.values()), (True, finished.values())):
             for boundary, row in entries:
                 try:
-                    if is_finished and not row["filled_qty"] > _OVERFILL_TOLERANCE:
+                    if is_finished and not row["filled_qty"] > _OVERFILL_TOLERANCE and not self._restored_row(row):
                         continue
                     venue_order_id = _row_venue_order_id(row)
                     if venue_order_id is None:

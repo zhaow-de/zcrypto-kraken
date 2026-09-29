@@ -8351,6 +8351,58 @@ def test_a_restored_orders_stale_open_copy_is_not_cancelled_at_a_later_restart_o
     assert not _kill_file(tmp_path).exists()
 
 
+@pytest.mark.parametrize(
+    "strategy_id, state, filled, status",
+    [
+        ("EXTERNAL", "filled", 0.001, OrderStatus.FILLED),
+        ("EXTERNAL", "canceled", None, OrderStatus.CANCELED),
+        (None, "canceled", None, OrderStatus.CANCELED),
+    ],
+    ids=["external-filled", "external-canceled-unfilled", "own-canceled-unfilled"],
+)
+def test_a_restored_copy_the_venue_holds_closed_is_sent_no_cancel_at_a_later_restart_whatever_its_id(
+    tmp_path, strategy_id, state, filled, status
+):
+    earlier = NOW - timedelta(hours=4)
+    cid = "O-restored" if strategy_id is None else _TXID
+    _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", state=state, add_filled_qty=filled or 0.0)
+    copy = _resting_limit_order(
+        cid, venue_order_id=_TXID, strategy_id=_STUB_STRATEGY_ID if strategy_id is None else StrategyId(strategy_id)
+    )
+    client = StubClient(StubCache(open_orders=[copy]))
+    venue = _VenueOrders(_report(_TXID, status, filled_qty=str(filled or 0)))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert client.canceled == [] and venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert f"restored order {cid} is {state} at the venue -- its stale open copy stays in the Cache and no cancel is sent" in [
+        r.getMessage() for r in records
+    ]
+    assert not _kill_file(tmp_path).exists()
+
+
+def test_a_restored_copy_whose_row_is_closed_is_cancelled_when_the_venue_cannot_be_read(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", state="filled", add_filled_qty=0.001)
+    copy = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=StrategyId("EXTERNAL"))
+    client = StubClient(StubCache(open_orders=[copy]))
+    venue = _VenueOrders(raises=RuntimeError("timed out"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [_TXID]
+
+
 @pytest.mark.parametrize("reduce_only, canceled, line", [
     (False, ["O-restored"], "canceling restored order O-restored, partial -- the ledger does not carry it as a resting reducer"),
     (True, [], "adopted resting order O-restored is a ledgered reducer -- left resting and re-attached"),
@@ -8638,6 +8690,43 @@ def test_a_fill_then_a_terminal_on_a_restored_row_before_the_next_tick_is_repair
     entry = _intent_entry(tmp_path, 0, earlier)
     assert (entry["outcome"], entry["filled_qty"]) == ("revoked", 0.0004 if reduce_only else 0.0)
     assert ex._restored_fills == set() and len(venue.calls) == 2
+
+
+def test_a_minted_terminal_on_a_restored_kept_reducer_the_venue_holds_open_is_re_cancelled_and_its_intent_written(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_restored_order("O-reducer")]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    cancel = _VenueCancel()
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        venue_cancel=cancel,
+        config=_cache_config(tmp_path),
+    )
+    ex.on_timer(NOW)
+    order = client.cache.order(ClientOrderId("O-reducer"))
+    fill = _fill("O-reducer", 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-race")
+    order.apply(fill)
+    ex.on_order_event(fill)
+    canceled = _event(OrderCanceled, client_order_id="O-reducer", reconciliation=True)
+    order.apply(canceled)
+    ex.on_order_event(canceled)
+    assert _record(tmp_path, earlier)["submitted"][0]["state"] == "ambiguous"
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending"
+
+    venue.reports = [_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004")]
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], row["events"][-1]["event"]) == ("canceled", 0.0004, "recancelled")
+    assert [venue_order_id for venue_order_id, _ in cancel.calls] == [_TXID]
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"]) == ("revoked", 0.0004)
 
 
 def test_realized_pnl_takes_the_caches_realizations_at_construction_as_a_baseline(tmp_path):

@@ -4,7 +4,9 @@ The node is the engine's own `build_shadow_node`, with the cache backing attache
 and every venue default redirected to the loopback the driver runs: the two client configs' URLs, the
 gate's venue reader, and the five bare-client reads' `base_url`. Before anything is built the child
 asserts that no production default remains, the autouse `_no_production_venue_read` fixture's rule
-for a node that runs. The strategy the engine registers is subclassed to hand the executor its
+for a node that runs; and the bare client itself is wrapped to refuse a `base_url` off the loopback,
+so a bare-client read the list above does not name reaches no venue with the fake keys either -- it
+raises, and the refusal lands in the record's `errors`. The strategy the engine registers is subclassed to hand the executor its
 quotes on a timer, since the data peer sends none, and to stop the node at the window's end; its
 executor, its startup pass and its ledger writes are the engine's own.
 
@@ -96,6 +98,18 @@ executor_module.cancel_venue_order = partial(executor_module.cancel_venue_order,
 executor_module.read_venue_holdings = partial(executor_module.read_venue_holdings, base_url=CONFIG["base_url"])
 executor_module.read_venue_fills = partial(executor_module.read_venue_fills, base_url=CONFIG["base_url"])
 executor_module.read_venue_positions = partial(executor_module.read_venue_positions, base_url=CONFIG["base_url"])
+_production_bare_client = executor_module._bare_client
+
+
+def _loopback_bare_client(base_url):
+    if base_url is None or not str(base_url).startswith(LOOPBACK_HTTP):
+        refusal = f"a bare venue client was asked for {base_url!r}, off the loopback"
+        RECORD["errors"].append(refusal)
+        raise AssertionError(refusal)
+    return _production_bare_client(base_url)
+
+
+executor_module._bare_client = _loopback_bare_client
 
 
 def _refuse_production_defaults() -> None:
@@ -118,6 +132,7 @@ def _refuse_production_defaults() -> None:
     if not (
         redirected
         and bare
+        and executor_module._bare_client is _loopback_bare_client
         and node_module.read_system_status is _venue_online
         and node_module._data_client_config is _data_client_config
         and node_module._exec_client_config is _exec_client_config

@@ -506,7 +506,12 @@ def exec_canceled(
 def serve_with_sockets(asset_pairs: dict[str, Any] | None = None) -> Iterator[tuple[KrakenLoopback, WsPeer, WsPeer]]:
     """`serve` plus the two WebSocket peers a node's data and execution clients connect to."""
     with serve(asset_pairs) as venue:
-        data, exec_ = WsPeer("data"), WsPeer("exec")
+        data = WsPeer("data")
+        try:
+            exec_ = WsPeer("exec")
+        except BaseException:
+            data.close()
+            raise
         try:
             yield venue, data, exec_
         finally:

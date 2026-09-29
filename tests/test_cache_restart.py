@@ -373,6 +373,64 @@ def test_a_server_that_fails_its_readiness_check_is_stopped_before_the_failure_e
         valkey.kill()
 
 
+def test_an_execution_peer_that_fails_to_start_closes_the_data_peer_before_the_failure_escapes(monkeypatch):
+    closed = []
+
+    class _Peer(lb.WsPeer):
+        def __init__(self, label: str):
+            if label == "exec":
+                raise AssertionError("the exec WebSocket peer did not start")
+            super().__init__(label)
+
+        def close(self) -> None:
+            closed.append(self.label)
+            super().close()
+
+    monkeypatch.setattr(lb, "WsPeer", _Peer)
+    with pytest.raises(AssertionError, match="exec WebSocket peer"), lb.serve_with_sockets():
+        pass
+    assert closed == ["data"]
+
+
+_BARE_CLIENT_PROBE = """
+import runpy, sys
+namespace = runpy.run_path(sys.argv[2], run_name="cache_restart_child_probe")
+namespace["_refuse_production_defaults"]()
+from cli.engine import executor
+refused = []
+for url in (None, "https://api.kraken.com", "http://127.0.0.2:1"):
+    try:
+        executor._bare_client(url)
+    except AssertionError:
+        refused.append(url)
+executor._bare_client("http://127.0.0.1:1")
+print("PROBE", repr((refused, len(namespace["RECORD"]["errors"]))))
+"""
+
+
+def test_the_child_refuses_a_bare_venue_client_off_the_loopback_whichever_read_asks(tmp_path):
+    config = {
+        "phase": 0,
+        "api_key": lb.API_KEY,
+        "api_secret": lb.API_SECRET,
+        "password": "unused",
+        "base_url": "http://127.0.0.1:1",
+        "ws_public": "ws://127.0.0.1:1",
+        "ws_private": "ws://127.0.0.1:1",
+    }
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONDONTWRITEBYTECODE": "1", "HOME": str(tmp_path)}
+    result = subprocess.run(
+        [sys.executable, "-c", _BARE_CLIENT_PROBE, json.dumps(config), str(CHILD)],
+        capture_output=True,
+        text=True,
+        timeout=CHILD_TIMEOUT,
+        cwd=REPO,
+        env=env,
+    )
+    lines = [line for line in result.stdout.splitlines() if line.startswith("PROBE ")]
+    assert lines == ["PROBE ([None, 'https://api.kraken.com', 'http://127.0.0.2:1'], 3)"], result.stdout + result.stderr
+
+
 def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(phase_one):
     """The restore of both identities and the boot line: the restarted node holds the order under
     its own client order id and strategy, matched by venue order id, the position at its entry
