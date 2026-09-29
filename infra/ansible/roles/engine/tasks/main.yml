@@ -537,8 +537,10 @@
   check_mode: false
 
 # The check runs under no_log, since a refusal quotes the offending line and the AUTH line carries the
-# requirepass; a refusal removes the 0600 candidate and stops with haproxy's report, the requirepass
-# masked -- the floor above holds it to letters and digits, so it appears in the report verbatim.
+# requirepass; a failure -- haproxy's refusal or the run itself -- removes the 0600 candidate and stops
+# with the run's report, the requirepass masked (the floor above holds it to letters and digits, so it
+# appears in the report verbatim). The hand check binds the live copy with --mount, which refuses a
+# missing source: -v would create it as a root directory, the hazard the comment above names.
 - name: validate the rendered cache proxy config, or remove it and stop
   block:
     - name: validate the rendered cache proxy config with the pinned image's own haproxy -c
@@ -557,16 +559,30 @@
         state: absent
       check_mode: false
 
-    - name: refuse the cache proxy config haproxy -c rejected (its report shown with the requirepass masked)
+    - name: probe — is there a live cache proxy config the unit still reads
+      ansible.builtin.stat:
+        path: /opt/zcrypto-engine/haproxy.cfg
+      register: engine_cache_proxy_live_config
+      check_mode: false
+
+    - name: refuse the cache proxy config whose validation failed (its report shown with the requirepass masked)
       ansible.builtin.fail:
         msg: >-
-          haproxy -c refused the rendered cache proxy config: it was not installed, its candidate is
-          removed and no engine file was rewritten, so the unit still reads the live
-          /opt/zcrypto-engine/haproxy.cfg. haproxy's report, the requirepass masked:
+          The rendered cache proxy config's validation failed -- haproxy -c refusing the render, or the
+          validation run itself (Docker, the image); the report below says which. It was not installed,
+          its candidate is removed and no engine file was rewritten;
+          {% if engine_cache_proxy_live_config.stat.exists %}the unit still reads the live /opt/zcrypto-engine/haproxy.cfg.
+          {% else %}no live /opt/zcrypto-engine/haproxy.cfg exists yet, so the proxy has no config until a converge installs one.
+          {% endif %}
+          The report, the requirepass masked:
           {{ ((ansible_failed_result.stdout | default('')) ~ ' ' ~ (ansible_failed_result.stderr | default(''))) | replace(cache_sentinel_requirepass, '<requirepass>') }}
-          The same check by hand on {{ inventory_hostname }}, over the live copy:
-          sudo docker run --rm --user 0:0 -v /opt/zcrypto-engine/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+          Reproduce it with converge.sh's preview, this run's arguments and --check: it re-renders and
+          re-validates the candidate and prints this same report.
+          {% if engine_cache_proxy_live_config.stat.exists %}The check by hand on {{ inventory_hostname }}, over the live copy:
+          sudo docker run --rm --user 0:0
+          --mount type=bind,src=/opt/zcrypto-engine/haproxy.cfg,dst=/usr/local/etc/haproxy/haproxy.cfg,readonly
           {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }} haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+          {% endif %}
 
 - name: install the validated cache proxy config (changed only where it differs from the live copy)
   ansible.builtin.copy:

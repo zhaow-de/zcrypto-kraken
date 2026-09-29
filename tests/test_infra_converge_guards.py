@@ -1112,15 +1112,20 @@ def test_the_cache_proxy_config_is_validated_before_it_is_installed_and_never_lo
     assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
 
 
-def test_a_refused_cache_proxy_config_removes_its_candidate_and_stops_with_the_report_masked():
-    """The check runs under no_log, so the refusal's own message is the operator's pointer: haproxy's
-    report with the requirepass masked, and the same check by hand over the live copy."""
+@pytest.mark.parametrize("live", [True, False], ids=["a-live-copy", "the-first-converge"])
+def test_a_refused_cache_proxy_config_removes_its_candidate_and_stops_with_the_report_masked(live):
+    """The check runs under no_log, so the failure's own message is the operator's pointer: the run's
+    report with the requirepass masked, the preview that reproduces it, and -- only when a live copy
+    exists -- the check by hand over it, bound with --mount, which refuses a missing source where -v
+    would create it as a directory the next install then writes into."""
     from ansible.template import trust_as_template
 
     block = find_task(load_tasks(ENGINE), "validate the rendered cache proxy config, or remove it and stop")
-    remove, refuse = block["rescue"]
+    remove, stat, refuse = block["rescue"]
     assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
     assert remove["check_mode"] is False
+    assert stat["ansible.builtin.stat"] == {"path": "/opt/zcrypto-engine/haproxy.cfg"}
+    assert stat["register"] == "engine_cache_proxy_live_config" and stat["check_mode"] is False
     assert "no_log" not in refuse
     variables = {
         "cache_sentinel_requirepass": "Sentinel12345",
@@ -1128,16 +1133,25 @@ def test_a_refused_cache_proxy_config_removes_its_candidate_and_stops_with_the_r
             "stdout": "",
             "stderr": '[ALERT] config : parsing [haproxy.cfg:30] : tcp-check send "AUTH Sentinel12345\\r\\n" bad',
         },
+        "engine_cache_proxy_live_config": {"stat": {"exists": live}},
         "inventory_hostname": "zcrypto",
         "engine_cache_proxy_image": "haproxy",
         "engine_cache_proxy_image_digest": "sha256:" + "c" * 64,
     }
     msg = str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(refuse["ansible.builtin.fail"]["msg"])))
     assert "Sentinel12345" not in msg and "AUTH <requirepass>" in msg and "haproxy.cfg:30" in msg, msg
-    assert (
-        "sudo docker run --rm --user 0:0 -v /opt/zcrypto-engine/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro "
-        "haproxy@sha256:" + "c" * 64 + " haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg"
-    ) in msg, msg
+    assert "validation failed" in msg and "refused the rendered" not in msg, msg
+    assert "converge.sh's preview" in msg and "--check" in msg, msg
+    assert "-v /opt/zcrypto-engine/haproxy.cfg:" not in msg, msg
+    hand = (
+        "sudo docker run --rm --user 0:0 --mount type=bind,src=/opt/zcrypto-engine/haproxy.cfg,"
+        "dst=/usr/local/etc/haproxy/haproxy.cfg,readonly haproxy@sha256:"
+        + "c" * 64
+        + " haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg"
+    )
+    assert (hand in msg) is live, msg
+    assert ("the unit still reads the live /opt/zcrypto-engine/haproxy.cfg" in msg) is live, msg
+    assert ("no live /opt/zcrypto-engine/haproxy.cfg exists yet" in msg) is not live, msg
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
