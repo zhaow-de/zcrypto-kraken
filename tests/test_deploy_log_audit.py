@@ -204,6 +204,13 @@ def test_engine_window_judges_a_cache_link_row_that_reaches_the_engine_host(tmp_
     assert capsys.readouterr().out.strip().startswith(expected)
 
 
+def test_engine_window_leaves_out_a_cache_link_row_that_skipped_engine(tmp_path, capsys):
+    """site.yml holds the cache_link role off where engine is skipped, so such a row changed nothing the gap guards."""
+    row = {**_row("2026-09-01T00:03:20Z", tags="firewall,cache-link"), "skip_tags": "engine"}
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    assert capsys.readouterr().out.strip().startswith("engine rows 0 outside window 0 ")
+
+
 def test_an_unreachable_feed_exits_2_rather_than_counting_zero(tmp_path, capsys, monkeypatch):
     def _unreachable(*_args, **_kwargs):
         raise urllib.error.URLError("no route to host")

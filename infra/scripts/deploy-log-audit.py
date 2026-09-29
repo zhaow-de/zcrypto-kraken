@@ -148,10 +148,13 @@ def _inventory_groups() -> dict[str, set[str]]:
 def gated_by_the_engine_window(row: dict, groups: dict[str, set[str]]) -> bool:
     """An `engine` row, or a `cache-link` row whose limit reaches an engine host: site.yml's window guard
     carries both tags, since the cache_link handler restarts the mesh interface the engine's cache session
-    crosses. A limit is host and group names, comma-separated, and an absent one is the whole inventory."""
+    crosses. A limit is host and group names, comma-separated, and an absent one is the whole inventory. A row
+    that skipped `engine` ran neither the guard nor, by the cache_link role's `when`, the role."""
     tags = row["tags"].split(",")
     if "engine" in tags:
         return True
+    if "engine" in (row.get("skip_tags") or "").split(","):
+        return False
     reached = {h for part in (row.get("limit") or "all").split(",") for h in (groups.get(part.strip()) or {part.strip()})}
     return "cache-link" in tags and bool(reached & groups.get("engine_host", set()))
 
