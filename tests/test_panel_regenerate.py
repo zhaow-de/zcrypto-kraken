@@ -150,7 +150,7 @@ def test_eta_over_deadline_refuses_and_restarts_timer(tmp_path):
     # WHICH refusal fired, not just that one did: setsid also denies /dev/tty, and that gate's
     # refusal is rc 3 with the same [stop, start] call log and the same intact tree. Without this
     # the deadline comparison can be deleted outright and the test still passes.
-    assert "02:25 UTC auto-reboot" in r.stderr
+    assert "02:25 UTC reboot slot" in r.stderr
     assert panel.exists()  # nothing deleted
     assert calls(log) == [*STEP1, TIMER_RESTART]
 

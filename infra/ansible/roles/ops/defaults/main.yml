@@ -51,7 +51,8 @@ ops_hot_group: zcrypto-hot
 ops_research_user: zhaow
 
 # node-exporter-style textfile-collector dir the timers publish their .prom files into --
-# `grep -rl ops_textfile_dir infra/ansible/roles/*/templates/*.sh.j2` names the writers.
+# `grep -rl ops_textfile_dir infra/ansible/roles/*/templates/` names the writers, with the ops
+# Alloy compose that mounts it for reading.
 ops_textfile_dir: "{{ ops_data_dir }}/textfile"
 
 # The nightly verify-replay checkpoint (spec 00078 D9): the per-hour raw facts that let the sweep

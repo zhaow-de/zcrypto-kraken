@@ -4,7 +4,7 @@
 # re-converge instead. Traceability: spec 00083 D2.
 #
 # Delete-and-rebuild of the L2 panel tree as one refusing flow: timer stopped first, window sized
-# from the input tree (~2.1 s/MB, x1.2 margin) against the 02:25 UTC auto-reboot, the dead-man
+# from the input tree (~2.1 s/MB, x1.2 margin) against the 02:25 UTC reboot slot, the dead-man
 # pause taken as a TYPED gate (the point of no return stays human), delete, rebuild INSIDE the
 # materialize unit (a stray timer tick collides with an active unit instead of double-writing),
 # then the operator checklist for the halves this host cannot reach (NAS copy, un-pause).
@@ -82,12 +82,12 @@ eta=$(awk -v m="$mb" 'BEGIN{printf "%d", m * 2.1 * 1.2}')
 now=$(date -u +%s)
 deadline=$(date -u -d "$(date -u +%F) 02:25" +%s)
 [ "$now" -ge "$deadline" ] && deadline=$(( deadline + 86400 ))
-echo "input ${mb} MB -> ETA ~$(( eta / 60 )) min incl. margin; auto-reboot deadline epoch $deadline"
+echo "input ${mb} MB -> ETA ~$(( eta / 60 )) min incl. margin; reboot-slot deadline epoch $deadline"
 if [ $(( now + eta )) -ge "$deadline" ]; then
   if [ -n "$override" ]; then
     echo "override accepted: $override"
   else
-    echo "refusing: the rebuild would still be running at the 02:25 UTC auto-reboot (a oneshot unit has no timeout — only that reboot kills it). Re-run earlier in the day, or pass --override \"<reason>\"." >&2
+    echo "refusing: the rebuild would still be running at the 02:25 UTC reboot slot, where ops is rebooted by hand (a oneshot unit has no timeout — only a reboot kills it). Re-run earlier in the day, or pass --override \"<reason>\"." >&2
     systemctl start zcrypto-panel-materialize.timer
     echo "timer restarted (nothing was deleted)."
     exit 3

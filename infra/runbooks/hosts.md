@@ -118,7 +118,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Four warning-severity rules over **one transport**. Which one fired names the failure mode; all four point at the same directory.
+Four warning-severity rules over **one transport**. Which one fired names the failure mode; all four read the textfile directory of the host they name, `/var/lib/zcrypto-node-textfile` on the capture pair and `/var/lib/zcrypto-ops/textfile` on ops.
 
 | uid | condition | what fired means |
 | -- | -- | -- |
@@ -147,7 +147,7 @@ What is at stake: the **attended-reboot safety net** — `node_reboot_required`,
 **Blind spots this family does not close, so do not read its silence as coverage:**
 
 - A **deleted** `.prom` makes its mtime series vanish rather than go stale. `max by (host)` simply drops that dimension and `noDataState: OK` swallows the empty result, so neither staleness rule fires. For `reboot.prom` the deletion is still caught, because `node_reboot_required` disappears with it and the `count()` rule sees that. For `engine-journal-prune.prom` the section below catches it: `zcrypto-engine-journal-prune-dead` reads the prune's own completion gauge under `noDataState: Alerting`.
-- `zcrypto-capture-textfile-missing` has no `or vector(0)` fallback, so it catches **one or two** of the three hosts going silent. If all three stop publishing `node_reboot_required`, the query returns nothing and `noDataState: OK` keeps it green. If both hosts' telemetry is dark, the alloy-dark canaries page instead; if the whole textfile collector failed, `zcrypto-node-collector-failed` does.
+- `zcrypto-capture-textfile-missing` has no `or vector(0)` fallback, so it catches **one or two** of the three hosts going silent. If all three stop publishing `node_reboot_required`, the query returns nothing and `noDataState: OK` keeps it green. If all three hosts' telemetry is dark, the alloy-dark canaries page instead; if the whole textfile collector failed, `zcrypto-node-collector-failed` does.
 
 `zcrypto-capture-prune` publishes no `.prom` at all and is outside all four rules — it has **no metric-plane trace**. Its evidence is its journald line, in Loki (`{host="<host>", container="zcrypto-capture-prune"}`) or on the host (`journalctl -u zcrypto-capture-prune -n 3 --no-pager`), and the unit's own result: `systemctl show -p Result,ExecMainExitTimestamp zcrypto-capture-prune.service`.
 
