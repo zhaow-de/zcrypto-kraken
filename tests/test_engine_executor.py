@@ -8792,6 +8792,41 @@ def test_a_restored_row_an_earlier_process_marked_is_read_again_by_the_re_read_p
     assert (row["state"], row["filled_qty"], len(venue.calls)) == ("ambiguous", pytest.approx(0.0008), 2)
 
 
+@pytest.mark.parametrize(
+    "reports, filled, outcome",
+    [([], 0.0, "pending"), ([_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0002")], 0.0002, "revoked")],
+    ids=["the-startup-marked-it", "the-startup-read-answered-it"],
+)
+def test_the_cancel_ack_of_a_restored_row_writes_its_intent_unless_the_startup_marked_it(tmp_path, reports, filled, outcome):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    credit_0 = {"event": "fill", "at": earlier.isoformat(), "qty": 0.0002, "px": 30000.0, "venue_order_id": _TXID, "credited": 0.0}
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", event=credit_0)
+    copy = _restored_order("O-restored", filled=0.0008)
+    ex = _executor(
+        tmp_path,
+        client=StubClient(StubCache(open_orders=[copy])),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=_VenueOrders(*reports),
+        config=_cache_config(tmp_path),
+    )
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending"
+
+    canceled = _event(OrderCanceled, client_order_id="O-restored")
+    copy.apply(canceled)
+    ex.on_order_event(canceled)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
+        "canceled",
+        pytest.approx(filled),
+        outcome,
+    )
+
+
 def test_a_restored_row_is_read_at_the_venue_when_a_read_of_its_copy_raises(tmp_path, kill_trip_expected):
     class _NoOrderRead(StubCache):
         def order(self, client_order_id):

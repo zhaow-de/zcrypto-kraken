@@ -1935,10 +1935,13 @@ class ProbeExecutor:
         sweep's shape: `filled`, or `revoked` naming the row's kind and whether it filled. A row in
         `_restored_fills` waits: its `filled_qty` is the credit-0 figure until the re-read pass repairs it,
         and the pass writes the intent after that repair; a row the pass could not repair, marked or
-        unread, stays in the set, its intent `pending`, never settled from that figure."""
+        unread, stays in the set, its intent `pending`, never settled from that figure. A row a sweep of
+        this process marked (`_marked_here`), the startup's marks among them, keeps its intent `pending`
+        at its terminal too: its figure is one no read answered, the credit-0 one among them, and its
+        mark names why."""
         if not self._restored_row(row) or row.get("state") in _OPEN_ORDER_STATES:
             return
-        if row["client_order_id"] in self._restored_fills:
+        if row["client_order_id"] in self._restored_fills or self._marked_here(row):
             return
         key = (row.get("plan_id"), row.get("intent_index"))
         try:
