@@ -38,6 +38,8 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.model", "AccountId"),
     ("nautilus_trader.model", "AccountType"),
     ("nautilus_trader.model", "ClientOrderId"),
+    ("nautilus_trader.model", "Currency"),
+    ("nautilus_trader.model", "CurrencyType"),
     ("nautilus_trader.model", "InstrumentId"),
     ("nautilus_trader.model", "LiquiditySide"),
     ("nautilus_trader.model", "OrderSide"),
@@ -66,6 +68,11 @@ PINNED_ATTRIBUTES = [
     # explicitly, so a rename breaks the call rather than silently selecting the other member.
     ("nautilus_trader.adapters.kraken", "KrakenProductType", "SPOT"),
     ("nautilus_trader.adapters.kraken", "KrakenEnvironment", "LIVE"),
+    # The registry calls `cli/engine/node.py` makes before a cache-backed build, and the member the
+    # six Kraken codes are registered under.
+    ("nautilus_trader.model", "Currency", "register"),
+    ("nautilus_trader.model", "Currency", "from_str"),
+    ("nautilus_trader.model", "CurrencyType", "CRYPTO"),
 ]
 
 

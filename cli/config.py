@@ -27,9 +27,22 @@ class FetchConfig:
 
 
 @dataclass(frozen=True)
+class CacheSettings:
+    """The engine's cache-database backing, the [zcrypto.engine.cache] table: `enabled` attaches it
+    at node build, and `host`, `port` and `username` name the proxy the engine reaches it through.
+    The password is no field of this file's: it is read from the environment at node build, so a
+    workstation command reading the same file never needs one."""
+
+    enabled: bool = False
+    host: str = "cache-proxy"
+    port: int = 6379
+    username: str = "engine"
+
+
+@dataclass(frozen=True)
 class EngineConfig:
     """Operational tuning for the `zcrypto engine` shadow node. Each field overrides a built-in
-    default via the [zcrypto.engine] table in zcrypto.toml."""
+    default via the [zcrypto.engine] table in zcrypto.toml; `cache` is its one nested table."""
 
     store_dir: Path = Path("data/engine-store")
     journal_dir: Path = Path("data/engine-journal")
@@ -46,6 +59,7 @@ class EngineConfig:
     # band there is nothing to exceed, so no closed week can ever latch the kill switch. Set it only
     # once a live armed window has shown the engine's own weeks read the way the report says.
     tracking_band_bps: float | None = None
+    cache: CacheSettings = CacheSettings()
 
 
 @dataclass(frozen=True)
@@ -91,6 +105,40 @@ def _build_fetch(table: dict, config_path: Path) -> FetchConfig:
             raise ConfigError(f"[{CONFIG_TABLE}.fetch].{name} in {config_path} must be a positive integer")
         overrides[name] = value
     return FetchConfig(**overrides)
+
+
+def _build_cache(raw: object, config_path: Path) -> CacheSettings:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{CONFIG_TABLE}.engine.cache] in {config_path} must be a table")
+    known = {f.name for f in fields(CacheSettings)}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ConfigError(f"[{CONFIG_TABLE}.engine.cache] in {config_path} has unknown key(s): {', '.join(unknown)}")
+
+    overrides: dict = {}
+
+    if "enabled" in raw:
+        value = raw["enabled"]
+        if not isinstance(value, bool):
+            raise ConfigError(f"[{CONFIG_TABLE}.engine.cache].enabled in {config_path} must be a boolean")
+        overrides["enabled"] = value
+
+    for name in ("host", "username"):
+        if name not in raw:
+            continue
+        value = raw[name]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"[{CONFIG_TABLE}.engine.cache].{name} in {config_path} must be a non-empty string")
+        overrides[name] = value
+
+    if "port" in raw:
+        value = raw["port"]
+        # bool is a subclass of int — reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+            raise ConfigError(f"[{CONFIG_TABLE}.engine.cache].port in {config_path} must be an integer between 1 and 65535")
+        overrides["port"] = value
+
+    return CacheSettings(**overrides)
 
 
 def _build_engine(table: dict, config_path: Path) -> EngineConfig:
@@ -160,6 +208,9 @@ def _build_engine(table: dict, config_path: Path) -> EngineConfig:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ConfigError(f"[{CONFIG_TABLE}.engine].settle_delay_secs in {config_path} must be a positive integer")
         overrides["settle_delay_secs"] = value
+
+    if "cache" in raw:
+        overrides["cache"] = _build_cache(raw["cache"], config_path)
 
     return EngineConfig(**overrides)
 

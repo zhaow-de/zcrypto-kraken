@@ -25,7 +25,7 @@ from nautilus_trader.adapters.kraken import (
 from nautilus_trader.common import LogLevel
 from nautilus_trader.model import AccountType
 
-from cli.config import EngineConfig
+from cli.config import CacheSettings, EngineConfig
 from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, node, startup_action
 from cli.engine.cycle import run_cycle
 from cli.engine.errors import EngineError
@@ -1299,6 +1299,37 @@ def test_the_exec_client_config_does_not_carry_the_credentials_back_out(tmp_path
     assert secret not in caplog.text
 
 
+# --- the cache password (spec 00120 D3) ---------------------------------------------------------
+
+
+def test_the_cache_password_is_never_read_while_the_cache_is_disabled(tmp_path, monkeypatch):
+    # The default config: the variable is not consulted at all, so a workstation `zcrypto` command,
+    # which reads the same file, never needs a password the file must never carry.
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    read = []
+
+    def _tracking_password():
+        read.append(True)
+        return "a-cache-password"
+
+    monkeypatch.setattr(node, "_cache_password", _tracking_password)
+    _record_assembly(tmp_path, monkeypatch)
+    assert read == []
+
+
+def test_the_cache_enabled_with_an_empty_environment_refuses_naming_the_variable(tmp_path, monkeypatch):
+    monkeypatch.delenv(node._CACHE_PASSWORD_VAR, raising=False)
+    with pytest.raises(EngineError) as excinfo:
+        _node_builder(_config(tmp_path, cache=CacheSettings(enabled=True)))
+    assert node._CACHE_PASSWORD_VAR in str(excinfo.value)
+
+
+def test_an_empty_cache_password_is_treated_as_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "")
+    with pytest.raises(EngineError, match=node._CACHE_PASSWORD_VAR):
+        _node_builder(_config(tmp_path, cache=CacheSettings(enabled=True)))
+
+
 # The node is assembled in a CHILD interpreter, one node per child: `zcrypto engine run` builds one
 # node per process, and a node holds Rust-side state whose teardown order is not ours to reason
 # about -- process exit releases strictly more than a dispose() would, and a native abort in the
@@ -1307,7 +1338,9 @@ _BUILD_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
 
-from cli.config import EngineConfig
+from nautilus_trader.model import Currency
+
+from cli.config import CacheSettings, EngineConfig
 import cli.engine.node as node_module
 
 root = Path(sys.argv[1])
@@ -1339,11 +1372,28 @@ def capturing_observer(*args, **kwargs):
 node_module.ShadowStrategy = capturing
 node_module.ExternalOrderObserver = capturing_observer
 node = node_module.build_shadow_node(
-    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=sys.argv[2] == "1")
+    EngineConfig(
+        store_dir=root / "store",
+        journal_dir=root / "journal",
+        exec_enabled=sys.argv[2] == "1",
+        cache=CacheSettings(enabled=sys.argv[3] == "1"),
+    )
 )
+
+
+def resolves(code):
+    try:
+        Currency.from_str(code, strict=True)
+    except ValueError:
+        return False
+    return True
+
+
 (root / "facts.json").write_text(
     json.dumps(
         {
+            # Read after the build: which of the table's codes a strict lookup resolves in this process.
+            "registered": sorted(c.code for c in node_module._KRAKEN_CURRENCIES if resolves(c.code)),
             "trader_id": str(node.trader_id),
             "environment": str(node.environment),
             "is_running": node.is_running,
@@ -1368,17 +1418,23 @@ os._exit(0)
 """
 
 
-def _run_build_probe(tmp_path: Path, *, exec_enabled: bool, credentials: tuple[str, str] | None = None):
+def _run_build_probe(
+    tmp_path: Path, *, exec_enabled: bool, credentials: tuple[str, str] | None = None, cache_enabled: bool = False
+):
     """Assemble the node in a child interpreter. The child's environment carries exactly the
     credentials this call names and nothing inherited, so what the build does with them is the
-    only thing under test."""
+    only thing under test; a cache-enabled build is handed a cache password, since the build
+    refuses without one and the registration under test happens before it."""
     env = os.environ.copy()
     env.pop("KRAKEN_SPOT_API_KEY", None)
     env.pop("KRAKEN_SPOT_API_SECRET", None)
+    env.pop(node._CACHE_PASSWORD_VAR, None)
     if credentials is not None:
         env["KRAKEN_SPOT_API_KEY"], env["KRAKEN_SPOT_API_SECRET"] = credentials
+    if cache_enabled:
+        env[node._CACHE_PASSWORD_VAR] = "a-cache-password"
     return subprocess.run(
-        [sys.executable, "-c", _BUILD_PROBE, str(tmp_path), "1" if exec_enabled else "0"],
+        [sys.executable, "-c", _BUILD_PROBE, str(tmp_path), "1" if exec_enabled else "0", "1" if cache_enabled else "0"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -1435,6 +1491,94 @@ def test_build_shadow_node_refuses_execution_with_an_empty_environment(tmp_path)
     assert result.returncode != 0, f"the build should have refused; stdout={result.stdout!r}"
     assert "KRAKEN_SPOT_API_KEY" in result.stderr and "KRAKEN_SPOT_API_SECRET" in result.stderr
     assert not (tmp_path / "facts.json").exists()
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True], ids=["disabled-registers-nothing", "enabled-registers-the-six"])
+def test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_process_cannot_resolve(tmp_path, cache_enabled):
+    """The store saves a currency as its bare code and the loader resolves it against the process's
+    registry before the adapter parses AssetPairs, so a cache-backed build registers the six Kraken
+    codes the library's own table lacks first; a build with the cache disabled registers nothing,
+    the differential that shows the registration is the build's and not the import's."""
+    facts = _node_build_facts(tmp_path, exec_enabled=False, cache_enabled=cache_enabled)
+    six = ["XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
+    five = ["ADA", "AVAX", "DOT", "LINK", "SOL"]
+    assert facts["registered"] == (sorted(five + six) if cache_enabled else sorted(five))
+
+
+# Every code the basket's twelve pairs carry as base or quote on Kraken's AssetPairs, read off the
+# committed snapshot rather than typed, and which of them a strict lookup resolves before any
+# registration; then the adapter's own parse of the mint fixture through the loopback, which mints
+# the codes it meets, read back field by field.
+_CURRENCY_PROBE = """
+import asyncio, json, os, sys
+from pathlib import Path
+
+from nautilus_trader.model import Currency
+
+from cli.engine.node import _KRAKEN_CURRENCIES
+from cli.engine.store import PAIR_KEYS
+from tests import kraken_loopback
+
+root = Path(sys.argv[1])
+snapshot = json.loads(Path("tests/fixtures/kraken_assetpairs.json").read_text())
+basket_codes = sorted({snapshot[key][side] for key in PAIR_KEYS.values() for side in ("base", "quote")})
+
+
+def fields(c):
+    return [c.code, c.precision, c.iso4217, c.name, str(c.currency_type).rsplit(".", 1)[-1]]
+
+
+def strict(code):
+    try:
+        return fields(Currency.from_str(code, strict=True))
+    except ValueError:
+        return None
+
+
+before = {code: strict(code) for code in basket_codes}
+with kraken_loopback.serve() as venue:
+    async def parse():
+        client = kraken_loopback.client(venue)
+        return await client.request_instruments()
+
+    minted = {}
+    for instrument in asyncio.run(parse()):
+        for currency in (instrument.base_currency, instrument.quote_currency):
+            minted[currency.code] = fields(currency)
+(root / "currencies.json").write_text(
+    json.dumps({"basket_codes": basket_codes, "before": before, "minted": minted, "table": [fields(c) for c in _KRAKEN_CURRENCIES]})
+)
+os._exit(0)
+"""
+
+
+def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_mints(tmp_path):
+    """Three reads in one child, since the adapter's parse registers what it mints: the table names
+    exactly the base and quote codes the twelve pairs carry; a fresh process resolves the five the
+    library's table holds at the table's values and none of the other six; and the adapter's parse
+    of the mint fixture mints `ZEUR`, `XXBT` and `SOL` at the table's values, the rule -- precision
+    8, no ISO number, the code as the name, crypto -- every one of the six follows. A bump that
+    reshapes a minted currency is red here before a store carrying it loads."""
+    result = subprocess.run(
+        [sys.executable, "-c", _CURRENCY_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120, cwd=Path.cwd()
+    )
+    recorded = tmp_path / "currencies.json"
+    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout[-2000:]}\n--- stderr ---\n{result.stderr[-2000:]}"
+    assert recorded.exists(), f"the currency probe produced no result: {detail}"
+    facts = json.loads(recorded.read_text())
+    table = {row[0]: row for row in facts["table"]}
+
+    assert (
+        sorted(table)
+        == facts["basket_codes"]
+        == ["ADA", "AVAX", "DOT", "LINK", "SOL", "XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
+    )
+    resolved = {code: row for code, row in facts["before"].items() if row is not None}
+    assert sorted(resolved) == ["ADA", "AVAX", "DOT", "LINK", "SOL"], detail
+    assert all(resolved[code] == table[code] for code in resolved), (resolved, table)
+    assert facts["minted"] == {code: table[code] for code in ("SOL", "XXBT", "ZEUR")}, (facts["minted"], table)
+    for code in ("XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"):
+        assert table[code] == [code, 8, 0, code, "CRYPTO"], table[code]
 
 
 def test_a_real_build_never_prints_the_credentials(tmp_path):

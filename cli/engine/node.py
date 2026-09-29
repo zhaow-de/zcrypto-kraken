@@ -25,7 +25,7 @@ from nautilus_trader.adapters.kraken import (
 from nautilus_trader.common import Environment, LogLevel
 from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
 from nautilus_trader.live import LiveNode, LiveNodeBuilder
-from nautilus_trader.model import AccountId, AccountType, StrategyId, TraderId
+from nautilus_trader.model import AccountId, AccountType, Currency, CurrencyType, StrategyId, TraderId
 from nautilus_trader.trading import Strategy, StrategyConfig
 
 from cli.config import EngineConfig
@@ -56,6 +56,9 @@ _ACCOUNT_ID = "KRAKEN-001"
 # the refusal below can say WHICH is missing without ever touching a value.
 _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
+# The cache password's variable, rendered onto the engine host beside the two above and read the
+# same way: by name, never a value in a message.
+_CACHE_PASSWORD_VAR = "ZCRYPTO_CACHE_PASSWORD"
 # The client-order-id tag, a venue-visible identifier: registration stamps it into `strategy_id`
 # and into every client order id this strategy mints. Tag-less, registration assigns it
 # positionally off the strategies already registered, so a second strategy registered ahead of this
@@ -69,6 +72,34 @@ _EXEC_TIMER_NAME = "exec-probe-tick"
 # `StrategyId` rather than spelled as a literal, so a rename surfaces in tests/test_engine_node.py
 # instead of as an observer nothing ever reaches and total silence in production.
 _EXTERNAL_STRATEGY_ID = StrategyId("EXTERNAL")
+# Every base and quote code the basket's twelve pairs carry on Kraken's AssetPairs, at the value the
+# adapter mints for it: the store saves a currency as its bare code and the loader resolves that code
+# against this process's registry before the adapter has parsed AssetPairs, so a code the library's
+# own table lacks -- the six Kraken spellings -- fails the load of every instrument, order and
+# position priced in it. The five the table holds are registered at the library's own values, which
+# `Currency.register` leaves in place. tests/test_engine_node.py pins the set and each value against
+# the adapter's parse, so a bump that reshapes a minted currency is red before a store carrying it
+# loads; a registration that disagreed with the adapter would poison its instruments, since a
+# registered code is read rather than minted.
+_KRAKEN_CURRENCIES: tuple[Currency, ...] = (
+    Currency("ADA", 6, 0, "Cardano", CurrencyType.CRYPTO),
+    Currency("AVAX", 8, 0, "Avalanche", CurrencyType.CRYPTO),
+    Currency("DOT", 8, 0, "Polkadot", CurrencyType.CRYPTO),
+    Currency("LINK", 8, 0, "Chainlink", CurrencyType.CRYPTO),
+    Currency("SOL", 8, 0, "Solana", CurrencyType.CRYPTO),
+    Currency("XETH", 8, 0, "XETH", CurrencyType.CRYPTO),
+    Currency("XLTC", 8, 0, "XLTC", CurrencyType.CRYPTO),
+    Currency("XXBT", 8, 0, "XXBT", CurrencyType.CRYPTO),
+    Currency("XXDG", 8, 0, "XXDG", CurrencyType.CRYPTO),
+    Currency("XXRP", 8, 0, "XXRP", CurrencyType.CRYPTO),
+    Currency("ZEUR", 8, 0, "ZEUR", CurrencyType.CRYPTO),
+)
+
+
+def _register_kraken_currencies() -> None:
+    """Register each of `_KRAKEN_CURRENCIES`, leaving one the registry already holds as it is."""
+    for currency in _KRAKEN_CURRENCIES:
+        Currency.register(currency)
 
 
 def _utc_now() -> datetime:
@@ -482,6 +513,12 @@ def _credentials() -> tuple[str, str] | None:
     return api_key, api_secret
 
 
+def _cache_password() -> str | None:
+    """The cache password read from the environment, or None when absent or empty, on `_credentials`'
+    terms: handed straight to the backing's config and never stored, logged or interpolated."""
+    return os.environ.get(_CACHE_PASSWORD_VAR, "") or None
+
+
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
     """Both currency fields read ZEUR for different reasons: margin summary figures are denominated in it, and
     spot position reports cover the ZEUR-quoted instruments."""
@@ -533,13 +570,20 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
 def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
     """`exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
     credentials are never read; on with either variable absent, this REFUSES rather than substituting a
-    placeholder that would defer the failure to the first submission."""
+    placeholder that would defer the failure to the first submission. `cache.enabled` reads the cache
+    password the same way, and refuses here rather than in the loader, which every workstation
+    command runs over a file that must never carry a password."""
     builder = (
         LiveNode.builder(name=_NODE_NAME, trader_id=TraderId(_TRADER_ID), environment=Environment.LIVE)
         .with_logging(_logging_config())
         .with_exec_engine_config(_exec_engine_config())
         .add_data_client(name=KRAKEN, factory=KrakenDataClientFactory(), config=_data_client_config())
     )
+    if config.cache.enabled and _cache_password() is None:
+        raise EngineError(
+            f"the cache is enabled but its password is missing: {_CACHE_PASSWORD_VAR} must be set and non-empty; "
+            "refusing to build the node"
+        )
     if config.exec_enabled:
         credentials = _credentials()
         if credentials is None:
@@ -572,7 +616,10 @@ def _probe_executor_factory(config: EngineConfig) -> Callable:
 def build_shadow_node(config: EngineConfig) -> LiveNode:
     """Assembles the shadow node without reaching the network -- nothing connects until `node.run()` -- and hands
     the observer THIS strategy's forwarder, because the filter scoping external events is the executor's and
-    a strategy wired without one drops them."""
+    a strategy wired without one drops them. With the cache enabled the Kraken currency codes are registered
+    first: the store's records resolve their codes at the load `node.run()` makes before the adapter mints them."""
+    if config.cache.enabled:
+        _register_kraken_currencies()
     node = _node_builder(config).build()
     strategy = ShadowStrategy(config, executor_factory=_probe_executor_factory(config))
     node.add_strategy(strategy)
