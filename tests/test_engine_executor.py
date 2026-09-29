@@ -6651,8 +6651,10 @@ def test_a_row_whose_events_record_two_txids_vouches_for_neither_order(tmp_path)
 def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp_path, finished):
     """The read skips an order row the adapter cannot parse, so an open row's order may still rest at
     Kraken beyond every cancel this process can issue, and its line is CRITICAL. A finished row's
-    order ended, and its line stays a WARNING."""
+    order ended, and its line stays a WARNING. Outside the restored set the mark leaves a finished
+    row's intent to the ledger's figure."""
     earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
     _submitted_row(tmp_path, "O-gone", reduce_only=True, when=earlier, venue_order_id=_TXID)
     if finished:
         update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-gone", state="filled", add_filled_qty=0.001)
@@ -6664,7 +6666,9 @@ def test_a_row_whose_txid_the_venue_read_does_not_return_is_marked_ambiguous(tmp
         ).on_timer(NOW)
 
     row = _record(tmp_path, earlier)["submitted"][0]
-    assert row["state"] == ("filled" if finished else "ambiguous")
+    assert (row["state"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
+        ("filled", "filled") if finished else ("ambiguous", "pending")
+    )
     assert row["events"][-1] == {"type": "ambiguous", "at": NOW.isoformat(), "what": f"the venue's order read has no order {_TXID}"}
     assert [(r.levelname, r.getMessage()) for r in records] == [
         (
