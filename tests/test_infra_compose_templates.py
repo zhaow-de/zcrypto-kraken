@@ -49,6 +49,9 @@ ENGINE_CONTEXT = {
     "engine_cpu_shares": 512,
     "engine_log_max_size": "50m",
     "engine_log_max_file": "5",
+    "engine_cache_proxy_image": "haproxy",
+    "engine_cache_proxy_image_digest": "sha256:" + "c" * 64,
+    "engine_cache_proxy_memory_limit": "32m",
 }
 
 OPS_CONTEXT = {
@@ -122,6 +125,30 @@ def test_ops_metrics_port_and_publish_land_on_the_liquidations_service():
     service = _render(OPS_TEMPLATE, OPS_CONTEXT)["services"]["liquidations"]
     assert service["environment"]["ZCRYPTO_METRICS_PORT"] == "9103"
     assert "127.0.0.1:9103:9103" in service["ports"]
+
+
+def test_the_cache_proxy_service_is_pinned_by_digest_root_at_start_with_its_config_read_only_and_its_metrics_on_loopback():
+    service = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["cache-proxy"]
+    assert service["image"] == "haproxy@sha256:" + "c" * 64
+    assert (service["container_name"], service["restart"], service["user"]) == ("zcrypto-cache-proxy", "unless-stopped", "0:0")
+    assert service["volumes"] == ["/opt/zcrypto-engine/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"]
+    assert service["ports"] == ["127.0.0.1:9104:9104"]
+    assert service["deploy"]["resources"]["limits"] == {"memory": "32m"}
+    assert service["logging"]["driver"] == "json-file"
+
+
+def test_the_engine_waits_for_the_proxy_to_start_and_stops_inside_twenty_seconds():
+    service = _render(ENGINE_TEMPLATE, ENGINE_CONTEXT)["services"]["engine"]
+    assert service["depends_on"] == {"cache-proxy": {"condition": "service_started"}}
+    assert service["stop_grace_period"] == "20s"
+
+
+def test_the_engine_compose_file_carries_neither_cache_secret():
+    """The passwords reach the host through engine.env and haproxy.cfg, both 0600 and never diffed;
+    the compose file stays diffable, so a render handed both values must not carry either."""
+    context = {**ENGINE_CONTEXT, "cache_engine_password": "EnginePw12345", "cache_sentinel_requirepass": "SentinelPw12345"}
+    rendered = _ENV.from_string(ENGINE_TEMPLATE.read_text()).render(**context)
+    assert "EnginePw12345" not in rendered and "SentinelPw12345" not in rendered
 
 
 def test_engine_logship_guard_moves_environment_and_entrypoint_together():

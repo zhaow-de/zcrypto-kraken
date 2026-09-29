@@ -274,6 +274,69 @@
     and (pins_override | default('') | string | length > 8)
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
+# spec 00120 D1: the cache proxy's image, guarded as the engine's is -- non-empty, pre-staged, the
+# replaced running digest recorded -- and without the canary parity, which is scoped to the engine
+# image: there is no capture bake of an upstream proxy image.
+- name: fail fast if the pinned cache proxy image digest was not supplied
+  ansible.builtin.assert:
+    that: engine_cache_proxy_image_digest | length > 0
+    fail_msg: >-
+      engine_cache_proxy_image_digest is empty — pass the haproxy index digest docs/reference/fleet-pins.md
+      records for cache-proxy on this host, e.g. -e cache_proxy_image_digest=sha256:<...> (read it
+      with `docker buildx imagetools inspect haproxy:<version>`), pre-staged on this host.
+
+- name: probe — is the pinned cache proxy digest already on this host
+  ansible.builtin.command: docker image inspect "{{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}"
+  register: engine_cache_proxy_digest_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: preflight — refuse a cache proxy digest the host has not pulled
+  ansible.builtin.assert:
+    that: engine_cache_proxy_digest_probe.rc == 0
+    fail_msg: >-
+      {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }} is not on {{ inventory_hostname }} — the
+      unit's ExecStartPre pulls at start, and the stop→start window must hold no registry pull.
+      Pre-stage it first: sudo docker pull {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}
+
+- name: probe — the currently-running cache proxy digest this converge would replace (pins recording)
+  ansible.builtin.command: docker inspect --format '{{ "{{" }}.Config.Image{{ "}}" }}' zcrypto-cache-proxy
+  register: engine_cache_proxy_running_probe
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: read fleet-pins.md from the controller tree (cache proxy)
+  ansible.builtin.set_fact:
+    engine_cache_proxy_pins_text: "{{ lookup('file', playbook_dir ~ '/../../docs/reference/fleet-pins.md') }}"
+  when: engine_cache_proxy_running_probe.rc == 0
+
+- name: cache proxy pins recording — refuse to replace a digest fleet-pins.md does not record
+  ansible.builtin.assert:
+    that: >-
+      ((engine_cache_proxy_running_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in engine_cache_proxy_pins_text)
+      or ((pins_override | default('') | string | length > 8)
+          and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes']))
+    fail_msg: >-
+      The cache proxy digest this converge replaces ({{ engine_cache_proxy_running_probe.stdout }}) is
+      not recorded in docs/reference/fleet-pins.md — an unrecorded pin is one docker-prune from an
+      unrecoverable rollback. Record the CURRENT digest there first (or pass -e '{"pins_override":
+      "<reason>"}' and record it immediately after).
+  when: engine_cache_proxy_running_probe.rc == 0 and engine_cache_proxy_pins_text is defined
+
+# The two cache secrets this role renders (spec 00120 D2): the engine's password into engine.env and
+# the Sentinel requirepass into the proxy's check line, both unquoted, so the cache role's floor holds
+# here too -- five or more letters and digits.
+- name: refuse a cache password shorter than five characters or outside letters and digits (the engine's two)
+  ansible.builtin.assert:
+    that: >-
+      [cache_engine_password, cache_sentinel_requirepass] | reject('match', '[A-Za-z0-9]{5,}\Z') | list | length == 0
+    fail_msg: >-
+      {{ ['cache_engine_password', 'cache_sentinel_requirepass'] | zip([cache_engine_password, cache_sentinel_requirepass]) | rejectattr('1', 'match', '[A-Za-z0-9]{5,}\Z') | map('first') | join(', ') }}
+      in group_vars/all/vault.yml must be five or more letters and digits. Re-generate it with
+      `openssl rand -hex 24 | tr -d '\n' | uv run ansible-vault encrypt_string --stdin-name <key>` and replace its entry.
+
 # The arming backstop: a machine check at the only moment that matters, the converge that would
 # actually arm the engine. Until it existed, arming on a nautilus version whose attended order-
 # semantics pass had not run was prevented only by prose.
@@ -424,8 +487,9 @@
       and a seed that refuses naming the REST fetch rather than a file is a row the venue itself
       carries, which is the venue's to answer and no store repair reaches. Then stop the unit, move
       this delivered copy aside too (a second store.aside-<stamp> if the repair already made one,
-      purged with it), and re-run this converge with --tags engine, -e converge_primary=true and
-      -e engine_image_digest=sha256:<full digest>, inside the inter-cycle gap and outside a published
+      purged with it), and re-run this converge with --tags engine, -e converge_primary=true,
+      -e engine_image_digest=sha256:<full digest> and -e cache_proxy_image_digest=sha256:<the running
+      proxy digest>, inside the inter-cycle gap and outside a published
       Kraken maintenance window checked immediately before: infra/runbooks/engine.md's
       zcrypto-engine-cycle-stale section holds the whole repair.
   when: engine_store_delivery is changed and not ansible_check_mode
@@ -439,6 +503,56 @@
     owner: root
     group: root
     mode: "0755"
+
+# --- 5a. The cache proxy's config (spec 00120 D1), ahead of the engine's own three files: rendered
+# beside the live copy, validated by the pinned image's own `haproxy -c`, and copied into place only
+# then, so an invalid render never sits where the unit's next start would read it, a refused render
+# stops before engine.env, zcrypto.toml or compose.yaml is rewritten, and the file exists before the
+# compose file below names it -- a bind mount whose source is missing is created as a directory. The
+# render and the validate run in check mode too (the candidate is 0600 under no_log; `docker run --rm
+# ... -c` changes nothing), so converge.sh's preview is the validation's first run. It carries the
+# Sentinel requirepass: no_log, never diffed, 0600. The copy is what changes when the render differs,
+# and only then does the unit restart.
+- name: render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /opt/zcrypto-engine/haproxy.cfg.next
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  check_mode: false
+
+- name: validate the rendered cache proxy config with the pinned image's own haproxy -c
+  ansible.builtin.command: >-
+    docker run --rm --user 0:0
+    -v /opt/zcrypto-engine/haproxy.cfg.next:/usr/local/etc/haproxy/haproxy.cfg:ro
+    {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}
+    haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+  changed_when: false
+  no_log: true
+  check_mode: false
+
+- name: install the validated cache proxy config (changed only where it differs from the live copy)
+  ansible.builtin.copy:
+    src: /opt/zcrypto-engine/haproxy.cfg.next
+    dest: /opt/zcrypto-engine/haproxy.cfg
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: restart engine service
+  when: not ansible_check_mode
+
+- name: remove the validated candidate
+  ansible.builtin.file:
+    path: /opt/zcrypto-engine/haproxy.cfg.next
+    state: absent
+  changed_when: false
+  check_mode: false
 
 - name: render the engine secrets env file (0600 root-only; never logged, never diffed)
   ansible.builtin.template:

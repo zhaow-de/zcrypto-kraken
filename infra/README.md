@@ -51,7 +51,7 @@ cd infra/ansible
 
 # engine deploy — the guard gates this too (a failed assert drops the host from later plays,
 # so WITHOUT the flag the engine play silently skips instead of deploying)
-./scripts/run.sh site.yml --tags engine -e converge_primary=true -e engine_image_digest=sha256:<...>
+./scripts/run.sh site.yml --tags engine -e converge_primary=true -e engine_image_digest=sha256:<...> -e cache_proxy_image_digest=sha256:<...>
 
 # dry-run anything by appending --check --diff
 ```

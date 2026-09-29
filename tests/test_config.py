@@ -305,6 +305,39 @@ def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     assert defaults["engine_exec_max_plan_notional_eur"] == 100.0, defaults.get("engine_exec_max_plan_notional_eur")
 
 
+@pytest.mark.parametrize("switch", [True, False], ids=["enabled-by-default", "off-by-the-operand"])
+def test_the_engine_role_template_renders_the_cache_table_enabled_at_the_proxys_address_unless_switched_off(tmp_path, switch):
+    """The rendered engine config enables the cache from the first boot, every value explicit, and
+    the loader reads it back as the settings the node builds from; no password is in the file. With
+    `-e engine_cache_enabled=false` the table is not rendered at all -- the way back to an engine
+    without the cache, on an image from before the table as on this one."""
+    import jinja2
+
+    text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
+    defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
+    assert defaults["engine_cache_enabled"] is True
+    values = {
+        "engine_state_dir": "/var/lib/zcrypto-engine",
+        "engine_exec_max_plan_notional_eur": "100.0",
+        "engine_shadow_nav_eur": "1000.0",
+        "engine_settle_delay_secs": "90",
+        "engine_cache_enabled": "true" if switch else "false",  # `-e k=v` hands the role a string
+    }
+    env = jinja2.Environment(trim_blocks=True, undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = lambda value: str(value).lower() in ("true", "1", "yes")  # Ansible's own filter, absent from jinja2
+    rendered = env.from_string(text).render(**values)
+    assert "password" not in rendered.lower().replace("the password is zcrypto_cache_password in engine.env, never here.", "")
+    cfg = load_config(_write(tmp_path, rendered))
+    assert cfg.engine.cache == (
+        CacheSettings(enabled=True, host="cache-proxy", port=6379, username="engine") if switch else CacheSettings()
+    )
+    assert ("[zcrypto.engine.cache]" in rendered) is switch
+    assert [ln.strip() for ln in text.splitlines() if ln.strip() in ("enabled = true", "port = 6379")] == [
+        "enabled = true",
+        "port = 6379",
+    ]
+
+
 def test_committed_zcrypto_toml_has_no_engine_table():
     # EngineConfig's defaults live in code; the committed zcrypto.toml carries no engine table to shadow them.
     cfg = load_config(Path("zcrypto.toml"))

@@ -241,6 +241,23 @@ def test_pins_override_echo_fires_only_on_an_accepted_override(pins_text, overri
 SITE = ANSIBLE / "site.yml"
 
 
+def test_every_engine_window_guard_task_also_gates_a_cache_link_converge():
+    """spec 00120 D2: the cache-link handler restarts wg-quick@zcache0, which cuts the engine's cache
+    session as a failover does, so the window guard's probes, refusal and echo carry both tags."""
+    play = next(p for p in load_tasks(SITE) if p.get("hosts") == "engine_host")
+    guarded = [t["name"] for t in play["pre_tasks"] if "engine" in t.get("tags", [])]
+    assert WINDOW in guarded and len(guarded) >= 4, guarded
+    assert all("cache-link" in t.get("tags", []) for t in play["pre_tasks"] if t["name"] in guarded), [
+        (t["name"], t.get("tags")) for t in play["pre_tasks"] if t["name"] in guarded
+    ]
+    # `--skip-tags engine` skips those tasks with the engine's, so the role they gate is held off there
+    # too: an Alloy bump's primary shape converges the mesh interface at no hour otherwise.
+    link = next(r for r in play["roles"] if r.get("role") == "cache_link")
+    assert not truthy(when_conditions(link), {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]})
+    assert truthy(when_conditions(link), {"ansible_run_tags": ["all"], "ansible_skip_tags": []})
+    assert truthy(when_conditions(link), {"ansible_run_tags": ["cache-link"], "ansible_skip_tags": []})
+
+
 def test_untagged_primary_refusal():
     task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
     refuse = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
@@ -967,6 +984,95 @@ def test_arming_backstop_reads_the_real_committed_files():
     )
     # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
     assert not truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [v for v in versions if v != pin]}))
+
+
+# --- the cache proxy's guards (spec 00120 D1, D2): the engine image's three, mirrored for the proxy
+# under their own probe names, and the password floor on the two secrets the engine host renders.
+PROXY_PINS_BASE = {"engine_cache_proxy_running_probe": {"stdout": "haproxy@sha256:" + "a" * 64}}
+PROXY_PINS_WITH = "| cache-proxy | zcrypto | `" + "a" * 12 + "` | 2026-10-02 | first pin |"
+PROXY_PINS_WITHOUT = "| cache-proxy | zcrypto | `" + "b" * 12 + "` | 2026-10-02 | first pin |"
+
+
+def test_the_cache_proxy_digest_is_refused_empty_and_refused_unpulled():
+    empty = find_task(load_tasks(ENGINE), "fail fast if the pinned cache proxy image digest was not supplied")
+    assert not truthy(assert_that(empty), {"engine_cache_proxy_image_digest": ""})
+    assert truthy(assert_that(empty), {"engine_cache_proxy_image_digest": "sha256:" + "c" * 64})
+    unpulled = find_task(load_tasks(ENGINE), "preflight — refuse a cache proxy digest the host has not pulled")
+    assert not truthy(assert_that(unpulled), {"engine_cache_proxy_digest_probe": {"rc": 1}})
+    assert truthy(assert_that(unpulled), {"engine_cache_proxy_digest_probe": {"rc": 0}})
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (PROXY_PINS_WITH, "", True),
+        (PROXY_PINS_WITHOUT, "", False),
+        (PROXY_PINS_WITHOUT, "true", False),
+        (PROXY_PINS_WITHOUT, "emergency: pins file unreachable, recorded after", True),
+    ],
+)
+def test_cache_proxy_pins_recording_semantics(pins_text, override, expected):
+    task = find_task(load_tasks(ENGINE), "cache proxy pins recording — refuse to replace a digest fleet-pins.md does not record")
+    variables = {**PROXY_PINS_BASE, "engine_cache_proxy_pins_text": pins_text, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+    assert "engine_cache_proxy_running_probe.rc == 0" in task["when"]
+
+
+@pytest.mark.parametrize(
+    ("engine_password", "requirepass", "expected"),
+    [
+        ("Engine12345", "Sentinel12345", True),
+        ("Eng1", "Sentinel12345", False),  # under the floor
+        ("Engine12345", "Sentinel 12345", False),  # a space splits the check line
+        ("Engine12345", 'Sentinel"12345', False),  # a quote ends the check line
+    ],
+)
+def test_the_engine_host_refuses_a_cache_password_below_the_floor_or_outside_letters_and_digits(
+    engine_password, requirepass, expected
+):
+    task = find_task(
+        load_tasks(ENGINE), "refuse a cache password shorter than five characters or outside letters and digits (the engine's two)"
+    )
+    variables = {"cache_engine_password": engine_password, "cache_sentinel_requirepass": requirepass}
+    assert truthy(assert_that(task), variables) is expected
+
+
+def test_the_cache_proxy_config_is_validated_before_it_is_installed_and_never_logged():
+    """The order is the property: render to the candidate, validate with the pinned image's own
+    `haproxy -c`, copy into place with the restart notify, remove the candidate, all four ahead of
+    the engine's env, toml and compose renders -- so a refused render stops before any engine file
+    is rewritten, and the config exists before a compose file names it; the render and the validate
+    run in check mode too, so the preview is the validation's first run. The render and the copy
+    under no_log with no diff, since the file carries the Sentinel requirepass."""
+    tasks = load_tasks(ENGINE)
+    names = [
+        "render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)",
+        "validate the rendered cache proxy config with the pinned image's own haproxy -c",
+        "install the validated cache proxy config (changed only where it differs from the live copy)",
+        "remove the validated candidate",
+    ]
+    indexes = [task_index(tasks, name) for name in names]
+    assert indexes == sorted(indexes) and indexes[-1] - indexes[0] == 3, indexes
+    assert task_index(tasks, "ensure the compose project directory exists") < indexes[0]
+    assert indexes[-1] < task_index(tasks, "render the engine secrets env file (0600 root-only; never logged, never diffed)")
+    render, validate, install, remove = (find_task(tasks, name) for name in names)
+    assert render["ansible.builtin.template"]["dest"] == "/opt/zcrypto-engine/haproxy.cfg.next"
+    assert render["ansible.builtin.template"]["mode"] == "0600" and render["no_log"] is True and render["diff"] is False
+    assert "notify" not in render and render["check_mode"] is False
+    command = " ".join(validate["ansible.builtin.command"].split())
+    assert "haproxy.cfg.next:/usr/local/etc/haproxy/haproxy.cfg:ro" in command
+    assert command.endswith("haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg") and validate["no_log"] is True
+    assert "{{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}" in command
+    assert validate["check_mode"] is False and "when" not in validate and remove["check_mode"] is False
+    copy = install["ansible.builtin.copy"]
+    assert (copy["src"], copy["dest"], copy["remote_src"], copy["mode"]) == (
+        "/opt/zcrypto-engine/haproxy.cfg.next",
+        "/opt/zcrypto-engine/haproxy.cfg",
+        True,
+        "0600",
+    )
+    assert install["notify"] == "restart engine service" and install["no_log"] is True and install["diff"] is False
+    assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.

@@ -30,6 +30,30 @@ engine_cpu_shares: 512
 engine_log_max_size: "50m"
 engine_log_max_file: "5"
 
+# The cache proxy beside the engine (spec 00120 D1): the official haproxy image, digest-pinned per run
+# with no default, pre-staged on the host first; the pin's row in docs/reference/fleet-pins.md is
+# `cache-proxy` on `zcrypto`:
+#   -e cache_proxy_image_digest=sha256:<...>   (read it with `docker buildx imagetools inspect haproxy:<version>`)
+# HAProxy 3.1 or later: `init-state` on the server lines is a keyword of that release. The operand keeps
+# the fleet's spelling, `cache_proxy_image_digest`; the role reads it through its own prefixed name.
+engine_cache_proxy_image: haproxy
+engine_cache_proxy_image_digest: "{{ cache_proxy_image_digest | default('') }}"
+engine_cache_proxy_memory_limit: "32m"
+# The rendered zcrypto.toml carries the [zcrypto.engine.cache] table, enabled, unless a converge passes
+# `-e engine_cache_enabled=false`: the way back to an engine that runs without the cache inside the same
+# gap, since an engine image from before the table refuses a config that carries it; past the gap the
+# same value is committed in host_vars/zcrypto/vars.yml, since the next engine converge reads this
+# default again. The proxy service renders either way.
+engine_cache_enabled: true
+# The set's Sentinel master name and the three cache nodes on the zcache mesh, one backend each: the
+# cache role's `cache_master_name` and the cache_link role's peers, neither loaded in the engine play,
+# which tests/test_infra_cache_proxy.py holds equal.
+engine_cache_proxy_master_name: zcache
+engine_cache_proxy_nodes:
+  - {name: node1, address: 10.98.0.11}
+  - {name: node2, address: 10.98.0.12}
+  - {name: node3, address: 10.98.0.13}
+
 # healthchecks.io ping URL for the dead-man's switch — vault-supplied (the attended deployment
 # vaults it as engine_healthcheck_url); empty means the engine simply skips liveness pings.
 engine_healthcheck_url: ""

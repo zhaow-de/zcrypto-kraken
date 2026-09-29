@@ -1,0 +1,56 @@
+# Rendered by the `engine` Ansible role at /opt/zcrypto-engine/haproxy.cfg (0600 root-only, bind-mounted
+# read-only into zcrypto-cache-proxy) -- do not hand-edit on the host, it is overwritten on the next
+# converge. It carries the Sentinel requirepass, so the role renders it under no_log, never diffs it, and
+# validates the render with the pinned image's own `haproxy -c` before moving it into place.
+global
+    log stdout format raw local0 info
+    # Without a bound HAProxy sizes itself off the container's file-descriptor hard limit -- 524288 on
+    # the fleet's containerd, a worker of about 69 MB resident, killed under the 32m cap at load. At 256
+    # it runs and answers /metrics under the cap; the engine's sessions and nine checks need a handful.
+    maxconn 256
+    # The container starts as root so this 0600 file is readable; the workers drop to the image's user.
+    user haproxy
+    group haproxy
+
+defaults
+    mode tcp
+    log global
+    option tcplog
+    timeout connect 2s
+    # The library's session idles for hours between writes and reconnects only on the next write, which
+    # it drops, so an idle cut would cost a write per idle period: the parser's longest value, which a
+    # zero would not be -- a zero is a "missing" timeout, warned about at every start.
+    timeout client 24d
+    timeout server 24d
+    # A mismatched Sentinel reply is not detected as wrong but waited for until this timeout.
+    timeout check 2s
+
+frontend metrics
+    mode http
+    bind 0.0.0.0:9104
+    no log
+    http-request use-service prometheus-exporter if { path /metrics }
+
+frontend cache
+    bind 0.0.0.0:6379
+{% for node in engine_cache_proxy_nodes %}
+    use_backend {{ node.name }} if { nbsrv({{ node.name }}) ge 2 }
+{% endfor %}
+
+{% for node in engine_cache_proxy_nodes %}
+# {{ node.name }} routes to {{ node.address }} while two of the three Sentinels name it the primary: one
+# server line per Sentinel, each checking that Sentinel and passing only when its answer names this node.
+backend {{ node.name }}
+    option tcp-check
+    tcp-check connect
+    tcp-check send "AUTH {{ cache_sentinel_requirepass }}\r\n"
+    tcp-check expect string +OK
+    tcp-check send "PING\r\n"
+    tcp-check expect string +PONG
+    tcp-check send "SENTINEL master {{ engine_cache_proxy_master_name }}\r\n"
+    tcp-check expect string "\$2\r\nip\r\n\${{ node.address | length }}\r\n{{ node.address }}\r\n"
+{% for sentinel in engine_cache_proxy_nodes %}
+    server via-{{ sentinel.name }} {{ node.address }}:6379 check addr {{ sentinel.address }} port 26379 inter 1s fall 2 rise 2 init-state fully-down on-marked-down shutdown-sessions
+{% endfor %}
+
+{% endfor %}

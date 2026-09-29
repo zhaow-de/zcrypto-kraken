@@ -82,7 +82,10 @@
       changed_when: false
       check_mode: false
       when: not ansible_check_mode
-      tags: [engine]  # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged runs
+      # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged
+      # runs. cache-link too (spec 00120 D2): its handler restarts wg-quick@zcache0 on any change, which
+      # cuts the engine's cache session as a failover does.
+      tags: [engine, cache-link]
 
     # spec 00083 D6: when the boundary's cycle already completed, the fixed B+30 floor protects a
     # cycle that is over. The probe reads the journal artifact ON the engine host, and any failure
@@ -105,7 +108,7 @@
       changed_when: false
       check_mode: false
       when: not ansible_check_mode
-      tags: [engine]
+      tags: [engine, cache-link]
 
     # The close stands a play's work above the deploy-log audit's `_BEFORE_BOUNDARY_SECONDS`,
     # which judges the row's `ts`, written at the play's end.
@@ -128,7 +131,7 @@
           too close to the next). Wait for the gap, or pass
           -e '{"engine_window_override": "<why this cannot wait>"}' (a reason, not a boolean).
       when: not ansible_check_mode and engine_epoch_probe.stdout is defined
-      tags: [engine]
+      tags: [engine, cache-link]
 
     # The window condition is mirrored here character-for-character. A folded scalar keeps both the
     # break and the EXTRA indent of every more-indented line, so the mirror shifts each line 2
@@ -151,14 +154,16 @@
          and (14400 - ((engine_epoch_probe.stdout | int) % 14400) >= 900))
         and (engine_window_override | default('') | string | length > 8)
         and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
-      tags: [engine]
+      tags: [engine, cache-link]
   roles:
     # The engine host's end of the zcache mesh, under its own tag. It restarts no container, and a
-    # changed zcache0.conf restarts wg-quick@zcache0, which carries no engine traffic until the engine
-    # half routes the cache through it, so it takes no engine window yet. The capture play's
-    # converge_primary guard still gates it, and `--skip-tags engine` runs it too.
+    # changed zcache0.conf restarts wg-quick@zcache0, which carries the engine's cache traffic, so it
+    # takes the engine window above. The capture play's converge_primary guard still gates it. A
+    # `--skip-tags engine` run skips the guard's tasks with the engine's, so it skips this role too:
+    # the mesh drift lands at a `--tags cache-link` converge inside a gap.
     - role: cache_link
       tags: [cache-link]
+      when: "'engine' not in ansible_skip_tags"
     - role: engine
       tags: [engine]
 
