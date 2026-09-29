@@ -1715,8 +1715,8 @@ def test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_proce
 
 # Every code the basket's twelve pairs carry as base or quote on Kraken's AssetPairs, read off the
 # committed snapshot rather than typed, and which of them a strict lookup resolves before any
-# registration; then the adapter's own parse of the mint fixture through the loopback, which mints
-# the codes it meets, read back field by field.
+# registration; then the adapter's own parse of the twelve-pair basket fixture through the loopback,
+# which mints every code the basket carries, read back field by field.
 _CURRENCY_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
@@ -1744,7 +1744,7 @@ def strict(code):
 
 
 before = {code: strict(code) for code in basket_codes}
-with kraken_loopback.serve() as venue:
+with kraken_loopback.serve(json.loads(Path("tests/fixtures/kraken_assetpairs_basket.json").read_text())) as venue:
     async def parse():
         client = kraken_loopback.client(venue)
         return await client.request_instruments()
@@ -1764,8 +1764,8 @@ def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_m
     """Three reads in one child, since the adapter's parse registers what it mints: the table names
     exactly the base and quote codes the twelve pairs carry; a fresh process resolves the five the
     library's table holds at the table's values and none of the other six; and the adapter's parse
-    of the mint fixture mints `ZEUR`, `XXBT` and `SOL` at the table's values, the rule -- precision
-    8, no ISO number, the code as the name, crypto -- every one of the six follows. A bump that
+    of the twelve-pair basket fixture mints all eleven at the table's values, the six Kraken
+    spellings on the rule -- precision 8, no ISO number, the code as the name, crypto. A bump that
     reshapes a minted currency is red here before a store carrying it loads."""
     result = subprocess.run(
         [sys.executable, "-c", _CURRENCY_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120, cwd=Path.cwd()
@@ -1784,7 +1784,7 @@ def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_m
     resolved = {code: row for code, row in facts["before"].items() if row is not None}
     assert sorted(resolved) == ["ADA", "AVAX", "DOT", "LINK", "SOL"], detail
     assert all(resolved[code] == table[code] for code in resolved), (resolved, table)
-    assert facts["minted"] == {code: table[code] for code in ("SOL", "XXBT", "ZEUR")}, (facts["minted"], table)
+    assert facts["minted"] == table, (facts["minted"], table)
     for code in ("XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"):
         assert table[code] == [code, 8, 0, code, "CRYPTO"], table[code]
 

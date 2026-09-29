@@ -51,6 +51,8 @@ jobs:
       # merge ref with only `origin/develop`, and `count-list.sh` refuses a checkout with no local
       # `develop`, which left nine of `tests/test_count_list.py`'s cases skipping here.
       - run: git branch --force develop origin/develop
+      # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
+      - run: sudo apt-get update && sudo apt-get install -y valkey-server
       - run: uv sync
       - run: uv run coverage run -m pytest
       - run: uv run coverage lcov -o coverage.lcov
