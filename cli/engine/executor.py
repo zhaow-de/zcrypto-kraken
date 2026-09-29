@@ -983,8 +983,10 @@ class ProbeExecutor:
         # The (row, `what`) pairs a sweep of this process marked unmatched (`_mark_unmatched`), which the
         # re-read pass leaves out.
         self._marked: set[tuple[str, str]] = set()
-        # The rows a sweep of this process left unread on a failed venue read, each until a later read of
-        # this process answers it: with `_marked`, the rows no read of this process repaired.
+        # The rows the open sweep or the re-read pass left unread on a failed venue read, each until a later
+        # read of this process answers it: with `_marked`, the rows no read of this process repaired. A
+        # finished row the startup leaves unread is not recorded: it is never attached, so no event or pass
+        # of this process reaches its intent.
         self._unread: set[str] = set()
         # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
@@ -2150,7 +2152,6 @@ class ProbeExecutor:
                         self._reconcile_finished_row(boundary, row, float(order.filled_qty), label, venue_order_id=venue_order_id)
                         continue
                     if venue_order_id is not None and venue_orders is None:
-                        self._unread.add(client_order_id)
                         continue  # the read failed: unread, not unknowable, and every plan is refused
                     report = None if venue_order_id is None else venue_orders.get(venue_order_id)
                     if report is None:
