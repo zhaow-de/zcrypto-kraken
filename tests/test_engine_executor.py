@@ -23,6 +23,7 @@ from nautilus_trader.model import (
     ClientOrderId,
     Currency,
     CurrencyPair,
+    FillReport,
     InstrumentId,
     LimitOrder,
     LiquiditySide,
@@ -57,7 +58,7 @@ from nautilus_trader.model import (
 import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
 import cli.engine.venuestate as venuestate_module
-from cli.config import EngineConfig
+from cli.config import CacheSettings, EngineConfig
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
@@ -371,6 +372,16 @@ def _all_instruments(**overrides):
 _STUB_STRATEGY_ID = StrategyId("ShadowStrategy-000")
 
 
+def _orders_under(strategy_id, held):
+    """`held` under `strategy_id`, the real Cache's own filter: every order when none is given, else
+    the ones whose id equals it exactly, and a plain str refused as the typed accessor refuses it."""
+    if strategy_id is None:
+        return held
+    if not isinstance(strategy_id, StrategyId):
+        raise TypeError(f"Argument 'strategy_id' has incorrect type (expected StrategyId, got {type(strategy_id).__name__})")
+    return [o for o in held if str(getattr(o, "strategy_id", None)) == str(strategy_id)]
+
+
 class StubCache:
     """Duck-types the Cache accessors `venue_state_from_cache` and the executor call, matching
     their real signatures. `raises=True` is the no-venue-truth construction."""
@@ -497,8 +508,15 @@ class StubCache:
             None,
         )
 
-    def orders_open(self, *, venue=None, **kwargs):
-        return list(self._open_orders)
+    def orders(self, *, venue=None, strategy_id=None, **kwargs):
+        """The whole index, open and closed, with `strategy_id` honoured as the real Cache honours it,
+        by the exact id: the restored set is what the Cache holds under this engine's own, closed
+        copies included, never the EXTERNAL identity's adopted orders."""
+        return _orders_under(strategy_id, [*self._open_orders, *self._closed_orders])
+
+    def orders_open(self, *, venue=None, strategy_id=None, **kwargs):
+        """The open half, `strategy_id` honoured the same way: the boot line's read."""
+        return _orders_under(strategy_id, list(self._open_orders))
 
     def orders_inflight(self, *, venue=None, **kwargs):
         """The orders the library's in-flight check queries, derived from each held order's own
@@ -615,6 +633,8 @@ def _executor(
     venue_orders=None,
     venue_cancel=None,
     venue_holdings=None,
+    venue_fills=None,
+    venue_positions=None,
 ) -> ProbeExecutor:
     client = client if client is not None else StubClient()
     return ProbeExecutor(
@@ -624,9 +644,14 @@ def _executor(
         clock=clock if clock is not None else (lambda: NOW),
         venue_orders=venue_orders,
         venue_cancel=venue_cancel,
+        # An empty trade history unless a case hands one in: a withdrawal test's shortfall then trips
+        # as it did before the history became the check's second source.
+        venue_fills=venue_fills if venue_fills is not None else _VenueFills(),
         # An empty answer unless a case hands one in: the settle then publishes nothing, and the read
         # every startup pass makes reaches no venue.
         venue_holdings=venue_holdings if venue_holdings is not None else _VenueHoldings(),
+        # No margin position unless a case hands one in: the mixed-inventory check then refuses nothing.
+        venue_positions=venue_positions if venue_positions is not None else _VenuePositions(),
     )
 
 
@@ -657,9 +682,18 @@ def _no_production_venue_read(monkeypatch):
             pytest.fail("a test reached the production venue holdings read -- pass venue_holdings")
         return holdings(base_url=base_url)
 
+    def _refuse_fills(since, **kwargs):
+        pytest.fail(f"a test reached the production venue fills read (since {since.isoformat()}) -- pass venue_fills")
+
+    def _refuse_positions(**kwargs):
+        pytest.fail("a test reached the production venue positions read -- pass venue_positions")
+
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "cancel_venue_order", _refuse_cancel)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
+    # `raising=False`: the two reads land with their source fence, and the cases fail on their own terms before it.
+    monkeypatch.setattr(executor_module, "read_venue_fills", _refuse_fills, raising=False)
+    monkeypatch.setattr(executor_module, "read_venue_positions", _refuse_positions, raising=False)
 
 
 def _intent(**overrides):
@@ -780,6 +814,40 @@ class _VenueOrders:
         return list(self.reports)
 
 
+def _fill_report(txid, qty, *, trade_id="T-h1"):
+    """A REAL `FillReport` in the shape the adapter builds from Kraken's trade history: the fill named by
+    the order's txid and its own trade id, no client order id."""
+    return FillReport(
+        account_id=AccountId("KRAKEN-001"),
+        instrument_id=InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]),
+        venue_order_id=VenueOrderId(txid),
+        trade_id=TradeId(trade_id),
+        order_side=OrderSide.SELL,
+        last_qty=Quantity.from_str(qty),
+        last_px=Price.from_str("30000.0"),
+        commission=Money(0.08, Currency.from_str("EUR")),
+        liquidity_side=LiquiditySide.MAKER,
+        ts_event=0,
+        ts_init=0,
+    )
+
+
+class _VenueFills:
+    """The executor's `venue_fills` reader: answers `reports`, or raises `raises`, and records the `since`
+    of every call -- the withdrawal check reads once per pass, and only when a figure fell short."""
+
+    def __init__(self, *reports, raises=None):
+        self.reports = list(reports)
+        self.calls: list[datetime] = []
+        self._raises = raises
+
+    def __call__(self, since):
+        self.calls.append(since)
+        if self._raises is not None:
+            raise self._raises
+        return list(self.reports)
+
+
 class _VenueCancel:
     """The executor's `venue_cancel`: records each `(venue_order_id, instrument_id)` it is asked to
     cancel, and raises `raises` instead when set -- the venue's refusal, or the cut not over."""
@@ -803,6 +871,22 @@ def _cancel_venue_order(*args, **kwargs):
 class _VenueHoldings:
     """The executor's `venue_holdings` reader: answers `held`, which a test moves between two passes
     as the account moves, or raises `raises` instead, and counts its calls."""
+
+    def __init__(self, held=None, *, raises=None):
+        self.held = {} if held is None else dict(held)
+        self.calls = 0
+        self._raises = raises
+
+    def __call__(self):
+        self.calls += 1
+        if self._raises is not None:
+            raise self._raises
+        return dict(self.held)
+
+
+class _VenuePositions:
+    """The executor's `venue_positions` reader: answers `held`, the venue's margin positions by symbol,
+    or raises `raises`, and counts its calls -- one per plan that carries an opening intent."""
 
     def __init__(self, held=None, *, raises=None):
         self.held = {} if held is None else dict(held)
@@ -2306,14 +2390,15 @@ def test_a_commission_less_fill_still_gets_its_forensic_row_with_a_null_fee(tmp_
 def test_realized_pnl_sums_open_and_closed_positions_and_skips_a_non_eur_one(tmp_path):
     """`Position.realized_pnl` is `Money | None`. The None is skipped rather than `float()`-ed, the
     CLOSED positions are summed too (a round trip's PnL lives nowhere else), and a non-EUR position
-    is left out rather than added to a EUR total."""
+    is left out rather than added to a EUR total. The round trips close after the executor is built:
+    what the Cache holds at construction is the baseline the gauge subtracts."""
     client = StubClient()
-    client.cache.close_position("BTC/EUR", Money(-4.5, Currency.from_str("ZEUR")))
-    client.cache.close_position("BTC/EUR", Money(1.25, Currency.from_str("EUR")))
-    client.cache.close_position("BTC/EUR", Money(9999.0, Currency.from_str("XXBT")))  # never summed into a EUR total
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
     ex = _executor(tmp_path, client=client)
+    client.cache.close_position("BTC/EUR", Money(-4.5, Currency.from_str("ZEUR")))
+    client.cache.close_position("BTC/EUR", Money(1.25, Currency.from_str("EUR")))
+    client.cache.close_position("BTC/EUR", Money(9999.0, Currency.from_str("XXBT")))  # never summed into a EUR total
     _drop_plan(tmp_path, _plan_dict())
 
     ex.on_timer(NOW)
@@ -4009,15 +4094,16 @@ def _executor_errors(level=logging.ERROR):
         log.setLevel(previous_level)
 
 
-def _resting_limit_order(client_order_id, *, quantity="1.0", venue_order_id=None):
+def _resting_limit_order(client_order_id, *, quantity="1.0", venue_order_id=None, strategy_id=_STUB_STRATEGY_ID):
     """A REAL `LimitOrder` resting at the venue, driven to ACCEPTED by the library's own events.
 
     Real because the terminal-state write reads `cache.order(...).status`, and only the library's own
     state machine can say what an event does to that status -- including for the stale and replayed
     acks it REFUSES, which is where reading the order rather than the event's name earns its place.
     `_resting_limit_order(_TXID, venue_order_id=_TXID)` is the shape a restart's reconciliation
-    leaves on the pinned wheel: the order named by its txid on both ids."""
-    head = (_TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id))
+    leaves on the pinned wheel: the order named by its txid on both ids. Under the stub's own
+    `strategy_id` with the id this engine minted, it is the shape the cache restores."""
+    head = (_TRADER_ID, strategy_id, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id))
     order = LimitOrder(
         *head, OrderSide.BUY, Quantity.from_str(quantity), Price.from_str("30000.0"), TimeInForce.GTC,
         False, False, False, UUID4(), 0,
@@ -8142,3 +8228,672 @@ def test_a_naive_cycle_ts_is_refused_with_this_modules_error_not_a_typeerror(tmp
     journal, reader = _journal_with(tmp_path, boundary, mangle=naive_cycle_ts)
     with pytest.raises(EngineJournalError, match="timezone-aware"):
         reader(journal, boundary)
+
+
+# --- the cache's restored orders and positions (spec 00120 D6 to D10, D12) ------------------------
+
+
+def _cache_config(tmp_path, enabled=True):
+    return _config(tmp_path, cache=CacheSettings(enabled=enabled))
+
+
+def _restored_order(client_order_id="O-restored", *, filled=None, quantity="0.001"):
+    """The Cache's copy of an order a previous process placed, restored under this engine's own id and
+    the txid it recorded, with the previous process's fills applied when `filled` is given."""
+    order = _resting_limit_order(client_order_id, quantity=quantity, venue_order_id=_TXID)
+    if filled is not None:
+        order.apply(_fill(client_order_id, filled, venue_order_id=VenueOrderId(_TXID), trade_id="T-before"))
+    return order
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_the_restored_set_is_every_order_the_cache_holds_at_construction_only_with_the_cache_enabled(tmp_path, enabled):
+    external = _resting_limit_order("OEXTRN-AAAAA-BBBBBB", venue_order_id="OEXTRN-AAAAA-BBBBBB", strategy_id=StrategyId("EXTERNAL"))
+    client = StubClient(StubCache(open_orders=[_restored_order(), external]))
+
+    ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path, enabled))
+
+    assert ex._restored == ({"O-restored": _TXID, "OEXTRN-AAAAA-BBBBBB": "OEXTRN-AAAAA-BBBBBB"} if enabled else {})
+
+
+def test_a_restored_set_the_cache_cannot_read_is_empty_at_critical(tmp_path):
+    class _Unreadable(StubCache):
+        def orders(self, *, venue=None, strategy_id=None, **kwargs):
+            raise RuntimeError("cache read failed")
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex = _executor(tmp_path, client=StubClient(_Unreadable()), config=_cache_config(tmp_path))
+
+    assert ex._restored == {}
+    assert [r.getMessage() for r in records] == [
+        "the restored orders could not be read at start -- the startup pass reads the Cache's copy of each"
+    ]
+
+
+@pytest.mark.parametrize(
+    "enabled, filled_qty, events",
+    [(True, 0.0006, ["OrderAccepted", "reconciled"]), (False, 0.0004, ["OrderAccepted"])],
+)
+def test_the_startup_pass_asks_the_venue_over_a_restored_orders_cache_copy_and_the_report_wins(
+    tmp_path, enabled, filled_qty, events
+):
+    """The Cache's copy is the previous process's view, 0.0004 filled, and the ledger agrees with it;
+    the venue says 0.0006. With the cache enabled the venue is read and its figure repairs the row;
+    without it the Cache's copy answers as before and no venue read is made."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-restored", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", add_filled_qty=0.0004)
+    client = StubClient(StubCache(open_orders=[_restored_order(filled=0.0004)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0006"))
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        config=_cache_config(tmp_path, enabled),
+    )
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], [e.get("type") or e.get("event") for e in row["events"]]) == (filled_qty, events)
+    assert venue.calls == ([_boundary(earlier) - timedelta(hours=1)] if enabled else [])
+    assert client.canceled == []  # a ledgered reducer, kept on both settings
+
+
+def test_a_restored_order_the_venue_reports_closed_has_its_row_written_from_the_report_and_no_cancel_sent(tmp_path):
+    """Mass status reads open orders only, so an order that filled while the engine was down comes back
+    open in the Cache; the venue's report writes the row, settles the intent through the sweep, and the
+    stale open copy is left where it is with no cancel through the handle."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_restored_order()]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.FILLED, filled_qty="0.001"))
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("filled", 0.001)
+    assert client.canceled == [] and "O-restored" in ex._attached
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "filled"
+    assert metrics.orders == ["filled"]
+    assert "restored order O-restored is filled at the venue -- its stale open copy stays in the Cache and no cancel is sent" in [
+        r.getMessage() for r in records
+    ]
+
+
+def test_a_restored_orders_stale_open_copy_is_not_cancelled_at_a_later_restart_once_its_row_is_closed(tmp_path):
+    """The restart after the one that wrote the row terminal: the row is among the window's closed
+    rows, the Cache still lists the copy open, and the classification loop sends it no cancel."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", state="filled", add_filled_qty=0.001)
+    client = StubClient(StubCache(open_orders=[_restored_order()]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.FILLED, filled_qty="0.001"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert client.canceled == [] and venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert "restored order O-restored is filled at the venue -- its stale open copy stays in the Cache and no cancel is sent" in [
+        r.getMessage() for r in records
+    ]
+    assert not _kill_file(tmp_path).exists()
+
+
+@pytest.mark.parametrize("reduce_only, canceled, line", [
+    (False, ["O-restored"], "canceling restored order O-restored, partial -- the ledger does not carry it as a resting reducer"),
+    (True, [], "adopted resting order O-restored is a ledgered reducer -- left resting and re-attached"),
+])  # fmt: skip
+def test_a_restored_opener_the_venue_reports_open_is_cancelled_by_the_pass_and_a_kept_reducer_is_not(
+    tmp_path, reduce_only, canceled, line
+):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=reduce_only, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_restored_order(filled=0.0004)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == canceled
+    assert line in [r.getMessage() for r in records]
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == ("revoked" if canceled else "pending")
+
+
+def test_a_finished_row_with_fills_is_read_at_the_venue_over_the_caches_closed_copy_with_the_cache_enabled(
+    tmp_path, kill_trip_expected
+):
+    """The withdrawal check compared against the Cache's restored copy would compare the ledger with
+    itself: the copy agrees with the row at 0.001, the venue says the order ended with 0.0006."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    cache = StubCache(closed_orders=[_closed_order("O-finished", OrderStatus.FILLED, filled_qty=0.001, venue_order_id=_TXID)])
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0006"))
+    ex = _executor(
+        tmp_path,
+        client=StubClient(cache),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        config=_cache_config(tmp_path),
+    )
+
+    ex.on_timer(NOW)
+
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert _record(tmp_path, earlier)["submitted"][0]["events"][-1]["event"] == "withdrawn"
+    assert (
+        f"order O-finished (Kraken {_TXID}) shows 0.0006 filled at the venue, less than the 0.001"
+        in _kill_file(tmp_path).read_text()
+    )
+
+
+def test_a_finished_row_the_caches_closed_copy_agrees_with_is_not_read_at_the_venue_without_the_cache(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-finished", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-finished", state="filled", add_filled_qty=0.001)
+    cache = StubCache(closed_orders=[_closed_order("O-finished", OrderStatus.FILLED, filled_qty=0.001, venue_order_id=_TXID)])
+    venue = _VenueOrders(_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0006"))
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue)
+
+    ex.on_timer(NOW)
+
+    assert venue.calls == [] and not _kill_file(tmp_path).exists()
+
+
+def test_a_fill_on_a_restored_row_before_the_first_tick_lands_in_its_row_and_trips_nothing(tmp_path):
+    """The attach at construction (spec 00120 D6): a restored order's fill can reach the own topic in
+    the seconds between `on_start` and the first tick, where `_trip_on_fill` runs first and an order
+    no row is attached for latches the kill switch. Attached at construction, under its own id and
+    its txid, the fill takes the detached path -- the row's `fill` line with `credited` 0, no kill
+    file, and the re-read pass armed for the repair."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_restored_order("O-reducer")]))
+    ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path))
+    assert not ex._adopted and "O-reducer" in ex._attached and _TXID in ex._attached_by_venue
+
+    fill = _fill("O-reducer", 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-early")
+    client.cache.order(ClientOrderId("O-reducer")).apply(fill)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_order_event(fill)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], row["state"]) == (0.0, "accepted")
+    assert row["events"][-1]["event"] == "fill" and (row["events"][-1]["qty"], row["events"][-1]["credited"]) == (0.0004, 0.0)
+    assert not _kill_file(tmp_path).exists() and ex._reread_tries == 3
+    assert [r.getMessage() for r in records] == [
+        "a fill on restored order O-reducer credits nothing until the venue is read -- the next restart is taken flat"
+    ]
+
+
+def test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins(tmp_path):
+    """The restored set is every order the Cache holds under the own id, closed copies included: a
+    kept reducer's double-booked copy reads FILLED where the venue says partial (spec 00120 D7), and
+    a set read from the open orders alone would trust exactly that copy. The row, repaired to 0.0007
+    by the previous process, stays there: the venue is read and its partial report is the figure."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0007)
+    client = StubClient(StubCache(closed_orders=[_restored_order("O-reducer", filled=0.001)]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0007"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+    assert client.cache.order(ClientOrderId("O-reducer")).status == OrderStatus.FILLED
+
+    ex.on_timer(NOW)
+
+    assert ex._restored == {"O-reducer": _TXID} and venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], [e.get("event") for e in row["events"] if e.get("event")]) == ("accepted", 0.0007, [])
+    assert not _kill_file(tmp_path).exists() and "O-reducer" in ex._attached
+
+
+def test_a_restored_external_copy_of_a_kept_reducer_credits_its_fills_nothing_and_the_pass_repairs_the_row(tmp_path):
+    """The store persists the EXTERNAL copy a previous process adopted by its txid and restores it with
+    that process's fills, the library state a restored own order has and the same double booking on a
+    trade frame: the copy is in the restored set under its txid, the venue answers for it, its fills
+    credit the row nothing, and the re-read pass repairs the row from the venue's figure."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0004)
+    copy = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=StrategyId("EXTERNAL"))
+    copy.apply(_fill(_TXID, 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-before", strategy_id=StrategyId("EXTERNAL")))
+    client = StubClient(StubCache(open_orders=[copy]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004"))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert ex._restored == {_TXID: _TXID} and venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert client.canceled == [] and f"adopted resting order {_TXID} is a ledgered reducer -- left resting and re-attached" in [
+        r.getMessage() for r in records
+    ]
+    for trade_id in ("T-inferred", "T-frame"):
+        fill = _fill(_TXID, 0.0003, venue_order_id=VenueOrderId(_TXID), trade_id=trade_id, strategy_id=StrategyId("EXTERNAL"))
+        _deliver_external_event(ex, client, fill)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], row["state"]) == (0.0004, "accepted") and not _kill_file(tmp_path).exists()
+    assert [(e["qty"], e.get("credited")) for e in row["events"] if e.get("event") == "fill"] == [(0.0003, 0.0), (0.0003, 0.0)]
+
+    venue.reports = [_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0007")]
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], row["state"], row["events"][-1]["event"]) == (0.0007, "accepted", "reconciled")
+    assert "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue" in [
+        r.getMessage() for r in records
+    ]
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending" and len(venue.calls) == 2
+
+
+def _kept_reducer(tmp_path, venue):
+    """A restored reducer the startup pass keeps: its row, its pending intent, the Cache's copy under
+    this engine's own id, and the pass run against `venue`'s first report."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_restored_order("O-reducer")]))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+    ex.on_timer(NOW)
+    assert client.canceled == [] and ex._restored == {"O-reducer": _TXID}
+    return ex, client, earlier
+
+
+def test_a_fill_on_a_restored_row_credits_nothing_and_the_re_read_pass_repairs_the_row_from_the_venue(tmp_path):
+    """D8's credit rule and the pass that follows it: the frame's fill lands in the row as the stream's
+    record with `credited` 0, the row's quantity waits for the venue's cumulative figure, and the
+    pass reads it on the next tick with nothing in flight; the completing repair writes the row
+    `filled`, counts it, and writes the kept reducer's intent."""
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    ex, client, earlier = _kept_reducer(tmp_path, venue)
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    order = client.cache.order(ClientOrderId("O-reducer"))
+
+    fill = _fill("O-reducer", 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-2")
+    order.apply(fill)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_order_event(fill)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], row["state"]) == (0.0, "accepted")
+    assert row["events"][-1]["event"] == "fill" and (row["events"][-1]["qty"], row["events"][-1]["credited"]) == (0.0004, 0.0)
+    assert not _kill_file(tmp_path).exists() and ex._reread_tries == 3
+    assert [r.getMessage() for r in records] == [
+        "a fill on restored order O-reducer credits nothing until the venue is read -- the next restart is taken flat"
+    ]
+
+    venue.reports = [_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004")]
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], row["state"], row["events"][-1]["event"]) == (0.0004, "accepted", "reconciled")
+    assert len(venue.calls) == 2 and _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending"
+    assert [r.getMessage() for r in records][:1] == [
+        "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue"
+    ]
+
+    last = _fill("O-reducer", 0.0006, venue_order_id=VenueOrderId(_TXID), trade_id="T-3")
+    order.apply(last)
+    ex.on_order_event(last)
+    venue.reports = [_report(_TXID, OrderStatus.FILLED, filled_qty="0.001")]
+    ex.on_timer(NOW + timedelta(seconds=10))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["filled_qty"], row["state"]) == (0.001, "filled")
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"]) == ("filled", 0.001)
+    assert metrics.orders == ["filled"] and len(venue.calls) == 3
+
+
+@pytest.mark.parametrize(
+    "reconciliation, state, outcome, reasons",
+    [(False, "canceled", "revoked", ["the kept reducer ended without filling"]), (True, "ambiguous", "pending", [])],
+)
+def test_a_terminal_on_a_restored_kept_reducer_writes_the_venues_state_and_its_intent(
+    tmp_path, reconciliation, state, outcome, reasons
+):
+    """The own topic's detached path makes the external path's writes for a restored row: the venue's
+    cancel closes the row and writes the intent, a minted one reads ambiguous and leaves the intent
+    for the pass that settles the row."""
+    ex, client, earlier = _kept_reducer(tmp_path, _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED)))
+    canceled = _event(OrderCanceled, client_order_id="O-reducer", reconciliation=reconciliation)
+    client.cache.order(ClientOrderId("O-reducer")).apply(canceled)
+
+    ex.on_order_event(canceled)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert row["state"] == state and row["events"][-1]["type"] == "OrderCanceled"
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["reasons"]) == (outcome, reasons)
+
+
+@pytest.mark.parametrize("minted", [False, True], ids=["venue-ack", "minted-terminal"])
+@pytest.mark.parametrize("reduce_only", [True, False], ids=["kept-reducer", "cancelled-opener"])
+def test_a_fill_then_a_terminal_on_a_restored_row_before_the_next_tick_is_repaired_by_the_pass(tmp_path, reduce_only, minted):
+    """D7's race on the event path: a restored row takes a fill, credited nothing, and a terminal
+    closes it before the re-read pass runs -- the venue's cancel ack, or one the library flagged
+    `reconciliation`, which the row reads `ambiguous`. The pass reads the row either way, names it
+    among the restored rows with a fill, and repairs it to the
+    venue's figure; a kept reducer's intent is written then, at the repaired quantity, never at the
+    terminal's credit-0 figure, and a cancelled opener's the startup sweep already wrote."""
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=reduce_only, when=earlier, venue_order_id=_TXID)
+    client = StubClient(StubCache(open_orders=[_restored_order()]))
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+    ex.on_timer(NOW)
+    assert [str(cid) for cid in client.canceled] == ([] if reduce_only else ["O-restored"])
+    order = client.cache.order(ClientOrderId("O-restored"))
+
+    fill = _fill("O-restored", 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-race")
+    order.apply(fill)
+    ex.on_order_event(fill)
+    canceled = _event(OrderCanceled, client_order_id="O-restored", reconciliation=minted)
+    order.apply(canceled)
+    ex.on_order_event(canceled)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"]) == ("ambiguous" if minted else "canceled", 0.0)
+    assert _intent_entry(tmp_path, 0, earlier)["outcome"] == ("pending" if reduce_only else "revoked")
+
+    venue.reports = [_report(_TXID, OrderStatus.CANCELED, filled_qty="0.0004")]
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW + timedelta(seconds=5))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], row["events"][-1]["event"]) == ("canceled", 0.0004, "reconciled")
+    assert [r.getMessage() for r in records if r.getMessage().startswith("the re-read pass reads")] == [
+        "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue"
+    ]
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"]) == ("revoked", 0.0004 if reduce_only else 0.0)
+    assert ex._restored_fills == set() and len(venue.calls) == 2
+
+
+def test_realized_pnl_takes_the_caches_realizations_at_construction_as_a_baseline(tmp_path):
+    """A restored closed position carries a previous run's realization; the gauge reads this
+    process's own from the baseline read at construction."""
+    client = StubClient()
+    client.cache.close_position("BTC/EUR", Money(5.0, Currency.from_str("EUR")))
+    ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path))
+    ex._traded.add(InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]))
+
+    assert ex._realized_eur() == 0.0
+    client.cache.close_position("BTC/EUR", Money(-1.5, Currency.from_str("EUR")))
+    assert ex._realized_eur() == pytest.approx(-1.5)
+
+
+_MARGIN_OPEN = _intent(leverage=2)
+_SPOT_CLOSE = _intent(side="sell", action="close", notional_eur=None, qty=0.001)
+_MARGIN_CLOSE = _intent(side="sell", action="close", leverage=2)
+
+
+@pytest.mark.parametrize(
+    "intent, margin, balances, refused",
+    [
+        (_intent(), {"BTC/EUR": 0.001}, {}, "a spot open on BTC/EUR beside a margin position of 0.001 there"),
+        (_MARGIN_OPEN, {}, {"XXBT": 0.01}, "a margin open on BTC/EUR beside 0.01 BTC spot inventory"),
+        (_MARGIN_OPEN, {}, {"XXBT": 0.0001}, "a margin open on BTC/EUR beside 0.0001 BTC spot inventory"),
+        (_MARGIN_OPEN, {}, {"XXBT": 0.00005}, None),
+        (_intent(symbol="DOGE/EUR", leverage=2), {}, {"XDG": 12.5}, "a margin open on DOGE/EUR beside 12.5 DOGE spot inventory"),
+        (_intent(), {}, {"XXBT": 0.01}, None),
+        (_MARGIN_OPEN, {"BTC/EUR": 0.001}, {}, None),
+        (_SPOT_CLOSE, {"BTC/EUR": 0.001}, {"XXBT": 0.001}, None),
+        (_MARGIN_CLOSE, {"BTC/EUR": 0.001}, {"XXBT": 0.001}, None),
+    ],
+    ids=[
+        "spot-open-beside-margin",
+        "margin-open-beside-spot",
+        "margin-open-beside-spot-at-ordermin",
+        "margin-open-beside-spot-dust",
+        "margin-open-beside-spot-spelled-xdg",
+        "spot-beside-spot",
+        "margin-beside-margin",
+        "spot-close",
+        "margin-close",
+    ],
+)
+def test_an_opening_intent_that_would_mix_spot_and_margin_inventory_on_its_pair_is_refused_and_a_close_never_is(
+    tmp_path, intent, margin, balances, refused
+):
+    """The refusal 00118 D11 carries into spec 00120 D12, on what can create the mixed shape alone: a
+    spot open where the venue's margin positions hold the pair, a margin open where the base has spot
+    inventory at or above the pair's `ordermin` (0.0001 on the stub's BTC/EUR) -- a lot under it is
+    dust the engine cannot sell -- the base read under Kraken's spellings of it, DOGE's `XDG` among
+    them. The same kind beside itself, and a close of either kind beside both,
+    are admitted -- the Cache's own position would read a spot lot as the margin one, so the margin
+    figure is the venue's, and a close takes inventory off."""
+    positions = _VenuePositions(margin)
+    ex = _executor(
+        tmp_path,
+        client=StubClient(StubCache(balances={"ZEUR": 1000.0, **balances})),
+        config=_cache_config(tmp_path),
+        venue_positions=positions,
+    )
+    _drop_plan(tmp_path, _plan_dict(intents=[intent]))
+
+    ex.on_timer(NOW)
+
+    entry = _plan_entry(tmp_path)
+    expected = [f"intent 0: {refused} -- the cache's restore does not distinguish them"] if refused else []
+    reads = 1 if intent["action"] == "open" else 0  # a plan of closes reads no venue position
+    assert (entry["disposition"], entry["reasons"], positions.calls) == ("refused" if refused else "accepted", expected, reads)
+
+
+def test_the_mixed_inventory_check_reads_no_venue_position_for_a_plan_of_closes_or_without_the_cache(tmp_path):
+    positions = _VenuePositions({"BTC/EUR": 0.001})
+    ex = _executor(tmp_path, client=StubClient(StubCache(balances={"ZEUR": 1000.0, "XXBT": 0.01})), venue_positions=positions)
+    _drop_plan(tmp_path, _plan_dict())
+    ex.on_timer(NOW)
+    assert (_plan_entry(tmp_path)["disposition"], positions.calls) == ("accepted", 0)
+
+    ex = _executor(
+        tmp_path,
+        client=StubClient(StubCache(balances={"ZEUR": 1000.0, "XXBT": 0.01})),
+        config=_cache_config(tmp_path),
+        venue_positions=positions,
+    )
+    _drop_plan(tmp_path, _plan_dict(plan_id="p-2", intents=[_SPOT_CLOSE]))
+    ex.on_timer(NOW + timedelta(seconds=5))
+    assert (_plan_entry(tmp_path, index=1)["disposition"], positions.calls) == ("accepted", 0)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_a_plan_with_an_opening_intent_waits_for_a_tick_with_nothing_in_flight_before_the_mixed_inventory_read(tmp_path, enabled):
+    """The startup pass's cancel of an adopted order is PENDING_CANCEL on the tick it goes out, and the
+    mixed-inventory check's positions read is a signed read on the same key: with the cache enabled
+    the plan waits in its file for a tick with nothing in flight, and is picked up on the next one;
+    without the cache no venue read is made and the plan is picked up on the first tick."""
+
+    class _PendingCancel(StubClient):
+        def cancel_order(self, client_order_id):
+            super().cancel_order(client_order_id)
+            self.cache.order(client_order_id).apply(
+                _event(OrderPendingCancel, client_order_id=str(client_order_id), strategy_id=StrategyId("EXTERNAL"))
+            )
+
+    adopted = "OADOPT-AAAAA-BBBBBB"
+    client = _PendingCancel(
+        StubCache(open_orders=[_resting_limit_order(adopted, venue_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))])
+    )
+    positions = _VenuePositions()
+    ex = _executor(tmp_path, client=client, config=_cache_config(tmp_path, enabled), venue_positions=positions)
+    _drop_plan(tmp_path, _plan_dict())
+
+    with _executor_errors(level=logging.INFO) as records:
+        ex.on_timer(NOW)
+
+    assert [str(cid) for cid in client.canceled] == [adopted] and client.cache.order(ClientOrderId(adopted)).is_inflight
+    held = "probe plan p-1 waits for a tick with nothing in flight -- its opening intents take a venue read"
+    if enabled:
+        assert _plan_path(tmp_path).exists() and positions.calls == 0
+        assert held in [r.getMessage() for r in records]
+        client.cache.order(ClientOrderId(adopted)).apply(
+            _event(OrderCanceled, client_order_id=adopted, strategy_id=StrategyId("EXTERNAL"))
+        )
+        ex.on_timer(NOW + timedelta(seconds=5))
+    else:
+        assert held not in [r.getMessage() for r in records]
+    assert not _plan_path(tmp_path).exists()
+    assert (_plan_entry(tmp_path)["disposition"], positions.calls) == ("accepted", 1 if enabled else 0)
+
+
+def test_a_margin_position_read_that_fails_refuses_the_opening_intents_by_name(tmp_path):
+    positions = _VenuePositions(raises=RuntimeError("timed out"))
+    ex = _executor(tmp_path, client=StubClient(StubCache()), config=_cache_config(tmp_path), venue_positions=positions)
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(), _SPOT_CLOSE]))
+
+    ex.on_timer(NOW)
+
+    entry = _plan_entry(tmp_path)
+    assert (entry["disposition"], entry["reasons"]) == (
+        "refused",
+        ["intent 0: the venue's margin positions could not be read for the mixed-inventory check -- RuntimeError: timed out"],
+    )
+
+
+# --- the withdrawal check's second source: the venue's trade history (spec 00120 D19) ---------------
+
+
+def _cold_start_row(tmp_path, *, finished=False):
+    """A cold start's shape: the ledger recorded 0.4 filled on an order the Cache holds under the venue's
+    txid at ACCEPTED with no fill applied -- the library created it from the venue's report and applied
+    none of the trade history's fills to it. `finished` closes the row on that quantity instead."""
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-cold", reduce_only=False, when=earlier, venue_order_id=_TXID, qty=1.0)
+    update_submitted_row(
+        tmp_path / "journal", _boundary(earlier), "O-cold", add_filled_qty=0.4, state="filled" if finished else None
+    )
+    return earlier
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_the_trade_history_covers_it(tmp_path, finished):
+    earlier = _cold_start_row(tmp_path, finished=finished)
+    order = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=StrategyId("EXTERNAL"))
+    cache = (
+        StubCache(closed_orders=[_closed_order("O-cold", OrderStatus.FILLED, filled_qty=0.0, venue_order_id=_TXID)])
+        if finished
+        else StubCache(open_orders=[order])
+    )
+    client = StubClient(cache)
+    fills = _VenueFills(_fill_report(_TXID, "0.4"))
+    ex = _executor(tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_fills=fills)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    assert not _kill_file(tmp_path).exists()
+    assert fills.calls == [_boundary(earlier) - timedelta(hours=1)]
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (
+        row["filled_qty"] == 0.4 and [e.get("event") for e in row["events"] if e.get("event") in ("withdrawn", "reconciled")] == []
+    )
+    kind = "finished order" if finished else "adopted order"
+    assert f"{kind} O-cold (Kraken {_TXID}) reads 0 filled on its order figure against the 0.4" in " ".join(
+        r.getMessage() for r in records
+    )
+    if not finished:
+        assert [str(cid) for cid in client.canceled] == [_TXID]  # cancelled as an order the ledger carries as no reducer
+        assert "O-cold" in ex._rows_the_pass_repaired  # a fill the library infers at the ack credits nothing beyond the Cache
+
+
+@pytest.mark.parametrize(
+    "history",
+    [(), (("0.2", _TXID), ("0.4", f"{_TXID}-other"))],
+    ids=["no-fill", "short-on-the-txid-and-covered-on-another"],
+)
+@pytest.mark.parametrize("finished", [False, True])
+def test_a_true_withdrawal_with_no_fill_in_the_trade_history_trips_the_kill_switch_as_today(
+    tmp_path, finished, history, kill_trip_expected
+):
+    """The cover is the row's own txid's sum: a history short on that txid trips however much another
+    order's fills would make up, and presence alone is no cover."""
+    earlier = _cold_start_row(tmp_path, finished=finished)
+    order = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=StrategyId("EXTERNAL"))
+    cache = (
+        StubCache(closed_orders=[_closed_order("O-cold", OrderStatus.FILLED, filled_qty=0.0, venue_order_id=_TXID)])
+        if finished
+        else StubCache(open_orders=[order])
+    )
+    fills = _VenueFills(*(_fill_report(txid, qty, trade_id=f"T-h{i}") for i, (qty, txid) in enumerate(history)))
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_fills=fills)
+
+    ex.on_timer(NOW)
+
+    assert fills.calls == [_boundary(earlier) - timedelta(hours=1)]
+    assert f"O-cold (Kraken {_TXID}) shows 0 filled at the venue, less than the 0.4" in _kill_file(tmp_path).read_text()
+    last = _record(tmp_path, earlier)["submitted"][0]["events"][-1]
+    assert (last.get("event"), last.get("type")) == (("withdrawn", None) if finished else (None, "OrderAccepted"))
+
+
+def test_a_trade_history_read_that_fails_leaves_the_withdrawal_check_on_the_order_figure(tmp_path, kill_trip_expected):
+    earlier = _cold_start_row(tmp_path)
+    order = _resting_limit_order(_TXID, venue_order_id=_TXID, strategy_id=StrategyId("EXTERNAL"))
+    fills = _VenueFills(raises=RuntimeError("timed out"))
+    ex = _executor(
+        tmp_path, client=StubClient(StubCache(open_orders=[order])), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_fills=fills
+    )
+
+    with _executor_errors(level=logging.CRITICAL) as records:
+        ex.on_timer(NOW)
+
+    assert len(fills.calls) == 1 and f"O-cold (Kraken {_TXID}) shows 0 filled at the venue" in _kill_file(tmp_path).read_text()
+    assert "the venue's trade history could not be read for the withdrawal check -- the order's figure decides" in [
+        r.getMessage() for r in records
+    ]
+    _ = earlier
+
+
+def test_the_trade_history_is_read_once_per_pass_from_the_earliest_rows_boundary_and_a_failed_read_is_not_retried(
+    tmp_path, kill_trip_expected
+):
+    """D19's once per pass: two finished rows short of the ledger, under two boundaries, and a reader
+    that raises -- one call, from one hour before the earlier boundary, both rows tripping on their
+    order figure."""
+    rows = {"O-cold-1": (NOW - timedelta(hours=4), f"{_TXID}-1"), "O-cold-2": (NOW - timedelta(hours=8), f"{_TXID}-2")}
+    for cid, (when, txid) in rows.items():
+        _submitted_row(tmp_path, cid, reduce_only=False, when=when, venue_order_id=txid, qty=1.0)
+        update_submitted_row(tmp_path / "journal", _boundary(when), cid, add_filled_qty=0.4, state="filled")
+    cache = StubCache(
+        closed_orders=[
+            _closed_order(cid, OrderStatus.FILLED, filled_qty=0.0, venue_order_id=txid) for cid, (_, txid) in rows.items()
+        ]
+    )
+    fills = _VenueFills(raises=RuntimeError("timed out"))
+    ex = _executor(tmp_path, client=StubClient(cache), gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_fills=fills)
+
+    ex.on_timer(NOW)
+
+    assert fills.calls == [_boundary(NOW - timedelta(hours=8)) - timedelta(hours=1)]
+    assert _kill_file(tmp_path).exists()

@@ -2,7 +2,7 @@
 
 The node is the engine's own `build_shadow_node`, with the cache backing attached through the config
 and every venue default redirected to the loopback the driver runs: the two client configs' URLs, the
-gate's venue reader, and the three bare-client reads' `base_url`. Before anything is built the child
+gate's venue reader, and the five bare-client reads' `base_url`. Before anything is built the child
 asserts that no production default remains, the autouse `_no_production_venue_read` fixture's rule
 for a node that runs. The strategy the engine registers is subclassed to hand the executor its
 quotes on a timer, since the data peer sends none, and to stop the node at the window's end; its
@@ -94,6 +94,8 @@ node_module.read_system_status = _venue_online
 executor_module.read_venue_orders = partial(executor_module.read_venue_orders, base_url=CONFIG["base_url"])
 executor_module.cancel_venue_order = partial(executor_module.cancel_venue_order, base_url=CONFIG["base_url"])
 executor_module.read_venue_holdings = partial(executor_module.read_venue_holdings, base_url=CONFIG["base_url"])
+executor_module.read_venue_fills = partial(executor_module.read_venue_fills, base_url=CONFIG["base_url"])
+executor_module.read_venue_positions = partial(executor_module.read_venue_positions, base_url=CONFIG["base_url"])
 
 
 def _refuse_production_defaults() -> None:
@@ -105,7 +107,13 @@ def _refuse_production_defaults() -> None:
     redirected = all(url.startswith(LOOPBACK_HTTP) for url in urls) and all(url.startswith(LOOPBACK_WS) for url in sockets)
     bare = all(
         isinstance(fn, partial) and str(fn.keywords.get("base_url", "")).startswith(LOOPBACK_HTTP)
-        for fn in (executor_module.read_venue_orders, executor_module.cancel_venue_order, executor_module.read_venue_holdings)
+        for fn in (
+            executor_module.read_venue_orders,
+            executor_module.cancel_venue_order,
+            executor_module.read_venue_holdings,
+            executor_module.read_venue_fills,
+            executor_module.read_venue_positions,
+        )
     )
     if not (
         redirected

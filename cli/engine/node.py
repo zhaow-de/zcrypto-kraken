@@ -211,14 +211,18 @@ class ShadowStrategy(Strategy):
     empty: an order the engine did not submit -- the account owner settling a position by hand
     mid-probe -- keeps nautilus's `EXTERNAL` strategy id and structurally never arrives on that
     topic. That scoping is the precondition the executor's unknown-order kill trip rests on;
-    widening it would latch the kill switch on a sanctioned act.
+    widening it would latch the kill switch on a sanctioned act. With the cache enabled the topic
+    also carries the orders a previous process of this engine placed and the cache restored under
+    this same id, since the id derives from the class name and the store keys them under it; the
+    executor attaches those at its construction, inside this `on_start` (spec 00120 D6).
 
     A SECOND order stream reaches this strategy from the side (spec 00098 D1, 00100 D2), and
     neither half of that scoping moves. The claim list stays empty, so the own topic still carries
     only orders this engine submitted and the unknown-order trip still runs only there. The second
     stream is `ExternalOrderObserver`, a separate strategy registered under the venue's external
-    order identity, and it forwards into `_on_external_order_event` -> the executor's disposition
-    filter, which acts only on the rows the adopt pass re-attached plus this session's own
+    order identity -- the orders the cache did not restore, a cold start's among them -- and it
+    forwards into `_on_external_order_event` -> the executor's disposition filter, which acts only
+    on the rows the adopt pass re-attached plus this session's own
     submissions -- a SUBSET of what the ledger vouches for, and a strict one by the rows
     `executor._reconcile_adopted_rows` leaves unattached -- and everything else it counts, logs,
     and drops before any row write, cancel, or trip arithmetic. So the hand settle remains
@@ -402,9 +406,10 @@ def _external_observer_config() -> StrategyConfig:
 
 class ExternalOrderObserver(Strategy):
     """The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
-    order identity, it receives the order events of everything this process did not submit --
-    a previous process's resting order the startup pass adopted, and the account owner's own
-    hand-placed settling orders alike -- and forwards each to `handler`, which is the shadow
+    order identity, it receives the order events of everything this process did not submit and the
+    cache did not restore under the engine's own id -- a previous process's resting order the
+    startup pass adopted by its txid, and the account owner's own hand-placed settling orders
+    alike -- and forwards each to `handler`, which is the shadow
     strategy's `_on_external_order_event` and through it the executor's disposition filter. That
     filter acts only on the rows the adopt pass re-attached and this session's own submissions --
     a subset of what the ledger vouches for; the hand settle matches none, so it is counted and

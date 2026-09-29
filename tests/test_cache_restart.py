@@ -47,7 +47,7 @@ ADMIN_USER, ADMIN_PASSWORD = "admin", "admin-harness-password"
 # submission; phase 2's re-read pass runs on the tick after the pass's cancel. Each node adds the
 # library's ten-second residual wait at stop.
 PHASE1_WINDOW = 14
-PHASE2_WINDOW = 16
+PHASE2_WINDOW = 20
 CHILD_TIMEOUT = 150
 
 
@@ -418,6 +418,16 @@ def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(pha
         f"order {wire['client_order_id']} partial, 0.40000000 of 1.00000000 filled @ 150.00",
     ]
     assert record["external"] == [], record["external"]  # every later event reaches the own topic
+    # The executor: the restored set, the pass's cancel of the restored opener named with its fill
+    # state, the row settled from the venue's report by the re-read pass, and the intent the sweep wrote.
+    assert record["restored"] == [wire["client_order_id"]]
+    assert (
+        f"canceling restored order {wire['client_order_id']}, partial -- the ledger does not carry it as a resting reducer"
+        in record["log"]
+    )
+    [row] = node.rows()
+    [intent] = node.intents()
+    assert (row["state"], row["filled_qty"], intent["outcome"]) == ("canceled", 0.4, "revoked")
 
 
 def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(phase_one):
@@ -456,6 +466,12 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
         "position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
         f"order {wire['client_order_id']} partial, 0.70000000 of 1.00000000 filled @ 150.00",
     ]
+    # The executor: the venue's report repairs the row to the venue's figure before the pass's cancel.
+    label = f"{wire['client_order_id']} (Kraken {wire['txid']})"
+    assert f"adopted order {label} reconciled against the venue: 0.7 filled there against the 0.4 recorded here" in record["log"]
+    [row] = node.rows()
+    assert (row["filled_qty"], row["state"]) == (0.7, "canceled")
+    assert [e["qty"] for e in row["events"] if e.get("event") == "reconciled"] == [pytest.approx(0.3)]
 
 
 def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_library(phase_one):
@@ -482,6 +498,15 @@ def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_lib
     [order] = record["at_start"]["orders"]
     assert (order["is_open"], order["filled_qty"]) == (True, "0.40000000")
     assert _restore_lines(record["log"])[0] == "1 order(s), 1 position(s) restored"
+    # The executor: the row written from the venue's report, the stale copy left, no cancel sent.
+    assert "ClosedOrders" in private_calls and "CancelOrder" not in private_calls, private_calls
+    assert (
+        f"restored order {wire['client_order_id']} is canceled at the venue -- its stale open copy stays in the Cache and no cancel is sent"
+        in record["log"]
+    )
+    [row] = node.rows()
+    [intent] = node.intents()
+    assert (row["state"], row["filled_qty"], intent["outcome"]) == ("canceled", 0.4, "revoked")
 
 
 def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one):
@@ -529,14 +554,98 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
     assert [(e["last_qty"], e["reconciliation"]) for e in fills] == [("0.20000000", True), ("0.20000000", True)], fills
     [order] = record["at_end"]["orders"]
     assert order["filled_qty"] == "0.80000000"  # the venue's cumulative figure is 0.6
+    # The executor: both fills credit the row nothing, the re-read pass repairs it to the venue's 0.6,
+    # and the kept reducer's intent stays pending on its open row.
+    assert record["restored"] == [wire["client_order_id"]]
+    [row] = node.rows()
+    fills = [e for e in row["events"] if e.get("event") == "fill"]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0), (0.2, 0.0)]
+    assert "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue" in record["log"]
+    assert (row["filled_qty"], row["state"]) == (pytest.approx(0.6), "accepted")
+    [intent] = node.intents()
+    assert intent["outcome"] == "pending"
+    # The realized baseline over a real restored position: each fill's publish reads this process's own
+    # realizations, the previous run's left in the baseline.
+    assert record["metrics"]["realized"] and set(record["metrics"]["realized"]) == {0.0}, record["metrics"]["realized"]
+
+
+def test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_twice_and_the_row_settles_at_the_venues_figure(
+    phase_one,
+):
+    """The D7 race: the restored opener the startup pass cancels takes a `trade` frame (last 0.2,
+    cumulative 0.6) between the pass's cancel and the venue's ack. The library books it twice, 0.8 on
+    a copy the ack then closes, and flags the ack `reconciliation` -- its fill-decrease handling, so
+    the row reads `ambiguous` until the re-read pass reads the venue's closed report; both fills
+    credit the row nothing, the pass repairs it to the venue's 0.6 and closes it `canceled`, and the
+    intent the sweep wrote at the cancel stays `revoked`."""
+    valkey, node, wire, _ = phase_one
+    with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
+        venue.balances = {"ZEUR": lb.balance("1000.00000000")}
+        venue.open_orders[wire["txid"]] = dict(
+            lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+            oflags="fciq",
+            vol_exec="0.40000000",
+            price="150.00000",
+            cost="60.00000",
+        )
+        venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
+        venue.positions["TPOSLP-AAAAA-BBBBBB"] = dict(
+            lb.margin_position(PAIR, volume="0.40000000"), ordertxid=wire["txid"], cost="60.00000"
+        )
+        _script_cancel_ack(venue, exec_, wire)
+        ack = venue.on_cancel_order
+
+        def trade_then_ack(form: dict) -> None:
+            # Inside the venue's CancelOrder: the frame and the listings it moves land before the answer.
+            exec_.send_execution(
+                lb.exec_trade(
+                    wire["txid"], wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE, last_qty=0.2, cum_qty=0.6,
+                    exec_id="TLOOP3-AAAAA-AAAAAA", trade_id=1003,
+                )
+            )  # fmt: skip
+            venue.open_orders[wire["txid"]].update(vol_exec="0.60000000", cost="90.00000")
+            venue.trades["TLOOP3-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.20000000", price="150.00", trade_id=1003)
+            venue.positions["TPOSLP-AAAAA-BBBBBB"].update(vol="0.60000000", cost="90.00000")
+            ack(form)
+
+        venue.on_cancel_order = trade_then_ack
+        record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
+        cancels = list(venue.cancel_forms)
+
+    assert record["errors"] == [], record["errors"]
+    assert [form.get("txid") for form in cancels] == [wire["txid"]]
+    assert "Generated inferred fill" in record["log"]
+    assert [(e["type"], e["reconciliation"]) for e in record["own"]] == [
+        ("OrderPendingCancel", False),
+        ("OrderFilled", True),
+        ("OrderFilled", True),
+        ("OrderCanceled", True),
+    ], record["own"]
+    [order] = record["at_end"]["orders"]
+    assert (order["status"], order["filled_qty"]) == ("CANCELED", "0.80000000")  # the venue's cumulative figure is 0.6
+    [row] = node.rows()
+    fills = [e for e in row["events"] if e.get("event") == "fill"]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0), (0.2, 0.0)], fills
+    assert "its row reads ambiguous until the re-read pass settles it" in record["log"]
+    assert "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue" in record["log"]
+    assert (
+        f"a fill on restored order {row['client_order_id']} credits nothing until the venue is read -- the next restart is taken flat"
+        in record["log"]
+    )
+    assert (row["state"], row["filled_qty"]) == ("canceled", pytest.approx(0.6))
+    assert [e["qty"] for e in row["events"] if e.get("event") == "reconciled"] == [pytest.approx(0.2)]
+    [intent] = node.intents()
+    assert intent["outcome"] == "revoked"
 
 
 def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today(tmp_path):
     """The owner's ruling: an empty namespace is a cold start, never a refusal. The order is a spot
-    one resting unfilled, so the venue has no margin position for the start to fail on and no fill
-    for the pass to weigh against the ledger; the restarted node reads zero, reconciliation names
-    the order by its txid under EXTERNAL, and the pass cancels it as an order the ledger carries as
-    no reducer, today's shape."""
+    one, so the venue has no margin position for the start to fail on, and it filled 0.4 before the
+    stop: the library creates the EXTERNAL copy from the venue's report at ACCEPTED with no fill
+    applied, and the venue's own report, 0.4, answers for the copy as for every order the Cache holds
+    at construction -- no trip. The restarted node reads zero, reconciliation names the order by its
+    txid under EXTERNAL, the pass cancels it as an order the ledger carries as no reducer, and the
+    fill the library infers at the cancel's ack credits the row nothing, a restored row's credit."""
     valkey = _Valkey(tmp_path / "valkey")
     try:
         valkey.start()
@@ -545,11 +654,11 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         wire: dict = {}
         with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000")}
-            _script_first_fill(venue, exec_, wire=wire, fill=False)
+            _script_first_fill(venue, exec_, wire=wire)
             record = node.run(1, venue, data, exec_, window=PHASE1_WINDOW)
         assert record["errors"] == [], record["errors"]
         [row] = node.rows()
-        assert (row["state"], row["filled_qty"], row["order"]["leverage"]) == ("accepted", 0.0, None)
+        assert (row["state"], row["filled_qty"], row["order"]["leverage"]) == ("accepted", 0.4, None)
         wire["client_order_id"] = row["client_order_id"]
         assert len(_keys(valkey.port)) > 0
         # The store lost: a fresh server on the same port, the venue still listing the order open.
@@ -557,8 +666,15 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         valkey.start()
         assert _keys(valkey.port) == []
         with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
-            venue.balances = {"ZEUR": lb.balance("1000.00000000")}
-            venue.open_orders[wire["txid"]] = dict(lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"), oflags="fciq")
+            venue.balances = {"ZEUR": lb.balance("1000.00000000"), "SOL": lb.balance("0.40000000")}
+            venue.open_orders[wire["txid"]] = dict(
+                lb.open_order(PAIR, price=f"{PRICE:.2f}", volume=f"{QTY:.8f}"),
+                oflags="fciq",
+                vol_exec="0.40000000",
+                price="150.00000",
+                cost="60.00000",
+            )
+            venue.trades["TLOOP1-AAAAA-AAAAAA"] = lb.trade_row(wire["txid"], PAIR, vol="0.40000000", price="150.00", trade_id=1001)
             _script_cancel_ack(venue, exec_, wire)
             record = node.run(2, venue, data, exec_, window=PHASE2_WINDOW)
             cancels = list(venue.cancel_forms)
@@ -567,6 +683,7 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
 
     assert record["errors"] == [], record["errors"]
     assert _restore_lines(record["log"]) == ["0 order(s), 0 position(s) restored"]
+    assert record["restored"] == [wire["txid"]]  # the EXTERNAL copy reconciliation created, in the set under its txid
     assert f"Created external order {wire['txid']}" in record["log"]
     [external] = record["at_start"]["orders"]
     assert (
@@ -583,9 +700,22 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
         True,
     )
     assert "execution kill switch tripped" not in record["log"]
+    # The EXTERNAL copy reads 0 filled; the venue's report, 0.4, answers for it as for every order the
+    # Cache holds at construction, so the withdrawal check reads no shortfall and the trade history is
+    # not consulted -- the check's second source is the copy's, without the cache or under a failed
+    # order read, and the executor file's cold-start cases pin it there.
+    assert "reads 0 filled on its order figure" not in record["log"]
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
     assert [form.get("txid") for form in cancels] == [wire["txid"]]
     assert [e["client_order_id"] for e in record["external"]][:1] == [wire["txid"]]
+    # The fill the library infers at the cancel's ack, 0.4 again, credits the row nothing, a restored
+    # row's credit; the row settles at the venue's 0.4, canceled by the pass.
+    [row] = node.rows()
+    fills = [e for e in row["events"] if e.get("event") == "fill"]
+    assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.4, 0.0)], fills
+    assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
+    [intent] = node.intents()
+    assert intent["outcome"] == "revoked"
 
 
 def _silent_listener() -> tuple[int, threading.Event]:
