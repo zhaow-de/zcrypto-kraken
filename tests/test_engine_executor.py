@@ -8827,6 +8827,16 @@ def test_the_cancel_ack_of_a_restored_row_writes_its_intent_unless_the_startup_m
     )
 
 
+def test_the_cancel_ack_of_an_adopted_reducer_outside_the_restored_set_writes_no_intent(tmp_path):
+    ex, client, earlier = _adopted_executor(tmp_path)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+
+    _deliver_external_event(ex, client, _canceled("O-attached"))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == ("canceled", "pending")
+
+
 def test_a_restored_row_is_read_at_the_venue_when_a_read_of_its_copy_raises(tmp_path, kill_trip_expected):
     class _NoOrderRead(StubCache):
         def order(self, client_order_id):
