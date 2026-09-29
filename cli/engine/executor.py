@@ -418,12 +418,14 @@ def _unread_what(venue_order_id: str) -> str:
     return f"the venue's order read has no order {venue_order_id}"
 
 
-def _marked_unmatched(row: dict, what: str | None = None, *, venue_order_id: str | None = None) -> bool:
-    """Whether `row` carries `_mark_unmatched`'s `ambiguous` event for `what` -- with none given, for
-    the one a read by `venue_order_id`, the executor's `_read_id`, would write now. The strand's
-    `ambiguous` event carries another `what`."""
-    if what is None:
-        what = _unmatchable_what(row) if venue_order_id is None else _unread_what(venue_order_id)
+def _mark_what(row: dict, venue_order_id: str | None) -> str:
+    """The `what` of `_mark_unmatched`'s mark on `row` read by `venue_order_id`, the executor's `_read_id`."""
+    return _unmatchable_what(row) if venue_order_id is None else _unread_what(venue_order_id)
+
+
+def _marked_unmatched(row: dict, what: str) -> bool:
+    """Whether `row` carries `_mark_unmatched`'s `ambiguous` event for `what`. The strand's `ambiguous`
+    event carries another `what`."""
     return any(isinstance(e, dict) and e.get("type") == "ambiguous" and e.get("what") == what for e in row.get("events") or ())
 
 
@@ -935,8 +937,9 @@ class ProbeExecutor:
         # When the gate was last evaluated, for the idle refresh: the process's startup evaluation
         # published moments before this construction.
         self._gate_evaluated_at: datetime = self._now()
-        # Set once, when the startup pass could not read the venue's orders, and never cleared: every
-        # plan is refused with it for the life of this process, and a restart is the retry.
+        # Set once, when the startup pass could not read the venue's orders or the restored set could not
+        # be read at construction (`_read_restored`), and never cleared: every plan is refused with it for
+        # the life of this process, and a restart is the retry.
         self._reconciliation_refusal: str | None = None
         self._journal_dir = Path(config.journal_dir)
         # The 00088 convention: the control-file tree sits beside the journal, not inside it.
@@ -974,6 +977,12 @@ class ProbeExecutor:
         # The restored set (`_read_restored`): the txid of every order the Cache held for the venue at
         # construction, by client order id, for the process's life; empty without the cache.
         self._restored: dict[str, str | None] = {}
+        # Set when the restored set could not be read at construction: which rows the Cache holds a copy
+        # of is then unknown, so every row is read as a restored one (`_restored_row`).
+        self._restored_unread = False
+        # The (row, `what`) pairs a sweep of this process marked unmatched (`_mark_unmatched`), which the
+        # re-read pass leaves out.
+        self._marked: set[tuple[str, str]] = set()
         # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
         self._restored_fills: set[str] = set()
@@ -995,8 +1004,15 @@ class ProbeExecutor:
         try:
             orders = list(self._cache.orders(venue=_VENUE))
         except Exception:
+            self._restored_unread = True
+            self._reconciliation_refusal = (
+                "the restored orders could not be read at start, so no ledgered row can be told from one the Cache "
+                "restored -- restart the engine to retry"
+            )
             logger.critical(
-                "the restored orders could not be read at start -- the startup pass reads the Cache's copy of each", exc_info=True
+                "the restored orders could not be read at start -- every ledgered row is read at the venue as a restored "
+                "one, and every plan is refused until the engine is restarted",
+                exc_info=True,
             )
             return
         self._restored = {str(order.client_order_id): _venue_order_id_of(order) for order in orders}
@@ -1497,8 +1513,10 @@ class ProbeExecutor:
         `DISCONNECTED` and the execution socket's own drop later -- spends no budget into the cut; a
         stale entry, an endpoint whose `CONNECTED` never comes under its drop's string, then closes
         every return's arm at its first failed read, the read's CRITICAL never reaching the page while
-        it stands. A row a pass already marked unmatched (`_marked_unmatched`) is left out: no read of
-        this process settles it, and each arm would re-read it and page the same line. A run whose reads
+        it stands. A row a sweep of this process marked unmatched under the id it is read by now
+        (`_marked_here`) is left out: no read of this process settles it, and each arm would re-read it and
+        page the same line; an earlier process's mark leaves it in, since this process's reads may answer
+        for it. A run whose reads
         answer -- the ledger's, and the venue's orders when the population is not empty -- ends by
         settling the position gauge from the venue's holdings (`_settle_positions_from_venue`), so an
         opposing hand trade the state machine refused settles at the next such arm; a run whose read
@@ -1509,8 +1527,7 @@ class ProbeExecutor:
             rows = {
                 row["client_order_id"]: (boundary, row)
                 for boundary, row in open_submitted_rows(self._journal_dir, now)
-                if (self._minted_closed(row) or row["client_order_id"] in self._restored_fills)
-                and not _marked_unmatched(row, venue_order_id=self._read_id(row))
+                if (self._minted_closed(row) or row["client_order_id"] in self._restored_fills) and not self._marked_here(row)
             }
             # A restored row a fill reached and a terminal then closed before this pass -- the venue's
             # cancel ack, an expiry -- is in the window's closed rows: its credit-0 fill is repaired
@@ -1519,8 +1536,7 @@ class ProbeExecutor:
                 {
                     row["client_order_id"]: (boundary, row)
                     for boundary, row in closed_submitted_rows(self._journal_dir, now)
-                    if row["client_order_id"] in self._restored_fills
-                    and not _marked_unmatched(row, venue_order_id=self._read_id(row))
+                    if row["client_order_id"] in self._restored_fills and not self._marked_here(row)
                 }
             )
             self._reset_fills_read(rows.values())
@@ -1586,7 +1602,8 @@ class ProbeExecutor:
     def _reconcile_adopted_rows(self, rows: dict, venue_orders: dict | None, *, recancel: bool = False) -> None:
         """The startup reconciliation sweep (spec 00098 D7): every open ledgered row, compared
         against its order's own quantity and status, before anything is classified -- and the
-        re-read pass's, with `recancel`, over the rows it reads, ledger-closed restored rows among them.
+        re-read pass's, with `recancel`, over the rows it reads, ledger-closed restored rows among them,
+        which take the report's figure and keep their closed state whatever status it reads.
 
         The ROWS drive it, and each asks for exactly the order it names. The alternative -- reading
         the account's whole order history and matching it against the rows -- reads a population with
@@ -1607,8 +1624,10 @@ class ProbeExecutor:
 
         A row neither answers is never given a venue truth nobody read: `_mark_unmatched` marks it by
         its ledger state unless the venue read it needed failed, which `_read_venue_orders` has already
-        turned into a refusal of every plan. The order behind such a row is neither attached nor kept by the
-        pass above; `_on_external_event` says what becomes of its later fills.
+        turned into a refusal of every plan. Outside the restored set the order behind such a row is neither
+        attached nor kept by the pass above, and `_on_external_event` says what becomes of its later fills; a
+        restored copy is attached at construction and, resting in the Cache, kept as a ledgered reducer or
+        cancelled through the strategy handle.
 
         Wrapped twice, and both wrappings earn their place. PER ROW, so one row's failure -- its
         lookup, its repair, or its trip -- costs only that row and the rest still get their repairs.
@@ -1761,20 +1780,22 @@ class ProbeExecutor:
         The line is a WARNING, except for an open row whose txid the venue read does not return: CRITICAL,
         the level `_log_resting_outside_the_cache` logs at, since that read skips an order row the adapter
         cannot parse (`_cancel_resting`), so the order may still rest at Kraken, where no cancel this
-        process can issue reaches it.
+        process can issue reaches it outside the restored set; a restored copy resting in the Cache is
+        attached and kept as a ledgered reducer or cancelled through the strategy handle.
 
         A row already carrying the mark -- the event, for this `what` (`_marked_unmatched`) -- is left
         alone, so a row that stays unmatched does not gain an event every restart; its line is logged
-        every restart all the same, and the re-read pass reads the event to leave the row out of its
-        later arms, an open row's `ambiguous` state being the mint's or the strand's as readily as a
-        mark's. Nothing is refused and nothing trips: the operator reads the row against Kraken's own
-        open and closed orders. The write is not wrapped: the caller's per-row `try` logs its failure,
-        and no trip stands behind it."""
+        every restart all the same, and the re-read pass leaves a row this process marked out of its
+        later arms (`_marked_here`), an open row's `ambiguous` state being the mint's or the strand's as
+        readily as a mark's. Nothing is refused and nothing trips: the operator reads the row against
+        Kraken's own open and closed orders. The write is not wrapped: the caller's per-row `try` logs
+        its failure, and no trip stands behind it."""
         client_order_id = row["client_order_id"]
         open_row = row.get("state") in _OPEN_ORDER_STATES
-        what = _unmatchable_what(row) if venue_order_id is None else _unread_what(venue_order_id)
+        what = _mark_what(row, venue_order_id)
         log = logger.critical if open_row and venue_order_id is not None else logger.warning
         log("ledgered order %s matches no venue order -- %s; its row is marked ambiguous", client_order_id, what)
+        self._marked.add((client_order_id, what))
         if _marked_unmatched(row, what):
             return
         event = {"type": "ambiguous", "at": self._now().isoformat(), "what": what}
@@ -1801,8 +1822,8 @@ class ProbeExecutor:
                     venue_order_id = self._read_id(row)
                     if venue_order_id is None:
                         continue
-                    order = self._cached_order(row, venue_order_id)
-                    if order is None or self._venue_answers(row, finished=is_finished):
+                    # The venue first, so a row it answers for is read whatever a read of its copy does.
+                    if self._venue_answers(row, finished=is_finished) or self._cached_order(row, venue_order_id) is None:
                         needed.append(boundary)
                 except Exception:
                     continue  # the sweep reads this row again, and logs what fails there
@@ -1894,11 +1915,15 @@ class ProbeExecutor:
         (`_restored`), which carries the acceptance a ledger row can miss."""
         return _row_venue_order_id(row) or self._restored.get(row["client_order_id"])
 
+    def _marked_here(self, row: dict) -> bool:
+        """Whether a sweep of this process marked `row` unmatched under the id it is read by now (`_read_id`)."""
+        return (row["client_order_id"], _mark_what(row, self._read_id(row))) in self._marked
+
     def _restored_row(self, row: dict) -> bool:
         """Whether the Cache held `row`'s order at construction (`_read_restored`): under the id this
         engine minted, or, for an EXTERNAL copy, under the txid the row recorded, which is that copy's
-        own client order id."""
-        return row["client_order_id"] in self._restored or _row_venue_order_id(row) in self._restored
+        own client order id. Every row when that read failed, since any row may then have a copy."""
+        return self._restored_unread or row["client_order_id"] in self._restored or _row_venue_order_id(row) in self._restored
 
     def _settle_restored_intent(self, boundary: datetime, row: dict) -> None:
         """A restored row's intent, written once at the row's terminal while it still reads `pending` (spec
@@ -2081,7 +2106,7 @@ class ProbeExecutor:
         nothing, ever. That is fine for everything an order can do going forward and wrong for the
         one thing it can do backwards: the venue withdrawing a fill it already reported. A withdrawal
         lands on a COMPLETED order by construction, which is exactly the row the re-attach set omits.
-        A row with no fills has none to withdraw, so only rows with fills are asked.
+        A row with no fills has none to withdraw, so only rows with fills are asked, and the restored rows below.
 
         This engine never sees the withdrawal as an event: it happens to an order this process may
         never have held, and what shows it is the venue's own `filled_qty` for the order having come
@@ -2089,7 +2114,9 @@ class ProbeExecutor:
         sized against. The row finds that order, and is marked when it finds none, as an open row
         does in `_reconcile_adopted_rows`; `_mark_unmatched` says how a finished row's mark differs. A
         row of the restored set finds it in the venue's report alone, by `_read_id`, never in its Cache
-        copy (`_venue_answers` says why).
+        copy (`_venue_answers` says why), and is asked with no fills too, since a credit-0 fill no re-read
+        pass repaired leaves its figure below the venue's (spec 00120 D8): a report above the row repairs
+        it through the startup's repair arm before the pass settles its intent.
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
@@ -2098,16 +2125,13 @@ class ProbeExecutor:
         try:
             for client_order_id, (boundary, row) in rows.items():
                 try:
-                    if not row["filled_qty"] > _OVERFILL_TOLERANCE:
-                        continue
+                    restored = self._restored_row(row)
                     venue_order_id = self._read_id(row)
+                    if not row["filled_qty"] > _OVERFILL_TOLERANCE and not (restored and venue_order_id is not None):
+                        continue
                     label = _row_label(row, venue_order_id)
-                    order = self._cached_order(row, venue_order_id)
-                    if (
-                        order is not None
-                        and not self._restored_row(row)
-                        and (venue_order_id is None or not self._venue_answers(row, finished=True))
-                    ):
+                    order = None if restored else self._cached_order(row, venue_order_id)
+                    if order is not None and (venue_order_id is None or not self._venue_answers(row, finished=True)):
                         self._reconcile_finished_row(boundary, row, float(order.filled_qty), label, venue_order_id=venue_order_id)
                         continue
                     if venue_order_id is not None and venue_orders is None:
@@ -2116,9 +2140,26 @@ class ProbeExecutor:
                     if report is None:
                         self._mark_unmatched(boundary, row, venue_order_id)
                         continue
-                    if order is None:
+                    if not restored and order is None:
                         _log_resting_outside_the_cache(label, report)
-                    self._reconcile_finished_row(boundary, row, float(report.filled_qty), label, venue_order_id=venue_order_id)
+                    if restored and float(report.filled_qty) > row["filled_qty"] + _OVERFILL_TOLERANCE:
+                        self._reconcile_adopted_row(
+                            boundary,
+                            row,
+                            float(report.filled_qty),
+                            report.order_status,
+                            order_id=None,
+                            venue_order_id=venue_order_id,
+                        )
+                    else:
+                        self._reconcile_finished_row(boundary, row, float(report.filled_qty), label, venue_order_id=venue_order_id)
+                    # A restored row's copy is read only once its figure is applied, and only for the line below.
+                    if (
+                        restored
+                        and report.order_status not in _ADOPTED_TERMINAL_STATES
+                        and self._cached_order(row, venue_order_id) is None
+                    ):
+                        _log_resting_outside_the_cache(label, report)
                 except Exception:
                     logger.critical("finished row %s could not be reconciled against the venue", client_order_id, exc_info=True)
         except Exception:
@@ -2222,8 +2263,9 @@ class ProbeExecutor:
         if self._reconciliation_refusal is not None:
             # The startup pass could not read the venue's orders, so ledgered rows were never compared
             # with what the venue did while this process was down -- a withdrawn fill among them would
-            # have latched the kill switch. Refused the way the backstop above refuses, for the life of
-            # this process.
+            # have latched the kill switch -- or the restored set could not be read, so any order's fill
+            # may be a restored copy's, credited nothing. Refused the way the backstop above refuses, for
+            # the life of this process.
             logger.critical("probe plan %s refused: %s", plan.plan_id, self._reconciliation_refusal)
             if self._journal_plan(
                 cycle_ts,
