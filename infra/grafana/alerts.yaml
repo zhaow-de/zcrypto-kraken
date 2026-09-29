@@ -2816,7 +2816,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-capture-reboot-pending
-    title: "Capture · reboot pending (attended)"
+    title: "Node · reboot pending, reboot by hand (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2826,6 +2826,7 @@ rules:
       # patches install, the reboot is a human act. That closes the risk of an unwatched reboot of
       # unbackfillable L2 capture -- and, on the primary, the live trade engine -- and opens the
       # opposite one: a kernel flag nobody notices. THIS rule is the whole reason the flip is safe.
+      # Ops runs the same flip by the owner's decision of 2026-09-29, and publishes the same flag.
       # It keeps firing until the human reboots; that persistence is the point, not a nuisance.
       # Published by the zcrypto-reboot-check timer as an explicit 0/1 -- never an absent series,
       # which would be indistinguishable from a dead exporter.
@@ -2834,7 +2835,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'node_reboot_required{host=~"zcrypto|zcrypto-red"}'
+          expr: 'node_reboot_required{host=~"zcrypto|zcrypto-red|ops"}'
           instant: true
           refId: A
       - refId: C
@@ -2855,7 +2856,7 @@ rules:
     # no gap between 15-minute publishes to ride out.
     for: 15m
     annotations:
-      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
+      summary: "A host that does not reboot itself -- a capture host or the ops node -- has a pending reboot (/run/reboot-required); it keeps paging until a human reboots it. A capture host: schedule it -- secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart; expect a ~83s capture gap, containers self-restart. The ops node: no capture gap; reboot it by hand in its 02:25 UTC slot, then check its containers came back resolving names -- docker waits for a nameserver before it starts them. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
     labels:
@@ -2864,7 +2865,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-capture-textfile-missing
-    title: "Capture · a one-off timer stopped publishing entirely"
+    title: "Node · the reboot probe stopped publishing entirely (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2879,7 +2880,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'count(node_reboot_required{host=~"zcrypto|zcrypto-red"})'
+          expr: 'count(node_reboot_required{host=~"zcrypto|zcrypto-red|ops"})'
           instant: true
           refId: A
       - refId: C
@@ -2892,22 +2893,22 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: lt, params: [2]}  # both capture hosts must publish
+            - evaluator: {type: lt, params: [3]}  # both capture hosts and ops must publish
     noDataState: OK
     execErrState: Alerting
     for: 20m
     annotations:
-      summary: "A capture host has stopped publishing node_reboot_required entirely -- not stale, ABSENT. The attended-reboot safety net is down on at least one host: a pending kernel reboot would now go unseen. Check `systemctl status zcrypto-reboot-check.timer` on both hosts, then that the .prom exists in /var/lib/zcrypto-node-textfile and is mode 0644 (Alloy reads it as a non-root user). Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-missing"
+      summary: "A capture host or the ops node has stopped publishing node_reboot_required entirely -- not stale, ABSENT. The attended-reboot safety net is down on at least one of the three: a pending kernel reboot would now go unseen. Check `systemctl status zcrypto-reboot-check.timer` on each, then that reboot.prom exists and is mode 0644 (Alloy reads it as a non-root user) -- in /var/lib/zcrypto-node-textfile on a capture host, /var/lib/zcrypto-ops/textfile on ops. Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-missing"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
-      unit: "of the two capture machines still publishing the probe"
+      unit: "of the three machines (two capture, ops) still publishing the probe"
     labels:
       severity: warning
     notification_settings:
       receiver: metrics
 
   - uid: zcrypto-capture-textfile-unreadable
-    title: "Capture · node-exporter textfile unreadable or malformed"
+    title: "Node · node-exporter textfile unreadable or malformed (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2922,7 +2923,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'max by (host) (node_textfile_scrape_error{host=~"zcrypto|zcrypto-red"})'
+          expr: 'max by (host) (node_textfile_scrape_error{host=~"zcrypto|zcrypto-red|ops"})'
           instant: true
           refId: A
       - refId: C
@@ -2940,7 +2941,7 @@ rules:
     execErrState: Alerting
     for: 15m
     annotations:
-      summary: "Alloy's textfile collector cannot read or parse a .prom on a capture host, so that timer's metrics are absent while everything else looks healthy. Most likely the file is mode 0600 (mktemp's default -- the publisher needs an explicit chmod 0644) or was written malformed. Check /var/lib/zcrypto-node-textfile on that host. Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-unreadable"
+      summary: "Alloy's textfile collector cannot read or parse a .prom on a capture host or the ops node, so that timer's metrics are absent while everything else looks healthy. Most likely the file is mode 0600 (mktemp's default -- the publisher needs an explicit chmod 0644) or was written malformed. Check /var/lib/zcrypto-node-textfile on a capture host, /var/lib/zcrypto-ops/textfile on ops. Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-unreadable"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "502"
     labels:
@@ -2949,7 +2950,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-reboot-probe-stale
-    title: "Capture · reboot probe is stale"
+    title: "Node · reboot probe is stale (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2963,7 +2964,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-red", file=~".*/reboot.prom"})'
+          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-red|ops", file=~".*/reboot.prom"})'
           instant: true
           refId: A
       - refId: C
@@ -2981,7 +2982,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The pending-reboot probe on a capture host has not refreshed in over an hour (it runs every 15 min), so node_reboot_required is a frozen last-known value, not current state. A kernel reboot could be pending and unreported. Check `systemctl list-timers zcrypto-reboot-check.timer` on that host. Runbook: infra/runbooks/hosts.md#zcrypto-reboot-probe-stale"
+      summary: "The pending-reboot probe on a capture host or the ops node has not refreshed in over an hour (it runs every 15 min), so node_reboot_required is a frozen last-known value, not current state. A kernel reboot could be pending and unreported. Check `systemctl list-timers zcrypto-reboot-check.timer` on that host. Runbook: infra/runbooks/hosts.md#zcrypto-reboot-probe-stale"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "501"
       unit: "seconds since the reboot probe last wrote its file"

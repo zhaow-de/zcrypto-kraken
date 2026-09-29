@@ -1,7 +1,7 @@
 """The unattended-upgrades auto-reboot flip (spec 00071 D4, T0027).
 
-`Automatic-Reboot` is a variable so the two capture VPSes can go attended while the ops node stays
-automatic. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
+`Automatic-Reboot` is a variable so the two capture VPSes and the ops node reboot by hand while the
+cache nodes and the bridgehead keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
 `False`, emitting `Automatic-Reboot "False";`, which apt reads as not-true by accident rather than
 by intention.
 """
@@ -25,6 +25,7 @@ VAR = "base_unattended_upgrades_automatic_reboot"
 BASE_TASKS = REPO / "infra/ansible/roles/base/tasks/main.yml"
 CACHE_GROUP_VARS = REPO / "infra/ansible/group_vars/cache_host/vars.yml"
 HOST_VARS = REPO / "infra/ansible/host_vars"
+OPS_HOST_VARS = HOST_VARS / "zcrypto-ops/vars.yml"
 CACHE_NODES = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
 # The groups whose hosts run the base role and so hold an unattended-upgrades slot; DSM owns the NAS's.
 SLOT_GROUPS = ("capture_host", "ops_host", "access_host", "cache_host")
@@ -58,8 +59,8 @@ def test_automatic_reboot_is_driven_by_the_variable_not_hardcoded():
 
 
 def test_the_role_default_preserves_todays_behaviour():
-    """The ops node takes the flip's default: a default of "false" would silently disarm patch
-    reboots on a host the owner decided should keep them (T0027's ruling)."""
+    """The cache nodes and the bridgehead take the role default: a default of "false" would silently
+    disarm patch reboots on the hosts that keep them."""
     assert _yaml(BASE_DEFAULTS)[VAR] == "true"
 
 
@@ -71,7 +72,13 @@ def test_the_capture_group_flips_both_hosts_and_only_them():
     assert set(hosts) == {"zcrypto", "zcrypto-red"}, f"capture_host membership drifted: {sorted(hosts)}"
 
 
-@pytest.mark.parametrize("path", [BASE_DEFAULTS, CAPTURE_GROUP_VARS], ids=["defaults", "capture"])
+def test_the_ops_node_reboots_by_hand():
+    """The owner's decision of 2026-09-29: ops never reboots itself, and its reboot-check flag pages until the reboot
+    is taken."""
+    assert _yaml(OPS_HOST_VARS)[VAR] == "false"
+
+
+@pytest.mark.parametrize("path", [BASE_DEFAULTS, CAPTURE_GROUP_VARS, OPS_HOST_VARS], ids=["defaults", "capture", "ops"])
 def test_the_value_is_a_quoted_string_never_a_yaml_boolean(path):
     value = _yaml(path)[VAR]
     assert isinstance(value, str), (
@@ -94,7 +101,7 @@ def test_the_reboot_time_directive_survives_the_flip():
     rendered = _render(**{VAR: "false"})
     assert _directive(rendered, "Automatic-Reboot-Time") == "21:25"
     assert _directive(rendered, "Automatic-Reboot-WithUsers") == "true", (
-        "WithUsers is inert on capture but LIVE on the ops node — leave it alone"
+        "WithUsers goes inert with the flip but is LIVE on the hosts that reboot themselves — leave it alone"
     )
 
 

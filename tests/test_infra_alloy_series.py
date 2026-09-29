@@ -239,6 +239,8 @@ OPS_REQUIRED = [
     # (zcrypto-node-clock-skew), so dropping either leaves that rule unable to see ops.
     "zcrypto_clock_offset_seconds",
     "zcrypto_clock_synchronised",
+    # The reboot-check copy's flag: this node never reboots itself, and the pending-reboot rule pages on it.
+    "node_reboot_required",
 ]
 # One-off timers publish a .prom, not a /metrics endpoint (spec 00071 D1) -- a daily oneshot runs
 # for a second and has no process to scrape. The keep-regex is an ALLOW-list with no `node_.*`
@@ -585,6 +587,7 @@ _JOURNAL_NOT_SHIPPED = {
     "zcrypto-grafana-watchdog": "a shell probe; its output is echoes, and its failure is a metric, not a log line",
     "zcrypto-grafana-keepalive": "a shell curl call; its one line a run is read on the host, which stays readable while Grafana is dark",
     "zcrypto-clock-offset": "a shell probe; its output is the .prom it writes, and a chronyc failure is the unknown offset it publishes",
+    "zcrypto-reboot-check": "a shell probe; its output is the .prom it writes, and a failed write is the absence the publisher count pages on",
 }
 
 

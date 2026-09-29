@@ -1571,8 +1571,8 @@
     {
       "id": 501,
       "type": "timeseries",
-      "title": "Textfile age — did the timer run (capture)",
-      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The three timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines only — that is the only scope any alert gives this family. The ops machine's timers are watched by different families with different budgets and live on the data-integrity board. The clock exporter is the third: it writes every 5 min and its bar is 1800 s, tighter than the others.",
+      "title": "Textfile age — did the timer run (capture, and the ops reboot probe)",
+      "description": "Has a one-off timer stopped writing its metrics file, freezing every gauge it publishes at a healthy-looking last value? The three timers republish on completely different schedules and get completely different bars: the pending-reboot probe runs every 15 minutes and pages above 1 hour stale after `for: 10m`; the daily journal prune pages above 26 hours stale after `for: 30m`. Scoped to the two capture machines, as the alerts scope this family, except the pending-reboot probe's line, which also draws the ops machine: it reboots by hand too, and the probe-stale alert covers it. The ops machine's other timers are watched by different families with different budgets and live on the data-integrity board. The clock exporter is the third: it writes every 5 min and its bar is 1800 s, tighter than the others.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1589,7 +1589,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red\", file=~\".*/reboot.prom\"})",
+          "expr": "time() - max by (host) (node_textfile_mtime_seconds{host=~\"zcrypto|zcrypto-red|ops\", file=~\".*/reboot.prom\"})",
           "refId": "A",
           "legendFormat": "{{host}} reboot probe age"
         },
@@ -1756,7 +1756,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "max by (host) (node_textfile_scrape_error{host=~\"zcrypto|zcrypto-red\"})",
+          "expr": "max by (host) (node_textfile_scrape_error{host=~\"zcrypto|zcrypto-red|ops\"})",
           "refId": "A",
           "legendFormat": "{{host}}"
         }
@@ -1801,7 +1801,7 @@
       "id": 503,
       "type": "timeseries",
       "title": "Reboot pending & probe presence",
-      "description": "Does either capture machine need its attended reboot — **and** is the probe that answers that question still publishing on both machines? These two questions have opposite failure directions on the same signal, so they carry opposite lines: the pending flag pages when it rises to 1 (after `for: 15m`) and the publisher count pages when it *falls* below 2 (after `for: 20m`). A staleness alert cannot fire on a series that never exists, which is exactly why the count is drawn here: an absent probe reads green forever without it. A flat zero on the pending line is the healthy state, not a dead exporter — the count line is what tells the two apart.",
+      "description": "Does a capture machine or the ops machine need its attended reboot — **and** is the probe that answers that question still publishing on all three? These two questions have opposite failure directions on the same signal, so they carry opposite lines: the pending flag pages when it rises to 1 (after `for: 15m`) and the publisher count pages when it *falls* below 3 (after `for: 20m`). A staleness alert cannot fire on a series that never exists, which is exactly why the count is drawn here: an absent probe reads green forever without it. A flat zero on the pending line is the healthy state, not a dead exporter — the count line is what tells the two apart.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1818,7 +1818,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "node_reboot_required{host=~\"zcrypto|zcrypto-red\"}",
+          "expr": "node_reboot_required{host=~\"zcrypto|zcrypto-red|ops\"}",
           "refId": "A",
           "legendFormat": "{{host}} reboot pending"
         },
@@ -1827,7 +1827,7 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "count(node_reboot_required{host=~\"zcrypto|zcrypto-red\"})",
+          "expr": "count(node_reboot_required{host=~\"zcrypto|zcrypto-red|ops\"})",
           "refId": "B",
           "legendFormat": "machines publishing the probe"
         }
@@ -1905,7 +1905,7 @@
                     },
                     {
                       "color": "green",
-                      "value": 2
+                      "value": 3
                     }
                   ]
                 }

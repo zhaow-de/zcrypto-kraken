@@ -2024,6 +2024,32 @@ def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
     assert rule["noDataState"] == "OK", "the series is absent until the roles converge; NoData must not page"
 
 
+# --- the pending-reboot family: the hosts that never reboot themselves ---------------------------
+# The capture pair and ops run `Automatic-Reboot "false"` and publish the reboot-check flag; a host left out of a
+# matcher reboots by hand with nothing paging, and the publisher count's bar is the number of hosts it selects.
+_REBOOT_HOSTS = frozenset({"zcrypto", "zcrypto-red", "ops"})
+_REBOOT_FAMILY = (
+    "zcrypto-capture-reboot-pending",
+    "zcrypto-capture-textfile-missing",
+    "zcrypto-capture-textfile-unreadable",
+    "zcrypto-reboot-probe-stale",
+)
+
+
+@pytest.mark.parametrize("uid", _REBOOT_FAMILY)
+def test_the_reboot_family_selects_exactly_the_hosts_that_reboot_by_hand(uid):
+    matchers = [m.group(1) for expr in _prom_exprs(_rule(uid)) for m in re.finditer(r'host=~"([^"]+)"', expr)]
+    assert matchers, f"{uid} carries no host matcher"
+    for matcher in matchers:
+        assert frozenset(matcher.split("|")) == _REBOOT_HOSTS, f"{uid} selects {matcher!r}"
+
+
+def test_the_publisher_count_pages_below_the_number_of_hosts_it_selects():
+    rule = _rule("zcrypto-capture-textfile-missing")
+    threshold = next(q for q in rule["data"] if q["model"].get("type") == "threshold")
+    assert threshold["model"]["conditions"][0]["evaluator"] == {"type": "lt", "params": [len(_REBOOT_HOSTS)]}
+
+
 # --- ops' inode rule: sized against the fastest fill seen on its tmpfs ----------------------------
 _OPS_INODES = "zcrypto-ops-inodes-low"
 # `/tmp` on ops is a tmpfs of `nr_inodes=1048576`, and the rate is the fastest refill of it read so far,
