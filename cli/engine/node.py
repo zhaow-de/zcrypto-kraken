@@ -607,18 +607,25 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
 
 
 def _cache_config() -> CacheConfig:
-    """Every field the store's keys and contents rest on, each at the library's default and stated
-    because a flip on a bump is destructive: `True` on `use_instance_id` reloads an empty namespace and
-    on `flush_on_start` issues FLUSHDB; `use_trader_prefix` and `encoding` are the keys and the format
-    the next process reads back; `buffer_interval_ms=None` writes through; `persist_account_events`
-    keeps the account's events."""
+    """Every field of the pinned wheel's `CacheConfig`, each at the library's default and stated so a
+    bump's new default is a decision, never an inheritance; the builder takes its config from here
+    alone. A flip on the first six is destructive: `True` on `use_instance_id` reloads an empty
+    namespace and on `flush_on_start` issues FLUSHDB; `use_trader_prefix`, `encoding` and
+    `timestamps_as_iso8601` are the keys and the format the next process reads back;
+    `buffer_interval_ms=None` writes through; `persist_account_events` keeps the account's events."""
     return CacheConfig(
         use_instance_id=False,
         flush_on_start=False,
         use_trader_prefix=True,
         encoding=SerializationEncoding.JSON,
+        timestamps_as_iso8601=False,
         buffer_interval_ms=None,
         persist_account_events=True,
+        bulk_read_batch_size=None,
+        drop_instruments_on_reset=True,
+        tick_capacity=10000,
+        bar_capacity=10000,
+        save_market_data=False,
     )
 
 

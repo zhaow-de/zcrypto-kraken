@@ -319,16 +319,31 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
 
 
 def test_the_cache_config_defaults_we_state_are_unchanged():
-    """`cli/engine/node.py`'s `_cache_config` states each at these values and says why a flip on any is destructive."""
+    """`cli/engine/node.py`'s `_cache_config` states every field at these values; a field a bump adds
+    or removes fails here, so it is stated there before the bump lands."""
     from nautilus_trader.common import CacheConfig, SerializationEncoding
 
+    expected = {
+        "use_instance_id": False,
+        "flush_on_start": False,
+        "use_trader_prefix": True,
+        "encoding": SerializationEncoding.JSON,
+        "timestamps_as_iso8601": False,
+        "buffer_interval_ms": None,
+        "persist_account_events": True,
+        "bulk_read_batch_size": None,
+        "drop_instruments_on_reset": True,
+        "tick_capacity": 10000,
+        "bar_capacity": 10000,
+        "save_market_data": False,
+    }
     config = CacheConfig()
-    assert config.use_instance_id is False
-    assert config.flush_on_start is False
-    assert config.use_trader_prefix is True
-    assert config.encoding == SerializationEncoding.JSON
-    assert config.buffer_interval_ms is None
-    assert config.persist_account_events is True
+    live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
+    assert set(live) == set(expected), (
+        f"the cache config's FIELD SET moved -- added {sorted(set(live) - set(expected))}, removed "
+        f"{sorted(set(expected) - set(live))}"
+    )
+    assert live == expected
 
 
 def test_the_node_config_defaults_we_leave_off_are_unchanged():

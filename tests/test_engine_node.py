@@ -1331,17 +1331,31 @@ def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monke
     assert getattr(node._exec_engine_config(), field) == stated
 
 
-@pytest.mark.parametrize(
-    ("field", "stated", "flipped"),
-    [
-        ("use_instance_id", False, True),
-        ("flush_on_start", False, True),
-        ("use_trader_prefix", True, False),
-        ("encoding", SerializationEncoding.JSON, SerializationEncoding.MSG_PACK),
-        ("buffer_interval_ms", None, 100),
-        ("persist_account_events", True, False),
-    ],
-)
+_CACHE_CONFIG_STATED = [
+    ("use_instance_id", False, True),
+    ("flush_on_start", False, True),
+    ("use_trader_prefix", True, False),
+    ("encoding", SerializationEncoding.JSON, SerializationEncoding.MSG_PACK),
+    ("timestamps_as_iso8601", False, True),
+    ("buffer_interval_ms", None, 100),
+    ("persist_account_events", True, False),
+    ("bulk_read_batch_size", None, 500),
+    ("drop_instruments_on_reset", True, False),
+    ("tick_capacity", 10000, 5000),
+    ("bar_capacity", 10000, 5000),
+    ("save_market_data", False, True),
+]
+
+
+def _cache_config_fields(config) -> dict:
+    return {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
+
+
+def test_the_cache_config_stand_in_rows_are_every_field_of_the_wheel():
+    assert {field for field, _, _ in _CACHE_CONFIG_STATED} == set(_cache_config_fields(node.CacheConfig()))
+
+
+@pytest.mark.parametrize(("field", "stated", "flipped"), _CACHE_CONFIG_STATED)
 def test_the_cache_config_states_each_field_rather_than_inheriting_it(monkeypatch, field, stated, flipped):
     """Against a library whose default for the named field reads `flipped`, `_cache_config` still
     produces a config reading `stated`."""
@@ -1380,7 +1394,7 @@ def test_the_builder_is_given_the_cache_backing_at_the_measured_budget_when_enab
     ).recorder
 
     [cache_call] = recorder.named("with_cache_config")
-    assert (cache_call["config"].use_instance_id, cache_call["config"].flush_on_start) == (False, False)
+    assert _cache_config_fields(cache_call["config"]) == _cache_config_fields(node._cache_config())
     [factory_call] = recorder.named("with_cache_database_factory")
     factory = factory_call["factory"]
     assert isinstance(factory, RedisCacheConfig)
