@@ -15,16 +15,16 @@
 - The wiring's values are the spec's: `.with_cache_config(CacheConfig(use_instance_id=False, flush_on_start=False))` and `.with_cache_database_factory(RedisCacheConfig(host, port, username, password, ssl=False, connection_timeout=5, response_timeout=5, number_of_retries=10))`, appended by `_node_builder` only when `config.cache.enabled`, with `load_cache=True` stated in the execution engine's config and `load_state` and `save_state` left at their `False` defaults (spec D5). The refused shape fails inside about four seconds and the silent shape inside about a minute, the budget `tests/test_cache_restart.py` bounds at 20 and 40 to 90 seconds.
 - The config table is `[zcrypto.engine.cache]` with `enabled: bool = False`, `host: str = "cache-proxy"`, `port: int = 6379`, `username: str = "engine"`; `_build_cache` refuses a non-table, an unknown key, a non-boolean `enabled`, an empty `host` or `username`, and a `port` that is a boolean or outside 1 to 65535, each with the loader's own message shape; the password is `ZCRYPTO_CACHE_PASSWORD`, read in `_node_builder` when enabled and never stored on a module object, logged or interpolated; the committed `zcrypto.toml` keeps no engine table (spec D3).
 - The currencies registered before a cache-backed build are the eleven codes the basket's twelve pairs carry on Kraken's AssetPairs: the six outside the library's table, `XETH`, `XLTC`, `XXBT`, `XXDG`, `XXRP` and `ZEUR`, each `Currency(code, 8, 0, code, CurrencyType.CRYPTO)` as the adapter mints them, and the five inside it at the library's own values, `ADA` 6 `Cardano`, `AVAX` 8 `Avalanche`, `DOT` 8 `Polkadot`, `LINK` 8 `Chainlink`, `SOL` 8 `Solana` (spec D4).
-- The boot line is the engine's, through the `zcrypto` logger at INFO: `cache restore: N order(s), M position(s) restored`, then per position `cache restore: position <instrument> <signed qty> @ <avg_px_open> (<strategy>)` and per open order `cache restore: order <id> <state>, <filled> of <quantity> filled @ <price>`, the state read off `filled_qty` and never off the status (spec D9, D11); a cold start or an empty namespace reads `0 order(s), 0 position(s) restored` and refuses nothing (spec D12).
+- The boot line is the engine's, through the `zcrypto` logger at INFO: `cache restore: N order(s), M position(s) restored`, then per open position, whichever strategy the Cache holds it under, `cache restore: position <instrument> <signed qty> @ <avg_px_open> (<strategy>)`, an instrument's figure being its lines summed, and per open order under the engine's own id `cache restore: order <id> <state>, <filled> of <quantity> filled @ <price>`, the state read off `filled_qty` and never off the status (spec D9, D11); a cold start or an empty namespace reads `0 order(s)`, and `0 position(s) restored` with no position open, and refuses nothing (spec D12).
 - The proxy's config is the spec's: three backends `node1` to `node3`, each three `server` lines at the node's mesh address on 6379 with `check addr <one Sentinel's mesh address> port 26379 inter 1s fall 2 rise 2 init-state fully-down on-marked-down shutdown-sessions`, one `tcp-check` sequence of `AUTH <requirepass>` expecting `+OK`, `PING` expecting `+PONG`, `SENTINEL master zcache` expecting the anchored `"\$2\r\nip\r\n\$10\r\n10.98.0.1N\r\n"` with the dollar escaped inside the double quotes, no `QUIT` step, `timeout check 2s`, `use_backend nodeN if { nbsrv(nodeN) ge 2 }`, the Prometheus endpoint on `127.0.0.1:9104`; the image is the official `haproxy`, 3.1 or later for `init-state`, pinned by index digest through `-e cache_proxy_image_digest=` and a `cache-proxy` row on `zcrypto` in `fleet-pins.md`; the service takes a 32m memory cap, which holds only with `maxconn 256` in `global` -- without a bound HAProxy sizes itself off the container's file-descriptor hard limit, 524288 on the fleet's containerd, and its worker is killed under the cap at load -- `json-file` logging, the config bind-mounted read-only from `/opt/zcrypto-engine/haproxy.cfg`, rendered root-owned 0600 under `no_log` and `diff: false`, validated with the pinned image's own `haproxy -c` before it is moved into place; the engine's `depends_on: cache-proxy` takes `condition: service_started` alone, and the engine service takes `stop_grace_period: 20s` (spec D1, D15).
 - `cache_engine_password` and `cache_sentinel_requirepass` move verbatim from `group_vars/cache_host/vault.yml` to `group_vars/all/vault.yml`, never decrypted; the engine host holds both to the cache role's floor, five or more of `[A-Za-z0-9]`; `engine.env.j2` gains `ZCRYPTO_CACHE_PASSWORD={{ cache_engine_password }}` under its existing `no_log` render; `zcrypto.toml.j2` renders the table -- `enabled = true`, `host = "cache-proxy"`, `port = 6379`, `username = "engine"` -- behind the role default `engine_cache_enabled: true`, and `-e engine_cache_enabled=false` renders no table, the way back to an engine without the cache on any image inside the same gap; the engine window guard's tasks in `site.yml` take `tags: [engine, cache-link]`, and the `cache_link` role is held off by `when` where `engine` is skipped, since a `--skip-tags engine` run skips the guard's tasks with the engine's (spec D2, D3).
 - The harness has no environment gate and takes no second skip name: `shutil.which("valkey-server")` names the binary and its absence is `pytest.fail` with `sudo apt-get install -y valkey-server`; each scenario starts its own server on a free port under its `tmp_path` with `--bind 127.0.0.1 --save "" --appendonly no --daemonize no` and an ACL file carrying the cache role's `engine` line; `coverage.yml` gains `sudo apt-get install -y valkey-server` before `uv sync`, and a runner whose apt lacks the package takes Valkey's own binary tarball, pinned by version and sha256 in the workflow, the choice made at the plan's first CI run (spec D13).
 - The withdrawal check's second source is the venue's trade history (spec D19): where an order's figure -- the Cache's copy or the venue's order report -- falls short of the ledger, the pass reads the trade history once through a bare client, `request_fill_reports` from one hour before the earliest row's boundary, and trips only when the history's fills for the row's txid fall short of the ledger; a covered row keeps its figure and joins the rows the pass repaired; an unread history leaves the trip on the order's figure.
-- The operating rule's pages carry the operator's test in the anchor paragraph `engine-restart-margin-position` of `infra/runbooks/engine-procedures.md` -- a restart with a margin position open is admitted when the Cache board shows the proxy routed and a session of the engine's up, and the engine's last boot line counted that position as restored or this engine opened it after that boot, with no cache outage fired since and no restored order filled since, the executor's WARNING that the re-read pass reads a restored row with a fill; else close first, as today; a cold start, a lost database or a position the cache never saw keeps the failure until upstream #5065 -- and every link to it keeps pointing there, the conditional stated in one clause on each line (spec D17); the outage line beside the three rules says the store is behind after a cache outage and the next restart is taken flat (spec D14).
+- The operating rule's pages carry the operator's test in the anchor paragraph `engine-restart-margin-position` of `infra/runbooks/engine-procedures.md` -- a restart with a margin position open is admitted when the Cache board shows the proxy routed and a session of the engine's up, and the engine's last boot line counted that position as restored -- its instrument's position lines, whichever strategy each names, summing to Kraken's figure, none at entry price 0 -- or this engine opened it after that boot, with no cache outage fired since and no restored order filled since, the executor's WARNING at the fill `a fill on restored order <id> credits nothing until the venue is read`; else close first, as today; a cold start, a lost database or a position the cache never saw keeps the failure until upstream #5065 -- and every link to it keeps pointing there, the conditional stated in one clause on each line (spec D17); the outage line beside the three rules says the store is behind after a cache outage and the next restart is taken flat (spec D14).
 - No string literal added under `cli/engine/`, no ansible task name or message, no runbook line, no alert summary and no dashboard text names a spec, a decision, a topic, a phase, an iteration or a work package: `tests/test_internal_terms_not_operator_visible.py` walks them and runs in every task's consumer command; `WP<N>` appears nowhere, this plan included.
 - The six tasks land in order on one branch and merge together: the counts each task's failing and passing runs state assume the tasks before it have landed, and every task's first step from the second on checks the previous task's marker.
 - A fence is the exact text at its indentation in the file: a `Replace, in <path>, this block:` instruction names the whole block it replaces, which occurs exactly once in the file at that step, and a `Create <path> with this content:` instruction writes the whole file. A fence whose closing backticks sit on its last text line is a mid-line fragment with no trailing newline; a fence closed on its own line ends with a newline. A block that itself carries a line opening with three backticks is fenced with four, and its closing run is four too. Every fence was applied in task order on a scratch worktree and read back identical to the tree that produced every count and verdict below.
-- A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend with the tree clean, from a file (`git commit --amend -F <file>`) and never from a double-quoted `-m` argument, inside which the shell runs each backticked name of the verdict text as a command substitution; the script refuses a dirty tree, so the probes run after Step 9 and never before Step 8.
+- A commit that adds or changes a guard records its `infra/scripts/mutate-probe.sh` verdict on that commit, earned after the commit exists and recorded by a message-only amend with the tree clean, from a file (`git commit --amend -F <file>`) and never from a double-quoted `-m` argument, inside which the shell runs each backticked name of the verdict text as a command substitution; the script refuses a dirty tree, so the probes run after Step 9 and never before Step 8. A probe's mutation changes one line of its file at its step, three excepted whose verdict names the whole it changes -- Task 5's `depends_on` block, the password floor's two asserts and `cache-link` on the window guard's four tasks -- read by applying every `--control` and `--mutation` of the plan with `sed` to the tree its task leaves.
 - Every commit is green over the changed files' consumers, the list each task's Step 6 names, run locally in place of the full suite, which CI runs on every push; the restart harness is among Task 3's and Task 4's consumers and takes six to eight minutes.
 - `uv run pre-commit run -a` runs the pre-commit stage alone and is clean before every commit, ansible-lint and yamllint over `infra/ansible` and mdformat over the runbooks among its hooks; `guidance-guard` and `message-citations` run at commit-msg, on `git commit`: a runbook list item the tasks write carries no universal word (every, never, always, only, any, cannot) outside code spans without a count entry, and no commit message cites a `path:line`, a `path::symbol` or a topic.
 - No step reaches a fleet host, a venue, a credential or Docker: the harness runs on 127.0.0.1 alone, the role's `haproxy -c` validation runs at the rollout's converge, and the proxy's first pin and pins row are the rollout's.
@@ -40,7 +40,7 @@ Claude-Session: <the executing session's URL>
 
 - Modify `cli/config.py` — `CacheSettings`, `EngineConfig.cache`, `_build_cache`, `_build_engine`'s `cache` arm (Task 1).
 - Modify `cli/engine/node.py` — `_CACHE_PASSWORD_VAR`, `_KRAKEN_CURRENCIES`, `_register_kraken_currencies`, `_cache_password`, the refusal in `_node_builder`, the registration in `build_shadow_node` (Task 1); the two builder calls, `load_cache`, `ShadowStrategy._log_cache_restore` and its call in `on_start` (Task 2); the strategy class's and the observer's docstrings (Task 4).
-- Modify `cli/engine/executor.py` — `restored_fill_state` (Task 2); `read_venue_fills`, the restored set, the restored fills, the realized baseline, the fills read's per-pass cache, `_read_restored`, `_read_realized_baseline`, `_trades_cover`, `_venue_answers`, `_settle_restored_intent`, `_realized_on`, `_mixed_inventory_refusals`, and the startup pass, the re-read pass, `_read_venue_orders`, `_reconcile_adopted_rows`, `_reconcile_adopted_row`, `_reconcile_finished_rows`, `_reconcile_finished_row`, `_fill_credit`, `_on_detached_event`, `_on_external_event`, `_realized_eur` and `_pickup` changed, with the docstrings (Task 4).
+- Modify `cli/engine/executor.py` — `restored_fill_state` (Task 2); `read_venue_fills`, the restored set, the restored fills, the realized baseline, the fills read's per-pass cache, `_read_restored`, `_read_realized_baseline`, `_trades_cover`, `_venue_answers`, `_settle_restored_intent`, `_realized_on`, `_mixed_inventory_refusals`, and `_spot_balance`, the startup pass, the re-read pass, `_read_venue_orders`, `_reconcile_adopted_rows`, `_reconcile_adopted_row`, `_reconcile_finished_rows`, `_reconcile_finished_row`, `_fill_credit`, `_on_detached_event`, `_on_external_event`, `_realized_eur` and `_pickup` changed, with the docstrings (Task 4).
 - Modify `tests/kraken_loopback.py` — `trade_row`, the `trades` listing, the `on_add_order` and `on_cancel_order` hooks, the four private endpoints, `WsPeer`, the three execution frames, `serve_with_sockets` (Task 3).
 - Create `tests/cache_restart_child.py` and `tests/test_cache_restart.py`; generate `tests/fixtures/kraken_assetpairs_basket.json` (Task 3); the child's fourth redirect, the harness's executor assertions and the cold-start scenario's measured shape (Task 4).
 - Modify `.github/workflows/coverage.yml` — the apt install (Task 3).
@@ -885,7 +885,7 @@ What this task decides, where the spec leaves it open:
 
 - The wiring is inside `_node_builder`, in the arm Task 1 left as a bare refusal: the password is read once, handed to `RedisCacheConfig` and never held; the cache arm comes before the exec-client arm, and with `enabled` false neither builder method is called, which the recorder pins.
 - `restored_fill_state(order)` lives in `cli/engine/executor.py`, since the executor's classification line is its other caller and the node already imports from there; it reads `filled_qty` against `quantity` on `_OVERFILL_TOLERANCE`'s dead band and never the status: `filled` at or above the quantity, `partial` inside, `open` at none. The library's regression is pinned beside it: a partially filled real `LimitOrder` handed `OrderAccepted(reconciliation=True)` reads ACCEPTED while the predicate reads `partial`.
-- The boot line is `ShadowStrategy._log_cache_restore`, called from `on_start` after the alert chain is seeded and before the executor is built, only when `cache.enabled`: with the cache disabled no line is written, so an operator reading the line knows the store was attached. It reads the Cache under this strategy's id, `orders_open(strategy_id=...)` and `positions_open(strategy_id=...)`, so an order reconciliation created under `EXTERNAL` on a cold start is not counted as restored; a read that raises logs one ERROR and `on_start` carries on. Its lines: `cache restore: N order(s), M position(s) restored`, then `cache restore: position <instrument> <signed qty> @ <avg_px_open> (<strategy>)` per position and `cache restore: order <id> <fill state>, <filled> of <quantity> filled @ <price>` per order, each a separate INFO record so the Logs board's search box `cache restore` finds them all.
+- The boot line is `ShadowStrategy._log_cache_restore`, called from `on_start` after the alert chain is seeded and before the executor is built, only when `cache.enabled`: with the cache disabled no line is written, so an operator reading the line knows the store was attached. It reads the open orders under this strategy's id, `orders_open(strategy_id=...)`, so an order reconciliation created under `EXTERNAL` on a cold start is not counted as restored, and every open position whatever its strategy, `positions_open()`, sorted by instrument and strategy: a fill made while the engine was down beside a restored position leaves that position at its stored quantity and reconciliation books the gap to the venue's figure under `EXTERNAL` (Task 3's fill-while-down scenario), so an instrument's figure, the proof's comparand, is its lines summed, and a boot at entry price 0 shows its 0 whatever strategy holds the position; a read that raises logs one ERROR and `on_start` carries on. Its lines: `cache restore: N order(s), M position(s) restored`, then `cache restore: position <instrument> <signed qty> @ <avg_px_open> (<strategy>)` per open position and `cache restore: order <id> <fill state>, <filled> of <quantity> filled @ <price>` per order, each a separate INFO record so the Logs board's search box `cache restore` finds them all.
 - The test stub `_exec_stub` gains `cache` and `strategy_id`, and binds `_log_cache_restore` lazily, so the cases that never enable the cache are untouched by a method the stub does not need.
 
 **Files:**
@@ -1014,10 +1014,11 @@ def test_on_start_writes_no_restore_line_while_the_cache_is_disabled(tmp_path, c
     assert _restore_lines(caplog) == []
 
 
-def test_on_start_reads_the_cache_under_this_strategys_id_and_writes_the_zero_line_on_an_empty_namespace(tmp_path, caplog):
-    """A cold start or an empty namespace reads zero and is no refusal; the reads are scoped to this
-    strategy's id, so an order reconciliation created under EXTERNAL is not counted as restored;
-    and the line comes after the alert chain is seeded and before the executor is built."""
+def test_on_start_reads_the_orders_under_this_strategys_id_and_writes_the_zero_line_on_an_empty_namespace(tmp_path, caplog):
+    """A cold start or an empty namespace reads zero and is no refusal; the order read is scoped to
+    this strategy's id, so an order reconciliation created under EXTERNAL is not counted as
+    restored, and the position read takes every strategy's; and the line comes after the alert
+    chain is seeded and before the executor is built."""
     reads: list = []
     cache = types.SimpleNamespace(
         orders_open=lambda **kw: reads.append(("orders", kw)) or [],
@@ -1041,28 +1042,35 @@ def test_on_start_reads_the_cache_under_this_strategys_id_and_writes_the_zero_li
     assert _restore_lines(caplog) == ["cache restore: 0 order(s), 0 position(s) restored"]
     assert reads == [
         ("orders", {"strategy_id": "ShadowStrategy-000"}),
-        ("positions", {"strategy_id": "ShadowStrategy-000"}),
+        ("positions", {}),
         "executor built",
     ]
     assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
 
 
 def test_on_start_writes_each_restored_position_and_order_at_the_values_the_proof_reads(tmp_path, caplog):
-    """The proof's comparand: the position's instrument, signed quantity, entry price and strategy,
-    and each order's fill state off `filled_qty`, its filled and ordered quantity and its price,
-    one INFO record each under the search box's prefix."""
-    position = types.SimpleNamespace(
-        instrument_id="SOL/EUR.KRAKEN", signed_qty=0.4, avg_px_open=150.0, strategy_id="ShadowStrategy-000"
-    )
+    """The proof's comparand: every open position the Cache holds, whichever strategy holds it -- the
+    gap a fill made while the engine was down leaves to the venue's figure is booked under EXTERNAL --
+    with its instrument, signed quantity, entry price and strategy, and each order's fill state off
+    `filled_qty`, its filled and ordered quantity and its price, one INFO record each under the
+    search box's prefix."""
+    held = [
+        types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.4, avg_px_open=150.0, strategy_id="ShadowStrategy-000"),
+        types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.3, avg_px_open=150.0, strategy_id="EXTERNAL"),
+    ]
     order = types.SimpleNamespace(client_order_id="O-20260928-201651-001-000-1", filled_qty=0.4, quantity=1.0, price=150.0)
-    cache = types.SimpleNamespace(orders_open=lambda **kw: [order], positions_open=lambda **kw: [position])
+    cache = types.SimpleNamespace(
+        orders_open=lambda **kw: [order],
+        positions_open=lambda strategy_id=None, **kw: [p for p in held if strategy_id in (None, p.strategy_id)],
+    )
     stub = _exec_stub(
         _config(tmp_path, cache=CacheSettings(enabled=True)), FakeClock(), cache=cache, strategy_id="ShadowStrategy-000"
     )
     with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
         ShadowStrategy.on_start(stub)
     assert _restore_lines(caplog) == [
-        "cache restore: 1 order(s), 1 position(s) restored",
+        "cache restore: 1 order(s), 2 position(s) restored",
+        "cache restore: position SOL/EUR.KRAKEN 0.3 @ 150.0 (EXTERNAL)",
         "cache restore: position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
         "cache restore: order O-20260928-201651-001-000-1 partial, 0.4 of 1.0 filled @ 150.0",
     ]
@@ -1500,17 +1508,20 @@ with:
 ```python
     def _log_cache_restore(self) -> None:
         """The boot line, through the `zcrypto` logger at INFO since the library's own restore lines
-        are INFO and dropped at ingest: what the cache restored under this strategy's id, read here
-        after the load and the reconciliation and before the executor is built. The counts, then
-        each restored position's instrument, signed quantity, entry price and strategy -- the
-        proof's comparand, since a boot at entry price 0 passes every other read -- and each
-        restored open order's id, fill state off `filled_qty`, filled and ordered quantity and
-        price. A cold start or an empty namespace reads zero; an order reconciliation created under
-        EXTERNAL is not this strategy's and is not counted. A read that raises logs and returns:
-        the line is evidence, never a gate."""
+        are INFO and dropped at ingest, read here after the load and the reconciliation and before
+        the executor is built. The counts, then every position the Cache holds open, whichever
+        strategy holds it, with its instrument, signed quantity, entry price and strategy: a fill
+        made while the engine was down beside a restored position leaves that position at its stored
+        quantity and reconciliation books the gap to the venue's figure under EXTERNAL, so the lines
+        of one instrument sum to the Cache's net there -- the proof's comparand against Kraken's
+        positions page -- and a boot at entry price 0, which passes every other read, shows its 0.
+        Then each open order under this strategy's id, the restored ones, with its id, fill state
+        off `filled_qty`, filled and ordered quantity and price; an order reconciliation created
+        under EXTERNAL is not this strategy's and is not counted. A read that raises logs and
+        returns: the line is evidence, never a gate."""
         try:
             orders = list(self.cache.orders_open(strategy_id=self.strategy_id))
-            positions = list(self.cache.positions_open(strategy_id=self.strategy_id))
+            positions = sorted(self.cache.positions_open(), key=lambda p: (str(p.instrument_id), str(p.strategy_id)))
         except Exception:
             logger.exception("cache restore: the Cache could not be read at start")
             return
@@ -1657,9 +1668,9 @@ engine's five. Reconciliation regresses a partially filled restored order's stat
 so restored_fill_state reads filled_qty against quantity and never the status, the one predicate
 the boot line and the executor's sites share. The library's own restore lines are INFO and dropped
 at ingest, so the boot line is the engine's: at on_start, after the alert chain and before the
-executor, the counts restored under this strategy's id and each restored position's instrument,
-signed quantity, entry price and strategy, then each restored order's id, fill state, quantities
-and price, INFO records under the search box's prefix, a cold start reading zero, a read that
+executor, the counts, every open position whichever strategy holds it with its instrument, signed
+quantity, entry price and strategy, then each order restored under this strategy's id with its id,
+fill state, quantities and price, INFO records under the search box's prefix, a cold start reading zero, a read that
 raises logging one ERROR; with the cache disabled no line is written. The interface pin gains the
 two config classes, the cache config's two defaults, the node config's two the engine leaves off,
 and the backing's constructor with the password hidden from its repr.
@@ -1668,8 +1679,9 @@ Cases: no cache call by default; the two calls once each at the config's address
 environment's password and the measured budget; the cache arm before the exec client's on a
 data-only and an executing assembly; the password absent from a DEBUG-level assembly log and from
 the factory's repr; the boot line absent with the cache disabled, reading zero on an empty
-namespace under this strategy's id after the alert chain and before the executor, each position
-and order at the proof's values, and one ERROR on a Cache that cannot be read with on_start
+namespace, the orders read under this strategy's id and the positions under every strategy, after
+the alert chain and before the executor, each position and order at the proof's values, an
+EXTERNAL position beside the own one listed, and one ERROR on a Cache that cannot be read with on_start
 carrying on; the predicate's four fill shapes and the regression it does not follow; load_cache
 stated rather than inherited.
 
@@ -1684,9 +1696,9 @@ Claude-Session: <the executing session's URL>"
 Run: `git status --porcelain`
 Expected: empty.
 
-- [ ] **Step 10: Prove the guards with six probes, then record their verdicts by a message-only amend**
+- [ ] **Step 10: Prove the guards with seven probes, then record their verdicts by a message-only amend**
 
-The node's control shortens the boot line's prefix so every boot-line case fails. The mutations, in order: the retry count at six; `load_cache` dropped; the boot line written with the cache disabled; the order read unscoped, every strategy's orders counted; the boot line's read failure re-raised. The executor's control flips the predicate's `filled` reading so the fill-state cases fail; its mutation reads the status. Each `-k` selects the task's cases from the file it names:
+The node's control shortens the boot line's prefix so every boot-line case fails. The mutations, in order: the retry count at six; `load_cache` dropped; the boot line written with the cache disabled; the order read unscoped, every strategy's orders counted; the position read scoped to this strategy's id, the EXTERNAL position unlisted; the boot line's read failure re-raised. The executor's control flips the predicate's `filled` reading so the fill-state cases fail; its mutation reads the status. Each `-k` selects the task's cases from the file it names:
 
 ```bash
 K1="cache_backing or cache_arm or never_logs_the_password or restore_line or zero_line or restored_position or boot_line or exec_knob"
@@ -1702,6 +1714,9 @@ infra/scripts/mutate-probe.sh --file cli/engine/node.py --control "$C1" \
   -- uv run pytest tests/test_engine_node.py -q -p no:cacheprovider -k "$K1"
 infra/scripts/mutate-probe.sh --file cli/engine/node.py --control "$C1" \
   --mutation 's/orders = list(self.cache.orders_open(strategy_id=self.strategy_id))/orders = list(self.cache.orders_open())/' \
+  -- uv run pytest tests/test_engine_node.py -q -p no:cacheprovider -k "$K1"
+infra/scripts/mutate-probe.sh --file cli/engine/node.py --control "$C1" \
+  --mutation 's/positions = sorted(self.cache.positions_open(), key=/positions = sorted(self.cache.positions_open(strategy_id=self.strategy_id), key=/' \
   -- uv run pytest tests/test_engine_node.py -q -p no:cacheprovider -k "$K1"
 infra/scripts/mutate-probe.sh --file cli/engine/node.py --control "$C1" \
   --mutation 's/            logger.exception("cache restore: the Cache could not be read at start")/            raise/' \
@@ -1720,7 +1735,8 @@ shortened so every boot-line case fails, through
 `-k "cache_backing or cache_arm or never_logs_the_password or restore_line or zero_line or restored_position or boot_line or exec_knob"`:
 the retry count at six, KILLED, control proven; load_cache dropped, KILLED, control proven; the
 boot line written with the cache disabled, KILLED, control proven; the order read unscoped,
-KILLED, control proven; the boot line's read failure re-raised, KILLED, control proven; over
+KILLED, control proven; the position read scoped to this strategy's id, KILLED, control proven;
+the boot line's read failure re-raised, KILLED, control proven; over
 `cli/engine/executor.py`, control the predicate's filled reading flipped, through
 `-k "restored_orders_fill_state or regresses_a_partially_filled"`: the fill state read off the
 status, KILLED, control proven.
@@ -1740,7 +1756,7 @@ What this task decides, where the spec leaves it open:
 - The child takes one JSON argument, redirects the two client configs, the gate's venue reader and the three bare-client reads to the loopback, and exits 3 before building if any production default remains -- the `_no_production_venue_read` fixture's rule for a node that runs; it hands the executor a real `QuoteTick` on a timer, since the data peer sends none, stops the node by a time alert at the window's end, and writes a record the test reads: every own and external order event, the Cache's orders and positions at start and at the window's end, the metrics hook's readings, the child's errors and `run()`'s wall time.
 - The twelve-pair fixture `tests/fixtures/kraken_assetpairs_basket.json` is generated by the fenced script below, not fenced whole: the two rows the mint fixture already carries verbatim, the ten others the committed snapshot's row plus the parser's ten fields at the executor tests' generic precisions; its sha256 is pinned in Step 4, so a regeneration that differs is caught.
 - Windows: a phase-one node runs 14 s and a phase-two node 16 s -- the startup pass and the plan pickup on the first tick at 5 s, the first quote a second later, the fill frames within a second of the submission, the re-read pass on the tick after the pass's cancel -- and every node adds the library's ten-second residual wait at stop; the whole file ran in 369 s on the workstation, its eight scenarios each a minute or two, and the plan's Step 5 names that number so a run twice as long is read as a hang.
-- Two readings measured while writing this task are recorded here because a scenario's assertions rest on them. A fill made while the engine was down lands on the restored order (`filled_qty` 0.7 of 1.0, status regressed to ACCEPTED), while the restored position keeps its stored quantity (0.4) and the library closes the gap to the venue's position report with a synthesized EXTERNAL order and position of 0.3 (`Generating reconciliation order for SOL/EUR.KRAKEN: side=Buy, qty=0.30000000`); the net is 0.7, which the executor's position gauge publishes, and the boot line reads the own position at 0.4. And a cold start over a resting opener that had partially filled (ledger 0.4, the venue's open row at `vol_exec` 0.4, one `TradesHistory` row) is today's executor tripping its kill switch: the library creates the EXTERNAL copy at ACCEPTED with `filled_qty` 0 -- its mass status reads `Received 1 order(s), 1 fill(s)` and applies `fills=0` -- and the pass's adopted-row reconcile reads that copy, trips `shows 0 filled at the venue, less than the 0.4 this engine has already recorded` and cancels under the kill's reason; the 0.4 then arrives as `OrderFilled(reconciliation=True)` from the cancel ack's frame. The cold-start scenario pinned here rests the opener unfilled, the shape D12 names, and Task 4 moves it to the measured partial-fill shape under spec D19, the owner's ruling of 2026-09-29.
+- Two readings measured while writing this task are recorded here because a scenario's assertions rest on them. A fill made while the engine was down lands on the restored order (`filled_qty` 0.7 of 1.0, status regressed to ACCEPTED), while the restored position keeps its stored quantity (0.4) and the library closes the gap to the venue's position report with a synthesized EXTERNAL order and position of 0.3 (`Generating reconciliation order for SOL/EUR.KRAKEN: side=Buy, qty=0.30000000`); the net is 0.7, which the executor's position gauge publishes, and the boot line lists both positions, the own 0.4 and the EXTERNAL 0.3, whose sum is the figure the proof reads against Kraken's positions page. With nothing stored -- the order resting unfilled at the stop and 0.3 filled at 149.5 while the engine was down, A2's shape, run as a scratch case on this harness -- the fill is booked onto the restored order and the position opens under the own strategy at 0.3 @ 149.5, no EXTERNAL and no `Unresolved positions` line. And a cold start over a resting opener that had partially filled (ledger 0.4, the venue's open row at `vol_exec` 0.4, one `TradesHistory` row) is today's executor tripping its kill switch: the library creates the EXTERNAL copy at ACCEPTED with `filled_qty` 0 -- its mass status reads `Received 1 order(s), 1 fill(s)` and applies `fills=0` -- and the pass's adopted-row reconcile reads that copy, trips `shows 0 filled at the venue, less than the 0.4 this engine has already recorded` and cancels under the kill's reason; the 0.4 then arrives as `OrderFilled(reconciliation=True)` from the cancel ack's frame. The cold-start scenario pinned here rests the opener unfilled, the shape D12 names, and Task 4 moves it to the measured partial-fill shape under spec D19, the owner's ruling of 2026-09-29.
 
 **Files:**
 - Modify: `tests/kraken_loopback.py` (`asyncio` and `Callable` imports; `websockets` import; `trade_row` after `margin_position`; the dataclass's `trades`, `on_add_order` and `on_cancel_order` fields; the four private endpoints and the two hooks in `_answer`; `WsPeer`, `_ws_stamp`, `exec_new`, `exec_trade`, `exec_canceled` and `serve_with_sockets` after `client`)
@@ -2191,7 +2207,8 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
     assert record["errors"] == [], record["errors"]
     assert "Unresolved positions" not in record["log"]
     # The library books the missed fill onto the restored order, keeps the restored position at its
-    # stored quantity, and closes the gap to the venue's position with a synthesized EXTERNAL order.
+    # stored quantity, and closes the gap to the venue's position with a synthesized EXTERNAL order
+    # and position, which the boot line lists beside the restored one.
     orders = {o["strategy_id"]: o for o in record["at_start"]["orders"]}
     positions = {p["strategy_id"]: p for p in record["at_start"]["positions"]}
     assert (orders[record["strategy_id"]]["filled_qty"], orders[record["strategy_id"]]["status"]) == ("0.70000000", "ACCEPTED")
@@ -2199,7 +2216,8 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
     assert positions["EXTERNAL"]["signed_qty"] == 0.3
     assert {tuple(p) for p in record["metrics"]["positions"] if p[0] == "SOL/EUR"} == {("SOL/EUR", 0.7)}
     assert _restore_lines(record["log"]) == [
-        "1 order(s), 1 position(s) restored",
+        "1 order(s), 2 position(s) restored",
+        "position SOL/EUR.KRAKEN 0.3 @ 150.0 (EXTERNAL)",
         "position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
         f"order {wire['client_order_id']} partial, 0.70000000 of 1.00000000 filled @ 150.00",
     ]
@@ -3230,7 +3248,7 @@ with:
       - run: uv sync
 ```
 
-If the plan's first CI run shows the runner's apt carrying no `valkey-server` package, the spec's D13 names the substitute: Valkey's own binary tarball from its download site, pinned by version and sha256 in the workflow, in place of the apt line -- a decision the executor makes at that run and records in the PR body, never a skip.
+The apt line installs 7.2 on noble, `ubuntu-latest` when this plan was written, the version packages.ubuntu.com lists there: CI runs the harness on a third version beside the workstation's 8.1.1 and the fleet's 9.1.2, the readings that could differ being the ones spec D13's measured basis names, and the first CI run's install step prints the version it took. If the plan's first CI run shows the runner's apt carrying no `valkey-server` package, the spec's D13 names the substitute: Valkey's own binary tarball from its download site, pinned by version and sha256 in the workflow, in place of the apt line -- a decision the executor makes at that run and records in the PR body, never a skip.
 
 - [ ] **Step 5: Run the harness and watch the eight scenarios pass**
 
@@ -3270,7 +3288,8 @@ Scenarios, each the library's own behaviour and Task 2's boot line, measured on 
 against Valkey 8.1.1: a resting order and a margin position restored across a restart under the
 own strategy id, matched by venue_order_id, every later event on the own topic; a fill made while
 down booked onto the restored order from TradesHistory, the restored position kept at its stored
-quantity and the venue's position report closed by a synthesized EXTERNAL order; a cancel made
+quantity and the venue's position report closed by a synthesized EXTERNAL order, the boot line
+listing both positions; a cancel made
 while down never closing the restored order, since the mass status reads open orders only; a
 trade frame on a restored kept reducer booked twice, inferred and then as the fill; an empty namespace
 beside an open ledger row as a cold start reading zero, the order under the EXTERNAL txid and the
@@ -3292,7 +3311,7 @@ Expected: empty.
 
 - [ ] **Step 10: Prove the harness with three probes, then record their verdicts by a message-only amend**
 
-The node's control misspells the boot line's text so the restored scenario fails; the mutations, in order: the retry count cut to two, which the silent shape's lower bound catches; the currency registration dropped, which the restore's loss of every instrument catches. The executor's control respells the pass's cancel line so the cold start fails; its mutation drops the cancel call, which the loopback's empty cancel listing catches. Each run is a few minutes: the selected scenarios run twice, once under the control and once under the mutation.
+The node's control misspells the boot line's text so the restored scenario fails; the mutations, in order: the retry count cut to two, which the silent shape's lower bound catches; the currency registration dropped, which the restore's loss of every instrument catches. The executor's control respells the pass's cancel line so the cold start fails; its mutation drops the pass's cancel call, the `sed` scoped to the pass's lines since the kill sweep's cancel is the same line at the same indentation, which the loopback's empty cancel listing catches. Each run is a few minutes: the selected scenarios run twice, once under the control and once under the mutation.
 
 ```bash
 K1="restored_across or (unreachable and silent)"
@@ -3303,7 +3322,7 @@ infra/scripts/mutate-probe.sh --file cli/engine/node.py --control 's/"cache rest
   --mutation 's/^        _register_kraken_currencies()$/        pass/' \
   -- uv run pytest tests/test_cache_restart.py -q -p no:cacheprovider -k "$K1"
 infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control 's/"canceling adopted resting order %s -- %s",/"cancelling adopted resting order %s -- %s",/' \
-  --mutation 's/^                self._client.cancel_order(order.client_order_id)$/                pass/' \
+  --mutation '/"canceling adopted resting order %s -- %s",/,/^            except Exception:/s/^                self._client.cancel_order(order.client_order_id)$/                pass/' \
   -- uv run pytest tests/test_cache_restart.py -q -p no:cacheprovider -k "empty_cache"
 ```
 
@@ -3331,13 +3350,14 @@ What this task decides, where the spec leaves it open:
 - The venue answers for every row of the restored set whatever its Cache copy's status, not for the non-terminal ones alone as D6's text has it: the copy of a kept reducer whose trade frame was double-booked reads FILLED where the venue says partial (D7's measured 0.8 against 0.6), and a rule keyed on the copy's status would trust exactly the copy the double booking corrupted. The cost is the same one venue read per restart.
 - The kept reducer's intent (D8) is written by `_settle_restored_intent`, once, at the row's terminal, by whichever path ends the row: the detached path's completion or terminal-state write, the external path's, or the re-read pass's repair where the fill's credit was nothing. The last departs from D20's letter that the pass writes no intent, and the departure is forced: with the credit at zero a fill never completes the row on the event path, so a reducer that fills whole would keep its intent `pending` for the process's life; the pass writes it only for a row of the restored set whose intent still reads `pending`, from the row's own state, and no later pass revisits it. A row a fill reached since the pass last read it is not settled by the event's path: its `filled_qty` is the credit-0 figure until the pass repairs it, and a terminal before the next tick -- the venue's cancel ack, an expiry -- puts it among the window's closed rows, which the pass's population takes for the rows of `_restored_fills` too, so the intent is written after the repair, at the repaired quantity.
 - The detached path's external-path writes (D12) apply to rows of the restored set alone: this process's own superseded and finished orders keep the no-claim rule their tests pin, and a restored order is the population the writes exist for.
-- The mixed-inventory refusal (D12, carried from 00118 D11) refuses an opening intent alone -- a close takes inventory off -- and by the kind it would add: a spot open where the venue's margin positions hold the pair, read through `read_venue_positions` once per plan that carries an open, a bare-client read on the passes' nonce terms -- which `_pickup` keeps by holding such a plan, the cache enabled, until `_nothing_in_flight` holds, the file left for the next tick: on the first tick the startup pass's cancels are still PENDING_CANCEL when the pickup runs, and the read would race them on the one key -- and a margin open where the venue state's balances, already read, hold the pair's base at or above the pair's `ordermin`, since a lot under it is dust the engine cannot sell and would otherwise refuse every margin open on the pair for as long as the cache is enabled. The Cache's net was set aside as the margin figure: the Cache books a spot fill as a position too, so the engine's own spot lot read as a margin one and every later plan on the pair was refused, closes included. A read that fails refuses each open intent by name, since the shape is then unknown. The reader is a fifth constructor keyword beside `venue_fills`, with the same stub, refusal and child redirect.
+- The mixed-inventory refusal (D12, carried from 00118 D11) refuses an opening intent alone -- a close takes inventory off -- and by the kind it would add: a spot open where the venue's margin positions hold the pair, read through `read_venue_positions` once per plan that carries an open, a bare-client read on the passes' nonce terms -- which `_pickup` keeps by holding such a plan, the cache enabled, until `_nothing_in_flight` holds, the file left for the next tick: on the first tick the startup pass's cancels are still PENDING_CANCEL when the pickup runs, and the read would race them on the one key -- and a margin open where the venue state's balances, already read, hold the pair's base at or above the pair's `ordermin`, since a lot under it is dust the engine cannot sell and would otherwise refuse every margin open on the pair for as long as the cache is enabled. The balances are keyed by the adapter's codes, which spell DOGE `XDG`, so `_spot_balance` reads a base through `resolve_base`, the rule `read_venue_holdings` reads the same balances by, in place of its own `X`-prefix tuple and the BTC one: a base the tuple missed read 0 and admitted a margin open beside a spot lot, and the spot close's sizing, the helper's other caller, read the same 0. The Cache's net was set aside as the margin figure: the Cache books a spot fill as a position too, so the engine's own spot lot read as a margin one and every later plan on the pair was refused, closes included. A read that fails refuses each open intent by name, since the shape is then unknown. The reader is a fifth constructor keyword beside `venue_fills`, with the same stub, refusal and child redirect.
 - The withdrawal check's second source (D19) is `_trades_cover`: where an order's figure falls short of the ledger, on the open sweep's negative arm or a finished row's, the pass reads the trade history once through `read_venue_fills`, from one hour before the earliest boundary among the pass's rows, which both passes set before any row asks (`_reset_fills_read`), keeps the sums by txid for the pass, and trips only when the row's txid sums short; a read that fails is not retried in the pass, so N short rows under an unreachable history cost one `_VENUE_READ_TIMEOUT_SECONDS` and never N; a covered row keeps its figure, logs the reading at WARNING and joins `_rows_the_pass_repaired`, so the fill the library infers at a cancel's ack credits it only what the Cache holds beyond it -- measured on the harness, the inferred 0.4 credits 0 and the row settles at 0.4. A read that fails or a row with no txid answers None and the trip stands on the order's figure. The reader is a constructor keyword beside the other three; the executor tests' `_executor` hands every case an empty history unless it passes one, so the existing withdrawal cases trip as before, and the autouse refusal of the production read sets the name with `raising=False`, since the name lands with the source fence and the cases fail on their own terms before it.
+- A restored row's fill logs `a fill on restored order <id> credits nothing until the venue is read -- the next restart is taken flat` at WARNING in `_fill_credit`, at the fill, once per row until the re-read pass reads it, though `_trip_on_fill` and the row's append both ask that credit: the Cache's copy stays ahead of the venue's whatever the pass's read then answers, a read that fails on every try or while a socket is down included, and neither logs the pass's own line, so the restart rule's test keys on this one.
 - The pass names a restored order it cancels with its fill state, `canceling restored order <id>, <state> -- <reason>` (D9), a separate line from the adopted order's, whose text the executor tests and drills page pin.
 - `_cache_enabled` is read once at construction from `config.cache` through a local, since `tests/test_engine_executor.py`'s accessor walk reads every attribute reached under a holder named `cache` as a Cache accessor.
 
 **Files:**
-- Modify: `cli/engine/executor.py` (`read_venue_fills` after `read_venue_orders`; `_margin_positions` and `read_venue_positions` beside `read_venue_holdings`, whose position loop moves into the first; the constructor's restored set, restored fills, realized baseline, `_cache_enabled`, `venue_fills`, `venue_positions` and the fills read's per-pass state; `_read_restored` with its attach, `_read_realized_baseline`, `_reset_fills_read`; `_arm_reread_after_mint`'s and `_nothing_in_flight`'s docstrings; `_adopt_resting_orders`' docstring, fills-read reset and classification loop with its stale-copy skip; `_reread_pass`'s population over the open and the closed rows, fills-read reset, lines and clear; `_reconcile_adopted_rows`' venue-wins branch; `_read_venue_orders`; `_cached_order`'s and `_cache_lookup`'s docstrings; `_trades_cover`, `_venue_answers`, `_restored_row`, `_settle_restored_intent`; `_pickup`'s hold; `_reconcile_adopted_row`'s covered arm; `_reconcile_finished_rows` and `_reconcile_finished_row`'s keyword and covered arm; `_mixed_inventory_refusals` and its call in `_pickup`; `_trip_on_fill`'s docstring; `_realized_eur` and `_realized_on`; `_fill_credit`; `_on_detached_event`; `_on_external_event`)
+- Modify: `cli/engine/executor.py` (`read_venue_fills` after `read_venue_orders`; `_margin_positions` and `read_venue_positions` beside `read_venue_holdings`, whose position loop moves into the first; the constructor's restored set, restored fills, realized baseline, `_cache_enabled`, `venue_fills`, `venue_positions` and the fills read's per-pass state; `_read_restored` with its attach, `_read_realized_baseline`, `_reset_fills_read`; `_arm_reread_after_mint`'s and `_nothing_in_flight`'s docstrings; `_adopt_resting_orders`' docstring, fills-read reset and classification loop with its stale-copy skip; `_reread_pass`'s population over the open and the closed rows, fills-read reset, lines and clear; `_reconcile_adopted_rows`' venue-wins branch; `_read_venue_orders`; `_cached_order`'s and `_cache_lookup`'s docstrings; `_trades_cover`, `_venue_answers`, `_restored_row`, `_settle_restored_intent`; `_pickup`'s hold; `_reconcile_adopted_row`'s covered arm; `_reconcile_finished_rows` and `_reconcile_finished_row`'s keyword and covered arm; `_mixed_inventory_refusals` and its call in `_pickup`; `_spot_balance` reading through `resolve_base`, `_BTC_BALANCE_ALIASES` removed; `_trip_on_fill`'s docstring; `_realized_eur` and `_realized_on`; `_fill_credit`; `_on_detached_event`; `_on_external_event`)
 - Modify: `cli/engine/node.py` (the strategy class's and the observer's docstrings)
 - Modify: `tests/test_engine_executor.py` (`CacheSettings` and `FillReport` imported; `_orders_under`, `StubCache.orders` and `orders_open` honouring `strategy_id`; `_executor` taking `venue_fills` and `venue_positions` with empty defaults; the autouse refusal of the fills and positions reads; `_fill_report`, `_VenueFills` and `_VenuePositions`; `_resting_limit_order` taking `strategy_id`; the realized-PnL test's closes moved after construction; the restored cases and the withdrawal-check cases in two new sections at the end of the file)
 - Modify: `tests/cache_restart_child.py` (the fourth and fifth bare-client reads redirected and checked)
@@ -3345,7 +3365,7 @@ What this task decides, where the spec leaves it open:
 - Modify: `tests/test_cache_restart.py` (`PHASE2_WINDOW` 20; the executor's assertions in the restored, fill-while-down, cancelled-while-down and kept-reducer scenarios, the realized readings among the last's; the cold-start scenario at the measured shape, the opener filled 0.4 before the stop; the ninth scenario, the trade frame on a restored opener racing the pass's cancel)
 
 **Interfaces:**
-- Consumes: `ProbeExecutor`, `_cached_order`, `_cache_lookup`, `_reconcile_adopted_row`, `_attach`, `_arm_reread_after_mint`, `_venue_terminal_state`, `_cache_net`, `_spot_balance`, `_ordered_qty`, `restored_fill_state`, `_inc_order`, `_bare_client`, `_VENUE_READ_MARGIN`, `_ADOPTED_TERMINAL_STATES`, `_OPEN_ORDER_STATES`, `FLAT_TOLERANCE`, `pending_plan_intents`, `update_plan_intent`, `update_submitted_row` in `cli/engine/executor.py` and `cli/engine/execledger.py`; `INSTRUMENT_IDS` in `cli/engine/instruments.py`; `KrakenSpotHttpClient.request_fill_reports`, `request_position_status_reports` and `FillReport` in the library; `QUOTE_CURRENCY` in `cli/engine/flatten.py`; `StubCache`, `StubClient`, `_executor`, `_config`, `_gate`, `_submitted_row`, `_pending_plan_entry`, `_resting_limit_order`, `_closed_order`, `_report`, `_VenueOrders`, `_fill`, `_event`, `_record`, `_intent_entry`, `_plan_entry`, `_drop_plan`, `_plan_dict`, `_executor_errors`, `_kill_file`, `RecordingMetrics`, `kill_trip_expected` in `tests/test_engine_executor.py`; `_script_first_fill`, `_script_cancel_ack`, `_Node.rows`, `_Node.intents` in `tests/test_cache_restart.py`
+- Consumes: `ProbeExecutor`, `_cached_order`, `_cache_lookup`, `_reconcile_adopted_row`, `_attach`, `_arm_reread_after_mint`, `_venue_terminal_state`, `_cache_net`, `_spot_balance`, `_ordered_qty`, `restored_fill_state`, `_inc_order`, `_bare_client`, `_VENUE_READ_MARGIN`, `_ADOPTED_TERMINAL_STATES`, `_OPEN_ORDER_STATES`, `FLAT_TOLERANCE`, `pending_plan_intents`, `update_plan_intent`, `update_submitted_row` in `cli/engine/executor.py` and `cli/engine/execledger.py`; `INSTRUMENT_IDS` in `cli/engine/instruments.py`; `KrakenSpotHttpClient.request_fill_reports`, `request_position_status_reports` and `FillReport` in the library; `QUOTE_CURRENCY` and `resolve_base` in `cli/engine/flatten.py`; `StubCache`, `StubClient`, `_executor`, `_config`, `_gate`, `_submitted_row`, `_pending_plan_entry`, `_resting_limit_order`, `_closed_order`, `_report`, `_VenueOrders`, `_fill`, `_event`, `_record`, `_intent_entry`, `_plan_entry`, `_drop_plan`, `_plan_dict`, `_executor_errors`, `_kill_file`, `RecordingMetrics`, `kill_trip_expected` in `tests/test_engine_executor.py`; `_script_first_fill`, `_script_cancel_ack`, `_Node.rows`, `_Node.intents` in `tests/test_cache_restart.py`
 - Produces: `read_venue_fills(since, *, base_url=None) -> list`; `_margin_positions(reports) -> dict[str, float]`; `read_venue_positions(*, base_url=None) -> dict[str, float]`; `ProbeExecutor(..., venue_fills=None, venue_positions=None)`; `ProbeExecutor._restored: dict[str, str | None]`, `._restored_fills: set[str]`, `._realized_baseline: dict[InstrumentId, float]`, `._cache_enabled: bool`, `._venue_fills_read: dict[str, float] | None`, `._venue_fills_failed: bool`, `._venue_fills_floor: datetime | None`; `_read_restored() -> None`; `_read_realized_baseline() -> None`; `_reset_fills_read(entries) -> None`; `_trades_cover(boundary, venue_order_id, ledgered) -> bool | None`; `_venue_answers(row, *, finished) -> bool`; `_restored_row(row) -> bool`; `_settle_restored_intent(boundary, row) -> None`; `_realized_on(instrument_id) -> float`; `_mixed_inventory_refusals(plan, state) -> list[str]`; `_reconcile_finished_row(..., *, venue_order_id=None)`; in the tests, `_cache_config(tmp_path, enabled=True)`, `_restored_order(client_order_id, *, filled, quantity)`, `_kept_reducer(tmp_path, venue)`, `_fill_report(txid, qty, *, trade_id)`, `_VenueFills(*reports, raises=None)`, `_VenuePositions(held=None, *, raises=None)`, `_orders_under(strategy_id, held)`, `_cold_start_row(tmp_path, *, finished)`
 
 - [ ] **Step 1: Confirm Task 3's marker and this task's absence**
@@ -3903,7 +3923,10 @@ def test_a_fill_on_a_restored_row_before_the_first_tick_lands_in_its_row_and_tri
     row = _record(tmp_path, earlier)["submitted"][0]
     assert (row["filled_qty"], row["state"]) == (0.0, "accepted")
     assert row["events"][-1]["event"] == "fill" and (row["events"][-1]["qty"], row["events"][-1]["credited"]) == (0.0004, 0.0)
-    assert not _kill_file(tmp_path).exists() and ex._reread_tries == 3 and records == []
+    assert not _kill_file(tmp_path).exists() and ex._reread_tries == 3
+    assert [r.getMessage() for r in records] == [
+        "a fill on restored order O-reducer credits nothing until the venue is read -- the next restart is taken flat"
+    ]
 
 
 def test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins(tmp_path):
@@ -4007,7 +4030,10 @@ def test_a_fill_on_a_restored_row_credits_nothing_and_the_re_read_pass_repairs_t
     row = _record(tmp_path, earlier)["submitted"][0]
     assert (row["filled_qty"], row["state"]) == (0.0, "accepted")
     assert row["events"][-1]["event"] == "fill" and (row["events"][-1]["qty"], row["events"][-1]["credited"]) == (0.0004, 0.0)
-    assert not _kill_file(tmp_path).exists() and ex._reread_tries == 3 and records == []
+    assert not _kill_file(tmp_path).exists() and ex._reread_tries == 3
+    assert [r.getMessage() for r in records] == [
+        "a fill on restored order O-reducer credits nothing until the venue is read -- the next restart is taken flat"
+    ]
 
     venue.reports = [_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004")]
     with _executor_errors(level=logging.WARNING) as records:
@@ -4061,7 +4087,7 @@ def test_a_fill_then_a_terminal_on_a_restored_row_before_the_next_tick_is_repair
     """D7's race on the event path: a restored row takes a fill, credited nothing, and a terminal
     closes it before the re-read pass runs -- the venue's cancel ack, or one the library flagged
     `reconciliation`, which the row reads `ambiguous`. The pass reads the row either way, names it
-    among the restored rows with a fill (the operator's test's fourth read), and repairs it to the
+    among the restored rows with a fill, and repairs it to the
     venue's figure; a kept reducer's intent is written then, at the repaired quantity, never at the
     terminal's credit-0 figure, and a cancelled opener's the startup sweep already wrote."""
     earlier = NOW - timedelta(hours=4)
@@ -4126,6 +4152,7 @@ _MARGIN_CLOSE = _intent(side="sell", action="close", leverage=2)
         (_MARGIN_OPEN, {}, {"XXBT": 0.01}, "a margin open on BTC/EUR beside 0.01 BTC spot inventory"),
         (_MARGIN_OPEN, {}, {"XXBT": 0.0001}, "a margin open on BTC/EUR beside 0.0001 BTC spot inventory"),
         (_MARGIN_OPEN, {}, {"XXBT": 0.00005}, None),
+        (_intent(symbol="DOGE/EUR", leverage=2), {}, {"XDG": 12.5}, "a margin open on DOGE/EUR beside 12.5 DOGE spot inventory"),
         (_intent(), {}, {"XXBT": 0.01}, None),
         (_MARGIN_OPEN, {"BTC/EUR": 0.001}, {}, None),
         (_SPOT_CLOSE, {"BTC/EUR": 0.001}, {"XXBT": 0.001}, None),
@@ -4136,6 +4163,7 @@ _MARGIN_CLOSE = _intent(side="sell", action="close", leverage=2)
         "margin-open-beside-spot",
         "margin-open-beside-spot-at-ordermin",
         "margin-open-beside-spot-dust",
+        "margin-open-beside-spot-spelled-xdg",
         "spot-beside-spot",
         "margin-beside-margin",
         "spot-close",
@@ -4148,7 +4176,8 @@ def test_an_opening_intent_that_would_mix_spot_and_margin_inventory_on_its_pair_
     """The refusal 00118 D11 carries into spec 00120 D12, on what can create the mixed shape alone: a
     spot open where the venue's margin positions hold the pair, a margin open where the base has spot
     inventory at or above the pair's `ordermin` (0.0001 on the stub's BTC/EUR) -- a lot under it is
-    dust the engine cannot sell. The same kind beside itself, and a close of either kind beside both,
+    dust the engine cannot sell -- the base read under Kraken's spellings of it, DOGE's `XDG` among
+    them. The same kind beside itself, and a close of either kind beside both,
     are admitted -- the Cache's own position would read a spot lot as the margin one, so the margin
     figure is the venue's, and a close takes inventory off."""
     positions = _VenuePositions(margin)
@@ -4618,6 +4647,10 @@ def test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_tw
     assert [(e["qty"], e.get("credited")) for e in fills] == [(0.4, None), (0.2, 0.0), (0.2, 0.0)], fills
     assert "its row reads ambiguous until the re-read pass settles it" in record["log"]
     assert "the re-read pass reads 1 restored row(s) with a fill since its last read against the venue" in record["log"]
+    assert (
+        f"a fill on restored order {row['client_order_id']} credits nothing until the venue is read -- the next restart is taken flat"
+        in record["log"]
+    )
     assert (row["state"], row["filled_qty"]) == ("canceled", pytest.approx(0.6))
     assert [e["qty"] for e in row["events"] if e.get("event") == "reconciled"] == [pytest.approx(0.2)]
     [intent] = node.intents()
@@ -4775,7 +4808,7 @@ with:
 - [ ] **Step 3: Run the executor file and watch the new cases fail**
 
 Run: `uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider`
-Expected: `330 failed, 50 passed, 35 errors` -- `_executor` now hands the constructor `venue_fills` and `venue_positions`, two keywords it does not take yet, so every case that builds an executor fails at construction with `TypeError` and the fifty that build none pass; the thirty-five errors are `kill_trip_expected`'s teardown on cases that tripped nothing. The count is the whole file's, not the new cases' alone, and it reads green only once the source fence lands. The harness is not run red: its executor assertions fail only after six minutes of scenarios, and the executor file's cases are the same rules read faster.
+Expected: `331 failed, 50 passed, 35 errors` -- `_executor` now hands the constructor `venue_fills` and `venue_positions`, two keywords it does not take yet, so every case that builds an executor fails at construction with `TypeError` and the fifty that build none pass; the thirty-five errors are `kill_trip_expected`'s teardown on cases that tripped nothing. The count is the whole file's, not the new cases' alone, and it reads green only once the source fence lands. The harness is not run red: its executor assertions fail only after six minutes of scenarios, and the executor file's cases are the same rules read faster.
 
 - [ ] **Step 4: The executor and the two docstrings in `cli/engine/node.py`**
 
@@ -5778,6 +5811,53 @@ with:
 Replace, in `cli/engine/executor.py`, this block:
 
 ```python
+_SPOT_SYMBOL_BY_BASE = {symbol.split("/")[0]: symbol for symbol in INSTRUMENT_IDS if symbol.endswith("/EUR")}
+# Kraken spells one asset three ways across its surfaces; the balance read tries them in order.
+# Every other base gets the plain code plus its `X`-prefixed classic spelling.
+_BTC_BALANCE_ALIASES = ("BTC", "XBT", "XXBT")
+```
+
+with:
+
+```python
+_SPOT_SYMBOL_BY_BASE = {symbol.split("/")[0]: symbol for symbol in INSTRUMENT_IDS if symbol.endswith("/EUR")}
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
+def _spot_balance(balances: dict, base: str) -> float:
+    """What the venue record says is held of `base`, or 0.0 when no spelling of it is present.
+    Raises on a present-but-unreadable value -- the caller turns that into a refusal, because a
+    balance this process cannot parse is not a balance it may reason about."""
+    aliases = _BTC_BALANCE_ALIASES if base == "BTC" else (base, f"X{base}")
+    for alias in aliases:
+        if alias in balances:
+            return float(balances[alias])
+    return 0.0
+```
+
+with:
+
+```python
+def _spot_balance(balances: dict, base: str) -> float:
+    """What the venue record says is held of `base`, or 0.0 when no spelling of it is present: a
+    code is `base`'s when `resolve_base` maps it there, the rule `read_venue_holdings` reads the
+    balances by, so Kraken's `XDG` is DOGE and `XBT` BTC. Raises on a present-but-unreadable value --
+    the caller turns that into a refusal, because a balance this process cannot parse is not a
+    balance it may reason about."""
+    from cli.engine.flatten import resolve_base
+
+    bases = frozenset((base,))
+    for code, value in balances.items():
+        if resolve_base(code, bases) == base:
+            return float(value)
+    return 0.0
+```
+
+Replace, in `cli/engine/executor.py`, this block:
+
+```python
         self._index = 0
         self._resolved_notional = {}
 
@@ -5797,10 +5877,11 @@ with:
         it takes inventory off. A spot open is refused where the venue's margin positions hold the pair,
         read through `read_venue_positions` once per plan that carries an open, on the passes' nonce
         terms, which `_pickup` keeps by holding such a plan until nothing of this process is in flight;
-        a margin open where the venue state's balances, already read, hold the pair's base at or above
-        the pair's `ordermin` -- a lot under it is dust the engine cannot sell, and would refuse every
-        margin open on the pair for as long as the cache is enabled. A read that fails refuses each open
-        intent, since the shape is then unknown."""
+        a margin open where the venue state's balances, already read through `_spot_balance` under
+        every spelling of the base, hold the pair's base at or above the pair's `ordermin` -- a lot
+        under it is dust the engine cannot sell, and would refuse every margin open on the pair for as
+        long as the cache is enabled. A read that fails refuses each open intent, since the shape is
+        then unknown."""
         opens = [(index, intent) for index, intent in enumerate(plan.intents) if intent.action == "open"]
         if not opens:
             return []
@@ -6007,7 +6088,16 @@ with:
             # A restored row's fill credits nothing (spec 00120 D8): the library books a trade frame on
             # a restored open order twice, an inferred fill for the cumulative gap and then the fill
             # itself, so the event's quantity would trip a false overfill; the fill arms the re-read
-            # pass, whose venue read repairs the row up to the venue's cumulative figure.
+            # pass, whose venue read repairs the row up to the venue's cumulative figure. The Cache's copy
+            # stays ahead of the venue's for the process's life whatever that read answers, so the
+            # WARNING is logged here, at the fill, once per row until the pass reads it, the trip check
+            # and the row's append both asking this credit: its text is what an operator searches
+            # before a restart.
+            if row["client_order_id"] not in self._restored_fills:
+                logger.warning(
+                    "a fill on restored order %s credits nothing until the venue is read -- the next restart is taken flat",
+                    row["client_order_id"],
+                )
             self._restored_fills.add(row["client_order_id"])
             self._arm_reread_after_mint()
             return 0.0
@@ -6147,14 +6237,14 @@ class ExternalOrderObserver(Strategy):
 - [ ] **Step 5: Run the executor and node files, then the harness, and watch them pass**
 
 Run: `uv run pytest tests/test_engine_executor.py tests/test_engine_node.py -q -p no:cacheprovider`
-Expected: `481 passed, 2 skipped`, the skips the node file's two live-venue gates.
+Expected: `482 passed, 2 skipped`, the skips the node file's two live-venue gates.
 Run: `uv run pytest tests/test_cache_restart.py -q -p no:cacheprovider`
 Expected: `9 passed`, in about seven and a half minutes (`9 passed in 445.92s` when this plan was written).
 
 - [ ] **Step 6: The consumers**
 
 Run: `uv run pytest tests/test_cache_restart.py tests/test_engine_executor.py tests/test_engine_node.py tests/test_engine_command.py tests/test_engine_flatten.py tests/test_engine_metrics.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_nautilus_interface_pin.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a gate, none failed; `1762 passed, 3 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates and `tests/test_engine_flatten.py`'s one. The list is every module that imports `cli.engine.executor` or `cli.engine.node`, with the ledger's, the pin, the stub walker and the internal-terms walker.
+Expected: every test passed or skipped by a gate, none failed; `1763 passed, 3 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates and `tests/test_engine_flatten.py`'s one. The list is every module that imports `cli.engine.executor` or `cli.engine.node`, with the ledger's, the pin, the stub walker and the internal-terms walker.
 
 - [ ] **Step 7: The commit gate**
 
@@ -6181,15 +6271,16 @@ status, and over every finished row with fills, taking the report over the Cache
 previous process's view; a restored order the venue holds closed has its row written from the
 report and no cancel sent, its stale open copy left in the Cache; one the venue holds open is
 cancelled unless its row is a ledgered reducer, the line naming its fill state. A restored row's
-fill credits nothing and arms the re-read pass, whose population gains the restored rows with a
-fill since its last read, the window's closed rows among them, and whose repair brings the row to
+fill credits nothing, logs a WARNING at the fill that the next restart is taken flat, and arms the
+re-read pass, whose population gains the restored rows with a fill since its last read, the window's closed rows among them, and whose repair brings the row to
 the venue's cumulative figure; the kept reducer's intent is written once at the row's terminal,
 filled or revoked, by the path that ends it, the re-read pass's repair included, since a zero credit
 never completes a row on the event path, and held past a terminal that lands before the pass, so it
 names the repaired quantity and never the credit-0 one. The detached path makes the external path's two writes for a restored row alone. The
 realized gauge subtracts the realizations the Cache held at construction. An opening intent that would put
 a spot lot beside a margin position on its pair, or the reverse, is refused while the cache is
-enabled, the margin figure the venue's own positions read through a bare client, and a close never
+enabled, the margin figure the venue's own positions read through a bare client and the spot figure
+every spelling of the base the holdings read resolves, DOGE's XDG among them, and a close never
 is. The withdrawal check reads the venue's trade history before it trips, once per pass from the
 earliest boundary among the pass's rows and never again in it after a failure: on a cold start the library creates the EXTERNAL
 copy from the venue's order report with no fill applied, so the figure reads 0 against the ledger's
@@ -6206,14 +6297,15 @@ winning; a restored EXTERNAL copy of a kept reducer crediting a frame's two fill
 pass repairing its row; a restored order's stale open copy sent no cancel at a later restart once
 its row is closed; a plan with an opening intent held until nothing is in flight and picked up on
 the next tick, and not held without the cache; a margin open refused beside spot inventory at the
-pair's ordermin and admitted beside dust under it; a fill then a minted terminal on a restored row
+pair's ordermin, DOGE's under its XDG spelling too, and admitted beside dust under it; a fill then a minted terminal on a restored row
 repaired by the pass and named among its restored rows; a true withdrawal tripping on a history
 short on the row's txid however much another txid holds; the venue's report repairing the row over the Cache's copy with the cache
 enabled and the copy answering without it; a restored order the venue reports closed written from
 the report with no cancel and its intent settled by the sweep; a restored opener cancelled with its
 fill state named and a kept reducer left resting; a finished row with fills read at the venue over
 the Cache's agreeing copy with the cache enabled, a withdrawal tripping the kill switch, and not
-read without it; a fill on a restored row credited nothing, the pass repairing the row and the
+read without it; a fill on a restored row credited nothing with its WARNING logged once at the
+fill, the pass repairing the row and the
 completing repair writing the intent filled; a venue cancel on the kept reducer writing its row and
 its intent revoked, a minted one ambiguous and the intent pending; a fill then a terminal before
 the next tick repaired by the pass on a kept reducer and a cancelled opener, the intent written
@@ -6242,9 +6334,9 @@ Claude-Session: <the executing session's URL>"
 Run: `git status --porcelain`
 Expected: empty.
 
-- [ ] **Step 10: Prove the guards with eighteen probes, then record their verdicts by a message-only amend**
+- [ ] **Step 10: Prove the guards with twenty-one probes, then record their verdicts by a message-only amend**
 
-The control respells the restored cancel line so the restored-opener case fails. The mutations, in order: the venue answering for restored rows dropped, so the Cache's copy is trusted again; the restored fill no longer noted for the re-read pass; the re-read pass's repair no longer writing the kept reducer's intent; the realized baseline no longer read; the mixed-inventory refusal dropped; the closed restored order's cancel no longer withheld; the trade history no longer consulted before the open sweep's trip; the attach at construction dropped; the restored set read from the open orders alone; the closed rows dropped from the re-read pass's population; the intent no longer held while a fill waits for its repair; a failed trade-history read retried in the pass; the mixed-inventory check widened to every intent; the pickup's hold dropped, so the positions read races the pass's cancels; the trade history's cover summed across txids; the spot floor back at the flat tolerance, so dust refuses a margin open; the re-read pass's restored count excluding a row a minted terminal closed; the stale open copy cancelled at a later restart.
+The control respells the restored cancel line so the restored-opener case fails. The mutations, in order: the venue answering for restored rows dropped, so the Cache's copy is trusted again; the restored fill no longer noted for the re-read pass; the re-read pass's repair no longer writing the kept reducer's intent; the realized baseline no longer read; the mixed-inventory refusal dropped; the closed restored order's cancel no longer withheld; the trade history no longer consulted before the open sweep's trip; the attach at construction dropped; the restored set read from the open orders alone; the closed rows dropped from the re-read pass's population; the intent no longer held while a fill waits for its repair; a failed trade-history read retried in the pass; the mixed-inventory check widened to every intent; the pickup's hold dropped, so the positions read races the pass's cancels; the trade history's cover summed across txids; the spot floor back at the flat tolerance, so dust refuses a margin open; the re-read pass's restored count excluding a row a minted terminal closed; the stale open copy cancelled at a later restart; the spot balance read by the plain and `X`-prefixed code alone, so DOGE's `XDG` reads 0; the restored fill's WARNING dropped; the restored fill's WARNING logged at every credit asked.
 
 ```bash
 K="restored or kept_reducer or finished_row_with_fills or mix_spot or mixed_inventory or margin_position_read or baseline or cold_starts_order_figure or true_withdrawal or trade_history_read or read_once_per_pass"
@@ -6303,6 +6395,15 @@ infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
 infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
   --mutation 's/^            if attached is None and own and venue_order_id in finished_by_venue:$/            if False:/' \
   -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^        if resolve_base(code, bases) == base:$/        if code in (base, f"X{base}"):/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^            if row\["client_order_id"\] not in self._restored_fills:$/            if False:/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
+infra/scripts/mutate-probe.sh --file cli/engine/executor.py --control "$C" \
+  --mutation 's/^            if row\["client_order_id"\] not in self._restored_fills:$/            if True:/' \
+  -- uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider -k "$K"
 ```
 
 Expected: each run ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message with the text below: write the whole message, that line replaced, to a file under `.tmp/` (gitignored) and amend from it with `git commit --amend -F <file>`; the amend changes the message only, no file.
@@ -6325,7 +6426,10 @@ pass, KILLED, control proven; the mixed-inventory check widened to every intent,
 proven; the pickup's hold dropped, KILLED, control proven; the trade history's cover summed across
 txids, KILLED, control proven; the spot floor back at the flat tolerance, KILLED, control proven;
 the re-read pass's restored count excluding a row a minted terminal closed, KILLED, control
-proven; the stale open copy cancelled at a later restart, KILLED, control proven.
+proven; the stale open copy cancelled at a later restart, KILLED, control proven; the spot balance
+read by the plain and X-prefixed code alone, KILLED, control proven; the restored fill's WARNING
+dropped, KILLED, control proven; the restored fill's WARNING logged at every credit asked,
+KILLED, control proven.
 ```
 
 Run: `git status --porcelain` -- Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` -- Expected: `0`; `git log -1 --format=%B | grep -c 'infra/scripts/mutate-probe.sh'` -- Expected: `1`, the verdict naming the script.
@@ -6347,7 +6451,7 @@ What this task decides, where the spec leaves it open:
 - The proxy's config is rendered, validated, installed and its candidate removed ahead of the engine's env, toml and compose renders, not after them: a refused render then stops before any engine file is rewritten, the file exists before the compose file names it (a bind mount whose source is missing is created as a directory), and the preview -- `converge.sh`'s `--check --diff` -- runs the render and the validation, the two tasks that change nothing an operator reads, while the install waits for the real pass.
 - `global` carries `maxconn 256`: without a bound HAProxy sizes itself off the container's file-descriptor hard limit, 524288 on the fleet's containerd, and its worker, about 69 MB resident, is killed under the 32m cap at every load; at 256 it runs and answers `/metrics` under the cap, measured by the plan-review's pin with the 3.4.5 layers under `MemoryMax=32M`.
 - The rendered `zcrypto.toml`'s cache table sits behind the role default `engine_cache_enabled: true`, and `-e engine_cache_enabled=false` renders no table -- the way back to an engine that runs without the cache inside the same gap, since an engine image from before the table refuses a config that carries it (`has unknown key(s): cache`) and a compose re-pin alone leaves the rendered file in place; the operand joins `converge.sh`'s `EVKEYS`, and the proxy service renders either way.
-- The `cache_link` role takes `when: "'engine' not in ansible_skip_tags"`: `--skip-tags engine`, the Alloy bump's primary shape, skips the window guard's tasks with the engine's, so the role that guard gates is held off there too, and the mesh drift lands at a `--tags cache-link` or `--tags engine` converge inside a gap. Measured with a two-task play: `--skip-tags engine` runs neither the guard nor the role, `--tags cache-link` and an un-tagged run both, `--tags capture` neither. The mirror, `--tags engine --skip-tags cache-link`, would run the engine role with the guard skipped, measured on a three-task play: `converge.sh` refuses it -- `--tags` and `--skip-tags` together, and `--skip-tags` taking `engine` alone -- so nothing run through the script reaches it, and a bare `ansible-playbook` is the one path that would.
+- The `cache_link` role takes `when: "'engine' not in ansible_skip_tags"`: `--skip-tags engine`, the Alloy bump's primary shape, skips the window guard's tasks with the engine's, so the role that guard gates is held off there too, and the mesh drift lands at a `--tags cache-link` converge inside a gap, `--tags engine` running the guard and the engine role and not this one. Measured with a two-task play: `--skip-tags engine` runs neither the guard nor the role, `--tags cache-link` and an un-tagged run both, `--tags capture` neither. The mirror, `--tags engine --skip-tags cache-link`, would run the engine role with the guard skipped, measured on a three-task play: `converge.sh` refuses it -- `--tags` and `--skip-tags` together, and `--skip-tags` taking `engine` alone -- so nothing run through the script reaches it, and a bare `ansible-playbook` is the one path that would.
 
 **Files:**
 - Create: `infra/ansible/roles/engine/templates/haproxy.cfg.j2`
@@ -7242,7 +7346,7 @@ with:
     # changed zcache0.conf restarts wg-quick@zcache0, which carries the engine's cache traffic, so it
     # takes the engine window above. The capture play's converge_primary guard still gates it. A
     # `--skip-tags engine` run skips the guard's tasks with the engine's, so it skips this role too:
-    # the mesh drift lands at a `--tags cache-link` or `--tags engine` converge inside a gap.
+    # the mesh drift lands at a `--tags cache-link` converge inside a gap.
     - role: cache_link
       tags: [cache-link]
       when: "'engine' not in ansible_skip_tags"
@@ -7423,7 +7527,7 @@ The nodes authenticate to each other: a replica to its primary with the `replica
 ### What to do
 
 1. **Put the primary on valkey1 while the nodes still run the old passwords:** `cache-manual-failover` above, repeated until `sn SENTINEL get-master-addr-by-name zcache` names `10.98.0.11`. When a converge already carried the change, `vk` or `sn` answers `WRONGPASS` or `NOAUTH`: put the old value back in `vault.yml`, converge each node with the two digests it runs, read as step 3 reads them — step 5's command without `-e cache_config_reset=true` — and begin here again.
-2. **Change the password** in `group_vars/cache_host/vault.yml`, or in `group_vars/all/vault.yml` for `cache_engine_password` and `cache_sentinel_requirepass`, by the recipe in the cache file's header, merged to `develop`, which the converges below run from. Steps 3 to 6 follow in the same sitting, and no other converge that renders a password — a `cache-config-reset` on another node, an Alloy bump's cache leg, an engine converge of `zcrypto` — runs between this merge and step 6: a cache converge without the reset in that window renders the new password into the env files its digests gate, against a `users.acl` and a Sentinel `requirepass` still holding the old one, and two nodes in that state page `zcrypto-cache-primary-count` on a healthy set; an engine converge in it — an arm or disarm, the rollout skill's same-day shape — renders the new `engine` password into `engine.env` or the new `requirepass` into `haproxy.cfg` against nodes still holding the old, and its handler restarts the engine into `failed to create cache database backing` every ten seconds until step 6.
+2. **Change the password** in `group_vars/cache_host/vault.yml`, or in `group_vars/all/vault.yml` for `cache_engine_password` and `cache_sentinel_requirepass`, by the recipe in the cache file's header, merged to `develop`, which the converges below run from. Steps 3 to 6 follow in the same sitting, and no other converge that renders a password — a `cache-config-reset` on another node, an Alloy bump's cache leg, an engine converge of `zcrypto` — runs between this merge and step 6: a cache converge without the reset in that window renders the new password into the env files its digests gate, against a `users.acl` and a Sentinel `requirepass` still holding the old one, and two nodes in that state page `zcrypto-cache-primary-count` on a healthy set; an engine converge in it — an arm or disarm, the rollout skill's same-day shape — renders the new `engine` password into `engine.env` or the new `requirepass` into `haproxy.cfg` against nodes still holding the old, and its handler restarts the engine into `failed to create cache database backing` at ten-second intervals until step 6.
 3. **Read each node's running digests**, on each node: `sudo docker inspect zcrypto-valkey grafana-alloy --format '{{.Config.Image}}'` prints Valkey's, then Alloy's.
 4. **Stop the three nodes, valkey3 and valkey2 before valkey1:** `sudo systemctl stop zcrypto-cache.service` on each.
 5. **Converge each node with the reset, valkey1 first, and recreate its Alloy before the next node's converge**, from `infra/ansible`: `./scripts/converge.sh site.yml --limit zcrypto-valkey<N> --tags cache -e cache_config_reset=true -e cache_image_digest=sha256:<its Valkey digest> -e cache_alloy_digest=sha256:<its Alloy digest>`, which renders the node's files and starts its daemons; then, on the node, `cd /opt/zcrypto-cache/alloy && sudo docker compose up -d`, which recreates Alloy so it reads the new secrets.
@@ -8315,7 +8419,7 @@ with:
       "id": 403,
       "type": "timeseries",
       "title": "Sessions through the proxy \u2014 the page's value",
-      "description": "Sessions the proxy carries to the cache set, summed over its backends: 2 from a never-cut engine, the load's connection, idle after the start, and the writer's; 1 after a cut once the writer's is re-made at the engine's next write, which the library drops, the load's never coming back; 0 from the cut until that write. Below the red line while the engine reports for `for: 15m` is the alert. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session",
+      "description": "Sessions the proxy carries to the cache set, summed over its backends: 2 from a never-cut engine, the load's connection, idle after the start, and the writer's; after a cut the writer's is re-made at the engine's next write, which the library drops, and the load's never comes back: a cut of both reads 0 until that write and 1 after it, a cut of the writer's alone 1 until that write and 2 after it, and a cut of the load's alone 1, no write dropped. Below the red line while the engine reports for `for: 15m` is the alert. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 8, "x": 8, "y": 79},
       "targets": [
@@ -8486,7 +8590,7 @@ A **warning** Grafana alert, `Cache · engine running with no session through th
 
 ### What it means
 
-The engine's link to the cache was cut and not yet re-made. The library holds two connections through the proxy from a start that was never cut — the load's, which idles once the store is read, and the writer's — and reconnects lazily: the next write after a cut of the writer's connection fails and is dropped, the write after that opens a fresh connection for the writer, and the load's connection never comes back, so a healthy engine reads 2 sessions from a start never cut, and 1 or 2 after a cut, by whether the cut took the load's connection. A cut is a failover's `shutdown-sessions`; one Sentinel's check going down on the routed backend — each server entry is that backend's node checked through one Sentinel, the default roundrobin balance spreads the engine's sessions over the three, and `on-marked-down shutdown-sessions` closes the sessions an entry carries, so a replica node's reboot, a Sentinel restart or a mesh blip to one node cuts the sessions routed through it; a proxy restart; the `zcache0` interface restarted by a `cache-link` converge; or a node reboot under the primary. An engine idle between cycles then shows no session for as long as it makes no write. The store is behind by the dropped write and by everything written while the link was down, nothing replays it, and the engine's next restart is taken flat. The engine keeps trading. With the cache disabled on purpose — `engine_cache_enabled: false` on the engine host, the rollout's abort — the engine holds no session by design and this page is no incident: silence it until the cache is re-enabled.
+The engine's link to the cache was cut and not yet re-made. The library holds two connections through the proxy from a start that was never cut — the load's, which idles once the store is read, and the writer's — and reconnects lazily: the next write after a cut of the writer's connection fails and is dropped, the write after that opens a fresh connection for the writer, and the load's connection never comes back, so a healthy engine reads 2 sessions from a start never cut, and 1 or 2 after a cut, by whether the cut took the load's connection. A cut is a failover's `shutdown-sessions`; one Sentinel's check going down on the routed backend — each server entry is that backend's node checked through one Sentinel, the default roundrobin balance spreads the engine's sessions over the three, and `on-marked-down shutdown-sessions` closes the sessions an entry carries, so a replica node's reboot, a Sentinel restart or a mesh blip to one node cuts the sessions routed through it; a proxy restart; the `zcache0` interface restarted by a `cache-link` converge; or a node reboot under the primary. After a cut of both connections — a failover, a proxy restart, a dead link — an engine idle between cycles shows no session for as long as it makes no write, which is what this page reads; after a per-entry cut it shows 1 and this page stays quiet: one of the writer's alone is paged by the dropped write's ERROR at the next write ([`#zcrypto-engine-cache-write-failed`](#zcrypto-engine-cache-write-failed)), and one of the load's alone drops no write. The store is behind by the dropped write and by everything written while the link was down, nothing replays it, and the engine's next restart is taken flat. The engine keeps trading. With the cache disabled on purpose — `engine_cache_enabled: false` on the engine host, the rollout's abort — the engine holds no session by design and this page is no incident: silence it until the cache is re-enabled.
 
 ### What to do
 
@@ -8542,7 +8646,7 @@ with:
 ```markdown
 <a name="engine-restart-margin-position"></a>
 
-**An engine converge or restart with a Kraken margin position open is admitted by one test, and refused otherwise until the nautilus-trader build the engine runs carries upstream #5065.** Kraken's margin position report carries no entry price, the node's startup reconciliation needs one to rebuild an open position, and #5065 is the upstream change that puts the entry average on that report; the engine's cache holds its own orders and positions, entry prices included, across a restart, and that is what the test reads. Four reads before any procedure below converges or restarts the engine: the Cache board's proxy row, where `Sentinel checks passing on the most-agreed backend` reads 2 or 3 and `Sessions through the proxy` reads 1 or more — the proxy routed and the engine's sessions up, two from a never-cut engine, the load's, idle after the start, and the writer's, which alone comes back after a cut; the engine's last boot line in Loki under container `engine`, `cache restore: N order(s), M position(s) restored` with a `cache restore: position <instrument> <quantity> @ <entry price> (<strategy>)` line per position; Kraken's positions page, or `kraken positions -o json` on the workstation, for what is open; and the engine's log under the same container since that boot line for `the re-read pass reads N restored row(s) with a fill since its last read against the venue`, the executor's WARNING that an order the cache restored has filled since the boot. The restart is admitted when every open position is one that boot line counted as restored, or one this engine opened after that boot — the order that opened it this engine's own, placed after that boot, whether it filled while the engine ran or while it was down — no cache outage has fired since that boot, and no restored order has filled since it: a `zcrypto-engine-cache-write-failed`, `zcrypto-cache-proxy-no-backend` or `zcrypto-cache-proxy-no-engine-session` page since the boot line means the store is behind by what was written while the link was down and by the write the reconnect dropped, nothing replays it, and the restart is taken flat ([`cache.md#zcrypto-engine-cache-write-failed`](cache.md#zcrypto-engine-cache-write-failed)); that WARNING since the boot line means a fill the library booked twice into the cache, its stored copy of the order and the position ahead of the venue's figure, which the next start's reconciliation meets as a difference against the venue — a diff fill at the stored price, or a failed start where it crosses zero — and the restart is taken flat. Otherwise close the position first or wait, as before: a cold start, a lost database, or a position the cache never saw — opened by hand, or by an order the cache never held — goes one of two ways on 2.0.0rc6.dev20260921, depending on the pair's fill history: the start fails with `Unresolved positions during startup reconciliation … missing avg_px_open for position recovery` and the container restarts into the same failure, or it boots with the position's entry price at 0, where the one reading that goes wrong is the realized-PnL gauge (`zcrypto_exec_realized_pnl_eur`). A start already failing that way is ended by the red button's press ([`#engine-flatten`](#engine-flatten)): it stops the unit and reads the account through its own client, which runs no startup reconciliation. The test ends once the engine runs a pinned build carrying #5065; the converge that puts it there is still a start of the engine and takes the test like any other.
+**An engine converge or restart with a Kraken margin position open is admitted by one test, and refused otherwise until the nautilus-trader build the engine runs carries upstream #5065.** Kraken's margin position report carries no entry price, the node's startup reconciliation needs one to rebuild an open position, and #5065 is the upstream change that puts the entry average on that report; the engine's cache holds its own orders and positions, entry prices included, across a restart, and that is what the test reads. Four reads before any procedure below converges or restarts the engine: the Cache board's proxy row, where `Sentinel checks passing on the most-agreed backend` reads 2 or 3 and `Sessions through the proxy` reads 1 or more — the proxy routed and the engine's sessions up, two from a never-cut engine, the load's, idle after the start, and the writer's, which alone comes back after a cut; the engine's last boot line in Loki under container `engine`, `cache restore: N order(s), M position(s) restored` with a `cache restore: position <instrument> <quantity> @ <entry price> (<strategy>)` line per open position, under the engine's own strategy or `EXTERNAL` — a fill made while the engine was down beside a restored position shows as a second line under `EXTERNAL`, so an instrument's figure is its lines summed; Kraken's positions page, or `kraken positions -o json` on the workstation, for what is open; and the engine's log under the same container since that boot line for `credits nothing until the venue is read`, the executor's WARNING `a fill on restored order <id> credits nothing until the venue is read -- the next restart is taken flat`, logged at the fill whatever the venue read after it answers. The restart is admitted when every open position is one that boot line counted as restored — its instrument's lines summing to Kraken's figure, none at entry price 0 — or one this engine opened after that boot — the order that opened it this engine's own, placed after that boot, whether it filled while the engine ran or while it was down — no cache outage has fired since that boot, and no restored order has filled since it: a `zcrypto-engine-cache-write-failed`, `zcrypto-cache-proxy-no-backend` or `zcrypto-cache-proxy-no-engine-session` page since the boot line means the store is behind by what was written while the link was down and by the write the reconnect dropped, nothing replays it, and the restart is taken flat ([`cache.md#zcrypto-engine-cache-write-failed`](cache.md#zcrypto-engine-cache-write-failed)); that WARNING since the boot line means a fill the library booked twice into the cache, its stored copy of the order and the position ahead of the venue's figure, which the next start's reconciliation meets as a difference against the venue — a diff fill at the stored price, or a failed start where it crosses zero — and the restart is taken flat. Otherwise close the position first or wait, as before: a cold start, a lost database, or a position the cache never saw — opened by hand, or by an order the cache never held — goes one of two ways on 2.0.0rc6.dev20260921, depending on the pair's fill history: the start fails with `Unresolved positions during startup reconciliation … missing avg_px_open for position recovery` and the container restarts into the same failure, or it boots with the position's entry price at 0, where the one reading that goes wrong is the realized-PnL gauge (`zcrypto_exec_realized_pnl_eur`). A start already failing that way is ended by the red button's press ([`#engine-flatten`](#engine-flatten)): it stops the unit and reads the account through its own client, which runs no startup reconciliation. The test ends once the engine runs a pinned build carrying #5065; the converge that puts it there is still a start of the engine and takes the test like any other.
 
 <a name="engine-probe-window"></a>
 ```
@@ -9406,10 +9510,10 @@ One gap, on the owner's word, the cache enabled from the engine's first boot on 
 3. **The pushes**, from `develop`: `infra/scripts/grafana-push.sh` with the proxy row, the three rules and spec 00119's tiles; each new rule's first sample verified by value with `infra/scripts/grafana-query.py` -- `max(haproxy_backend_active_servers{host="zcrypto"})` at 2 or 3, `sum(haproxy_backend_current_sessions{host="zcrypto"})` at 2 once the engine has written, the load's connection and the writer's, and the Loki count at 0 -- and the four detail families read once each, `haproxy_backend_status{host="zcrypto",state="UP"}` at 1 on one backend, `haproxy_server_status{host="zcrypto",state="UP"}` at 1 on that backend's three servers, `haproxy_server_check_status{host="zcrypto",state="L7OK"}` at 1 on them, and `haproxy_server_check_failures_total{host="zcrypto"}` present -- `(no series)` a fail, never a zero.
 4. **The boot line in Loki**, container `engine`, host `zcrypto`: `cache restore: 0 order(s), 0 position(s) restored`, the flat first boot, beside `Reconciliation complete for KRAKEN` and no `Unresolved positions` line; with it the readings the spec sends to the first boot: `sudo docker stats --no-stream zcrypto-cache-proxy` on `zcrypto` under the 32m cap; the proxy's backends at `L7OK` in `curl -s 127.0.0.1:9104/metrics | grep 'haproxy_server_check_status.*state="L7OK"} 1'`, the anchored expect passing against 9.1.2's `SENTINEL master` field order; and `ACL LOG` on the primary node's Valkey reading empty, nothing the node issues beyond `info` in 9.1.2's `dangerous` category. **If the boot line is absent within ten minutes of the converge** -- the unit restart-looping on `failed to create cache database backing`, the backends never `L7OK`: the mesh reach or the MTU the spec lists as unmeasured -- re-converge in the same gap with the same digests and `-e engine_cache_enabled=false`, which renders no cache table and starts the engine as before, the proxy left in place, and record the reading in the deploy row; the rollout skill's compose re-pin is no way back on its own, since an engine image from before the table refuses the rendered config. Then make the abort durable before the gap closes, since the role's default is `true` and the rollout skill's engine shape names no key, so the next routine engine converge would render the table again: a one-line PR to `develop` adding `engine_cache_enabled: false` to `infra/ansible/host_vars/zcrypto/vars.yml`, which every later engine converge reads, reverted by the change that re-enables the cache; and the two rules the abort leaves firing -- `zcrypto-cache-proxy-no-engine-session` within fifteen minutes, the proxy running with no session through it, and `zcrypto-cache-proxy-no-backend` where the backends never reached `L7OK` -- are silenced in Grafana until that revert, as their sections say. Then spec 00119's own post-converge readings, the first tick's holdings lines and the first hour's socket lines, taken on T0018's line.
 5. **The pins**: `docs/reference/fleet-pins.md` gains the `cache-proxy` row on `zcrypto`, `76928c0d6b39 -- HAProxy 3.4.5, upstream haproxy`, `since` from `sudo docker inspect zcrypto-cache-proxy --format '{{.State.StartedAt}}'`, rollback `first pin`, and its glossary line; the engine row is re-trued from `sudo docker inspect zcrypto-engine --format '{{.Config.Image}}'`; every read of the engine container names its field -- `.Config.Image`, `.State.StartedAt`, `.Mounts` -- and never `.Config` whole or `.Config.Env`.
-6. **The proof**, since the fixture mint cannot supply the position (its legs trade under `KRAKEN-902` through a bare client, outside the engine's cache): an attended probe window in drill D's shape -- the pre-probe checklist, the 60-minute pre-boundary rule, rung-1 money, a funded leveraged `execute` plan the owner places while the engine runs, opening one margin leg, then a leveraged `rest-hold` plan dropped last in the window with `hold_minutes` at its cap of 60, and, while that order rests and with the arm file in place, `sudo systemctl restart zcrypto-engine` on `zcrypto` inside the window's own gap -- at least ten minutes before the hold ends and sixty before the boundary, the restart the operator's test admits -- so that one restart restores the resting order beside the position: the boot's gate reads `reduce_only` on the restart hold, the pass cancels the opener, and the spec's two live-only readings below are taken at that boot. The disarm follows the proof and never precedes it: §5's step 1 removes the arm file and the running engine revokes a resting order at once, so an order dropped before the disarm rests through no restart, and a disarmed boot would read `the gate reads none (config_not_armed, ...)` in place of the ledger's reason. The boot line's restored position -- instrument, signed quantity, entry price -- read against Kraken's positions page, or `kraken positions -o json` on the workstation, beside `Reconciliation complete for KRAKEN` counting the position and no `Unresolved positions` line; the restart marker is the container's new id and `.State.StartedAt`, never `.RestartCount`, which every `compose down` removes with the container. The restored order, at that boot, takes the spec's two live-only readings: the boot line's `cache restore: order <id> open, 0 of <qty> filled @ <price>`, its price read against the order's own -- a `0.00` there is the reprice the spec infers from the parser -- and the pass's `canceling restored order <id>, open -- the ledger does not carry it as a resting reducer` line followed either by the venue's `OrderCanceled` applied to the row, read as `canceled` in the ledger read within the tick, or by the adopted path's 31 s mint, `OrderCanceled for <id> was reconciled, not received`, the row `ambiguous` until the re-read pass settles it; the pass's line names its fill state, which reads `partial` where the resting order took a fill, since the pass reads the venue's figure before the cancel. Recorded as a drill-log entry and as the adapter-verification page's step 6, both readings named, and the operating rule's lift holds from that reading; A2 on T0158 is unblocked by it. The leg is then closed through the engine by a close plan, which `reduce_only` admits, and the disarm follows as §5 has it, its converge a second restart the test admits with the position open, or a flat one by then.
+6. **The proof**, since the fixture mint cannot supply the position (its legs trade under `KRAKEN-902` through a bare client, outside the engine's cache): an attended probe window in drill D's shape -- the pre-probe checklist, the 60-minute pre-boundary rule, rung-1 money, a funded leveraged `execute` plan the owner places while the engine runs, opening one margin leg, then a leveraged `rest-hold` plan dropped last in the window with `hold_minutes` at its cap of 60, and, while that order rests and with the arm file in place, `sudo systemctl restart zcrypto-engine` on `zcrypto` inside the window's own gap -- at least ten minutes before the hold ends and sixty before the boundary, the restart the operator's test admits -- so that one restart restores the resting order beside the position: the boot's gate reads `reduce_only` on the restart hold, the pass cancels the opener, and the spec's two live-only readings below are taken at that boot. The disarm follows the proof and never precedes it: §5's step 1 removes the arm file and the running engine revokes a resting order at once, so an order dropped before the disarm rests through no restart, and a disarmed boot would read `the gate reads none (config_not_armed, ...)` in place of the ledger's reason. The boot line's position lines -- instrument, signed quantity, entry price, strategy -- summed per instrument and read against Kraken's positions page, where a fill on the resting order in the seconds the engine was down can show as a second line under `EXTERNAL` beside the restored one, or `kraken positions -o json` on the workstation, beside `Reconciliation complete for KRAKEN` counting the position and no `Unresolved positions` line; the restart marker is the container's new id and `.State.StartedAt`, never `.RestartCount`, which every `compose down` removes with the container. The restored order, at that boot, takes the spec's two live-only readings: the boot line's `cache restore: order <id> open, 0 of <qty> filled @ <price>`, its price read against the order's own -- a `0.00` there is the reprice the spec infers from the parser -- and the pass's `canceling restored order <id>, open -- the ledger does not carry it as a resting reducer` line followed either by the venue's `OrderCanceled` applied to the row, read as `canceled` in the ledger read within the tick, or by the adopted path's 31 s mint, `OrderCanceled for <id> was reconciled, not received`, the row `ambiguous` until the re-read pass settles it; the pass's line names its fill state, which reads `partial` where the resting order took a fill, since the pass reads the venue's figure before the cancel. Recorded as a drill-log entry and as the adapter-verification page's step 6, both readings named, and the operating rule's lift holds from that reading; A2 on T0158 is unblocked by it. The leg is then closed through the engine by a close plan, which `reduce_only` admits, and the disarm follows as §5 has it, its converge a second restart the test admits with the position open, or a flat one by then.
 7. **The closeout**: the deploy-log rows, the pins row and the drill-log entry in one commit; T0018's build-list line of 2026-09-26 re-trued to name the converge and the readings taken; the 2026-10-05 arm on T0018's trigger goes at this converge; and spec D18's hand-off line to the `nautilus` peer session through the coordination table, naming the two defects the harness measured on the pinned wheel -- the store saving a currency as its bare code, which a venue-minted code cannot resolve before the adapter runs, and the double booking of a trade frame on a restored order, its status half inferring the fill its fill half then reports -- with the open-only mass status noted as already fixed by #5110, and nothing here waiting on any of the three. What comes after -- Rung 2, then the nautilus bump whose compat check reads the upstream warning that a mass-status client conflicting with an execution client becomes a startup error -- is T0018's.
 
-Two readings were measured while writing this plan. The first, a cold start over a partially filled resting opener tripping today's kill switch -- the library creates the EXTERNAL copy at ACCEPTED with `filled_qty` 0 and applies none of the mass status's fills to it, so the pass read `shows 0 filled at the venue, less than the 0.4 this engine has already recorded` and cancelled under the kill's reason, the fill landing after the ack as `OrderFilled(reconciliation=True)` -- was ruled on by the owner on 2026-09-29 and is solved in this pair as spec D19 and Task 4's withdrawal-check source: the pass reads the venue's trade history before it trips, and the harness's cold-start scenario pins the measured shape tripping nothing. The second is pinned by the fill-while-down scenario: a fill made while the engine was down lands on the restored order while the restored position keeps its stored quantity and the library synthesizes an EXTERNAL order and position for the gap to the venue's position report, the net being right.
+Two readings were measured while writing this plan. The first, a cold start over a partially filled resting opener tripping today's kill switch -- the library creates the EXTERNAL copy at ACCEPTED with `filled_qty` 0 and applies none of the mass status's fills to it, so the pass read `shows 0 filled at the venue, less than the 0.4 this engine has already recorded` and cancelled under the kill's reason, the fill landing after the ack as `OrderFilled(reconciliation=True)` -- was ruled on by the owner on 2026-09-29 and is solved in this pair as spec D19 and Task 4's withdrawal-check source: the pass reads the venue's trade history before it trips, and the harness's cold-start scenario pins the measured shape tripping nothing. The second is pinned by the fill-while-down scenario: a fill made while the engine was down lands on the restored order while the restored position keeps its stored quantity and the library synthesizes an EXTERNAL order and position for the gap to the venue's position report, the net being right and the boot line listing both.
 
 ## Resolution
 
