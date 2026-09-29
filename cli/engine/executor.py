@@ -1684,6 +1684,11 @@ class ProbeExecutor:
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
                         continue
+                    if order is not None and venue_orders is None and self._venue_answers(row, finished=False):
+                        # The order read failed: a restored row is left unread, its attach kept, and never
+                        # repaired from the Cache's copy, which runs ahead of the venue on a kept reducer
+                        # (spec 00120 D8) -- the next successful read repairs it, the finished sweep's rule.
+                        continue
                     if order is not None:
                         self._reconcile_adopted_row(
                             boundary,
@@ -1972,7 +1977,10 @@ class ProbeExecutor:
         if row.get("state") == "filled":
             outcome, reasons = "filled", ()
         else:
-            outcome, reasons = "revoked", ("the kept reducer ended without filling",)
+            payload = row.get("order")
+            kind = "kept reducer" if isinstance(payload, dict) and payload.get("reduce_only") is True else "restored opener"
+            how = "partly filled" if float(row["filled_qty"]) > _OVERFILL_TOLERANCE else "without filling"
+            outcome, reasons = "revoked", (f"the {kind} ended {how}",)
         try:
             update_plan_intent(
                 self._journal_dir, boundary, key[0], key[1], outcome=outcome, reasons=reasons, filled_qty=float(row["filled_qty"])
@@ -2294,11 +2302,6 @@ class ProbeExecutor:
                 self._delete(path)
             return
 
-        # Live balances spell the free-cash currency `EUR` -- measured against the live engine
-        # (`{'EUR': 99.84}`), so this resolves on its SECOND arm in production. The `ZEUR` arm stays
-        # first and is not dead: the adapter's other surface genuinely spells the euro `ZEUR` (the
-        # instrument quote currency), so the two differ by surface and the fallback covers both.
-        # Both absent reads 0.0, which refuses any margin intent.
         if self._cache_enabled and any(intent.action == "open" for intent in plan.intents) and not self._nothing_in_flight():
             # The mixed-inventory check's venue read (`_mixed_inventory_refusals`) is a signed read on
             # the trade key, on the passes' nonce terms: on the first tick the startup pass's cancels
@@ -2307,6 +2310,11 @@ class ProbeExecutor:
                 "probe plan %s waits for a tick with nothing in flight -- its opening intents take a venue read", plan.plan_id
             )
             return
+        # Live balances spell the free-cash currency `EUR` -- measured against the live engine
+        # (`{'EUR': 99.84}`), so this resolves on its SECOND arm in production. The `ZEUR` arm stays
+        # first and is not dead: the adapter's other surface genuinely spells the euro `ZEUR` (the
+        # instrument quote currency), so the two differ by surface and the fallback covers both.
+        # Both absent reads 0.0, which refuses any margin intent.
         free_zeur = state.balances.get("ZEUR", 0.0) or state.balances.get("EUR", 0.0)
         reasons = plan_refusals(
             plan,
@@ -2315,7 +2323,8 @@ class ProbeExecutor:
             max_plan_notional_eur=self._config.exec_max_plan_notional_eur,
             free_zeur=free_zeur,
         )
-        if self._cache_enabled:
+        if self._cache_enabled and not reasons:
+            # A plan already refused takes no signed positions read.
             reasons = [*reasons, *self._mixed_inventory_refusals(plan, state)]
         intents = [
             {"index": i, "intent": raw, "outcome": "pending", "reasons": [], "filled_qty": 0.0}
@@ -2349,7 +2358,8 @@ class ProbeExecutor:
         intent that would put a spot lot and a margin lot on one pair is refused -- the restore reads
         both as the instrument's position and tells neither from the other -- and a close never is, since
         it takes inventory off. A spot open is refused where the venue's margin positions hold the pair,
-        read through `read_venue_positions` once per plan that carries an open, on the passes' nonce
+        read through `read_venue_positions` once per plan that carries an open and that the plan's
+        other checks admitted, on the passes' nonce
         terms, which `_pickup` keeps by holding such a plan until nothing of this process is in flight;
         a margin open where the venue state's balances, already read through `_spot_balance` under
         every spelling of the base, hold the pair's base at or above the pair's `ordermin` -- a lot

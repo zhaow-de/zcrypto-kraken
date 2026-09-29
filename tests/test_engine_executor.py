@@ -510,8 +510,7 @@ class StubCache:
 
     def orders(self, *, venue=None, strategy_id=None, **kwargs):
         """The whole index, open and closed, with `strategy_id` honoured as the real Cache honours it,
-        by the exact id: the restored set is what the Cache holds under this engine's own, closed
-        copies included, never the EXTERNAL identity's adopted orders."""
+        by the exact id."""
         return _orders_under(strategy_id, [*self._open_orders, *self._closed_orders])
 
     def orders_open(self, *, venue=None, strategy_id=None, **kwargs):
@@ -8386,6 +8385,42 @@ def test_a_restored_copy_the_venue_holds_closed_is_sent_no_cancel_at_a_later_res
     assert not _kill_file(tmp_path).exists()
 
 
+def test_a_restored_row_the_order_read_failed_for_stays_unread_and_the_next_restart_trips_nothing(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0006)
+    reads = (
+        _VenueOrders(raises=RuntimeError("timed out")),
+        _VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0006")),
+    )
+    for restart, venue in enumerate(reads):
+        client = StubClient(StubCache(open_orders=[_restored_order("O-reducer", filled=0.0008)]))
+        ex = _executor(
+            tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+        )
+
+        with _executor_errors(level=logging.CRITICAL):
+            ex.on_timer(NOW + timedelta(minutes=restart))
+
+        row = _record(tmp_path, earlier)["submitted"][0]
+        reconciled = [e for e in row["events"] if e.get("event") == "reconciled"]
+        assert (row["filled_qty"], reconciled, client.canceled) == (0.0006, [], []), restart
+        assert "O-reducer" in ex._attached and not _kill_file(tmp_path).exists(), restart
+
+
+def test_a_plan_the_other_checks_refused_takes_no_mixed_inventory_read(tmp_path):
+    positions = _VenuePositions({"BTC/EUR": 0.001})
+    ex = _executor(
+        tmp_path, client=StubClient(StubCache(balances={"ZEUR": 1000.0})), config=_cache_config(tmp_path), venue_positions=positions
+    )
+    _drop_plan(tmp_path, _plan_dict(created_at=NOW + timedelta(minutes=5)))
+
+    ex.on_timer(NOW)
+
+    entry = _plan_entry(tmp_path)
+    assert (entry["disposition"], entry["reasons"], positions.calls) == ("refused", ["created_at is in the future"], 0)
+
+
 def test_a_restored_copy_whose_row_is_closed_is_cancelled_when_the_venue_cannot_be_read(tmp_path):
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
@@ -8561,13 +8596,14 @@ def test_a_restored_external_copy_of_a_kept_reducer_credits_its_fills_nothing_an
     assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending" and len(venue.calls) == 2
 
 
-def _kept_reducer(tmp_path, venue):
+def _kept_reducer(tmp_path, venue, *, reduce_only=True, client_type=None):
     """A restored reducer the startup pass keeps: its row, its pending intent, the Cache's copy under
-    this engine's own id, and the pass run against `venue`'s first report."""
+    this engine's own id, and the pass run against `venue`'s first report. With `reduce_only` False
+    and a `client_type` whose cancel raises, it is a restored opener the pass could not cancel."""
     earlier = NOW - timedelta(hours=4)
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
-    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
-    client = StubClient(StubCache(open_orders=[_restored_order("O-reducer")]))
+    _submitted_row(tmp_path, "O-reducer", reduce_only=reduce_only, when=earlier, venue_order_id=_TXID)
+    client = (client_type or StubClient)(StubCache(open_orders=[_restored_order("O-reducer")]))
     ex = _executor(
         tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
     )
@@ -8625,16 +8661,31 @@ def test_a_fill_on_a_restored_row_credits_nothing_and_the_re_read_pass_repairs_t
 
 
 @pytest.mark.parametrize(
-    "reconciliation, state, outcome, reasons",
-    [(False, "canceled", "revoked", ["the kept reducer ended without filling"]), (True, "ambiguous", "pending", [])],
+    "reduce_only, reconciliation, state, outcome, reasons",
+    [
+        (True, False, "canceled", "revoked", ["the kept reducer ended without filling"]),
+        (True, True, "ambiguous", "pending", []),
+        (False, False, "canceled", "revoked", ["the restored opener ended without filling"]),
+    ],
+    ids=["kept-reducer", "kept-reducer-minted", "opener-whose-cancel-raised"],
 )
 def test_a_terminal_on_a_restored_kept_reducer_writes_the_venues_state_and_its_intent(
-    tmp_path, reconciliation, state, outcome, reasons
+    tmp_path, reduce_only, reconciliation, state, outcome, reasons
 ):
     """The own topic's detached path makes the external path's writes for a restored row: the venue's
     cancel closes the row and writes the intent, a minted one reads ambiguous and leaves the intent
-    for the pass that settles the row."""
-    ex, client, earlier = _kept_reducer(tmp_path, _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED)))
+    for the pass that settles the row. The reason names the row's kind by its `reduce_only`."""
+
+    class _CancelRaises(StubClient):
+        def cancel_order(self, client_order_id):
+            raise RuntimeError("the cancel could not be sent")
+
+    ex, client, earlier = _kept_reducer(
+        tmp_path,
+        _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED)),
+        reduce_only=reduce_only,
+        client_type=None if reduce_only else _CancelRaises,
+    )
     canceled = _event(OrderCanceled, client_order_id="O-reducer", reconciliation=reconciliation)
     client.cache.order(ClientOrderId("O-reducer")).apply(canceled)
 
@@ -8689,6 +8740,9 @@ def test_a_fill_then_a_terminal_on_a_restored_row_before_the_next_tick_is_repair
     ]
     entry = _intent_entry(tmp_path, 0, earlier)
     assert (entry["outcome"], entry["filled_qty"]) == ("revoked", 0.0004 if reduce_only else 0.0)
+    assert entry["reasons"] == (
+        ["the kept reducer ended partly filled"] if reduce_only else ["the engine restarted while the intent was in flight"]
+    )
     assert ex._restored_fills == set() and len(venue.calls) == 2
 
 
