@@ -325,6 +325,17 @@
       "<reason>"}' and record it immediately after).
   when: engine_cache_proxy_running_probe.rc == 0 and engine_cache_proxy_pins_text is defined
 
+# The engine's echo above, mirrored: the reason reaches the play log only when the override was
+# accepted over an unrecorded proxy digest; the negated clause is the assert's first disjunct verbatim.
+- name: cache proxy pins override accepted — the reason, on the record
+  ansible.builtin.debug:
+    msg: "pins_override accepted (cache proxy): {{ pins_override }}"
+  when: >-
+    engine_cache_proxy_running_probe.rc == 0 and engine_cache_proxy_pins_text is defined
+    and not ((engine_cache_proxy_running_probe.stdout | default('') | regex_search('sha256:[0-9a-f]{12}') | default('') | replace('sha256:', '')) in engine_cache_proxy_pins_text)
+    and (pins_override | default('') | string | length > 8)
+    and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+
 # The two cache secrets this role renders (spec 00120 D2): the engine's password into engine.env and
 # the Sentinel requirepass into the proxy's check line, both unquoted, so the cache role's floor holds
 # here too -- five or more letters and digits.
@@ -512,7 +523,8 @@
 # render and the validate run in check mode too (the candidate is 0600 under no_log; `docker run --rm
 # ... -c` changes nothing), so converge.sh's preview is the validation's first run. It carries the
 # Sentinel requirepass: no_log, never diffed, 0600. The copy is what changes when the render differs,
-# and only then does the unit restart.
+# and only then does the unit restart; in check mode it reports that change and its restart, and
+# writes nothing.
 - name: render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)
   ansible.builtin.template:
     src: haproxy.cfg.j2
@@ -524,15 +536,37 @@
   diff: false
   check_mode: false
 
-- name: validate the rendered cache proxy config with the pinned image's own haproxy -c
-  ansible.builtin.command: >-
-    docker run --rm --user 0:0
-    -v /opt/zcrypto-engine/haproxy.cfg.next:/usr/local/etc/haproxy/haproxy.cfg:ro
-    {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}
-    haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
-  changed_when: false
-  no_log: true
-  check_mode: false
+# The check runs under no_log, since a refusal quotes the offending line and the AUTH line carries the
+# requirepass; a refusal removes the 0600 candidate and stops with haproxy's report, the requirepass
+# masked -- the floor above holds it to letters and digits, so it appears in the report verbatim.
+- name: validate the rendered cache proxy config, or remove it and stop
+  block:
+    - name: validate the rendered cache proxy config with the pinned image's own haproxy -c
+      ansible.builtin.command: >-
+        docker run --rm --user 0:0
+        -v /opt/zcrypto-engine/haproxy.cfg.next:/usr/local/etc/haproxy/haproxy.cfg:ro
+        {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}
+        haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+      changed_when: false
+      no_log: true
+      check_mode: false
+  rescue:
+    - name: remove the refused candidate
+      ansible.builtin.file:
+        path: /opt/zcrypto-engine/haproxy.cfg.next
+        state: absent
+      check_mode: false
+
+    - name: refuse the cache proxy config haproxy -c rejected (its report shown with the requirepass masked)
+      ansible.builtin.fail:
+        msg: >-
+          haproxy -c refused the rendered cache proxy config: it was not installed, its candidate is
+          removed and no engine file was rewritten, so the unit still reads the live
+          /opt/zcrypto-engine/haproxy.cfg. haproxy's report, the requirepass masked:
+          {{ ((ansible_failed_result.stdout | default('')) ~ ' ' ~ (ansible_failed_result.stderr | default(''))) | replace(cache_sentinel_requirepass, '<requirepass>') }}
+          The same check by hand on {{ inventory_hostname }}, over the live copy:
+          sudo docker run --rm --user 0:0 -v /opt/zcrypto-engine/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+          {{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }} haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 
 - name: install the validated cache proxy config (changed only where it differs from the live copy)
   ansible.builtin.copy:
@@ -545,7 +579,6 @@
   no_log: true
   diff: false
   notify: restart engine service
-  when: not ansible_check_mode
 
 - name: remove the validated candidate
   ansible.builtin.file:

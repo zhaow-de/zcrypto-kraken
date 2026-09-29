@@ -1037,17 +1037,51 @@ def test_the_engine_host_refuses_a_cache_password_below_the_floor_or_outside_let
     assert truthy(assert_that(task), variables) is expected
 
 
+PROXY_PINS_ECHO = "cache proxy pins override accepted — the reason, on the record"
+PROXY_PINS_ASSERT = "cache proxy pins recording — refuse to replace a digest fleet-pins.md does not record"
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (PROXY_PINS_WITHOUT, ENGINE_PINS_REASON, True),
+        (PROXY_PINS_WITHOUT, "", False),
+        (PROXY_PINS_WITHOUT, "true", False),
+        (PROXY_PINS_WITH, ENGINE_PINS_REASON, False),
+    ],
+)
+def test_cache_proxy_pins_override_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(ENGINE), PROXY_PINS_ECHO)
+    probe = {**PROXY_PINS_BASE["engine_cache_proxy_running_probe"], "rc": 0}
+    variables = {"engine_cache_proxy_running_probe": probe, "engine_cache_proxy_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+def test_the_cache_proxy_pins_echo_negates_the_asserts_own_first_disjunct():
+    tasks = load_tasks(ENGINE)
+    disjunct = _first_balanced_group(" ".join(assert_that(find_task(tasks, PROXY_PINS_ASSERT))))
+    echo = " ".join(when_conditions(find_task(tasks, PROXY_PINS_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+    assert "regex_search" in disjunct and "engine_cache_proxy_pins_text" in disjunct, disjunct
+    assert " ".join(negated.split()) == " ".join(disjunct.split()), (negated, disjunct)
+    assert task_index(tasks, PROXY_PINS_ASSERT) + 1 == task_index(tasks, PROXY_PINS_ECHO)
+
+
 def test_the_cache_proxy_config_is_validated_before_it_is_installed_and_never_logged():
     """The order is the property: render to the candidate, validate with the pinned image's own
-    `haproxy -c`, copy into place with the restart notify, remove the candidate, all four ahead of
+    `haproxy -c` inside a block whose rescue removes a refused candidate, copy into place with the
+    restart notify, remove the candidate, all four ahead of
     the engine's env, toml and compose renders -- so a refused render stops before any engine file
     is rewritten, and the config exists before a compose file names it; the render and the validate
-    run in check mode too, so the preview is the validation's first run. The render and the copy
-    under no_log with no diff, since the file carries the Sentinel requirepass."""
+    run in check mode too, so the preview is the validation's first run, and the copy runs there
+    as check mode's own, reporting a changed file and its restart without writing it. The render and
+    the copy under no_log with no diff, since the file carries the Sentinel requirepass."""
     tasks = load_tasks(ENGINE)
     names = [
         "render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)",
-        "validate the rendered cache proxy config with the pinned image's own haproxy -c",
+        "validate the rendered cache proxy config, or remove it and stop",
         "install the validated cache proxy config (changed only where it differs from the live copy)",
         "remove the validated candidate",
     ]
@@ -1055,7 +1089,9 @@ def test_the_cache_proxy_config_is_validated_before_it_is_installed_and_never_lo
     assert indexes == sorted(indexes) and indexes[-1] - indexes[0] == 3, indexes
     assert task_index(tasks, "ensure the compose project directory exists") < indexes[0]
     assert indexes[-1] < task_index(tasks, "render the engine secrets env file (0600 root-only; never logged, never diffed)")
-    render, validate, install, remove = (find_task(tasks, name) for name in names)
+    render, _, install, remove = (find_task(tasks, name) for name in names)
+    validate = find_task(tasks, "validate the rendered cache proxy config with the pinned image's own haproxy -c")
+    assert find_task(tasks, names[1])["block"] == [validate]
     assert render["ansible.builtin.template"]["dest"] == "/opt/zcrypto-engine/haproxy.cfg.next"
     assert render["ansible.builtin.template"]["mode"] == "0600" and render["no_log"] is True and render["diff"] is False
     assert "notify" not in render and render["check_mode"] is False
@@ -1072,7 +1108,36 @@ def test_the_cache_proxy_config_is_validated_before_it_is_installed_and_never_lo
         "0600",
     )
     assert install["notify"] == "restart engine service" and install["no_log"] is True and install["diff"] is False
+    assert "when" not in install and "check_mode" not in install
     assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
+
+
+def test_a_refused_cache_proxy_config_removes_its_candidate_and_stops_with_the_report_masked():
+    """The check runs under no_log, so the refusal's own message is the operator's pointer: haproxy's
+    report with the requirepass masked, and the same check by hand over the live copy."""
+    from ansible.template import trust_as_template
+
+    block = find_task(load_tasks(ENGINE), "validate the rendered cache proxy config, or remove it and stop")
+    remove, refuse = block["rescue"]
+    assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
+    assert remove["check_mode"] is False
+    assert "no_log" not in refuse
+    variables = {
+        "cache_sentinel_requirepass": "Sentinel12345",
+        "ansible_failed_result": {
+            "stdout": "",
+            "stderr": '[ALERT] config : parsing [haproxy.cfg:30] : tcp-check send "AUTH Sentinel12345\\r\\n" bad',
+        },
+        "inventory_hostname": "zcrypto",
+        "engine_cache_proxy_image": "haproxy",
+        "engine_cache_proxy_image_digest": "sha256:" + "c" * 64,
+    }
+    msg = str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(refuse["ansible.builtin.fail"]["msg"])))
+    assert "Sentinel12345" not in msg and "AUTH <requirepass>" in msg and "haproxy.cfg:30" in msg, msg
+    assert (
+        "sudo docker run --rm --user 0:0 -v /opt/zcrypto-engine/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro "
+        "haproxy@sha256:" + "c" * 64 + " haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg"
+    ) in msg, msg
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.
