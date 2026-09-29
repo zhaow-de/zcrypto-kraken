@@ -8491,6 +8491,29 @@ def test_a_restored_row_a_good_read_omits_is_marked_ambiguous_at_critical_and_ne
     assert len(venue.calls) == 1  # the re-read pass the fill armed leaves the marked row out
 
 
+def test_a_restored_row_marked_under_its_copys_txid_is_left_out_of_the_re_read_pass(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier)
+    copy = _restored_order("O-reducer")
+    copy.apply(_event(OrderCanceled, client_order_id="O-reducer", reconciliation=True))
+    client = StubClient(StubCache(closed_orders=[copy]))
+    venue = _VenueOrders()
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+    ex.on_timer(NOW)
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], [e["what"] for e in row["events"] if e.get("type") == "ambiguous"]) == (
+        "ambiguous",
+        [f"the venue's order read has no order {_TXID}"],
+    )
+
+    _reconnect(ex)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert len(venue.calls) == 1
+
+
 def test_a_plan_the_other_checks_refused_takes_no_mixed_inventory_read(tmp_path):
     positions = _VenuePositions({"BTC/EUR": 0.001})
     ex = _executor(
