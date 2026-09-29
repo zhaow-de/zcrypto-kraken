@@ -89,7 +89,7 @@ While the engine is disarmed, bump freely. The freeze starts when the pass is sc
 
 On the workstation, `kraken positions -o json` must print no position. Check again immediately before §5.1.
 
-From 2.0.0rc6.dev20260921 a node refuses to start while the account holds a Kraken margin position its startup reconciliation cannot rebuild, and the adapter's margin position report carries no entry price, so an ordinary open position can be enough: the start fails with `Unresolved positions during startup reconciliation ... missing avg_px_open for position recovery`. The harness records that as `FAIL` on probe 2 or 6, naming the instrument and quantity (§6). It is not the harness's position to close: find its owner, and run the pass once it is closed. The harness runs its own node, which keeps no cache, so the engine's restart rule's test — which admits a position the engine's cache restores from the cache's live proof on — lifts nothing here: this section stands as written.
+From 2.0.0rc6.dev20260921 a node refuses to start while the account holds a Kraken margin position its startup reconciliation cannot rebuild, and the adapter's margin position report carries no entry price, so an ordinary open position can be enough: the start fails with `Unresolved positions during startup reconciliation ... missing avg_px_open for position recovery`. The harness records that as `FAIL` on probe 2 or 6, naming the instrument and quantity (§6). It is not the harness's position to close: find its owner, and run the pass once it is closed. The harness runs its own node, which keeps no cache, so the engine's restart rule's test lifts nothing here.
 
 ### 2. Environment: the interpreter under test
 
