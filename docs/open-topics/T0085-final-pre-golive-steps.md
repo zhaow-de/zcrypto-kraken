@@ -36,10 +36,10 @@ All four are silent until the moment they are not. A disabled build lane is invi
   | --- | --- | --- | --- |
   | `zcrypto` | **false** | 21:25 (inert) | capture primary + trade engine — patches accumulate until an attended reboot |
   | `zcrypto-red` | **false** | 22:25 (inert) | capture secondary — same |
-  | `zcrypto-ops` | **true** | 02:25 | reboots itself; also the deadline every long job on that host must finish clear of |
+  | `zcrypto-ops` | **true**, **false** since 2026-09-29 | 02:25 | reboots by hand in this slot since the owner's decision of 2026-09-29; also the deadline every long job on that host must finish clear of |
   | `zaccess` | **true** | 05:25 | reboots itself; up 11 days at the measurement |
 
-  So "auto-reboot is off everywhere" is **not** the case — it is off on the capture pair only, which is exactly where the unpatched-reboot backlog builds. The retained 21:25 / 22:25 times on the capture hosts are deliberate dead config (`fleet.md` explains why they must not be deleted).
+  So "auto-reboot is off everywhere" is **not** the case — it was off on the capture pair only, ops joining them on 2026-09-29, which is exactly where the unpatched-reboot backlog builds. The retained 21:25 / 22:25 times on the capture hosts are deliberate dead config (`fleet.md` explains why they must not be deleted).
 - **A reboot does NOT re-read `alloy-secrets.env`, so it cannot stand in for the container recreate** (measured 2026-08-04). No systemd unit runs `docker compose up` at boot on ops, and `grafana-alloy` carries `restart: unless-stopped` — so a reboot *restarts* the existing container, and a restart reuses the environment baked in at **create** time. Only `docker compose up -d` (which notices the changed `env_file`) or an explicit `--force-recreate` re-reads it. The reboot round therefore **does not** simplify the rotation's Alloy step; that step stays.
 
 - **One known exposure this round subsumes**, from [[T0126]] — accepted rather than acted on: iter-125's vault-guard TDD red phase put the vault password into local subagent transcript(s) and terminal scrollback on the workstation. Nothing was committed, the branch was not on the remote, and the workstation already holds the sops key material, so the marginal risk did not warrant an immediate standalone rekey. **That judgement is sound only because this round is coming** — if the rotation sub-item is ever dropped or deferred past go-live, T0126's acceptance must be re-decided, not inherited.
