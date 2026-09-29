@@ -140,13 +140,17 @@ class _Valkey:
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )  # fmt: skip
-        for _ in range(100):
-            try:
-                if _resp(self.port, ADMIN_USER, ADMIN_PASSWORD, "PING") == "PONG":
-                    return
-            except OSError:
-                time.sleep(0.1)
-        pytest.fail(f"valkey-server did not answer on 127.0.0.1:{self.port}: {self.log.read_text()[-2000:]}")
+        try:
+            for _ in range(100):
+                try:
+                    if _resp(self.port, ADMIN_USER, ADMIN_PASSWORD, "PING") == "PONG":
+                        return
+                except OSError:
+                    time.sleep(0.1)
+            pytest.fail(f"valkey-server did not answer on 127.0.0.1:{self.port}: {self.log.read_text()[-2000:]}")
+        except BaseException:
+            self.stop()
+            raise
 
     def kill(self) -> None:
         if self.process is not None and self.process.poll() is None:
@@ -163,9 +167,8 @@ class _Valkey:
 
 
 class _Node:
-    """The driver's side of one child node: the loopback, the two peers, the state directory and the
-    child's record. `script` is called with the AddOrder form and the txid at each order, on the peer's
-    own thread, to send the frames and move the loopback's listings."""
+    """The driver's side of one child node: its state directory, the ledger rows and intents read back
+    from it, and the child's records."""
 
     def __init__(self, root: Path, valkey_port: int, *, max_plan_notional_eur: float = 200.0):
         self.root = root
@@ -269,7 +272,8 @@ def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: 
 
         def frames() -> None:
             time.sleep(0.3)
-            exec_.subscribed.wait(30)
+            if not exec_.subscribed.wait(30):
+                return
             exec_.send_execution(lb.exec_new(txid, wire["cl_ord_id"], symbol=SYMBOL, qty=QTY, price=PRICE))
             if not fill:
                 return
@@ -323,10 +327,9 @@ def _restore_lines(log: str) -> list[str]:
     return [line.split("cache restore: ", 1)[1] for line in log.splitlines() if "cache restore: " in line]
 
 
-def _phase_one(tmp_path: Path) -> tuple[_Valkey, _Node, dict, dict]:
+def _phase_one(valkey: _Valkey, tmp_path: Path) -> tuple[_Node, dict, dict]:
     """A node that placed one leveraged order, filled 0.4 of 1.0, and stopped with it resting: the
     store holds the order, the fill and the margin position, and the venue lists all three."""
-    valkey = _Valkey(tmp_path / "valkey")
     valkey.start()
     node = _Node(tmp_path / "node", valkey.port)
     node.drop_plan("p-phase-1")
@@ -344,16 +347,30 @@ def _phase_one(tmp_path: Path) -> tuple[_Valkey, _Node, dict, dict]:
     assert row["client_order_id"] == record["own"][0]["client_order_id"]
     wire["client_order_id"] = row["client_order_id"]
     assert "trader-SHADOW-001:orders:" + row["client_order_id"] in _keys(valkey.port)
-    return valkey, node, wire, record
+    return node, wire, record
 
 
 @pytest.fixture
 def phase_one(tmp_path):
-    valkey, node, wire, record = _phase_one(tmp_path)
+    valkey = _Valkey(tmp_path / "valkey")
     try:
+        node, wire, record = _phase_one(valkey, tmp_path)
         yield valkey, node, wire, record
     finally:
         valkey.stop()
+
+
+def test_a_server_that_fails_its_readiness_check_is_stopped_before_the_failure_escapes(tmp_path):
+    valkey = _Valkey(tmp_path / "valkey")
+    valkey.acl.write_text(valkey.acl.read_text().replace(ADMIN_PASSWORD, "another-harness-password"))
+    try:
+        with pytest.raises(RuntimeError, match="WRONGPASS"):
+            valkey.start()
+        listed = subprocess.run(["pgrep", "-af", "valkey-server"], capture_output=True, text=True).stdout.splitlines()
+        survivors = [line for line in listed if line.endswith(f"127.0.0.1:{valkey.port}")]
+        assert (valkey.process.poll() is not None, survivors) == (True, []), survivors
+    finally:
+        valkey.kill()
 
 
 def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(phase_one):
@@ -460,6 +477,7 @@ def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_lib
         private_calls = list(venue.private_calls)
 
     assert record["errors"] == [], record["errors"]
+    assert "OpenPositions" in private_calls, private_calls
     assert "ClosedOrders" not in private_calls[: private_calls.index("OpenPositions") + 1], private_calls
     [order] = record["at_start"]["orders"]
     assert (order["is_open"], order["filled_qty"]) == (True, "0.40000000")
@@ -488,7 +506,8 @@ def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(p
         )
 
         def later() -> None:
-            exec_.subscribed.wait(60)
+            if not exec_.subscribed.wait(60):
+                return
             time.sleep(8)  # past the startup pass, which keeps the reducer resting
             exec_.send_execution(
                 lb.exec_trade(
@@ -519,8 +538,8 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     the order by its txid under EXTERNAL, and the pass cancels it as an order the ledger carries as
     no reducer, today's shape."""
     valkey = _Valkey(tmp_path / "valkey")
-    valkey.start()
     try:
+        valkey.start()
         node = _Node(tmp_path / "node", valkey.port)
         node.drop_plan("p-spot", leverage=None)
         wire: dict = {}
@@ -598,7 +617,8 @@ def test_the_cache_unreachable_at_start_fails_inside_the_budget_without_touching
     """Ten retries under five-second timeouts: a port nothing listens on refuses the start in seconds,
     a peer that accepts and never answers in about 55 s, both inside the inter-cycle gap and this
     harness's timeout, and neither reaches the venue -- `run()` creates the backing before any
-    client connects. Measured on 8.1.1's client library, whose timeouts are the library's own."""
+    client connects. The budget is the pinned nautilus wheel's Redis client's, its retries and
+    timeouts the node's own: no server runs in either shape, so no server version moves it."""
     port, stop = (1, None) if shape == "refused" else _silent_listener()
     node = _Node(tmp_path / "node", port)
     try:
@@ -624,12 +644,15 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
     on the lost order's key at WARN; the server returns empty, the link comes back lazily on the next
     write, and at the return the store holds neither the second order nor its fill."""
     valkey = _Valkey(tmp_path / "valkey")
-    valkey.start()
     node = _Node(tmp_path / "node", valkey.port)
     node.drop_plan("p-first")
     wire: dict = {}
     orders: list[str] = []
+    # Set by the `finally` before it stops the server: the scripting thread starts no server after it.
+    done = threading.Event()
+    threads: list[threading.Thread] = []
     try:
+        valkey.start()
         with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
             venue.balances = {"ZEUR": lb.balance("1000.00000000")}
 
@@ -641,7 +664,8 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
 
                 def frames() -> None:
                     time.sleep(0.3)
-                    exec_.subscribed.wait(30)
+                    if not exec_.subscribed.wait(30):
+                        return
                     exec_.send_execution(lb.exec_new(txid, wire[txid], symbol=SYMBOL, qty=QTY, price=PRICE))
                     time.sleep(0.7)
                     exec_.send_execution(
@@ -659,15 +683,20 @@ def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind
                         time.sleep(2)
                         valkey.kill()
                         node.drop_plan("p-second")
-                        time.sleep(12)
+                        if done.wait(12):
+                            return
                         valkey.start()
 
-                threading.Thread(target=frames, daemon=True).start()
+                threads.append(threading.Thread(target=frames, daemon=True))
+                threads[-1].start()
 
             venue.on_add_order = on_add_order
             record = node.run(1, venue, data, exec_, window=32)
         keys_at_return = _keys(valkey.port)
     finally:
+        done.set()
+        for thread in threads:
+            thread.join(30)
         valkey.stop()
 
     assert record["errors"] == [], record["errors"]

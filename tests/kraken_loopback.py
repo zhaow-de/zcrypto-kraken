@@ -168,10 +168,10 @@ class KrakenLoopback:
     # TradesHistory rows by trade id, paged by `ofs` as the adapter pages them; a fill the private
     # WebSocket never delivered is booked from here at startup reconciliation.
     trades: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Called with the AddOrder form and the txid it was answered, after the answer is built: a
+    # Called with the AddOrder form and the txid it is answered, before the answer is sent: a
     # test's chance to script the private WebSocket's frames for that order.
     on_add_order: Callable[[dict[str, str], str], None] | None = None
-    # Called with the CancelOrder form after the answer is built: the test's chance to script the
+    # Called with the CancelOrder form before the answer is sent: the test's chance to script the
     # cancel's frame and to move the order from the open listing to the closed one.
     on_cancel_order: Callable[[dict[str, str]], None] | None = None
     # Depth books by the pair a request names, which the adapter spells as the AssetPairs key. A pair
@@ -373,13 +373,28 @@ class WsPeer:
 
         async def main():
             self.loop = asyncio.get_running_loop()
+            self._closing = self.loop.create_future()
             async with websockets.serve(handler, "127.0.0.1", 0) as server:
                 self.port = server.sockets[0].getsockname()[1]
                 ready.set()
-                await asyncio.Future()
+                await self._closing
 
-        threading.Thread(target=lambda: asyncio.run(main()), daemon=True).start()
-        ready.wait(10)
+        self._thread = threading.Thread(target=lambda: asyncio.run(main()), daemon=True)
+        self._thread.start()
+        assert ready.wait(10), f"the {label} WebSocket peer did not start"
+
+    def close(self) -> None:
+        """Close the server and its connections, and join the loop's thread."""
+
+        def release() -> None:
+            if not self._closing.done():
+                self._closing.set_result(None)
+
+        try:
+            self.loop.call_soon_threadsafe(release)
+        except RuntimeError:  # the loop has already closed
+            pass
+        self._thread.join(10)
 
     @property
     def url(self) -> str:
@@ -491,4 +506,9 @@ def exec_canceled(
 def serve_with_sockets(asset_pairs: dict[str, Any] | None = None) -> Iterator[tuple[KrakenLoopback, WsPeer, WsPeer]]:
     """`serve` plus the two WebSocket peers a node's data and execution clients connect to."""
     with serve(asset_pairs) as venue:
-        yield venue, WsPeer("data"), WsPeer("exec")
+        data, exec_ = WsPeer("data"), WsPeer("exec")
+        try:
+            yield venue, data, exec_
+        finally:
+            data.close()
+            exec_.close()
