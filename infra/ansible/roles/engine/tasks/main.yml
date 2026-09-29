@@ -562,6 +562,7 @@
     - name: probe — is there a live cache proxy config the unit still reads
       ansible.builtin.stat:
         path: /opt/zcrypto-engine/haproxy.cfg
+        get_checksum: false
       register: engine_cache_proxy_live_config
       check_mode: false
 

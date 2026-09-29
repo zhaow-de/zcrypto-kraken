@@ -1124,7 +1124,7 @@ def test_a_refused_cache_proxy_config_removes_its_candidate_and_stops_with_the_r
     remove, stat, refuse = block["rescue"]
     assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
     assert remove["check_mode"] is False
-    assert stat["ansible.builtin.stat"] == {"path": "/opt/zcrypto-engine/haproxy.cfg"}
+    assert stat["ansible.builtin.stat"] == {"path": "/opt/zcrypto-engine/haproxy.cfg", "get_checksum": False}
     assert stat["register"] == "engine_cache_proxy_live_config" and stat["check_mode"] is False
     assert "no_log" not in refuse
     variables = {
