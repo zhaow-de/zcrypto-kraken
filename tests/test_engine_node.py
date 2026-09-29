@@ -543,10 +543,11 @@ class RecordingExecutor:
         self.external_events.append(event)
 
 
-def _exec_stub(config, clock, *, executor_factory=None, executor=None):
+def _exec_stub(config, clock, *, executor_factory=None, executor=None, cache=None, strategy_id=None):
     """A ShadowStrategy stand-in driven through the unbound methods (the house pattern of
     test_schedule_alert_sets_state_and_timer): a real instance's `clock` is readonly until the
-    nautilus registration this suite never performs."""
+    nautilus registration this suite never performs. `cache` and `strategy_id` are what the boot
+    line reads, bound lazily so a case that never enables the cache reads neither."""
     stub = types.SimpleNamespace(
         clock=clock,
         _engine_config=config,
@@ -557,8 +558,11 @@ def _exec_stub(config, clock, *, executor_factory=None, executor=None):
         _executor_factory=executor_factory,
         _executor=executor,
         socket_subscriptions=[],
+        cache=cache,
+        strategy_id=strategy_id,
     )
     stub.subscribe_socket_state = lambda: stub.socket_subscriptions.append("all")
+    stub._log_cache_restore = lambda: ShadowStrategy._log_cache_restore(stub)
     stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
     stub._on_cycle_alert = functools.partial(ShadowStrategy._on_cycle_alert, stub)
     stub._on_exec_tick = functools.partial(ShadowStrategy._on_exec_tick, stub)
@@ -606,6 +610,103 @@ def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
     assert clock.timers == []
     assert stub._executor is None
     assert stub.socket_subscriptions == []
+
+
+# --- the boot line (spec 00120 D11) -------------------------------------------------------------
+
+
+def _restore_lines(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("cache restore")]
+
+
+def test_on_start_writes_no_restore_line_while_the_cache_is_disabled(tmp_path, caplog):
+    stub = _exec_stub(_config(tmp_path), FakeClock())
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert _restore_lines(caplog) == []
+
+
+def test_on_start_reads_the_orders_under_this_strategys_id_and_writes_the_zero_line_on_an_empty_namespace(tmp_path, caplog):
+    """A cold start or an empty namespace reads zero and is no refusal; the order read is scoped to
+    this strategy's id, so an order reconciliation created under EXTERNAL is not counted as
+    restored, and the position read takes every strategy's; and the line comes after the alert
+    chain is seeded and before the executor is built."""
+    reads: list = []
+    cache = types.SimpleNamespace(
+        orders_open=lambda **kw: reads.append(("orders", kw)) or [],
+        positions_open=lambda **kw: reads.append(("positions", kw)) or [],
+    )
+    clock = FakeClock()
+
+    def factory(strategy):
+        reads.append("executor built")
+        return RecordingExecutor()
+
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)),
+        clock,
+        executor_factory=factory,
+        cache=cache,
+        strategy_id="ShadowStrategy-000",
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert _restore_lines(caplog) == ["cache restore: 0 order(s), 0 position(s) restored"]
+    assert reads == [
+        ("orders", {"strategy_id": "ShadowStrategy-000"}),
+        ("positions", {}),
+        "executor built",
+    ]
+    assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+
+
+def test_on_start_writes_each_restored_position_and_order_at_the_values_the_proof_reads(tmp_path, caplog):
+    """The proof's comparand: every open position the Cache holds, whichever strategy holds it -- the
+    gap a fill made while the engine was down leaves to the venue's figure is booked under EXTERNAL --
+    with its instrument, signed quantity, entry price and strategy, and each order's fill state off
+    `filled_qty`, its filled and ordered quantity and its price, one INFO record each under the
+    search box's prefix."""
+    held = [
+        types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.4, avg_px_open=150.0, strategy_id="ShadowStrategy-000"),
+        types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.3, avg_px_open=150.0, strategy_id="EXTERNAL"),
+    ]
+    order = types.SimpleNamespace(client_order_id="O-20260928-201651-001-000-1", filled_qty=0.4, quantity=1.0, price=150.0)
+    cache = types.SimpleNamespace(
+        orders_open=lambda **kw: [order],
+        positions_open=lambda strategy_id=None, **kw: [p for p in held if strategy_id in (None, p.strategy_id)],
+    )
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)), FakeClock(), cache=cache, strategy_id="ShadowStrategy-000"
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert _restore_lines(caplog) == [
+        "cache restore: 1 order(s), 2 position(s) restored",
+        "cache restore: position SOL/EUR.KRAKEN 0.3 @ 150.0 (EXTERNAL)",
+        "cache restore: position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
+        "cache restore: order O-20260928-201651-001-000-1 partial, 0.4 of 1.0 filled @ 150.0",
+    ]
+    assert {r.levelno for r in caplog.records if r.getMessage().startswith("cache restore")} == {logging.INFO}
+
+
+def test_a_cache_the_boot_line_cannot_read_logs_one_error_and_on_start_carries_on(tmp_path, caplog):
+    def boom(**kw):
+        raise RuntimeError("cache blew up")
+
+    cache = types.SimpleNamespace(orders_open=boom, positions_open=boom)
+    clock = FakeClock()
+    executor = RecordingExecutor()
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)),
+        clock,
+        executor_factory=lambda strategy: executor,
+        cache=cache,
+        strategy_id="ShadowStrategy-000",
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert [r.levelno for r in caplog.records if r.getMessage().startswith("cache restore")] == [logging.ERROR]
+    assert stub._executor is executor and [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
 
 
 def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
@@ -1091,6 +1192,12 @@ class RecordingBuilder:
     def add_exec_client(self, name, factory, config):
         return self._record("add_exec_client", name=name, factory=factory, config=config)
 
+    def with_cache_config(self, config):
+        return self._record("with_cache_config", config=config)
+
+    def with_cache_database_factory(self, factory):
+        return self._record("with_cache_database_factory", factory=factory)
+
     def named(self, call_name):
         return [kwargs for name, kwargs in self.calls if name == call_name]
 
@@ -1141,6 +1248,9 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_engine.inflight_check_interval_ms == 2000
     assert exec_engine.inflight_check_threshold_ms == 5000
     assert exec_engine.inflight_check_retries == 5
+    # The restore itself: the library's default, stated because a flip would leave a backing
+    # attached that nothing loads from.
+    assert exec_engine.load_cache is True
 
     data_client = recorder.named("add_data_client")[0]
     assert data_client["name"] == "KRAKEN"
@@ -1183,6 +1293,7 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
         ("inflight_check_interval_ms", 2000, 3000),
         ("inflight_check_threshold_ms", 5000, 7000),
         ("inflight_check_retries", 5, 7),
+        ("load_cache", True, False),
     ],
 )
 def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monkeypatch, field, stated, flipped):
@@ -1211,6 +1322,74 @@ def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
     assert [call["name"] for call in recorder.named("add_data_client")] == ["KRAKEN"]
 
 
+# --- the cache backing (spec 00120 D5) ----------------------------------------------------------
+
+
+def test_the_builder_is_given_no_cache_backing_by_default(tmp_path, monkeypatch):
+    # `enabled = false` renders nothing into the node: neither builder method is called.
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    recorder = _record_assembly(tmp_path, monkeypatch).recorder
+    assert recorder.named("with_cache_config") == [] and recorder.named("with_cache_database_factory") == []
+
+
+def test_the_builder_is_given_the_cache_backing_at_the_measured_budget_when_enabled(tmp_path, monkeypatch):
+    """The two calls, once each: the cache config at the library's own two defaults, stated because
+    `True` on the first reloads an empty namespace and on the second issues FLUSHDB; the backing at
+    the proxy's address from the config, the password from the environment, and the budget the
+    probes settled -- ten retries under five-second timeouts, 3.4 s on a refused port and about
+    55 s on a silent peer, inside the gap and above the second a proxy takes to mark its backends."""
+    from nautilus_trader.infrastructure import RedisCacheConfig
+
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    recorder = _record_assembly(
+        tmp_path, monkeypatch, cache=CacheSettings(enabled=True, host="10.98.0.1", port=6390, username="probe")
+    ).recorder
+
+    [cache_call] = recorder.named("with_cache_config")
+    assert (cache_call["config"].use_instance_id, cache_call["config"].flush_on_start) == (False, False)
+    [factory_call] = recorder.named("with_cache_database_factory")
+    factory = factory_call["factory"]
+    assert isinstance(factory, RedisCacheConfig)
+    assert (factory.host, factory.port, factory.username, factory.password) == ("10.98.0.1", 6390, "probe", "a-cache-password")
+    assert (factory.ssl, factory.connection_timeout, factory.response_timeout, factory.number_of_retries) == (False, 5, 5, 10)
+
+
+def test_the_cache_arm_comes_before_the_exec_client_and_the_data_only_node_still_takes_it(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
+    calls = [
+        name
+        for name, _ in _record_assembly(tmp_path, monkeypatch, exec_enabled=True, cache=CacheSettings(enabled=True)).recorder.calls
+    ]
+    assert calls == [
+        "with_logging",
+        "with_exec_engine_config",
+        "add_data_client",
+        "with_cache_config",
+        "with_cache_database_factory",
+        "add_exec_client",
+    ]
+    data_only = [name for name, _ in _record_assembly(tmp_path, monkeypatch, cache=CacheSettings(enabled=True)).recorder.calls]
+    assert data_only == [
+        "with_logging",
+        "with_exec_engine_config",
+        "add_data_client",
+        "with_cache_config",
+        "with_cache_database_factory",
+    ]
+
+
+def test_a_cache_backed_assembly_never_logs_the_password(tmp_path, monkeypatch, caplog):
+    secret = "cache-password-sentinel"
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, secret)
+    with caplog.at_level(logging.DEBUG):
+        recorder = _record_assembly(tmp_path, monkeypatch, cache=CacheSettings(enabled=True)).recorder
+    [factory_call] = recorder.named("with_cache_database_factory")
+    assert secret not in repr(factory_call["factory"]) and secret not in str(factory_call["factory"])
+    assert secret not in caplog.text
+
+
 def test_every_builder_call_exists_on_the_library(tmp_path, monkeypatch):
     # The recorder above is a restatement of `LiveNodeBuilder`; this is what keeps it honest. A
     # renamed or removed builder method fails here instead of passing every recorder-backed test
@@ -1219,9 +1398,11 @@ def test_every_builder_call_exists_on_the_library(tmp_path, monkeypatch):
 
     monkeypatch.setenv(node._API_KEY_VAR, "a-key")
     monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
-    recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True).recorder
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    # Every arm on: the exec client's and the cache's, so both of the cache's calls are recorded.
+    recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True, cache=CacheSettings(enabled=True)).recorder
     called = {name for name, _ in recorder.calls}
-    assert called, "the recorder saw no builder calls -- it is no longer standing in for anything"
+    assert called >= {"with_cache_config", "with_cache_database_factory"}, sorted(called)
     for name in sorted(called):
         assert hasattr(LiveNodeBuilder, name), f"LiveNodeBuilder.{name} is gone -- node assembly breaks"
 

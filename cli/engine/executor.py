@@ -383,6 +383,18 @@ def _ordered_qty(row: dict) -> float:
         return 0.0
 
 
+def restored_fill_state(order) -> str:
+    """How far a restored order has filled, read off `filled_qty` against `quantity` and never off its
+    status: reconciliation appends `OrderAccepted(reconciliation=True)` to a partially filled restored
+    order, since Kraken's `open` maps to ACCEPTED whatever `vol_exec` says, so the status reads open
+    where the fills say partial. `filled` at or above the quantity, on the sweep's dead band; `partial`
+    inside it; `open` at none."""
+    filled = float(order.filled_qty)
+    if filled >= float(order.quantity) - _OVERFILL_TOLERANCE:
+        return "filled"
+    return "partial" if filled > _OVERFILL_TOLERANCE else "open"
+
+
 def _minted_terminal(order) -> bool:
     """Whether `order` was closed by a terminal the execution engine minted rather than received: it
     is closed and an event in its history is one of `_RECONCILED_TERMINALS` carrying the

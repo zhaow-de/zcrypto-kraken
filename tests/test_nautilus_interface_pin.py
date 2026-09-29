@@ -28,11 +28,13 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientFactory"),
     ("nautilus_trader.adapters.kraken", "KrakenProductType"),
     ("nautilus_trader.adapters.kraken", "KrakenSpotHttpClient"),
+    ("nautilus_trader.common", "CacheConfig"),
     ("nautilus_trader.common", "Environment"),
     ("nautilus_trader.common", "LogLevel"),
     ("nautilus_trader.common", "SocketState"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),
     ("nautilus_trader.config", "LoggerConfig"),
+    ("nautilus_trader.infrastructure", "RedisCacheConfig"),
     ("nautilus_trader.live", "LiveNode"),
     ("nautilus_trader.live", "LiveNodeBuilder"),
     ("nautilus_trader.model", "AccountId"),
@@ -226,6 +228,10 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "application past the order's own quantity. True removes one of the three bounds that "
         "paragraph and specs 00098 and 00100 rest on"
     )
+    assert config.load_cache is True, (
+        "stated by cli/engine/node.py since spec 00120, so the default no longer reaches production; "
+        "a flip would turn the stated value into a divergence worth re-deriving"
+    )
 
 
 # Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
@@ -309,6 +315,45 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     assert config.inflight_check_interval_ms == 2000
     assert config.inflight_check_threshold_ms == 5000
     assert config.inflight_check_retries == 5
+
+
+def test_the_cache_config_defaults_we_state_are_unchanged():
+    """`cli/engine/node.py` states both at the library's own values: `True` on the first reloads an
+    empty namespace and on the second issues FLUSHDB, so the pin says whether the statement is
+    still a restatement."""
+    from nautilus_trader.common import CacheConfig
+
+    config = CacheConfig()
+    assert config.use_instance_id is False
+    assert config.flush_on_start is False
+
+
+def test_the_node_config_defaults_we_leave_off_are_unchanged():
+    """Strategy state is not restored: the ledger is the executor's state, and both stay at the
+    library's own off, inherited, so a flip would restore state nothing here designed for."""
+    from nautilus_trader.live import LiveNodeConfig
+
+    config = LiveNodeConfig()
+    assert config.load_state is False
+    assert config.save_state is False
+
+
+def test_the_redis_cache_config_accepts_the_arguments_we_pass_and_hides_the_password():
+    from nautilus_trader.infrastructure import RedisCacheConfig
+
+    secret = "cache-password-sentinel"
+    config = RedisCacheConfig(
+        host="cache-proxy",
+        port=6379,
+        username="engine",
+        password=secret,
+        ssl=False,
+        connection_timeout=5,
+        response_timeout=5,
+        number_of_retries=10,
+    )
+    assert config.password == secret  # the value reaches the backing
+    assert secret not in repr(config) and secret not in str(config)
 
 
 def test_a_position_report_refuses_a_none_side():

@@ -69,7 +69,7 @@ from cli.engine.execledger import (
     update_submitted_row,
     write_exec_record,
 )
-from cli.engine.executor import ProbeExecutor, read_venue_orders, set_executor_hooks, size_probe_order
+from cli.engine.executor import ProbeExecutor, read_venue_orders, restored_fill_state, set_executor_hooks, size_probe_order
 from cli.engine.instruments import INSTRUMENT_IDS, BelowMinimum, SizedOrder, size_order
 from cli.engine.journal import CycleRecord, SnapshotEntry, to_json
 from cli.engine.node import ShadowStrategy
@@ -148,6 +148,37 @@ def test_a_below_costmin_result_names_the_floor():
     result = size_probe_order(0.001, 100.0, _constraints())
     assert isinstance(result, BelowMinimum)
     assert "costmin" in result.reason
+
+
+# --- a restored order's fill state (spec 00120 D9) ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "fills, expected",
+    [
+        ([], "open"),
+        ([0.4], "partial"),
+        ([0.4, 0.6], "filled"),
+        ([0.3, 0.3, 0.4], "filled"),  # three per-fill floats an ulp short of the quantity still read filled
+    ],
+)
+def test_a_restored_orders_fill_state_is_read_off_its_filled_quantity(fills, expected):
+    order = _resting_limit_order("O-1")
+    for n, qty in enumerate(fills):
+        order.apply(_fill("O-1", qty, trade_id=f"T-{n}"))
+    assert restored_fill_state(order) == expected
+
+
+def test_reconciliation_regresses_a_partially_filled_orders_status_and_the_predicate_does_not_follow_it():
+    """Measured on the pinned wheel: reconciliation appends `OrderAccepted(reconciliation=True)` to
+    a restored order that was PARTIALLY_FILLED, since Kraken's `open` maps to ACCEPTED whatever
+    `vol_exec` says, so the status reads open where the fills say partial."""
+    order = _resting_limit_order("O-1")
+    order.apply(_fill("O-1", 0.4))
+    assert order.status == OrderStatus.PARTIALLY_FILLED
+    order.apply(_event(OrderAccepted, client_order_id="O-1", reconciliation=True))
+    assert order.status == OrderStatus.ACCEPTED
+    assert restored_fill_state(order) == "partial"
 
 
 # --- the structural pin -------------------------------------------------------------------------
