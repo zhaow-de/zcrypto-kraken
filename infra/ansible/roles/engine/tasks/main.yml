@@ -204,6 +204,7 @@
 - name: probe — the logship secrets file the engine's compose reads at start
   ansible.builtin.stat:
     path: /opt/zcrypto-capture/logship-secrets.env
+    get_checksum: false
   register: engine_logship_secrets_stat
   failed_when: false
   changed_when: false
@@ -274,9 +275,8 @@
     and (pins_override | default('') | string | length > 8)
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
-# spec 00120 D1: the cache proxy's image, guarded as the engine's is -- non-empty, pre-staged, the
-# replaced running digest recorded -- and without the canary parity, which is scoped to the engine
-# image: there is no capture bake of an upstream proxy image.
+# The cache proxy's image takes the engine image's guards but not its canary parity: there is no capture
+# bake of an upstream proxy image.
 - name: fail fast if the pinned cache proxy image digest was not supplied
   ansible.builtin.assert:
     that: engine_cache_proxy_image_digest | length > 0
@@ -325,8 +325,7 @@
       "<reason>"}' and record it immediately after).
   when: engine_cache_proxy_running_probe.rc == 0 and engine_cache_proxy_pins_text is defined
 
-# The engine's echo above, mirrored: the reason reaches the play log only when the override was
-# accepted over an unrecorded proxy digest; the negated clause is the assert's first disjunct verbatim.
+# The engine's echo above, mirrored for the proxy: the negated clause is the assert's first disjunct verbatim.
 - name: cache proxy pins override accepted — the reason, on the record
   ansible.builtin.debug:
     msg: "pins_override accepted (cache proxy): {{ pins_override }}"
@@ -336,9 +335,8 @@
     and (pins_override | default('') | string | length > 8)
     and (pins_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
 
-# The two cache secrets this role renders (spec 00120 D2): the engine's password into engine.env and
-# the Sentinel requirepass into the proxy's check line, both unquoted, so the cache role's floor holds
-# here too -- five or more letters and digits.
+# The two cache secrets this role renders, into engine.env unquoted and into the proxy's quoted check
+# line, hold to the cache role's floor too.
 - name: refuse a cache password shorter than five characters or outside letters and digits (the engine's two)
   ansible.builtin.assert:
     that: >-
@@ -515,16 +513,9 @@
     group: root
     mode: "0755"
 
-# --- 5a. The cache proxy's config (spec 00120 D1), ahead of the engine's own three files: rendered
-# beside the live copy, validated by the pinned image's own `haproxy -c`, and copied into place only
-# then, so an invalid render never sits where the unit's next start would read it, a refused render
-# stops before engine.env, zcrypto.toml or compose.yaml is rewritten, and the file exists before the
-# compose file below names it -- a bind mount whose source is missing is created as a directory. The
-# render and the validate run in check mode too (the candidate is 0600 under no_log; `docker run --rm
-# ... -c` changes nothing), so converge.sh's preview is the validation's first run. It carries the
-# Sentinel requirepass: no_log, never diffed, 0600. The copy is what changes when the render differs,
-# and only then does the unit restart; in check mode it reports that change and its restart, and
-# writes nothing.
+# --- 5a. The cache proxy's config, ahead of the engine's three files: a refused render stops before any
+# is rewritten, and the file exists before compose.yaml bind-mounts it, whose missing source Docker
+# creates as a directory.
 - name: render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)
   ansible.builtin.template:
     src: haproxy.cfg.j2
@@ -536,11 +527,8 @@
   diff: false
   check_mode: false
 
-# The check runs under no_log, since a refusal quotes the offending line and the AUTH line carries the
-# requirepass; a failure -- haproxy's refusal or the run itself -- removes the 0600 candidate and stops
-# with the run's report, the requirepass masked (the floor above holds it to letters and digits, so it
-# appears in the report verbatim). The hand check binds the live copy with --mount, which refuses a
-# missing source: -v would create it as a root directory, the hazard the comment above names.
+# no_log: a refusal quotes the AUTH line. The rescue masks the requirepass, which the floor keeps
+# verbatim in the report, and binds its hand check with --mount, which refuses a missing source.
 - name: validate the rendered cache proxy config, or remove it and stop
   block:
     - name: validate the rendered cache proxy config with the pinned image's own haproxy -c
@@ -577,8 +565,7 @@
           {% endif %}
           The report, the requirepass masked:
           {{ ((ansible_failed_result.stdout | default('')) ~ ' ' ~ (ansible_failed_result.stderr | default(''))) | replace(cache_sentinel_requirepass, '<requirepass>') }}
-          Reproduce it with converge.sh's preview, this run's arguments and --check: it re-renders and
-          re-validates the candidate and prints this same report.
+          Reproduce it with converge.sh's preview: this run's arguments and --check.
           {% if engine_cache_proxy_live_config.stat.exists %}The check by hand on {{ inventory_hostname }}, over the live copy:
           sudo docker run --rm --user 0:0
           --mount type=bind,src=/opt/zcrypto-engine/haproxy.cfg,dst=/usr/local/etc/haproxy/haproxy.cfg,readonly

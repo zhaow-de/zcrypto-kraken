@@ -462,9 +462,9 @@ NOT_A_FAULT_SIGNAL = {
     #   audit_mismatches: a discriminator, not a signal -- nonzero withholds the summary, so run-broken
     #   pages and its runbook reads this first to tell a cache disagreement from a crash.
     "ops_verify_replay_audit_mismatches",
-    # The engine's cache proxy: the two alerted families are the most-agreed backend's active
-    # servers and the sessions; these four are the detail the Cache board's proxy row draws once
-    # one has paged. backend_status per backend is the alert's own signal broken out per node,
+    # The engine's cache proxy: the alerted families are the most-agreed backend's active servers and
+    # the sessions; these four are the detail the Cache board's proxy row draws once one has paged.
+    # backend_status reads UP at one server, which routes nothing, so it cannot stand for the alert;
     # server_status and server_check_status are per-Sentinel views of the same checks, and the
     # failures counter rises on every failover by design, so a threshold on it pages on a healthy
     # set moving its primary.
@@ -2026,7 +2026,7 @@ def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
 
 # --- the pending-reboot family: the hosts that never reboot themselves ---------------------------
 # The capture pair and ops run `Automatic-Reboot "false"` and publish the reboot-check flag; a host left out of a
-# matcher reboots by hand with nothing paging, and the publisher count's bar is the number of hosts it selects.
+# matcher reboots by hand with nothing paging.
 _REBOOT_HOSTS = frozenset({"zcrypto", "zcrypto-red", "ops"})
 _REBOOT_FAMILY = (
     "zcrypto-capture-reboot-pending",

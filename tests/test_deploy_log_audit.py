@@ -197,7 +197,6 @@ def test_engine_window_counts_none_when_every_engine_row_sits_in_the_gap(tmp_pat
     ],
 )
 def test_engine_window_judges_a_cache_link_row_that_reaches_the_engine_host(tmp_path, capsys, limit, counted):
-    """The window guard runs for a cache-link converge of the engine host, so its row is judged as an engine row."""
     rows = [_row("2026-09-01T00:03:20Z", limit=limit, tags="firewall,cache-link")]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
     expected = "engine rows 1 outside window 1 " if counted else "engine rows 0 outside window 0 "
@@ -205,7 +204,6 @@ def test_engine_window_judges_a_cache_link_row_that_reaches_the_engine_host(tmp_
 
 
 def test_engine_window_leaves_out_a_cache_link_row_that_skipped_engine(tmp_path, capsys):
-    """site.yml holds the cache_link role off where engine is skipped, so such a row changed nothing the gap guards."""
     row = {**_row("2026-09-01T00:03:20Z", tags="firewall,cache-link"), "skip_tags": "engine"}
     assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
     assert capsys.readouterr().out.strip().startswith("engine rows 0 outside window 0 ")

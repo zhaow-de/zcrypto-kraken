@@ -307,10 +307,6 @@ def test_the_engine_role_template_renders_the_plan_cap_explicitly():
 
 @pytest.mark.parametrize("switch", [True, False], ids=["enabled-by-default", "off-by-the-operand"])
 def test_the_engine_role_template_renders_the_cache_table_enabled_at_the_proxys_address_unless_switched_off(tmp_path, switch):
-    """The rendered engine config enables the cache from the first boot, every value explicit, and
-    the loader reads it back as the settings the node builds from; no password is in the file. With
-    `-e engine_cache_enabled=false` the table is not rendered at all -- the way back to an engine
-    without the cache, on an image from before the table as on this one."""
     import jinja2
 
     text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()

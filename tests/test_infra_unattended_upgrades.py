@@ -73,8 +73,6 @@ def test_the_capture_group_flips_both_hosts_and_only_them():
 
 
 def test_the_ops_node_reboots_by_hand():
-    """The owner's decision of 2026-09-29: ops never reboots itself, and its reboot-check flag pages until the reboot
-    is taken."""
     assert _yaml(OPS_HOST_VARS)[VAR] == "false"
 
 

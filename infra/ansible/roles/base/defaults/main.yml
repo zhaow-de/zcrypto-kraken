@@ -7,9 +7,9 @@ base_packages:
   - aptitude
 
 # This governs only the reboot; security patches install regardless. "true" keeps the cache nodes
-# and the bridgehead automatic; group_vars/capture_host flips the two capture VPSes and
-# host_vars/zcrypto-ops flips the ops node to attended (T0027, spec 00071 D4). MUST be a QUOTED string: a bare YAML false renders as Python's "False", which apt reads as
-# not-true.
+# and the bridgehead automatic; group_vars/capture_host flips the two capture VPSes to attended
+# (T0027, spec 00071 D4) and host_vars/zcrypto-ops flips the ops node. MUST be a QUOTED string: a
+# bare YAML false renders as Python's "False", which apt reads as not-true.
 base_unattended_upgrades_automatic_reboot: "true"
 
 # The slot is spec 00050's measured book-row trough: at least an hour from any 4h bar boundary, off

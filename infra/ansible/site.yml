@@ -83,8 +83,7 @@
       check_mode: false
       when: not ansible_check_mode
       # I2: NOT always — a --tags capture primary run must not be window-blocked; guard 4 covers untagged
-      # runs. cache-link too (spec 00120 D2): its handler restarts wg-quick@zcache0 on any change, which
-      # cuts the engine's cache session as a failover does.
+      # runs. cache-link too: the cache_link role below says why.
       tags: [engine, cache-link]
 
     # spec 00083 D6: when the boundary's cycle already completed, the fixed B+30 floor protects a

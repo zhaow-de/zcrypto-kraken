@@ -236,7 +236,6 @@ def _program(path: Path) -> list[str]:
 
 
 def _resolved_default(role: str, var: str) -> str:
-    """A default through the defaults it names: ops's is `{{ ops_data_dir }}/textfile`."""
     import re
 
     defaults = yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
@@ -288,7 +287,6 @@ def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
 
 
 def test_the_ops_unit_writes_where_the_ops_alloy_mounts_its_textfile_directory():
-    """Ops's Alloy reads `/textfile`, a bind mount of ops_textfile_dir, not the host root."""
     ops = REPO / "infra/ansible/roles/ops"
     compose = yaml.safe_load((ops / "templates/alloy-compose.yaml.j2").read_text())
     alloy = (ops / "files/config.alloy").read_text()

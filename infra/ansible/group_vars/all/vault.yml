@@ -284,10 +284,6 @@ cache_wg_zcrypto_valkey3_private_key: !vault |
           6266633533613864350a353163333039333431386637323364383062333134336563356132616535
           32623666313633306430626335306463663065643930373664396631633639623038396637623538
           6137636436613032323165353164613165353032623464333435
-# Moved here from group_vars/cache_host/ (spec 00120 D2): the engine play renders `cache_engine_password`
-# into engine.env and `cache_sentinel_requirepass` into the cache proxy's check line, and the cache role
-# reads both unchanged. The ciphertext is UNCHANGED -- same vault password, the blocks moved verbatim and
-# were never decrypted. Rotating either is infra/runbooks/cache.md's cache-password-rotation.
 cache_engine_password: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           31643137396633376334303935323737636535303130393938663863663263343434656137623733

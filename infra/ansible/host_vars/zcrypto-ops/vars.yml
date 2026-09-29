@@ -17,8 +17,7 @@ base_unattended_upgrades_reboot_time: "02:25"
 
 # The owner's standing decision of 2026-09-29: this node never reboots itself. Patches install and the
 # reboot is a human act; the pending-reboot rule pages on this host's reboot-check flag until it is
-# taken. Quoted: a bare YAML false renders `False`. The slot above stays, as the attended window and
-# for the collision assert.
+# taken. The slot above stays, as the attended window and for the collision assert.
 base_unattended_upgrades_automatic_reboot: "false"
 
 # Wire the vaulted dead-man ping URLs (vault.yml beside this file) into the role vars the rendered

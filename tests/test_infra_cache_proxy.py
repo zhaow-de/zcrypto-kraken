@@ -1,6 +1,4 @@
-"""The cache proxy's rendered config and the fleet's plumbing for it (spec 00120 D1, D2): the
-HAProxy template, the engine defaults it reads against the cache roles' values, the extra-var key
-`converge.sh` admits, and the engine's env file carrying the cache password under the no_log render."""
+"""The cache proxy's rendered config and the fleet's plumbing for it."""
 
 import re
 from pathlib import Path
@@ -32,8 +30,6 @@ def _lines(text: str) -> list[str]:
 
 
 def test_the_engine_defaults_name_the_cache_roles_nodes_and_master():
-    """The engine play loads neither the cache role nor its defaults, so the proxy's node list and the
-    Sentinel master name are the engine role's own, held equal to the cache side's here."""
     nodes = ENGINE_DEFAULTS["engine_cache_proxy_nodes"]
     peers = [p["address"] for p in LINK_DEFAULTS["cache_link_peers"] if p["name"].startswith("zcrypto-valkey")]
     assert [n["address"] for n in nodes] == peers == ["10.98.0.11", "10.98.0.12", "10.98.0.13"]
@@ -74,7 +70,7 @@ def test_the_check_authenticates_pings_and_expects_the_anchored_master_reply_wit
 def test_the_timeouts_the_logging_and_the_metrics_endpoint():
     lines = _lines(_render())
     assert "timeout check 2s" in lines and "timeout connect 2s" in lines
-    assert "maxconn 256" in lines  # without it the worker is OOM-killed under the 32m cap at load
+    assert "maxconn 256" in lines
     assert "timeout client 24d" in lines and "timeout server 24d" in lines
     assert "log stdout format raw local0 info" in lines
     assert "user haproxy" in lines and "group haproxy" in lines

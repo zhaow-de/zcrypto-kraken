@@ -42,8 +42,8 @@
           | reject('match', '[A-Za-z0-9]{5,}\Z') | list | length == 0
         fail_msg: >-
           {{ ['cache_engine_password', 'cache_replica_password', 'cache_sentinel_password', 'cache_sentinel_requirepass', 'cache_exporter_password'] | zip([cache_engine_password, cache_replica_password, cache_sentinel_password, cache_sentinel_requirepass, cache_exporter_password]) | rejectattr('1', 'match', '[A-Za-z0-9]{5,}\Z') | map('first') | join(', ') }}
-          in group_vars/cache_host/vault.yml (cache_engine_password and cache_sentinel_requirepass: group_vars/all/vault.yml,
-          the engine play's read) must be five or more letters and digits. Re-generate it with
+          in group_vars/cache_host/vault.yml (cache_engine_password and cache_sentinel_requirepass: group_vars/all/vault.yml)
+          must be five or more letters and digits. Re-generate it with
           `openssl rand -hex 24 | tr -d '\n' | uv run ansible-vault encrypt_string --stdin-name <key>` and replace its entry.
 
     # Tests: tests/test_infra_converge_guards.py.

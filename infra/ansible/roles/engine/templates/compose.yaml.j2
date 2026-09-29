@@ -16,8 +16,8 @@ services:
     depends_on:
       cache-proxy:
         condition: service_started
-    # nautilus_live waits ten seconds for residual events before it disconnects its clients, and
-    # Docker's default grace is ten, so every stop was a force-kill (spec 00120 D15).
+    # nautilus_live waits ten seconds for residual events before it disconnects its clients, and Docker's
+    # default grace of ten would force-kill it.
     stop_grace_period: 20s
 {% if logship_loki_token is defined %}
     # --ship-logs is spelled out here, not left to the image's own shell-ENTRYPOINT conveyance
@@ -102,10 +102,7 @@ services:
         max-size: "{{ engine_log_max_size }}"
         max-file: "{{ engine_log_max_file }}"
 
-  # The engine's route to the cache set (spec 00120 D1): HAProxy, digest-pinned, routing 6379 to the
-  # node two of the three Sentinels name the primary, its config a root-owned 0600 file the role
-  # validates before it lands here. Its stdout reaches the unit's journal beside the engine's, and the
-  # Prometheus endpoint is published on loopback for the host's Alloy.
+  # Its stdout reaches the unit's journal beside the engine's; its metrics port is on loopback for the host's Alloy.
   cache-proxy:
     image: "{{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}"
     container_name: zcrypto-cache-proxy

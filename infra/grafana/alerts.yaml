@@ -2856,7 +2856,7 @@ rules:
     # no gap between 15-minute publishes to ride out.
     for: 15m
     annotations:
-      summary: "A host that does not reboot itself -- a capture host or the ops node -- has a pending reboot (/run/reboot-required); it keeps paging until a human reboots it. A capture host: schedule it -- secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart; expect a ~83s capture gap, containers self-restart. The ops node: no capture gap; reboot it by hand in its 02:25 UTC slot, then check its containers came back resolving names -- docker waits for a nameserver before it starts them. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
+      summary: "A host that does not reboot itself -- a capture host or the ops node -- has a pending reboot (/run/reboot-required). A capture host: schedule it -- secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart; expect a ~83s capture gap, containers self-restart. The ops node: no capture gap; reboot it by hand in its 02:25 UTC slot, then check its containers came back resolving names. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
     labels:
@@ -5429,13 +5429,8 @@ rules:
       receiver: metrics
 
   # ---- the engine's cache proxy and the engine's own cache writes, on the engine host -----------------
-  # `cache_proxy` is a STATIC scrape target on both capture hosts (roles/capture/files/config.alloy), so
-  # its series read 0 on zcrypto-red by construction: every rule here carries host="zcrypto". The proxy
-  # routes the engine's connections -- the load's, idle after the start, and the writer's -- to the node
-  # two of the three Sentinels name the primary; a backend short of two servers UP is one the frontend
-  # routes nothing to, the engine's writes going nowhere, and the engine's sessions absent while the
-  # engine runs is a link cut the lazy reconnect has not yet taken -- the writer's returns at the next
-  # write, which the library drops, and the load's never does.
+  # `cache_proxy` is a STATIC scrape target on both capture hosts (roles/capture/files/config.alloy) and
+  # only zcrypto runs the proxy: every rule here carries host="zcrypto".
   - uid: zcrypto-cache-proxy-no-backend
     title: "Cache · proxy has no backend"
     ruleGroup: zcrypto-cache
@@ -5448,12 +5443,9 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # The most Sentinels agreeing on any one backend: 2 or 3 while the set has a primary the quorum
-          # names, 1 while only one Sentinel does, 0 while none does or the proxy is down -- `or on()
-          # vector(0)` reads a dead proxy as 0 rather than NoData, since the scrape target is static and
-          # a proxy container that stopped takes its series away. The threshold is the frontend's own
-          # routing bound, `nbsrv(nodeN) ge 2` in roles/engine/templates/haproxy.cfg.j2: at 1 the proxy
-          # routes nothing new, which tests/test_infra_alert_rules.py holds equal.
+          # `or on() vector(0)` reads a stopped proxy, whose static target then carries no series, as 0
+          # rather than NoData. The threshold is the frontend's own routing bound, `nbsrv(nodeN) ge 2` in
+          # roles/engine/templates/haproxy.cfg.j2, which tests/test_infra_alert_rules.py holds equal.
           expr: >-
             max(haproxy_backend_active_servers{host="zcrypto"}) or on() vector(0)
           instant: true
@@ -5553,14 +5545,11 @@ rules:
     orgId: 1
     condition: C
     data:
-      # The library logs each write it could not deliver at ERROR (`broken pipe`, `Connection refused`)
-      # and each event on an order whose key an outage lost at WARN (`Cannot update order in Redis, no
-      # existing state`), every one naming its module, `nautilus_infrastructure::redis::cache`, and the
-      # capture primary's Alloy ships nautilus's WARN and ERROR lines as container="engine-nautilus",
-      # which zcrypto-engine-error-logs (container="engine") never selects. Nothing is logged at the cut
-      # itself: detection comes from writes, so an engine idle between cycles logs nothing about an
-      # outage, which zcrypto-cache-proxy-no-engine-session covers from the proxy's side. Shape as
-      # zcrypto-engine-error-logs: a count over 15m, `or on() vector(0)` for a clean window.
+      # The library's failed-write ERROR and lost-key WARN lines each name its module,
+      # `nautilus_infrastructure::redis::cache`, and the capture primary's Alloy ships nautilus's WARN and
+      # ERROR lines as container="engine-nautilus", which zcrypto-engine-error-logs (container="engine")
+      # never selects. Nothing is logged at the cut itself: zcrypto-cache-proxy-no-engine-session covers an
+      # idle engine from the proxy's side.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}

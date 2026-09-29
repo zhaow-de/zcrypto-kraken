@@ -1,12 +1,10 @@
 # Rendered by the `engine` Ansible role at /opt/zcrypto-engine/haproxy.cfg (0600 root-only, bind-mounted
 # read-only into zcrypto-cache-proxy) -- do not hand-edit on the host, it is overwritten on the next
-# converge. It carries the Sentinel requirepass, so the role renders it under no_log, never diffs it, and
-# validates the render with the pinned image's own `haproxy -c` before moving it into place.
+# converge. It carries the Sentinel requirepass.
 global
     log stdout format raw local0 info
-    # Without a bound HAProxy sizes itself off the container's file-descriptor hard limit -- 524288 on
-    # the fleet's containerd, a worker of about 69 MB resident, killed under the 32m cap at load. At 256
-    # it runs and answers /metrics under the cap; the engine's sessions and nine checks need a handful.
+    # Without a bound HAProxy sizes itself off the container's file-descriptor limit and its worker is
+    # killed under the 32m cap; the engine's sessions and nine checks need a handful.
     maxconn 256
     # The container starts as root so this 0600 file is readable; the workers drop to the image's user.
     user haproxy

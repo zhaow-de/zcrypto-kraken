@@ -95,8 +95,8 @@ prometheus.scrape "engine_app" {
 }
 
 // The engine's cache proxy: HAProxy's Prometheus endpoint, published on loopback by the engine's
-// compose file beside the engine's own. Scraped from both capture hosts as `engine_app` is, so its
-// series read 0 on zcrypto-red by construction and every rule on them carries host="zcrypto".
+// compose file. Scraped from both capture hosts as `engine_app` is; only zcrypto runs the proxy, so
+// every rule on its series carries host="zcrypto".
 prometheus.scrape "cache_proxy" {
   targets         = [{"__address__" = "127.0.0.1:9104"}]
   job_name        = "cache_proxy"
