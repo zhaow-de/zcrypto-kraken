@@ -90,7 +90,7 @@ From `infra/grafana/alerts.yaml`, the dependents per collector, and which of the
 | `loadavg` | `zcrypto-capture-load-high`, `zcrypto-ops-load-high`, `zcrypto-nas-load-high` | `zcrypto-nas-load-high` |
 | `cpu` | `zcrypto-capture-load-high` again — `cpu` supplies its per-core denominator | none |
 | `textfile`, on a capture host | `zcrypto-capture-textfile-unreadable`, `zcrypto-reboot-probe-stale`, `zcrypto-capture-clock-exporter-stale`, `zcrypto-oneoff-textfile-stale`, `zcrypto-capture-reboot-pending`, `zcrypto-capture-clock-skew`, and on the primary `zcrypto-engine-journal-prune-dead` and the engine host's rows of `zcrypto-cache-wg-handshake-stale` | `zcrypto-engine-journal-prune-dead` |
-| `textfile`, on ops | the 21 rules reading `ops_*`, `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*`, `zcrypto_tapebars_*` and `zcrypto_grafana_keepalive_*` (the command below lists them), the ops-side rows of `zaccess-tunnel-stale` and `zaccess-cert-expiring`, and the ops rows of `zcrypto-node-clock-skew` and `zcrypto-node-clock-exporter-stale` | `zcrypto-reconcile-exporter-stale`, `zcrypto-trade-backfill-stale`, `zcrypto-ops-archive-pull-stalled`, `zcrypto-ops-verify-replay-stale`, `zcrypto-ops-verified-replay-stale`, `zcrypto-ops-grafana-keepalive-stale` |
+| `textfile`, on ops | the 21 rules reading `ops_*`, `zcrypto_reconcile_*`, `zcrypto_trade_backfill_*`, `zcrypto_tapebars_*` and `zcrypto_grafana_keepalive_*` (the command below lists them), the ops-side rows of `zaccess-tunnel-stale` and `zaccess-cert-expiring`, the ops rows of `zcrypto-node-clock-skew` and `zcrypto-node-clock-exporter-stale`, and the ops rows of `zcrypto-capture-reboot-pending`, `zcrypto-reboot-probe-stale` and `zcrypto-capture-textfile-unreadable` | `zcrypto-reconcile-exporter-stale`, `zcrypto-trade-backfill-stale`, `zcrypto-ops-archive-pull-stalled`, `zcrypto-ops-verify-replay-stale`, `zcrypto-ops-verified-replay-stale`, `zcrypto-ops-grafana-keepalive-stale` |
 | `textfile`, on the NAS | the whole `zcrypto_gate_*` family and its five gate rules: `zcrypto-gate-streak-reset`, `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag`, `zcrypto-gate-exporter-stale`, `zcrypto-gate-cache-reverify-stalled` | `zcrypto-gate-mismatch`, `zcrypto-gate-pull-lag`, `zcrypto-gate-exporter-stale` |
 | `textfile`, on the bridgehead | `zaccess-tunnel-stale`, `zaccess-cert-expiring` | none |
 | `textfile`, on a cache node | that node's rows of `zcrypto-cache-wg-handshake-stale`, `zcrypto-node-clock-skew` and `zcrypto-node-clock-exporter-stale` | none |
@@ -98,7 +98,7 @@ From `infra/grafana/alerts.yaml`, the dependents per collector, and which of the
 
 The ops row's 21 rules are the uids this prints: `awk '/^ +- uid: /{u=$3} /expr: .*(ops_(archive_pull|panel|verify_replay|verified_replay)|zcrypto_(reconcile|trade_backfill|tapebars|grafana_keepalive))_/{print u}' infra/grafana/alerts.yaml | sort -u`.
 
-`zcrypto-capture-textfile-missing` is the one exception that still bites: it is shaped as `count(node_reboot_required{…}) < 2`, so a capture host losing its textfile collector drops the count to 1 and that rule fires on its own.
+`zcrypto-capture-textfile-missing` is the one exception that still bites: it is shaped as `count(node_reboot_required{…}) < 3` over the capture pair and ops, so one of the three losing its textfile collector drops the count to 2 and that rule fires on its own.
 
 If the host's Alloy is dark, this rule is blind too; `zcrypto-alloy-dark-*` owns that.
 

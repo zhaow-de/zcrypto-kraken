@@ -34,7 +34,7 @@ Two Grafana alerts on the same unit, `zcrypto-archive-pull.service` — despite 
 
 ### What to do
 
-1. **`ssh hp`, then read the timer and the unit**: `systemctl list-timers zcrypto-archive-pull.timer` and `systemctl status zcrypto-archive-pull.service zcrypto-archive-pull.timer`. A `Persistent=true` catch-up run right after the 02:25 UTC reboot is expected, not a finding.
+1. **`ssh hp`, then read the timer and the unit**: `systemctl list-timers zcrypto-archive-pull.timer` and `systemctl status zcrypto-archive-pull.service zcrypto-archive-pull.timer`. A `Persistent=true` catch-up run right after a reboot is expected, not a finding.
 2. **Read the journal, and prove you read something**: `sudo journalctl -u zcrypto-archive-pull.service --since -4h --no-pager | wc -l` first, then the same without `wc` — an unprivileged `journalctl -u` prints `-- No entries --` under a hint to rerun with `sudo`, which is a permissions artifact and not an idle unit. Look for `writer cycle SKIPPED (fail-closed gate):` and `reconcile failed, continuing`.
 3. **If it is a skip, the fault is upstream.** `cat /mnt/zhao-crypto/.pull-status` and `date -u +%s`, and compare against the gate's conditions above. A not-clean or stale status means the NAS's own capture pulls are broken — go to the NAS's rules and its `infra/nas/pull-entrypoint.sh` logs. **Do not hand-edit `.pull-status`**: it is the gate's ground truth, and the gate exists to refuse a frozen view.
 4. **If reconcile failed, look for a leftover container first.** `sudo docker ps -a --filter name=zcrypto-reconcile` — after a dockerd crash the leftover makes the next run fail on the name conflict; `sudo docker rm zcrypto-reconcile`. Then `sudo systemctl status docker`.
@@ -227,7 +227,7 @@ Sustained saturation, not a transient burst. Nothing is lost by load alone — t
 
 The load is Alloy plus the timers under `infra/ansible/roles/ops/`; the overlay writer is one of them, not a service beside them. Read the schedules from those templates, or from `systemctl list-timers 'zcrypto-*'` on the host; no list written here is the authority. The bar is 20 whatever the box has. If you are going to reason about the ratio, read the thread count from `nproc` on the host rather than from any figure written here or in a spec.
 
-**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host auto-reboots at 02:25 UTC and the role's `Persistent=true` timers (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`) run their missed ticks after it, so a post-boot burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
+**Known, accepted overlaps and bursts, none of them findings on their own**: the writer's `:42` slot collides with the 03:41 verify-replay run once a day (both are read-only NFS readers); the host reboots by hand, in its 02:25 UTC slot ([`hosts.md#zcrypto-capture-reboot-pending`](hosts.md#zcrypto-capture-reboot-pending)), and the role's `Persistent=true` timers (`grep -l 'Persistent=true' infra/ansible/roles/ops/templates/*.timer.j2`) run their missed ticks after it, so a post-boot burst is expected; and this host also carries the liquidations poller, Alloy, and the agentboard web terminal with its tmux sessions, so not every load spike is pipeline work.
 
 ### What to do
 
