@@ -607,9 +607,8 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
 
 
 def _cache_config() -> CacheConfig:
-    """Every field of the pinned wheel's `CacheConfig`, each at the library's default and stated so a
-    bump's new default is a decision, never an inheritance; the builder takes its config from here
-    alone. A flip on the first six is destructive: `True` on `use_instance_id` reloads an empty
+    """Every field of the pinned wheel's `CacheConfig`, stated so a bump's new default is a decision,
+    never an inheritance. A flip is destructive on these: `True` on `use_instance_id` reloads an empty
     namespace and on `flush_on_start` issues FLUSHDB; `use_trader_prefix`, `encoding` and
     `timestamps_as_iso8601` are the keys and the format the next process reads back;
     `buffer_interval_ms=None` writes through; `persist_account_events` keeps the account's events."""
