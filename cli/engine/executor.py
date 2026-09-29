@@ -983,11 +983,11 @@ class ProbeExecutor:
         # The (row, `what`) pairs a sweep of this process marked unmatched (`_mark_unmatched`), which the
         # re-read pass leaves out.
         self._marked: set[tuple[str, str]] = set()
-        # The rows the open sweep or the re-read pass left unread on a failed venue read, each until a later
-        # read of this process answers it: with `_marked`, the rows no read of this process repaired. A
-        # finished row the startup leaves unread is not recorded: it is never attached, so no event or pass
-        # of this process reaches its intent.
-        self._unread: set[str] = set()
+        # The restored rows a venue report this process read has answered since the row's last fill or a
+        # terminal this engine minted on it: the only restored rows either intent writer writes
+        # (`_settle_restored_intent`, `_settle_pending_intents`). Added where a sweep applies a report to a
+        # restored row, cleared where a fill or a mint lands on one.
+        self._answered: set[str] = set()
         # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
         self._restored_fills: set[str] = set()
@@ -1326,8 +1326,8 @@ class ProbeExecutor:
 
         LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
         their plans, so each is written terminal from what its rows show, except one with an open row
-        this pass sent no cancel for -- kept, or beyond its reach -- or a restored row this pass marked,
-        and none when either read above failed or a sweep above latched the kill switch.
+        this pass sent no cancel for -- kept, or beyond its reach -- or a restored row no report of this
+        pass answered, and none when either read above failed or a sweep above latched the kill switch.
         """
         try:
             resting = list(self._cache.orders_open(venue=_VENUE))
@@ -1441,11 +1441,10 @@ class ProbeExecutor:
         order's quantity, `revoked` when it ran and its order did not survive the restart, `refused`
         when it never ran -- except one with an open row this pass sent no cancel for: an order left
         resting, kept as a reducer or beyond the pass's reach, is still live and its row the live
-        record -- and one with a row of the restored set this pass marked (`_marked_here`), which the
-        pass could not repair: its intent stays `pending`, never settled from a figure no read answered,
-        the credit-0 one among them (spec 00120 D8), and its mark names why. Skipped whole when either
-        read failed or this pass latched the kill switch, since the rows' fills were then never
-        compared, never read, or refuted by the venue, and are no figure to journal."""
+        record -- and one with a row of the restored set no venue report of this pass answered
+        (`_answered`). Skipped whole when either read failed or this pass latched the kill switch, since
+        the rows' fills were then never compared, never read, or refuted by the venue, and are no figure
+        to journal."""
         if venue_orders is None or not ledger_read or self._kill_tripped:
             return
         try:
@@ -1465,7 +1464,7 @@ class ProbeExecutor:
             # the largest of them is the target.
             ordered[key] = max(ordered.get(key, 0.0), _ordered_qty(row))
             if (row.get("state") in _OPEN_ORDER_STATES and row["client_order_id"] not in cancelled) or (
-                self._restored_row(row) and self._marked_here(row)
+                self._restored_row(row) and row["client_order_id"] not in self._answered
             ):
                 left.add(key)
         for boundary, plan_id, index in pending:
@@ -1511,8 +1510,9 @@ class ProbeExecutor:
         report as at startup, an open one by a cancel, since the Cache's own order is the guess the
         venue must answer. The rows are read from the ledger and the Cache when the pass runs, not
         collected at the mint: a mint can land before the socket's own deadline reports the cut, F2's
-        order, and a mint the ack deadline had already stranded lands detached. No intent is written:
-        each is terminal at its mint or by the startup sweep, and a plan may be running beside the pass.
+        order, and a mint the ack deadline had already stranded lands detached. No intent is written
+        but a restored row's, once the pass's report has answered it (`_settle_restored_intent`): each
+        other is terminal at its mint or by the startup sweep, and a plan may be running beside the pass.
         A read that fails spends one try and the tick asks again; past the budget the rows keep their
         state and the line names the hand cancel and, when the ledger read succeeded, each row it could
         not read for, and a startup inside the re-attach window reads them too, under the restart rule
@@ -1522,14 +1522,12 @@ class ProbeExecutor:
         `DISCONNECTED` and the execution socket's own drop later -- spends no budget into the cut; a
         stale entry, an endpoint whose `CONNECTED` never comes under its drop's string, then closes
         every return's arm at its first failed read, the read's CRITICAL never reaching the page while
-        it stands. A row a sweep of this process marked unmatched under the id it is read by now
-        (`_marked_here`) is left out: no read of this process settles it, and each arm would re-read it and
-        page the same line; an earlier process's mark leaves it in, since this process's reads may answer
-        for it. A run whose reads
-        answer -- the ledger's, and the venue's orders when the population is not empty -- ends by
-        settling the position gauge from the venue's holdings (`_settle_positions_from_venue`), so an
-        opposing hand trade the state machine refused settles at the next such arm; a run whose read
-        fails returns before the settle. Wrapped whole: a raise here may never drop a plan."""
+        it stands. A row this process marked unmatched (`_marked_here`) is left out: each arm would
+        re-read it and page the same line. A run whose reads answer -- the ledger's, and the venue's
+        orders when the population is not empty -- ends by settling the position gauge from the
+        venue's holdings (`_settle_positions_from_venue`), so an opposing hand trade the state machine
+        refused settles at the next such arm; a run whose read fails returns before the settle.
+        Wrapped whole: a raise here may never drop a plan."""
         self._reread_armed_by = None  # a return's arm is consumed by this run, whatever it reads
         rows: dict = {}
         try:
@@ -1554,7 +1552,6 @@ class ProbeExecutor:
                 since = min(boundary for boundary, _ in rows.values()) - _VENUE_READ_MARGIN
                 reports = (self._venue_orders or read_venue_orders)(since)
         except Exception:
-            self._unread.update(rows)
             if self._sockets_down:
                 self._reread_tries = 0
                 self._reread_armed_by = None
@@ -1657,8 +1654,6 @@ class ProbeExecutor:
                     venue_order_id = self._read_id(row)
                     order = self._cached_order(row, venue_order_id)
                     report = None if venue_orders is None or venue_order_id is None else venue_orders.get(venue_order_id)
-                    if report is not None:
-                        self._unread.discard(client_order_id)
                     restored = order is not None and self._venue_answers(row, finished=False)
                     if restored and report is not None:
                         # A restored order the venue answered for: the report over the Cache's copy, the
@@ -1672,9 +1667,8 @@ class ProbeExecutor:
                             order_id=str(order.client_order_id),
                             venue_order_id=venue_order_id,
                         )
+                        self._answered.add(client_order_id)
                         if recancel:
-                            # The repair is what the intent waited for: the row leaves the fill set
-                            # before the settle reads it.
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
                         continue
@@ -1691,7 +1685,6 @@ class ProbeExecutor:
                     # A restored row no report answered for takes the tail below as a row outside the restored set does,
                     # never repaired from the Cache's copy, which runs ahead of the venue on a kept reducer (spec 00120 D8).
                     if venue_order_id is not None and venue_orders is None:
-                        self._unread.add(client_order_id)
                         continue  # the read failed: unread, not unknowable, and every plan is refused
                     if report is None:
                         self._mark_unmatched(boundary, row, venue_order_id)
@@ -1710,6 +1703,7 @@ class ProbeExecutor:
                             # A restored row whose minted terminal stood for an order still resting: the
                             # re-cancel writes it `canceled` from the repaired figure, and its intent is
                             # written then, as the closed report's arm below writes it.
+                            self._answered.add(client_order_id)
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
                         continue
@@ -1722,12 +1716,14 @@ class ProbeExecutor:
                         order_id=order_id,
                         venue_order_id=venue_order_id,
                     )
-                    if recancel and self._restored_row(row):
-                        # A restored row a fill reached whose terminal the library minted -- D7's race,
-                        # the ack flagged `reconciliation` -- takes this path, and the repair is what its
-                        # intent waited for.
-                        self._restored_fills.discard(client_order_id)
-                        self._settle_restored_intent(boundary, row)
+                    if self._restored_row(row):
+                        self._answered.add(client_order_id)
+                        if recancel:
+                            # A restored row a fill reached whose terminal the library minted -- D7's race,
+                            # the ack flagged `reconciliation` -- takes this path, and the repair is what its
+                            # intent waited for.
+                            self._restored_fills.discard(client_order_id)
+                            self._settle_restored_intent(boundary, row)
                 except Exception:
                     logger.critical("adopted row %s could not be reconciled against the venue", client_order_id, exc_info=True)
         except Exception:
@@ -1782,8 +1778,7 @@ class ProbeExecutor:
         """A row no venue report answers for, read by `venue_order_id` (`_read_id`), marked in the
         ledger's own word for an outcome this process could not establish: `ambiguous`, with the event
         `_mark_ambiguous` writes, its `what` the missing txid (`_unmatchable_what`) or the one the read
-        omits (`_unread_what`). Every sweep of both passes marks here, and whether the row is open -- its
-        LEDGER state one of `execledger._OPEN_ORDER_STATES` -- decides the rest, whichever sweep asks.
+        omits (`_unread_what`).
 
         An open row takes the state as well. It is one of `execledger._OPEN_ORDER_STATES`, so the row
         stays in the re-attach set, pointing at an order that may still rest. A finished row takes the
@@ -1792,9 +1787,7 @@ class ProbeExecutor:
 
         The line is a WARNING, except for an open row whose txid the venue read does not return: CRITICAL,
         the level `_log_resting_outside_the_cache` logs at, since that read skips an order row the adapter
-        cannot parse (`_cancel_resting`), so the order may still rest at Kraken, where no cancel this
-        process can issue reaches it outside the restored set; a restored copy resting in the Cache is
-        attached and kept as a ledgered reducer or cancelled through the strategy handle.
+        cannot parse (`_cancel_resting`), so the order may still rest at Kraken.
 
         A row already carrying the mark -- the event, for this `what` (`_marked_unmatched`) -- is left
         alone, so a row that stays unmatched does not gain an event every restart; its line is logged
@@ -1941,17 +1934,12 @@ class ProbeExecutor:
     def _settle_restored_intent(self, boundary: datetime, row: dict) -> None:
         """A restored row's intent, written once at the row's terminal while it still reads `pending` (spec
         00120 D8), by the path that ends the row, at the row's own boundary without `self._plan`, the
-        sweep's shape: `filled`, or `revoked` naming the row's kind and whether it filled. A row in
-        `_restored_fills` waits: its `filled_qty` is the credit-0 figure until the re-read pass repairs it,
-        and the pass writes the intent after that repair; a row the pass could not repair, marked or
-        unread, stays in the set, its intent `pending`, never settled from that figure. A row a sweep of
-        this process marked (`_marked_here`), the startup's marks among them, or left unread on a failed
-        read (`_unread`) until a later read answers it, keeps its intent `pending` at its terminal too: its
-        figure is one no read answered, the credit-0 one among them, and its mark or the failed read's
-        line names why."""
+        sweep's shape: `filled`, or `revoked` naming the row's kind and whether it filled. A row no venue
+        report of this process has answered since its last fill or mint (`_answered`), the credit-0 one
+        among them, waits, its intent `pending`."""
         if not self._restored_row(row) or row.get("state") in _OPEN_ORDER_STATES:
             return
-        if row["client_order_id"] in self._restored_fills or self._marked_here(row) or row["client_order_id"] in self._unread:
+        if row["client_order_id"] not in self._answered:
             return
         key = (row.get("plan_id"), row.get("intent_index"))
         try:
@@ -2130,10 +2118,8 @@ class ProbeExecutor:
         DOWN while the ledger row still carries the quantity this engine recorded, published and
         sized against. The row finds that order, and is marked when it finds none, as an open row
         does in `_reconcile_adopted_rows`; `_mark_unmatched` says how a finished row's mark differs. A
-        row of the restored set finds it in the venue's report alone, by `_read_id`, never in its Cache
-        copy (`_venue_answers` says why), and is asked with no fills too, since a credit-0 fill no re-read
-        pass repaired leaves its figure below the venue's (spec 00120 D8): a report above the row repairs
-        it through the startup's repair arm before the pass settles its intent.
+        row of the restored set finds it in the venue's report alone, fills or none, since a credit-0
+        fill no re-read pass repaired leaves its figure below the venue's (spec 00120 D8).
 
         Wrapped per row and around the whole loop for `_reconcile_adopted_rows`' reasons, and the
         ledger write carries its own `try` for the same one: the trip stands behind it, so a
@@ -2170,6 +2156,8 @@ class ProbeExecutor:
                         )
                     else:
                         self._reconcile_finished_row(boundary, row, float(report.filled_qty), label, venue_order_id=venue_order_id)
+                    if restored:
+                        self._answered.add(client_order_id)
                     # A restored row's copy is read only once its figure is applied, and only for the line below.
                     if (
                         restored
@@ -3703,9 +3691,10 @@ class ProbeExecutor:
         reason = getattr(event, "reason", None)
         if reason is not None:
             payload["reason"] = str(reason)
+        boundary, row = attached
         if name in _RECONCILED_TERMINALS and getattr(event, "reconciliation", False):
             payload["reconciliation"] = True  # the flag a minted terminal carries: the ledger's own evidence of the mint
-        boundary, row = attached
+            self._answered.discard(row["client_order_id"])  # a mint answers nothing: the intent waits for a report
         terminal_state = self._venue_terminal_state(event)
         if row.get("state") == "filled":
             # A completed row is never demoted by a later or replayed terminal ack: the fills that
@@ -3912,6 +3901,7 @@ class ProbeExecutor:
                     row["client_order_id"],
                 )
             self._restored_fills.add(row["client_order_id"])
+            self._answered.discard(row["client_order_id"])
             self._arm_reread_after_mint()
             return 0.0
         if row["client_order_id"] not in self._rows_the_pass_repaired:
@@ -3965,6 +3955,7 @@ class ProbeExecutor:
             # deadline stranded the intent first, or a reprice superseded the order -- and it lands here.
             payload["reconciliation"] = True  # the mint's own evidence on the detached path
             self._arm_reread_after_mint()  # the detached site: the order may rest, and no intent of this process will ask
+            self._answered.discard(row["client_order_id"])  # a mint answers nothing: the intent waits for a report
         if type(event).__name__ == "OrderAccepted":
             # A superseded order's acceptance can land after the order it was replaced by: the same
             # record `_on_order_event` writes for the one in flight.

@@ -8538,18 +8538,7 @@ def test_a_restored_row_marked_under_its_copys_txid_is_left_out_of_the_re_read_p
 _OTHER_TXID = "OOTHER-ORDER-000009"
 _ANCHOR_TXID = "OANCHR-ORDER-000001"
 
-# Every shape a row of the restored set reaches a pass in, and the rule's outcome for it: the venue's
-# figure applied, with its repair or its trip, or with the re-read pass's cancel by txid; the pre-cache
-# mark the row's LEDGER state picks, at the level it picks; or unread. The ledger holds 0.0004 on an open
-# row and 0.001 on a finished one, the venue 0.0006, or 0.0005 against a finished row at startup, and the
-# Cache's copy 0.0008, 0.0003, or nothing on a copy the venue never accepted, a figure no row takes. The
-# txid is the row's own, none but the copy's, none anywhere, two the row recorded, or one the row recorded
-# that differs from its copy's. At the re-read pass an open row arrives by a credit-0 fill, or, with no
-# txid of its own, by a terminal this engine minted on its copy; a finished row is one a credit-0 fill
-# reached and the venue's cancel ack closed before the pass. At a restart the row closed on nothing but a
-# credit-0 fill no pass repaired, its copy closed at 0.0008. A startup that marks a row leaves its intent
-# `pending`, never settled from a figure no read answered, and the mark names why.
-# ledger, txid, read, pass -> outcome, state, filled_qty, the mark's level, the intent
+# ledger, txid, read, pass -> outcome, state, filled_qty, the mark's level, the intent; the case below builds each label.
 _ONE_DOOR_MATRIX = [
     ("open", "recorded", "answers", "startup", "applied", "accepted", 0.0006, None, "pending"),
     ("open", "recorded", "omits", "startup", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
@@ -8603,10 +8592,34 @@ _ONE_DOOR_MATRIX = [
     ("finished", "two", "answers", "restart", "applied", "canceled", 0.0006, None, "revoked"),
     ("finished", "two", "omits", "restart", "marked", "canceled", 0.0, "WARNING", "pending"),
     ("finished", "two", "fails", "restart", "unread", "canceled", 0.0, None, "pending"),
+    ("open", "recorded", "fails", "ledger-fails", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "fails", "ledger-fails", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "none", "fails", "ledger-fails", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "fails", "ledger-fails", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "fails", "ledger-fails", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "answers", "early-terminal", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "recorded", "omits", "early-terminal", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "recorded", "fails", "early-terminal", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "answers", "early-terminal", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "copys", "omits", "early-terminal", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "copys", "fails", "early-terminal", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "none", "omits", "early-terminal", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "none", "fails", "early-terminal", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "two", "answers", "early-terminal", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "two", "omits", "early-terminal", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "two", "fails", "early-terminal", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "answers", "early-terminal", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "differs", "omits", "early-terminal", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "differs", "fails", "early-terminal", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
+    ("open", "copys", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
+    ("open", "two", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
+    ("open", "differs", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
 ]
 
 _ONE_DOOR_TXIDS = ("recorded", "copys", "none", "two", "differs")
 _ONE_DOOR_READS = ("answers", "omits", "fails")
+_ONE_DOOR_PASSES = ("startup", "re-read", "restart", "ledger-fails", "early-terminal", "fill-after-answer")
 _ONE_DOOR_DROPPED = {
     **{
         (ledger, "none", "answers", "startup"): "a row with no txid anywhere has no report a read could answer with"
@@ -8638,6 +8651,34 @@ _ONE_DOOR_DROPPED = {
         for txid in ("copys", "none", "differs")
         for read in _ONE_DOOR_READS
     },
+    **{
+        ("open", txid, read, "ledger-fails"): "with the ledger unread the startup reads the venue for no row: the failed read"
+        for txid in _ONE_DOOR_TXIDS
+        for read in ("answers", "omits")
+    },
+    **{
+        ("finished", txid, read, "ledger-fails"): (
+            "never attached at construction, and the startup's settle skips whole on the failed ledger read: no writer "
+            "reaches its intent"
+        )
+        for txid in _ONE_DOOR_TXIDS
+        for read in _ONE_DOOR_READS
+    },
+    **{
+        ("open", "none", "answers", pass_): "a row with no txid anywhere has no report a read could answer with"
+        for pass_ in ("early-terminal", "fill-after-answer")
+    },
+    **{
+        ("open", txid, read, "fill-after-answer"): "no read answered the row, so its fill closes nothing: the startup's tail"
+        for txid in _ONE_DOOR_TXIDS
+        for read in ("omits", "fails")
+    },
+    **{
+        ("finished", txid, read, pass_): "a finished row's terminal came before construction: the startup shape"
+        for txid in _ONE_DOOR_TXIDS
+        for read in _ONE_DOOR_READS
+        for pass_ in ("early-terminal", "fill-after-answer")
+    },
 }
 
 
@@ -8647,7 +8688,7 @@ def test_the_one_door_matrix_is_every_shape_but_the_ones_that_cannot_occur():
         for ledger in ("open", "finished")
         for txid in _ONE_DOOR_TXIDS
         for read in _ONE_DOOR_READS
-        for pass_ in ("startup", "re-read", "restart")
+        for pass_ in _ONE_DOOR_PASSES
     }
     listed = [case[:4] for case in _ONE_DOOR_MATRIX]
     assert len(listed) == len(set(listed)) and not set(listed) & set(_ONE_DOOR_DROPPED)
@@ -8692,7 +8733,7 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     cache = StubCache(closed_orders=[copy]) if copy.is_closed else StubCache(open_orders=[copy])
     anchor = _report(_ANCHOR_TXID, OrderStatus.FILLED, filled_qty="0.001")
     closed = ledger == "finished" and not withdrawal
-    status = OrderStatus.CANCELED if ledger == "finished" else OrderStatus.PARTIALLY_FILLED
+    status = OrderStatus.CANCELED if ledger == "finished" or pass_ == "early-terminal" else OrderStatus.PARTIALLY_FILLED
     figure = "0.0005" if withdrawal else "0.0006"
     answer = _report(read_id, status, filled_qty=figure)
     # A read that omits the row's own txid answers its copy's where the two differ, the report a read by the copy finds.
@@ -8713,9 +8754,26 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
         venue_cancel=cancel,
         config=_cache_config(tmp_path),
     )
+    if pass_ == "ledger-fails":
+
+        def _unreadable(*args, **kwargs):
+            raise OSError("read-only file system")
+
+        request.getfixturevalue("monkeypatch").setattr(executor_module, "open_submitted_rows", _unreadable)
+    terminal = _event(OrderCanceled, client_order_id="O-restored")
 
     with _executor_errors(level=logging.WARNING) as records:
+        if pass_ == "early-terminal":
+            copy.apply(terminal)
+            cache._open_orders.remove(copy)
+            cache._closed_orders.append(copy)
+            ex.on_order_event(terminal)
         ex.on_timer(NOW)
+        if pass_ == "fill-after-answer":
+            ex.on_order_event(_fill("O-restored", 0.0002, venue_order_id=VenueOrderId(read_id), trade_id="T-credit-0"))
+        if pass_ in ("ledger-fails", "fill-after-answer"):
+            copy.apply(terminal)
+            ex.on_order_event(terminal)
         if pass_ == "re-read":
             if txid in ("copys", "differs"):
                 minted = _event(OrderCanceled, client_order_id="O-restored", reconciliation=True)
@@ -8737,11 +8795,9 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     line = f"ledgered order O-restored matches no venue order -- {what}; its row is marked ambiguous"
     marks = [e["what"] for e in row["events"] if e.get("type") == "ambiguous"]
     figures = [e["venue_filled_qty"] for e in row["events"] if e.get("event") in ("reconciled", "withdrawn")]
-    assert (row["state"], row["filled_qty"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
-        state,
-        pytest.approx(filled),
-        intent,
-    )
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (row["state"], row["filled_qty"], entry["outcome"]) == (state, pytest.approx(filled), intent)
+    assert intent == "pending" or entry["filled_qty"] == pytest.approx(filled)
     assert (marks, [r.levelname for r in records if r.getMessage() == line]) == (
         ([what], [level]) if outcome == "marked" else ([], [])
     )
@@ -8749,9 +8805,9 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     assert float(copy.filled_qty) not in (row["filled_qty"], *figures)
     assert cancel.calls == ([(read_id, INSTRUMENT_IDS["BTC/EUR"])] if outcome == "recancelled" else [])
     assert _kill_file(tmp_path).exists() == (outcome == "applied" and withdrawal)
-    assert (ex._reconciliation_refusal is not None) == (read == "fails" and pass_ != "re-read")
+    assert (ex._reconciliation_refusal is not None) == (read == "fails" and pass_ not in ("re-read", "ledger-fails"))
     since = _boundary(NOW if txid == "none" else earlier) - timedelta(hours=1)
-    assert venue.calls == ([since, since] if pass_ == "re-read" else [since])
+    assert venue.calls == {"re-read": [since, since], "ledger-fails": []}.get(pass_, [since])
 
     if outcome == "marked" and pass_ == "re-read":
         later = _fill("O-restored", 0.0001, venue_order_id=VenueOrderId(read_id), trade_id="T-later")
@@ -8884,6 +8940,61 @@ def test_the_cancel_ack_of_an_adopted_reducer_outside_the_restored_set_writes_no
     assert (row["state"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == ("canceled", "pending")
 
 
+@pytest.mark.parametrize("external", [False, True], ids=["own-copy", "external-copy"])
+def test_a_mint_on_a_restored_row_the_startup_answered_keeps_its_intent_pending_at_a_later_venue_ack(tmp_path, external):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    cid, strategy_id = (_TXID, StrategyId("EXTERNAL")) if external else ("O-reducer", _STUB_STRATEGY_ID)
+    client = StubClient(StubCache(open_orders=[_resting_limit_order(cid, venue_order_id=_TXID, strategy_id=strategy_id)]))
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=_VenueOrders(_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0002")),
+        config=_cache_config(tmp_path),
+    )
+    ex.on_timer(NOW)
+    assert _record(tmp_path, earlier)["submitted"][0]["filled_qty"] == pytest.approx(0.0002)
+
+    with _executor_errors(level=logging.WARNING):
+        for reconciliation in (True, False):
+            event = _event(OrderCanceled, client_order_id=cid, strategy_id=strategy_id, reconciliation=reconciliation)
+            if external:
+                _deliver_external_event(ex, client, event)
+            else:
+                if reconciliation:
+                    client.cache.order(ClientOrderId(cid)).apply(event)
+                ex.on_order_event(event)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
+        "canceled",
+        pytest.approx(0.0002),
+        "pending",
+    )
+
+
+def test_a_finished_restored_row_the_venue_answers_at_its_own_figure_has_its_intent_settled_at_startup(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=False, when=earlier, venue_order_id=_TXID)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", state="filled", add_filled_qty=0.001)
+    venue = _VenueOrders(_report(_TXID, OrderStatus.FILLED, filled_qty="0.001"))
+    ex = _executor(
+        tmp_path,
+        client=StubClient(StubCache(closed_orders=[_restored_order("O-restored", filled=0.001)])),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        config=_cache_config(tmp_path),
+    )
+
+    ex.on_timer(NOW)
+
+    entry = _intent_entry(tmp_path, 0, earlier)
+    assert (entry["outcome"], entry["filled_qty"], len(venue.calls)) == ("filled", 0.001, 1)
+
+
 def test_a_restored_row_is_read_at_the_venue_when_a_read_of_its_copy_raises(tmp_path, kill_trip_expected):
     class _NoOrderRead(StubCache):
         def order(self, client_order_id):
@@ -8909,12 +9020,7 @@ def test_a_restored_row_is_read_at_the_venue_when_a_read_of_its_copy_raises(tmp_
     assert _kill_file(tmp_path).exists() and _intent_entry(tmp_path, 0, earlier)["outcome"] == "pending"
 
 
-# The reads of a row's txid, of the restored set or of a row's Cache copy other than through `_read_id`: the
-# one door's names, reached by name, attribute or string; the Cache's `order` and `client_order_id` reached
-# through `_cache`; a copy's figure or status read off a lookup's result; and the ledger's txid key. Each
-# pair is keyed by its enclosing def, a nested one by its path, and listed with the reason it reads no row
-# at the venue by it. The census holds which functions read, not which arm of a sweep does: that a sweep
-# takes a restored row's figure and status from the venue's report alone is the matrix's to hold.
+# The reads of a row's txid, the restored set or a Cache copy other than through `_read_id`, per function; which arm of a sweep reads is the matrix's.
 _ONE_DOOR_NAMES = frozenset({"_row_venue_order_id", "_row_venue_order_ids", "_cached_order", "_cache_lookup", "_restored"})
 _ONE_DOOR_LOOKUPS = frozenset({"_cached_order", "_cache_lookup"})
 _ONE_DOOR_CACHE_ACCESSORS = frozenset({"order", "client_order_id"})
@@ -8956,6 +9062,13 @@ _ONE_DOOR_CALLERS = {
     ("_fill_credit", "_cache.order"): "the event path: the replay cap on a row outside the restored set",
     ("_fill_credit", "copy.filled_qty"): "the event path: what the Cache's order holds beyond a row the pass repaired",
 }
+# Every writer of a plan intent, per function: a restored row's intent is written only from `_answered`.
+_INTENT_WRITER = "update_plan_intent"
+_INTENT_WRITERS = {
+    "_journal_intent": "the running plan's own intents, which no restored row belongs to",
+    "_settle_pending_intents": "the startup's settle, a restored row's intent only once this pass's report answered it",
+    "_settle_restored_intent": "a restored row's terminal, only once a report of this process answered it since its last fill",
+}
 
 
 def _one_door_callers() -> set[tuple[str, str]]:
@@ -8975,13 +9088,15 @@ def _one_door_callers() -> set[tuple[str, str]]:
             )
         )
 
+    names = _ONE_DOOR_NAMES | {_INTENT_WRITER}
+
     def read(node, aliases, copies):
-        if isinstance(node, ast.Name) and node.id in _ONE_DOOR_NAMES:
+        if isinstance(node, ast.Name) and node.id in names:
             return node.id
-        if isinstance(node, ast.Constant) and node.value in _ONE_DOOR_NAMES:
+        if isinstance(node, ast.Constant) and node.value in names:
             return node.value  # `getattr` or `globals()` by the name
         if isinstance(node, ast.Attribute):
-            if node.attr in _ONE_DOOR_NAMES:
+            if node.attr in names:
                 return node.attr
             if node.attr in _ONE_DOOR_CACHE_ACCESSORS and cache(node.value, aliases):
                 return f"_cache.{node.attr}"
@@ -9017,8 +9132,16 @@ def _one_door_callers() -> set[tuple[str, str]]:
     return found
 
 
-def test_every_read_of_a_rows_txid_or_its_cache_copy_goes_through_the_one_door():
+def test_every_read_of_a_rows_txid_or_its_cache_copy_goes_through_the_one_door_and_every_intent_writer_is_listed():
     found = _one_door_callers()
+    writers = {owner for owner, name in found if name == _INTENT_WRITER}
+    found -= {(owner, _INTENT_WRITER) for owner in writers}
+    assert sorted(writers - set(_INTENT_WRITERS)) == [], (
+        f"{sorted(writers - set(_INTENT_WRITERS))} write a plan intent -- a restored row's intent is written only once a "
+        "venue report of this process has answered it since its last fill or mint (`_answered`); write it through "
+        "`_settle_restored_intent`, or list the writer in `_INTENT_WRITERS` with the reason it writes no restored row's"
+    )
+    assert sorted(set(_INTENT_WRITERS) - writers) == [], "an entry no function calls any more leaves `_INTENT_WRITERS`"
     unlisted = sorted(found - set(_ONE_DOOR_CALLERS))
     assert unlisted == [], (
         f"{unlisted} read a row's txid or its Cache copy directly -- the one door: every ledgered row either pass reads "
@@ -9401,6 +9524,50 @@ def test_a_minted_terminal_on_a_restored_kept_reducer_the_venue_holds_open_is_re
     assert [venue_order_id for venue_order_id, _ in cancel.calls] == [_TXID]
     entry = _intent_entry(tmp_path, 0, earlier)
     assert (entry["outcome"], entry["filled_qty"]) == ("revoked", 0.0004)
+
+
+@pytest.mark.parametrize("raised", [False, True], ids=["marked-by-a-good-read", "its-reconcile-raised"])
+def test_a_restored_row_the_re_read_pass_could_not_repair_stays_among_the_rows_a_fill_reached(tmp_path, raised):
+    class _OrderReadRaises(StubCache):
+        raises = False
+
+        def order(self, client_order_id):
+            if self.raises:
+                raise RuntimeError("cache read failed")
+            return super().order(client_order_id)
+
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    cache = _OrderReadRaises(open_orders=[_restored_order("O-reducer")])
+    venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
+    ex = _executor(
+        tmp_path,
+        client=StubClient(cache),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        config=_cache_config(tmp_path),
+    )
+    ex.on_timer(NOW)
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_order_event(_fill("O-reducer", 0.0004, venue_order_id=VenueOrderId(_TXID), trade_id="T-1"))
+        venue.reports = [_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004")] if raised else []
+        cache.raises = raised
+        ex.on_timer(NOW + timedelta(seconds=5))
+        cache.raises = False
+        if raised:
+            _reconnect(ex)
+            ex.on_timer(NOW + timedelta(seconds=10))
+        else:
+            ex.on_order_event(_fill("O-reducer", 0.0001, venue_order_id=VenueOrderId(_TXID), trade_id="T-2"))
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert [r.getMessage() for r in records if "credits nothing" in r.getMessage()] == [
+        "a fill on restored order O-reducer credits nothing until the venue is read -- the next restart is taken flat"
+    ]
+    assert (row["state"], row["filled_qty"], len(venue.calls)) == (
+        ("accepted", pytest.approx(0.0004), 3) if raised else ("ambiguous", 0.0, 2)
+    )
 
 
 def test_realized_pnl_takes_the_caches_realizations_at_construction_as_a_baseline(tmp_path):
