@@ -1033,7 +1033,7 @@
       "id": 401,
       "type": "stat",
       "title": "Backend status per node",
-      "description": "Whether each backend of the engine's cache proxy is UP, its `state=\"UP\"` series -- HAProxy publishes one 0/1 series per state, never one enumerated value: a backend is a cache node, and its servers are the three Sentinels' checks of that node, UP while a Sentinel names it the primary. Exactly one backend UP is the healthy reading; none is the alert below; two is a failover in progress.",
+      "description": "Whether each backend of the engine's cache proxy is UP, its `state=\"UP\"` series -- HAProxy publishes one 0/1 series per state, never one enumerated value: a backend is a cache node, and its servers are the three Sentinels' checks of that node, UP while a Sentinel names it the primary. Exactly one backend UP is the healthy reading; two is a failover in progress. A backend reads UP with one server UP, which the frontend routes nothing to: the alert below is fewer than two servers UP on every backend, the panel beside this one.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 5, "w": 8, "x": 0, "y": 74},
       "targets": [
