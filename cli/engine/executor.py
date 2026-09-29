@@ -983,6 +983,9 @@ class ProbeExecutor:
         # The (row, `what`) pairs a sweep of this process marked unmatched (`_mark_unmatched`), which the
         # re-read pass leaves out.
         self._marked: set[tuple[str, str]] = set()
+        # The rows a sweep of this process left unread on a failed venue read, each until a later read of
+        # this process answers it: with `_marked`, the rows no read of this process repaired.
+        self._unread: set[str] = set()
         # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
         self._restored_fills: set[str] = set()
@@ -1549,6 +1552,7 @@ class ProbeExecutor:
                 since = min(boundary for boundary, _ in rows.values()) - _VENUE_READ_MARGIN
                 reports = (self._venue_orders or read_venue_orders)(since)
         except Exception:
+            self._unread.update(rows)
             if self._sockets_down:
                 self._reread_tries = 0
                 self._reread_armed_by = None
@@ -1651,6 +1655,8 @@ class ProbeExecutor:
                     venue_order_id = self._read_id(row)
                     order = self._cached_order(row, venue_order_id)
                     report = None if venue_orders is None or venue_order_id is None else venue_orders.get(venue_order_id)
+                    if report is not None:
+                        self._unread.discard(client_order_id)
                     restored = order is not None and self._venue_answers(row, finished=False)
                     if restored and report is not None:
                         # A restored order the venue answered for: the report over the Cache's copy, the
@@ -1683,6 +1689,7 @@ class ProbeExecutor:
                     # A restored row no report answered for takes the tail below as a row outside the restored set does,
                     # never repaired from the Cache's copy, which runs ahead of the venue on a kept reducer (spec 00120 D8).
                     if venue_order_id is not None and venue_orders is None:
+                        self._unread.add(client_order_id)
                         continue  # the read failed: unread, not unknowable, and every plan is refused
                     if report is None:
                         self._mark_unmatched(boundary, row, venue_order_id)
@@ -1936,12 +1943,13 @@ class ProbeExecutor:
         `_restored_fills` waits: its `filled_qty` is the credit-0 figure until the re-read pass repairs it,
         and the pass writes the intent after that repair; a row the pass could not repair, marked or
         unread, stays in the set, its intent `pending`, never settled from that figure. A row a sweep of
-        this process marked (`_marked_here`), the startup's marks among them, keeps its intent `pending`
-        at its terminal too: its figure is one no read answered, the credit-0 one among them, and its
-        mark names why."""
+        this process marked (`_marked_here`), the startup's marks among them, or left unread on a failed
+        read (`_unread`) until a later read answers it, keeps its intent `pending` at its terminal too: its
+        figure is one no read answered, the credit-0 one among them, and its mark or the failed read's
+        line names why."""
         if not self._restored_row(row) or row.get("state") in _OPEN_ORDER_STATES:
             return
-        if row["client_order_id"] in self._restored_fills or self._marked_here(row):
+        if row["client_order_id"] in self._restored_fills or self._marked_here(row) or row["client_order_id"] in self._unread:
             return
         key = (row.get("plan_id"), row.get("intent_index"))
         try:
@@ -2142,6 +2150,7 @@ class ProbeExecutor:
                         self._reconcile_finished_row(boundary, row, float(order.filled_qty), label, venue_order_id=venue_order_id)
                         continue
                     if venue_order_id is not None and venue_orders is None:
+                        self._unread.add(client_order_id)
                         continue  # the read failed: unread, not unknowable, and every plan is refused
                     report = None if venue_order_id is None else venue_orders.get(venue_order_id)
                     if report is None:

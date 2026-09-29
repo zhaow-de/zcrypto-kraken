@@ -8758,13 +8758,17 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
         ex.on_order_event(later)
         ex.on_timer(NOW + timedelta(seconds=10))
         assert len(venue.calls) == 2  # the marked row is left out of the pass the later fill armed
-        if ledger == "open":
-            canceled = _event(OrderCanceled, client_order_id="O-restored")
-            if not copy.is_closed:
-                copy.apply(canceled)
-            ex.on_order_event(canceled)
-            row = _record(tmp_path, earlier)["submitted"][0]
-            assert (row["state"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == ("canceled", "pending")
+    if outcome in ("marked", "unread"):
+        # A terminal after the pass, or its replay on a closed copy, writes no intent for a row no read repaired.
+        canceled = _event(OrderCanceled, client_order_id="O-restored")
+        if not copy.is_closed:
+            copy.apply(canceled)
+        ex.on_order_event(canceled)
+        row = _record(tmp_path, earlier)["submitted"][0]
+        assert (row["state"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
+            "canceled" if ledger == "open" else state,
+            "pending",
+        )
 
 
 def test_a_restored_row_an_earlier_process_marked_is_read_again_by_the_re_read_pass_once_this_process_answers_it(tmp_path):
@@ -8825,6 +8829,49 @@ def test_the_cancel_ack_of_a_restored_row_writes_its_intent_unless_the_startup_m
         pytest.approx(filled),
         outcome,
     )
+
+
+@pytest.mark.parametrize(
+    "reread, filled, outcome",
+    [(False, 0.0, "pending"), (True, 0.0006, "revoked")],
+    ids=["no-read-answered-it", "a-re-read-answered-it"],
+)
+def test_the_cancel_ack_of_a_restored_row_a_failed_startup_read_left_unread_writes_its_intent_once_a_read_answers(
+    tmp_path, reread, filled, outcome
+):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-restored", reduce_only=True, when=earlier, venue_order_id=_TXID)
+    credit_0 = {"event": "fill", "at": earlier.isoformat(), "qty": 0.0002, "px": 30000.0, "venue_order_id": _TXID, "credited": 0.0}
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-restored", event=credit_0)
+    copy = _restored_order("O-restored", filled=0.0008)
+    venue = _VenueOrders(raises=RuntimeError("timed out"))
+    ex = _executor(
+        tmp_path,
+        client=StubClient(StubCache(open_orders=[copy])),
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=venue,
+        config=_cache_config(tmp_path),
+    )
+    with _executor_errors(level=logging.WARNING):
+        ex.on_timer(NOW)
+        if reread:
+            ex.on_order_event(_fill("O-restored", 0.0002, venue_order_id=VenueOrderId(_TXID), trade_id="T-credit-0"))
+            venue._raises = None
+            venue.reports = [_report(_TXID, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0006")]
+            ex.on_timer(NOW + timedelta(seconds=5))
+
+    canceled = _event(OrderCanceled, client_order_id="O-restored")
+    copy.apply(canceled)
+    ex.on_order_event(canceled)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    assert (row["state"], row["filled_qty"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
+        "canceled",
+        pytest.approx(filled),
+        outcome,
+    )
+    assert len(venue.calls) == (2 if reread else 1)
 
 
 def test_the_cancel_ack_of_an_adopted_reducer_outside_the_restored_set_writes_no_intent(tmp_path):
