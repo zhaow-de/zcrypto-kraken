@@ -8405,26 +8405,90 @@ def test_a_restored_row_the_order_read_failed_for_stays_unread_and_the_next_rest
         assert "O-reducer" in ex._attached and not _kill_file(tmp_path).exists(), restart
 
 
-@pytest.mark.parametrize("venue_order_id", [None, _TXID], ids=["row-without-a-txid", "txid-the-read-omits"])
-def test_a_restored_row_a_good_read_answered_nothing_for_stays_unread(tmp_path, venue_order_id):
+def test_a_restored_row_without_a_txid_is_read_by_its_copys_txid_and_settled_from_the_report(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _pending_plan_entry(tmp_path, earlier, n_intents=1)
+    _submitted_row(tmp_path, "O-open", reduce_only=False, when=earlier)
+    reads = []
+    for restart in range(2):
+        client = StubClient(StubCache(closed_orders=[_restored_order("O-open", filled=0.001)]))
+        venue = _VenueOrders(_report(_TXID, OrderStatus.FILLED, filled_qty="0.001"))
+        ex = _executor(
+            tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+        )
+
+        ex.on_timer(NOW + timedelta(minutes=restart))
+
+        row = _record(tmp_path, earlier)["submitted"][0]
+        types = [e.get("type") or e.get("event") for e in row["events"]]
+        assert (row["state"], row["filled_qty"], types) == ("filled", 0.001, ["reconciled"]), restart
+        assert _intent_entry(tmp_path, 0, earlier)["outcome"] == "filled", restart
+        assert client.canceled == [] and not _kill_file(tmp_path).exists(), restart
+        reads.append(venue.calls)
+    assert reads[0] == [_boundary(earlier) - timedelta(hours=1)]
+
+
+def _unaccepted_order(client_order_id):
+    """A REAL `LimitOrder` the venue never acknowledged: SUBMITTED, with no txid on it."""
+    head = (_TRADER_ID, _STUB_STRATEGY_ID, InstrumentId.from_str(INSTRUMENT_IDS["BTC/EUR"]), ClientOrderId(client_order_id))
+    order = LimitOrder(
+        *head, OrderSide.BUY, Quantity.from_str("0.001"), Price.from_str("30000.0"), TimeInForce.GTC,
+        False, False, False, UUID4(), 0,
+    )  # fmt: skip
+    order.apply(OrderSubmitted(*head, _ACCOUNT_ID, UUID4(), 0, 0))
+    assert order.venue_order_id is None
+    return order
+
+
+def test_a_restored_row_with_no_txid_anywhere_is_marked_ambiguous_at_warning(tmp_path):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier)
+    client = StubClient(StubCache(open_orders=[_unaccepted_order("O-reducer")]))
+    venue = _VenueOrders()
+    ex = _executor(
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
+    )
+
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    marks = [e["what"] for e in row["events"] if e.get("type") == "ambiguous"]
+    assert (row["state"], row["filled_qty"], marks, venue.calls) == ("ambiguous", 0.0, [_NO_TXID], [])
+    line = f"ledgered order O-reducer matches no venue order -- {_NO_TXID}; its row is marked ambiguous"
+    assert [r.levelname for r in records if r.getMessage() == line] == ["WARNING"]
+
+
+@pytest.mark.parametrize("venue_order_id", [None, _TXID], ids=["the-copys-txid", "the-rows-txid"])
+def test_a_restored_row_a_good_read_omits_is_marked_ambiguous_at_critical_and_never_repaired(tmp_path, venue_order_id):
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=venue_order_id)
     update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0006)
     client = StubClient(StubCache(open_orders=[_restored_order("O-reducer", filled=0.0008)]))
+    venue = _VenueOrders()
     ex = _executor(
-        tmp_path,
-        client=client,
-        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
-        venue_orders=_VenueOrders(),
-        config=_cache_config(tmp_path),
+        tmp_path, client=client, gate=_gate(tmp_path, GateLevel.REDUCE_ONLY), venue_orders=venue, config=_cache_config(tmp_path)
     )
 
-    ex.on_timer(NOW)
+    with _executor_errors(level=logging.WARNING) as records:
+        ex.on_timer(NOW)
 
     row = _record(tmp_path, earlier)["submitted"][0]
     reconciled = [e for e in row["events"] if e.get("event") == "reconciled"]
-    assert (row["filled_qty"], reconciled, client.canceled) == (0.0006, [], [])
-    assert "O-reducer" in ex._attached and not _kill_file(tmp_path).exists()
+    marks = [e["what"] for e in row["events"] if e.get("type") == "ambiguous"]
+    what = f"the venue's order read has no order {_TXID}"
+    assert (row["state"], row["filled_qty"], reconciled, marks) == ("ambiguous", 0.0006, [], [what])
+    assert venue.calls == [_boundary(earlier) - timedelta(hours=1)]
+    line = f"ledgered order O-reducer matches no venue order -- {what}; its row is marked ambiguous"
+    assert [r.levelname for r in records if r.getMessage() == line] == ["CRITICAL"]
+    assert client.canceled == [] and not _kill_file(tmp_path).exists()
+
+    fill = _fill("O-reducer", 0.0001, venue_order_id=VenueOrderId(_TXID), trade_id="T-after")
+    client.cache.order(ClientOrderId("O-reducer")).apply(fill)
+    ex.on_order_event(fill)
+    ex.on_timer(NOW + timedelta(seconds=5))
+
+    assert len(venue.calls) == 1  # the re-read pass the fill armed leaves the marked row out
 
 
 def test_a_plan_the_other_checks_refused_takes_no_mixed_inventory_read(tmp_path):

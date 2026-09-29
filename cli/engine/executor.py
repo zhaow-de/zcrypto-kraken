@@ -418,14 +418,14 @@ def _unread_what(venue_order_id: str) -> str:
     return f"the venue's order read has no order {venue_order_id}"
 
 
-def _marked_unmatched(row: dict, what: str | None = None) -> bool:
+def _marked_unmatched(row: dict, what: str | None = None, *, venue_order_id: str | None = None) -> bool:
     """Whether `row` carries `_mark_unmatched`'s `ambiguous` event for `what` -- with none given, for
-    the `what` a read would write for it now, the row's own txid deciding which (`_unmatchable_what`
-    or `_unread_what`): the re-read pass leaves such a row out of its later arms, since no read of
-    this process settles it and each arm would re-read it and page the same line, where a startup
-    inside the re-attach window reads it again. The strand's `ambiguous` event carries another `what`."""
+    the `what` a read would write for it now, the txid it is read by (`venue_order_id`, the executor's
+    `_read_id`) deciding which (`_unmatchable_what` or `_unread_what`): the re-read pass leaves such a
+    row out of its later arms, since no read of this process settles it and each arm would re-read it
+    and page the same line, where a startup inside the re-attach window reads it again. The strand's
+    `ambiguous` event carries another `what`."""
     if what is None:
-        venue_order_id = _row_venue_order_id(row)
         what = _unmatchable_what(row) if venue_order_id is None else _unread_what(venue_order_id)
     return any(isinstance(e, dict) and e.get("type") == "ambiguous" and e.get("what") == what for e in row.get("events") or ())
 
@@ -1512,7 +1512,8 @@ class ProbeExecutor:
             rows = {
                 row["client_order_id"]: (boundary, row)
                 for boundary, row in open_submitted_rows(self._journal_dir, now)
-                if (self._minted_closed(row) or row["client_order_id"] in self._restored_fills) and not _marked_unmatched(row)
+                if (self._minted_closed(row) or row["client_order_id"] in self._restored_fills)
+                and not _marked_unmatched(row, venue_order_id=self._read_id(row))
             }
             # A restored row a fill reached and a terminal then closed before this pass -- the venue's
             # cancel ack, an expiry -- is in the window's closed rows: its credit-0 fill is repaired
@@ -1521,7 +1522,8 @@ class ProbeExecutor:
                 {
                     row["client_order_id"]: (boundary, row)
                     for boundary, row in closed_submitted_rows(self._journal_dir, now)
-                    if row["client_order_id"] in self._restored_fills and not _marked_unmatched(row)
+                    if row["client_order_id"] in self._restored_fills
+                    and not _marked_unmatched(row, venue_order_id=self._read_id(row))
                 }
             )
             self._reset_fills_read(rows.values())
@@ -1627,10 +1629,11 @@ class ProbeExecutor:
         try:
             for client_order_id, (boundary, row) in rows.items():
                 try:
-                    venue_order_id = _row_venue_order_id(row)
+                    venue_order_id = self._read_id(row)
                     order = self._cached_order(row, venue_order_id)
                     report = None if venue_orders is None or venue_order_id is None else venue_orders.get(venue_order_id)
-                    if order is not None and report is not None and self._venue_answers(row, finished=False):
+                    restored = order is not None and self._venue_answers(row, finished=False)
+                    if restored and report is not None:
                         # A restored order the venue answered for: the report over the Cache's copy, the
                         # previous process's view (spec 00120 D6), and no re-cancel -- a restored order is
                         # cancelled or kept by the startup's classification.
@@ -1648,13 +1651,7 @@ class ProbeExecutor:
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
                         continue
-                    if order is not None and self._venue_answers(row, finished=False):
-                        # The order read failed or answered nothing for it: a restored row is left unread,
-                        # its attach kept, and never repaired from the Cache's copy, which runs ahead of
-                        # the venue on a kept reducer (spec 00120 D8) -- a fill arms the re-read pass, else
-                        # the next restart reads it while open.
-                        continue
-                    if order is not None:
+                    if order is not None and not restored:
                         self._reconcile_adopted_row(
                             boundary,
                             row,
@@ -1664,12 +1661,15 @@ class ProbeExecutor:
                             venue_order_id=venue_order_id or _venue_order_id_of(order),
                         )
                         continue
+                    # A restored row no report answered for -- read by its copy's txid where the row records
+                    # none (`_read_id`) -- joins the rest here: never repaired from the Cache's copy, which
+                    # runs ahead of the venue on a kept reducer (spec 00120 D8), but marked as a row outside
+                    # the restored set is, and left unread only when the read failed, every plan then refused.
                     if venue_order_id is None:
                         self._mark_unmatched(boundary, row, _unmatchable_what(row), open_row=True)
                         continue
                     if venue_orders is None:
                         continue  # the read failed: unread, not unknowable, and every plan is refused
-                    report = venue_orders.get(venue_order_id)
                     if report is None:
                         self._mark_unmatched(boundary, row, _unread_what(venue_order_id), open_row=True, critical=True)
                         continue
@@ -1794,8 +1794,9 @@ class ProbeExecutor:
         holdings read the pass makes next (`_settle_positions_from_venue`) builds a client of its own at
         every startup.
 
-        A row needs them when it recorded a txid and the Cache holds no order under either of its ids -- an
-        open row whose order closed while this process was down, or a finished row with fills, the only
+        A row needs them when it has a txid -- the one it recorded, or for an open row of the restored
+        set its copy's (`_read_id`) -- and the Cache holds no order under either of its ids -- an open
+        row whose order closed while this process was down, or a finished row with fills, the only
         kind a withdrawal can show on -- and, with the cache enabled, every row the venue answers for
         (`_venue_answers`), a finished row of the restored set with no fills among them. The read reaches
         back to the earliest such row's boundary.
@@ -1810,7 +1811,7 @@ class ProbeExecutor:
                 try:
                     if is_finished and not row["filled_qty"] > _OVERFILL_TOLERANCE and not self._restored_row(row):
                         continue
-                    venue_order_id = _row_venue_order_id(row)
+                    venue_order_id = _row_venue_order_id(row) if is_finished else self._read_id(row)
                     if venue_order_id is None:
                         continue
                     order = self._cached_order(row, venue_order_id)
@@ -1900,6 +1901,11 @@ class ProbeExecutor:
         if not self._cache_enabled:
             return False
         return finished or self._restored_row(row)
+
+    def _read_id(self, row: dict) -> str | None:
+        """The txid an open row is read at the venue by: the one it recorded, else, for a row of the
+        restored set, its Cache copy's (`_restored`), which carries the acceptance a ledger row can miss."""
+        return _row_venue_order_id(row) or self._restored.get(row["client_order_id"])
 
     def _restored_row(self, row: dict) -> bool:
         """Whether the Cache held `row`'s order at construction (`_read_restored`): under the id this
