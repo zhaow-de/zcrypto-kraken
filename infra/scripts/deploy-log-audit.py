@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import pathlib
 import re
@@ -137,8 +138,27 @@ def run_maintenance(rows: list[dict], windows: list[dict], *, venue_facing_only:
     return EXIT_OK
 
 
+def _inventory_groups() -> dict[str, set[str]]:
+    spec = importlib.util.spec_from_file_location("pins_converged", pathlib.Path(__file__).with_name("pins-converged.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.inventory_groups(_REPO)
+
+
+def gated_by_the_engine_window(row: dict, groups: dict[str, set[str]]) -> bool:
+    """An `engine` row, or a `cache-link` row whose limit reaches an engine host: site.yml's window guard
+    carries both tags, since the cache_link handler restarts the mesh interface the engine's cache session
+    crosses. A limit is host and group names, comma-separated, and an absent one is the whole inventory."""
+    tags = row["tags"].split(",")
+    if "engine" in tags:
+        return True
+    reached = {h for part in (row.get("limit") or "all").split(",") for h in (groups.get(part.strip()) or {part.strip()})}
+    return "cache-link" in tags and bool(reached & groups.get("engine_host", set()))
+
+
 def run_engine_window(rows: list[dict]) -> int:
-    engine = [row for row in rows if "engine" in row["tags"].split(",")]
+    groups = _inventory_groups()
+    engine = [row for row in rows if gated_by_the_engine_window(row, groups)]
     floor = [row for row in engine if on_the_completion_floor(row)]
     outside = [row for row in engine if not inside_gap(row["ts"]) and row not in floor]
     failed = [row for row in engine if row["rc"] != 0]
