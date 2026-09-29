@@ -5426,3 +5426,177 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  # ---- the engine's cache proxy and the engine's own cache writes, on the engine host -----------------
+  # `cache_proxy` is a STATIC scrape target on both capture hosts (roles/capture/files/config.alloy), so
+  # its series read 0 on zcrypto-red by construction: every rule here carries host="zcrypto". The proxy
+  # routes the engine's connections -- the load's, idle after the start, and the writer's -- to the node
+  # two of the three Sentinels name the primary; a backend short of two servers UP is one the frontend
+  # routes nothing to, the engine's writes going nowhere, and the engine's sessions absent while the
+  # engine runs is a link cut the lazy reconnect has not yet taken -- the writer's returns at the next
+  # write, which the library drops, and the load's never does.
+  - uid: zcrypto-cache-proxy-no-backend
+    title: "Cache · proxy has no backend"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The most Sentinels agreeing on any one backend: 2 or 3 while the set has a primary the quorum
+          # names, 1 while only one Sentinel does, 0 while none does or the proxy is down -- `or on()
+          # vector(0)` reads a dead proxy as 0 rather than NoData, since the scrape target is static and
+          # a proxy container that stopped takes its series away. The threshold is the frontend's own
+          # routing bound, `nbsrv(nodeN) ge 2` in roles/engine/templates/haproxy.cfg.j2: at 1 the proxy
+          # routes nothing new, which tests/test_infra_alert_rules.py holds equal.
+          expr: >-
+            max(haproxy_backend_active_servers{host="zcrypto"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [2]}
+    noDataState: OK
+    execErrState: Alerting
+    # A failover leaves the frontend without a backend for the seconds the Sentinels take to name the
+    # new primary and the checks to pass twice; 2m clears one.
+    for: 2m
+    annotations:
+      summary: "For 2+ minutes no backend of the engine's cache proxy has two Sentinel checks passing, the frontend's routing bound, so the engine's cache writes have nowhere to land: the set has no primary its quorum names, the proxy cannot reach two Sentinels over the mesh, or the proxy container is down. Nothing is replayed once the link returns, so the store is behind from the first dropped write and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "402"
+      unit: "Sentinel checks passing on the most-agreed backend"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-proxy-no-engine-session
+    title: "Cache · engine running with no session through the proxy"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The conjunction zcrypto-engine-dark-with-exposure takes: the engine's scrape reads 1 (node B reads
+    # the VALUE, since the target is static) while the proxy carries no session (node A). `or on()
+    # vector(0)` on both so a dead proxy or a dark engine reads 0 rather than NoData.
+    condition: D
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            sum(haproxy_backend_current_sessions{host="zcrypto"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min(up{job="engine_app",host="zcrypto"}) or on() vector(0)'
+          instant: true
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: math
+          expression: "$A < 1 && $B > 0"
+          refId: C
+      - refId: D
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "C"
+          refId: D
+          conditions:
+            - evaluator: {type: gt, params: [0]}  # the math node is 1 iff BOTH halves hold
+    noDataState: OK
+    execErrState: Alerting
+    # The library reconnects lazily, on the engine's next write: an idle engine between cycles holds no
+    # session for minutes after a cut, and 15m is the longest an armed engine stays silent.
+    for: 15m
+    annotations:
+      summary: "The engine has been reporting for 15+ minutes while the cache proxy carries no session from it: the link was cut -- a failover's shutdown of sessions, a proxy restart, the mesh interface restarted -- and the library reconnects only on the engine's next write, which it drops. The writer's session returns at the write after that; the store is behind by what the cut cost, nothing replays it, and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "403"
+      unit: "sessions through the proxy"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-cache-write-failed
+    title: "Cache · the engine's cache writes failed"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The library logs each write it could not deliver at ERROR (`broken pipe`, `Connection refused`)
+      # and each event on an order whose key an outage lost at WARN (`Cannot update order in Redis, no
+      # existing state`), every one naming its module, `nautilus_infrastructure::redis::cache`, and the
+      # capture primary's Alloy ships nautilus's WARN and ERROR lines as container="engine-nautilus",
+      # which zcrypto-engine-error-logs (container="engine") never selects. Nothing is logged at the cut
+      # itself: detection comes from writes, so an engine idle between cycles logs nothing about an
+      # outage, which zcrypto-cache-proxy-no-engine-session covers from the proxy's side. Shape as
+      # zcrypto-engine-error-logs: a count over 15m, `or on() vector(0)` for a clean window.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="zcrypto", container="engine-nautilus"} |= "nautilus_infrastructure::redis::cache" [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "The engine's library logged a cache write it could not deliver, or an event on an order whose cache key an outage lost, in the last 15 minutes. The link recovers lazily on the next write, which fails and is dropped, and nothing written during the outage is replayed: the store is behind by everything written while the link was down and by the dropped write, an order whose creating write was lost logs this on every later event, and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-engine-cache-write-failed"
+      unit: "cache write failures logged in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs

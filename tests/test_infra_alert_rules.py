@@ -462,6 +462,16 @@ NOT_A_FAULT_SIGNAL = {
     #   audit_mismatches: a discriminator, not a signal -- nonzero withholds the summary, so run-broken
     #   pages and its runbook reads this first to tell a cache disagreement from a crash.
     "ops_verify_replay_audit_mismatches",
+    # The engine's cache proxy: the two alerted families are the most-agreed backend's active
+    # servers and the sessions; these four are the detail the Cache board's proxy row draws once
+    # one has paged. backend_status per backend is the alert's own signal broken out per node,
+    # server_status and server_check_status are per-Sentinel views of the same checks, and the
+    # failures counter rises on every failover by design, so a threshold on it pages on a healthy
+    # set moving its primary.
+    "haproxy_backend_status",
+    "haproxy_server_status",
+    "haproxy_server_check_status",
+    "haproxy_server_check_failures_total",
 }
 
 _ADMITTED = frozenset(_admitted_series()) | frozenset(_verify_replay_series())
@@ -827,6 +837,37 @@ def _runbook_anchors() -> dict[str, list[str]]:
         for anchor in _ANCHOR_TAG.findall(path.read_text()):
             found.setdefault(anchor, []).append(path.name)
     return found
+
+
+def test_the_cache_proxy_rules_read_the_primary_and_the_write_rule_reads_the_librarys_lines():
+    """The three rules of the engine's cache: every Prometheus expression scoped to the engine host,
+    since the static scrape reads 0 on the secondary, and the write rule reading the library's own
+    stream, which the engine's ERROR rule never selects."""
+    rules = {r["uid"]: r for r in _rules()}
+    backend, session, writes = (
+        rules["zcrypto-cache-proxy-no-backend"],
+        rules["zcrypto-cache-proxy-no-engine-session"],
+        rules["zcrypto-engine-cache-write-failed"],
+    )
+    for rule in (backend, session):
+        exprs = [q["model"]["expr"] for q in rule["data"] if "expr" in q.get("model", {})]
+        assert exprs and all('host="zcrypto"' in e for e in exprs), (rule["uid"], exprs)
+    assert (backend["for"], backend["labels"]["severity"]) == ("2m", "critical")
+    assert 'max(haproxy_backend_active_servers{host="zcrypto"})' in backend["data"][0]["model"]["expr"]
+    # The threshold is the frontend's own routing bound: a backend below `nbsrv ... ge N` routes nothing.
+    haproxy_cfg = (REPO / "infra/ansible/roles/engine/templates/haproxy.cfg.j2").read_text()
+    bound = {int(n) for n in re.findall(r"nbsrv\(\{\{ node\.name \}\}\) ge (\d+)", haproxy_cfg)}
+    assert bound == {2}, bound
+    assert backend["data"][1]["model"]["conditions"] == [{"evaluator": {"type": "lt", "params": [bound.pop()]}}]
+    assert (session["for"], session["labels"]["severity"], session["condition"]) == ("15m", "warning", "D")
+    assert session["data"][2]["model"]["expression"] == "$A < 1 && $B > 0"
+    assert 'up{job="engine_app",host="zcrypto"}' in session["data"][1]["model"]["expr"]
+    loki = writes["data"][0]
+    assert loki["datasourceUid"] == "${GRAFANA_LOKI_DS_UID}"
+    assert '{host="zcrypto", container="engine-nautilus"} |= "nautilus_infrastructure::redis::cache"' in loki["model"]["expr"]
+    assert (writes["labels"]["severity"], writes["notification_settings"]["receiver"]) == ("warning", "logs")
+    for rule in (backend, session, writes):
+        assert rule["ruleGroup"] == "zcrypto-cache" and f"infra/runbooks/cache.md#{rule['uid']}" in rule["annotations"]["summary"]
 
 
 def test_every_runbook_anchor_is_defined_in_exactly_one_file():

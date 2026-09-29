@@ -704,7 +704,7 @@
       "id": 211,
       "type": "timeseries",
       "title": "Connected clients",
-      "description": "Client connections on each Valkey: the exporter, the Sentinels, the replicas on the primary, and the engine through its proxy once it is wired.",
+      "description": "Client connections on each Valkey: the exporter, the Sentinels, the replicas on the primary, and on the primary the engine's sessions through its proxy, cache-proxy on the engine host -- two from a never-cut engine, the load's, idle after the start, and the writer's, which alone is re-made lazily at the next write after a cut.",
       "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
       "gridPos": {"h": 7, "w": 6, "x": 18, "y": 41},
       "targets": [
@@ -1019,6 +1019,224 @@
         "colorMode": "background",
         "orientation": "auto",
         "graphMode": "none"
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Cache proxy on the engine host",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 73}
+    },
+    {
+      "id": 401,
+      "type": "stat",
+      "title": "Backend status per node",
+      "description": "Whether each backend of the engine's cache proxy is UP, its `state=\"UP\"` series -- HAProxy publishes one 0/1 series per state, never one enumerated value: a backend is a cache node, and its servers are the three Sentinels' checks of that node, UP while a Sentinel names it the primary. Exactly one backend UP is the healthy reading; none is the alert below; two is a failover in progress.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 74},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "haproxy_backend_status{host=\"zcrypto\", state=\"UP\"}",
+          "refId": "A",
+          "legendFormat": "{{proxy}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 404,
+      "type": "stat",
+      "title": "Server status per backend and Sentinel",
+      "description": "Each backend's three servers, one per Sentinel, their `state=\"UP\"` series: UP while that Sentinel names the backend's node the primary, DOWN otherwise. The frontend routes to a backend with two or more UP.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 5, "w": 16, "x": 8, "y": 74},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "haproxy_server_status{host=\"zcrypto\", state=\"UP\"}",
+          "refId": "A",
+          "legendFormat": "{{proxy}}/{{server}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {"text": "DOWN", "color": "red", "index": 0},
+                "1": {"text": "UP", "color": "green", "index": 1}
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "orientation": "auto",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 402,
+      "type": "timeseries",
+      "title": "Sentinel checks passing on the most-agreed backend \u2014 the page's value",
+      "description": "The most Sentinels agreeing on any one backend, and each backend's own count. 2 or 3 is a primary the quorum names and the frontend routes to; 1 is one Sentinel alone, a backend the frontend routes nothing to; 0 is no backend at all, or the proxy down, since the scrape target is static and a stopped proxy takes its series away. The red line, at the frontend's own bound of 2, is where the alert fires, after `for: 2m`. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 79},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "max(haproxy_backend_active_servers{host=\"zcrypto\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "most-agreed backend"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "haproxy_backend_active_servers{host=\"zcrypto\"}",
+          "refId": "B",
+          "legendFormat": "{{proxy}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "line"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 2}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 403,
+      "type": "timeseries",
+      "title": "Sessions through the proxy \u2014 the page's value",
+      "description": "Sessions the proxy carries to the cache set, summed over its backends: 2 from a never-cut engine, the load's connection, idle after the start, and the writer's; after a cut the writer's is re-made at the engine's next write, which the library drops, and the load's never comes back: a cut of both reads 0 until that write and 1 after it, a cut of the writer's alone 1 until that write and 2 after it, and a cut of the load's alone 1, no write dropped. Below the red line while the engine reports for `for: 15m` is the alert. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 79},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "sum(haproxy_backend_current_sessions{host=\"zcrypto\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "sessions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "line"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 405,
+      "type": "timeseries",
+      "title": "Sentinel check failures per server",
+      "description": "The rate at which each server's Sentinel check fails: a Sentinel not naming that backend's node the primary, or unreachable over the mesh. Two of three servers of the routed backend failing for two checks in a row moves the route.",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 79},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "rate(haproxy_server_check_failures_total{host=\"zcrypto\"}[5m])",
+          "refId": "A",
+          "legendFormat": "{{proxy}}/{{server}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
+      }
+    },
+    {
+      "id": 406,
+      "type": "timeseries",
+      "title": "Sentinel check status code per server",
+      "description": "HAProxy's own code for each server's last check, the `haproxy_server_check_status` series at 1 -- one 0/1 series per code, sixteen of them, so the one at 1 is the code: read beside the failures panel to tell a Sentinel that answered with another node (L7RSP, L7TOUT) from one that did not answer at all (L4CON, L4TOUT).",
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 86},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+          "expr": "haproxy_server_check_status{host=\"zcrypto\"} == 1",
+          "refId": "A",
+          "legendFormat": "{{proxy}}/{{server}} {{state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"thresholdsStyle": {"mode": "off"}, "lineInterpolation": "stepAfter"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "none"}
       }
     }
   ]

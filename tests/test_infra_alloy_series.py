@@ -259,6 +259,19 @@ ONEOFF_TEXTFILE_SERIES = [
     "zcrypto_engine_journal_prune_last_run_timestamp_seconds",
 ]
 
+# The engine's cache proxy, HAProxy's Prometheus endpoint scraped as `cache_proxy` on the capture
+# hosts (zcrypto-red admits a family it never publishes, as it does the engine's). Two are
+# alert-bearing (zcrypto-cache-proxy-no-backend, -no-engine-session) and the other four are the
+# detail the Cache board's proxy row draws; dropped from the keep-regex, the rules read 0 forever.
+CACHE_PROXY_SERIES = [
+    "haproxy_backend_status",
+    "haproxy_backend_active_servers",
+    "haproxy_backend_current_sessions",
+    "haproxy_server_status",
+    "haproxy_server_check_status",
+    "haproxy_server_check_failures_total",
+]
+
 # The capture host's own alert-bearing node families: `Capture · spool disk low` reads
 # node_filesystem_avail_bytes/node_filesystem_size_bytes, and `Capture · node load high` reads
 # node_load1/node_cpu_seconds_total.
@@ -277,6 +290,7 @@ CAPTURE_REQUIRED = [
     *ONEOFF_TEXTFILE_SERIES,
     *CAPTURE_APP_SERIES,
     *ENGINE_APP_SERIES,
+    *CACHE_PROXY_SERIES,
     *LOGSHIP_SERIES,
     *PROCESS_FAMILIES,
 ]
@@ -427,15 +441,25 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
     ("path", "excluded"),
     [
         # No daemon runs on the NAS at all (00069 T7) -- none of the app/logship families exist there.
-        (NAS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
+        (NAS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
         # The poller runs on ops, not capture or engine.
-        (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES]),
+        (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES]),
         # Capture/engine run on the capture hosts, not the poller.
         (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
         # No app daemon runs on the bridgehead, and (D11) no `exporter.self "alloy"` component
         # either -- none of the app/logship/process families exist there.
-        (ACCESS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES, *PROCESS_FAMILIES]),
-        (CACHE_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
+        (
+            ACCESS_ALLOY,
+            [
+                *CAPTURE_APP_SERIES,
+                *ENGINE_APP_SERIES,
+                *CACHE_PROXY_SERIES,
+                *LIQUIDATIONS_APP_SERIES,
+                *LOGSHIP_SERIES,
+                *PROCESS_FAMILIES,
+            ],
+        ),
+        (CACHE_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES, *LIQUIDATIONS_APP_SERIES, *LOGSHIP_SERIES]),
     ],
     ids=["nas", "ops", "capture", "access", "cache"],
 )
@@ -665,6 +689,21 @@ def test_the_journal_keep_regex_names_no_unit_the_role_does_not_install():
 
 
 # --- the cache nodes' config ---------------------------------------------------------------------
+def test_the_capture_config_scrapes_the_cache_proxy_and_labels_its_journal_lines_before_the_engines_block():
+    """The proxy's scrape on the engine's loopback port under its own job, and its journal lines
+    labelled `cache-proxy` by a match that runs before the nautilus block, which would otherwise
+    relabel every line of the unit as the engine's."""
+    text = CAPTURE_ALLOY.read_text()
+    scrape = re.search(r'prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.DOTALL)
+    assert scrape, "no cache_proxy scrape block"
+    assert '"127.0.0.1:9104"' in scrape.group(1) and 'job_name        = "cache_proxy"' in scrape.group(1)
+    proxy, engine = text.index('pipeline_name = "cache_proxy"'), text.index('pipeline_name = "engine_nautilus"')
+    assert proxy < engine, "the proxy's match must run before the engine's, which relabels the whole unit"
+    block = text[proxy:engine]
+    assert 'container = "cache-proxy"' in block and "zcrypto-cache-proxy" in block
+    assert "NOTICE|WARNING|ALERT|INFO" in block
+
+
 def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
     """Both directions, where the per-host admission test reads one: a family the regex admits that the
     list lacks fails here as well as a listed one the regex drops. Whether each is read by a panel or a
