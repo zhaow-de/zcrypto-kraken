@@ -1321,8 +1321,8 @@ class ProbeExecutor:
 
         LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
         their plans, so each is written terminal from what its rows show, except one with an open row
-        this pass sent no cancel for -- kept, or beyond its reach -- and none when either read above
-        failed or a sweep above latched the kill switch.
+        this pass sent no cancel for -- kept, or beyond its reach -- or a restored row this pass marked,
+        and none when either read above failed or a sweep above latched the kill switch.
         """
         try:
             resting = list(self._cache.orders_open(venue=_VENUE))
@@ -1436,9 +1436,11 @@ class ProbeExecutor:
         order's quantity, `revoked` when it ran and its order did not survive the restart, `refused`
         when it never ran -- except one with an open row this pass sent no cancel for: an order left
         resting, kept as a reducer or beyond the pass's reach, is still live and its row the live
-        record. Skipped whole when either read failed or this pass latched the kill switch, since
-        the rows' fills were then never compared, never read, or refuted by the venue, and are no
-        figure to journal."""
+        record -- and one with a row of the restored set this pass marked (`_marked_here`), which the
+        pass could not repair: its intent stays `pending`, never settled from a figure no read answered,
+        the credit-0 one among them (spec 00120 D8), and its mark names why. Skipped whole when either
+        read failed or this pass latched the kill switch, since the rows' fills were then never
+        compared, never read, or refuted by the venue, and are no figure to journal."""
         if venue_orders is None or not ledger_read or self._kill_tripped:
             return
         try:
@@ -1457,7 +1459,9 @@ class ProbeExecutor:
             # The first order carries the intent's whole quantity and every later one a remainder, so
             # the largest of them is the target.
             ordered[key] = max(ordered.get(key, 0.0), _ordered_qty(row))
-            if row.get("state") in _OPEN_ORDER_STATES and row["client_order_id"] not in cancelled:
+            if (row.get("state") in _OPEN_ORDER_STATES and row["client_order_id"] not in cancelled) or (
+                self._restored_row(row) and self._marked_here(row)
+            ):
                 left.add(key)
         for boundary, plan_id, index in pending:
             key = (plan_id, index)

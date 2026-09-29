@@ -8543,8 +8543,8 @@ _ANCHOR_TXID = "OANCHR-ORDER-000001"
 # that differs from its copy's. At the re-read pass an open row arrives by a credit-0 fill, or, with no
 # txid of its own, by a terminal this engine minted on its copy; a finished row is one a credit-0 fill
 # reached and the venue's cancel ack closed before the pass. At a restart the row closed on nothing but a
-# credit-0 fill no pass repaired, its copy closed at 0.0008. The intent of a finished row a startup marks
-# is settled from the ledger's figure.
+# credit-0 fill no pass repaired, its copy closed at 0.0008. A startup that marks a row leaves its intent
+# `pending`, never settled from a figure no read answered, and the mark names why.
 # ledger, txid, read, pass -> outcome, state, filled_qty, the mark's level, the intent
 _ONE_DOOR_MATRIX = [
     ("open", "recorded", "answers", "startup", "applied", "accepted", 0.0006, None, "pending"),
@@ -8562,18 +8562,18 @@ _ONE_DOOR_MATRIX = [
     ("open", "differs", "omits", "startup", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
     ("open", "differs", "fails", "startup", "unread", "accepted", 0.0004, None, "pending"),
     ("finished", "recorded", "answers", "startup", "applied", "filled", 0.001, None, "pending"),
-    ("finished", "recorded", "omits", "startup", "marked", "filled", 0.001, "WARNING", "filled"),
+    ("finished", "recorded", "omits", "startup", "marked", "filled", 0.001, "WARNING", "pending"),
     ("finished", "recorded", "fails", "startup", "unread", "filled", 0.001, None, "pending"),
     ("finished", "copys", "answers", "startup", "applied", "filled", 0.001, None, "pending"),
-    ("finished", "copys", "omits", "startup", "marked", "filled", 0.001, "WARNING", "filled"),
+    ("finished", "copys", "omits", "startup", "marked", "filled", 0.001, "WARNING", "pending"),
     ("finished", "copys", "fails", "startup", "unread", "filled", 0.001, None, "pending"),
-    ("finished", "none", "omits", "startup", "marked", "filled", 0.001, "WARNING", "filled"),
+    ("finished", "none", "omits", "startup", "marked", "filled", 0.001, "WARNING", "pending"),
     ("finished", "none", "fails", "startup", "marked", "filled", 0.001, "WARNING", "pending"),
     ("finished", "two", "answers", "startup", "applied", "filled", 0.001, None, "pending"),
-    ("finished", "two", "omits", "startup", "marked", "filled", 0.001, "WARNING", "filled"),
+    ("finished", "two", "omits", "startup", "marked", "filled", 0.001, "WARNING", "pending"),
     ("finished", "two", "fails", "startup", "unread", "filled", 0.001, None, "pending"),
     ("finished", "differs", "answers", "startup", "applied", "filled", 0.001, None, "pending"),
-    ("finished", "differs", "omits", "startup", "marked", "filled", 0.001, "WARNING", "filled"),
+    ("finished", "differs", "omits", "startup", "marked", "filled", 0.001, "WARNING", "pending"),
     ("finished", "differs", "fails", "startup", "unread", "filled", 0.001, None, "pending"),
     ("open", "recorded", "answers", "re-read", "applied", "accepted", 0.0006, None, "pending"),
     ("open", "recorded", "omits", "re-read", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
@@ -8594,10 +8594,10 @@ _ONE_DOOR_MATRIX = [
     ("finished", "two", "omits", "re-read", "marked", "canceled", 0.0004, "WARNING", "pending"),
     ("finished", "two", "fails", "re-read", "unread", "canceled", 0.0004, None, "pending"),
     ("finished", "recorded", "answers", "restart", "applied", "canceled", 0.0006, None, "revoked"),
-    ("finished", "recorded", "omits", "restart", "marked", "canceled", 0.0, "WARNING", "revoked"),
+    ("finished", "recorded", "omits", "restart", "marked", "canceled", 0.0, "WARNING", "pending"),
     ("finished", "recorded", "fails", "restart", "unread", "canceled", 0.0, None, "pending"),
     ("finished", "two", "answers", "restart", "applied", "canceled", 0.0006, None, "revoked"),
-    ("finished", "two", "omits", "restart", "marked", "canceled", 0.0, "WARNING", "revoked"),
+    ("finished", "two", "omits", "restart", "marked", "canceled", 0.0, "WARNING", "pending"),
     ("finished", "two", "fails", "restart", "unread", "canceled", 0.0, None, "pending"),
 ]
 
