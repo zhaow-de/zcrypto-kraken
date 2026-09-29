@@ -185,9 +185,6 @@ def test_a_restored_orders_fill_state_reads_its_quantity_on_the_dead_band(filled
 
 
 def test_reconciliation_regresses_a_partially_filled_orders_status_and_the_predicate_does_not_follow_it():
-    """Reconciliation appends `OrderAccepted(reconciliation=True)` to a restored PARTIALLY_FILLED
-    order, since Kraken's `open` maps to ACCEPTED whatever `vol_exec` says; the status then reads
-    open where the fills say partial."""
     order = _resting_limit_order("O-1")
     order.apply(_fill("O-1", 0.4))
     assert order.status == OrderStatus.PARTIALLY_FILLED
@@ -833,7 +830,7 @@ def _fill_report(txid, qty, *, trade_id="T-h1"):
 
 class _VenueFills:
     """The executor's `venue_fills` reader: answers `reports`, or raises `raises`, and records the `since`
-    of every call -- the withdrawal check reads once per pass, and only when a figure fell short."""
+    of every call."""
 
     def __init__(self, *reports, raises=None):
         self.reports = list(reports)
@@ -885,7 +882,7 @@ class _VenueHoldings:
 
 class _VenuePositions:
     """The executor's `venue_positions` reader: answers `held`, the venue's margin positions by symbol,
-    or raises `raises`, and counts its calls -- one per plan that carries an opening intent."""
+    or raises `raises`, and counts its calls."""
 
     def __init__(self, held=None, *, raises=None):
         self.held = {} if held is None else dict(held)
@@ -8408,6 +8405,28 @@ def test_a_restored_row_the_order_read_failed_for_stays_unread_and_the_next_rest
         assert "O-reducer" in ex._attached and not _kill_file(tmp_path).exists(), restart
 
 
+@pytest.mark.parametrize("venue_order_id", [None, _TXID], ids=["row-without-a-txid", "txid-the-read-omits"])
+def test_a_restored_row_a_good_read_answered_nothing_for_stays_unread(tmp_path, venue_order_id):
+    earlier = NOW - timedelta(hours=4)
+    _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=venue_order_id)
+    update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0006)
+    client = StubClient(StubCache(open_orders=[_restored_order("O-reducer", filled=0.0008)]))
+    ex = _executor(
+        tmp_path,
+        client=client,
+        gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
+        venue_orders=_VenueOrders(),
+        config=_cache_config(tmp_path),
+    )
+
+    ex.on_timer(NOW)
+
+    row = _record(tmp_path, earlier)["submitted"][0]
+    reconciled = [e for e in row["events"] if e.get("event") == "reconciled"]
+    assert (row["filled_qty"], reconciled, client.canceled) == (0.0006, [], [])
+    assert "O-reducer" in ex._attached and not _kill_file(tmp_path).exists()
+
+
 def test_a_plan_the_other_checks_refused_takes_no_mixed_inventory_read(tmp_path):
     positions = _VenuePositions({"BTC/EUR": 0.001})
     ex = _executor(
@@ -8530,10 +8549,10 @@ def test_a_fill_on_a_restored_row_before_the_first_tick_lands_in_its_row_and_tri
 
 
 def test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins(tmp_path):
-    """The restored set is every order the Cache holds under the own id, closed copies included: a
-    kept reducer's double-booked copy reads FILLED where the venue says partial (spec 00120 D7), and
-    a set read from the open orders alone would trust exactly that copy. The row, repaired to 0.0007
-    by the previous process, stays there: the venue is read and its partial report is the figure."""
+    """The restored set takes the Cache's closed copies too: a kept reducer's double-booked copy reads
+    FILLED where the venue says partial (spec 00120 D7), and a set read from the open orders alone would
+    trust exactly that copy. The row, repaired to 0.0007 by the previous process, stays there: the venue
+    is read and its partial report is the figure."""
     earlier = NOW - timedelta(hours=4)
     _submitted_row(tmp_path, "O-reducer", reduce_only=True, when=earlier, venue_order_id=_TXID)
     update_submitted_row(tmp_path / "journal", _boundary(earlier), "O-reducer", add_filled_qty=0.0007)
@@ -8673,8 +8692,8 @@ def test_a_terminal_on_a_restored_kept_reducer_writes_the_venues_state_and_its_i
     tmp_path, reduce_only, reconciliation, state, outcome, reasons
 ):
     """The own topic's detached path makes the external path's writes for a restored row: the venue's
-    cancel closes the row and writes the intent, a minted one reads ambiguous and leaves the intent
-    for the pass that settles the row. The reason names the row's kind by its `reduce_only`."""
+    cancel closes the row and writes the intent, a minted one reads ambiguous and leaves the intent for
+    the pass that settles the row."""
 
     class _CancelRaises(StubClient):
         def cancel_order(self, client_order_id):

@@ -388,8 +388,7 @@ def restored_fill_state(order) -> str:
     """How far a restored order has filled, read off `filled_qty` against `quantity` and never off its
     status: reconciliation appends `OrderAccepted(reconciliation=True)` to a partially filled restored
     order, since Kraken's `open` maps to ACCEPTED whatever `vol_exec` says, so the status reads open
-    where the fills say partial. `filled` at or above the quantity, on the sweep's dead band; `partial`
-    inside it; `open` at none."""
+    where the fills say partial."""
     filled = float(order.filled_qty)
     if filled >= float(order.quantity) - _OVERFILL_TOLERANCE:
         return "filled"
@@ -531,12 +530,9 @@ def read_venue_orders(since: datetime, *, base_url: str | None = None) -> list:
 def read_venue_fills(since: datetime, *, base_url: str | None = None) -> list:
     """The venue's own fills since `since`, as the adapter's `FillReport`s from Kraken's trade history, on
     a client of its own (`_bare_client`) and on `read_venue_orders`' terms: the withdrawal check's second
-    source (spec 00120 D19). An order's figure can fall short of the ledger without a fill having been
-    withdrawn -- on a cold start the library creates the order from the venue's report and applies none of
-    the history's fills to it, so its copy reads 0 filled where the venue's trade history reads the fills
-    the ledger recorded -- and the trade history is the venue's own record of what filled. Read once per
-    pass, for the rows whose figure fell short, and never retried in it. Anything short of a complete
-    answer inside `_VENUE_READ_TIMEOUT_SECONDS` raises."""
+    source (spec 00120 D19), whose reason `_trades_cover` states. A timeout past
+    `_VENUE_READ_TIMEOUT_SECONDS` raises, and an answer of None reads as no fills, which leaves the trip
+    standing."""
     from cli.engine.node import _ACCOUNT_ID
 
     client = _bare_client(base_url)
@@ -633,8 +629,6 @@ def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
 
 
 def _margin_positions(reports) -> dict[str, float]:
-    """Each margin position report's quantity, signed by its side, summed under its basket symbol; a
-    pair outside the basket is not read, and a side that is not LONG, SHORT or FLAT raises."""
     held = dict.fromkeys(INSTRUMENT_IDS, 0.0)
     for report in reports:
         symbol = _SYMBOL_BY_INSTRUMENT_ID.get(str(report.instrument_id))
@@ -646,12 +640,10 @@ def _margin_positions(reports) -> dict[str, float]:
 
 
 def read_venue_positions(*, base_url: str | None = None) -> dict[str, float]:
-    """The venue's margin positions under every `INSTRUMENT_IDS` symbol, signed by side, on a client of
-    its own (`_bare_client`) and on `read_venue_holdings`' terms -- the position half of that read, the
-    listing cached first since the position read resolves its rows through it, an empty listing and a
-    positions answer of `None` refused the same way. The mixed-inventory refusal's source (spec 00120
-    D12): a margin lot is what the venue's OpenPositions lists, and no Cache read tells one from a spot
-    lot, which the Cache books as a position too."""
+    """The venue's margin positions under every `INSTRUMENT_IDS` symbol, signed by side, on a client of its
+    own (`_bare_client`) and on `read_venue_holdings`' terms: the mixed-inventory refusal's source (spec
+    00120 D12), since no Cache read tells a margin lot from a spot lot, which the Cache books as a position
+    too."""
     from cli.engine.flatten import QUOTE_CURRENCY
     from cli.engine.node import _ACCOUNT_ID
 
@@ -921,10 +913,7 @@ class ProbeExecutor:
         self._venue_holdings = venue_holdings
         self._venue_fills = venue_fills
         self._venue_positions = venue_positions
-        # The venue's fills by txid, read once per pass for the rows whose order figure fell short of
-        # the ledger (`_trades_cover`): None until a row asks; a read that failed sets the flag and is
-        # not retried in the pass; the floor is the earliest boundary among the pass's rows, set by
-        # the pass before any row asks, so one read covers every row of it.
+        # The pass's trade-history read (`_trades_cover`), reset at each pass by `_reset_fills_read`.
         self._venue_fills_read: dict[str, float] | None = None
         self._venue_fills_failed = False
         self._venue_fills_floor: datetime | None = None
@@ -985,13 +974,8 @@ class ProbeExecutor:
         # the latch, this only stops a second divergence from rewriting the first one's reason and
         # re-halting a plan that is already gone.
         self._kill_tripped = False
-        # The orders the Cache holds for the venue at construction, open or closed, by client order id
-        # with the txid each carries (spec 00120 D6): this engine's own, restored from a previous
-        # process, and the EXTERNAL copies -- restored, or created by this boot's reconciliation, which
-        # nothing tells apart. Read here, inside `on_start` after the load and the reconciliation and
-        # before the first tick, each attached to the row the ledger's window carries for it, and held
-        # for the process's life, since the Cache's copy of each is a view the venue is asked over.
-        # Empty without the cache, where what reconciliation adopted answers as before.
+        # The restored set (`_read_restored`): the txid of every order the Cache held for the venue at
+        # construction, by client order id, for the process's life; empty without the cache.
         self._restored: dict[str, str | None] = {}
         # The restored rows a fill reached since the re-read pass last read them: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
@@ -1006,17 +990,11 @@ class ProbeExecutor:
         self._read_realized_baseline()
 
     def _read_restored(self) -> None:
-        """The restored set: every order the Cache holds for the venue at construction, open or closed,
-        this engine's own and the EXTERNAL copies alike -- a closed copy is the double booking's shape
-        too, an order the Cache reads FILLED where the venue says partial (spec 00120 D7), and the store
-        restores the EXTERNAL copy a previous process adopted with that process's fills, the same state
-        as a restored own order and one nothing tells from a copy this boot's reconciliation created;
-        the venue answers for every one of them (`_venue_answers`). Each whose row the ledger's window
-        carries is attached here, under its own id and its txid, so a fill on it before the first tick
-        lands in its row and never in the unknown-order trip (D6); the startup pass attaches what it
-        classifies again. A read that fails leaves the set empty at CRITICAL, and the startup pass then
-        reads each such order's Cache copy as it reads an adopted one; a ledger that cannot be read
-        leaves the set unattached until the pass, which reads it again."""
+        """The restored set (spec 00120 D6): every order the Cache holds for the venue at construction,
+        open or closed, own and EXTERNAL -- a closed copy can be the double booking's FILLED (D7), and a
+        restored EXTERNAL copy is one nothing tells from a copy this boot's reconciliation created. Each
+        whose row the ledger's window carries is attached here, so a fill on it before the first tick lands
+        in its row and never in the unknown-order trip."""
         try:
             orders = list(self._cache.orders(venue=_VENUE))
         except Exception:
@@ -1049,8 +1027,8 @@ class ProbeExecutor:
 
     def _read_realized_baseline(self) -> None:
         """`_realized_eur`'s baseline (spec 00120 D10): per basket instrument, the realized PnL the Cache
-        holds at construction -- after reconciliation's fills, the library's order, and before any fill
-        of this process, the tick's. Telemetry: a read that fails leaves the baseline at zero and logs."""
+        holds at construction, after reconciliation's fills and before any of this process's. Telemetry: a
+        read that fails logs, and an instrument it did not reach keeps no baseline."""
         try:
             for instrument_id in (InstrumentId.from_str(value) for value in INSTRUMENT_IDS.values()):
                 held = self._realized_on(instrument_id)
@@ -1257,19 +1235,15 @@ class ProbeExecutor:
             logger.exception("executor socket-state handling raised -- continuing")
 
     def _arm_reread_after_mint(self) -> None:
-        """The re-read pass's second trigger: a terminal this engine minted, on the plan's own order, on
-        one no intent holds any more (`_on_detached_event`) or on one the startup pass adopted, or a fill
-        on a restored row, whose credit is nothing until the pass reads the venue (`_fill_credit`), with no
-        socket held down -- the adopted path's shape on this wheel, where each adopt-pass cancel's ack
-        goes unapplied and the mint lands about 31 s on with the sockets up (drills G and A1). A mint
-        while a socket is held down arms nothing: the socket's return does (`on_socket_state`), so a
-        mint inside a cut reads at most once, on a tick inside the mint-to-`DISCONNECTED` gap, one try
-        spent at WARNING and the tick held up to `_VENUE_READ_TIMEOUT_SECONDS` -- F2's shape, where the
-        mint lands before the socket's own deadline reports the cut and the `DISCONNECTED` then holds
-        the arm this sets. The cost is a stale entry, an endpoint whose `CONNECTED` never comes under
-        its `DISCONNECTED`'s string, unmeasured offline, holding every later mint's settlement off until
-        a startup inside the re-attach window; the rollout's first hour of socket lines, and F2's next
-        run, measure the execution socket's name."""
+        """The re-read pass's second trigger: a terminal this engine minted -- on the plan's own order, on
+        one no intent holds any more (`_on_detached_event`), or on one the startup pass adopted, whose
+        cancel's ack goes unapplied on this wheel -- or a fill on a restored row, whose credit is nothing
+        until the pass reads the venue (`_fill_credit`). A trigger while a socket is held down arms
+        nothing: the socket's return does (`on_socket_state`), so a mint inside a cut reads at most once,
+        on a tick inside the mint-to-`DISCONNECTED` gap, one try spent at WARNING and the tick held up to
+        `_VENUE_READ_TIMEOUT_SECONDS`. The cost is a stale entry, an endpoint whose `CONNECTED` never comes
+        under its `DISCONNECTED`'s string, holding every later mint's settlement off until a startup inside
+        the re-attach window."""
         if not self._sockets_down:
             self._reread_tries = _REREAD_ATTEMPTS
 
@@ -1327,16 +1301,10 @@ class ProbeExecutor:
         early when nothing is resting: an idle startup can still owe row repairs.
 
         With the cache enabled the Cache may already hold this engine's OWN orders and positions from a
-        previous process (spec 00120 D6, D7): every order it holds at construction, this strategy's own
-        and the EXTERNAL copies, restored or created by this boot's reconciliation, is in `_restored`,
-        read and attached at construction, and the venue is the authority over each -- the
-        sweep asks the venue for every order of the restored set, whatever its Cache copy's status,
-        and takes the report over the copy, which is the previous process's view. A restored order the venue reports closed has its
-        row written from the report and is left where it is, its stale open copy in the Cache for the
-        process's life, since a cancel through the handle would answer nothing this engine applies; a
-        restored order the venue reports open is classified as an adopted one is -- cancelled unless
-        its row is a ledgered reducer -- and its events reach the own topic under its own id, where
-        `_on_detached_event` carries them.
+        previous process (spec 00120 D6, D7): the sweep takes the venue's report over the Cache's copy for
+        every order of the restored set (`_venue_answers`); one the venue reports closed has its row
+        written from the report and is sent no cancel, its stale open copy left in the Cache, and one it
+        reports open is classified as an adopted one is -- cancelled unless its row is a ledgered reducer.
 
         LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
         their plans, so each is written terminal from what its rows show, except one with an open row
@@ -1407,11 +1375,7 @@ class ProbeExecutor:
             own = self._cache_enabled and str(getattr(order, "strategy_id", "")) == str(self._strategy_id)
             report = None if not venue_orders or venue_order_id is None else venue_orders.get(venue_order_id)
             if client_order_id in self._restored and report is not None and report.order_status in _ADOPTED_TERMINAL_STATES:
-                # The venue holds the order closed: it ended while this engine was down, and the open
-                # copy is a previous process's, own or EXTERNAL, listed by `orders_open` at this and
-                # every later restart (spec 00120 D7). The venue's report decides, never the copy's id
-                # or the ledger's closed row: a row a mint closed can stand for an order still resting,
-                # and without a report the order is classified and cancelled as an open one is.
+                # The venue's report alone decides: a row a mint closed can stand for an order still resting.
                 logger.warning(
                     "restored order %s is %s at the venue -- its stale open copy stays in the Cache and no cancel is sent",
                     client_order_id,
@@ -1668,8 +1632,8 @@ class ProbeExecutor:
                     report = None if venue_orders is None or venue_order_id is None else venue_orders.get(venue_order_id)
                     if order is not None and report is not None and self._venue_answers(row, finished=False):
                         # A restored order the venue answered for: the report over the Cache's copy, the
-                        # previous process's view (spec 00120 D6), and no re-cancel -- the order is open
-                        # under this engine's own id, and the classification loop cancels or keeps it.
+                        # previous process's view (spec 00120 D6), and no re-cancel -- a restored order is
+                        # cancelled or kept by the startup's classification.
                         self._reconcile_adopted_row(
                             boundary,
                             row,
@@ -1684,10 +1648,11 @@ class ProbeExecutor:
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
                         continue
-                    if order is not None and venue_orders is None and self._venue_answers(row, finished=False):
-                        # The order read failed: a restored row is left unread, its attach kept, and never
-                        # repaired from the Cache's copy, which runs ahead of the venue on a kept reducer
-                        # (spec 00120 D8) -- the next successful read repairs it, the finished sweep's rule.
+                    if order is not None and self._venue_answers(row, finished=False):
+                        # The order read failed or answered nothing for it: a restored row is left unread,
+                        # its attach kept, and never repaired from the Cache's copy, which runs ahead of
+                        # the venue on a kept reducer (spec 00120 D8) -- a fill arms the re-read pass, else
+                        # the next restart reads it while open.
                         continue
                     if order is not None:
                         self._reconcile_adopted_row(
@@ -1829,15 +1794,11 @@ class ProbeExecutor:
         holdings read the pass makes next (`_settle_positions_from_venue`) builds a client of its own at
         every startup.
 
-        A row needs them when it recorded a txid and the Cache holds no order under either of its
-        ids -- an open row whose order closed while this process was down, or a finished row with
-        fills, the only kind a withdrawal can show on -- and, with the cache enabled, when the Cache's
-        order is one it held at construction (`_venue_answers`): every order of the restored set, this
-        engine's own and the EXTERNAL copies, whatever its Cache copy's status, and every finished row
-        with fills whatever the Cache holds, so the venue is asked at every restart that held anything. A
-        finished row of the restored set is asked with no fills too: its stale open copy is withheld from
-        the startup pass's cancel on the venue's report alone. The read reaches back to the earliest such row's
-        boundary.
+        A row needs them when it recorded a txid and the Cache holds no order under either of its ids -- an
+        open row whose order closed while this process was down, or a finished row with fills, the only
+        kind a withdrawal can show on -- and, with the cache enabled, every row the venue answers for
+        (`_venue_answers`), a finished row of the restored set with no fills among them. The read reaches
+        back to the earliest such row's boundary.
 
         A read that fails leaves those rows unread and returns None, and that is a refusal, not a
         retry: the read is not repeated in this process (`read_venue_orders` says why), and every
@@ -1877,13 +1838,11 @@ class ProbeExecutor:
 
     def _trades_cover(self, boundary: datetime, venue_order_id: str | None, ledgered: float) -> bool | None:
         """Whether the venue's trade history holds fills for `venue_order_id` summing to at least
-        `ledgered`, the withdrawal check's second source (spec 00120 D19): the order's figure can fall
-        short of the ledger because the library created the order from the venue's report without its
-        fills applied, a cold start's shape, and the trade history says whether the fills happened. The
-        history is read once per pass, from one hour before the earliest boundary among the pass's rows
-        (`_reset_fills_read`), on a client of its own, and its failure answers None for the pass -- the
-        check then trips on the order's figure as before, since an unread history is no evidence either
-        way, and no later row of the pass reads again. A row with no txid answers None too."""
+        `ledgered`, the withdrawal check's second source (spec 00120 D19): an order's figure falls short of
+        the ledger without a withdrawal when the library created the order from the venue's report with
+        none of its fills applied, a cold start's shape. None -- the check then trips on the order's figure
+        -- for a row with no txid and, for the rest of the pass, once the history's one read
+        (`_reset_fills_read`) has failed, since an unread history is no evidence either way."""
         if venue_order_id is None or self._venue_fills_failed:
             return None
         if self._venue_fills_read is None:
@@ -1949,15 +1908,11 @@ class ProbeExecutor:
         return row["client_order_id"] in self._restored or _row_venue_order_id(row) in self._restored
 
     def _settle_restored_intent(self, boundary: datetime, row: dict) -> None:
-        """A restored row's intent, written once at the row's terminal while it still reads `pending`
-        (spec 00120 D8): `filled` with the row's `filled_qty`, else `revoked` with the reducer's end.
-        The startup sweep settles the window's other pending intents and leaves a kept reducer's, an
-        open row it sent no cancel for; this is written by what ends that row -- the event's path, or
-        the re-read pass's repair where the fill's credit was nothing -- at the row's own boundary
-        without `self._plan`, the sweep's shape, and no later pass revisits it. A row a fill reached
-        since the pass last read it (`_restored_fills`) is not settled by the event's path: its
-        `filled_qty` is the credit-0 figure until the pass repairs it, and the pass writes the intent
-        after that repair."""
+        """A restored row's intent, written once at the row's terminal while it still reads `pending` (spec
+        00120 D8), by the path that ends the row, at the row's own boundary without `self._plan`, the
+        sweep's shape: `filled`, or `revoked` naming the row's kind and whether it filled. A row in
+        `_restored_fills` waits: its `filled_qty` is the credit-0 figure until the re-read pass repairs it,
+        and the pass writes the intent after that repair."""
         if not self._restored_row(row) or row.get("state") in _OPEN_ORDER_STATES:
             return
         if row["client_order_id"] in self._restored_fills:
@@ -2096,10 +2051,8 @@ class ProbeExecutor:
         if completes and state == "filled":
             _inc_order("filled")
         if delta < -_OVERFILL_TOLERANCE and self._trades_cover(boundary, venue_order_id, ledgered) is True:
-            # The order's figure fell short of the ledger and the venue's trade history covers the ledger:
-            # the figure is the library's copy without its fills applied, a cold start's shape, and no fill
-            # was withdrawn. The row keeps its figure and joins the repaired set, so a fill the library
-            # later infers for this order credits only what the Cache holds beyond the row.
+            # The row keeps its figure and joins the repaired set, so a fill the library later infers for
+            # this order credits only what the Cache holds beyond the row.
             self._rows_the_pass_repaired.add(client_order_id)
             logger.warning(
                 "adopted order %s reads %.10g filled on its order figure against the %.10g recorded here, and the venue's "
@@ -2203,8 +2156,6 @@ class ProbeExecutor:
         if venue_filled >= ledgered - _OVERFILL_TOLERANCE:
             return
         if self._trades_cover(boundary, venue_order_id, ledgered) is True:
-            # The second source (spec 00120 D19): the order's figure is the library's copy without its
-            # fills applied, and the venue's trade history holds the fills the row was closed on.
             logger.warning(
                 "finished order %s reads %.10g filled on its order figure against the %.10g it was closed on, and the venue's "
                 "trade history covers the ledger -- no withdrawal",
@@ -2310,11 +2261,9 @@ class ProbeExecutor:
                 "probe plan %s waits for a tick with nothing in flight -- its opening intents take a venue read", plan.plan_id
             )
             return
-        # Live balances spell the free-cash currency `EUR` -- measured against the live engine
-        # (`{'EUR': 99.84}`), so this resolves on its SECOND arm in production. The `ZEUR` arm stays
-        # first and is not dead: the adapter's other surface genuinely spells the euro `ZEUR` (the
-        # instrument quote currency), so the two differ by surface and the fallback covers both.
-        # Both absent reads 0.0, which refuses any margin intent.
+        # Live balances spell the free-cash currency `EUR`, so this resolves on its SECOND arm in
+        # production; the `ZEUR` arm stays first because the adapter's instrument quote currency spells
+        # the euro `ZEUR`. Both absent reads 0.0, which refuses any margin intent.
         free_zeur = state.balances.get("ZEUR", 0.0) or state.balances.get("EUR", 0.0)
         reasons = plan_refusals(
             plan,
@@ -2324,7 +2273,6 @@ class ProbeExecutor:
             free_zeur=free_zeur,
         )
         if self._cache_enabled and not reasons:
-            # A plan already refused takes no signed positions read.
             reasons = [*reasons, *self._mixed_inventory_refusals(plan, state)]
         intents = [
             {"index": i, "intent": raw, "outcome": "pending", "reasons": [], "filled_qty": 0.0}
@@ -2354,18 +2302,10 @@ class ProbeExecutor:
         self._resolved_notional = {}
 
     def _mixed_inventory_refusals(self, plan, state) -> list[str]:
-        """The refusal 00118 D11 carries into spec 00120 D12: while the cache is enabled, an opening
-        intent that would put a spot lot and a margin lot on one pair is refused -- the restore reads
-        both as the instrument's position and tells neither from the other -- and a close never is, since
-        it takes inventory off. A spot open is refused where the venue's margin positions hold the pair,
-        read through `read_venue_positions` once per plan that carries an open and that the plan's
-        other checks admitted, on the passes' nonce
-        terms, which `_pickup` keeps by holding such a plan until nothing of this process is in flight;
-        a margin open where the venue state's balances, already read through `_spot_balance` under
-        every spelling of the base, hold the pair's base at or above the pair's `ordermin` -- a lot
-        under it is dust the engine cannot sell, and would refuse every margin open on the pair for as
-        long as the cache is enabled. A read that fails refuses each open intent, since the shape is
-        then unknown."""
+        """Spec 00120 D12's refusal of an opening intent that would put a spot lot beside a margin lot on
+        one pair, the margin figure the venue's (`read_venue_positions`); the spot floor is the pair's
+        `ordermin`, since a lot under it is dust the engine cannot sell and would refuse every margin open
+        on the pair while the cache is enabled."""
         opens = [(index, intent) for index, intent in enumerate(plan.intents) if intent.action == "open"]
         if not opens:
             return []
@@ -3639,13 +3579,11 @@ class ProbeExecutor:
         return None if order is None else _ADOPTED_TERMINAL_STATES.get(order.status)
 
     def _on_external_event(self, event) -> None:
-        """Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this
-        process adopted at startup under the venue's txid -- the ones the cache did not restore, or
-        every one when the cache is off -- filtered by disposition BEFORE anything else runs. A
+        """Events from `events.order.EXTERNAL` (spec 00098 D1): the delivery path for orders this process
+        adopted at startup under the venue's txid, filtered by disposition BEFORE anything else runs. A
         restored own order keeps its own id and its events reach the own topic (spec 00120 D12); an
-        EXTERNAL copy the store restored keeps this path, in the restored set under its txid, its fills
-        credited nothing and its row repaired by the re-read pass as a restored own order's is, and its
-        intent written here as the own path writes it.
+        EXTERNAL copy the store restored keeps this path and is handled here as a restored own order is
+        (`_restored_row`).
 
         Matched (the ledger vouches for the order): delegate into the existing pipeline --
         `_trip_on_fill` FIRST, exactly as the own-topic path does, so a matched overfill trips the
@@ -3910,15 +3848,11 @@ class ProbeExecutor:
         cannot be read or does not hold the order, credits the event's quantity: the startup's repair
         rebuilds the Cache from the venue first, so nothing replays behind it."""
         if self._restored_row(row):
-            # A restored row's fill credits nothing (spec 00120 D8): the library books a trade frame on
-            # a restored open order twice, an inferred fill for the cumulative gap and then the fill
-            # itself, so the event's quantity would trip a false overfill; the fill arms the re-read
-            # pass, whose venue read repairs the row up to the venue's cumulative figure. A fill booked
-            # twice leaves the Cache's copy ahead of the venue's for the process's life whatever that
-            # read answers, and nothing here tells it from a fill booked once, so the WARNING is logged
-            # at each restored row's fill, once per row until the pass reads it, the trip check and the
-            # row's append both asking this credit: its text is what an operator searches before a
-            # restart, which it takes flat whichever it was.
+            # A restored row's fill credits nothing (spec 00120 D8): the library books a trade frame on a
+            # restored open order twice, so the event's quantity would trip a false overfill, and the re-read
+            # pass repairs the row from the venue's cumulative figure. Nothing here tells a double booking
+            # from a single one, so the WARNING an operator searches before a restart is logged once per row
+            # until the pass reads it; the trip check and the row's append both ask this credit.
             if row["client_order_id"] not in self._restored_fills:
                 logger.warning(
                     "a fill on restored order %s credits nothing until the venue is read -- the next restart is taken flat",
@@ -3946,15 +3880,12 @@ class ProbeExecutor:
         """An event for an order that is not the one in flight: an order this process superseded, one
         it already finished with, or one the startup pass adopted from a previous process.
 
-        It still gets its ledger row -- that is the no-fill-without-a-forensic-row invariant, and the
-        row is chosen by the boundary the ORDER was filed under, never the boundary of the tick that
-        saw the event. No state claim is made for an order of this process: it is not tracking that
-        order's lifecycle, so the row keeps whatever open state it has and stays visible to the next
-        re-attach. A RESTORED order's events land here too, under its own id (spec 00120 D12), and for
-        its row this path makes the external path's two writes: a fill completing the ledgered
-        quantity writes the row `filled` once and counts it, and every other event asks
-        `_venue_terminal_state` for the row's state, `ambiguous` on a mint, a completed row never
-        demoted; a terminal writes the kept reducer's intent (`_settle_restored_intent`).
+        It still gets its ledger row -- that is the no-fill-without-a-forensic-row invariant, and the row
+        is chosen by the boundary the ORDER was filed under, never the boundary of the tick that saw the
+        event. No state claim is made for an order of this process: it is not tracking that order's
+        lifecycle, so the row keeps whatever open state it has and stays visible to the next re-attach. A
+        RESTORED order's events land here too, under its own id (spec 00120 D12), and for its row this path
+        makes the external path's two writes and settles its intent (`_settle_restored_intent`).
 
         A fill on an order belonging to the RUNNING intent also grows `filled`, so the next
         resubmission is sized against it. Without that the remainder over-asks by exactly the

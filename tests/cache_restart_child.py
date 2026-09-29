@@ -1,14 +1,13 @@
 """One engine-shaped node in its own interpreter, for tests/test_cache_restart.py.
 
 The node is the engine's own `build_shadow_node`, with the cache backing attached through the config
-and every venue default redirected to the loopback the driver runs: the two client configs' URLs, the
-gate's venue reader, and the five bare-client reads' `base_url`. Before anything is built the child
+and every venue default redirected to the loopback the driver runs: the two client configs' URLs,
+the gate's venue reader, and the bare-client reads' `base_url`. Before anything is built the child
 asserts that no production default remains, the autouse `_no_production_venue_read` fixture's rule
-for a node that runs; and the bare client itself is wrapped to refuse a `base_url` off the loopback,
-so a bare-client read the list above does not name reaches no venue with the fake keys either -- it
-raises, and the refusal lands in the record's `errors`. The strategy the engine registers is subclassed to hand the executor its
-quotes on a timer, since the data peer sends none, and to stop the node at the window's end; its
-executor, its startup pass and its ledger writes are the engine's own.
+for a node that runs, and the bare client itself refuses a `base_url` off the loopback, the refusal
+landing in the record's `errors`. The strategy the engine registers is subclassed to hand the
+executor its quotes on a timer, since the data peer sends none, and to stop the node at the window's
+end; its executor, its startup pass and its ledger writes are the engine's own.
 
 argv[1] is a JSON object: `phase`, `journal_dir`, `store_dir`, `port`, `username`, `password`,
 `api_key`, `api_secret`, `base_url`, `ws_public`, `ws_private`, `instrument`, `bid`, `ask`,

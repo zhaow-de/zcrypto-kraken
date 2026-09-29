@@ -31,6 +31,7 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.common", "CacheConfig"),
     ("nautilus_trader.common", "Environment"),
     ("nautilus_trader.common", "LogLevel"),
+    ("nautilus_trader.common", "SerializationEncoding"),
     ("nautilus_trader.common", "SocketState"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),
     ("nautilus_trader.config", "LoggerConfig"),
@@ -70,11 +71,13 @@ PINNED_ATTRIBUTES = [
     # explicitly, so a rename breaks the call rather than silently selecting the other member.
     ("nautilus_trader.adapters.kraken", "KrakenProductType", "SPOT"),
     ("nautilus_trader.adapters.kraken", "KrakenEnvironment", "LIVE"),
-    # The registry calls `cli/engine/node.py` makes before a cache-backed build, and the member the
-    # six Kraken codes are registered under.
+    # `register`, called before a cache-backed build; `from_str`, which its tests resolve with; and
+    # the type every code in the table carries.
     ("nautilus_trader.model", "Currency", "register"),
     ("nautilus_trader.model", "Currency", "from_str"),
     ("nautilus_trader.model", "CurrencyType", "CRYPTO"),
+    # The store's format, stated on the cache config.
+    ("nautilus_trader.common", "SerializationEncoding", "JSON"),
 ]
 
 
@@ -235,11 +238,9 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
 
 
 # Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
-# `cli/engine/node.py` states six of these and inherits the other thirty-two, so a default that
-# moves upstream moves production here silently, with no import to break and no rename to notice.
-# The three that carry a reasoned assertion below say WHY they matter; this map says only what a
-# wheel reported, which is the one claim it can make honestly about fields whose behaviour nothing
-# in this repo has established.
+# `cli/engine/node.py` states some of these and inherits the rest, so a default that moves upstream
+# moves production here silently, with no import to break and no rename to notice. The reasoned
+# assertions above say WHY a field matters; this map says only what a wheel reported.
 EXEC_ENGINE_DEFAULTS = {
     "allow_overfills": False,
     "debug": False,
@@ -318,14 +319,16 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
 
 
 def test_the_cache_config_defaults_we_state_are_unchanged():
-    """`cli/engine/node.py` states both at the library's own values: `True` on the first reloads an
-    empty namespace and on the second issues FLUSHDB, so the pin says whether the statement is
-    still a restatement."""
-    from nautilus_trader.common import CacheConfig
+    """`cli/engine/node.py`'s `_cache_config` states each at these values and says why a flip on any is destructive."""
+    from nautilus_trader.common import CacheConfig, SerializationEncoding
 
     config = CacheConfig()
     assert config.use_instance_id is False
     assert config.flush_on_start is False
+    assert config.use_trader_prefix is True
+    assert config.encoding == SerializationEncoding.JSON
+    assert config.buffer_interval_ms is None
+    assert config.persist_account_events is True
 
 
 def test_the_node_config_defaults_we_leave_off_are_unchanged():
@@ -338,8 +341,8 @@ def test_the_node_config_defaults_we_leave_off_are_unchanged():
     assert config.save_state is False
 
 
-# Inherited by the backing `cli/engine/node.py` attaches: the start-order budget its ten retries
-# are sized to, a refused port in about 3.4 s and a silent peer in about 55 s, rests on them.
+# Inherited by the backing `cli/engine/node.py` attaches; the start-order budget its ten retries are
+# sized to (spec 00120 D5) rests on them.
 REDIS_BACKOFF_DEFAULTS = {"exponent_base": 2, "max_delay": 1000, "factor": 2}
 
 

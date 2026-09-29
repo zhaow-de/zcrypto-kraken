@@ -22,7 +22,7 @@ from nautilus_trader.adapters.kraken import (
     KrakenDataClientFactory,
     KrakenExecutionClientFactory,
 )
-from nautilus_trader.common import LogLevel
+from nautilus_trader.common import LogLevel, SerializationEncoding
 from nautilus_trader.model import AccountType
 
 from cli.config import CacheSettings, EngineConfig
@@ -546,8 +546,7 @@ class RecordingExecutor:
 def _exec_stub(config, clock, *, executor_factory=None, executor=None, cache=None, strategy_id=None):
     """A ShadowStrategy stand-in driven through the unbound methods (the house pattern of
     test_schedule_alert_sets_state_and_timer): a real instance's `clock` is readonly until the
-    nautilus registration this suite never performs. `cache` and `strategy_id` are what the boot
-    line reads, bound lazily so a case that never enables the cache reads neither."""
+    nautilus registration this suite never performs."""
     stub = types.SimpleNamespace(
         clock=clock,
         _engine_config=config,
@@ -627,10 +626,6 @@ def test_on_start_writes_no_restore_line_while_the_cache_is_disabled(tmp_path, c
 
 
 def test_on_start_reads_the_orders_under_this_strategys_id_and_writes_the_zero_line_on_an_empty_namespace(tmp_path, caplog):
-    """A cold start or an empty namespace reads zero and is no refusal; the order read is scoped to
-    this strategy's id, so an order reconciliation created under EXTERNAL is not counted as
-    restored, and the position read takes every strategy's; and the line comes after the alert
-    chain is seeded and before the executor is built."""
     reads: list = []
     cache = types.SimpleNamespace(
         orders_open=lambda **kw: reads.append(("orders", kw)) or [],
@@ -661,11 +656,6 @@ def test_on_start_reads_the_orders_under_this_strategys_id_and_writes_the_zero_l
 
 
 def test_on_start_writes_each_restored_position_and_order_at_the_values_the_proof_reads(tmp_path, caplog):
-    """The proof's comparand: every open position the Cache holds, whichever strategy holds it -- the
-    gap a fill made while the engine was down leaves to the venue's figure is booked under EXTERNAL --
-    with its instrument, signed quantity, entry price and strategy, and each order's fill state off
-    `filled_qty`, its filled and ordered quantity and its price, one INFO record each under the
-    search box's prefix."""
     held = [
         types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.4, avg_px_open=150.0, strategy_id="ShadowStrategy-000"),
         types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.3, avg_px_open=150.0, strategy_id="EXTERNAL"),
@@ -1275,8 +1265,6 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_engine.inflight_check_interval_ms == 2000
     assert exec_engine.inflight_check_threshold_ms == 5000
     assert exec_engine.inflight_check_retries == 5
-    # The restore itself: the library's default, stated because a flip would leave a backing
-    # attached that nothing loads from.
     assert exec_engine.load_cache is True
 
     data_client = recorder.named("add_data_client")[0]
@@ -1309,9 +1297,9 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.use_ws_trade is False
 
 
-# Each of the six equals the library's own default, so the recorder-backed assertions above read
-# the same whether `_exec_engine_config` names the field or inherits it; the stand-in below is what
-# tells a stated value from an inherited one.
+# Each equals the library's own default, so the recorder-backed assertions above read the same
+# whether `_exec_engine_config` names the field or inherits it; the stand-in below is what tells a
+# stated value from an inherited one.
 @pytest.mark.parametrize(
     ("field", "stated", "flipped"),
     [
@@ -1343,6 +1331,31 @@ def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monke
     assert getattr(node._exec_engine_config(), field) == stated
 
 
+@pytest.mark.parametrize(
+    ("field", "stated", "flipped"),
+    [
+        ("use_instance_id", False, True),
+        ("flush_on_start", False, True),
+        ("use_trader_prefix", True, False),
+        ("encoding", SerializationEncoding.JSON, SerializationEncoding.MSG_PACK),
+        ("buffer_interval_ms", None, 100),
+        ("persist_account_events", True, False),
+    ],
+)
+def test_the_cache_config_states_each_field_rather_than_inheriting_it(monkeypatch, field, stated, flipped):
+    """Against a library whose default for the named field reads `flipped`, `_cache_config` still
+    produces a config reading `stated`."""
+    real_config = node.CacheConfig
+
+    def default_flipped(**kwargs):
+        kwargs.setdefault(field, flipped)
+        return real_config(**kwargs)
+
+    assert getattr(default_flipped(), field) == flipped
+    monkeypatch.setattr(node, "CacheConfig", default_flipped)
+    assert getattr(node._cache_config(), field) == stated
+
+
 def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
     recorder = _record_assembly(tmp_path, monkeypatch).recorder
     assert recorder.named("add_exec_client") == []
@@ -1353,18 +1366,12 @@ def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
 
 
 def test_the_builder_is_given_no_cache_backing_by_default(tmp_path, monkeypatch):
-    # `enabled = false` renders nothing into the node: neither builder method is called.
     monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
     recorder = _record_assembly(tmp_path, monkeypatch).recorder
     assert recorder.named("with_cache_config") == [] and recorder.named("with_cache_database_factory") == []
 
 
 def test_the_builder_is_given_the_cache_backing_at_the_measured_budget_when_enabled(tmp_path, monkeypatch):
-    """The two calls, once each: the cache config at the library's own two defaults, stated because
-    `True` on the first reloads an empty namespace and on the second issues FLUSHDB; the backing at
-    the proxy's address from the config, the password from the environment, and the budget the
-    probes settled -- ten retries under five-second timeouts, 3.4 s on a refused port and about
-    55 s on a silent peer, inside the gap and above the second a proxy takes to mark its backends."""
     from nautilus_trader.infrastructure import RedisCacheConfig
 
     monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
@@ -1426,7 +1433,6 @@ def test_every_builder_call_exists_on_the_library(tmp_path, monkeypatch):
     monkeypatch.setenv(node._API_KEY_VAR, "a-key")
     monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
     monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
-    # Every arm on: the exec client's and the cache's, so both of the cache's calls are recorded.
     recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True, cache=CacheSettings(enabled=True)).recorder
     called = {name for name, _ in recorder.calls}
     assert called >= {"with_cache_config", "with_cache_database_factory"}, sorted(called)
@@ -1511,8 +1517,6 @@ def test_the_exec_client_config_does_not_carry_the_credentials_back_out(tmp_path
 
 
 def test_the_cache_password_is_never_read_while_the_cache_is_disabled(tmp_path, monkeypatch):
-    # The default config: the variable is not consulted at all, so a workstation `zcrypto` command,
-    # which reads the same file, never needs a password the file must never carry.
     monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
     read = []
 
@@ -1632,7 +1636,7 @@ def _run_build_probe(
     """Assemble the node in a child interpreter. The child's environment carries exactly the
     credentials this call names and nothing inherited, so what the build does with them is the
     only thing under test; a cache-enabled build is handed a cache password, since the build
-    refuses without one and the registration under test happens before it."""
+    refuses without one."""
     env = os.environ.copy()
     env.pop("KRAKEN_SPOT_API_KEY", None)
     env.pop("KRAKEN_SPOT_API_SECRET", None)
@@ -1703,20 +1707,14 @@ def test_build_shadow_node_refuses_execution_with_an_empty_environment(tmp_path)
 
 @pytest.mark.parametrize("cache_enabled", [False, True], ids=["disabled-registers-nothing", "enabled-registers-the-six"])
 def test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_process_cannot_resolve(tmp_path, cache_enabled):
-    """The store saves a currency as its bare code and the loader resolves it against the process's
-    registry before the adapter parses AssetPairs, so a cache-backed build registers the six Kraken
-    codes the library's own table lacks first; a build with the cache disabled registers nothing,
-    the differential that shows the registration is the build's and not the import's."""
+    """A build with the cache disabled registers nothing: the differential that shows the registration
+    is the build's, not the import's."""
     facts = _node_build_facts(tmp_path, exec_enabled=False, cache_enabled=cache_enabled)
     six = ["XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
     five = ["ADA", "AVAX", "DOT", "LINK", "SOL"]
     assert facts["registered"] == (sorted(five + six) if cache_enabled else sorted(five))
 
 
-# Every code the basket's twelve pairs carry as base or quote on Kraken's AssetPairs, read off the
-# committed snapshot rather than typed, and which of them a strict lookup resolves before any
-# registration; then the adapter's own parse of the twelve-pair basket fixture through the loopback,
-# which mints every code the basket carries, read back field by field.
 _CURRENCY_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
@@ -1761,12 +1759,7 @@ os._exit(0)
 
 
 def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_mints(tmp_path):
-    """Three reads in one child, since the adapter's parse registers what it mints: the table names
-    exactly the base and quote codes the twelve pairs carry; a fresh process resolves the five the
-    library's table holds at the table's values and none of the other six; and the adapter's parse
-    of the twelve-pair basket fixture mints all eleven at the table's values, the six Kraken
-    spellings on the rule -- precision 8, no ISO number, the code as the name, crypto. A bump that
-    reshapes a minted currency is red here before a store carrying it loads."""
+    """Read before the parse, which registers what it mints; red on a bump that reshapes a minted currency."""
     result = subprocess.run(
         [sys.executable, "-c", _CURRENCY_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120, cwd=Path.cwd()
     )

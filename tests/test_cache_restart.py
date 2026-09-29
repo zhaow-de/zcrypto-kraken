@@ -2,11 +2,9 @@
 this file starts, with the venue a loopback the file scripts.
 
 No environment gate, on purpose: a database is not a venue, and a skip on a missing binary would
-read as coverage. `valkey-server` is found on PATH and named, and its absence fails with the
-install command. In CI the binary comes from apt (`.github/workflows/coverage.yml`); locally it is
-the workstation's own, 8.1.1 at the time of writing where the fleet runs 9.1.2, so a reading that
-could differ there is named where it is asserted. Every node runs in a child interpreter
-(`tests/cache_restart_child.py`) under a timeout, and reaches nothing past 127.0.0.1.
+read as coverage. CI installs the binary from apt (`.github/workflows/coverage.yml`); a workstation
+runs its own, whose version may differ from the fleet's, so a reading a server version could move
+is named where it is asserted.
 """
 
 from __future__ import annotations
@@ -114,9 +112,6 @@ def _keys(port: int) -> list[str]:
 
 
 class _Valkey:
-    """A `valkey-server` on a free port under `root`, no persistence, the ACL file carrying the role's
-    engine line and an admin user for the harness's own reads."""
-
     def __init__(self, root: Path):
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
@@ -167,9 +162,6 @@ class _Valkey:
 
 
 class _Node:
-    """The driver's side of one child node: its state directory, the ledger rows and intents read back
-    from it, and the child's records."""
-
     def __init__(self, root: Path, valkey_port: int, *, max_plan_notional_eur: float = 200.0):
         self.root = root
         self.state = root / "state"
@@ -262,9 +254,6 @@ class _Node:
 
 
 def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: float = 0.4, wire: dict, fill: bool = True) -> None:
-    """The venue's side of one order: the open-orders row at the AddOrder, then the `new` and, when
-    `fill`, the `trade` frame on the private socket and the listings the fill moves -- the open row's
-    `vol_exec`, the trade history and the margin position."""
 
     def on_add_order(form: dict, txid: str) -> None:
         wire.update(txid=txid, cl_ord_id=form.get("cl_ord_id"))
@@ -298,8 +287,6 @@ def _script_first_fill(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, last_qty: 
 
 
 def _script_cancel_ack(venue: lb.KrakenLoopback, exec_: lb.WsPeer, wire: dict) -> None:
-    """The venue's answer to a cancel: the order leaves the open listing for the closed one, and the
-    private socket sends the `canceled` frame at the venue's cumulative fill."""
 
     def on_cancel_order(form: dict) -> None:
         txid = wire["txid"]
@@ -329,7 +316,7 @@ def _restore_lines(log: str) -> list[str]:
 
 def _phase_one(valkey: _Valkey, tmp_path: Path) -> tuple[_Node, dict, dict]:
     """A node that placed one leveraged order, filled 0.4 of 1.0, and stopped with it resting: the
-    store holds the order, the fill and the margin position, and the venue lists all three."""
+    store holds the order, the fill and the margin position."""
     valkey.start()
     node = _Node(tmp_path / "node", valkey.port)
     node.drop_plan("p-phase-1")
@@ -432,10 +419,7 @@ def test_the_child_refuses_a_bare_venue_client_off_the_loopback_whichever_read_a
 
 
 def test_a_resting_order_and_a_margin_position_are_restored_across_a_restart(phase_one):
-    """The restore of both identities and the boot line: the restarted node holds the order under
-    its own client order id and strategy, matched by venue order id, the position at its entry
-    price, and the boot line says so; no `Unresolved positions` line, the failure the operating
-    rule stands against."""
+    """No `Unresolved positions` line: the failure the operating rule stands against."""
     valkey, node, wire, _ = phase_one
     with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
@@ -509,9 +493,6 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
 
     assert record["errors"] == [], record["errors"]
     assert "Unresolved positions" not in record["log"]
-    # The library books the missed fill onto the restored order, keeps the restored position at its
-    # stored quantity, and closes the gap to the venue's position with a synthesized EXTERNAL order
-    # and position, which the boot line lists beside the restored one.
     orders = {o["strategy_id"]: o for o in record["at_start"]["orders"]}
     positions = {p["strategy_id"]: p for p in record["at_start"]["positions"]}
     assert (orders[record["strategy_id"]]["filled_qty"], orders[record["strategy_id"]]["status"]) == ("0.70000000", "ACCEPTED")
@@ -533,9 +514,8 @@ def test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history(
 
 
 def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_library(phase_one):
-    """Mass status reads open orders only on this pin and ClosedOrders is never requested, so the
-    restored copy stays open in the Cache for the process's life -- the shape the startup pass
-    settles from the venue's report."""
+    """Mass status reads open orders only on this pin and never requests ClosedOrders, so the restored
+    copy stays open in the Cache -- the shape the startup pass settles from the venue's report."""
     valkey, node, wire, _ = phase_one
     with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
         venue.balances = {"ZEUR": lb.balance("1000.00000000")}
@@ -568,10 +548,8 @@ def test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_lib
 
 
 def test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library(phase_one):
-    """The measured double booking: a `trade` frame on a restored order is booked as an inferred fill
-    for the cumulative gap and then as the fill itself, so the Cache's copy reads 0.8 where the
-    venue said 0.6. The row is the previous process's reducer, which the startup pass keeps, so the
-    order is still open when the frame lands."""
+    """The row is the previous process's reducer, which the startup pass keeps, so the order is still
+    open when the `trade` frame lands."""
     valkey, node, wire, _ = phase_one
     node.mark_row_reducer(wire["client_order_id"])
     with lb.serve_with_sockets(_basket_pairs()) as (venue, data, exec_):
@@ -760,8 +738,8 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     assert "execution kill switch tripped" not in record["log"]
     # The EXTERNAL copy reads 0 filled; the venue's report, 0.4, answers for it as for every order the
     # Cache holds at construction, so the withdrawal check reads no shortfall and the trade history is
-    # not consulted -- the check's second source is the copy's, without the cache or under a failed
-    # order read, and the executor file's cold-start cases pin it there.
+    # not consulted -- the copy's zero reaches the check only outside the restored set, where the
+    # executor file's cold-start cases pin it.
     assert "reads 0 filled on its order figure" not in record["log"]
     assert f"canceling adopted resting order {wire['txid']} -- the ledger does not carry it as a resting reducer" in record["log"]
     assert [form.get("txid") for form in cancels] == [wire["txid"]]
@@ -802,11 +780,7 @@ def _silent_listener() -> tuple[int, threading.Event]:
 
 @pytest.mark.parametrize("shape", ["refused", "silent"])
 def test_the_cache_unreachable_at_start_fails_inside_the_budget_without_touching_the_venue(tmp_path, shape):
-    """Ten retries under five-second timeouts: a port nothing listens on refuses the start in seconds,
-    a peer that accepts and never answers in about 55 s, both inside the inter-cycle gap and this
-    harness's timeout, and neither reaches the venue -- `run()` creates the backing before any
-    client connects. The budget is the pinned nautilus wheel's Redis client's, its retries and
-    timeouts the node's own: no server runs in either shape, so no server version moves it."""
+    """No server runs in either shape, so no server version moves the budget these bounds hold."""
     port, stop = (1, None) if shape == "refused" else _silent_listener()
     node = _Node(tmp_path / "node", port)
     try:
@@ -826,11 +800,6 @@ def test_the_cache_unreachable_at_start_fails_inside_the_budget_without_touching
 
 
 def test_the_cache_killed_mid_run_leaves_the_engine_trading_and_the_store_behind(tmp_path):
-    """The store dies under a running node: the first plan's order fills whole, the server is killed,
-    a second plan is dropped and its order is placed, acknowledged and filled with the server down,
-    every failed write logged at ERROR under `nautilus_infrastructure::redis::cache` and every event
-    on the lost order's key at WARN; the server returns empty, the link comes back lazily on the next
-    write, and at the return the store holds neither the second order nor its fill."""
     valkey = _Valkey(tmp_path / "valkey")
     node = _Node(tmp_path / "node", valkey.port)
     node.drop_plan("p-first")

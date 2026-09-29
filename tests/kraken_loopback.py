@@ -23,8 +23,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-# The scripted private WebSocket peer below is served by `websockets`, the library the adapter's own
-# execution socket speaks to; nothing here reaches past 127.0.0.1.
 import websockets
 
 # Bound here, not at call time: a test that replaces the adapter's attribute to refuse any client
@@ -129,9 +127,8 @@ def margin_position(pair: str, *, volume: str, side: str = "buy") -> dict[str, A
 
 
 def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy") -> dict[str, Any]:
-    """One TradesHistory row, as Kraken's trades history lists a fill of `txid`; `pair` spelled as the
-    AssetPairs key. A margin fill: `posstatus` open and a `postxid`, which the adapter reads beside the
-    quantity when it books a fill the stream never delivered."""
+    """One TradesHistory row for a margin fill of `txid` -- `posstatus` open and a `postxid`; `pair`
+    spelled as the AssetPairs key."""
     cost = f"{float(vol) * float(price):.5f}"
     return {
         "ordertxid": txid,
@@ -168,11 +165,9 @@ class KrakenLoopback:
     # TradesHistory rows by trade id, paged by `ofs` as the adapter pages them; a fill the private
     # WebSocket never delivered is booked from here at startup reconciliation.
     trades: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Called with the AddOrder form and the txid it is answered, before the answer is sent: a
-    # test's chance to script the private WebSocket's frames for that order.
+    # Called with the AddOrder form and its txid before the answer is sent.
     on_add_order: Callable[[dict[str, str], str], None] | None = None
-    # Called with the CancelOrder form before the answer is sent: the test's chance to script the
-    # cancel's frame and to move the order from the open listing to the closed one.
+    # Called with the CancelOrder form before the answer is sent.
     on_cancel_order: Callable[[dict[str, str]], None] | None = None
     # Depth books by the pair a request names, which the adapter spells as the AssetPairs key. A pair
     # with no book answers `EQuery:Unknown asset pair`, never an empty book.
@@ -327,11 +322,9 @@ def client(venue: KrakenLoopback) -> KrakenSpotHttpClient:
 
 
 class WsPeer:
-    """One WebSocket server on its own event-loop thread, bound to 127.0.0.1: it answers `ping` with
-    `pong` and acknowledges any `subscribe`, and records the connection that subscribed `executions`
-    so a test can script execution frames onto it. The same peer serves the data socket, where it
-    acknowledges the quote subscription and sends nothing: the harness hands the executor its quotes
-    itself. `log` carries every frame either way, stamped."""
+    """One WebSocket server on its own event-loop thread, bound to 127.0.0.1, for either socket:
+    `send_execution` scripts frames onto the connection that subscribed `executions`; on the data
+    socket it sends nothing, since the harness hands the executor its quotes itself."""
 
     def __init__(self, label: str):
         self.label = label
