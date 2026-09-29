@@ -235,7 +235,7 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
 
 
 # Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
-# `cli/engine/node.py` states five of these and inherits the other thirty-three, so a default that
+# `cli/engine/node.py` states six of these and inherits the other thirty-two, so a default that
 # moves upstream moves production here silently, with no import to break and no rename to notice.
 # The three that carry a reasoned assertion below say WHY they matter; this map says only what a
 # wheel reported, which is the one claim it can make honestly about fields whose behaviour nothing
@@ -338,6 +338,11 @@ def test_the_node_config_defaults_we_leave_off_are_unchanged():
     assert config.save_state is False
 
 
+# Inherited by the backing `cli/engine/node.py` attaches: the start-order budget its ten retries
+# are sized to, a refused port in about 3.4 s and a silent peer in about 55 s, rests on them.
+REDIS_BACKOFF_DEFAULTS = {"exponent_base": 2, "max_delay": 1000, "factor": 2}
+
+
 def test_the_redis_cache_config_accepts_the_arguments_we_pass_and_hides_the_password():
     from nautilus_trader.infrastructure import RedisCacheConfig
 
@@ -354,6 +359,12 @@ def test_the_redis_cache_config_accepts_the_arguments_we_pass_and_hides_the_pass
     )
     assert config.password == secret  # the value reaches the backing
     assert secret not in repr(config) and secret not in str(config)
+    moved = {
+        name: (REDIS_BACKOFF_DEFAULTS[name], getattr(config, name))
+        for name in REDIS_BACKOFF_DEFAULTS
+        if getattr(config, name) != REDIS_BACKOFF_DEFAULTS[name]
+    }
+    assert moved == {}, f"the backing's inherited backoff moved (was, now): {moved}"
 
 
 def test_a_position_report_refuses_a_none_side():

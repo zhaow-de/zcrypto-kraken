@@ -709,6 +709,33 @@ def test_a_cache_the_boot_line_cannot_read_logs_one_error_and_on_start_carries_o
     assert stub._executor is executor and [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
 
 
+def test_a_restored_position_the_boot_line_cannot_format_logs_one_error_and_on_start_carries_on(tmp_path, caplog):
+    class Unreadable:
+        instrument_id = "SOL/EUR.KRAKEN"
+        signed_qty = 0.4
+        strategy_id = "ShadowStrategy-000"
+
+        @property
+        def avg_px_open(self):
+            raise ValueError("no entry price")
+
+    cache = types.SimpleNamespace(orders_open=lambda **kw: [], positions_open=lambda **kw: [Unreadable()])
+    clock = FakeClock()
+    executor = RecordingExecutor()
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)),
+        clock,
+        executor_factory=lambda strategy: executor,
+        cache=cache,
+        strategy_id="ShadowStrategy-000",
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    levels = [r.levelno for r in caplog.records if r.getMessage().startswith("cache restore")]
+    assert levels.count(logging.ERROR) == 1 and levels[-1] == logging.ERROR
+    assert stub._executor is executor and [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+
+
 def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
     executor = RecordingExecutor()
     stub = _exec_stub(_config(tmp_path), FakeClock(), executor=executor)
@@ -1282,7 +1309,7 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.use_ws_trade is False
 
 
-# Each of the five equals the library's own default, so the recorder-backed assertions above read
+# Each of the six equals the library's own default, so the recorder-backed assertions above read
 # the same whether `_exec_engine_config` names the field or inherits it; the stand-in below is what
 # tells a stated value from an inherited one.
 @pytest.mark.parametrize(

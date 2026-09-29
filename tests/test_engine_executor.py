@@ -159,7 +159,6 @@ def test_a_below_costmin_result_names_the_floor():
         ([], "open"),
         ([0.4], "partial"),
         ([0.4, 0.6], "filled"),
-        ([0.3, 0.3, 0.4], "filled"),  # three per-fill floats an ulp short of the quantity still read filled
     ],
 )
 def test_a_restored_orders_fill_state_is_read_off_its_filled_quantity(fills, expected):
@@ -169,10 +168,25 @@ def test_a_restored_orders_fill_state_is_read_off_its_filled_quantity(fills, exp
     assert restored_fill_state(order) == expected
 
 
+@pytest.mark.parametrize(
+    "filled, expected",
+    [
+        (1.0 - 1e-13, "filled"),
+        (1.0 - 1e-11, "partial"),
+        (1e-13, "open"),
+    ],
+)
+def test_a_restored_orders_fill_state_reads_its_quantity_on_the_dead_band(filled, expected):
+    # A fixed-point `Quantity` sums its fills exactly, so a real order never reaches the band; the
+    # stand-in's floats sit inside it and just outside it.
+    order = SimpleNamespace(filled_qty=filled, quantity=1.0)
+    assert restored_fill_state(order) == expected
+
+
 def test_reconciliation_regresses_a_partially_filled_orders_status_and_the_predicate_does_not_follow_it():
-    """Measured on the pinned wheel: reconciliation appends `OrderAccepted(reconciliation=True)` to
-    a restored order that was PARTIALLY_FILLED, since Kraken's `open` maps to ACCEPTED whatever
-    `vol_exec` says, so the status reads open where the fills say partial."""
+    """Reconciliation appends `OrderAccepted(reconciliation=True)` to a restored PARTIALLY_FILLED
+    order, since Kraken's `open` maps to ACCEPTED whatever `vol_exec` says; the status then reads
+    open where the fills say partial."""
     order = _resting_limit_order("O-1")
     order.apply(_fill("O-1", 0.4))
     assert order.status == OrderStatus.PARTIALLY_FILLED

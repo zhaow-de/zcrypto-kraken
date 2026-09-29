@@ -283,32 +283,32 @@ class ShadowStrategy(Strategy):
         positions page -- and a boot at entry price 0, which passes every other read, shows its 0.
         Then each open order under this strategy's id, the restored ones, with its id, fill state
         off `filled_qty`, filled and ordered quantity and price; an order reconciliation created
-        under EXTERNAL is not this strategy's and is not counted. A read that raises logs and
-        returns: the line is evidence, never a gate."""
+        under EXTERNAL is not this strategy's and is not counted. A read that raises anywhere in the
+        line, the Cache's or a restored object's, logs one ERROR and returns: the line is evidence,
+        never a gate."""
         try:
             orders = list(self.cache.orders_open(strategy_id=self.strategy_id))
             positions = sorted(self.cache.positions_open(), key=lambda p: (str(p.instrument_id), str(p.strategy_id)))
+            logger.info("cache restore: %d order(s), %d position(s) restored", len(orders), len(positions))
+            for position in positions:
+                logger.info(
+                    "cache restore: position %s %s @ %s (%s)",
+                    position.instrument_id,
+                    position.signed_qty,
+                    position.avg_px_open,
+                    position.strategy_id,
+                )
+            for order in orders:
+                logger.info(
+                    "cache restore: order %s %s, %s of %s filled @ %s",
+                    order.client_order_id,
+                    restored_fill_state(order),
+                    order.filled_qty,
+                    order.quantity,
+                    getattr(order, "price", None),
+                )
         except Exception:
             logger.exception("cache restore: the Cache could not be read at start")
-            return
-        logger.info("cache restore: %d order(s), %d position(s) restored", len(orders), len(positions))
-        for position in positions:
-            logger.info(
-                "cache restore: position %s %s @ %s (%s)",
-                position.instrument_id,
-                position.signed_qty,
-                position.avg_px_open,
-                position.strategy_id,
-            )
-        for order in orders:
-            logger.info(
-                "cache restore: order %s %s, %s of %s filled @ %s",
-                order.client_order_id,
-                restored_fill_state(order),
-                order.filled_qty,
-                order.quantity,
-                getattr(order, "price", None),
-            )
 
     def on_start(self) -> None:
         on_start_logic(
