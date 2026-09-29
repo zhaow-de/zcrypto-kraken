@@ -50,7 +50,7 @@ Claude-Session: <the executing session's URL>
 
 ## Review Focus
 
-- The restored order under its own id: a restored order is read under this engine's strategy id at construction, open or closed, attached there, asked over at the venue, and cancelled or kept by the classification loop with its fill state named -- `test_the_restored_set_is_every_order_the_cache_holds_at_construction_only_with_the_cache_enabled`, `test_a_fill_on_a_restored_row_before_the_first_tick_lands_in_its_row_and_trips_nothing`, `test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins`, `test_the_startup_pass_asks_the_venue_over_a_restored_orders_cache_copy_and_the_report_wins`, `test_a_restored_opener_the_venue_reports_open_is_cancelled_by_the_pass_and_a_kept_reducer_is_not` in `tests/test_engine_executor.py`, and `test_a_resting_order_and_a_margin_position_are_restored_across_a_restart` in `tests/test_cache_restart.py`.
+- The restored order under its own id: every order the Cache holds for the venue is read at construction, this engine's own and the EXTERNAL copies, open or closed, attached there where the window carries its row, asked over at the venue, and cancelled or kept by the classification loop, the lines naming a restored order keyed on the own id with its fill state named -- `test_the_restored_set_is_every_order_the_cache_holds_at_construction_only_with_the_cache_enabled`, `test_a_fill_on_a_restored_row_before_the_first_tick_lands_in_its_row_and_trips_nothing`, `test_a_restored_order_the_cache_holds_closed_is_read_at_the_venue_and_the_report_wins`, `test_the_startup_pass_asks_the_venue_over_a_restored_orders_cache_copy_and_the_report_wins`, `test_a_restored_opener_the_venue_reports_open_is_cancelled_by_the_pass_and_a_kept_reducer_is_not` in `tests/test_engine_executor.py`, and `test_a_resting_order_and_a_margin_position_are_restored_across_a_restart` in `tests/test_cache_restart.py`.
 - The order that closed while the engine was down: mass status reads open orders only, so the Cache's copy stays open, and the pass writes the row from the venue's report with no cancel sent -- `test_a_restored_order_the_venue_reports_closed_has_its_row_written_from_the_report_and_no_cancel_sent`, and `test_an_order_cancelled_while_the_engine_was_down_is_never_closed_by_the_library` and `test_a_fill_made_while_the_engine_was_down_is_booked_from_the_trade_history` in the harness.
 - The kept reducer's double-booked fill: the library books a trade frame on a restored open order twice, and the row credits nothing until the re-read pass repairs it from the venue's cumulative figure, the intent written at the terminal -- `test_a_fill_on_a_restored_row_credits_nothing_and_the_re_read_pass_repairs_the_row_from_the_venue`, `test_a_terminal_on_a_restored_kept_reducer_writes_the_venues_state_and_its_intent`, `test_a_fill_then_a_terminal_on_a_restored_row_before_the_next_tick_is_repaired_by_the_pass`, and `test_a_trade_frame_on_a_restored_open_order_is_booked_twice_by_the_library` and `test_a_trade_frame_on_a_restored_opener_racing_the_passs_cancel_is_booked_twice_and_the_row_settles_at_the_venues_figure` in the harness.
 - The cache absent or unreachable: an empty namespace is a cold start under the EXTERNAL identity, the pass cancelling as today and its withdrawal check reading the venue's trade history over the library's unfilled copy, and an unreachable cache fails inside the budget without a venue call -- `test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconciles_as_today` and `test_the_cache_unreachable_at_start_fails_inside_the_budget_without_touching_the_venue` in the harness, `test_a_cold_starts_order_figure_short_of_the_ledger_is_no_withdrawal_when_the_trade_history_covers_it` and `test_a_true_withdrawal_with_no_fill_in_the_trade_history_trips_the_kill_switch_as_today` in `tests/test_engine_executor.py`, with `test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_process_cannot_resolve` in `tests/test_engine_node.py` for the registration a restore needs.
@@ -5737,6 +5737,10 @@ Replace, in `cli/engine/executor.py`, this block:
 ```python
         pass's cancels of adopted orders, and a trip's, PENDING_CANCEL with no intent live. A Cache
         that cannot be read holds the pass, never a plan."""
+        try:
+            return self._active is None and not list(self._cache.orders_inflight(venue=_VENUE))
+        except Exception:
+            logger.exception("executor in-flight read raised -- the re-read pass waits for the next tick")
 ```
 
 with:
@@ -5744,7 +5748,11 @@ with:
 ```python
         pass's cancels of adopted orders, and a trip's, PENDING_CANCEL with no intent live. A Cache
         that cannot be read holds the pass, and under the cache the pickup of a plan with an opening
-        intent (`_pickup`), whose file its expiry then refuses; never a plan otherwise."""
+        intent (`_pickup`) until the read answers, when its expiry refuses the file; never a plan otherwise."""
+        try:
+            return self._active is None and not list(self._cache.orders_inflight(venue=_VENUE))
+        except Exception:
+            logger.exception("executor in-flight read raised -- the re-read pass and a held pickup wait for the next tick")
 ```
 
 Replace, in `cli/engine/executor.py`, this block:
@@ -6146,7 +6154,7 @@ Expected: `9 passed`, in about seven and a half minutes (`9 passed in 445.92s` w
 - [ ] **Step 6: The consumers**
 
 Run: `uv run pytest tests/test_cache_restart.py tests/test_engine_executor.py tests/test_engine_node.py tests/test_engine_command.py tests/test_engine_flatten.py tests/test_engine_metrics.py tests/test_engine_stub_fidelity.py tests/test_engine_execledger.py tests/test_nautilus_interface_pin.py tests/test_internal_terms_not_operator_visible.py -q -p no:cacheprovider`
-Expected: every test passed or skipped by a gate, none failed; `1777 passed, 3 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates and `tests/test_engine_flatten.py`'s one. The list is every module that imports `cli.engine.executor` or `cli.engine.node`, with the ledger's, the pin, the stub walker and the internal-terms walker.
+Expected: every test passed or skipped by a gate, none failed; `1762 passed, 3 skipped` when this plan was written, the skips `tests/test_engine_node.py`'s two live-venue gates and `tests/test_engine_flatten.py`'s one. The list is every module that imports `cli.engine.executor` or `cli.engine.node`, with the ledger's, the pin, the stub walker and the internal-terms walker.
 
 - [ ] **Step 7: The commit gate**
 
@@ -8478,7 +8486,7 @@ A **warning** Grafana alert, `Cache · engine running with no session through th
 
 ### What it means
 
-The engine's link to the cache was cut and not yet re-made. The library holds two connections through the proxy from a start that was never cut — the load's, which idles once the store is read, and the writer's — and reconnects lazily: the next write after a cut fails and is dropped, the write after that opens a fresh connection for the writer, and the load's connection never comes back, so a healthy engine reads 2 sessions before its first cut and 1 after. A cut is a failover's `shutdown-sessions`; one Sentinel's check going down on the routed backend — each server entry is that backend's node checked through one Sentinel, the default roundrobin balance spreads the engine's sessions over the three, and `on-marked-down shutdown-sessions` closes the sessions an entry carries, so a replica node's reboot, a Sentinel restart or a mesh blip to one node cuts the sessions routed through it; a proxy restart; the `zcache0` interface restarted by a `cache-link` converge; or a node reboot under the primary. An engine idle between cycles then shows no session for as long as it makes no write. The store is behind by the dropped write and by everything written while the link was down, nothing replays it, and the engine's next restart is taken flat. The engine keeps trading. With the cache disabled on purpose — `engine_cache_enabled: false` on the engine host, the rollout's abort — the engine holds no session by design and this page is no incident: silence it until the cache is re-enabled.
+The engine's link to the cache was cut and not yet re-made. The library holds two connections through the proxy from a start that was never cut — the load's, which idles once the store is read, and the writer's — and reconnects lazily: the next write after a cut of the writer's connection fails and is dropped, the write after that opens a fresh connection for the writer, and the load's connection never comes back, so a healthy engine reads 2 sessions from a start never cut, and 1 or 2 after a cut, by whether the cut took the load's connection. A cut is a failover's `shutdown-sessions`; one Sentinel's check going down on the routed backend — each server entry is that backend's node checked through one Sentinel, the default roundrobin balance spreads the engine's sessions over the three, and `on-marked-down shutdown-sessions` closes the sessions an entry carries, so a replica node's reboot, a Sentinel restart or a mesh blip to one node cuts the sessions routed through it; a proxy restart; the `zcache0` interface restarted by a `cache-link` converge; or a node reboot under the primary. An engine idle between cycles then shows no session for as long as it makes no write. The store is behind by the dropped write and by everything written while the link was down, nothing replays it, and the engine's next restart is taken flat. The engine keeps trading. With the cache disabled on purpose — `engine_cache_enabled: false` on the engine host, the rollout's abort — the engine holds no session by design and this page is no incident: silence it until the cache is re-enabled.
 
 ### What to do
 
