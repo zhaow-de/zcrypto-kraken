@@ -508,6 +508,7 @@ _SOURCE_GLOBS = ("cli/**/*.py", "infra/**/*.j2", "infra/**/*.sh", "infra/**/*.py
 
 NOT_A_PUBLISHED_METRIC = {
     "zcrypto_ed25519",  # the vaulted deploy-key filename in infra/ansible/scripts/run.sh
+    "zcrypto_window_record",  # the extra-var converge.sh names the engine play's window record file by
     "zcrypto_owned",  # the logger-ownership marker in cli/logging/config.py, never exported
     "zcrypto_reconcile_",  # the f-string STEM, not a series -- the real names are listed above
     # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
