@@ -5,11 +5,8 @@
 Attended operator procedure for `infra/scripts/kraken-order-semantics-probe.py`, the six-probe protocol re-run demanded by the
 **Version re-check rule** ("a fresh ~€0.20 zero-fill + round-trip pass must re-run the
 order-semantics probes before the engine trades on the new version" —
-`docs/reference/adapter-verification/1.230.0.md`). It gates **merging** a bump: `tests/test_nautilus_pin_verified.py`
-fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks, so the
-bump, this pass and its write-up (§7.4) land in one PR, and develop never carries an unverified build. It is
-owed at **every** nautilus-trader bump, before that bump merges; the converge assert and the runtime gate
-still refuse to arm a build the record lacks, behind it.
+`docs/reference/adapter-verification/1.230.0.md`). It is owed at **every** nautilus-trader bump and gates
+**merging** it: the bump, this pass and its write-up (§7.4) land in one PR (§1.6).
 
 **A pass binds to one exact version string and nothing else** — §1.6 says what that demands of the
 pin, and it may need deciding days before anything else here.
@@ -79,14 +76,14 @@ The sweep of `docs/open-topics/README.md` and `.local/memo.md` for anything that
 
 #### 1.6 Freeze the pin
 
-Decide this first; it can predate everything above. A pass binds to one exact version string (§2.1), and the bump carrying it merges with the pass recorded on its own branch, so the freeze runs from the pass to that merge. A nightly channel that moves daily and a record matched by exact string are in conflict, and the record does not loosen.
+Decide this first; it can predate everything above. A pass binds to one exact version string (§2.1), so the freeze runs from the pass to the bump's merge.
 
 - Freeze before the pass. Cut the bump branch from develop, land the pin and the lock on it, and run the probes from its worktree (§2). Do not re-pin or re-lock that branch after the pass: the record would then name a build the branch no longer installs.
-- The bump's PR stays red until its write-up (§7.4) lands on the same branch: `tests/test_nautilus_pin_verified.py` fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks. The pass turns it green; adding the version to the record ahead of the pass is the move §7.4 (1) forbids.
+- The bump's PR stays red until its write-up (§7.4) lands on the same branch: `tests/test_nautilus_pin_verified.py` fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks. Adding the version to the record ahead of the pass is the move §7.4 (1) forbids.
 - A bump in the repo does not touch a running container, so an engine armed on the old version keeps trading on it until an image built from the merged tree is deployed; the converge assert and the runtime gate still check that image before it arms.
 - A bump after a pass owes its own pass, at the full attended cost, or the pin stays. There is no third option: a bump can move fill, cancel, post-only or reconciliation behaviour without moving anything the suite can see (no count command: the adapter's venue behaviour is upstream; the attended probes are what read it).
 
-Armed or disarmed, a bump carries its pass. The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
+The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
 
 #### 1.7 No margin position is open
 
@@ -330,7 +327,7 @@ The harness prints the table under `PROBE RESULTS -- paste these rows into docs/
 3. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window): pre-probe step 4, whose unmatched-external baseline and live-orders-boot caveat both name the version they were taken on.
 4. The previous version's `docs/reference/adapter-verification/` record, cross-linked so the series reads as one and neither file claims to be current.
 
-`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: neither carries a version string to sweep. The first compares the installed version with the pin; the second reads the record, so it is red from the bump until (1) and green from then on, which is why the bump, this pass and this write-up land in one PR.
+`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: neither carries a version string to sweep; the first compares the installed version with the pin, the second reads the record.
 
 Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it.
 
