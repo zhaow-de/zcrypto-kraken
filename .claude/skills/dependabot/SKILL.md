@@ -37,11 +37,11 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 3. **Sort** the Dependabot PRs from context by priority: minor/patch first, major last. Classify each PR by parsing the `from <X> to <Y>` versions in its title and comparing the major components. Within a priority class, oldest first.
 
-4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above).
+4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above). A `nautilus-trader` PR stays out of the plan, open as the reminder of a new build (escalation trigger 6).
 
 ### Phase 2 — Process each PR (loop)
 
-For each Dependabot PR in the sorted order:
+For each PR step 4 plans, in order:
 
 #### 2a. Check out + rebase onto develop
 
@@ -144,7 +144,7 @@ print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed (
 # any `if` would test an unset variable and merely LOOK like a guard.
 # Squash so each dependency bump is a single commit on develop (the deliberate exception to
 # merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
-gh pr merge <number> --squash --delete-branch    # the number from the sorted list, not a variable
+gh pr merge <number> --squash --delete-branch    # the number step 4 planned, not a variable
 # Anything other than `success` stops the merge: a red check is escalation trigger #4, and a check
 # still pending 30 minutes after the push is reported as stalled. Never merge on a state you did
 # not read.
@@ -174,6 +174,7 @@ Only pause for user input when:
 3. **Major-version upgrades** where the changelog mentions breaking changes — surface the upgrade summary and ask before merging.
 4. **CI failures unrelated to the PR's changes** (e.g. infra flake, pre-existing test that was passing on develop before this branch was opened).
 5. **A PR's base branch is not `develop`** (likely `.github/dependabot.yml` `target-branch` misconfigured — surface and stop).
+6. **A `nautilus-trader` PR** — left open and unprocessed, the reminder of a new build: its CI stays red until that build's attended order-semantics pass is recorded on its branch, and neither a rebase, an auto-fix nor an edit of `cli/engine/order-semantics-verified.json` is this skill's to make.
 
 ## Notes
 
