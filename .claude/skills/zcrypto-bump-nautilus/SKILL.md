@@ -16,15 +16,15 @@ An attended session for the pass (`order-semantics-verification.md` §0: ~EUR 0.
 
 ## Step 1 — the candidate build
 
-1. Read the index raw and grep it: `curl -fsS https://packages.nautechsystems.io/simple/nautilus-trader/index.html | grep -oE '2\.0\.0rc[0-9]+\.dev[0-9]{8}(\+[0-9]+)?' | sort -u`. A summarising fetch of the page truncates without saying so, so the raw fetch is the read.
+1. Read the index raw and grep it: `curl -fsS https://packages.nautechsystems.io/simple/nautilus-trader/index.html | grep -oE '2\.0\.0rc[0-9]+\.dev[0-9]{8}(\+[0-9]+)?' | sort -uV`. A summarising fetch of the page truncates without saying so, so the raw fetch is the read.
 2. Filter to `^2\.0\.0rc[0-9]+\.dev[0-9]{8}$` before taking the newest. A `+NNNNN` suffix is an ad-hoc build, deleted hours after creation; one date can carry both forms, and pinning the suffixed one breaks `uv lock` on the next resolve, far from its cause.
 3. Verify the premise the bump is taken for against upstream, not against the date: the `nightly` branch's tip (`gh api repos/nautechsystems/nautilus_trader/compare/<merge-sha>...nightly --jq .status` reads `ahead` or `identical` for a merged PR), the upstream build run's sha, and the wheel's `last-modified` on the index.
-4. Read the upstream items the engine waits on and what each does to this bump. Today: #5110 (merged; spot startup reconciliation reads ClosedOrders too) moves the premise `docs/specs/00120-engine-cache-engine-half-design.md` D7 rests on, so Step 3 re-measures it; #5064/#5065 (the Kraken margin entry price, on hold) lifts the engine restart rule when it ships, `infra/runbooks/engine-procedures.md#engine-restart-margin-position`; #5067 (the pair and asset spellings) awaits the maintainer's pick. Upstream's own compatibility note: a mass-status client conflicting with an execution client becomes a startup error, so the node's client wiring is read against the release notes from the pin up to the candidate.
+4. Read the upstream items the engine waits on and what each does to this bump — the watch list is `.local/memo.md`'s upstream line under TRACK E, `zcrypto-marco`'s to keep, and the Closeout re-trues it — with the release notes from the pin up to the candidate for upstream's own compatibility notes (one at the pin: a mass-status client conflicting with an execution client becomes a startup error, so the node's client wiring is read against it). A merged fix the engine waited on names the premise a spec rests on, and Step 3 re-measures that premise on this build.
 
 ## Step 2 — the branch
 
 1. Cut `feat/engine-arm-<build>` from `develop` into its own worktree; move `pyproject.toml`'s `nautilus-trader===<build>` and run `uv lock` (the lock resolves through the `nautechsystems` index `pyproject.toml` names) and `uv sync`.
-2. Open the draft PR through `open-pr` at the first commit so CI runs; the pin test keeps it red until Step 5, and a red for another reason is read first.
+2. Open the draft PR through `open-pr` at the first commit, its red expected: the pin test fails by design until Step 5, and CI's `-x` stops the run there, so the test files sorting after it mostly do not run before Step 5. Step 3, run locally, is the pre-money gate; a CI red for another reason, before the pin test, is read first.
 3. Close the Dependabot reminder PR for the same build as superseded, with this branch named in the comment; the `dependabot` skill leaves that PR open by design and this is where it ends.
 
 ## Step 3 — the static guards and the premises
@@ -35,6 +35,7 @@ Run on the bump branch, before any money:
 - `tests/test_nautilus_interface_pin.py` — the symbols, shapes and values `cli/` depends on, at the paths it imports them from; this file answers "what changed under us" in one run.
 - `tests/test_kraken_wheel_contract.py`, `tests/test_kraken_order_semantics_probe.py` and `tests/test_order_semantics_probe.py` — the harness and its contract against the new wheel.
 - `tests/test_cache_restart.py` — the two-process restart harness against a real `valkey-server`, the library's restore and reconciliation paths on this build.
+- `tests/test_engine_stub_fidelity.py` — each engine-suite double classified against the installed type, the guard that catches a real type moving under a stub; with it `tests/test_engine_node.py`, `tests/test_kraken_window_reads.py` and `tests/test_engine_flatten.py`, which build the node or drive the client on this wheel.
 
 A change one of these reports is read, then either absorbed on the branch or the reason the build is held; the guard is re-pinned to the new shape, not loosened.
 
