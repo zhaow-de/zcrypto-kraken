@@ -343,6 +343,13 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
 PLAY_WORK_ALLOWANCE_SECONDS = 300
 
 
+def _deploy_log_audit():
+    spec = importlib.util.spec_from_file_location("deploy_log_audit_window", REPO / "infra" / "scripts" / "deploy-log-audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    return audit
+
+
 def test_a_play_the_window_admits_last_still_finishes_inside_the_audits_gap():
     task = find_task(load_tasks(SITE), WINDOW)
     closes = re.findall(r"14400 - \(\(engine_epoch_probe\.stdout \| int\) % 14400\) >= (\d+)\)", " ".join(assert_that(task)))
@@ -351,9 +358,7 @@ def test_a_play_the_window_admits_last_still_finishes_inside_the_audits_gap():
     last_admitted_start = 1754265600 + 14400 - close
     assert truthy(assert_that(task), {"engine_epoch_probe": {"stdout": str(last_admitted_start)}, "engine_window_override": ""})
 
-    spec = importlib.util.spec_from_file_location("deploy_log_audit_window", REPO / "infra" / "scripts" / "deploy-log-audit.py")
-    audit = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(audit)
+    audit = _deploy_log_audit()
     assert close - audit._BEFORE_BOUNDARY_SECONDS >= PLAY_WORK_ALLOWANCE_SECONDS
     finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_admitted_start + PLAY_WORK_ALLOWANCE_SECONDS))
     assert audit.inside_gap(finished)
@@ -630,7 +635,12 @@ def _written_record(since_boundary: int, cycle_probe: dict | None, override: str
     ],
 )
 def test_the_play_records_the_clock_the_floor_and_the_arm_the_assert_compared(since_boundary, cycle_probe, override, expected):
-    assert _written_record(since_boundary, cycle_probe, override) == {"at": BOUNDARY + since_boundary, **expected}
+    record = _written_record(since_boundary, cycle_probe, override)
+    assert record == {"at": BOUNDARY + since_boundary, **expected}
+    # `==` holds for 0 == False and 1.0 == 1, while the audit admits a record only on these exact types.
+    assert {key: type(value) for key, value in record.items()} == {"at": int, "floor": int, "arm": str, "override": bool}
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(BOUNDARY + since_boundary))
+    assert _deploy_log_audit().carries_the_record({"ts": stamp, "window": record}), record
 
 
 @pytest.mark.parametrize(
