@@ -30,12 +30,13 @@ TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas 
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
 # `daemon_json_ack` and `ops_panel_timer_hold` (the rollout skill), `ops_reconcile_mint` (the ops
 # host_vars), `docker_apt_distribution` and `access_ops_agentboard_live` (their role defaults); plus
-# spec 00118's three: the cache role's two digests and its deliberate config re-render (D9).
+# spec 00118's three: the cache role's two digests and its deliberate config re-render (D9); spec
+# 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back.
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_alloy_digest \
-cache_config_reset"
+cache_config_reset cache_proxy_image_digest engine_cache_enabled"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 

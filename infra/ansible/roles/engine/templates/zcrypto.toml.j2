@@ -17,3 +17,13 @@ exec_armed = false
 exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}
 shadow_nav_eur = {{ engine_shadow_nav_eur }}
 settle_delay_secs = {{ engine_settle_delay_secs }}
+
+{% if engine_cache_enabled | bool %}
+# The engine's cache: enabled from the first boot, every value explicit so a converge diff shows it.
+# The password is ZCRYPTO_CACHE_PASSWORD in engine.env, never here.
+[zcrypto.engine.cache]
+enabled = true
+host = "cache-proxy"
+port = 6379
+username = "engine"
+{% endif %}

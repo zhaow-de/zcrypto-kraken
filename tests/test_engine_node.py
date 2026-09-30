@@ -22,10 +22,10 @@ from nautilus_trader.adapters.kraken import (
     KrakenDataClientFactory,
     KrakenExecutionClientFactory,
 )
-from nautilus_trader.common import LogLevel
+from nautilus_trader.common import LogLevel, SerializationEncoding
 from nautilus_trader.model import AccountType
 
-from cli.config import EngineConfig
+from cli.config import CacheSettings, EngineConfig
 from cli.engine import ShadowStrategy, most_recent_boundary, next_boundary, node, startup_action
 from cli.engine.cycle import run_cycle
 from cli.engine.errors import EngineError
@@ -543,7 +543,7 @@ class RecordingExecutor:
         self.external_events.append(event)
 
 
-def _exec_stub(config, clock, *, executor_factory=None, executor=None):
+def _exec_stub(config, clock, *, executor_factory=None, executor=None, cache=None, strategy_id=None):
     """A ShadowStrategy stand-in driven through the unbound methods (the house pattern of
     test_schedule_alert_sets_state_and_timer): a real instance's `clock` is readonly until the
     nautilus registration this suite never performs."""
@@ -557,8 +557,11 @@ def _exec_stub(config, clock, *, executor_factory=None, executor=None):
         _executor_factory=executor_factory,
         _executor=executor,
         socket_subscriptions=[],
+        cache=cache,
+        strategy_id=strategy_id,
     )
     stub.subscribe_socket_state = lambda: stub.socket_subscriptions.append("all")
+    stub._log_cache_restore = lambda: ShadowStrategy._log_cache_restore(stub)
     stub._schedule_alert = functools.partial(ShadowStrategy._schedule_alert, stub)
     stub._on_cycle_alert = functools.partial(ShadowStrategy._on_cycle_alert, stub)
     stub._on_exec_tick = functools.partial(ShadowStrategy._on_exec_tick, stub)
@@ -606,6 +609,121 @@ def test_on_start_registers_no_exec_tick_without_a_factory(tmp_path):
     assert clock.timers == []
     assert stub._executor is None
     assert stub.socket_subscriptions == []
+
+
+# --- the boot line (spec 00120 D11) -------------------------------------------------------------
+
+
+def _restore_lines(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("cache restore")]
+
+
+def test_on_start_writes_no_restore_line_while_the_cache_is_disabled(tmp_path, caplog):
+    stub = _exec_stub(_config(tmp_path), FakeClock())
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert _restore_lines(caplog) == []
+
+
+def test_on_start_reads_the_orders_under_this_strategys_id_and_writes_the_zero_line_on_an_empty_namespace(tmp_path, caplog):
+    reads: list = []
+    cache = types.SimpleNamespace(
+        orders_open=lambda **kw: reads.append(("orders", kw)) or [],
+        positions_open=lambda **kw: reads.append(("positions", kw)) or [],
+    )
+    clock = FakeClock()
+
+    def factory(strategy):
+        reads.append("executor built")
+        return RecordingExecutor()
+
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)),
+        clock,
+        executor_factory=factory,
+        cache=cache,
+        strategy_id="ShadowStrategy-000",
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert _restore_lines(caplog) == ["cache restore: 0 order(s), 0 position(s) restored"]
+    assert reads == [
+        ("orders", {"strategy_id": "ShadowStrategy-000"}),
+        ("positions", {}),
+        "executor built",
+    ]
+    assert [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+
+
+def test_on_start_writes_each_restored_position_and_order_at_the_values_the_proof_reads(tmp_path, caplog):
+    held = [
+        types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.4, avg_px_open=150.0, strategy_id="ShadowStrategy-000"),
+        types.SimpleNamespace(instrument_id="SOL/EUR.KRAKEN", signed_qty=0.3, avg_px_open=150.0, strategy_id="EXTERNAL"),
+    ]
+    order = types.SimpleNamespace(client_order_id="O-20260928-201651-001-000-1", filled_qty=0.4, quantity=1.0, price=150.0)
+    cache = types.SimpleNamespace(
+        orders_open=lambda **kw: [order],
+        positions_open=lambda strategy_id=None, **kw: [p for p in held if strategy_id in (None, p.strategy_id)],
+    )
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)), FakeClock(), cache=cache, strategy_id="ShadowStrategy-000"
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert _restore_lines(caplog) == [
+        "cache restore: 1 order(s), 2 position(s) restored",
+        "cache restore: position SOL/EUR.KRAKEN 0.3 @ 150.0 (EXTERNAL)",
+        "cache restore: position SOL/EUR.KRAKEN 0.4 @ 150.0 (ShadowStrategy-000)",
+        "cache restore: order O-20260928-201651-001-000-1 partial, 0.4 of 1.0 filled @ 150.0",
+    ]
+    assert {r.levelno for r in caplog.records if r.getMessage().startswith("cache restore")} == {logging.INFO}
+
+
+def test_a_cache_the_boot_line_cannot_read_logs_one_error_and_on_start_carries_on(tmp_path, caplog):
+    def boom(**kw):
+        raise RuntimeError("cache blew up")
+
+    cache = types.SimpleNamespace(orders_open=boom, positions_open=boom)
+    clock = FakeClock()
+    executor = RecordingExecutor()
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)),
+        clock,
+        executor_factory=lambda strategy: executor,
+        cache=cache,
+        strategy_id="ShadowStrategy-000",
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    assert [r.levelno for r in caplog.records if r.getMessage().startswith("cache restore")] == [logging.ERROR]
+    assert stub._executor is executor and [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
+
+
+def test_a_restored_position_the_boot_line_cannot_format_logs_one_error_and_on_start_carries_on(tmp_path, caplog):
+    class Unreadable:
+        instrument_id = "SOL/EUR.KRAKEN"
+        signed_qty = 0.4
+        strategy_id = "ShadowStrategy-000"
+
+        @property
+        def avg_px_open(self):
+            raise ValueError("no entry price")
+
+    cache = types.SimpleNamespace(orders_open=lambda **kw: [], positions_open=lambda **kw: [Unreadable()])
+    clock = FakeClock()
+    executor = RecordingExecutor()
+    stub = _exec_stub(
+        _config(tmp_path, cache=CacheSettings(enabled=True)),
+        clock,
+        executor_factory=lambda strategy: executor,
+        cache=cache,
+        strategy_id="ShadowStrategy-000",
+    )
+    with caplog.at_level(logging.INFO, logger="zcrypto.engine.node"):
+        ShadowStrategy.on_start(stub)
+    levels = [r.levelno for r in caplog.records if r.getMessage().startswith("cache restore")]
+    assert levels.count(logging.ERROR) == 1 and levels[-1] == logging.ERROR
+    assert stub._executor is executor and [name for name, _, _ in clock.alerts] == ["shadow-cycle-2026-07-10T12"]
 
 
 def test_exec_tick_forwards_the_strategys_own_clock_reading(tmp_path):
@@ -1091,6 +1209,12 @@ class RecordingBuilder:
     def add_exec_client(self, name, factory, config):
         return self._record("add_exec_client", name=name, factory=factory, config=config)
 
+    def with_cache_config(self, config):
+        return self._record("with_cache_config", config=config)
+
+    def with_cache_database_factory(self, factory):
+        return self._record("with_cache_database_factory", factory=factory)
+
     def named(self, call_name):
         return [kwargs for name, kwargs in self.calls if name == call_name]
 
@@ -1141,6 +1265,7 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_engine.inflight_check_interval_ms == 2000
     assert exec_engine.inflight_check_threshold_ms == 5000
     assert exec_engine.inflight_check_retries == 5
+    assert exec_engine.load_cache is True
 
     data_client = recorder.named("add_data_client")[0]
     assert data_client["name"] == "KRAKEN"
@@ -1172,9 +1297,9 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert exec_config.use_ws_trade is False
 
 
-# Each of the five equals the library's own default, so the recorder-backed assertions above read
-# the same whether `_exec_engine_config` names the field or inherits it; the stand-in below is what
-# tells a stated value from an inherited one.
+# Each equals the library's own default, so the recorder-backed assertions above read the same
+# whether `_exec_engine_config` names the field or inherits it; the stand-in below is what tells a
+# stated value from an inherited one.
 @pytest.mark.parametrize(
     ("field", "stated", "flipped"),
     [
@@ -1183,6 +1308,7 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
         ("inflight_check_interval_ms", 2000, 3000),
         ("inflight_check_threshold_ms", 5000, 7000),
         ("inflight_check_retries", 5, 7),
+        ("load_cache", True, False),
     ],
 )
 def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monkeypatch, field, stated, flipped):
@@ -1205,10 +1331,111 @@ def test_the_engine_config_states_each_exec_knob_rather_than_inheriting_it(monke
     assert getattr(node._exec_engine_config(), field) == stated
 
 
+_CACHE_CONFIG_STATED = [
+    ("use_instance_id", False, True),
+    ("flush_on_start", False, True),
+    ("use_trader_prefix", True, False),
+    ("encoding", SerializationEncoding.JSON, SerializationEncoding.MSG_PACK),
+    ("timestamps_as_iso8601", False, True),
+    ("buffer_interval_ms", None, 100),
+    ("persist_account_events", True, False),
+    ("bulk_read_batch_size", None, 500),
+    ("drop_instruments_on_reset", True, False),
+    ("tick_capacity", 10000, 5000),
+    ("bar_capacity", 10000, 5000),
+    ("save_market_data", False, True),
+]
+
+
+def _cache_config_fields(config) -> dict:
+    return {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
+
+
+def test_the_cache_config_stand_in_rows_are_every_field_of_the_wheel():
+    assert {field for field, _, _ in _CACHE_CONFIG_STATED} == set(_cache_config_fields(node.CacheConfig()))
+
+
+@pytest.mark.parametrize(("field", "stated", "flipped"), _CACHE_CONFIG_STATED)
+def test_the_cache_config_states_each_field_rather_than_inheriting_it(monkeypatch, field, stated, flipped):
+    """Against a library whose default for the named field reads `flipped`, `_cache_config` still
+    produces a config reading `stated`."""
+    real_config = node.CacheConfig
+
+    def default_flipped(**kwargs):
+        kwargs.setdefault(field, flipped)
+        return real_config(**kwargs)
+
+    assert getattr(default_flipped(), field) == flipped
+    monkeypatch.setattr(node, "CacheConfig", default_flipped)
+    assert getattr(node._cache_config(), field) == stated
+
+
 def test_the_builder_is_given_no_exec_client_by_default(tmp_path, monkeypatch):
     recorder = _record_assembly(tmp_path, monkeypatch).recorder
     assert recorder.named("add_exec_client") == []
     assert [call["name"] for call in recorder.named("add_data_client")] == ["KRAKEN"]
+
+
+# --- the cache backing (spec 00120 D5) ----------------------------------------------------------
+
+
+def test_the_builder_is_given_no_cache_backing_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    recorder = _record_assembly(tmp_path, monkeypatch).recorder
+    assert recorder.named("with_cache_config") == [] and recorder.named("with_cache_database_factory") == []
+
+
+def test_the_builder_is_given_the_cache_backing_at_the_measured_budget_when_enabled(tmp_path, monkeypatch):
+    from nautilus_trader.infrastructure import RedisCacheConfig
+
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    recorder = _record_assembly(
+        tmp_path, monkeypatch, cache=CacheSettings(enabled=True, host="10.98.0.1", port=6390, username="probe")
+    ).recorder
+
+    [cache_call] = recorder.named("with_cache_config")
+    assert _cache_config_fields(cache_call["config"]) == _cache_config_fields(node._cache_config())
+    [factory_call] = recorder.named("with_cache_database_factory")
+    factory = factory_call["factory"]
+    assert isinstance(factory, RedisCacheConfig)
+    assert (factory.host, factory.port, factory.username, factory.password) == ("10.98.0.1", 6390, "probe", "a-cache-password")
+    assert (factory.ssl, factory.connection_timeout, factory.response_timeout, factory.number_of_retries) == (False, 5, 5, 10)
+
+
+def test_the_cache_arm_comes_before_the_exec_client_and_the_data_only_node_still_takes_it(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    monkeypatch.setenv(node._API_KEY_VAR, "a-key")
+    monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
+    calls = [
+        name
+        for name, _ in _record_assembly(tmp_path, monkeypatch, exec_enabled=True, cache=CacheSettings(enabled=True)).recorder.calls
+    ]
+    assert calls == [
+        "with_logging",
+        "with_exec_engine_config",
+        "add_data_client",
+        "with_cache_config",
+        "with_cache_database_factory",
+        "add_exec_client",
+    ]
+    data_only = [name for name, _ in _record_assembly(tmp_path, monkeypatch, cache=CacheSettings(enabled=True)).recorder.calls]
+    assert data_only == [
+        "with_logging",
+        "with_exec_engine_config",
+        "add_data_client",
+        "with_cache_config",
+        "with_cache_database_factory",
+    ]
+
+
+def test_a_cache_backed_assembly_never_logs_the_password(tmp_path, monkeypatch, caplog):
+    secret = "cache-password-sentinel"
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, secret)
+    with caplog.at_level(logging.DEBUG):
+        recorder = _record_assembly(tmp_path, monkeypatch, cache=CacheSettings(enabled=True)).recorder
+    [factory_call] = recorder.named("with_cache_database_factory")
+    assert secret not in repr(factory_call["factory"]) and secret not in str(factory_call["factory"])
+    assert secret not in caplog.text
 
 
 def test_every_builder_call_exists_on_the_library(tmp_path, monkeypatch):
@@ -1219,9 +1446,10 @@ def test_every_builder_call_exists_on_the_library(tmp_path, monkeypatch):
 
     monkeypatch.setenv(node._API_KEY_VAR, "a-key")
     monkeypatch.setenv(node._API_SECRET_VAR, "a-secret")
-    recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True).recorder
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    recorder = _record_assembly(tmp_path, monkeypatch, exec_enabled=True, cache=CacheSettings(enabled=True)).recorder
     called = {name for name, _ in recorder.calls}
-    assert called, "the recorder saw no builder calls -- it is no longer standing in for anything"
+    assert called >= {"with_cache_config", "with_cache_database_factory"}, sorted(called)
     for name in sorted(called):
         assert hasattr(LiveNodeBuilder, name), f"LiveNodeBuilder.{name} is gone -- node assembly breaks"
 
@@ -1299,6 +1527,35 @@ def test_the_exec_client_config_does_not_carry_the_credentials_back_out(tmp_path
     assert secret not in caplog.text
 
 
+# --- the cache password (spec 00120 D3) ---------------------------------------------------------
+
+
+def test_the_cache_password_is_never_read_while_the_cache_is_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "a-cache-password")
+    read = []
+
+    def _tracking_password():
+        read.append(True)
+        return "a-cache-password"
+
+    monkeypatch.setattr(node, "_cache_password", _tracking_password)
+    _record_assembly(tmp_path, monkeypatch)
+    assert read == []
+
+
+def test_the_cache_enabled_with_an_empty_environment_refuses_naming_the_variable(tmp_path, monkeypatch):
+    monkeypatch.delenv(node._CACHE_PASSWORD_VAR, raising=False)
+    with pytest.raises(EngineError) as excinfo:
+        _node_builder(_config(tmp_path, cache=CacheSettings(enabled=True)))
+    assert node._CACHE_PASSWORD_VAR in str(excinfo.value)
+
+
+def test_an_empty_cache_password_is_treated_as_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv(node._CACHE_PASSWORD_VAR, "")
+    with pytest.raises(EngineError, match=node._CACHE_PASSWORD_VAR):
+        _node_builder(_config(tmp_path, cache=CacheSettings(enabled=True)))
+
+
 # The node is assembled in a CHILD interpreter, one node per child: `zcrypto engine run` builds one
 # node per process, and a node holds Rust-side state whose teardown order is not ours to reason
 # about -- process exit releases strictly more than a dispose() would, and a native abort in the
@@ -1307,7 +1564,9 @@ _BUILD_PROBE = """
 import asyncio, json, os, sys
 from pathlib import Path
 
-from cli.config import EngineConfig
+from nautilus_trader.model import Currency
+
+from cli.config import CacheSettings, EngineConfig
 import cli.engine.node as node_module
 
 root = Path(sys.argv[1])
@@ -1339,11 +1598,28 @@ def capturing_observer(*args, **kwargs):
 node_module.ShadowStrategy = capturing
 node_module.ExternalOrderObserver = capturing_observer
 node = node_module.build_shadow_node(
-    EngineConfig(store_dir=root / "store", journal_dir=root / "journal", exec_enabled=sys.argv[2] == "1")
+    EngineConfig(
+        store_dir=root / "store",
+        journal_dir=root / "journal",
+        exec_enabled=sys.argv[2] == "1",
+        cache=CacheSettings(enabled=sys.argv[3] == "1"),
+    )
 )
+
+
+def resolves(code):
+    try:
+        Currency.from_str(code, strict=True)
+    except ValueError:
+        return False
+    return True
+
+
 (root / "facts.json").write_text(
     json.dumps(
         {
+            # Read after the build: which of the table's codes a strict lookup resolves in this process.
+            "registered": sorted(c.code for c in node_module._KRAKEN_CURRENCIES if resolves(c.code)),
             "trader_id": str(node.trader_id),
             "environment": str(node.environment),
             "is_running": node.is_running,
@@ -1368,17 +1644,23 @@ os._exit(0)
 """
 
 
-def _run_build_probe(tmp_path: Path, *, exec_enabled: bool, credentials: tuple[str, str] | None = None):
+def _run_build_probe(
+    tmp_path: Path, *, exec_enabled: bool, credentials: tuple[str, str] | None = None, cache_enabled: bool = False
+):
     """Assemble the node in a child interpreter. The child's environment carries exactly the
     credentials this call names and nothing inherited, so what the build does with them is the
-    only thing under test."""
+    only thing under test; a cache-enabled build is handed a cache password, since the build
+    refuses without one."""
     env = os.environ.copy()
     env.pop("KRAKEN_SPOT_API_KEY", None)
     env.pop("KRAKEN_SPOT_API_SECRET", None)
+    env.pop(node._CACHE_PASSWORD_VAR, None)
     if credentials is not None:
         env["KRAKEN_SPOT_API_KEY"], env["KRAKEN_SPOT_API_SECRET"] = credentials
+    if cache_enabled:
+        env[node._CACHE_PASSWORD_VAR] = "a-cache-password"
     return subprocess.run(
-        [sys.executable, "-c", _BUILD_PROBE, str(tmp_path), "1" if exec_enabled else "0"],
+        [sys.executable, "-c", _BUILD_PROBE, str(tmp_path), "1" if exec_enabled else "0", "1" if cache_enabled else "0"],
         capture_output=True,
         text=True,
         timeout=120,
@@ -1435,6 +1717,83 @@ def test_build_shadow_node_refuses_execution_with_an_empty_environment(tmp_path)
     assert result.returncode != 0, f"the build should have refused; stdout={result.stdout!r}"
     assert "KRAKEN_SPOT_API_KEY" in result.stderr and "KRAKEN_SPOT_API_SECRET" in result.stderr
     assert not (tmp_path / "facts.json").exists()
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True], ids=["disabled-registers-nothing", "enabled-registers-the-six"])
+def test_a_build_with_the_cache_enabled_registers_the_kraken_codes_a_fresh_process_cannot_resolve(tmp_path, cache_enabled):
+    """A build with the cache disabled registers nothing: the differential that shows the registration
+    is the build's, not the import's."""
+    facts = _node_build_facts(tmp_path, exec_enabled=False, cache_enabled=cache_enabled)
+    six = ["XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
+    five = ["ADA", "AVAX", "DOT", "LINK", "SOL"]
+    assert facts["registered"] == (sorted(five + six) if cache_enabled else sorted(five))
+
+
+_CURRENCY_PROBE = """
+import asyncio, json, os, sys
+from pathlib import Path
+
+from nautilus_trader.model import Currency
+
+from cli.engine.node import _KRAKEN_CURRENCIES
+from cli.engine.store import PAIR_KEYS
+from tests import kraken_loopback
+
+root = Path(sys.argv[1])
+snapshot = json.loads(Path("tests/fixtures/kraken_assetpairs.json").read_text())
+basket_codes = sorted({snapshot[key][side] for key in PAIR_KEYS.values() for side in ("base", "quote")})
+
+
+def fields(c):
+    return [c.code, c.precision, c.iso4217, c.name, str(c.currency_type).rsplit(".", 1)[-1]]
+
+
+def strict(code):
+    try:
+        return fields(Currency.from_str(code, strict=True))
+    except ValueError:
+        return None
+
+
+before = {code: strict(code) for code in basket_codes}
+with kraken_loopback.serve(json.loads(Path("tests/fixtures/kraken_assetpairs_basket.json").read_text())) as venue:
+    async def parse():
+        client = kraken_loopback.client(venue)
+        return await client.request_instruments()
+
+    minted = {}
+    for instrument in asyncio.run(parse()):
+        for currency in (instrument.base_currency, instrument.quote_currency):
+            minted[currency.code] = fields(currency)
+(root / "currencies.json").write_text(
+    json.dumps({"basket_codes": basket_codes, "before": before, "minted": minted, "table": [fields(c) for c in _KRAKEN_CURRENCIES]})
+)
+os._exit(0)
+"""
+
+
+def test_the_currency_table_covers_the_baskets_codes_at_the_values_the_adapter_mints(tmp_path):
+    """Read before the parse, which registers what it mints; red on a bump that reshapes a minted currency."""
+    result = subprocess.run(
+        [sys.executable, "-c", _CURRENCY_PROBE, str(tmp_path)], capture_output=True, text=True, timeout=120, cwd=Path.cwd()
+    )
+    recorded = tmp_path / "currencies.json"
+    detail = f"exit={result.returncode}\n--- stdout ---\n{result.stdout[-2000:]}\n--- stderr ---\n{result.stderr[-2000:]}"
+    assert recorded.exists(), f"the currency probe produced no result: {detail}"
+    facts = json.loads(recorded.read_text())
+    table = {row[0]: row for row in facts["table"]}
+
+    assert (
+        sorted(table)
+        == facts["basket_codes"]
+        == ["ADA", "AVAX", "DOT", "LINK", "SOL", "XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"]
+    )
+    resolved = {code: row for code, row in facts["before"].items() if row is not None}
+    assert sorted(resolved) == ["ADA", "AVAX", "DOT", "LINK", "SOL"], detail
+    assert all(resolved[code] == table[code] for code in resolved), (resolved, table)
+    assert facts["minted"] == table, (facts["minted"], table)
+    for code in ("XETH", "XLTC", "XXBT", "XXDG", "XXRP", "ZEUR"):
+        assert table[code] == [code, 8, 0, code, "CRYPTO"], table[code]
 
 
 def test_a_real_build_never_prints_the_credentials(tmp_path):

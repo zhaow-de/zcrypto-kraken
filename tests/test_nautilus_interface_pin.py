@@ -28,16 +28,21 @@ PINNED_SYMBOLS = [
     ("nautilus_trader.adapters.kraken", "KrakenExecutionClientFactory"),
     ("nautilus_trader.adapters.kraken", "KrakenProductType"),
     ("nautilus_trader.adapters.kraken", "KrakenSpotHttpClient"),
+    ("nautilus_trader.common", "CacheConfig"),
     ("nautilus_trader.common", "Environment"),
     ("nautilus_trader.common", "LogLevel"),
+    ("nautilus_trader.common", "SerializationEncoding"),
     ("nautilus_trader.common", "SocketState"),
     ("nautilus_trader.config", "LiveExecutionEngineConfig"),
     ("nautilus_trader.config", "LoggerConfig"),
+    ("nautilus_trader.infrastructure", "RedisCacheConfig"),
     ("nautilus_trader.live", "LiveNode"),
     ("nautilus_trader.live", "LiveNodeBuilder"),
     ("nautilus_trader.model", "AccountId"),
     ("nautilus_trader.model", "AccountType"),
     ("nautilus_trader.model", "ClientOrderId"),
+    ("nautilus_trader.model", "Currency"),
+    ("nautilus_trader.model", "CurrencyType"),
     ("nautilus_trader.model", "InstrumentId"),
     ("nautilus_trader.model", "LiquiditySide"),
     ("nautilus_trader.model", "OrderSide"),
@@ -66,6 +71,13 @@ PINNED_ATTRIBUTES = [
     # explicitly, so a rename breaks the call rather than silently selecting the other member.
     ("nautilus_trader.adapters.kraken", "KrakenProductType", "SPOT"),
     ("nautilus_trader.adapters.kraken", "KrakenEnvironment", "LIVE"),
+    # `register`, called before a cache-backed build; `from_str`, which its tests resolve with; and
+    # the type every code in the table carries.
+    ("nautilus_trader.model", "Currency", "register"),
+    ("nautilus_trader.model", "Currency", "from_str"),
+    ("nautilus_trader.model", "CurrencyType", "CRYPTO"),
+    # The store's format, stated on the cache config.
+    ("nautilus_trader.common", "SerializationEncoding", "JSON"),
 ]
 
 
@@ -219,14 +231,16 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "application past the order's own quantity. True removes one of the three bounds that "
         "paragraph and specs 00098 and 00100 rest on"
     )
+    assert config.load_cache is True, (
+        "stated by cli/engine/node.py since spec 00120, so the default no longer reaches production; "
+        "a flip would turn the stated value into a divergence worth re-deriving"
+    )
 
 
 # Every `LiveExecutionEngineConfig` default, measured from the installed wheel rather than typed.
-# `cli/engine/node.py` states five of these and inherits the other thirty-three, so a default that
-# moves upstream moves production here silently, with no import to break and no rename to notice.
-# The three that carry a reasoned assertion below say WHY they matter; this map says only what a
-# wheel reported, which is the one claim it can make honestly about fields whose behaviour nothing
-# in this repo has established.
+# `cli/engine/node.py` states some of these and inherits the rest, so a default that moves upstream
+# moves production here silently, with no import to break and no rename to notice. The reasoned
+# assertions above say WHY a field matters; this map says only what a wheel reported.
 EXEC_ENGINE_DEFAULTS = {
     "allow_overfills": False,
     "debug": False,
@@ -302,6 +316,73 @@ def test_the_inflight_defaults_we_now_state_explicitly_are_unchanged():
     assert config.inflight_check_interval_ms == 2000
     assert config.inflight_check_threshold_ms == 5000
     assert config.inflight_check_retries == 5
+
+
+def test_the_cache_config_defaults_we_state_are_unchanged():
+    """`cli/engine/node.py`'s `_cache_config` states every field at these values; a field a bump adds
+    or removes fails here, so it is stated there before the bump lands."""
+    from nautilus_trader.common import CacheConfig, SerializationEncoding
+
+    expected = {
+        "use_instance_id": False,
+        "flush_on_start": False,
+        "use_trader_prefix": True,
+        "encoding": SerializationEncoding.JSON,
+        "timestamps_as_iso8601": False,
+        "buffer_interval_ms": None,
+        "persist_account_events": True,
+        "bulk_read_batch_size": None,
+        "drop_instruments_on_reset": True,
+        "tick_capacity": 10000,
+        "bar_capacity": 10000,
+        "save_market_data": False,
+    }
+    config = CacheConfig()
+    live = {name: getattr(config, name) for name in dir(config) if not name.startswith("_")}
+    assert set(live) == set(expected), (
+        f"the cache config's FIELD SET moved -- added {sorted(set(live) - set(expected))}, removed "
+        f"{sorted(set(expected) - set(live))}"
+    )
+    assert live == expected
+
+
+def test_the_node_config_defaults_we_leave_off_are_unchanged():
+    """Strategy state is not restored: the ledger is the executor's state, and both stay at the
+    library's own off, inherited, so a flip would restore state nothing here designed for."""
+    from nautilus_trader.live import LiveNodeConfig
+
+    config = LiveNodeConfig()
+    assert config.load_state is False
+    assert config.save_state is False
+
+
+# Inherited by the backing `cli/engine/node.py` attaches; the start-order budget its ten retries are
+# sized to (spec 00120 D5) rests on them.
+REDIS_BACKOFF_DEFAULTS = {"exponent_base": 2, "max_delay": 1000, "factor": 2}
+
+
+def test_the_redis_cache_config_accepts_the_arguments_we_pass_and_hides_the_password():
+    from nautilus_trader.infrastructure import RedisCacheConfig
+
+    secret = "cache-password-sentinel"
+    config = RedisCacheConfig(
+        host="cache-proxy",
+        port=6379,
+        username="engine",
+        password=secret,
+        ssl=False,
+        connection_timeout=5,
+        response_timeout=5,
+        number_of_retries=10,
+    )
+    assert config.password == secret  # the value reaches the backing
+    assert secret not in repr(config) and secret not in str(config)
+    moved = {
+        name: (REDIS_BACKOFF_DEFAULTS[name], getattr(config, name))
+        for name in REDIS_BACKOFF_DEFAULTS
+        if getattr(config, name) != REDIS_BACKOFF_DEFAULTS[name]
+    }
+    assert moved == {}, f"the backing's inherited backoff moved (was, now): {moved}"
 
 
 def test_a_position_report_refuses_a_none_side():

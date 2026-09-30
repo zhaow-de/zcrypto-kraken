@@ -42,7 +42,8 @@
           | reject('match', '[A-Za-z0-9]{5,}\Z') | list | length == 0
         fail_msg: >-
           {{ ['cache_engine_password', 'cache_replica_password', 'cache_sentinel_password', 'cache_sentinel_requirepass', 'cache_exporter_password'] | zip([cache_engine_password, cache_replica_password, cache_sentinel_password, cache_sentinel_requirepass, cache_exporter_password]) | rejectattr('1', 'match', '[A-Za-z0-9]{5,}\Z') | map('first') | join(', ') }}
-          in group_vars/cache_host/vault.yml must be five or more letters and digits. Re-generate it with
+          in group_vars/cache_host/vault.yml (cache_engine_password and cache_sentinel_requirepass: group_vars/all/vault.yml)
+          must be five or more letters and digits. Re-generate it with
           `openssl rand -hex 24 | tr -d '\n' | uv run ansible-vault encrypt_string --stdin-name <key>` and replace its entry.
 
     # Tests: tests/test_infra_converge_guards.py.
@@ -197,8 +198,8 @@
           {{ item }}'s template no longer renders what {{ inventory_hostname }} was given. The file on the
           node is the daemon's and this converge left it as it is. Apply a template change by the
           cache-config-reset procedure in infra/runbooks/cache.md, and a password changed in
-          group_vars/cache_host/vault.yml by its cache-password-rotation procedure, which resets the three
-          nodes together.
+          group_vars/cache_host/vault.yml or group_vars/all/vault.yml by its cache-password-rotation
+          procedure, which resets the three nodes together and re-renders the engine host.
       loop: "{{ cache_daemon_files }}"
       when: item not in (cache_conf_render.results | selectattr('changed') | map(attribute='item') | list)
       register: cache_config_drift

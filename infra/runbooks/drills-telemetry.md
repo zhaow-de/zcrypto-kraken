@@ -70,15 +70,16 @@ The stop reaches nothing else. Each Alloy is its own compose project and its own
 
 ### Must fire
 
-**Ops half — eight pages.** An entry that names fewer books an eight-page blackout as a smaller one, and teaches the next responder to discount the rest.
+**Ops half — nine pages.** An entry that names fewer books a nine-page blackout as a smaller one, and teaches the next responder to discount the rest.
 
 - `zcrypto-alloy-dark-ops` (critical, `metrics`): `for: 10m` + 60 s + ~5 min staleness ≈ **16 min**.
 - `zcrypto-hcio-watchdog` (critical, `metrics`), **ahead of it, at ≈11 min**: the ops Alloy *is* the healthchecks.io scrape, so `hc_checks_down_total` goes stale with it and the rule's `or on() vector(999)` fallback trips at ~5 min staleness + `for: 5m` + 60 s. This is the one route where the watchdog leads rather than trails.
 - Six instant rules page by **NoData** at ≈11 min each (~5 min staleness + `for: 5m` + 60 s), because every series only the ops Alloy carries goes stale with it (no count command: upstream Prometheus staleness over the ops `config.alloy` keep-regex) and each carries `noDataState: Alerting`: [`zcrypto-ops-archive-pull-stalled`](ops-node.md#zcrypto-ops-archive-pull-stalled) (critical), [`zcrypto-reconcile-exporter-stale`](ops.md#zcrypto-reconcile-exporter-stale) (critical), [`zcrypto-trade-backfill-stale`](ops-node.md#zcrypto-trade-backfill-stale) (critical), [`zcrypto-ops-verified-replay-stale`](ops-node.md#zcrypto-ops-verified-replay-stale) (warning), [`zcrypto-ops-verify-replay-stale`](ops.md#zcrypto-ops-verify-replay-stale) (warning) and [`zcrypto-ops-grafana-keepalive-stale`](ops-node.md#zcrypto-ops-grafana-keepalive-stale) (warning). They are self-attributing: `zcrypto-alloy-dark-ops` fires in the same window and names the cause.
+- `zcrypto-capture-textfile-missing` (warning, `metrics`), **last, at ≈26 min**: ops publishes the reboot probe the rule counts, so the count falls to 2 once its series goes stale (~5 min), then `for: 20m` + 60 s. A **value** page, not a NoData one; its summary names the capture hosts beside ops, and when ops alone is induced the host that stopped is ops.
 - **Not** the Grafana watchdog check. It `curl`s Grafana from the host, not through Alloy, and keeps pinging success throughout.
 - The ops Loki rules stay quiet: their `[6h]`/`[26h]` windows still hold hours of prior lines.
 
-**Secondary half — two pages, not one**, for the same reason the ops half spells out: an unnamed page mid-hold reads as a real fault. `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at ≈16 min, and **`zcrypto-capture-textfile-missing` (warning, `metrics`) about 10 min behind it**: `count(node_reboot_required{host=~"zcrypto|zcrypto-red"})` with evaluator `lt 2` and `for: 20m`, so it is a **value** page rather than a NoData one and fires whenever EITHER capture host stops publishing. Read its summary carefully before reacting: it names the attended-reboot net on **both** hosts, so on a secondary-only induction it is easily misread as a primary-side fault on the unbackfillable host. `zcrypto-hcio-watchdog` must stay **quiet**; no check is fed by that host's Alloy.
+**Secondary half — two pages, not one**, for the same reason the ops half spells out: an unnamed page mid-hold reads as a real fault. `zcrypto-alloy-dark-capture-secondary` (critical, `metrics`) at ≈16 min, and **`zcrypto-capture-textfile-missing` (warning, `metrics`) about 10 min behind it**: `count(node_reboot_required{host=~"zcrypto|zcrypto-red|ops"})` with evaluator `lt 3` and `for: 20m`, so it is a **value** page rather than a NoData one and fires whenever one of the three hosts stops publishing. Read its summary carefully before reacting: it names the attended-reboot net on the capture hosts and ops, so on a secondary-only induction it is easily misread as a primary-side fault on the unbackfillable host. `zcrypto-hcio-watchdog` must stay **quiet**; no check is fed by that host's Alloy.
 
 ### Operator action
 
@@ -285,7 +286,7 @@ sudo docker stop grafana-alloy
 
 ### Must fire
 
-The same eight pages drill C's ops half lists, on the same clocks: `zcrypto-hcio-watchdog` at ≈11 min, `zcrypto-alloy-dark-ops` at ≈16 min, and the six NoData rules at ≈11 min. Each trips inside K's shorter hold, which is why K is the induction that times them.
+Eight of the nine pages drill C's ops half lists, on the same clocks: `zcrypto-hcio-watchdog` at ≈11 min, `zcrypto-alloy-dark-ops` at ≈16 min, and the six NoData rules at ≈11 min. Each trips inside K's shorter hold, which is why K is the induction that times them; `zcrypto-capture-textfile-missing`'s ≈26 min falls past a hold ended at ≈16 min, and it stays quiet here.
 
 ### Operator action
 

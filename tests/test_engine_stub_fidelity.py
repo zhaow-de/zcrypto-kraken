@@ -174,6 +174,11 @@ TABLE: dict[str, dict[str, Standin]] = {
         "_VenueHoldings": Standin(
             OURS, "cli.engine.executor.read_venue_holdings, the venue_holdings ProbeExecutor is built with", ()
         ),
+        # Answers REAL `FillReport`s; what it restates is this repo's reader, not the library.
+        "_VenueFills": Standin(OURS, "cli.engine.executor.read_venue_fills, the venue_fills ProbeExecutor is built with", ()),
+        "_VenuePositions": Standin(
+            OURS, "cli.engine.executor.read_venue_positions, the venue_positions ProbeExecutor is built with", ()
+        ),
     },
     "test_engine_command.py": {
         "_FakeNode": Standin(LIBRARY, "nautilus_trader.live.LiveNode", (_NODE_SURFACE, _NODE_OFFERS)),

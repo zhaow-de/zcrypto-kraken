@@ -116,11 +116,11 @@ def _assigned(block: str, key: str) -> str | None:
 
 def _engine_blocks() -> tuple[str, str]:
     """The nautilus stage and its sibling drop, in the order the pipeline runs them."""
-    blocks = [b for b in _blocks(_parse_body(CAPTURE_ALLOY.read_text()), "stage.match") if "engine" in b]
-    assert len(blocks) == 2, f"expected the nautilus stage and its drop, found {len(blocks)}"
-    stage, drop = blocks
-    assert _assigned(stage, "pipeline_name") == "engine_nautilus" and _assigned(drop, "action") == "drop"
-    return stage, drop
+    blocks = _blocks(_parse_body(CAPTURE_ALLOY.read_text()), "stage.match")
+    stages = [b for b in blocks if _assigned(b, "pipeline_name") == "engine_nautilus"]
+    drops = [b for b in blocks if _assigned(b, "action") == "drop" and "engine-nautilus" in (_assigned(b, "selector") or "")]
+    assert len(stages) == 1 and len(drops) == 1, f"expected the nautilus stage and its drop, found {len(stages)} and {len(drops)}"
+    return stages[0], drops[0]
 
 
 def _expressions(block: str) -> list[str]:

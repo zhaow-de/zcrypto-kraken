@@ -5,6 +5,7 @@ import yaml
 
 from cli.config import (
     AppConfig,
+    CacheSettings,
     ConfigError,
     DataConfig,
     EngineConfig,
@@ -242,6 +243,57 @@ def test_tracking_band_bps_rejects_a_non_number_non_positive_or_bool(tmp_path):
             load_config(cfg_path)
 
 
+def test_the_cache_table_defaults_to_disabled_on_the_proxy(tmp_path):
+    cfg = load_config(_write(tmp_path, "[zcrypto.engine]\nexec_enabled = true\n"))
+    assert cfg.engine.cache == CacheSettings()
+    assert (cfg.engine.cache.enabled, cfg.engine.cache.host, cfg.engine.cache.port, cfg.engine.cache.username) == (
+        False,
+        "cache-proxy",
+        6379,
+        "engine",
+    )
+
+
+def test_the_cache_table_reads_every_field(tmp_path):
+    cfg = load_config(
+        _write(tmp_path, '[zcrypto.engine.cache]\nenabled = true\nhost = "127.0.0.1"\nport = 6390\nusername = "probe"\n')
+    )
+    assert cfg.engine.cache == CacheSettings(enabled=True, host="127.0.0.1", port=6390, username="probe")
+    assert cfg.engine.exec_enabled is False  # the nested table leaves the flat keys at their defaults
+
+
+def test_the_cache_table_not_a_table_raises(tmp_path):
+    with pytest.raises(ConfigError, match=r"\[zcrypto\.engine\.cache\].*must be a table"):
+        load_config(_write(tmp_path, "[zcrypto.engine]\ncache = 5\n"))
+
+
+def test_the_cache_table_refuses_an_unknown_key_so_the_password_can_never_be_config(tmp_path):
+    with pytest.raises(ConfigError, match=r"\[zcrypto\.engine\.cache\].*unknown key\(s\): password"):
+        load_config(_write(tmp_path, '[zcrypto.engine.cache]\npassword = "never-here"\n'))
+
+
+def test_the_cache_enabled_flag_rejects_a_non_boolean(tmp_path):
+    with pytest.raises(ConfigError, match=r"\[zcrypto\.engine\.cache\]\.enabled.*must be a boolean"):
+        load_config(_write(tmp_path, "[zcrypto.engine.cache]\nenabled = 1\n"))
+
+
+@pytest.mark.parametrize("key", ["host", "username"])
+def test_the_cache_host_and_username_reject_an_empty_string(tmp_path, key):
+    with pytest.raises(ConfigError, match=rf"\[zcrypto\.engine\.cache\]\.{key}.*must be a non-empty string"):
+        load_config(_write(tmp_path, f'[zcrypto.engine.cache]\n{key} = "  "\n'))
+
+
+@pytest.mark.parametrize("bad", ["true", "0", "65536", '"6379"'])
+def test_the_cache_port_rejects_a_boolean_a_string_and_a_value_outside_the_port_range(tmp_path, bad):
+    with pytest.raises(ConfigError, match=r"\[zcrypto\.engine\.cache\]\.port.*must be an integer between 1 and 65535"):
+        load_config(_write(tmp_path, f"[zcrypto.engine.cache]\nport = {bad}\n"))
+
+
+def test_the_cache_port_accepts_the_range_ends(tmp_path):
+    assert load_config(_write(tmp_path, "[zcrypto.engine.cache]\nport = 1\n")).engine.cache.port == 1
+    assert load_config(_write(tmp_path, "[zcrypto.engine.cache]\nport = 65535\n")).engine.cache.port == 65535
+
+
 def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     """The blast-radius bound must appear in a converge diff, exactly like exec_armed."""
     text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
@@ -251,6 +303,35 @@ def test_the_engine_role_template_renders_the_plan_cap_explicitly():
     )
     defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
     assert defaults["engine_exec_max_plan_notional_eur"] == 100.0, defaults.get("engine_exec_max_plan_notional_eur")
+
+
+@pytest.mark.parametrize("switch", [True, False], ids=["enabled-by-default", "off-by-the-operand"])
+def test_the_engine_role_template_renders_the_cache_table_enabled_at_the_proxys_address_unless_switched_off(tmp_path, switch):
+    import jinja2
+
+    text = Path("infra/ansible/roles/engine/templates/zcrypto.toml.j2").read_text()
+    defaults = yaml.safe_load(Path("infra/ansible/roles/engine/defaults/main.yml").read_text())
+    assert defaults["engine_cache_enabled"] is True
+    values = {
+        "engine_state_dir": "/var/lib/zcrypto-engine",
+        "engine_exec_max_plan_notional_eur": "100.0",
+        "engine_shadow_nav_eur": "1000.0",
+        "engine_settle_delay_secs": "90",
+        "engine_cache_enabled": "true" if switch else "false",  # `-e k=v` hands the role a string
+    }
+    env = jinja2.Environment(trim_blocks=True, undefined=jinja2.StrictUndefined)
+    env.filters["bool"] = lambda value: str(value).lower() in ("true", "1", "yes")  # Ansible's own filter, absent from jinja2
+    rendered = env.from_string(text).render(**values)
+    assert "password" not in rendered.lower().replace("the password is zcrypto_cache_password in engine.env, never here.", "")
+    cfg = load_config(_write(tmp_path, rendered))
+    assert cfg.engine.cache == (
+        CacheSettings(enabled=True, host="cache-proxy", port=6379, username="engine") if switch else CacheSettings()
+    )
+    assert ("[zcrypto.engine.cache]" in rendered) is switch
+    assert [ln.strip() for ln in text.splitlines() if ln.strip() in ("enabled = true", "port = 6379")] == [
+        "enabled = true",
+        "port = 6379",
+    ]
 
 
 def test_committed_zcrypto_toml_has_no_engine_table():

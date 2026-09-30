@@ -218,11 +218,12 @@ def test_the_timer_actually_repeats():
     assert any(l.strip() == "Unit=zcrypto-reboot-check.service" for l in timer.splitlines())
 
 
-# --- the cache role's copy ------------------------------------------------------------------------
-# The cache nodes publish the same flag from a copy of this role's script, timer and unit, so the fleet's reboot-pending
-# series covers them. The copies' comments are their own, naming the role that installs them; what a shell or systemd
-# reads must be this role's, the unit's one variable renamed.
-CACHE_ROLE = REPO / "infra/ansible/roles/cache"
+# --- the cache and ops roles' copies ------------------------------------------------------------
+# The cache nodes and ops publish the same flag from a copy of this role's script, timer and unit, so the fleet's
+# reboot-pending series covers them. The copies' comments are their own, naming the role that installs them; what a
+# shell or systemd reads must be this role's, the unit's one variable renamed.
+COPY_ROLES = {"cache": "cache_textfile_dir", "ops": "ops_textfile_dir"}
+CACHE_ROLE_DIR = REPO / "infra/ansible/roles/cache"
 REBOOT_CHECK_FILES = (
     "files/zcrypto-reboot-check.sh",
     "files/zcrypto-reboot-check.timer",
@@ -234,26 +235,64 @@ def _program(path: Path) -> list[str]:
     return [line for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
+def _resolved_default(role: str, var: str) -> str:
+    import re
+
+    defaults = yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
+    value = defaults[var]
+    while m := re.search(r"\{\{ (\w+) \}\}", value):
+        value = value.replace(m.group(0), defaults[m.group(1)])
+    return value
+
+
+@pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
 @pytest.mark.parametrize("relative", REBOOT_CHECK_FILES)
-def test_the_cache_roles_reboot_check_is_the_capture_roles_program(relative):
-    copy = [line.replace("cache_textfile_dir", "capture_textfile_dir") for line in _program(CACHE_ROLE / relative)]
-    assert copy == _program(ROLE / relative), f"the cache role's {relative} drifted from the capture role's"
+def test_the_copied_reboot_check_is_the_capture_roles_program(role, var, relative):
+    copy = [line.replace(var, "capture_textfile_dir") for line in _program(REPO / "infra/ansible/roles" / role / relative)]
+    assert copy == _program(ROLE / relative), f"the {role} role's {relative} drifted from the capture role's"
 
 
-def test_the_cache_role_installs_what_its_unit_runs_and_enables_the_timer_alone():
-    import yaml
-
-    textfile_dir = yaml.safe_load((CACHE_ROLE / "defaults/main.yml").read_text())["cache_textfile_dir"]
-    assert textfile_dir == "/var/lib/zcrypto-node-textfile", textfile_dir
-    unit = (CACHE_ROLE / "templates/zcrypto-reboot-check.service.j2").read_text()
-    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
-    binary = exec_start.removeprefix("ExecStart=").split()[0]
-    cache_tasks_yaml = (CACHE_ROLE / "tasks/main.yml").read_text()
-    assert binary in _installed_dests(cache_tasks_yaml), f"the unit runs {binary}, which the cache role does not install"
+@pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
+def test_the_copying_role_installs_what_its_unit_runs_and_enables_the_timer_alone(role, var):
+    role_dir = REPO / "infra/ansible/roles" / role
+    unit = (
+        (role_dir / "templates/zcrypto-reboot-check.service.j2")
+        .read_text()
+        .replace("{{ " + var + " }}", _resolved_default(role, var))
+    )
+    assert "{{" not in unit, f"unsubstituted variable remains: {unit}"
+    binary, flag, out = next(line for line in unit.splitlines() if line.startswith("ExecStart=")).removeprefix("ExecStart=").split()
+    tasks_yaml = (role_dir / "tasks/main.yml").read_text()
+    assert binary in _installed_dests(tasks_yaml), f"the unit runs {binary}, which the {role} role does not install"
+    assert flag == "/run/reboot-required", flag
+    rw = next(line for line in unit.splitlines() if line.startswith("ReadWritePaths="))
+    assert str(Path(out).parent) in _rw_paths(rw), f"{out} is not writable under ProtectSystem=strict: {rw}"
     enabled = [
         t["ansible.builtin.systemd_service"]["name"]
-        for t in _flatten(yaml.safe_load(cache_tasks_yaml))
+        for t in _flatten(yaml.safe_load(tasks_yaml))
         if "ansible.builtin.systemd_service" in t and t["ansible.builtin.systemd_service"].get("enabled")
     ]
     assert "zcrypto-reboot-check.timer" in enabled, f"the timer is not enabled: {enabled}"
     assert "zcrypto-reboot-check.service" not in enabled, f"the oneshot must not be enabled: {enabled}"
+
+
+def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
+    unit = (CACHE_ROLE_DIR / "templates/zcrypto-reboot-check.service.j2").read_text()
+    unit = unit.replace("{{ cache_textfile_dir }}", _resolved_default("cache", "cache_textfile_dir"))
+    host_dir = str(Path(next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]).parent)
+    assert host_dir == "/var/lib/zcrypto-node-textfile", host_dir
+    alloy = (CACHE_ROLE_DIR / "files/config.alloy").read_text()
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
+    assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory}"
+
+
+def test_the_ops_unit_writes_where_the_ops_alloy_mounts_its_textfile_directory():
+    ops = REPO / "infra/ansible/roles/ops"
+    compose = yaml.safe_load((ops / "templates/alloy-compose.yaml.j2").read_text())
+    alloy = (ops / "files/config.alloy").read_text()
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
+    volumes = compose["services"]["alloy"]["volumes"]
+    assert f"{{{{ ops_textfile_dir }}}}:{directory}:ro" in volumes, f"ops_textfile_dir is not mounted at {directory}: {volumes}"
+    unit = (ops / "templates/zcrypto-reboot-check.service.j2").read_text()
+    exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert exec_start.endswith("{{ ops_textfile_dir }}/reboot.prom"), exec_start

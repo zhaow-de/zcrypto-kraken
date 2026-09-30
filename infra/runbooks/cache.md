@@ -25,7 +25,7 @@ Nothing fired. You mean to move the primary off a node: before re-pinning or con
 
 ### What it means
 
-`SENTINEL failover zcache` makes the Sentinel you ask promote a replica without waiting for the others to agree the primary is down; it picks by `replica-priority`, then by replication offset, so from valkey1 the primary moves to valkey2 and from valkey2 to valkey1, and valkey3 is picked when it is the one replica left. The old primary is turned into a replica of the new one. The engine, once wired to the set, holds its connection through the proxy on its own host, whose checks cut the session at the switch so its client reconnects to the new primary; do it inside an engine inter-cycle gap by preference.
+`SENTINEL failover zcache` makes the Sentinel you ask promote a replica without waiting for the others to agree the primary is down; it picks by `replica-priority`, then by replication offset, so from valkey1 the primary moves to valkey2 and from valkey2 to valkey1, and valkey3 is picked when it is the one replica left. The old primary is turned into a replica of the new one. The switch cuts the engine's session through the proxy on its own host (`on-marked-down shutdown-sessions`) and the library drops the engine's next write, which nothing replays, so the engine's next restart is taken flat ([`#zcrypto-engine-cache-write-failed`](#zcrypto-engine-cache-write-failed)): do it inside an engine inter-cycle gap while the engine is flat, by preference.
 
 ### What to do
 
@@ -72,7 +72,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired. You changed the cache role's Valkey or Sentinel template and mean a node to run it, or `cache-rejoin-node` sent you here because a node's own files are broken. A password changed in `group_vars/cache_host/vault.yml` is `cache-password-rotation` below, not this procedure: a node reset alone to a new password fails to authenticate to, and from, the nodes still holding the old one.
+Nothing fired. You changed the cache role's Valkey or Sentinel template and mean a node to run it, or `cache-rejoin-node` sent you here because a node's own files are broken. A password changed in `group_vars/cache_host/vault.yml`, or `cache_engine_password` or `cache_sentinel_requirepass` changed in `group_vars/all/vault.yml`, is `cache-password-rotation` below, not this procedure: a node reset alone to a new password fails to authenticate to, and from, the nodes still holding the old one.
 
 ### What it means
 
@@ -99,20 +99,21 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-Nothing fired. You mean to change a password in `group_vars/cache_host/vault.yml`, or a converge's drift report named `valkey.conf`, `sentinel.conf` or `users.acl` after one changed there, since their renders carry the passwords.
+Nothing fired. You mean to change a password in `group_vars/cache_host/vault.yml`, or `cache_engine_password` or `cache_sentinel_requirepass` in `group_vars/all/vault.yml`, or a converge's drift report named `valkey.conf`, `sentinel.conf` or `users.acl` after one changed there, since their renders carry the passwords.
 
 ### What it means
 
-The nodes authenticate to each other: a replica to its primary with the `replica` password, each Sentinel to each Valkey with the `sentinel` password and to the other Sentinels with Sentinel's `requirepass`. A node reset alone to a new password fails to authenticate to, and from, a node still holding the old one, so the three nodes' files are replaced in one stop, the set down for the minutes it takes; once the engine is wired to the set, that is inside an engine inter-cycle gap. The rendered files name valkey1 as the first primary, so valkey1 holds the primary before the stop and starts first, and no write the set took is lost. `vk` and `sn` read their passwords from files a converge carrying the node's image digest re-renders, and Alloy reads the exporter password and `requirepass` from a secrets file a converge carrying the Alloy digest re-renders and the container reads when it is recreated. The stop fires `zcrypto-cache-primary-count` once its two minutes pass, and it clears when step 5 is done on valkey2, the second node whose Sentinel and Alloy run on the new passwords; `zcrypto-cache-replicas-short` fires when valkey3's step 5 comes more than five minutes after valkey1's, and clears when valkey3's replica connects.
+The nodes authenticate to each other: a replica to its primary with the `replica` password, each Sentinel to each Valkey with the `sentinel` password and to the other Sentinels with Sentinel's `requirepass`. A node reset alone to a new password fails to authenticate to, and from, a node still holding the old one, so the three nodes' files are replaced in one stop, the set down for the minutes it takes, inside an engine inter-cycle gap while the engine is flat: the engine authenticates with the `engine` password and its proxy checks the Sentinels with their `requirepass`, both rendered on the engine host from `group_vars/all/vault.yml`, and between the nodes' stop and the engine converge of step 6 the engine holds no session the new passwords admit, its writes are dropped and the store is behind — the outage the `zcrypto-engine-cache-write-failed` section below describes, whose restart is that converge. The rendered files name valkey1 as the first primary, so valkey1 holds the primary before the stop and starts first, and no write the set took is lost. `vk` and `sn` read their passwords from files a converge carrying the node's image digest re-renders, and Alloy reads the exporter password and `requirepass` from a secrets file a converge carrying the Alloy digest re-renders and the container reads when it is recreated. The stop fires `zcrypto-cache-primary-count` once its two minutes pass, and it clears when step 5 is done on valkey2, the second node whose Sentinel and Alloy run on the new passwords; `zcrypto-cache-replicas-short` fires when valkey3's step 5 comes more than five minutes after valkey1's, and clears when valkey3's replica connects.
 
 ### What to do
 
-1. **Put the primary on valkey1 while the nodes still run the old passwords:** `cache-manual-failover` above, repeated until `sn SENTINEL get-master-addr-by-name zcache` names `10.98.0.11`. When a converge already carried the change, `vk` or `sn` answers `WRONGPASS` or `NOAUTH`: put the old value back in `vault.yml`, converge each node with the two digests it runs, read as step 3 reads them — step 5's command without `-e cache_config_reset=true` — and begin here again.
-2. **Change the password** in `group_vars/cache_host/vault.yml` by the recipe in that file's header, merged to `develop`, which the converges below run from. Steps 3 to 5 follow in the same sitting, and no other cache converge — a `cache-config-reset` on another node, an Alloy bump's cache leg — runs between this merge and step 5: a converge without the reset in that window renders the new password into the env files its digests gate, against a `users.acl` and a Sentinel `requirepass` still holding the old one, and two nodes in that state page `zcrypto-cache-primary-count` on a healthy set.
+1. **Put the primary on valkey1 while the nodes still run the old passwords:** `cache-manual-failover` above, repeated until `sn SENTINEL get-master-addr-by-name zcache` names `10.98.0.11`. When a converge already carried the change, `vk` or `sn` answers `WRONGPASS` or `NOAUTH`: put the old value back in the vault file it changed in, `group_vars/cache_host/vault.yml` or, for `cache_engine_password` and `cache_sentinel_requirepass`, `group_vars/all/vault.yml`, converge each node with the two digests it runs, read as step 3 reads them — step 5's command without `-e cache_config_reset=true` — and begin here again.
+2. **Change the password** in `group_vars/cache_host/vault.yml`, or in `group_vars/all/vault.yml` for `cache_engine_password` and `cache_sentinel_requirepass`, by the recipe in the cache file's header, merged to `develop`, which the converges below run from. Steps 3 to 6 follow in the same sitting, and no other converge that renders a password — a `cache-config-reset` on another node, an Alloy bump's cache leg, an engine converge of `zcrypto` — runs between this merge and step 6: a cache converge without the reset in that window renders the new password into the env files its digests gate, against a `users.acl` and a Sentinel `requirepass` still holding the old one, and two nodes in that state page `zcrypto-cache-primary-count` on a healthy set; an engine converge in it — an arm or disarm, the rollout skill's same-day shape — renders the new `engine` password into `engine.env` or the new `requirepass` into `haproxy.cfg` against nodes still holding the old, and its handler restarts the engine into `failed to create cache database backing` at ten-second intervals until step 6.
 3. **Read each node's running digests**, on each node: `sudo docker inspect zcrypto-valkey grafana-alloy --format '{{.Config.Image}}'` prints Valkey's, then Alloy's.
 4. **Stop the three nodes, valkey3 and valkey2 before valkey1:** `sudo systemctl stop zcrypto-cache.service` on each.
 5. **Converge each node with the reset, valkey1 first, and recreate its Alloy before the next node's converge**, from `infra/ansible`: `./scripts/converge.sh site.yml --limit zcrypto-valkey<N> --tags cache -e cache_config_reset=true -e cache_image_digest=sha256:<its Valkey digest> -e cache_alloy_digest=sha256:<its Alloy digest>`, which renders the node's files and starts its daemons; then, on the node, `cd /opt/zcrypto-cache/alloy && sudo docker compose up -d`, which recreates Alloy so it reads the new secrets.
-6. **Confirm by value:** on valkey2 and valkey3, `cache-rejoin-node` steps 3 and 4; on each node, `sn SENTINEL ckquorum zcache` answers `OK 3 usable Sentinels`; from the workstation, `uv run python infra/scripts/grafana-query.py 'redis_up{host=~"zcrypto-valkey[123]"}'` reads 1 on six series, a node's `valkey` and `sentinel` each.
+6. **Converge the engine host in the same gap, the one engine converge step 2 admits between the merge and here**, when `cache_engine_password` or `cache_sentinel_requirepass` changed: `./scripts/converge.sh site.yml --limit zcrypto -e converge_primary=true -e engine_image_digest=sha256:<the running engine digest> -e cache_proxy_image_digest=sha256:<the running proxy digest> --tags engine`, both digests read off the containers as `docs/reference/fleet-pins.md` prescribes; it re-renders `engine.env` and `haproxy.cfg` and its handler restarts the engine and the proxy, the restart `engine-restart-margin-position` in `infra/runbooks/engine-procedures.md` admits while flat.
+7. **Confirm by value:** on valkey2 and valkey3, `cache-rejoin-node` steps 3 and 4; on each node, `sn SENTINEL ckquorum zcache` answers `OK 3 usable Sentinels`; from the workstation, `uv run python infra/scripts/grafana-query.py 'redis_up{host=~"zcrypto-valkey[123]"}'` reads 1 on six series, a node's `valkey` and `sentinel` each.
 
 ### Retire when
 
@@ -162,7 +163,7 @@ A **critical** Grafana alert, `Cache · not exactly one primary`: for two minute
 
 ### What it means
 
-**No agreed primary**: a failover did not complete — fewer than two Sentinels agree the old primary is down, or no replica is eligible — or two of the three Sentinels are down, and cache writes have nowhere to land; the engine, once wired, logs its failed writes on its native side, which reaches no log store. One node's telemetry going dark does not fire it: the other two Sentinels still name the primary. The rule stays quiet while fewer than two nodes' telemetry ships, which the Alloy-dark alerts own. A node that still reads `role:master` after the Sentinels moved the primary is not counted here; `cache-rejoin-node` turns it back into a replica.
+**No agreed primary**: a failover did not complete — fewer than two Sentinels agree the old primary is down, or no replica is eligible — or two of the three Sentinels are down, and cache writes have nowhere to land; the engine's failed writes page `zcrypto-engine-cache-write-failed` below, and the store is behind from the first one. One node's telemetry going dark does not fire it: the other two Sentinels still name the primary. The rule stays quiet while fewer than two nodes' telemetry ships, which the Alloy-dark alerts own. A node that still reads `role:master` after the Sentinels moved the primary is not counted here; `cache-rejoin-node` turns it back into a replica.
 
 ### What to do
 
@@ -352,3 +353,83 @@ Valkey's resident memory runs above its used memory by fragmentation, or by the 
 ### Retire when
 
 `zcrypto-cache-valkey-rss-headroom` is absent from `infra/grafana/alerts.yaml`, or `redis_memory_used_rss_bytes` leaves the keep regex in `infra/ansible/roles/cache/files/config.alloy`.
+
+______________________________________________________________________
+
+<a name="zcrypto-cache-proxy-no-backend"></a>
+
+## zcrypto-cache-proxy-no-backend — ALERT
+
+### What you are seeing
+
+A **critical** Grafana alert, `Cache · proxy has no backend`. For over 2 minutes no backend of the engine's cache proxy has had two Sentinel checks passing: `max(haproxy_backend_active_servers{host="zcrypto"}) or on() vector(0)` read below 2, the frontend's own routing bound.
+
+### What it means
+
+The proxy, container `zcrypto-cache-proxy` in the engine's compose project on `zcrypto`, is the engine's only route to the cache set, and routes nothing to a backend with fewer than two Sentinel checks passing. Below 2 on every backend is the set with no primary its quorum names (`zcrypto-cache-primary-count` fires beside this), the proxy unable to reach the Sentinels over the `zcache0` mesh (`zcrypto-cache-wg-handshake-stale` on the engine host), or no series at all, which the fallback reads as 0: the proxy container down, the primary's Alloy dark, or `zcrypto` itself down — step 2's `curl` on the host tells them apart. Every cache write the engine makes meanwhile fails and is dropped, and nothing replays it ([`#zcrypto-engine-cache-write-failed`](#zcrypto-engine-cache-write-failed)). A running engine keeps trading, but no engine start succeeds while this fires: the node's `run()` creates the cache backing before any venue client connects and raises `failed to create cache database backing`, the unit restarting into it every ten seconds and `zcrypto-engine-error-logs` paging on the traceback ([`engine.md#zcrypto-engine-error-logs`](engine.md#zcrypto-engine-error-logs)) — so hold every restart, an arm or disarm converge, a kill-file clear and a `systemctl restart` alike, until the route is back; one that cannot wait is a re-converge of the engine host with the running digests and `-e engine_cache_enabled=false`, a cold start the restart rule's test refuses with a position open. With the cache disabled on purpose — `engine_cache_enabled: false` on the engine host, the rollout's abort — this page is no incident of the engine's: silence it until the cache is re-enabled, and work the proxy's route on its own clock.
+
+### What to do
+
+1. **Read the set first**, on one cache node: `sn SENTINEL get-master-addr-by-name zcache`. No answer, or three answers that disagree, is the set's incident: `zcrypto-cache-primary-count` above. An agreed address means the proxy does not see it.
+2. **Read the proxy's checks**, on `zcrypto`: `sudo docker ps --filter name=zcrypto-cache-proxy` for the container, then `curl -s 127.0.0.1:9104/metrics | grep -E 'haproxy_server_(status|check_status)'` for each server's last check. The Cache board's proxy row shows the same per backend and Sentinel.
+3. **Read the mesh from the engine host**: `sudo wg show zcache0 latest-handshakes` names each cache node's mesh address with the seconds since its last handshake; a stale one is `zcrypto-cache-wg-handshake-stale`'s procedure, on the engine host's side.
+4. **Read the proxy's own lines**: on `zcrypto`, `sudo journalctl -u zcrypto-engine --since -30m | grep zcrypto-cache-proxy | tail -50`, or the Logs board with container `cache-proxy`. A `WRONGPASS` or `NOAUTH` in a check's reply is the Sentinel `requirepass` disagreeing between the rendered config and the nodes: `cache-password-rotation` above.
+5. **Read first whether the unit was stopped on purpose** — `systemctl is-active zcrypto-engine` on `zcrypto`, the kill file `/var/lib/zcrypto-engine/exec/kill`, and the flatten record: an engine the red button or a latched kill file left stopped stays stopped until its reason is decided ([`engine-procedures.md#engine-flatten`](engine-procedures.md#engine-flatten)), and this rule is silenced for that stop rather than answered with a restart. **A proxy container down or wedged under a running engine is restarted with the engine**, inside the inter-cycle gap while the engine is flat, since the unit runs both: `sudo systemctl restart zcrypto-engine`, under [the restart rule](engine-procedures.md#engine-restart-margin-position), once steps 1 to 3 read a quorum-named primary the proxy reaches, since a start under a routeless proxy fails as *What it means* says. A config fault is a converge of the engine host with the running digests, not a host edit.
+
+**Verify by value:** `uv run python infra/scripts/grafana-query.py 'max(haproxy_backend_active_servers{host="zcrypto"})'` reads 2 or 3 with the rule back to **Normal**; `(no series)` is the proxy still dark, not a zero. Then read the engine's next cache write: a `nautilus_infrastructure::redis::cache` line in Loki after the route returned is the one dropped write, and the store is behind by it and by everything written while the route was down.
+
+### Retire when
+
+`zcrypto-cache-proxy-no-backend` is absent from `infra/grafana/alerts.yaml`, or `infra/ansible/roles/engine/templates/compose.yaml.j2` no longer renders a `cache-proxy` service.
+
+______________________________________________________________________
+
+<a name="zcrypto-cache-proxy-no-engine-session"></a>
+
+## zcrypto-cache-proxy-no-engine-session — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, `Cache · engine running with no session through the proxy`. For over 15 minutes the engine's scrape has read 1 while the proxy carried no session: `sum(haproxy_backend_current_sessions{host="zcrypto"})` read 0 with `up{job="engine_app",host="zcrypto"}` at 1.
+
+### What it means
+
+The engine's link to the cache was cut and not yet re-made. The library holds two connections through the proxy from a start that was never cut — the load's, which idles once the store is read, and the writer's — and reconnects lazily: the next write after a cut of the writer's connection fails and is dropped, the write after that opens a fresh connection for the writer, and the load's connection never comes back, so a healthy engine reads 2 sessions from a start never cut, and 1 or 2 after a cut, by whether the cut took the load's connection. A cut is a failover's `shutdown-sessions`; one Sentinel's check going down on the routed backend — each server entry is that backend's node checked through one Sentinel, the default roundrobin balance spreads the engine's sessions over the three, and `on-marked-down shutdown-sessions` closes the sessions an entry carries, so a replica node's reboot, a Sentinel restart or a mesh blip to one node cuts the sessions routed through it; a proxy restart; the `zcache0` interface restarted by a `cache-link` converge; or a node reboot under the primary. After a cut of both connections — a failover, a proxy restart, a dead link — an engine idle between cycles shows no session for as long as it makes no write, which is what this page reads; after a per-entry cut it shows 1 and this page stays quiet: one of the writer's alone is paged by the dropped write's ERROR at the next write ([`#zcrypto-engine-cache-write-failed`](#zcrypto-engine-cache-write-failed)), and one of the load's alone drops no write. The store is behind by the dropped write and by everything written while the link was down, nothing replays it, and the engine's next restart is taken flat. The engine keeps trading. With the cache disabled on purpose — `engine_cache_enabled: false` on the engine host, the rollout's abort — the engine holds no session by design and this page is no incident: silence it until the cache is re-enabled.
+
+### What to do
+
+1. **Read what cut it**: the Cache board's proxy row for a route change (`Backend status per node` moved), `zcrypto-cache-primary-count` or `cache-manual-failover` for a failover, the deploy log for a `cache-link` or engine converge, and on `zcrypto` `sudo journalctl -u zcrypto-engine --since -1h | grep zcrypto-cache-proxy` for the proxy's own lines.
+2. **Wait for the engine's next write**, at its next boundary cycle at the latest: the session returns at the write after the dropped one, and the alert clears itself. Nothing on the host re-makes it sooner without a restart.
+3. **Treat the store as behind** from this cut until the engine's next restart, which is taken flat: [the restart rule](engine-procedures.md#engine-restart-margin-position)'s test refuses a restart with a position open once a cache outage has fired since the boot.
+
+**Verify by value:** `uv run python infra/scripts/grafana-query.py 'sum(haproxy_backend_current_sessions{host="zcrypto"})'` reads 1 or more with the rule back to **Normal**.
+
+### Retire when
+
+`zcrypto-cache-proxy-no-engine-session` is absent from `infra/grafana/alerts.yaml`, or `infra/ansible/roles/engine/templates/compose.yaml.j2` no longer renders a `cache-proxy` service.
+
+______________________________________________________________________
+
+<a name="zcrypto-engine-cache-write-failed"></a>
+
+## zcrypto-engine-cache-write-failed — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, `Cache · the engine's cache writes failed`. In the last 15 minutes the engine's library logged at least one line naming `nautilus_infrastructure::redis::cache`, shipped from the unit's journal as `container="engine-nautilus"`: `[ERROR] … broken pipe` or `Connection refused (os error 111)` for a write it could not deliver, or `[WARN] … Cannot update order in Redis, no existing state at …` for an event on an order whose key an outage lost.
+
+### What it means
+
+**The store is behind, and it stays behind.** After a cache outage — a proxy without a backend, a session cut by a failover or by one Sentinel's check going down on the routed backend, a dead link — the library reconnects lazily on the next write, which fails and is dropped, and the write after it opens a fresh connection; nothing written during the outage is replayed. An order whose creating write was lost never gets its key and logs the WARN on every later event; a lost position key is a silent no-op. So the store is behind by everything written while the link was down and by the dropped write, and the engine's next restart is taken flat: [the restart rule](engine-procedures.md#engine-restart-margin-position)'s test refuses a restart with a position open once this, `zcrypto-cache-proxy-no-backend` or `zcrypto-cache-proxy-no-engine-session` has fired since the engine's last boot. Detection comes from writes alone: nothing is logged at the cut itself, and an engine idle between cycles logs nothing about an outage, which the no-session rule covers from the proxy's side. The engine itself keeps trading.
+
+### What to do
+
+1. **Read the lines** on the Logs board, container `engine-nautilus`, or on `zcrypto`: `sudo journalctl -u zcrypto-engine --since -1h | grep 'redis::cache'`. A burst of `Connection refused` is the proxy or the set down: `zcrypto-cache-proxy-no-backend` above. One `broken pipe` and nothing after is a cut the reconnect has taken.
+2. **Read the proxy** as `zcrypto-cache-proxy-no-backend`'s steps 1 to 4 do, if it fires beside this; a `WRONGPASS` or `NOAUTH` in the library's line is the `engine` password disagreeing between `engine.env` and the nodes' ACL: `cache-password-rotation` above.
+3. **Record the outage against the boot**: the engine's next restart is taken flat whatever the positions page reads, until a boot line after it counts the positions again.
+
+**Verify by value:** the next boundary cycle's writes log no `redis::cache` line: in Grafana Explore over the Loki datasource, `{host="zcrypto", container="engine-nautilus"} |= "redis::cache"` returns no line after that cycle, while `{host="zcrypto", container="alloy"}` returns lines for the same window — Alloy's own stream, which the same journal reader ships, so the second read is what makes the first empty result a clean window and not a dead shipper — and the rule reads **Normal** in Grafana's alert list, where no resolve message announces it, since the `logs` receiver sends none; the store's lag is not read back from here, since nothing replays it.
+
+### Retire when
+
+`zcrypto-engine-cache-write-failed` is absent from `infra/grafana/alerts.yaml`, or `roles/capture/files/config.alloy` no longer labels nautilus's lines `engine-nautilus`.

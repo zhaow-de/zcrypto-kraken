@@ -2816,7 +2816,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-capture-reboot-pending
-    title: "Capture · reboot pending (attended)"
+    title: "Node · reboot pending, reboot by hand (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2826,6 +2826,7 @@ rules:
       # patches install, the reboot is a human act. That closes the risk of an unwatched reboot of
       # unbackfillable L2 capture -- and, on the primary, the live trade engine -- and opens the
       # opposite one: a kernel flag nobody notices. THIS rule is the whole reason the flip is safe.
+      # Ops runs the same flip by the owner's decision of 2026-09-29, and publishes the same flag.
       # It keeps firing until the human reboots; that persistence is the point, not a nuisance.
       # Published by the zcrypto-reboot-check timer as an explicit 0/1 -- never an absent series,
       # which would be indistinguishable from a dead exporter.
@@ -2834,7 +2835,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'node_reboot_required{host=~"zcrypto|zcrypto-red"}'
+          expr: 'node_reboot_required{host=~"zcrypto|zcrypto-red|ops"}'
           instant: true
           refId: A
       - refId: C
@@ -2855,7 +2856,7 @@ rules:
     # no gap between 15-minute publishes to ride out.
     for: 15m
     annotations:
-      summary: "A capture host has a pending reboot (/run/reboot-required) and will NOT reboot itself -- these hosts are attended. Schedule it: secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart. Expect a ~83s capture gap; containers self-restart. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
+      summary: "A host that does not reboot itself -- a capture host or the ops node -- has a pending reboot (/run/reboot-required). A capture host: schedule it -- secondary first, verify it boots and captures, then the primary; off any 4h engine-cycle boundary, in the traffic trough, hosts >= 1h apart; expect a ~83s capture gap, containers self-restart. The ops node: no capture gap; reboot it by hand in its 02:25 UTC slot, then check its containers came back resolving names. Guidance in docs/reference/fleet.md. Runbook: infra/runbooks/hosts.md#zcrypto-capture-reboot-pending"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
     labels:
@@ -2864,7 +2865,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-capture-textfile-missing
-    title: "Capture · a one-off timer stopped publishing entirely"
+    title: "Node · the reboot probe stopped publishing entirely (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2879,7 +2880,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'count(node_reboot_required{host=~"zcrypto|zcrypto-red"})'
+          expr: 'count(node_reboot_required{host=~"zcrypto|zcrypto-red|ops"})'
           instant: true
           refId: A
       - refId: C
@@ -2892,22 +2893,22 @@ rules:
           expression: "A"
           refId: C
           conditions:
-            - evaluator: {type: lt, params: [2]}  # both capture hosts must publish
+            - evaluator: {type: lt, params: [3]}  # both capture hosts and ops must publish
     noDataState: OK
     execErrState: Alerting
     for: 20m
     annotations:
-      summary: "A capture host has stopped publishing node_reboot_required entirely -- not stale, ABSENT. The attended-reboot safety net is down on at least one host: a pending kernel reboot would now go unseen. Check `systemctl status zcrypto-reboot-check.timer` on both hosts, then that the .prom exists in /var/lib/zcrypto-node-textfile and is mode 0644 (Alloy reads it as a non-root user). Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-missing"
+      summary: "A capture host or the ops node has stopped publishing node_reboot_required entirely -- not stale, ABSENT. The attended-reboot safety net is down on at least one of the three: a pending kernel reboot would now go unseen. Check `systemctl status zcrypto-reboot-check.timer` on each, then that reboot.prom exists and is mode 0644 (Alloy reads it as a non-root user) -- in /var/lib/zcrypto-node-textfile on a capture host, /var/lib/zcrypto-ops/textfile on ops. Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-missing"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "503"
-      unit: "of the two capture machines still publishing the probe"
+      unit: "of the three machines (two capture, ops) still publishing the probe"
     labels:
       severity: warning
     notification_settings:
       receiver: metrics
 
   - uid: zcrypto-capture-textfile-unreadable
-    title: "Capture · node-exporter textfile unreadable or malformed"
+    title: "Node · node-exporter textfile unreadable or malformed (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2922,7 +2923,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'max by (host) (node_textfile_scrape_error{host=~"zcrypto|zcrypto-red"})'
+          expr: 'max by (host) (node_textfile_scrape_error{host=~"zcrypto|zcrypto-red|ops"})'
           instant: true
           refId: A
       - refId: C
@@ -2940,7 +2941,7 @@ rules:
     execErrState: Alerting
     for: 15m
     annotations:
-      summary: "Alloy's textfile collector cannot read or parse a .prom on a capture host, so that timer's metrics are absent while everything else looks healthy. Most likely the file is mode 0600 (mktemp's default -- the publisher needs an explicit chmod 0644) or was written malformed. Check /var/lib/zcrypto-node-textfile on that host. Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-unreadable"
+      summary: "Alloy's textfile collector cannot read or parse a .prom on a capture host or the ops node, so that timer's metrics are absent while everything else looks healthy. Most likely the file is mode 0600 (mktemp's default -- the publisher needs an explicit chmod 0644) or was written malformed. Check /var/lib/zcrypto-node-textfile on a capture host, /var/lib/zcrypto-ops/textfile on ops. Runbook: infra/runbooks/hosts.md#zcrypto-capture-textfile-unreadable"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "502"
     labels:
@@ -2949,7 +2950,7 @@ rules:
       receiver: metrics
 
   - uid: zcrypto-reboot-probe-stale
-    title: "Capture · reboot probe is stale"
+    title: "Node · reboot probe is stale (capture, ops)"
     ruleGroup: zcrypto-capture
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
@@ -2963,7 +2964,7 @@ rules:
         relativeTimeRange: {from: 3600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-red", file=~".*/reboot.prom"})'
+          expr: 'time() - max by (host) (node_textfile_mtime_seconds{host=~"zcrypto|zcrypto-red|ops", file=~".*/reboot.prom"})'
           instant: true
           refId: A
       - refId: C
@@ -2981,7 +2982,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "The pending-reboot probe on a capture host has not refreshed in over an hour (it runs every 15 min), so node_reboot_required is a frozen last-known value, not current state. A kernel reboot could be pending and unreported. Check `systemctl list-timers zcrypto-reboot-check.timer` on that host. Runbook: infra/runbooks/hosts.md#zcrypto-reboot-probe-stale"
+      summary: "The pending-reboot probe on a capture host or the ops node has not refreshed in over an hour (it runs every 15 min), so node_reboot_required is a frozen last-known value, not current state. A kernel reboot could be pending and unreported. Check `systemctl list-timers zcrypto-reboot-check.timer` on that host. Runbook: infra/runbooks/hosts.md#zcrypto-reboot-probe-stale"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "501"
       unit: "seconds since the reboot probe last wrote its file"
@@ -5426,3 +5427,166 @@ rules:
       severity: warning
     notification_settings:
       receiver: metrics
+
+  # ---- the engine's cache proxy and the engine's own cache writes, on the engine host -----------------
+  # `cache_proxy` is a STATIC scrape target on both capture hosts (roles/capture/files/config.alloy) and
+  # only zcrypto runs the proxy: every rule here carries host="zcrypto".
+  - uid: zcrypto-cache-proxy-no-backend
+    title: "Cache · proxy has no backend"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # `or on() vector(0)` reads a stopped proxy, whose static target then carries no series, as 0
+          # rather than NoData. The threshold is the frontend's own routing bound, `nbsrv(nodeN) ge 2` in
+          # roles/engine/templates/haproxy.cfg.j2, which tests/test_infra_alert_rules.py holds equal.
+          expr: >-
+            max(haproxy_backend_active_servers{host="zcrypto"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [2]}
+    noDataState: OK
+    execErrState: Alerting
+    # A failover leaves the frontend without a backend for the seconds the Sentinels take to name the
+    # new primary and the checks to pass twice; 2m clears one.
+    for: 2m
+    annotations:
+      summary: "For 2+ minutes no backend of the engine's cache proxy has two Sentinel checks passing, the frontend's routing bound, so the engine's cache writes have nowhere to land: the set has no primary its quorum names, the proxy cannot reach two Sentinels over the mesh, or the proxy container is down. Nothing is replayed once the link returns, so the store is behind from the first dropped write and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-backend"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "402"
+      unit: "Sentinel checks passing on the most-agreed backend"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-cache-proxy-no-engine-session
+    title: "Cache · engine running with no session through the proxy"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    # The conjunction zcrypto-engine-dark-with-exposure takes: the engine's scrape reads 1 (node B reads
+    # the VALUE, since the target is static) while the proxy carries no session (node A). `or on()
+    # vector(0)` on both so a dead proxy or a dark engine reads 0 rather than NoData.
+    condition: D
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            sum(haproxy_backend_current_sessions{host="zcrypto"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'min(up{job="engine_app",host="zcrypto"}) or on() vector(0)'
+          instant: true
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: math
+          expression: "$A < 1 && $B > 0"
+          refId: C
+      - refId: D
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "C"
+          refId: D
+          conditions:
+            - evaluator: {type: gt, params: [0]}  # the math node is 1 iff BOTH halves hold
+    noDataState: OK
+    execErrState: Alerting
+    # The library reconnects lazily, on the engine's next write: an idle engine between cycles holds no
+    # session for minutes after a cut, and 15m is the longest an armed engine stays silent.
+    for: 15m
+    annotations:
+      summary: "The engine has been reporting for 15+ minutes while the cache proxy carries no session from it: the link was cut -- a failover's shutdown of sessions, a proxy restart, the mesh interface restarted -- and the library reconnects only on the engine's next write, which it drops. The writer's session returns at the write after that; the store is behind by what the cut cost, nothing replays it, and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-cache-proxy-no-engine-session"
+      __dashboardUid__: "zcrypto-cache"
+      __panelId__: "403"
+      unit: "sessions through the proxy"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-engine-cache-write-failed
+    title: "Cache · the engine's cache writes failed"
+    ruleGroup: zcrypto-cache
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The library's failed-write ERROR and lost-key WARN lines each name its module,
+      # `nautilus_infrastructure::redis::cache`, and the capture primary's Alloy ships nautilus's WARN and
+      # ERROR lines as container="engine-nautilus", which zcrypto-engine-error-logs (container="engine")
+      # never selects. Nothing is logged at the cut itself: zcrypto-cache-proxy-no-engine-session covers an
+      # idle engine from the proxy's side.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="zcrypto", container="engine-nautilus"} |= "nautilus_infrastructure::redis::cache" [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "The engine's library logged a cache write it could not deliver, or an event on an order whose cache key an outage lost, in the last 15 minutes. The link recovers lazily on the next write, which fails and is dropped, and nothing written during the outage is replayed: the store is behind by everything written while the link was down and by the dropped write, an order whose creating write was lost logs this on every later event, and the engine's next restart is taken flat. Runbook: infra/runbooks/cache.md#zcrypto-engine-cache-write-failed"
+      unit: "cache write failures logged in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs

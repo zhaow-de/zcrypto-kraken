@@ -22,10 +22,11 @@ from nautilus_trader.adapters.kraken import (
     KrakenExecutionClientFactory,
     KrakenProductType,
 )
-from nautilus_trader.common import Environment, LogLevel
+from nautilus_trader.common import CacheConfig, Environment, LogLevel, SerializationEncoding
 from nautilus_trader.config import LiveExecutionEngineConfig, LoggerConfig
+from nautilus_trader.infrastructure import RedisCacheConfig
 from nautilus_trader.live import LiveNode, LiveNodeBuilder
-from nautilus_trader.model import AccountId, AccountType, StrategyId, TraderId
+from nautilus_trader.model import AccountId, AccountType, Currency, CurrencyType, StrategyId, TraderId
 from nautilus_trader.trading import Strategy, StrategyConfig
 
 from cli.config import EngineConfig
@@ -38,7 +39,7 @@ from cli.engine.execgate import ExecutionGate
 
 # `_TICK_SECONDS` is the executor's own tick cadence, imported rather than restated so the timer
 # this module arms and the interval the executor expects cannot drift apart.
-from cli.engine.executor import _TICK_SECONDS, ProbeExecutor
+from cli.engine.executor import _TICK_SECONDS, ProbeExecutor, restored_fill_state
 from cli.engine.venue import read_system_status
 from cli.engine.venuestate import VenueState, venue_state_from_cache
 from cli.logging import get_logger
@@ -56,6 +57,8 @@ _ACCOUNT_ID = "KRAKEN-001"
 # the refusal below can say WHICH is missing without ever touching a value.
 _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
+# The cache password's variable, rendered onto the engine host beside the two above.
+_CACHE_PASSWORD_VAR = "ZCRYPTO_CACHE_PASSWORD"
 # The client-order-id tag, a venue-visible identifier: registration stamps it into `strategy_id`
 # and into every client order id this strategy mints. Tag-less, registration assigns it
 # positionally off the strategies already registered, so a second strategy registered ahead of this
@@ -69,6 +72,31 @@ _EXEC_TIMER_NAME = "exec-probe-tick"
 # `StrategyId` rather than spelled as a literal, so a rename surfaces in tests/test_engine_node.py
 # instead of as an observer nothing ever reaches and total silence in production.
 _EXTERNAL_STRATEGY_ID = StrategyId("EXTERNAL")
+# Every base and quote code the basket's twelve pairs carry on Kraken's AssetPairs, at the value the
+# adapter mints for it: the store saves a currency as its bare code and the loader resolves that code
+# against this process's registry before the adapter has parsed AssetPairs, so a code the library's
+# own table lacks fails the load of every instrument, order and position priced in it. A value that
+# disagreed with the adapter's would poison its instruments, since a registered code is read rather
+# than minted; tests/test_engine_node.py pins the set and each value against the adapter's parse.
+_KRAKEN_CURRENCIES: tuple[Currency, ...] = (
+    Currency("ADA", 6, 0, "Cardano", CurrencyType.CRYPTO),
+    Currency("AVAX", 8, 0, "Avalanche", CurrencyType.CRYPTO),
+    Currency("DOT", 8, 0, "Polkadot", CurrencyType.CRYPTO),
+    Currency("LINK", 8, 0, "Chainlink", CurrencyType.CRYPTO),
+    Currency("SOL", 8, 0, "Solana", CurrencyType.CRYPTO),
+    Currency("XETH", 8, 0, "XETH", CurrencyType.CRYPTO),
+    Currency("XLTC", 8, 0, "XLTC", CurrencyType.CRYPTO),
+    Currency("XXBT", 8, 0, "XXBT", CurrencyType.CRYPTO),
+    Currency("XXDG", 8, 0, "XXDG", CurrencyType.CRYPTO),
+    Currency("XXRP", 8, 0, "XXRP", CurrencyType.CRYPTO),
+    Currency("ZEUR", 8, 0, "ZEUR", CurrencyType.CRYPTO),
+)
+
+
+def _register_kraken_currencies() -> None:
+    """Register each of `_KRAKEN_CURRENCIES`, leaving one the registry already holds as it is."""
+    for currency in _KRAKEN_CURRENCIES:
+        Currency.register(currency)
 
 
 def _utc_now() -> datetime:
@@ -179,14 +207,17 @@ class ShadowStrategy(Strategy):
     empty: an order the engine did not submit -- the account owner settling a position by hand
     mid-probe -- keeps nautilus's `EXTERNAL` strategy id and structurally never arrives on that
     topic. That scoping is the precondition the executor's unknown-order kill trip rests on;
-    widening it would latch the kill switch on a sanctioned act.
+    widening it would latch the kill switch on a sanctioned act. With the cache enabled the topic
+    also carries the orders a previous process of this engine placed and the cache restored under
+    this same id, since the id derives from the class name and the store keys them under it; the
+    executor attaches those at its construction, inside this `on_start` (spec 00120 D6).
 
     A SECOND order stream reaches this strategy from the side (spec 00098 D1, 00100 D2), and
     neither half of that scoping moves. The claim list stays empty, so the own topic still carries
     only orders this engine submitted and the unknown-order trip still runs only there. The second
     stream is `ExternalOrderObserver`, a separate strategy registered under the venue's external
     order identity, and it forwards into `_on_external_order_event` -> the executor's disposition
-    filter, which acts only on the rows the adopt pass re-attached plus this session's own
+    filter, which acts only on the rows the startup re-attached plus this session's own
     submissions -- a SUBSET of what the ledger vouches for, and a strict one by the rows
     `executor._reconcile_adopted_rows` leaves unattached -- and everything else it counts, logs,
     and drops before any row write, cancel, or trip arithmetic. So the hand settle remains
@@ -240,6 +271,39 @@ class ShadowStrategy(Strategy):
             logger.exception("shadow node: venue_state_from_cache raised; snapshot degrades to None")
             return None
 
+    def _log_cache_restore(self) -> None:
+        """The boot line, through the `zcrypto` logger at INFO since the library's own restore lines
+        are INFO and dropped at ingest, read after the load and the reconciliation and before the
+        executor is built. Positions are logged under every strategy with their entry price: a fill
+        made while the engine was down leaves a restored position at its stored quantity and
+        reconciliation books the gap under EXTERNAL, so one instrument's lines sum to the Cache's net,
+        the comparand against Kraken's positions page, and a restore at entry price 0 shows its 0.
+        Orders are this strategy's alone, the restored ones. A read that raises logs one ERROR and
+        returns: the line is evidence, never a gate."""
+        try:
+            orders = list(self.cache.orders_open(strategy_id=self.strategy_id))
+            positions = sorted(self.cache.positions_open(), key=lambda p: (str(p.instrument_id), str(p.strategy_id)))
+            logger.info("cache restore: %d order(s), %d position(s) restored", len(orders), len(positions))
+            for position in positions:
+                logger.info(
+                    "cache restore: position %s %s @ %s (%s)",
+                    position.instrument_id,
+                    position.signed_qty,
+                    position.avg_px_open,
+                    position.strategy_id,
+                )
+            for order in orders:
+                logger.info(
+                    "cache restore: order %s %s, %s of %s filled @ %s",
+                    order.client_order_id,
+                    restored_fill_state(order),
+                    order.filled_qty,
+                    order.quantity,
+                    getattr(order, "price", None),
+                )
+        except Exception:
+            logger.exception("cache restore: the Cache could not be read at start")
+
     def on_start(self) -> None:
         on_start_logic(
             now=self._now(),
@@ -248,6 +312,10 @@ class ShadowStrategy(Strategy):
             run_cycle_fn=self._run_cycle_fn,
             snapshot_fn=self._snapshot_venue_state,
         )
+        if self._engine_config.cache.enabled:
+            # After the alert chain, before the executor: the line reads what the load and the
+            # reconciliation left, which the executor's own startup pass then acts on.
+            self._log_cache_restore()
         if self._executor_factory is not None:
             # After the cycle wiring, deliberately: the alert chain is the engine's research
             # obligation and must be seeded even if the executor's construction were to raise.
@@ -328,13 +396,13 @@ def _external_observer_config() -> StrategyConfig:
 
 class ExternalOrderObserver(Strategy):
     """The second order stream (spec 00098 D1, 00100 D2): registered under the venue's external
-    order identity, it receives the order events of everything this process did not submit --
-    a previous process's resting order the startup pass adopted, and the account owner's own
-    hand-placed settling orders alike -- and forwards each to `handler`, which is the shadow
-    strategy's `_on_external_order_event` and through it the executor's disposition filter. That
-    filter acts only on the rows the adopt pass re-attached and this session's own submissions --
-    a subset of what the ledger vouches for; the hand settle matches none, so it is counted and
-    dropped before any row write, cancel, or trip arithmetic.
+    order identity, it receives the order events of everything this process did not submit and the
+    cache did not restore under the engine's own id -- a previous process's resting order, and the
+    account owner's own hand-placed settling orders alike -- and forwards each to `handler`, which is
+    the shadow strategy's `_on_external_order_event` and through it the executor's disposition
+    filter. That filter acts only on the rows the startup re-attached and this session's own
+    submissions -- a subset of what the ledger vouches for; the hand settle matches none, so it is
+    counted and dropped before any row write, cancel, or trip arithmetic.
 
     **Every order-mutating method is sealed to raise.** This class holds a strategy's full
     submit/cancel/modify/close powers, and registered under this id every one of their scoping
@@ -421,8 +489,10 @@ def _logging_config() -> LoggerConfig:
 
 
 def _exec_engine_config() -> LiveExecutionEngineConfig:
-    """Every knob explicit (all five are library defaults) because all five are load-bearing here.
-    Reconciliation is live exactly when exec_enabled flips on at deployment.
+    """Every knob explicit (all are library defaults) because all are load-bearing here.
+    Reconciliation is live exactly when exec_enabled flips on at deployment. `load_cache` is the
+    restore itself: with a backing attached, `run()` loads the store's orders, positions and
+    instruments before any client connects.
     filter_unclaimed_external_orders: filtering would drop VENUE-tagged unclaimed orders out of the
     cache entirely, so the startup pass would neither attach nor CANCEL a previous process's
     resting order, the kill switch's cancel sweep could not reach it either, and the whole
@@ -439,6 +509,7 @@ def _exec_engine_config() -> LiveExecutionEngineConfig:
     buys is that an upstream default flip cannot move the live trade path silently."""
     return LiveExecutionEngineConfig(
         reconciliation=True,
+        load_cache=True,
         filter_unclaimed_external_orders=False,
         inflight_check_interval_ms=2000,
         inflight_check_threshold_ms=5000,
@@ -480,6 +551,11 @@ def _credentials() -> tuple[str, str] | None:
     if not api_key or not api_secret:
         return None
     return api_key, api_secret
+
+
+def _cache_password() -> str | None:
+    """The cache password from the environment, or None when absent or empty, on `_credentials`' terms."""
+    return os.environ.get(_CACHE_PASSWORD_VAR, "") or None
 
 
 def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientConfig:
@@ -530,16 +606,61 @@ def _exec_client_config(credentials: tuple[str, str]) -> KrakenExecutionClientCo
     )
 
 
+def _cache_config() -> CacheConfig:
+    """Every field of the pinned wheel's `CacheConfig`, stated so a bump's new default is a decision,
+    never an inheritance. A flip is destructive on these: `True` on `use_instance_id` reloads an empty
+    namespace and on `flush_on_start` issues FLUSHDB; `use_trader_prefix`, `encoding` and
+    `timestamps_as_iso8601` are the keys and the format the next process reads back;
+    `buffer_interval_ms=None` writes through; `persist_account_events` keeps the account's events."""
+    return CacheConfig(
+        use_instance_id=False,
+        flush_on_start=False,
+        use_trader_prefix=True,
+        encoding=SerializationEncoding.JSON,
+        timestamps_as_iso8601=False,
+        buffer_interval_ms=None,
+        persist_account_events=True,
+        bulk_read_batch_size=None,
+        drop_instruments_on_reset=True,
+        tick_capacity=10000,
+        bar_capacity=10000,
+        save_market_data=False,
+    )
+
+
 def _node_builder(config: EngineConfig) -> LiveNodeBuilder:
     """`exec_enabled` alone decides whether this engine may reach the venue's private side: off, the
     credentials are never read; on with either variable absent, this REFUSES rather than substituting a
-    placeholder that would defer the failure to the first submission."""
+    placeholder that would defer the failure to the first submission. `cache.enabled` reads the cache
+    password the same way."""
     builder = (
         LiveNode.builder(name=_NODE_NAME, trader_id=TraderId(_TRADER_ID), environment=Environment.LIVE)
         .with_logging(_logging_config())
         .with_exec_engine_config(_exec_engine_config())
         .add_data_client(name=KRAKEN, factory=KrakenDataClientFactory(), config=_data_client_config())
     )
+    if config.cache.enabled:
+        password = _cache_password()
+        if password is None:
+            raise EngineError(
+                f"the cache is enabled but its password is missing: {_CACHE_PASSWORD_VAR} must be set and non-empty; "
+                "refusing to build the node"
+            )
+        # The backing is created at `run()`, before any venue client connects; ten retries is spec 00120
+        # D5's start-order budget, long enough for the proxy to mark its backends and short enough to fail
+        # inside the inter-cycle gap.
+        builder = builder.with_cache_config(_cache_config()).with_cache_database_factory(
+            RedisCacheConfig(
+                host=config.cache.host,
+                port=config.cache.port,
+                username=config.cache.username,
+                password=password,
+                ssl=False,
+                connection_timeout=5,
+                response_timeout=5,
+                number_of_retries=10,
+            )
+        )
     if config.exec_enabled:
         credentials = _credentials()
         if credentials is None:
@@ -573,6 +694,8 @@ def build_shadow_node(config: EngineConfig) -> LiveNode:
     """Assembles the shadow node without reaching the network -- nothing connects until `node.run()` -- and hands
     the observer THIS strategy's forwarder, because the filter scoping external events is the executor's and
     a strategy wired without one drops them."""
+    if config.cache.enabled:
+        _register_kraken_currencies()
     node = _node_builder(config).build()
     strategy = ShadowStrategy(config, executor_factory=_probe_executor_factory(config))
     node.add_strategy(strategy)

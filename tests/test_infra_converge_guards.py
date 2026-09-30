@@ -241,6 +241,19 @@ def test_pins_override_echo_fires_only_on_an_accepted_override(pins_text, overri
 SITE = ANSIBLE / "site.yml"
 
 
+def test_every_engine_window_guard_task_also_gates_a_cache_link_converge():
+    play = next(p for p in load_tasks(SITE) if p.get("hosts") == "engine_host")
+    guarded = [t["name"] for t in play["pre_tasks"] if "engine" in t.get("tags", [])]
+    assert WINDOW in guarded and len(guarded) >= 4, guarded
+    assert all("cache-link" in t.get("tags", []) for t in play["pre_tasks"] if t["name"] in guarded), [
+        (t["name"], t.get("tags")) for t in play["pre_tasks"] if t["name"] in guarded
+    ]
+    link = next(r for r in play["roles"] if r.get("role") == "cache_link")
+    assert not truthy(when_conditions(link), {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]})
+    assert truthy(when_conditions(link), {"ansible_run_tags": ["all"], "ansible_skip_tags": []})
+    assert truthy(when_conditions(link), {"ansible_run_tags": ["cache-link"], "ansible_skip_tags": []})
+
+
 def test_untagged_primary_refusal():
     task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
     refuse = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
@@ -967,6 +980,182 @@ def test_arming_backstop_reads_the_real_committed_files():
     )
     # THE BITE, against the real files: drop the pinned version and the guard must refuse again.
     assert not truthy(assert_that(task), _arming_derived({**base, "engine_verified_nautilus": [v for v in versions if v != pin]}))
+
+
+# --- the cache proxy's guards.
+PROXY_PINS_BASE = {"engine_cache_proxy_running_probe": {"stdout": "haproxy@sha256:" + "a" * 64}}
+PROXY_PINS_WITH = "| cache-proxy | zcrypto | `" + "a" * 12 + "` | 2026-10-02 | first pin |"
+PROXY_PINS_WITHOUT = "| cache-proxy | zcrypto | `" + "b" * 12 + "` | 2026-10-02 | first pin |"
+
+
+def test_the_cache_proxy_digest_is_refused_empty_and_refused_unpulled():
+    empty = find_task(load_tasks(ENGINE), "fail fast if the pinned cache proxy image digest was not supplied")
+    assert not truthy(assert_that(empty), {"engine_cache_proxy_image_digest": ""})
+    assert truthy(assert_that(empty), {"engine_cache_proxy_image_digest": "sha256:" + "c" * 64})
+    unpulled = find_task(load_tasks(ENGINE), "preflight — refuse a cache proxy digest the host has not pulled")
+    assert not truthy(assert_that(unpulled), {"engine_cache_proxy_digest_probe": {"rc": 1}})
+    assert truthy(assert_that(unpulled), {"engine_cache_proxy_digest_probe": {"rc": 0}})
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (PROXY_PINS_WITH, "", True),
+        (PROXY_PINS_WITHOUT, "", False),
+        (PROXY_PINS_WITHOUT, "true", False),
+        (PROXY_PINS_WITHOUT, "emergency: pins file unreachable, recorded after", True),
+    ],
+)
+def test_cache_proxy_pins_recording_semantics(pins_text, override, expected):
+    task = find_task(load_tasks(ENGINE), "cache proxy pins recording — refuse to replace a digest fleet-pins.md does not record")
+    variables = {**PROXY_PINS_BASE, "engine_cache_proxy_pins_text": pins_text, "pins_override": override}
+    assert truthy(assert_that(task), variables) is expected
+    assert "engine_cache_proxy_running_probe.rc == 0" in task["when"]
+
+
+@pytest.mark.parametrize(
+    ("engine_password", "requirepass", "expected"),
+    [
+        ("Engine12345", "Sentinel12345", True),
+        ("Eng1", "Sentinel12345", False),  # under the floor
+        ("Engine12345", "Sentinel 12345", False),  # a space splits the AUTH command
+        ("Engine12345", 'Sentinel"12345', False),  # a quote ends the check line
+    ],
+)
+def test_the_engine_host_refuses_a_cache_password_below_the_floor_or_outside_letters_and_digits(
+    engine_password, requirepass, expected
+):
+    task = find_task(
+        load_tasks(ENGINE), "refuse a cache password shorter than five characters or outside letters and digits (the engine's two)"
+    )
+    variables = {"cache_engine_password": engine_password, "cache_sentinel_requirepass": requirepass}
+    assert truthy(assert_that(task), variables) is expected
+
+
+PROXY_PINS_ECHO = "cache proxy pins override accepted — the reason, on the record"
+PROXY_PINS_ASSERT = "cache proxy pins recording — refuse to replace a digest fleet-pins.md does not record"
+
+
+@pytest.mark.parametrize(
+    ("pins_text", "override", "expected"),
+    [
+        (PROXY_PINS_WITHOUT, ENGINE_PINS_REASON, True),
+        (PROXY_PINS_WITHOUT, "", False),
+        (PROXY_PINS_WITHOUT, "true", False),
+        (PROXY_PINS_WITH, ENGINE_PINS_REASON, False),
+    ],
+)
+def test_cache_proxy_pins_override_echo_fires_only_on_an_accepted_override(pins_text, override, expected):
+    task = find_task(load_tasks(ENGINE), PROXY_PINS_ECHO)
+    probe = {**PROXY_PINS_BASE["engine_cache_proxy_running_probe"], "rc": 0}
+    variables = {"engine_cache_proxy_running_probe": probe, "engine_cache_proxy_pins_text": pins_text, "pins_override": override}
+    assert truthy(when_conditions(task), variables) is expected
+
+
+def test_the_cache_proxy_pins_echo_negates_the_asserts_own_first_disjunct():
+    tasks = load_tasks(ENGINE)
+    disjunct = _first_balanced_group(" ".join(assert_that(find_task(tasks, PROXY_PINS_ASSERT))))
+    echo = " ".join(when_conditions(find_task(tasks, PROXY_PINS_ECHO)))
+    marker = "and not "
+    assert echo.count(marker) == 1, f"the echo's negation is no longer unambiguous: {echo!r}"
+    negated = _first_balanced_group(echo, echo.index(marker) + len(marker))
+    assert "regex_search" in disjunct and "engine_cache_proxy_pins_text" in disjunct, disjunct
+    assert " ".join(negated.split()) == " ".join(disjunct.split()), (negated, disjunct)
+    assert task_index(tasks, PROXY_PINS_ASSERT) + 1 == task_index(tasks, PROXY_PINS_ECHO)
+
+
+def test_the_cache_proxy_config_is_validated_before_it_is_installed_and_never_logged():
+    tasks = load_tasks(ENGINE)
+    names = [
+        "render the cache proxy config beside its live copy (0600 root-only; never logged, never diffed)",
+        "validate the rendered cache proxy config, or remove it and stop",
+        "install the validated cache proxy config (changed only where it differs from the live copy)",
+        "remove the validated candidate",
+    ]
+    indexes = [task_index(tasks, name) for name in names]
+    assert indexes == sorted(indexes) and indexes[-1] - indexes[0] == 3, indexes
+    assert task_index(tasks, "ensure the compose project directory exists") < indexes[0]
+    assert indexes[-1] < task_index(tasks, "render the engine secrets env file (0600 root-only; never logged, never diffed)")
+    render, _, install, remove = (find_task(tasks, name) for name in names)
+    validate = find_task(tasks, "validate the rendered cache proxy config with the pinned image's own haproxy -c")
+    assert find_task(tasks, names[1])["block"] == [validate]
+    assert render["ansible.builtin.template"]["dest"] == "/opt/zcrypto-engine/haproxy.cfg.next"
+    assert render["ansible.builtin.template"]["mode"] == "0600" and render["no_log"] is True and render["diff"] is False
+    assert "notify" not in render and render["check_mode"] is False
+    command = " ".join(validate["ansible.builtin.command"].split())
+    assert "haproxy.cfg.next:/usr/local/etc/haproxy/haproxy.cfg:ro" in command
+    assert command.endswith("haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg") and validate["no_log"] is True
+    assert "{{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}" in command
+    assert validate["check_mode"] is False and "when" not in validate and remove["check_mode"] is False
+    copy = install["ansible.builtin.copy"]
+    assert (copy["src"], copy["dest"], copy["remote_src"], copy["mode"]) == (
+        "/opt/zcrypto-engine/haproxy.cfg.next",
+        "/opt/zcrypto-engine/haproxy.cfg",
+        True,
+        "0600",
+    )
+    assert install["notify"] == "restart engine service" and install["no_log"] is True and install["diff"] is False
+    assert "when" not in install and "check_mode" not in install
+    assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
+
+
+@pytest.mark.parametrize("live", [True, False], ids=["a-live-copy", "the-first-converge"])
+def test_a_refused_cache_proxy_config_removes_its_candidate_and_stops_with_the_report_masked(live):
+    from ansible.template import trust_as_template
+
+    block = find_task(load_tasks(ENGINE), "validate the rendered cache proxy config, or remove it and stop")
+    remove, stat, refuse = block["rescue"]
+    assert remove["ansible.builtin.file"] == {"path": "/opt/zcrypto-engine/haproxy.cfg.next", "state": "absent"}
+    assert remove["check_mode"] is False
+    assert stat["ansible.builtin.stat"] == {"path": "/opt/zcrypto-engine/haproxy.cfg", "get_checksum": False}
+    assert stat["register"] == "engine_cache_proxy_live_config" and stat["check_mode"] is False
+    assert "no_log" not in refuse
+    variables = {
+        "cache_sentinel_requirepass": "Sentinel12345",
+        "ansible_failed_result": {
+            "stdout": "",
+            "stderr": '[ALERT] config : parsing [haproxy.cfg:30] : tcp-check send "AUTH Sentinel12345\\r\\n" bad',
+        },
+        "engine_cache_proxy_live_config": {"stat": {"exists": live}},
+        "inventory_hostname": "zcrypto",
+        "engine_cache_proxy_image": "haproxy",
+        "engine_cache_proxy_image_digest": "sha256:" + "c" * 64,
+    }
+    msg = str(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(refuse["ansible.builtin.fail"]["msg"])))
+    assert "Sentinel12345" not in msg and "AUTH <requirepass>" in msg and "haproxy.cfg:30" in msg, msg
+    assert "validation failed" in msg and "refused the rendered" not in msg, msg
+    assert "converge.sh's preview" in msg and "--check" in msg, msg
+    assert "-v /opt/zcrypto-engine/haproxy.cfg:" not in msg, msg
+    hand = (
+        "sudo docker run --rm --user 0:0 --mount type=bind,src=/opt/zcrypto-engine/haproxy.cfg,"
+        "dst=/usr/local/etc/haproxy/haproxy.cfg,readonly haproxy@sha256:"
+        + "c" * 64
+        + " haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg"
+    )
+    assert (hand in msg) is live, msg
+    assert ("the unit still reads the live /opt/zcrypto-engine/haproxy.cfg" in msg) is live, msg
+    assert ("no live /opt/zcrypto-engine/haproxy.cfg exists yet" in msg) is not live, msg
+
+
+_SECRET_FILE = re.compile(r"(secrets\.env|engine\.env|haproxy\.cfg)$")
+
+
+def _stats(tasks: list[dict]):
+    for task in tasks:
+        for key in ("block", "rescue", "always"):
+            yield from _stats(task.get(key, []))
+        if "ansible.builtin.stat" in task:
+            yield task["ansible.builtin.stat"]
+
+
+def test_no_stat_over_a_file_that_carries_a_secret_registers_its_checksum():
+    stats = [stat for path in sorted(ANSIBLE.glob("roles/*/tasks/*.yml")) for stat in _stats(load_tasks(path))]
+    secret = [stat for stat in stats if _SECRET_FILE.search(str(stat["path"]))]
+    assert {str(stat["path"]) for stat in secret} >= {
+        "/opt/zcrypto-capture/logship-secrets.env",
+        "/opt/zcrypto-engine/haproxy.cfg",
+    }, secret
+    assert [stat["path"] for stat in secret if stat.get("get_checksum", True) is not False] == []
 
 
 # --- ops-role guards. `ops_` fixture keys for the same var-naming reason as the engine block above.

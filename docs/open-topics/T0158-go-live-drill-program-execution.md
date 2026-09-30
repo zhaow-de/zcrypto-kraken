@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: 'A2: the engine''s pinned nautilus-trader build carries upstream #5065, lifting the reboot-with-a-margin-position rule in docs/reference/fleet.md § Reboots'
+ripe_when: 'A2: either lift of the engine restart rule — the engine''s pinned nautilus-trader build carries upstream #5065, or the cache''s live proof, a restart with a margin position open whose boot line reads the position at Kraken''s entry price, is recorded in docs/reference/drill-log.md — the rule being the test in infra/runbooks/engine-procedures.md § engine-restart-margin-position'
 ---
 
 # The go-live drill program — executing spec 00105
@@ -42,5 +42,6 @@ The daily ops pass and its `ops-journal` entries are paused on the owner's word 
 
 **Every remaining sub-item is human-gated — this topic has no autonomous residual left.** The 2026-08-29 authorization recorded in `## Findings so far` lists **N** and **R** among the drills the loop may induce itself; that grant is about the *mechanism*, and blast radius overrides it here. Read the sub-item, never the grant, before inducing anything.
 
-- **(human)** A2 — the primary reboots and a fill lands while it is down — the tier's one unrun drill, `blocked` in `drill-log.md` on `docs/reference/fleet.md` § Reboots' margin-position rule; it runs when `ripe_when` fires.
+- **(human)** A2 — the primary reboots and a fill lands while it is down — the tier's one unrun drill, `blocked` in `drill-log.md` on `docs/reference/fleet.md` § Reboots' margin-position rule; it runs when `ripe_when` fires, on either lift: A2's fill lands on an order this engine placed, which the restart rule's test admits once the cache's live proof is in.
+- **(human)** Before A1's, G's or A2's next run, the reads their steps key on are re-derived on the drills page for the cache-enabled engine, which they state for the cache-less one: a restored order's pass line is `canceling restored order <id>, <state> -- …` and not `canceling adopted resting order …` (A1 step 2, G's operator action 3), its cancel's events reach the engine's own stream and not the external one, so G's `matched` does not count them (G's Record), and a venue figure short of the ledger trips the kill switch when the trade history falls short too, and not on the order figure alone (A2 step 4).
 - **(human)** The same tier carries [[T0027]]'s last requirement, transferred at its archive: reconciliation survives the engine host rebooting with an order resting (A1) or filling while down (A2), and an engine stop with an order resting (G) — A1 and G read `pass`, and A2 stands with the item above; a reboot with any intent in flight is among none of them and is not claimed.

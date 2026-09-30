@@ -11,6 +11,14 @@ services:
     container_name: zcrypto-engine
     restart: unless-stopped
     user: "{{ engine_uid }}:{{ engine_gid }}"
+    # The proxy is started first and nothing more (spec 00120 D1): the engine's own retry budget on
+    # the cache backing is the start-order guard, ten retries under five-second timeouts.
+    depends_on:
+      cache-proxy:
+        condition: service_started
+    # nautilus_live waits ten seconds for residual events before it disconnects its clients, and Docker's
+    # default grace of ten would force-kill it.
+    stop_grace_period: 20s
 {% if logship_loki_token is defined %}
     # --ship-logs is spelled out here, not left to the image's own shell-ENTRYPOINT conveyance
     # (Dockerfile's `${ZCRYPTO_SHIP_LOGS:+--ship-logs}`, spec 00068 D3/T4): this service's
@@ -88,6 +96,28 @@ services:
           memory: "{{ engine_memory_limit }}"
     # Capture (docker's default 1024) wins CPU contention deterministically over the engine.
     cpu_shares: {{ engine_cpu_shares }}
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ engine_log_max_size }}"
+        max-file: "{{ engine_log_max_file }}"
+
+  # Its stdout reaches the unit's journal beside the engine's; its metrics port is on loopback for the host's Alloy.
+  cache-proxy:
+    image: "{{ engine_cache_proxy_image }}@{{ engine_cache_proxy_image_digest }}"
+    container_name: zcrypto-cache-proxy
+    restart: unless-stopped
+    # Root at start so the 0600 config is readable; the config's global section drops the workers to
+    # the image's haproxy user.
+    user: "0:0"
+    volumes:
+      - "/opt/zcrypto-engine/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro"
+    ports:
+      - "127.0.0.1:9104:9104"
+    deploy:
+      resources:
+        limits:
+          memory: "{{ engine_cache_proxy_memory_limit }}"
     logging:
       driver: json-file
       options:
