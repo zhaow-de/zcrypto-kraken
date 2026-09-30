@@ -366,6 +366,16 @@ c_engine_rows_outside_the_gap() {
   uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'
 }
 
+# The engine window's bypasses: the rows whose `window` record says the override admitted them, which the count above
+# never calls outside. An override row without a record is judged by inference, and the count above still counts it when
+# it landed outside the fixed gap.
+c_engine_window_overrides() {
+  local since window=()
+  since="$(round_closed_at)" || return 2
+  if [ -n "$since" ]; then window=(--since "$since"); fi
+  uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows .* overridden \([0-9][0-9]*\) inferred .*/\1/p'
+}
+
 # A watch number, not a gate: the band's successful rows that carry no `window`, whose admission `on_the_completion_floor`
 # can only infer. A row whose run reached the engine play's assert and whose record the wrapper read carries one; an
 # `engine`-tagged run whose --limit reaches no engine host, an unreadable record or a hand-appended row carries none, so
@@ -558,6 +568,7 @@ main() {
   emit "drills-on-the-primary" c_drills_on_the_primary
   emit "un-tagged-primary-runs" c_un_tagged_primary_runs
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
+  emit "engine-window-overrides" c_engine_window_overrides
   emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner

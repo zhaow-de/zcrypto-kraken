@@ -745,6 +745,8 @@ def test_drills_on_the_primary_reports_a_log_it_cannot_read_as_an_error(tmp_path
 
 ROUND_CLOSED = "2026-09-24T18:01:00+02:00"  # 16:01:00Z, 61 s past a 4-hourly boundary
 BEFORE, AT = "2026-09-24T16:00:59Z", "2026-09-24T16:01:00Z"
+# A clock short of the fixed floor, so the override is what admitted the run.
+OVERRIDDEN = {"at": 1790265660, "floor": 1790265600 + 1800, "arm": "fixed", "override": True}
 WINDOWED = {
     "canary-bypasses-on-the-primary": [
         {"ts": ts, "limit": "zcrypto", "tags": "capture", "rc": 0, "extra_vars": {"canary_override": "an approved rollback"}}
@@ -752,6 +754,17 @@ WINDOWED = {
     ],
     "engine-rows-outside-the-gap": [
         {"ts": ts, "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}} for ts in (BEFORE, AT)
+    ],
+    "engine-window-overrides": [
+        {
+            "ts": ts,
+            "limit": "zcrypto",
+            "tags": "engine",
+            "rc": 0,
+            "extra_vars": {"engine_window_override": "an approved restart"},
+            "window": OVERRIDDEN,
+        }
+        for ts in (BEFORE, AT)
     ],
     "capture-hosts-converged-within-an-hour": [  # a pair wholly before the close, and a pair whose later row is at it
         {"ts": "2026-09-24T14:00:00Z", "limit": "zcrypto", "tags": "capture", "rc": 0},
@@ -816,6 +829,13 @@ def test_the_completion_floor_count_reads_only_the_rows_that_carry_no_window_rec
     rows = [band, {**band, "ts": "2026-09-19T12:12:24Z"}, {**band, "ts": "2026-09-19T16:12:24Z", "window": window}]
     entry = "engine-rows-on-the-completion-floor"
     assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t2\n"
+
+
+def test_a_recorded_override_row_is_counted_as_a_bypass_and_not_as_outside_the_gap(tmp_path):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    rows = WINDOWED["engine-window-overrides"][1:]
+    for entry, count in (("engine-window-overrides", 1), ("engine-rows-outside-the-gap", 0)):
+        assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t{count}\n"
 
 
 @pytest.mark.parametrize("entry", sorted(WINDOWED))
