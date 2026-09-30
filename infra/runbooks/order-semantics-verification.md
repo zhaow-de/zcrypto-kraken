@@ -5,9 +5,11 @@
 Attended operator procedure for `infra/scripts/kraken-order-semantics-probe.py`, the six-probe protocol re-run demanded by the
 **Version re-check rule** ("a fresh ~€0.20 zero-fill + round-trip pass must re-run the
 order-semantics probes before the engine trades on the new version" —
-`docs/reference/adapter-verification/1.230.0.md`). Nothing trades until the engine is armed by
-hand, so it gates **arming**, not merging: the repo may sit on a bumped version indefinitely while
-disarmed. It is owed at **every** nautilus-trader bump, before the engine may be armed on that version.
+`docs/reference/adapter-verification/1.230.0.md`). It gates **merging** a bump: `tests/test_nautilus_pin_verified.py`
+fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks, so the
+bump, this pass and its write-up (§7.4) land in one PR, and develop never carries an unverified build. It is
+owed at **every** nautilus-trader bump, before that bump merges; the converge assert and the runtime gate
+still refuse to arm a build the record lacks, behind it.
 
 **A pass binds to one exact version string and nothing else** — §1.6 says what that demands of the
 pin, and it may need deciding days before anything else here.
@@ -77,13 +79,14 @@ The sweep of `docs/open-topics/README.md` and `.local/memo.md` for anything that
 
 #### 1.6 Freeze the pin
 
-Decide this first; it can predate everything above. Stop bumping the pin, and keep it stopped until the engine is armed on the version you pass. A nightly channel that moves daily and an arming record matched by exact string (§2.1) are in conflict, and the record does not loosen.
+Decide this first; it can predate everything above. A pass binds to one exact version string (§2.1), and the bump carrying it merges with the pass recorded on its own branch, so the freeze runs from the pass to that merge. A nightly channel that moves daily and a record matched by exact string are in conflict, and the record does not loosen.
 
-- Freeze before the pass. The version you run the probes against must be the version still pinned when the engine is armed. Land the bump you intend to arm on, then stop.
-- A bump in the repo does not touch a running container, so an engine armed on the old version keeps trading on it. What the bump kills is the path forward: the armed converge is refused from that tree, and once an image built from it is deployed the gate refuses to arm too. Nothing warns at the moment of the bump; the refusal arrives at the arming step.
-- A bump that lands after a pass is a decision to re-run the pass, at the full attended cost, or to revert the pin. There is no third option: a bump can move fill, cancel, post-only or reconciliation behaviour without moving anything the suite can see (no count command: the adapter's venue behaviour is upstream; the attended probes are what read it).
+- Freeze before the pass. Cut the bump branch from develop, land the pin and the lock on it, and run the probes from its worktree (§2). Do not re-pin or re-lock that branch after the pass: the record would then name a build the branch no longer installs.
+- The bump's PR stays red until its write-up (§7.4) lands on the same branch: `tests/test_nautilus_pin_verified.py` fails the required `Full test suite` check on a tree whose installed nautilus-trader the record lacks. The pass turns it green; adding the version to the record ahead of the pass is the move §7.4 (1) forbids.
+- A bump in the repo does not touch a running container, so an engine armed on the old version keeps trading on it until an image built from the merged tree is deployed; the converge assert and the runtime gate still check that image before it arms.
+- A bump after a pass owes its own pass, at the full attended cost, or the pin stays. There is no third option: a bump can move fill, cancel, post-only or reconciliation behaviour without moving anything the suite can see (no count command: the adapter's venue behaviour is upstream; the attended probes are what read it).
 
-While the engine is disarmed, bump freely. The freeze starts when the pass is scheduled and ends when the arming window closes. The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
+Armed or disarmed, a bump carries its pass. The same rule, read from the arming side, is pre-probe step 3 of [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window).
 
 #### 1.7 No margin position is open
 
@@ -322,12 +325,12 @@ Do this in the same session as the run. Then close the credential-bearing shell.
 
 The harness prints the table under `PROBE RESULTS -- paste these rows into docs/reference/adapter-verification/<version>.md` and writes `evidence-<stamp>.json` into `--evidence-dir`, beside `probe-<stamp>.log`, the run's DEBUG log. The evidence's `tradevolume_fallback` is read from that log: `fell_back` is `true` when the credentialed instrument listing took Kraken's public fee schedule because the account's TradeVolume call failed (the adapter's `falling back to public rates` WARN, quoted under `warnings`), `false` when the listing finished without one, and `null` when the log cannot say: no exec client, or a log the harness could not read (its `why` says which), or a listing that never finished. Record it for each credentialed invocation. Then sweep the homes of "<version> is unverified" in the same change, or the next reader meets a contradiction:
 
-1. Add the version to `cli/engine/order-semantics-verified.json`, exactly as the interpreter spells it (§2.1). This is the act that says the re-run happened, and the one that clears both guards. Add a version only when its `docs/reference/adapter-verification/<version>.md` record carries a PASS (set: every entry of `verified_nautilus_versions` in `cli/engine/order-semantics-verified.json`, against its `docs/reference/adapter-verification/<version>.md`; count: `infra/scripts/count-list.sh verified-versions-without-a-pass-record`).
+1. Add the version to `cli/engine/order-semantics-verified.json`, exactly as the interpreter spells it (§2.1). This is the act that says the re-run happened, and the one that clears both arming guards and the bump's red `Full test suite` check (§1.6). Add a version only when its `docs/reference/adapter-verification/<version>.md` record carries a PASS (set: every entry of `verified_nautilus_versions` in `cli/engine/order-semantics-verified.json`, against its `docs/reference/adapter-verification/<version>.md`; count: `infra/scripts/count-list.sh verified-versions-without-a-pass-record`).
 2. `tests/test_engine_execgate.py` pins the record's exact contents and fails deliberately the moment you do (1); its assertion message points back at this list. Update it to the new set by hand, not by pasting whatever the diff shows.
 3. The arming step in [`engine-procedures.md#engine-probe-window`](engine-procedures.md#engine-probe-window): pre-probe step 4, whose unmatched-external baseline and live-orders-boot caveat both name the version they were taken on.
 4. The previous version's `docs/reference/adapter-verification/` record, cross-linked so the series reads as one and neither file claims to be current.
 
-`tests/test_nautilus_adapter.py` is deliberately not on this list: it compares the installed version with the pin, so it stays green across bumps and carries no version string to sweep. Nothing goes red at a bump, by design; the debt is collected at arming, by the converge assert and the runtime gate, each of which blocks the money rather than a test run.
+`tests/test_nautilus_adapter.py` and `tests/test_nautilus_pin_verified.py` are deliberately not on this list: neither carries a version string to sweep. The first compares the installed version with the pin; the second reads the record, so it is red from the bump until (1) and green from then on, which is why the bump, this pass and this write-up land in one PR.
 
 Paste the table; leave the evidence JSON where `--evidence-dir` put it (`$EVID`, outside the repo tree) and never commit it.
 
