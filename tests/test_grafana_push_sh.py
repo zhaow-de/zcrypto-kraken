@@ -192,7 +192,7 @@ def test_a_webhook_less_run_pushes_in_order_and_names_only_the_folders_orphan(st
     assert "${" not in calls[5][2] + calls[7][2]
     orphan_lines = [line for line in done.stderr.splitlines() if "ORPHAN" in line]
     assert orphan_lines == [
-        "grafana-push: ORPHAN (live but not in alerts.yaml): old  — re-run with GRAFANA_PRUNE=1 from a develop checkout at origin/develop's tip to delete"
+        "grafana-push: ORPHAN (live but not in alerts.yaml): old  — re-run with GRAFANA_PRUNE=1 from a develop checkout at origin/develop's tip, after the skill's open-PR read, to delete"
     ]
     assert "receivers metrics+logs already live, skipping Slack upserts" in done.stderr
 
