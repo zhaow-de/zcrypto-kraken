@@ -54,7 +54,24 @@ jobs:
       # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
       - run: sudo apt-get update && sudo apt-get install -y valkey-server
       - run: uv sync
-      - run: uv run coverage run -m pytest
+      # tests/test_cache_restart.py runs its scenarios one after another, each on its own valkey-server and
+      # engine child processes under tmp_path, and spends most of its time waiting, so it runs in the
+      # background beside the rest of the suite, in this one job so the check keeps its name. Each half
+      # writes its own coverage data file, combined below; the step fails when either half fails.
+      - name: Run the suite, the cache restart harness beside it
+        run: |
+          uv run coverage run --parallel-mode -m pytest tests/test_cache_restart.py > harness.log 2>&1 &
+          harness=$!
+          suite_rc=0
+          uv run coverage run --parallel-mode -m pytest --ignore=tests/test_cache_restart.py || suite_rc=$?
+          harness_rc=0
+          wait "$harness" || harness_rc=$?
+          echo "::group::tests/test_cache_restart.py (exit $harness_rc)"
+          cat harness.log
+          echo "::endgroup::"
+          tail -n 1 harness.log
+          uv run coverage combine
+          [ "$suite_rc" -eq 0 ] && [ "$harness_rc" -eq 0 ]
       - run: uv run coverage lcov -o coverage.lcov
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
