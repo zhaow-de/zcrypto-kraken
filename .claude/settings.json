@@ -42,7 +42,16 @@
       "Bash(kraken ledgers:*)",
       "Bash(kraken trades-history:*)",
       "Bash(kraken positions:*)",
-      "Bash(kraken open-orders:*)"
+      "Bash(kraken open-orders:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git branch --list:*)",
+      "Bash(git worktree add:*)",
+      "Bash(sed -i 's/^exec_armed = false$/exec_armed = true/' infra/ansible/roles/engine/templates/zcrypto.toml.j2)",
+      "Bash(sed -i 's/^exec_armed = true$/exec_armed = false/' infra/ansible/roles/engine/templates/zcrypto.toml.j2)",
+      "Bash(git reset --hard:*)",
+      "Bash(git commit --amend -F:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(gpg --card-status:*)"
     ]
   },
   "hooks": {
