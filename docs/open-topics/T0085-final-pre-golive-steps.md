@@ -11,7 +11,7 @@ Four things must happen in the run-up to the Stage-6b live-capital step that bel
 
 ## Why this matters
 
-All four are silent until the moment they are not. A disabled build lane is invisible until something needs arm64 — the silent-drift shape the fleet's pins-and-labels discipline exists to prevent, and a first multi-arch build can surface QEMU/buildx issues that must not be debugged inside a go-live window. An unrebooted host is the same shape — the patches are installed, only the kernel/library switch is pending, so nothing looks wrong until an exploit lands or a reboot finally happens at the worst moment. Credentials are worse still, because exposure accumulates quietly across a whole development period — test runs, agent transcripts, terminal scrollback, screen shares — and no single incident justifies the disruption of a rekey. The clean line is one round, late: rotate everything after the last change that could leak something new. Rotating early and continuing to develop simply re-opens the same exposure with fresh secrets.
+Three of them are silent until the moment they are not. A disabled build lane is invisible until something needs arm64 — the silent-drift shape the fleet's pins-and-labels discipline exists to prevent, and a first multi-arch build can surface QEMU/buildx issues that must not be debugged inside a go-live window. An unrebooted host is the same shape — the patches are installed, only the kernel/library switch is pending, so nothing looks wrong until an exploit lands or a reboot finally happens at the worst moment. Credentials are worse still, because exposure accumulates quietly across a whole development period — test runs, agent transcripts, terminal scrollback, screen shares — and no single incident justifies the disruption of a rekey. The clean line is one round, late: rotate everything after the last change that could leak something new. Rotating early and continuing to develop simply re-opens the same exposure with fresh secrets.
 
 ## Findings so far
 
@@ -47,7 +47,7 @@ All four are silent until the moment they are not. A disabled build lane is invi
 ## Done so far
 
 - **The OS/apt upgrade + reboot round is done on all four Debian hosts, 2026-09-27.** The capture pair went first, on 2026-09-26 (`docs/reference/drill-log.md`, A1 and the two reboot paragraphs behind it). The ops boot found docker starting its containers before dhcpcd had written a nameserver; the `ops` role's docker drop-in (`infra/ansible/roles/ops/files/docker-wait-for-resolver.conf`) waits for one, bounded and failing open, from the first boot after the ops converge that installs it.
-- **The `nautilus_trader` bump left this topic on 2026-09-30, on the owner's word, for the `zcrypto-bump-nautilus` skill (`.claude/skills/zcrypto-bump-nautilus/SKILL.md`), which owns the bump's order end to end.** What this topic carried of it — the pin's history, the passes on 1.231.0 and the v2 builds, the committed harness, the logger guard's retirement — stands in `docs/reference/adapter-verification/`, `infra/runbooks/order-semantics-verification.md` and this file's git history.
+- **The `nautilus_trader` bump is the `zcrypto-bump-nautilus` skill's (`.claude/skills/zcrypto-bump-nautilus/SKILL.md`); its passes stand in `docs/reference/adapter-verification/`.**
 
 ## Suggested next steps
 
