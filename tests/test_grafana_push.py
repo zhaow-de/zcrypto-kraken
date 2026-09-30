@@ -16,6 +16,8 @@ def test_every_curl_call_goes_through_gcurl():
     code = [line for line in SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#")]
     bare = [line for line in code if re.search(r"(^|[^g])curl ", line) and not line.startswith("gcurl()")]
     assert bare == []
+    bearer_sites = [line for line in code if "GRAFANA_SA_TOKEN" in line and not line.startswith(": ")]
+    assert [line[:8] for line in bearer_sites] == ["gcurl() "]
 
 
 def test_gcurl_hands_curl_the_bearer_as_a_config_line_and_never_in_argv(tmp_path):

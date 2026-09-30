@@ -3,15 +3,17 @@
 # the provisioned Grafana Cloud stack (spec 00049, Role B). Idempotent: each dashboard overwrites by
 # its own uid, each alert rule upserts by its own stable uid.
 #
-# Run it from MERGED develop by default: summaries and panel descriptions cite repo paths, so a push
-# from elsewhere can ship alert text naming files develop does not have. A feature-branch push is
-# admitted only under .claude/skills/zcrypto-grafana-push/SKILL.md's conditions.
+# Run it from a checkout that carries origin/develop's tip with infra/grafana/ clean -- it pushes the
+# working tree whole and its prune deletes what that tree lacks -- MERGED develop by default: summaries
+# and panel descriptions cite repo paths, so a push from elsewhere can ship alert text naming files
+# develop does not have. A feature-branch push is admitted only under
+# .claude/skills/zcrypto-grafana-push/SKILL.md's conditions, and a prune runs from develop alone.
 #
 # GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
 # `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it
 # encapsulates the two decrypt footguns its own docstring records, so do not hand-roll the
 # extraction. Assign it by command substitution and nothing else: the value must never reach a
-# file, a log or argv. For a PromQL read-back use `infra/scripts/grafana-query.py`, which needs no
+# file, a log or argv. For a PromQL or LogQL read-back use `infra/scripts/grafana-query.py`, which needs no
 # token from you at all.
 #
 # PATH note, which the PyYAML refusal below points at: this script calls bare `python3`, and PyYAML
@@ -256,7 +258,7 @@ else
       gcurl -fsS -X DELETE "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}" >/dev/null
       echo "grafana-push: DELETED orphaned rule ${uid}" >&2
     else
-      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 to delete" >&2
+      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 from a develop checkout at origin/develop's tip to delete" >&2
     fi
   done <<<"${orphans}"
 fi
