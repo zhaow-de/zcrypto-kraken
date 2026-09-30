@@ -637,7 +637,7 @@ def _written_record(since_boundary: int, cycle_probe: dict | None, override: str
 def test_the_play_records_the_clock_the_floor_and_the_arm_the_assert_compared(since_boundary, cycle_probe, override, expected):
     record = _written_record(since_boundary, cycle_probe, override)
     assert record == {"at": BOUNDARY + since_boundary, **expected}
-    # `==` holds for 0 == False and 1.0 == 1, while the audit admits a record only on these exact types.
+    # `==` holds for 0 == False and 1.0 == 1.
     assert {key: type(value) for key, value in record.items()} == {"at": int, "floor": int, "arm": str, "override": bool}
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(BOUNDARY + since_boundary))
     assert _deploy_log_audit().carries_the_record({"ts": stamp, "window": record}), record

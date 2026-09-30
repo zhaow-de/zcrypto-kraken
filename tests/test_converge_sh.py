@@ -1,5 +1,6 @@
 """converge.sh: preview-first, typed-limit confirm, then the real pass (spec 00083 D1)."""
 
+import importlib.util
 import os
 import pty
 import shutil
@@ -752,6 +753,18 @@ def test_a_real_uncommitted_change_still_reads_dirty(tmp_path, monkeypatch):
 import re  # noqa: E402 -- the block above is the file's own section header
 
 WINDOW = {"at": 1785744500, "floor": 1785744408, "arm": "journal", "override": False}
+
+
+def _booked_as_the_audit_reads(rec):
+    """The row's `window` as the play wrote it, and one the deploy-log audit judges the row on."""
+    assert rec["window"] == WINDOW, rec
+    assert {key: type(value) for key, value in rec["window"].items()} == {"at": int, "floor": int, "arm": str, "override": bool}
+    spec = importlib.util.spec_from_file_location("deploy_log_audit_booked", SCRIPT.parents[2] / "scripts" / "deploy-log-audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    assert audit.carries_the_record(rec), rec
+
+
 # The play's record task, as a fake: on the real pass only, it writes $FAKE_WINDOW into the file the wrapper named,
 # from `ansible/` as run.sh plays from infra/ansible, and fails the play as the copy task does when it cannot write.
 WRITES_THE_RECORD = r"""#!/usr/bin/env bash
@@ -786,7 +799,7 @@ def test_the_record_the_play_wrote_lands_in_the_row_as_window(tmp_path):
     )
     assert rc == 0
     rec = json.loads(log.read_text().splitlines()[0])
-    assert rec["window"] == WINDOW, rec
+    _booked_as_the_audit_reads(rec)
     assert rec["extra_vars"] == {"converge_primary": "true"}, "the wrapper's own operand is not the operator's"
 
 
@@ -799,7 +812,7 @@ def test_a_failed_pass_keeps_the_record_its_play_wrote_before_failing(tmp_path):
         run_sh=WRITES_THE_RECORD,
     )
     assert rc == 2
-    assert json.loads(log.read_text().splitlines()[0])["window"] == WINDOW
+    _booked_as_the_audit_reads(json.loads(log.read_text().splitlines()[0]))
 
 
 def test_a_pass_whose_play_wrote_no_record_books_no_window(tmp_path):
@@ -838,7 +851,7 @@ def test_a_relative_tmpdir_still_books_the_window_and_leaves_no_file(tmp_path, m
         run_sh=WRITES_THE_RECORD,
     )
     assert rc == 0
-    assert json.loads(log.read_text().splitlines()[0]).get("window") == WINDOW
+    _booked_as_the_audit_reads(json.loads(log.read_text().splitlines()[0]))
     assert list(tmp_path.rglob("zcrypto-window.*")) == []
 
 
