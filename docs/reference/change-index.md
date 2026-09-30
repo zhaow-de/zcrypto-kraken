@@ -358,3 +358,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #621 | 2026-09-27 | chore(fleet): the engine cache records — first pins, pruner, dark rules | — | 00118 | — |
 | #627 | 2026-09-28 | feat(engine): 00119 — Rung 1 execution findings on the live trade path | — | 00119 | — |
 | #630 | 2026-09-30 | feat(engine): 00120 — the engine-side half of the engine's cache | — | 00118, 00120 | T0213 |
+| #631 | 2026-09-30 | fix(ops): the daily-pass hand-offs of 09-28/29 and T0212's strict form | — | — | T0212 |
