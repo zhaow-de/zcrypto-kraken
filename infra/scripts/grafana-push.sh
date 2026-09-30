@@ -3,11 +3,10 @@
 # the provisioned Grafana Cloud stack (spec 00049, Role B). Idempotent: each dashboard overwrites by
 # its own uid, each alert rule upserts by its own stable uid.
 #
-# Run it from a checkout that carries origin/develop's tip with infra/grafana/ clean -- it pushes the
-# working tree whole and its prune deletes what that tree lacks -- MERGED develop by default: summaries
-# and panel descriptions cite repo paths, so a push from elsewhere can ship alert text naming files
-# develop does not have. A feature-branch push is admitted only under
-# .claude/skills/zcrypto-grafana-push/SKILL.md's conditions, and a prune runs from develop alone.
+# Run it from a checkout that carries origin/develop's tip with infra/grafana/ clean: it pushes the
+# working tree whole, and its prune deletes the folder's rules that tree lacks. MERGED develop is the
+# default, since summaries and panel descriptions cite repo paths; a feature-branch push is admitted
+# only under .claude/skills/zcrypto-grafana-push/SKILL.md's conditions, and a prune runs from develop alone.
 #
 # GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
 # `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it

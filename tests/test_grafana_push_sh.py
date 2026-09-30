@@ -1,11 +1,5 @@
 """`infra/scripts/grafana-push.sh` against a recording `curl` stub, from a copy in a scratch tree so the
-`infra/grafana/` it reads is the test's. It requires `GRAFANA_SA_TOKEN` and a `python3` that imports PyYAML before
-any call; pushes every `*-dashboard.json` by its own uid into the folder; PUTs each notification template and refuses
-one that does not read back byte-identical, before any rule is touched; without a webhook it requires both receivers
-live and referencing the templates, with one it upserts them by uid (PUT when the uid exists, POST otherwise), routes
-the default policy to `metrics` and deletes the legacy integration last; upserts each rule with the placeholders
-substituted (PUT on a 200, POST otherwise); reads every rule back and fails on a datasource that is neither the
-Prometheus nor the Loki uid; and names an orphan only inside the folder, deleting it only under `GRAFANA_PRUNE=1`."""
+`infra/grafana/` it reads is the test's."""
 
 from __future__ import annotations
 
