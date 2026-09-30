@@ -37,7 +37,7 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # /tmp/gate-cache.json, on no mount); size the window by fleet-pins.md's standing constraint.
 # `cache_invalidated` reads 0 across such a re-pin and that is CORRECT: no cache file exists and
 # `load_cache` returns rejected=False for an absent path, so read `cache_hits` instead. Gate metrics
-# describe the PREVIOUS image for about an hour after a roll -- check the textfile's mtime first.
+# describe the PREVIOUS image until the textfile's mtime passes the roll.
 # ROLLBACK rolls the REPO STATE, not just this pin: `pull-entrypoint.sh` is a bind mount, so an
 # image roll leaves it in place passing `--hash-scope`, which no image before `a3a3837e` accepts, and
 # flipping the scope to `full` does not help because the flag is still sent. Converge from a pre-spec-00102 state
