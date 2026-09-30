@@ -198,7 +198,7 @@ caps, not reservations.
 
 ## Grafana dashboard + alerts (spec 00049 Role B, Task 4)
 
-The committed-as-code dashboards (`infra/grafana/*-dashboard.json`), notification templates and alert rules (`infra/grafana/alerts.yaml`) are provisioned onto the already-live Grafana Cloud instance by `infra/scripts/grafana-push.sh` — from any machine with network access to that instance (nothing runs NAS-side), and **from merged `develop`, never a branch**: alert summaries and panel descriptions cite repo paths, so a branch push ships text naming files `develop` does not have. Idempotent: each dashboard overwrites by its own uid, each alert rule upserts by its own stable uid.
+The committed-as-code dashboards (`infra/grafana/*-dashboard.json`), notification templates and alert rules (`infra/grafana/alerts.yaml`) are provisioned onto the already-live Grafana Cloud instance by `infra/scripts/grafana-push.sh` — from any machine with network access to that instance (nothing runs NAS-side), and from merged `develop` by default, a feature branch admitted under `.claude/skills/zcrypto-grafana-push/SKILL.md`'s three conditions: alert summaries and panel descriptions cite repo paths, so a push from elsewhere can ship text naming files `develop` does not have. Idempotent: each dashboard overwrites by its own uid, each alert rule upserts by its own stable uid.
 
 ### Deploy
 
