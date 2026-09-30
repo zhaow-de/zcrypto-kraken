@@ -162,7 +162,7 @@ ref=$(git stash list | grep -F "dependabot-skill-temp" | head -1 | cut -d: -f1)
 
 Report a summary:
 - ✅ Merged PRs (with number + package)
-- ⏭️ Skipped PRs (with reasons — e.g. major-version requiring human review, base branch wrong, a `nautilus-trader` PR step 4 holds)
+- ⏭️ Skipped PRs (with reasons — e.g. major-version requiring human review, base branch wrong)
 - ❌ Failed PRs (with error details — conflicts, persistent test failures, CI failures)
 
 ## User escalation triggers
