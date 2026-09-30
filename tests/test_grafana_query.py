@@ -104,5 +104,30 @@ def test_loki_routes_the_query_through_the_loki_datasource_proxy_and_is_not_an_e
     assert rc == 0
     assert seen == [('count_over_time({host="zcrypto"}[6h])', True)]
     assert "--loki" not in capsys.readouterr().out
-    assert "/uid/grafanacloud-logs/loki/api/v1/query?" in gq.endpoint("x", loki=True)
-    assert "/uid/grafanacloud-prom/api/v1/query?" in gq.endpoint("x")
+
+
+def test_query_sends_the_loki_route_and_the_bearer_as_a_header(monkeypatch):
+    seen = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"data": {"result": []}}'
+
+    def urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["auth"] = request.get_header("Authorization")
+        return _Response()
+
+    monkeypatch.setattr(gq.urllib.request, "urlopen", urlopen)
+
+    assert gq.query("x", TOKEN, loki=True) == []
+    assert "/uid/grafanacloud-logs/loki/api/v1/query?" in seen["url"]
+    assert seen["auth"] == f"Bearer {TOKEN}"
+    gq.query("x", TOKEN)
+    assert "/uid/grafanacloud-prom/api/v1/query?" in seen["url"]
