@@ -1,0 +1,70 @@
+name: xdist timing trial
+
+on:
+  # PRs into develop/main only. Every change reaches those branches via a PR, so the PR run gates
+  # each change before merge — and there is no redundant post-merge `push` run of the same suite.
+  # Coverage is uploaded from the PR build (so the README develop-branch badge tracks PR builds).
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  trial:
+    # This string IS the required status-check context on develop (.github/settings.yml).
+    # GitHub reports a job's `name:` as the check-run name, so renaming it here without
+    # updating that contexts list blocks every PR on a check that never reports.
+    # Renaming ALSO strands every pull request open at that moment: their runs already
+    # reported under the old name, and a re-run replays the old workflow file, so each
+    # needs a fresh run (push a commit, or close and reopen) before it can merge again.
+    # Named for what it gates -- the whole suite; the coverage upload is a by-product.
+    name: trial ${{ matrix.args }}
+    strategy:
+      fail-fast: false
+      matrix:
+        args:
+          - "-n 4 --dist load"
+          - "-n 4 --dist load --maxschedchunk 4"
+          - "-n 6 --dist load"
+          - "-n 6 --dist load --maxschedchunk 16"
+          - "-n 8 --dist load --maxschedchunk 16"
+    runs-on: ubuntu-latest
+    # The suite reads; nothing here writes. `actions/checkout` persists this token in .git/config
+    # for every later step, so bounding it is worth the line whatever the repository default is.
+    permissions:
+      contents: read
+    steps:
+      # The whole history, not the tip: at fetch-depth 1 the clone is shallow, and
+      # `tests/test_change_index.py::test_every_keyed_merge_on_develop_has_a_row` reads the
+      # first-parent merges of `develop` — a rowless merge already there is what it catches, and
+      # it cannot see one at all in a depth-1 clone.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # On a key develop already holds (uv-cache.yml seeds it), setup-uv restores it and skips the save
+      # by itself; this rule decides the miss. A pull request that changes the lockfile saves its own
+      # key for its later pushes; any other leaves the save to uv-cache.yml rather than writing a copy
+      # under its merge ref, which no other pull request can read. A failed comparison counts as
+      # changed, so that run still saves.
+      - id: lock
+        run: |
+          if git diff --quiet origin/develop -- uv.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.14"
+          cache-dependency-glob: uv.lock
+          save-cache: ${{ steps.lock.outputs.changed == 'true' }}
+      # The branch under the name the tooling reads: a pull_request checkout is detached at the
+      # merge ref with only `origin/develop`, and `count-list.sh` refuses a checkout with no local
+      # `develop`, which left nine of `tests/test_count_list.py`'s cases skipping here.
+      - run: git branch --force develop origin/develop
+      # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
+      - run: sudo apt-get update && sudo apt-get install -y valkey-server
+      - run: uv sync
+      # Four workers for the public runner's four vCPUs. --maxschedchunk 4 hands tests out four at a time, so the
+      # slow harness tests spread over the workers; a worker's queue still refills toward a sixteenth of the tests
+      # left, and after -x the other workers drain theirs. worksteal deals every test up front, so they drain
+      # whole shares.
+      - run: uv run pytest ${{ matrix.args }} -x --cov=cli --cov-report=lcov:coverage.lcov
