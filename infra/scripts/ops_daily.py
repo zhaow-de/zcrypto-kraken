@@ -21,6 +21,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
@@ -130,6 +131,9 @@ class AlertsRead:
     firing_now: list[Alert] = field(default_factory=list)
     fired_in_window: list[Alert] = field(default_factory=list)
     unhealthy: list[RuleHealth] = field(default_factory=list)
+    # History transitions into a state carrying the `Error` reason, keyed (UTC hour, rule uid); left
+    # empty when the history was not read whole, so a partial count never reaches the report.
+    evaluation_errors: Counter[tuple[datetime, str]] = field(default_factory=Counter)
     unreadable: str | None = None
 
 
@@ -219,6 +223,7 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
         return AlertsRead(unreadable=f"the rules API could not be read: {exc}")
 
     fired = {a.uid: a for a in read.firing_now}
+    errors: Counter[tuple[datetime, str]] = Counter()
     chunk_start = now - window
     try:
         while chunk_start < now:
@@ -229,20 +234,24 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
             payload = _get(url, token, opener)
             rows = (payload.get("data") or {}).get("values") or []
             for stamp, line in _history_transitions(payload):
+                current = str(line.get("current") or "")
+                uid = line.get("ruleUID")
+                if not uid:
+                    continue
+                # `Error`, by substring so a compound reason cannot smuggle it past, is Grafana failing
+                # to reach its own Prometheus rather than a fleet event, and nearly every rule carries
+                # `execErrState: Alerting`, so admitting it to fired-in-window would move the daily
+                # verdict on a platform hiccup. It is counted for the report's informational line.
+                if "Error" in current:
+                    hour = datetime.fromtimestamp(stamp / 1000, timezone.utc).replace(minute=0, second=0, microsecond=0)
+                    errors[hour, uid] += 1
+                    continue
                 # The history writes the state with its REASON attached, so an exact match on
                 # "Alerting" drops every firing that arrived through `noDataState: Alerting`, which
                 # the rules carry deliberately. A PREFIX rather than a list of the reasons seen so
                 # far: admitting an unmeasured reason costs one report line, dropping one costs a
-                # silent all-clear over a page. `Error` is the single exclusion, and by substring so a
-                # compound reason cannot smuggle it past -- it is Grafana failing to reach its own
-                # Prometheus rather than a fleet event (`infra/runbooks/capture.md` measures how often),
-                # and nearly every rule carries `execErrState: Alerting`, so admitting it would move
-                # the daily verdict on a platform hiccup.
-                current = str(line.get("current") or "")
-                if not current.startswith("Alerting") or "Error" in current:
-                    continue
-                uid = line.get("ruleUID")
-                if not uid:
+                # silent all-clear over a page.
+                if not current.startswith("Alerting"):
                     continue
                 # The row's own label first: most rules are outside `_UID_HOST`, and falling straight
                 # to it prints `on ?` for them.
@@ -274,6 +283,8 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
     except _UNREACHABLE as exc:
         read.unreadable = f"the alert-state history could not be read: {exc}"
     read.fired_in_window = list(fired.values())
+    if read.unreadable is None:
+        read.evaluation_errors = errors
     return read
 
 
@@ -1020,6 +1031,24 @@ class Report:
     def verdict_word(self) -> str:
         return "all-clear" if self.exit_code == 0 else "attention"
 
+    @property
+    def evaluation_errors_clause(self) -> str | None:
+        """The window's `(Error)` transitions in one clause, or None when there were none. Informational
+        only: `exit_code` never reads them, for the reason `read_alerts` keeps them out of fired-in-window."""
+        errors = self.alerts.evaluation_errors
+        if not errors:
+            return None
+        transitions = sum(errors.values())
+        rules = len({uid for _, uid in errors})
+        by_hour: Counter[datetime] = Counter()
+        for (hour, _), n in errors.items():
+            by_hour[hour] += n
+        hours = ", ".join(f"{hour:%m-%d %H}Z ({n})" for hour, n in sorted(by_hour.items()))
+        return (
+            f"{transitions} transition{'s' if transitions != 1 else ''} across {rules} rule{'s' if rules != 1 else ''}, "
+            f"by hour {hours}"
+        )
+
     def markdown(self) -> str:
         hours = int(self.window.total_seconds() // 3600)
         out = [f"# Daily pass — {self.now:%Y-%m-%d %H:%MZ} (window {hours} h)", ""]
@@ -1030,6 +1059,8 @@ class Report:
         out += [f"- `{a.uid}` on {', '.join(a.hosts) or '?'} — {a.runbook or 'NO RUNBOOK'}" for a in self.alerts.firing_now] or [
             "- none"
         ]
+        if self.evaluation_errors_clause:
+            out += ["", f"Grafana evaluation errors in the window, outside the verdict: {self.evaluation_errors_clause}"]
         if self.alerts.unhealthy:
             out += ["", "## Rules not evaluating"]
             out += [f"- `{r.uid}` — {r.health}: {r.last_error or 'no error text from Grafana'}" for r in self.alerts.unhealthy]
@@ -1087,10 +1118,12 @@ class Report:
         deploys = ", ".join(str(d.get("limit")) for d in self.deploys) or "none"
         hours = int(self.window.total_seconds() // 3600)
         sick = len(self.alerts.unhealthy)
+        evaluation_errors = self.evaluation_errors_clause
         return (
             f"window {hours} h to {self.now:%Y-%m-%d %H:%MZ} · alerts {fired}"
             f"{f' · {sick} rule{"s" if sick != 1 else ""} not evaluating' if sick else ''}"
-            f"{f' · fired and cleared {cleared}' if cleared else ''} · checks {failed}{f' · soak {soak}' if soak else ''} · "
+            f"{f' · fired and cleared {cleared}' if cleared else ''}"
+            f"{f' · evaluation errors {evaluation_errors}' if evaluation_errors else ''} · checks {failed}{f' · soak {soak}' if soak else ''} · "
             f"logs {errors} ERROR/CRITICAL lines{f', {warnings} WARNING' if warnings else ''} · "
             f"dead-men {self.deadmen.via_prometheus} down via Grafana, "
             f"{len(self.deadmen.via_healthchecks)} read directly{f', {findings} description finding{"s" if findings != 1 else ""}' if findings else ''} · deploys {deploys} · "
