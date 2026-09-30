@@ -19,6 +19,7 @@
 # `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root -- rather than
 # installing PyYAML into the system python, where a second copy drifts unseen.
 #
+# The alert rules go through Grafana's Alerting Provisioning HTTP API, one rule per call; the
 # `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is not accepted
 # here, and file provisioning is not available on Grafana Cloud SaaS.
 #
