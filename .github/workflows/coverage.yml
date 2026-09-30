@@ -54,10 +54,9 @@ jobs:
       # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
       - run: sudo apt-get update && sudo apt-get install -y valkey-server
       - run: uv sync
-      # tests/test_cache_restart.py runs its scenarios one after another, each on its own valkey-server and
-      # engine child processes under tmp_path, and spends most of its time waiting, so it runs in the
-      # background beside the rest of the suite, in this one job so the check keeps its name. Each half
-      # writes its own coverage data file, combined below; the step fails when either half fails.
+      # tests/test_cache_restart.py mostly waits on its valkey-server and engine children, whose state lives
+      # under tmp_path, so it runs in the background beside the rest of the suite -- in this one job, so the
+      # check keeps its name.
       - name: Run the suite, the cache restart harness beside it
         run: |
           uv run coverage run --parallel-mode -m pytest tests/test_cache_restart.py > harness.log 2>&1 &
