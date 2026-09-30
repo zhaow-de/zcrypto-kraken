@@ -4,6 +4,8 @@
 # its own uid, each alert rule upserts by its own stable uid.
 #
 # Run it from MERGED develop by default: summaries and panel descriptions cite repo paths, so a push
+# from elsewhere can ship alert text naming files develop does not have. A feature-branch push is
+# admitted only under .claude/skills/zcrypto-grafana-push/SKILL.md's conditions.
 # from elsewhere can ship alert text naming files develop does not have. A push from a feature branch
 # is admitted under .claude/skills/zcrypto-grafana-push/SKILL.md's three conditions: the branch is the
 # one that will merge and its PR body records the push, the fix loop stays on that branch, and a push
@@ -16,7 +18,6 @@
 # file, a log or argv. For a PromQL read-back use `infra/scripts/grafana-query.py`, which needs no
 # token from you at all.
 #
-# The alert-rules calls target Grafana's Alerting Provisioning HTTP API, one rule per call.
 #
 # PATH note, which the PyYAML refusal below points at: this script calls bare `python3`, and PyYAML
 # lives in the project venv, so run it with that venv first on PATH --
@@ -26,7 +27,9 @@
 # `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is not accepted
 # here, and file provisioning is not available on Grafana Cloud SaaS.
 #
-# After ANY push, read the rules back and check each rule's datasourceUid -- the API accepts a wrong
+# Verify a DASHBOARD by RENDERING it, never by reading its JSON back: a read-back proves what was
+# stored, not what a panel DISPLAYS, and a unit that reaches a string column renders every cell `NaN`
+# while the stored JSON looks perfect.
 # one happily and reports health=ok (T0034). Verify a DASHBOARD by RENDERING it, never by reading
 # its JSON back: a read-back proves what was stored, not what a panel DISPLAYS, and a unit that
 # reaches a string column renders every cell `NaN` while the stored JSON looks perfect.
