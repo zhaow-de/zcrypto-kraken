@@ -142,6 +142,7 @@
     - name: engine window override accepted — the reason, on the record
       ansible.builtin.debug:
         msg: "engine_window_override accepted: {{ engine_window_override }}"
+      register: engine_window_override_echo
       when: >-
         not ansible_check_mode and engine_epoch_probe.stdout is defined
         and not (((engine_epoch_probe.stdout | int) >= (
@@ -153,6 +154,37 @@
          and (14400 - ((engine_epoch_probe.stdout | int) % 14400) >= 900))
         and (engine_window_override | default('') | string | length > 8)
         and (engine_window_override | default('') | string | lower not in ['true', 'false', '1', 'yes'])
+      tags: [engine, cache-link]
+
+    # converge.sh names this file and copies what lands in it into the run's deploy-log row as `window`, which the
+    # deploy-log audit judges an engine row on. `engine_window_floor` and `engine_window_journal` mirror the assert's
+    # floor and its journal test character-for-character, as the echo mirrors the window.
+    # `noqa: run-once[task]`: the rule warns of the `free` strategy, and this play runs under the default linear one.
+    - name: engine window — the floor this run was admitted on, for the deploy-log row  # noqa: run-once[task]
+      ansible.builtin.copy:
+        dest: "{{ zcrypto_window_record }}"
+        content: >-
+          {{ {'at': engine_epoch_probe.stdout | int, 'floor': engine_window_floor | int,
+              'arm': 'journal' if engine_window_journal else 'fixed',
+              'override': engine_window_override_echo is not skipped} | to_json }}
+        mode: "0600"
+      vars:
+        engine_window_floor: >-
+          {{ (
+              ((engine_cycle_epoch_probe.stdout | default('') | trim | int) + 300)
+              if ((engine_cycle_epoch_probe.rc | default(1)) == 0
+                  and ((engine_cycle_epoch_probe.stdout | default('') | trim) | regex_search('^[0-9]{10}$')))
+              else ((((engine_epoch_probe.stdout | int) // 14400) * 14400) + 1800)
+            ) }}
+        engine_window_journal: >-
+          {{ ((engine_cycle_epoch_probe.rc | default(1)) == 0
+              and ((engine_cycle_epoch_probe.stdout | default('') | trim) | regex_search('^[0-9]{10}$'))) }}
+      delegate_to: localhost
+      become: false
+      run_once: true
+      when: >-
+        not ansible_check_mode and engine_epoch_probe.stdout is defined
+        and (zcrypto_window_record | default('') | length > 0)
       tags: [engine, cache-link]
   roles:
     # The engine host's end of the zcache mesh, under its own tag. It restarts no container, and a

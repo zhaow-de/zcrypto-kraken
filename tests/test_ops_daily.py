@@ -21,6 +21,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.parse
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1044,8 +1045,6 @@ def _history(*transitions):
         # Drill K measured `Pending (NoData) -> Alerting (NoData)` off this endpoint, and these rules
         # carry `noDataState: Alerting` deliberately, so an exact match on "Alerting" drops them.
         ("Alerting (NoData)", True),
-        # `execErrState: Alerting` is Grafana failing to reach its own Prometheus -- 83.5% false over
-        # 23 days by the capture runbook's count. Admitting it would move the verdict on a hiccup.
         ("Alerting (Error)", False),
         # An Alerting reason nobody has measured yet costs one report line if admitted and a silent
         # all-clear over a page if dropped, so the filter is a prefix minus Error rather than a list.
@@ -1126,6 +1125,116 @@ def test_an_alert_still_firing_is_not_also_listed_as_cleared():
     report = _report(alerts=ops_daily.AlertsRead(firing_now=[still_firing], fired_in_window=[still_firing]))
     assert report.markdown().count("zcrypto-capture-venue-not-online") == 1
     assert "fired and cleared" not in report.markdown()
+
+
+_H13 = datetime(2026, 8, 28, 13, tzinfo=timezone.utc)
+_H07 = datetime(2026, 8, 29, 7, tzinfo=timezone.utc)
+
+
+def _stamped(*rows):
+    """`_history`, each transition at the instant paired with it."""
+    return {
+        "schema": {"fields": [{"name": "time"}, {"name": "line"}, {"name": "labels"}]},
+        "data": {"values": [[int(at.timestamp() * 1000) for at, _ in rows], [line for _, line in rows], [{} for _ in rows]]},
+    }
+
+
+def _transition(uid, current, previous="Normal"):
+    return {"previous": previous, "current": current, "ruleUID": uid, "ruleTitle": "t"}
+
+
+def _failing_after(*payloads):
+    """An opener answering with the payloads given, then failing the next request as a dropped link does."""
+    queue = list(payloads)
+
+    @contextlib.contextmanager
+    def opener(request, timeout=None):
+        if not queue:
+            raise urllib.error.URLError("down")
+        yield io.BytesIO(json.dumps(queue.pop(0)).encode())
+
+    return opener
+
+
+def test_the_history_counts_evaluation_error_transitions_by_hour_and_rule_across_chunks():
+    first_chunk = _stamped(
+        (_H13 + timedelta(minutes=5), _transition("zcrypto-a", "Alerting (Error)")),
+        (_H13 + timedelta(minutes=20), _transition("zcrypto-a", "Normal", previous="Alerting (Error)")),
+        (_H13 + timedelta(minutes=40), _transition("zcrypto-b", "Normal (Error)")),
+        (_H13 + timedelta(minutes=50), _transition("zcrypto-a", "Alerting (Error)")),
+        (_H13 + timedelta(minutes=55), _transition("zcrypto-c", "Alerting")),
+    )
+    last_chunk = _stamped((_H07 + timedelta(minutes=10), _transition("zcrypto-a", "Alerting (Error, KeepLast)")))
+    opener = _canned(_rules(), first_chunk, _EMPTY_HISTORY, _EMPTY_HISTORY, last_chunk)
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=opener)
+    assert read.unreadable is None
+    assert dict(read.evaluation_errors) == {(_H13, "zcrypto-a"): 2, (_H13, "zcrypto-b"): 1, (_H07, "zcrypto-a"): 1}
+    assert [a.uid for a in read.fired_in_window] == ["zcrypto-c"], "an (Error) row stays out of fired-in-window"
+    md = _report(alerts=read).markdown().splitlines()
+    line = "Grafana evaluation errors in the window, outside the verdict: 4 transitions across 2 rules, by hour 08-28 13Z (3), 08-29 07Z (1)"
+    assert line in md
+    assert md.index("## Alerts firing") < md.index(line) < md.index("## Fleet checks")
+
+
+def test_an_evaluation_error_is_counted_by_the_one_chunk_whose_requested_bounds_hold_it():
+    # `now` off the whole second, as a live run's is: each chunk asks for whole seconds, the first chunk's `to` being the
+    # second's `from`, and `after_it` lies before the second chunk's own start but inside what that chunk asked for.
+    now = NOW + timedelta(microseconds=456789)
+    boundary = datetime(2026, 8, 28, 18, tzinfo=timezone.utc)
+    on_the_shared_second = (boundary, _transition("zcrypto-a", "Alerting (Error)"))
+    after_it = (boundary + timedelta(milliseconds=300), _transition("zcrypto-b", "Normal (Error)"))
+    opener = _canned(_rules(), _stamped(on_the_shared_second), _stamped(on_the_shared_second, after_it), _EMPTY_HISTORY)
+    read = ops_daily.read_alerts("tok", now=now, window=DAY, opener=opener)
+    assert read.unreadable is None
+    assert dict(read.evaluation_errors) == {(boundary, "zcrypto-a"): 1, (boundary, "zcrypto-b"): 1}
+    assert read.fired_in_window == []
+
+
+def test_a_window_without_an_evaluation_error_prints_no_line_for_them():
+    history = _stamped(
+        (_H13, _transition("zcrypto-c", "Alerting")),
+        (_H13 + timedelta(minutes=9), _transition("zcrypto-c", "Normal", previous="Alerting")),
+    )
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=_canned(_rules(), history, _EMPTY_HISTORY))
+    assert not read.evaluation_errors
+    report = _report(alerts=read)
+    assert "evaluation error" not in report.markdown().lower()
+    assert "evaluation error" not in report.journal_paragraph().lower()
+
+
+def test_evaluation_errors_move_neither_the_verdict_nor_the_exit_code():
+    report = _report(alerts=ops_daily.AlertsRead(evaluation_errors=Counter({(_H13, "zcrypto-a"): 1})))
+    assert (report.exit_code, report.verdict_word) == (0, "all-clear")
+    assert "**Verdict: all-clear** (exit 0)" in report.markdown()
+    assert (
+        "Grafana evaluation errors in the window, outside the verdict: 1 transition across 1 rule, by hour 08-28 13Z (1)"
+        in report.markdown().splitlines()
+    )
+
+
+def test_the_journal_paragraph_carries_the_evaluation_error_clause():
+    errors = Counter({(_H07, "zcrypto-a"): 1, (_H13, "zcrypto-a"): 2, (_H13, "zcrypto-b"): 1})
+    para = _report(alerts=ops_daily.AlertsRead(evaluation_errors=errors)).journal_paragraph()
+    assert (
+        "· alerts none · evaluation errors 4 transitions across 2 rules, by hour 08-28 13Z (3), 08-29 07Z (1) · checks all pass ·"
+        in para
+    ), para
+
+
+@pytest.mark.parametrize("second_chunk", ["at the page limit", "unreachable"])
+def test_a_history_not_read_whole_says_nothing_about_evaluation_errors(second_chunk):
+    counted = _stamped((_H13, _transition("zcrypto-a", "Alerting (Error)")))
+    if second_chunk == "unreachable":
+        opener = _failing_after(_rules(), counted)
+    else:
+        opener = _canned(_rules(), counted, {"data": {"values": [["x"] * ops_daily.HISTORY_PAGE_LIMIT]}})
+    read = ops_daily.read_alerts("tok", now=NOW, window=DAY, opener=opener)
+    assert read.unreadable
+    assert not read.evaluation_errors
+    report = _report(alerts=read)
+    assert report.exit_code == 2
+    assert "evaluation error" not in report.markdown().lower()
+    assert "evaluation error" not in report.journal_paragraph().lower()
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,10 @@
 
 Both arms are counts and neither is a gate: they exit 0 whatever they find, and the reader judges.
 The one non-zero exit is an unreachable feed, which is an absent measurement rather than a clean one.
+
+An engine row's `window` is the record site.yml's engine play writes after its window assert and converge.sh copies
+into the row: a row carrying it is judged on it, and a row without it by inference, counted as `inferred`, as is a row
+whose `window` is not the four-key record the play writes, which the audit also names on stderr.
 """
 
 from __future__ import annotations
@@ -29,8 +33,8 @@ _CYCLE_SECONDS = 4 * 60 * 60
 _AFTER_BOUNDARY_SECONDS = 1800
 _BEFORE_BOUNDARY_SECONDS = 600
 # `site.yml` opens the gap this long after the boundary cycle's journalled completion, and keeps the fixed floor
-# above only when it cannot read one (spec 00083 D6). This log cannot read the journal; a cycle cannot complete
-# before its boundary, so this is the earliest the playbook can have admitted a row.
+# above only when it cannot read one (spec 00083 D6). For a row without a well-formed record this audit cannot read the journal; a
+# cycle cannot complete before its boundary, so this is the earliest the playbook can have admitted such a row.
 _AFTER_COMPLETION_SECONDS = 300
 
 EXIT_OK = 0
@@ -93,13 +97,45 @@ def inside_gap(stamp: str) -> bool:
     return since >= _AFTER_BOUNDARY_SECONDS and _CYCLE_SECONDS - since >= _BEFORE_BOUNDARY_SECONDS
 
 
+def carried_the_override(row: dict) -> bool:
+    """A JSON-null `engine_window_override` is no override: the play reads it as none."""
+    return (row.get("extra_vars") or {}).get("engine_window_override") is not None
+
+
 def on_the_completion_floor(row: dict) -> bool:
-    """A row short of the fixed floor that the playbook can have admitted on a completed cycle's floor instead.
-    Success is sufficient evidence of that, since the window assert precedes it, and not necessary: a run admitted
-    and failed later counts as outside. A row that carried the bypass was admitted on its reason and not on a floor."""
+    """For a row without a well-formed record: one short of the fixed floor that the playbook can have admitted on a completed
+    cycle's floor instead. Success is sufficient evidence of that, since the window assert precedes it, and not necessary: a
+    run admitted and failed later counts as outside. A row that carried the bypass is left to the fixed gap, since its
+    reason may be what admitted it: a value the play refused as a reason reads outside although a floor admitted it."""
     since = _since_boundary(row["ts"])
-    admitted = row["rc"] == 0 and "engine_window_override" not in (row.get("extra_vars") or {})
+    admitted = row["rc"] == 0 and not carried_the_override(row)
     return admitted and _AFTER_COMPLETION_SECONDS <= since < _AFTER_BOUNDARY_SECONDS
+
+
+def carries_the_record(row: dict) -> bool:
+    window = row.get("window")
+    if (
+        isinstance(window, dict)
+        and set(window) == {"at", "floor", "arm", "override"}
+        and type(window["at"]) is int
+        and type(window["floor"]) is int
+        and window["arm"] in ("journal", "fixed")
+        and type(window["override"]) is bool
+    ):
+        return True
+    if "window" in row:
+        print(f"engine row {row['ts']}: `window` is not the play's record, judged by inference: {window!r}", file=sys.stderr)
+    return False
+
+
+def outside_on_its_record(row: dict) -> bool:
+    """The close is measured from the boundary after the recorded clock, not the row's stamp: a play admitted late that
+    ran across the next boundary is outside."""
+    window = row["window"]
+    if window["override"]:
+        return False
+    closes = (window["at"] // _CYCLE_SECONDS + 1) * _CYCLE_SECONDS - _BEFORE_BOUNDARY_SECONDS
+    return window["at"] < window["floor"] or at(row["ts"]).timestamp() > closes
 
 
 def fetch_maintenances(url: str = FEED_URL, timeout: int = FEED_TIMEOUT_SECONDS) -> list[dict]:
@@ -159,10 +195,18 @@ def gated_by_the_engine_window(row: dict, groups: dict[str, set[str]]) -> bool:
 def run_engine_window(rows: list[dict]) -> int:
     groups = _inventory_groups()
     engine = [row for row in rows if gated_by_the_engine_window(row, groups)]
-    floor = [row for row in engine if on_the_completion_floor(row)]
-    outside = [row for row in engine if not inside_gap(row["ts"]) and row not in floor]
+    recorded, inferred = [], []
+    for row in engine:
+        (recorded if carries_the_record(row) else inferred).append(row)
+    floor = [row for row in inferred if on_the_completion_floor(row)]
+    outside = [row for row in recorded if outside_on_its_record(row)]
+    outside += [row for row in inferred if not inside_gap(row["ts"]) and row not in floor]
     failed = [row for row in engine if row["rc"] != 0]
-    print(f"engine rows {len(engine)} outside window {len(outside)} failed {len(failed)} on the completion floor {len(floor)}")
+    overridden = [row for row in engine if carried_the_override(row) or (row in recorded and row["window"]["override"])]
+    print(
+        f"engine rows {len(engine)} outside window {len(outside)} failed {len(failed)} overridden {len(overridden)}"
+        f" inferred {len(inferred)} of which on the completion floor {len(floor)}"
+    )
     return EXIT_OK
 
 

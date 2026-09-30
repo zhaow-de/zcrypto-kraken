@@ -366,8 +366,17 @@ c_engine_rows_outside_the_gap() {
   uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'
 }
 
-# A watch number, not a gate: the log cannot read the journal, so the band is what `on_the_completion_floor` infers.
-c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window | sed -n 's/^engine rows .*on the completion floor \([0-9][0-9]*\)$/\1/p'; }
+# The engine window's bypasses: every row whose run carried a non-null `engine_window_override`, recorded or not.
+# One without a record that landed outside the fixed gap is counted by the entry above as well.
+c_engine_window_overrides() {
+  local since window=()
+  since="$(round_closed_at)" || return 2
+  if [ -n "$since" ]; then window=(--since "$since"); fi
+  uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows .* overridden \([0-9][0-9]*\) inferred .*/\1/p'
+}
+
+# A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
+c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
 
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
 
@@ -555,6 +564,7 @@ main() {
   emit "drills-on-the-primary" c_drills_on_the_primary
   emit "un-tagged-primary-runs" c_un_tagged_primary_runs
   emit "engine-rows-outside-the-gap" c_engine_rows_outside_the_gap
+  emit "engine-window-overrides" c_engine_window_overrides
   emit "engine-rows-on-the-completion-floor" c_engine_rows_on_the_completion_floor
   emit "nas-rows-without-compat" c_nas_rows_without_compat
   emit "image-removals-outside-the-pruner" c_image_removals_outside_the_pruner

@@ -343,6 +343,13 @@ def test_engine_window_floors_are_pinned_at_their_exact_constants(since_boundary
 PLAY_WORK_ALLOWANCE_SECONDS = 300
 
 
+def _deploy_log_audit():
+    spec = importlib.util.spec_from_file_location("deploy_log_audit_window", REPO / "infra" / "scripts" / "deploy-log-audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    return audit
+
+
 def test_a_play_the_window_admits_last_still_finishes_inside_the_audits_gap():
     task = find_task(load_tasks(SITE), WINDOW)
     closes = re.findall(r"14400 - \(\(engine_epoch_probe\.stdout \| int\) % 14400\) >= (\d+)\)", " ".join(assert_that(task)))
@@ -351,9 +358,7 @@ def test_a_play_the_window_admits_last_still_finishes_inside_the_audits_gap():
     last_admitted_start = 1754265600 + 14400 - close
     assert truthy(assert_that(task), {"engine_epoch_probe": {"stdout": str(last_admitted_start)}, "engine_window_override": ""})
 
-    spec = importlib.util.spec_from_file_location("deploy_log_audit_window", REPO / "infra" / "scripts" / "deploy-log-audit.py")
-    audit = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(audit)
+    audit = _deploy_log_audit()
     assert close - audit._BEFORE_BOUNDARY_SECONDS >= PLAY_WORK_ALLOWANCE_SECONDS
     finished = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(last_admitted_start + PLAY_WORK_ALLOWANCE_SECONDS))
     assert audit.inside_gap(finished)
@@ -570,6 +575,110 @@ def test_the_window_echo_negates_the_asserts_own_window_condition():
     assert " ".join(negated.split()) == " ".join(condition.split()), (
         f"the echo records an override on other cases:\n echo:   {negated}\n assert: {condition}"
     )
+
+
+# --- the window's record: converge.sh names a file with `zcrypto_window_record`, the play writes into it the clock
+# and the floor the assert compared, and the wrapper copies it into the deploy-log row as `window`.
+WINDOW_RECORD = "engine window — the floor this run was admitted on, for the deploy-log row"
+
+
+def _engine_pre_tasks() -> list[dict]:
+    return next(p for p in load_tasks(SITE) if p.get("hosts") == "engine_host")["pre_tasks"]
+
+
+def _written_record(since_boundary: int, cycle_probe: dict | None, override: str = "") -> dict:
+    """The play's own sequence: the echo's `when:` decides whether it ran, and the record reads what it registered."""
+    from ansible.template import trust_as_template
+
+    tasks = load_tasks(SITE)
+    record, echo = find_task(tasks, WINDOW_RECORD), find_task(tasks, WINDOW_ECHO)
+    variables = {
+        "ansible_check_mode": False,
+        "engine_epoch_probe": {"stdout": str(BOUNDARY + since_boundary)},
+        "engine_window_override": override,
+        **({"engine_cycle_epoch_probe": cycle_probe} if cycle_probe is not None else {}),
+    }
+    assert truthy(assert_that(find_task(tasks, WINDOW)), variables), "the play fails at the assert and records nothing"
+    ran = truthy(when_conditions(echo), variables)
+    variables[echo["register"]] = {"changed": False, "msg": "accepted"} if ran else {"changed": False, "skipped": True}
+    variables |= {k: trust_as_template(v) for k, v in record.get("vars", {}).items()}
+    content = record["ansible.builtin.copy"]["content"]
+    return json.loads(Templar(loader=DataLoader(), variables=variables).template(trust_as_template(content)))
+
+
+@pytest.mark.parametrize(
+    ("since_boundary", "cycle_probe", "override", "expected"),
+    [
+        # completed 08:01:48, admitted at 08:08:20 on the floor 5 min past that completion
+        (500, {"rc": 0, "stdout": str(BOUNDARY + 108)}, "", {"floor": BOUNDARY + 408, "arm": "journal", "override": False}),
+        # a cycle that ran long raises the floor above the fixed one
+        (2000, {"rc": 0, "stdout": str(BOUNDARY + 1700)}, "", {"floor": BOUNDARY + 2000, "arm": "journal", "override": False}),
+        (1800, {"rc": 1, "stdout": ""}, "", {"floor": BOUNDARY + 1800, "arm": "fixed", "override": False}),
+        (1900, {"rc": 0, "stdout": "99"}, "", {"floor": BOUNDARY + 1800, "arm": "fixed", "override": False}),
+        (1900, None, "", {"floor": BOUNDARY + 1800, "arm": "fixed", "override": False}),
+        (900, {"rc": 1, "stdout": ""}, WINDOW_REASON, {"floor": BOUNDARY + 1800, "arm": "fixed", "override": True}),
+        (
+            300,
+            {"rc": 0, "stdout": str(BOUNDARY + 108)},
+            WINDOW_REASON,
+            {"floor": BOUNDARY + 408, "arm": "journal", "override": True},
+        ),
+        # open on the floor, closed by the ceiling: the override admitted it all the same
+        (
+            13501,
+            {"rc": 0, "stdout": str(BOUNDARY + 108)},
+            WINDOW_REASON,
+            {"floor": BOUNDARY + 408, "arm": "journal", "override": True},
+        ),
+        # a reason given over an open window overrode nothing
+        (1900, {"rc": 1, "stdout": ""}, WINDOW_REASON, {"floor": BOUNDARY + 1800, "arm": "fixed", "override": False}),
+    ],
+)
+def test_the_play_records_the_clock_the_floor_and_the_arm_the_assert_compared(since_boundary, cycle_probe, override, expected):
+    record = _written_record(since_boundary, cycle_probe, override)
+    assert record == {"at": BOUNDARY + since_boundary, **expected}
+    # `==` holds for 0 == False and 1.0 == 1.
+    assert {key: type(value) for key, value in record.items()} == {"at": int, "floor": int, "arm": str, "override": bool}
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(BOUNDARY + since_boundary))
+    assert _deploy_log_audit().carries_the_record({"ts": stamp, "window": record}), record
+
+
+@pytest.mark.parametrize(
+    ("variables", "writes"),
+    [
+        ({"ansible_check_mode": False, "zcrypto_window_record": "/tmp/zcrypto-window.abc123"}, True),
+        ({"ansible_check_mode": True, "zcrypto_window_record": "/tmp/zcrypto-window.abc123"}, False),
+        ({"ansible_check_mode": False}, False),
+        ({"ansible_check_mode": False, "zcrypto_window_record": ""}, False),
+    ],
+)
+def test_the_record_is_written_only_on_a_real_pass_that_names_its_file(variables, writes):
+    task = find_task(load_tasks(SITE), WINDOW_RECORD)
+    assert truthy(when_conditions(task), {"engine_epoch_probe": {"stdout": str(BOUNDARY + 1900)}, **variables}) is writes
+    assert task["ansible.builtin.copy"]["dest"] == "{{ zcrypto_window_record }}"
+
+
+def test_the_record_is_written_on_the_controller_once_after_the_assert_and_its_echo():
+    pre_tasks = _engine_pre_tasks()
+    names = [t["name"] for t in pre_tasks]
+    task = pre_tasks[names.index(WINDOW_RECORD)]
+    assert names.index(WINDOW) < names.index(WINDOW_ECHO) < names.index(WINDOW_RECORD), names
+    assert (task["delegate_to"], task["run_once"], task["become"]) == ("localhost", True, False), task
+    assert task["tags"] == ["engine", "cache-link"], task["tags"]
+
+
+def test_the_records_floor_and_arm_are_the_asserts_own_expression():
+    """The value fixtures above drive both arms; this holds the text: the floor the assert compares its clock against,
+    and that floor's own journal test, against the assert's."""
+    tasks = load_tasks(SITE)
+    condition = " ".join(assert_that(find_task(tasks, WINDOW)))
+    floor = _first_balanced_group(condition, condition.index(">= (") + 3)
+    journal = _first_balanced_group(floor, floor.index(" if ") + 1)
+    assert "engine_cycle_epoch_probe" in journal and "+ 1800" in floor, f"extraction missed the floor: {floor!r}"
+
+    mirrored = find_task(tasks, WINDOW_RECORD)["vars"]
+    assert " ".join(_first_balanced_group(mirrored["engine_window_floor"]).split()) == " ".join(floor.split())
+    assert " ".join(_first_balanced_group(mirrored["engine_window_journal"]).split()) == " ".join(journal.split())
 
 
 # --- engine-role guards. Fixture keys carry the `engine_` prefix ansible-lint's
