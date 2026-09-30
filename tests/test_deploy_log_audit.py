@@ -152,14 +152,20 @@ def test_engine_window_counts_the_rows_outside_the_gap(tmp_path, capsys):
         _row("2026-09-01T01:00:00Z", tags="engine"),
     ]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
-    assert capsys.readouterr().out.strip() == "engine rows 3 outside window 2 failed 1 on the completion floor 0"
+    assert (
+        capsys.readouterr().out.strip()
+        == "engine rows 3 outside window 2 failed 1 overridden 0 inferred 3 of which on the completion floor 0"
+    )
 
 
 def test_engine_window_admits_the_row_the_playbook_admitted_on_a_completed_cycles_floor(tmp_path, capsys):
     """744 s past a boundary: past the earliest the playbook's completion floor can open, short of the fixed one."""
     rows = [_row("2026-09-19T08:12:24Z", tags="capture,engine")]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
-    assert capsys.readouterr().out.strip() == "engine rows 1 outside window 0 failed 0 on the completion floor 1"
+    assert (
+        capsys.readouterr().out.strip()
+        == "engine rows 1 outside window 0 failed 0 overridden 0 inferred 1 of which on the completion floor 1"
+    )
 
 
 @pytest.mark.parametrize(
@@ -178,11 +184,67 @@ def test_engine_window_still_counts_a_row_ahead_of_the_fixed_floor_that_the_play
     assert capsys.readouterr().out.strip().startswith("engine rows 1 outside window 1 "), why
 
 
+BOUNDARY = 1789804800  # 2026-09-19T08:00:00Z
+
+
+def _recorded(ts: str, at: int, floor: int, *, arm: str = "journal", override: bool = False, rc: int = 0) -> dict:
+    window = {"at": BOUNDARY + at, "floor": BOUNDARY + floor, "arm": arm, "override": override}
+    return {**_row(ts, tags="engine", rc=rc), "window": window}
+
+
+@pytest.mark.parametrize(
+    ("why", "row", "outside"),
+    [
+        ("admitted below the fixed floor on its cycle's journalled completion", _recorded("2026-09-19T08:12:24Z", 700, 408), 0),
+        (
+            "a clock below the floor a long-running cycle raised, inside the fixed gap",
+            _recorded("2026-09-19T08:32:00Z", 1900, 2000),
+            1,
+        ),
+        ("admitted on its floor and failed later", _recorded("2026-09-19T08:12:24Z", 700, 408, rc=2), 0),
+        ("admitted on its floor, finished before the close", _recorded("2026-09-19T11:49:00Z", 13400, 408), 0),
+        ("admitted on its floor, finished past the close", _recorded("2026-09-19T11:51:00Z", 13400, 408), 1),
+        ("admitted on its floor, finished past the next boundary", _recorded("2026-09-19T12:01:40Z", 13400, 408), 1),
+    ],
+)
+def test_engine_window_judges_a_recorded_row_on_the_floor_its_record_carries(tmp_path, capsys, why, row, outside):
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    line = capsys.readouterr().out.strip()
+    assert line.startswith(f"engine rows 1 outside window {outside} "), (why, line)
+    assert line.endswith(" overridden 0 inferred 0 of which on the completion floor 0"), (why, line)
+
+
+def test_engine_window_admits_a_recorded_row_the_override_admitted_and_counts_it_apart(tmp_path, capsys):
+    row = _recorded("2026-09-19T08:05:00Z", 280, 1800, arm="fixed", override=True)
+    row["extra_vars"] = {"engine_window_override": "a reason given"}
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    assert (
+        capsys.readouterr().out.strip()
+        == "engine rows 1 outside window 0 failed 0 overridden 1 inferred 0 of which on the completion floor 0"
+    )
+
+
+def test_engine_window_reports_the_rows_without_a_record_apart_as_inferred(tmp_path, capsys):
+    rows = [
+        _row("2026-09-19T08:12:24Z", tags="capture,engine"),
+        _recorded("2026-09-19T08:12:24Z", 700, 408),
+        _row("2026-09-01T01:00:00Z", tags="engine"),
+    ]
+    assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
+    assert (
+        capsys.readouterr().out.strip()
+        == "engine rows 3 outside window 0 failed 0 overridden 0 inferred 2 of which on the completion floor 1"
+    )
+
+
 def test_engine_window_counts_none_when_every_engine_row_sits_in_the_gap(tmp_path, capsys):
     """The capture row is outside the gap and belongs to no engine cycle, so the tag filter must drop it."""
     rows = [_row("2026-09-01T01:00:00Z", tags="engine"), _row("2026-09-01T00:10:00Z", tags="capture")]
     assert audit.main(["engine-window", "--log", _log(tmp_path, rows)]) == 0
-    assert capsys.readouterr().out.strip() == "engine rows 1 outside window 0 failed 0 on the completion floor 0"
+    assert (
+        capsys.readouterr().out.strip()
+        == "engine rows 1 outside window 0 failed 0 overridden 0 inferred 1 of which on the completion floor 0"
+    )
 
 
 @pytest.mark.parametrize(
@@ -263,9 +325,15 @@ def test_since_counts_the_engine_rows_stamped_at_or_after_it(tmp_path, capsys):
     )
     for since in ("2026-09-01T04:03:20Z", "2026-09-01T06:03:20+02:00"):
         assert audit.main(["engine-window", "--log", log, "--since", since]) == 0
-        assert capsys.readouterr().out.strip() == "engine rows 2 outside window 2 failed 0 on the completion floor 0", since
+        assert (
+            capsys.readouterr().out.strip()
+            == "engine rows 2 outside window 2 failed 0 overridden 0 inferred 2 of which on the completion floor 0"
+        ), since
     assert audit.main(["engine-window", "--log", log]) == 0
-    assert capsys.readouterr().out.strip() == "engine rows 3 outside window 3 failed 0 on the completion floor 0"
+    assert (
+        capsys.readouterr().out.strip()
+        == "engine rows 3 outside window 3 failed 0 overridden 0 inferred 3 of which on the completion floor 0"
+    )
 
 
 def test_since_narrows_the_maintenance_arm_too(tmp_path, capsys):

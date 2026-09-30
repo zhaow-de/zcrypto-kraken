@@ -809,6 +809,15 @@ def test_a_capture_pair_straddling_the_round_close_is_counted_once_in_the_round_
     assert _windowed(tmp_path, entry, git_dir, rows=[first, second], COUNT_LIST_ALL="1").stdout == f"{entry}\t1\n"
 
 
+def test_the_completion_floor_count_reads_only_the_rows_that_carry_no_window_record(tmp_path):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    band = {"ts": "2026-09-19T08:12:24Z", "limit": "zcrypto", "tags": "engine", "rc": 0, "extra_vars": {}}
+    window = {"at": 1789833600 + 700, "floor": 1789833600 + 408, "arm": "journal", "override": False}
+    rows = [band, {**band, "ts": "2026-09-19T12:12:24Z"}, {**band, "ts": "2026-09-19T16:12:24Z", "window": window}]
+    entry = "engine-rows-on-the-completion-floor"
+    assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t2\n"
+
+
 @pytest.mark.parametrize("entry", sorted(WINDOWED))
 def test_a_deploy_log_count_with_no_closed_round_is_an_error_and_all_still_counts(tmp_path, entry):
     git_dir = _history(tmp_path, closes_a_round=False)
