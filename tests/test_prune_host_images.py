@@ -87,6 +87,7 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
         ("capture", ("zcrypto",)),
         ("capture", ("zcrypto-red",)),
         ("engine", ("zcrypto",)),
+        ("cache-proxy", ("zcrypto",)),
         ("alloy", ("zcrypto",)),
         ("alloy", ("zcrypto-red",)),
         ("alloy", ("zcrypto-ops",)),
@@ -103,10 +104,10 @@ def test_the_real_pins_file_parses_into_exactly_the_service_host_pairs_the_fleet
     assert {h for row in rows for h in row.hosts} == set(pm.HOSTS)
     for row in rows:
         assert len(row.current) == 12, row
-        first_pin = row.hosts in {("zcrypto-valkey1",), ("zcrypto-valkey2",), ("zcrypto-valkey3",)} and (
-            row.service,
-            row.current,
-        ) in {("valkey + sentinel", "418652cfb58e"), ("alloy", "b8ec653c4423")}
+        first_pin = (
+            row.hosts in {("zcrypto-valkey1",), ("zcrypto-valkey2",), ("zcrypto-valkey3",)}
+            and (row.service, row.current) in {("valkey + sentinel", "418652cfb58e"), ("alloy", "b8ec653c4423")}
+        ) or (row.hosts, row.service, row.current) == (("zcrypto",), "cache-proxy", "76928c0d6b39")
         assert len(row.operand) == 12 or first_pin, row
 
 
@@ -142,7 +143,7 @@ def test_a_comma_separated_host_cell_reaches_every_name_after_the_first(host):
 
 def test_the_real_zcrypto_keep_set_carries_every_row_that_names_the_host():
     rows = pm.parse_pins_table(pm.DEFAULT_PINS.read_text())
-    expected = {d for row in rows if "zcrypto" in row.hosts for d in (row.current, row.operand)}
+    expected = {d for row in rows if "zcrypto" in row.hosts for d in (row.current, row.operand) if d}
 
     assert set(pm.keep_for_host(rows, "zcrypto")) == expected
 
