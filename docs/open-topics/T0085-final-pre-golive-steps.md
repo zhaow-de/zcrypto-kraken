@@ -47,7 +47,6 @@ Three of them are silent until the moment they are not. A disabled build lane is
 ## Done so far
 
 - **The OS/apt upgrade + reboot round is done on all four Debian hosts, 2026-09-27.** The capture pair went first, on 2026-09-26 (`docs/reference/drill-log.md`, A1 and the two reboot paragraphs behind it). The ops boot found docker starting its containers before dhcpcd had written a nameserver; the `ops` role's docker drop-in (`infra/ansible/roles/ops/files/docker-wait-for-resolver.conf`) waits for one, bounded and failing open, from the first boot after the ops converge that installs it.
-- **The `nautilus_trader` bump is the `zcrypto-bump-nautilus` skill's (`.claude/skills/zcrypto-bump-nautilus/SKILL.md`); its passes stand in `docs/reference/adapter-verification/`.**
 
 ## Suggested next steps
 
