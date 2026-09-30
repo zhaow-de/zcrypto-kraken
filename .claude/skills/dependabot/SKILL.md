@@ -37,7 +37,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 3. **Sort** the Dependabot PRs from context by priority: minor/patch first, major last. Classify each PR by parsing the `from <X> to <Y>` versions in its title and comparing the major components. Within a priority class, oldest first.
 
-4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above). A `nautilus-trader` PR stays out of the plan, open as the reminder of a new build (escalation trigger 6).
+4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above). A `nautilus-trader` PR stays out of the plan, open as the reminder of a new build, and is reported under Skipped: its CI stays red until the build's attended order-semantics pass lands with the bump (`infra/runbooks/order-semantics-verification.md` §1.6), and an edit of `cli/engine/order-semantics-verified.json` is never this skill's to make.
 
 ### Phase 2 — Process each PR (loop)
 
@@ -162,7 +162,7 @@ ref=$(git stash list | grep -F "dependabot-skill-temp" | head -1 | cut -d: -f1)
 
 Report a summary:
 - ✅ Merged PRs (with number + package)
-- ⏭️ Skipped PRs (with reasons — e.g. major-version requiring human review, base branch wrong)
+- ⏭️ Skipped PRs (with reasons — e.g. major-version requiring human review, base branch wrong, a `nautilus-trader` PR step 4 holds)
 - ❌ Failed PRs (with error details — conflicts, persistent test failures, CI failures)
 
 ## User escalation triggers
@@ -174,7 +174,6 @@ Only pause for user input when:
 3. **Major-version upgrades** where the changelog mentions breaking changes — surface the upgrade summary and ask before merging.
 4. **CI failures unrelated to the PR's changes** (e.g. infra flake, pre-existing test that was passing on develop before this branch was opened).
 5. **A PR's base branch is not `develop`** (likely `.github/dependabot.yml` `target-branch` misconfigured — surface and stop).
-6. **A `nautilus-trader` PR** — out of step 4's plan: its CI stays red until the new build's attended order-semantics pass is recorded on its branch, and an edit of `cli/engine/order-semantics-verified.json` is never this skill's to make.
 
 ## Notes
 
