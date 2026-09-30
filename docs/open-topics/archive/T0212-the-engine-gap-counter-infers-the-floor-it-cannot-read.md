@@ -1,6 +1,5 @@
 ---
-status: open
-ripe_when: '`infra/ansible/scripts/converge.sh` or `infra/scripts/deploy-log-audit.py` is next changed — a session already at the writer or the reader this topic would change, and the arm the daily pass decides; OR `infra/scripts/count-list.sh engine-rows-on-the-completion-floor` reads 3 or more, the band having grown past the single row that made deferring it right.'
+status: resolved
 ---
 
 # The engine-gap counter infers the floor it cannot read
@@ -35,12 +34,12 @@ The owner's ruling of 2026-09-21 is to leave the strict form unbuilt and let the
 
 **The reading of 2026-09-27: the file arm fired and the band still holds one row, so the topic is deferred again under that ruling.** The watched files changed four times since registration, none of them at the floor or its inference: 11cf4e531 added a sentence to the window comment in `infra/scripts/deploy-log-audit.py` and 2caf33cee removed it, leaving the file as it was (#608, 2026-09-24); 1605abe64 added the three cache nodes to that script's `NO_VENUE_EXPOSURE` and to `infra/ansible/scripts/converge.sh`'s hosts, tags and keys, and 519600589 trimmed the wrapper's comment on them (#607, 2026-09-25). `infra/scripts/count-list.sh engine-rows-on-the-completion-floor` reads 1, and the row is the one the band has held since before registration: 2026-09-19T08:12:24Z, `--limit zcrypto`, tags `capture,engine`, rc 0.
 
-## Suggested next steps
+## Resolution
 
-Read the count first: `infra/scripts/count-list.sh engine-rows-on-the-completion-floor`. If it still reads one or two, record that reading here and defer again; the topic's own criterion is that a band which does not grow is not worth a wrapper change.
+Built as the strict form on the owner's approval of 2026-09-30, the design settled by that ruling, on the branch `fix/daily-pass-handoffs-t0212`:
 
-If it has grown, the build is a field on the deploy-log row. `infra/ansible/scripts/converge.sh` writes the record after the play returns, so the floor the assert used has to reach it: the assert's own arms already compute it, and the value to carry is the epoch it compared against plus which arm produced it, the journalled completion or the fixed fallback.
+- 8a27b407a: once the engine play's window assert passes, `infra/ansible/site.yml` writes `{"at", "floor", "arm", "override"}` into the file `infra/ansible/scripts/converge.sh` names with `zcrypto_window_record`, and the wrapper copies it into the deploy-log row as `window`. The floor and its journal test mirror the assert's own expression, and `tests/test_infra_converge_guards.py` holds them equal to it; `override` is whether the override echo fired. The wrapper refuses an operator's `zcrypto_window_record` and removes the file on every exit.
+- 92a532fc7: `infra/scripts/deploy-log-audit.py` judges a row carrying `window` on the floor it records, with the close anchored to the boundary after the recorded clock, and an override row as admitted. It reports the rows without the field apart as `inferred`, and a recorded override row as `overridden`. `infra/scripts/count-list.sh engine-rows-on-the-completion-floor` counts only the inferred rows in the band.
+- 94420d8b4: `infra/runbooks/engine.md` says what that count now holds.
 
-Then `on_the_completion_floor` reads that field rather than inferring, and a row that carries no field is one written before the change, which the counter reports apart rather than exempting.
-
-A converge is attended and the engine's runs inside the gap, so the first row carrying the field arrives at whatever engine converge comes next; the reader change and the writer change can land together because the reader tolerates a row without the field.
+At resolution the count reads 1, the 2026-09-19T08:12:24Z row, which carries no record and stays in the band. A converge the assert admits now carries one, so no new row joins it, and the file arm of the trigger retires with the topic. A converge the assert refuses writes no record and is still judged by inference: the raised-floor case under *Findings so far* still surfaces only as a failed row.
