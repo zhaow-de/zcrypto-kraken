@@ -54,11 +54,13 @@ from nautilus_trader.model import (
     Venue,
     VenueOrderId,
 )
+from prometheus_client import CollectorRegistry
 
 import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
 import cli.engine.venuestate as venuestate_module
 from cli.config import CacheSettings, EngineConfig
+from cli.engine.command import _ExecutionMetrics, _seed_exec_positions
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
@@ -6946,6 +6948,20 @@ def test_the_start_after_a_red_button_flatten_publishes_the_venues_holdings_flat
     ex.on_timer(NOW)
 
     assert (metrics.positions, holdings.calls) == ([("BTC/EUR", 0.0), ("ETH/EUR", 0.0)], 1)
+
+
+def test_a_start_whose_journal_seeds_no_position_gives_the_gauge_every_basket_child_at_the_first_tick(tmp_path):
+    registry = CollectorRegistry()
+    exec_metrics = _ExecutionMetrics(registry)
+    assert _seed_exec_positions(tmp_path / "journal") is None
+    assert [s for s in INSTRUMENT_IDS if registry.get_sample_value("zcrypto_exec_position", {"symbol": s}) is not None] == []
+    set_executor_hooks(metrics=exec_metrics)
+    held = dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.001}
+    ex = _executor(tmp_path, client=StubClient(StubCache()), venue_holdings=_VenueHoldings(held))
+
+    ex.on_timer(NOW)
+
+    assert {s: registry.get_sample_value("zcrypto_exec_position", {"symbol": s}) for s in INSTRUMENT_IDS} == held
 
 
 def test_a_close_filled_while_the_engine_was_down_with_no_catch_up_reads_flat_from_the_venues_holdings_at_the_startup_pass(
