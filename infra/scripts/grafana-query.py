@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Read PromQL from Grafana Cloud with the vaulted service-account token.
+"""Read PromQL, or with --loki a LogQL metric query, from Grafana Cloud with the vaulted service-account token.
     uv run python infra/scripts/grafana-query.py 'up{job="capture_app"}' hc_check_up
+    uv run python infra/scripts/grafana-query.py --loki 'sum by (host) (count_over_time({host="zcrypto", container="engine", level=~".+"} [6h]))'
 NOT for alert states: `ALERTS{alertstate="firing"}` is Prometheus-native and structurally EMPTY
 for Grafana-managed rules, which is all of ours, so its `(no series)` reads as "nothing firing"
 whatever is true -- read rule states from `GET /api/prometheus/grafana/api/v1/rules` with the same
@@ -30,20 +31,27 @@ vault_password = grafana_auth.vault_password
 vault_var = grafana_auth.vault_var
 
 PROM_DS_UID = "grafanacloud-prom"
+LOKI_DS_UID = "grafanacloud-logs"
 
 
-def query(expr: str, token: str) -> list[dict]:
-    """Instant query through the Grafana datasource proxy, so the stack's own auth is what is used."""
-    endpoint = f"{GRAFANA_URL}/api/datasources/proxy/uid/{PROM_DS_UID}/api/v1/query?" + urllib.parse.urlencode({"query": expr})
-    request = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {token}"})
+def endpoint(expr: str, loki: bool = False) -> str:
+    """The instant-query URL through the Grafana datasource proxy, so the stack's own auth is what is used."""
+    ds_uid, path = (LOKI_DS_UID, "loki/api/v1/query") if loki else (PROM_DS_UID, "api/v1/query")
+    return f"{GRAFANA_URL}/api/datasources/proxy/uid/{ds_uid}/{path}?" + urllib.parse.urlencode({"query": expr})
+
+
+def query(expr: str, token: str, loki: bool = False) -> list[dict]:
+    request = urllib.request.Request(endpoint(expr, loki), headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 -- fixed https endpoint
         return json.load(response)["data"]["result"]
 
 
 def main(argv: list[str]) -> int:
+    loki = "--loki" in argv
+    argv = [a for a in argv if a != "--loki"]
     if not argv:
         print(__doc__.strip().splitlines()[0])
-        print("usage: grafana-query.py '<promql>' ['<promql>' ...]")
+        print("usage: grafana-query.py [--loki] '<query>' ['<query>' ...]")
         return 2
     token = vault_var("grafana_sa_token")
     failed = False
@@ -53,7 +61,7 @@ def main(argv: list[str]) -> int:
         # past the handler and drop every expression after it -- the exact hiding this guards against.
         try:
             print(expr)
-            series = query(expr, token)
+            series = query(expr, token, loki=loki)
             if not series:
                 # An empty result is NOT the same as a zero, and a gate that reads it as one is why
                 # this says so out loud: absent series and a series at 0 fail differently.

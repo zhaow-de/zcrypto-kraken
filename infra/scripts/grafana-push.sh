@@ -26,8 +26,11 @@
 # stored, not what a panel DISPLAYS, and a unit that reaches a string column renders every cell `NaN`
 # while the stored JSON looks perfect.
 #
-#   curl -fsS -H "Authorization: Bearer $GRAFANA_SA_TOKEN" -o panel.png \
+#   printf 'header = "Authorization: Bearer %s"\n' "$(uv run python -c '<the vault_var("grafana_sa_token") one-liner>')" \
+#     | curl -fsS -K - -o panel.png \
 #     "$GRAFANA_URL/render/d-solo/<dashboard-uid>/x?panelId=<id>&width=1100&height=420&from=now-6h&to=now"
+#
+# `-K -` reads the bearer as a config line on stdin, so it is in no argv; a `-H "… $GRAFANA_SA_TOKEN"` is.
 #
 # Append &var-<name>=<value> per template variable, and render the NARROWED case too: a query
 # returning a single series yields one frame whose value field is named `Value` rather than `Value
