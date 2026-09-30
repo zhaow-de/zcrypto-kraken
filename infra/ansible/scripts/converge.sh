@@ -39,6 +39,9 @@ docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_allo
 cache_config_reset cache_proxy_image_digest engine_cache_enabled"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
+# This script's own key: it names the file the engine play writes its window record into (below), so an operator's
+# is refused in either form.
+OWNKEY="zcrypto_window_record"
 
 # EXACT, word by word: a substring test answers true for `zcrypto zcrypto-red`, which is two hosts
 # to ansible and both capture daemons restarted in one pass.
@@ -114,10 +117,10 @@ for op in $EV; do
   case "$op" in
     '{'*)
       # The check prints its own one-line reason; a traceback at the terminal reads as a crash.
-      why="$(python3 - "$op" "$OVERRIDES" 2>&1 <<'PYCHK'
+      why="$(python3 - "$op" "$OVERRIDES" "$OWNKEY" 2>&1 <<'PYCHK'
 import json, sys
 
-operand, names = sys.argv[1], sys.argv[2].split()
+operand, names, own = sys.argv[1], sys.argv[2].split(), sys.argv[3]
 try:
     parsed = json.loads(operand)
 except ValueError as exc:
@@ -125,6 +128,8 @@ except ValueError as exc:
 if not isinstance(parsed, dict) or len(parsed) != 1:
     raise SystemExit("a braced operand carries exactly one override")
 (key, value), = parsed.items()
+if key == own:
+    raise SystemExit(f"{own} is this script's own: it names the file the engine play records its window in")
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
 # What the reason SAYS is the roles' gate, not this script's: each of the four asserts
@@ -135,6 +140,7 @@ PYCHK
       ;;
     *=*)
       key="${op%%=*}"
+      [ "$key" = "$OWNKEY" ] && refuse "$OWNKEY is this script's own: it names the file the engine play records its window in"
       in_set "$key" "$OVERRIDES" && refuse "an override is a reason: -e '{\"$key\": \"<why>\"}'"
       # Ansible accepts an unknown `-e` silently and converges nothing, so the key is named here
       # rather than passed through. A key this fleet has not used yet is added to EVKEYS above.
@@ -148,8 +154,14 @@ PYCHK
 done
 IFS="$OLDIFS"
 
+# The engine play writes the floor its window assert admitted the run on into this file (site.yml), and the record
+# below copies it into the row as `window`. Every exit removes it, the refusals above having created nothing.
+WREC="$(mktemp -t zcrypto-window.XXXXXX)"
+trap 'rm -f "$WREC"' EXIT
+WREC_EV="$(python3 -c 'import json, sys; print(json.dumps({sys.argv[1]: sys.argv[2]}))' "$OWNKEY" "$WREC")"
+
 echo "== preview: --check --diff =="
-"$SD/run.sh" "$PLAYBOOK" --check --diff "$@" || {
+"$SD/run.sh" "$PLAYBOOK" --check --diff "$@" -e "$WREC_EV" || {
   echo "converge.sh: preview failed — fix the check pass before converging" >&2
   exit 4
 }
@@ -176,7 +188,7 @@ fi
 # pass returns: a wrapper killed mid-pass leaves an orphaned child converging with NO record, and
 # the line is then appended by hand from the container's `.State.StartedAt`.
 set +e
-"$SD/run.sh" "$PLAYBOOK" "$@"
+"$SD/run.sh" "$PLAYBOOK" "$@" -e "$WREC_EV"
 rc=$?
 set -e
 LOG="${ZCRYPTO_DEPLOY_LOG:-$SD/../../../docs/reference/deploy-log.jsonl}"
@@ -203,9 +215,9 @@ fi
 # Best-effort and LOUD, never fatal: the pass has already run, so its rc is the truth this script
 # returns; a record that cannot be written is printed for the operator to append by hand instead of
 # being turned into a converge failure that did not happen.
-python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" "$SKIP" -- "$PLAYBOOK" "$@" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
+python3 - "$LOG" "$PLAYBOOK" "$LIMIT" "$TAGS" "$REV" "$DIRTY" "$rc" "$EV" "$ADIR" "$SKIP" "$WREC" -- "$PLAYBOOK" "$@" <<'PYREC' || echo "converge.sh: RECORD FAILED — append the line above to docs/reference/deploy-log.jsonl by hand" >&2
 import json, pathlib, sys, datetime as dt
-log, playbook, limit, tags, rev, dirty, rc, ev, adir, skip = sys.argv[1:11]
+log, playbook, limit, tags, rev, dirty, rc, ev, adir, skip, wrec = sys.argv[1:12]
 argv_words = sys.argv[sys.argv.index("--", 1) + 1 :]
 # Every operand was checked against the grammar BEFORE the pass, so there is nothing to fail on and
 # nothing to guess: the two accepted forms are a braced JSON override and a single `KEY=VALUE`.
@@ -228,6 +240,20 @@ _vars = pathlib.Path(adir) / "host_vars" / limit / "vars.yml"
 if _vars.is_file():
     for m in _re.finditer(r"^(\w+_image):\s*(\S+@sha256:[0-9a-f]{64})\s*$", _vars.read_text(), _re.M):
         committed[m.group(1)] = m.group(2)
+# The play writes the window record only when its engine window assert admitted the run, so an empty file is none.
+window = None
+try:
+    text = pathlib.Path(wrec).read_text()
+except OSError:
+    text = ""
+if text.strip():
+    try:
+        window = json.loads(text)
+    except ValueError:
+        pass
+    if not isinstance(window, dict):
+        window = None
+        print(f"converge.sh: WINDOW RECORD UNREADABLE — the row goes without `window`: {text!r}", file=sys.stderr)
 rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
@@ -236,6 +262,8 @@ rec = {
     "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }
+if window is not None:
+    rec["window"] = window
 line = json.dumps(rec, sort_keys=True)
 try:
     with open(log, "a") as f:

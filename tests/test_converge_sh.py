@@ -103,7 +103,9 @@ def run_with_ctty_but_piped_stdin(script, args, piped_reply, deadline=3.0):
     return None if status is None else os.waitstatus_to_exitcode(status)
 
 
-def test_pipe_cannot_drive_the_confirm(tmp_path):
+def test_pipe_cannot_drive_the_confirm(tmp_path, monkeypatch):
+    # The child is killed at the confirm, so its trap never removes the record file; this keeps that file in tmp_path.
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     script = make_harness(tmp_path)
     rc = run_with_ctty_but_piped_stdin(script, ["site.yml", "--limit", "zcrypto-red"], "zcrypto-red")
     # rc 3 (aborted) and None (still waiting on the silent /dev/tty) are both correct; 0 means the
@@ -742,3 +744,119 @@ def test_a_real_uncommitted_change_still_reads_dirty(tmp_path, monkeypatch):
     rc, _ = run_with_tty(script, ["site.yml", "--limit", "nas"], "nas")
     assert rc == 0
     assert _dirty_of_last_record(repo) is True, "an uncommitted role change must still read dirty"
+
+
+# --- the engine window's record: the wrapper names a file for the play, which writes the floor its window assert
+# admitted the run on, and the row carries it as `window`; the file is the wrapper's, gone however it exits.
+
+import re  # noqa: E402 -- the block above is the file's own section header
+
+WINDOW = {"at": 1785744500, "floor": 1785744408, "arm": "journal", "override": False}
+# The play's record task, as a fake: on the real pass only, it writes $FAKE_WINDOW into the file the wrapper named.
+WRITES_THE_RECORD = r"""#!/usr/bin/env bash
+echo "$@" >> "$(dirname "$0")/invocations.log"
+case " $* " in *" --check "*) exit 0 ;; esac
+f="$(printf '%s\n' "$*" | sed -n 's/.*"zcrypto_window_record": "\([^"]*\)".*/\1/p')"
+[ -n "$f" ] && printf '%s' "$FAKE_WINDOW" > "$f"
+exit ${FAKE_RUN_RC:-0}
+"""
+
+
+def _record_files(tmp_path) -> list[str]:
+    return [m for line in invocations(tmp_path) for m in re.findall(r'"zcrypto_window_record": "([^"]+)"', line)]
+
+
+def test_every_run_is_handed_one_record_file_that_is_gone_when_the_wrapper_exits(tmp_path):
+    rc, _out, _log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto", "--tags", "engine"], reply="zcrypto")
+    assert rc == 0
+    files = _record_files(tmp_path)
+    assert len(files) == 2 and len(set(files)) == 1, invocations(tmp_path)
+    assert not os.path.exists(files[0])
+
+
+def test_the_record_the_play_wrote_lands_in_the_row_as_window(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine", "-e", "converge_primary=true"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps(WINDOW)},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert rec["window"] == WINDOW, rec
+    assert rec["extra_vars"] == {"converge_primary": "true"}, "the wrapper's own operand is not the operator's"
+
+
+def test_a_failed_pass_keeps_the_record_its_play_wrote_before_failing(tmp_path):
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps(WINDOW), "FAKE_RUN_RC": "2"},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 2
+    assert json.loads(log.read_text().splitlines()[0])["window"] == WINDOW
+
+
+def test_a_pass_whose_play_wrote_no_record_books_no_window(tmp_path):
+    rc, _out, log = run_recording(tmp_path, ["site.yml", "--limit", "zcrypto", "--tags", "capture"], reply="zcrypto")
+    assert rc == 0
+    assert len(_record_files(tmp_path)) == 2, invocations(tmp_path)
+    assert "window" not in json.loads(log.read_text().splitlines()[0])
+
+
+def test_an_unreadable_record_is_loud_and_still_books_the_row(tmp_path):
+    rc, out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": "{not json"},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    rec = json.loads(log.read_text().splitlines()[0])
+    assert "window" not in rec and rec["rc"] == 0
+    assert "WINDOW RECORD UNREADABLE" in out
+
+
+@pytest.mark.parametrize(
+    ("args", "reply", "env", "rc"),
+    [
+        (["--check"], None, {}, 0),
+        ([], None, {"FAKE_RUN_RC": "1"}, 4),
+        ([], None, {}, 3),
+        ([], "zcrypto-ops", {}, 3),
+        ([], "zcrypto", {"FAKE_RUN_RC_REAL": "7"}, 7),
+    ],
+)
+def test_the_record_file_is_removed_on_every_exit_path(tmp_path, args, reply, env, rc):
+    fails_the_real_pass = (
+        '#!/usr/bin/env bash\necho "$@" >> "$(dirname "$0")/invocations.log"\n'
+        'case " $* " in *" --check "*) exit ${FAKE_RUN_RC:-0} ;; esac\nexit ${FAKE_RUN_RC_REAL:-0}\n'
+    )
+    if reply is None:
+        script = make_harness(tmp_path)
+        (tmp_path / "run.sh").write_text(fails_the_real_pass)
+        got = run_no_tty(script, ["site.yml", "--limit", "zcrypto", *args], env=env).returncode
+    else:
+        got, _out, _log = run_recording(
+            tmp_path, ["site.yml", "--limit", "zcrypto", *args], reply=reply, env=env, run_sh=fails_the_real_pass
+        )
+    assert got == rc
+    files = _record_files(tmp_path)
+    assert files and not any(os.path.exists(f) for f in files), (files, invocations(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "operand",
+    ["zcrypto_window_record=/tmp/elsewhere", json.dumps({"zcrypto_window_record": "/tmp/elsewhere"})],
+)
+def test_an_operator_cannot_name_the_record_file(tmp_path, operand):
+    script = make_harness(tmp_path)
+    r = run_no_tty(script, ["site.yml", "--limit", "zcrypto", "-e", operand])
+    assert r.returncode == 2
+    assert invocations(tmp_path) == []
+    refusal = next(line for line in r.stderr.splitlines() if line.startswith("converge.sh:"))
+    assert "zcrypto_window_record is this script's own" in refusal, refusal
