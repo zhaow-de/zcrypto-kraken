@@ -19,7 +19,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 - **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only. If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
 - Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.).
-- This skill processes any `dependabot/` PR regardless of ecosystem (`.github/dependabot.yml` lists them).
+- This skill processes every ecosystem `.github/dependabot.yml` lists, a `nautilus-trader` PR excepted (step 4).
 
 ## Workflow
 
@@ -37,11 +37,11 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 3. **Sort** the Dependabot PRs from context by priority: minor/patch first, major last. Classify each PR by parsing the `from <X> to <Y>` versions in its title and comparing the major components. Within a priority class, oldest first.
 
-4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above).
+4. **Report plan**: list the PRs to be processed, in the chosen order, with their base branch noted (must be `develop` — see "Repo specifics" above). A `nautilus-trader` PR stays out of the plan, open as the reminder of a new build, and is reported under Skipped: its CI stays red until the build's attended order-semantics pass lands with the bump (`infra/runbooks/order-semantics-verification.md` §1.6), and an edit of `cli/engine/order-semantics-verified.json` is never this skill's to make.
 
 ### Phase 2 — Process each PR (loop)
 
-For each Dependabot PR in the sorted order:
+For each PR step 4 plans, in order:
 
 #### 2a. Check out + rebase onto develop
 
@@ -144,7 +144,7 @@ print("success" if run["c"] in ("success", "neutral", "skipped") else f"failed (
 # any `if` would test an unset variable and merely LOOK like a guard.
 # Squash so each dependency bump is a single commit on develop (the deliberate exception to
 # merge-pr's merge-commit rule); also deletes the dependabot/ head branch.
-gh pr merge <number> --squash --delete-branch    # the number from the sorted list, not a variable
+gh pr merge <number> --squash --delete-branch    # the number step 4 planned, not a variable
 # Anything other than `success` stops the merge: a red check is escalation trigger #4, and a check
 # still pending 30 minutes after the push is reported as stalled. Never merge on a state you did
 # not read.

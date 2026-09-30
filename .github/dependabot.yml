@@ -2,14 +2,22 @@ version: 2
 
 # Per-ecosystem PRs, deliberately UNGROUPED (owner ruling): the multi-ecosystem group
 # produced consolidated "bump the dependencies group" titles that broke the dependabot
-# skill's per-package triage, and whether the group was honored at all was never
-# established (T0099, resolved by this removal).
+# skill's per-package triage.
 # target-branch stays develop on every entry (branch model: develop is the integration
 # branch; a Dependabot PR against main means this drifted — see .claude/skills/dependabot).
+# Dependabot's egress proxy reaches only PyPI and the registries declared here, and every uv bump
+# re-locks nautilus-trader through the index pyproject.toml pins it to, so the uv entry names that index.
+registries:
+  nautechsystems:
+    type: python-index
+    url: https://packages.nautechsystems.io/simple
+
 updates:
   - package-ecosystem: "uv"
     directory: "/"
     target-branch: "develop"
+    registries:
+      - nautechsystems
     schedule:
       interval: "daily"
 
