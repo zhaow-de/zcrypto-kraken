@@ -366,8 +366,8 @@ c_engine_rows_outside_the_gap() {
   uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'
 }
 
-# The engine window's bypasses: every row whose run carried a non-null `engine_window_override`, recorded or not. One without a
-# record that landed outside the fixed gap is counted by the entry above as well.
+# The engine window's bypasses: every row whose run carried a non-null `engine_window_override`, recorded or not.
+# One without a record that landed outside the fixed gap is counted by the entry above as well.
 c_engine_window_overrides() {
   local since window=()
   since="$(round_closed_at)" || return 2

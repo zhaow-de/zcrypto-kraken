@@ -105,8 +105,8 @@ def carried_the_override(row: dict) -> bool:
 def on_the_completion_floor(row: dict) -> bool:
     """For a row without a well-formed record: one short of the fixed floor that the playbook can have admitted on a completed
     cycle's floor instead. Success is sufficient evidence of that, since the window assert precedes it, and not necessary: a
-    run admitted and failed later counts as outside. A row that carried the bypass was admitted on its reason and not
-    on a floor."""
+    run admitted and failed later counts as outside. A row that carried the bypass is left to the fixed gap, since its
+    reason may be what admitted it: a value the play refused as a reason reads outside although a floor admitted it."""
     since = _since_boundary(row["ts"])
     admitted = row["rc"] == 0 and not carried_the_override(row)
     return admitted and _AFTER_COMPLETION_SECONDS <= since < _AFTER_BOUNDARY_SECONDS

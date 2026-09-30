@@ -756,7 +756,6 @@ WINDOW = {"at": 1785744500, "floor": 1785744408, "arm": "journal", "override": F
 
 
 def _booked_as_the_audit_reads(rec):
-    """The row's `window` as the play wrote it, and one the deploy-log audit judges the row on."""
     assert rec["window"] == WINDOW, rec
     assert {key: type(value) for key, value in rec["window"].items()} == {"at": int, "floor": int, "arm": str, "override": bool}
     spec = importlib.util.spec_from_file_location("deploy_log_audit_booked", SCRIPT.parents[2] / "scripts" / "deploy-log-audit.py")
