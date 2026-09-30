@@ -19,7 +19,7 @@ Autonomously process Dependabot dependency-update PRs in this repo: check out, r
 
 - **Dependabot is configured** at `.github/dependabot.yml` with `target-branch: "develop"` on every ecosystem, so Dependabot opens PRs against **`develop`** (the integration branch) — never `main`, which is release-only. If a Dependabot PR you see here targets `main`, stop and report — that `target-branch` entry has drifted or been removed.
 - Pre-commit hooks (`.pre-commit-config.yaml` at repo root) auto-format on every `git commit` (ruff-format, trailing whitespace, etc.).
-- This skill processes any `dependabot/` PR regardless of ecosystem (`.github/dependabot.yml` lists them).
+- This skill processes every ecosystem `.github/dependabot.yml` lists, a `nautilus-trader` PR excepted (step 4).
 
 ## Workflow
 
@@ -174,7 +174,7 @@ Only pause for user input when:
 3. **Major-version upgrades** where the changelog mentions breaking changes — surface the upgrade summary and ask before merging.
 4. **CI failures unrelated to the PR's changes** (e.g. infra flake, pre-existing test that was passing on develop before this branch was opened).
 5. **A PR's base branch is not `develop`** (likely `.github/dependabot.yml` `target-branch` misconfigured — surface and stop).
-6. **A `nautilus-trader` PR** — left open and unprocessed, the reminder of a new build: its CI stays red until that build's attended order-semantics pass is recorded on its branch, and neither a rebase, an auto-fix nor an edit of `cli/engine/order-semantics-verified.json` is this skill's to make.
+6. **A `nautilus-trader` PR** — out of step 4's plan: its CI stays red until the new build's attended order-semantics pass is recorded on its branch, and an edit of `cli/engine/order-semantics-verified.json` is never this skill's to make.
 
 ## Notes
 
