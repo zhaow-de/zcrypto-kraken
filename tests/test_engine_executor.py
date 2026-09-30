@@ -8537,6 +8537,7 @@ def test_a_restored_row_marked_under_its_copys_txid_is_left_out_of_the_re_read_p
 
 _OTHER_TXID = "OOTHER-ORDER-000009"
 _ANCHOR_TXID = "OANCHR-ORDER-000001"
+_EXTERNAL = StrategyId("EXTERNAL")
 
 # ledger, txid, read, pass -> outcome, state, filled_qty, the mark's level, the intent; the case below builds each label.
 _ONE_DOOR_MATRIX = [
@@ -8615,15 +8616,141 @@ _ONE_DOOR_MATRIX = [
     ("open", "copys", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
     ("open", "two", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
     ("open", "differs", "answers", "fill-after-answer", "applied", "canceled", 0.0006, None, "pending"),
+    ("open", "recorded", "below-short", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "startup", "covered", "accepted", 0.0004, None, "pending"),
+    ("open", "copys", "below-short", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "copys", "below-unread", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "copys", "below-covered", "startup", "covered", "accepted", 0.0004, None, "pending"),
+    ("open", "two", "below-short", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "two", "below-unread", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "two", "below-covered", "startup", "covered", "accepted", 0.0004, None, "pending"),
+    ("open", "differs", "below-short", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "differs", "below-unread", "startup", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "differs", "below-covered", "startup", "covered", "accepted", 0.0004, None, "pending"),
+    ("finished", "recorded", "below-unread", "startup", "refuted", "filled", 0.001, None, "pending"),
+    ("finished", "recorded", "below-covered", "startup", "covered", "filled", 0.001, None, "filled"),
+    ("finished", "copys", "below-unread", "startup", "refuted", "filled", 0.001, None, "pending"),
+    ("finished", "copys", "below-covered", "startup", "covered", "filled", 0.001, None, "filled"),
+    ("finished", "two", "below-unread", "startup", "refuted", "filled", 0.001, None, "pending"),
+    ("finished", "two", "below-covered", "startup", "covered", "filled", 0.001, None, "filled"),
+    ("finished", "differs", "below-unread", "startup", "refuted", "filled", 0.001, None, "pending"),
+    ("finished", "differs", "below-covered", "startup", "covered", "filled", 0.001, None, "filled"),
+    ("open", "recorded", "below-short", "re-read", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "re-read", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "re-read", "covered", "accepted", 0.0004, None, "pending"),
+    ("open", "copys", "below-short", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-unread", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-covered", "re-read", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "two", "below-short", "re-read", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "two", "below-unread", "re-read", "refuted", "accepted", 0.0004, None, "pending"),
+    ("open", "two", "below-covered", "re-read", "covered", "accepted", 0.0004, None, "pending"),
+    ("open", "differs", "below-short", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-unread", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-covered", "re-read", "covered", "canceled", 0.0004, None, "revoked"),
+    ("finished", "recorded", "below-short", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("finished", "recorded", "below-unread", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("finished", "recorded", "below-covered", "re-read", "covered", "canceled", 0.0004, None, "revoked"),
+    ("finished", "two", "below-short", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("finished", "two", "below-unread", "re-read", "refuted", "canceled", 0.0004, None, "pending"),
+    ("finished", "two", "below-covered", "re-read", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "recorded", "below-short", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "early-terminal", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "copys", "below-short", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-unread", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-covered", "early-terminal", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "two", "below-short", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "below-unread", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "below-covered", "early-terminal", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "differs", "below-short", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-unread", "early-terminal", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-covered", "early-terminal", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "recorded", "answers", "minted-before", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "recorded", "omits", "minted-before", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "recorded", "fails", "minted-before", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "recorded", "below-short", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "minted-before", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "copys", "answers", "minted-before", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "copys", "omits", "minted-before", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "copys", "fails", "minted-before", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "copys", "below-short", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-unread", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-covered", "minted-before", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "two", "answers", "minted-before", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "two", "omits", "minted-before", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "two", "fails", "minted-before", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "two", "below-short", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "below-unread", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "below-covered", "minted-before", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "differs", "answers", "minted-before", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "differs", "omits", "minted-before", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "differs", "fails", "minted-before", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "differs", "below-short", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-unread", "minted-before", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-covered", "minted-before", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "recorded", "answers", "reconnect", "recancelled", "canceled", 0.0006, None, "revoked"),
+    ("open", "recorded", "omits", "reconnect", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "recorded", "fails", "reconnect", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "recorded", "below-short", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "reconnect", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "copys", "answers", "reconnect", "recancelled", "canceled", 0.0006, None, "revoked"),
+    ("open", "copys", "omits", "reconnect", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "copys", "fails", "reconnect", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "copys", "below-short", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-unread", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "copys", "below-covered", "reconnect", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "two", "answers", "reconnect", "recancelled", "canceled", 0.0006, None, "revoked"),
+    ("open", "two", "omits", "reconnect", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "two", "fails", "reconnect", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "two", "below-short", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "below-unread", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "two", "below-covered", "reconnect", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "differs", "answers", "reconnect", "recancelled", "canceled", 0.0006, None, "revoked"),
+    ("open", "differs", "omits", "reconnect", "marked", "ambiguous", 0.0004, "CRITICAL", "pending"),
+    ("open", "differs", "fails", "reconnect", "unread", "ambiguous", 0.0004, None, "pending"),
+    ("open", "differs", "below-short", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-unread", "reconnect", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "differs", "below-covered", "reconnect", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "recorded", "answers", "minted-external", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "recorded", "omits", "minted-external", "marked", "canceled", 0.0004, "CRITICAL", "pending"),
+    ("open", "recorded", "fails", "minted-external", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-short", "minted-external", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "minted-external", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "minted-external", "covered", "canceled", 0.0004, None, "revoked"),
+    ("open", "recorded", "answers", "early-external", "applied", "canceled", 0.0006, None, "revoked"),
+    ("open", "recorded", "omits", "early-external", "marked", "canceled", 0.0004, "WARNING", "pending"),
+    ("open", "recorded", "fails", "early-external", "unread", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-short", "early-external", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-unread", "early-external", "refuted", "canceled", 0.0004, None, "pending"),
+    ("open", "recorded", "below-covered", "early-external", "covered", "canceled", 0.0004, None, "revoked"),
 ]
 
 _ONE_DOOR_TXIDS = ("recorded", "copys", "none", "two", "differs")
-_ONE_DOOR_READS = ("answers", "omits", "fails")
-_ONE_DOOR_PASSES = ("startup", "re-read", "restart", "ledger-fails", "early-terminal", "fill-after-answer")
+# A below read reports the row under its ledger, the trade history short of it, unread, or covering it. A minted pass
+# restores the copy closed by a previous process's mint, which `reconnect` reads again at a socket's return; an external
+# pass restores it as the EXTERNAL copy under the txid its row recorded, minted closed or acked before the first tick.
+_ONE_DOOR_BELOW = ("below-short", "below-unread", "below-covered")
+_ONE_DOOR_READS = ("answers", "omits", "fails", *_ONE_DOOR_BELOW)
+_ONE_DOOR_PASSES = (
+    "startup",
+    "re-read",
+    "restart",
+    "ledger-fails",
+    "early-terminal",
+    "fill-after-answer",
+    "minted-before",
+    "reconnect",
+    "minted-external",
+    "early-external",
+)
 _ONE_DOOR_DROPPED = {
     **{
-        (ledger, "none", "answers", "startup"): "a row with no txid anywhere has no report a read could answer with"
+        (ledger, "none", read, "startup"): "a row with no txid anywhere has no report a read could answer with"
         for ledger in ("open", "finished")
+        for read in ("answers", *_ONE_DOOR_BELOW)
     },
     **{
         ("open", "none", read, "re-read"): (
@@ -8654,7 +8781,7 @@ _ONE_DOOR_DROPPED = {
     **{
         ("open", txid, read, "ledger-fails"): "with the ledger unread the startup reads the venue for no row: the failed read"
         for txid in _ONE_DOOR_TXIDS
-        for read in ("answers", "omits")
+        for read in ("answers", "omits", *_ONE_DOOR_BELOW)
     },
     **{
         ("finished", txid, read, "ledger-fails"): (
@@ -8665,19 +8792,64 @@ _ONE_DOOR_DROPPED = {
         for read in _ONE_DOOR_READS
     },
     **{
-        ("open", "none", "answers", pass_): "a row with no txid anywhere has no report a read could answer with"
-        for pass_ in ("early-terminal", "fill-after-answer")
+        ("open", "none", read, pass_): "a row with no txid anywhere has no report a read could answer with"
+        for pass_, reads in (("early-terminal", ("answers", *_ONE_DOOR_BELOW)), ("fill-after-answer", ("answers", "below-covered")))
+        for read in reads
     },
     **{
         ("open", txid, read, "fill-after-answer"): "no read answered the row, so its fill closes nothing: the startup's tail"
         for txid in _ONE_DOOR_TXIDS
-        for read in ("omits", "fails")
+        for read in ("omits", "fails", "below-short", "below-unread")
     },
     **{
         ("finished", txid, read, pass_): "a finished row's terminal came before construction: the startup shape"
         for txid in _ONE_DOOR_TXIDS
         for read in _ONE_DOOR_READS
-        for pass_ in ("early-terminal", "fill-after-answer")
+        for pass_ in ("early-terminal", "fill-after-answer", "early-external")
+    },
+    **{
+        ("finished", txid, "below-short", "startup"): (
+            "the answers row: a finished startup row's report reads below its ledger, the trade history short of it"
+        )
+        for txid in ("recorded", "copys", "two", "differs")
+    },
+    **{
+        ("finished", txid, read, "restart"): "a credit-0 row's ledger reads 0.0, which no report reads below"
+        for txid in ("recorded", "two")
+        for read in _ONE_DOOR_BELOW
+    },
+    **{
+        ("open", txid, "below-covered", "fill-after-answer"): (
+            "the answers rows: a covered row is answered as a repaired one is, and its fill re-closes it alike"
+        )
+        for txid in ("recorded", "copys", "two", "differs")
+    },
+    **{
+        ("open", "none", read, pass_): (
+            "a row with no txid anywhere is marked at startup whatever its copy holds, and the pass's filter leaves it out: "
+            "the startup rows"
+        )
+        for read in _ONE_DOOR_READS
+        for pass_ in ("minted-before", "reconnect")
+    },
+    **{
+        ("finished", txid, read, pass_): "the finished sweep reads no restored copy, minted or not: the startup shape"
+        for txid in _ONE_DOOR_TXIDS
+        for read in _ONE_DOOR_READS
+        for pass_ in ("minted-before", "minted-external")
+    },
+    **{
+        ("finished", txid, read, "reconnect"): "the pass reads a finished row only once a fill reached it: the re-read rows"
+        for txid in _ONE_DOOR_TXIDS
+        for read in _ONE_DOOR_READS
+    },
+    **{
+        ("open", txid, read, pass_): (
+            "an EXTERNAL copy is restored under the one txid its row recorded: a row recording none, two or another is no copy's"
+        )
+        for txid in ("copys", "none", "two", "differs")
+        for read in _ONE_DOOR_READS
+        for pass_ in ("minted-external", "early-external")
     },
 }
 
@@ -8706,6 +8878,8 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     earlier = NOW - timedelta(hours=4)
     journal = tmp_path / "journal"
     withdrawal = ledger == "finished" and pass_ == "startup"
+    external = pass_ in ("minted-external", "early-external")
+    prior_mint = pass_ in ("minted-before", "reconnect", "minted-external")
     read_id = _OTHER_TXID if txid == "differs" else _TXID
     _pending_plan_entry(tmp_path, earlier, n_intents=1)
     recorded = {"recorded": _TXID, "two": _TXID, "differs": _OTHER_TXID}.get(txid)
@@ -8714,7 +8888,14 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     other = {"event": "fill", "at": earlier.isoformat(), "qty": 0.0004, "px": 30000.0, "venue_order_id": _OTHER_TXID}
     if pass_ == "restart":
         other["credited"] = 0.0
-    update_submitted_row(journal, _boundary(earlier), "O-restored", event=other if txid == "two" else None, add_filled_qty=base)
+    update_submitted_row(
+        journal,
+        _boundary(earlier),
+        "O-restored",
+        state="ambiguous" if prior_mint else None,
+        event=other if txid == "two" else None,
+        add_filled_qty=base,
+    )
     if withdrawal:
         update_submitted_row(journal, _boundary(earlier), "O-restored", state="filled", add_filled_qty=0.0006)
     if pass_ == "restart":
@@ -8724,34 +8905,48 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     # reaches back to the restored row's boundary only when that row's own read id asks for it.
     _submitted_row(tmp_path, "O-anchor", reduce_only=False, index=1, venue_order_id=_ANCHOR_TXID)
     update_submitted_row(journal, _boundary(NOW), "O-anchor", state="filled", add_filled_qty=0.001)
+    strategy = {"strategy_id": _EXTERNAL} if external else {}
     if txid == "none":
         copy = _unaccepted_order("O-restored")
+    elif external:
+        copy = _resting_limit_order(_TXID, quantity="0.001", venue_order_id=_TXID, strategy_id=_EXTERNAL)
+        copy.apply(_fill(_TXID, 0.0008, venue_order_id=VenueOrderId(_TXID), trade_id="T-before", **strategy))
     else:
         copy = _restored_order("O-restored", filled=0.0003 if withdrawal else 0.0008)
         if ledger == "finished" and pass_ != "re-read":
             copy.apply(_event(OrderCanceled, client_order_id="O-restored"))
+    copy_id = str(copy.client_order_id)
+    if prior_mint:
+        copy.apply(_event(OrderCanceled, client_order_id=copy_id, reconciliation=True, **strategy))
     cache = StubCache(closed_orders=[copy]) if copy.is_closed else StubCache(open_orders=[copy])
     anchor = _report(_ANCHOR_TXID, OrderStatus.FILLED, filled_qty="0.001")
     closed = ledger == "finished" and not withdrawal
-    status = OrderStatus.CANCELED if ledger == "finished" or pass_ == "early-terminal" else OrderStatus.PARTIALLY_FILLED
-    figure = "0.0005" if withdrawal else "0.0006"
+    early = pass_ in ("early-terminal", "early-external")
+    status = OrderStatus.CANCELED if ledger == "finished" or early or pass_ == "minted-before" else OrderStatus.PARTIALLY_FILLED
+    figure = "0.0005" if withdrawal else "0.0002" if read in _ONE_DOOR_BELOW else "0.0006"
     answer = _report(read_id, status, filled_qty=figure)
     # A read that omits the row's own txid answers its copy's where the two differ, the report a read by the copy finds.
     omitted = [_report(_TXID, status, filled_qty=figure), anchor] if txid == "differs" else [anchor]
-    reports = {"answers": [answer, anchor], "omits": omitted, "fails": []}[read]
-    if pass_ == "re-read":
+    reports = {"omits": omitted, "fails": []}.get(read, [answer, anchor])
+    if pass_ in ("re-read", "reconnect"):
         venue = _VenueOrders(_report(read_id, OrderStatus.PARTIALLY_FILLED, filled_qty="0.0004"), anchor)
     else:
         venue = _VenueOrders(*reports, raises=RuntimeError("timed out") if read == "fails" else None)
-    if outcome == "applied" and withdrawal:
+    history = {
+        "below-unread": _VenueFills(raises=RuntimeError("timed out")),
+        "below-covered": _VenueFills(_fill_report(read_id, "0.001" if withdrawal else "0.0004")),
+    }.get(read, _VenueFills())
+    if (outcome == "applied" and withdrawal) or outcome == "refuted":
         request.getfixturevalue("kill_trip_expected")
     cancel = _VenueCancel()
+    client = StubClient(cache)
     ex = _executor(
         tmp_path,
-        client=StubClient(cache),
+        client=client,
         gate=_gate(tmp_path, GateLevel.REDUCE_ONLY),
         venue_orders=venue,
         venue_cancel=cancel,
+        venue_fills=history,
         config=_cache_config(tmp_path),
     )
     if pass_ == "ledger-fails":
@@ -8760,20 +8955,27 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
             raise OSError("read-only file system")
 
         request.getfixturevalue("monkeypatch").setattr(executor_module, "open_submitted_rows", _unreadable)
-    terminal = _event(OrderCanceled, client_order_id="O-restored")
+    terminal = _event(OrderCanceled, client_order_id=copy_id, **strategy)
+
+    def _terminate(event):
+        # The venue's terminal: an EXTERNAL copy's on the external topic, the order taking it first.
+        if external:
+            _deliver_external_event(ex, client, event)
+            return
+        if not copy.is_closed:
+            copy.apply(event)
+        ex.on_order_event(event)
 
     with _executor_errors(level=logging.WARNING) as records:
-        if pass_ == "early-terminal":
-            copy.apply(terminal)
+        if early:
+            _terminate(terminal)
             cache._open_orders.remove(copy)
             cache._closed_orders.append(copy)
-            ex.on_order_event(terminal)
         ex.on_timer(NOW)
         if pass_ == "fill-after-answer":
             ex.on_order_event(_fill("O-restored", 0.0002, venue_order_id=VenueOrderId(read_id), trade_id="T-credit-0"))
-        if pass_ in ("ledger-fails", "fill-after-answer"):
-            copy.apply(terminal)
-            ex.on_order_event(terminal)
+        if pass_ in ("ledger-fails", "fill-after-answer", "minted-external"):
+            _terminate(terminal)
         if pass_ == "re-read":
             if txid in ("copys", "differs"):
                 minted = _event(OrderCanceled, client_order_id="O-restored", reconciliation=True)
@@ -8785,6 +8987,9 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
                 canceled = _event(OrderCanceled, client_order_id="O-restored")
                 copy.apply(canceled)
                 ex.on_order_event(canceled)
+        if pass_ == "reconnect":
+            _reconnect(ex)
+        if pass_ in ("re-read", "reconnect"):
             venue.reports = reports
             if read == "fails":
                 venue._raises = RuntimeError("timed out")
@@ -8798,33 +9003,39 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     entry = _intent_entry(tmp_path, 0, earlier)
     assert (row["state"], row["filled_qty"], entry["outcome"]) == (state, pytest.approx(filled), intent)
     assert intent == "pending" or entry["filled_qty"] == pytest.approx(filled)
+    # Every mirror this process holds for the row reads its ledgered figure, whichever id an event names it by.
+    mirrors = [mirror["filled_qty"] for _, mirror in ex._attached.values() if mirror["client_order_id"] == "O-restored"]
+    assert mirrors == [pytest.approx(row["filled_qty"])] * len(mirrors)
     assert (marks, [r.levelname for r in records if r.getMessage() == line]) == (
         ([what], [level]) if outcome == "marked" else ([], [])
     )
-    assert figures == ([float(answer.filled_qty)] if outcome in ("applied", "recancelled") else [])
+    withdrawn = outcome == "refuted" and (withdrawal or early)
+    assert figures == ([float(answer.filled_qty)] if outcome in ("applied", "recancelled") or withdrawn else [])
     assert float(copy.filled_qty) not in (row["filled_qty"], *figures)
-    assert cancel.calls == ([(read_id, INSTRUMENT_IDS["BTC/EUR"])] if outcome == "recancelled" else [])
-    assert _kill_file(tmp_path).exists() == (outcome == "applied" and withdrawal)
-    assert (ex._reconciliation_refusal is not None) == (read == "fails" and pass_ not in ("re-read", "ledger-fails"))
+    recancels = (pass_ == "reconnect" or pass_ == "re-read" and txid in ("copys", "differs")) and read not in ("omits", "fails")
+    assert cancel.calls == ([(read_id, INSTRUMENT_IDS["BTC/EUR"])] if ledger == "open" and recancels else [])
+    assert _kill_file(tmp_path).exists() == ((outcome == "applied" and withdrawal) or outcome == "refuted")
+    assert (ex._reconciliation_refusal is not None) == (read == "fails" and pass_ not in ("re-read", "reconnect", "ledger-fails"))
     since = _boundary(NOW if txid == "none" else earlier) - timedelta(hours=1)
-    assert venue.calls == {"re-read": [since, since], "ledger-fails": []}.get(pass_, [since])
+    assert venue.calls == {"re-read": [since, since], "reconnect": [since, since], "ledger-fails": []}.get(pass_, [since])
 
     if outcome == "marked" and pass_ == "re-read":
         later = _fill("O-restored", 0.0001, venue_order_id=VenueOrderId(read_id), trade_id="T-later")
         ex.on_order_event(later)
         ex.on_timer(NOW + timedelta(seconds=10))
         assert len(venue.calls) == 2  # the marked row is left out of the pass the later fill armed
-    if outcome in ("marked", "unread"):
-        # A terminal after the pass, or its replay on a closed copy, writes no intent for a row no read repaired.
-        canceled = _event(OrderCanceled, client_order_id="O-restored")
-        if not copy.is_closed:
-            copy.apply(canceled)
-        ex.on_order_event(canceled)
+    if outcome in ("marked", "unread", "refuted", "covered"):
+        # A terminal after the pass, or its replay on a closed copy, writes the intent of a row a read answered
+        # since its last fill or mint, the startup's answer before a later pass's mark among them, and of no other.
+        _terminate(_event(OrderCanceled, client_order_id=copy_id, **strategy))
+        answered = outcome == "covered" or pass_ == "reconnect" and outcome in ("marked", "unread")
         row = _record(tmp_path, earlier)["submitted"][0]
-        assert (row["state"], _intent_entry(tmp_path, 0, earlier)["outcome"]) == (
+        entry = _intent_entry(tmp_path, 0, earlier)
+        assert (row["state"], entry["outcome"]) == (
             "canceled" if ledger == "open" else state,
-            "pending",
+            intent if intent != "pending" else "revoked" if answered else "pending",
         )
+        assert entry["outcome"] == "pending" or entry["filled_qty"] == pytest.approx(row["filled_qty"])
 
 
 def test_a_restored_row_an_earlier_process_marked_is_read_again_by_the_re_read_pass_once_this_process_answers_it(tmp_path):
@@ -9049,7 +9260,7 @@ _ONE_DOOR_CALLERS = {
         "_reconcile_adopted_rows",
         "_cached_order",
     ): "a row outside the restored set is reconciled from it, and its presence routes a mint",
-    ("_reconcile_adopted_rows", "_cache_lookup"): "the Cache order's own id, re-attaching a row the re-read pass repaired",
+    ("_reconcile_adopted_rows", "_cache_lookup"): "the Cache order's own id, re-attaching a row a report repaired",
     ("_reconcile_adopted_rows", "copy.filled_qty"): "a row outside the restored set is repaired from its Cache order's figure",
     ("_reconcile_adopted_rows", "copy.status"): "a row outside the restored set takes its Cache order's status",
     (
@@ -9057,6 +9268,7 @@ _ONE_DOOR_CALLERS = {
         "_cached_order",
     ): "a row outside the restored set is checked against it; a restored row's presence",
     ("_reconcile_finished_rows", "copy.filled_qty"): "a row outside the restored set is checked against its Cache order's figure",
+    ("_reconcile_finished_rows", "_cache_lookup"): "the copy's own id, re-attaching a restored row the upward arm repaired",
     ("_venue_terminal_state", "_cache.order"): "the event path: the order a venue event was applied to",
     ("_venue_terminal_state", "copy.status"): "the event path: the status the venue's event put on the order",
     ("_fill_credit", "_cache.order"): "the event path: the replay cap on a row outside the restored set",
@@ -9066,7 +9278,7 @@ _ONE_DOOR_CALLERS = {
 _INTENT_WRITER = "update_plan_intent"
 _INTENT_WRITERS = {
     "_journal_intent": "the running plan's own intents, which no restored row belongs to",
-    "_settle_pending_intents": "the startup's settle, a restored row's intent only once this pass's report answered it",
+    "_settle_pending_intents": "the startup's settle, a restored row's intent only once a report of this process answered it",
     "_settle_restored_intent": "a restored row's terminal, only once a report of this process answered it since its last fill",
 }
 
@@ -9093,6 +9305,8 @@ def _one_door_callers() -> set[tuple[str, str]]:
     def read(node, aliases, copies):
         if isinstance(node, ast.Name) and node.id in names:
             return node.id
+        if isinstance(node, ast.alias) and node.name in names and node.asname not in (None, node.name):
+            return node.name  # an import under another name, whose calls no read below would see
         if isinstance(node, ast.Constant) and node.value in names:
             return node.value  # `getattr` or `globals()` by the name
         if isinstance(node, ast.Attribute):
@@ -9142,6 +9356,12 @@ def test_every_read_of_a_rows_txid_or_its_cache_copy_goes_through_the_one_door_a
         "`_settle_restored_intent`, or list the writer in `_INTENT_WRITERS` with the reason it writes no restored row's"
     )
     assert sorted(set(_INTENT_WRITERS) - writers) == [], "an entry no function calls any more leaves `_INTENT_WRITERS`"
+    elsewhere = sorted(
+        path.name
+        for path in Path(executor_module.__file__).parent.rglob("*.py")
+        if path.name not in ("executor.py", "execledger.py") and _INTENT_WRITER in path.read_text()
+    )
+    assert elsewhere == [], f"{elsewhere} name `{_INTENT_WRITER}`, which the walk above reads in the executor alone"
     unlisted = sorted(found - set(_ONE_DOOR_CALLERS))
     assert unlisted == [], (
         f"{unlisted} read a row's txid or its Cache copy directly -- the one door: every ledgered row either pass reads "

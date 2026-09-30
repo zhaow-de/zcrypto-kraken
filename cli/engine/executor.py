@@ -985,8 +985,8 @@ class ProbeExecutor:
         self._marked: set[tuple[str, str]] = set()
         # The restored rows a venue report this process read has answered since the row's last fill or a
         # terminal this engine minted on it: the only restored rows either intent writer writes
-        # (`_settle_restored_intent`, `_settle_pending_intents`). Added where a sweep applies a report to a
-        # restored row, cleared where a fill or a mint lands on one.
+        # (`_settle_restored_intent`, `_settle_pending_intents`). Written by `_answer` where a sweep applies a
+        # report to a restored row, and cleared where a fill or a mint lands on one.
         self._answered: set[str] = set()
         # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
@@ -1327,7 +1327,8 @@ class ProbeExecutor:
         LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
         their plans, so each is written terminal from what its rows show, except one with an open row
         this pass sent no cancel for -- kept, or beyond its reach -- or a restored row no report of this
-        pass answered, and none when either read above failed or a sweep above latched the kill switch.
+        process answered since its last fill or mint, and none when either read above failed or a sweep above
+        latched the kill switch.
         """
         try:
             resting = list(self._cache.orders_open(venue=_VENUE))
@@ -1441,10 +1442,10 @@ class ProbeExecutor:
         order's quantity, `revoked` when it ran and its order did not survive the restart, `refused`
         when it never ran -- except one with an open row this pass sent no cancel for: an order left
         resting, kept as a reducer or beyond the pass's reach, is still live and its row the live
-        record -- and one with a row of the restored set no venue report of this pass answered
-        (`_answered`). Skipped whole when either read failed or this pass latched the kill switch, since
-        the rows' fills were then never compared, never read, or refuted by the venue, and are no figure
-        to journal."""
+        record -- and one with a row of the restored set no venue report of this process answered since its
+        last fill or mint (`_answered`). Skipped whole when either read failed or this pass latched the kill
+        switch, since the rows' fills were then never compared, never read, or refuted by the venue, and are
+        no figure to journal."""
         if venue_orders is None or not ledger_read or self._kill_tripped:
             return
         try:
@@ -1659,7 +1660,7 @@ class ProbeExecutor:
                         # A restored order the venue answered for: the report over the Cache's copy, the
                         # previous process's view (spec 00120 D6), and no re-cancel -- a restored order is
                         # cancelled or kept by the startup's classification.
-                        self._reconcile_adopted_row(
+                        answered = self._reconcile_adopted_row(
                             boundary,
                             row,
                             float(report.filled_qty),
@@ -1667,7 +1668,7 @@ class ProbeExecutor:
                             order_id=str(order.client_order_id),
                             venue_order_id=venue_order_id,
                         )
-                        self._answered.add(client_order_id)
+                        self._answer(client_order_id, answered)
                         if recancel:
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
@@ -1689,26 +1690,28 @@ class ProbeExecutor:
                     if report is None:
                         self._mark_unmatched(boundary, row, venue_order_id)
                         continue
-                    # The pass's row is in the Cache under the id it was minted closed by, which
-                    # `_attached` still maps to the mirror the startup built: re-attached under that id
-                    # too, this fresh dict is what a later fill's completion guard and trip read. At
-                    # startup the Cache holds none of these rows, and the id stays None.
-                    order = self._cache_lookup(row, venue_order_id) if recancel else None
+                    # The row's order is in the Cache under the id it was minted closed by -- this process's
+                    # mint in the pass, a previous process's on a restored copy -- which `_attached` may still
+                    # map to an earlier mirror, the startup's or the one `_read_restored` built under an
+                    # EXTERNAL copy's id: re-attached under that id too, this fresh dict is what a later fill's
+                    # completion guard and trip, and a terminal's intent write, read. At startup a row outside
+                    # the restored set that reaches here has no order in the Cache, and the id stays None.
+                    order = self._cache_lookup(row, venue_order_id) if recancel or self._restored_row(row) else None
                     order_id = None if order is None else str(order.client_order_id)
                     if recancel:
                         self._rows_the_pass_repaired.add(client_order_id)
                     if recancel and report.order_status not in _ADOPTED_TERMINAL_STATES:
-                        self._recancel(boundary, row, venue_order_id, report, order_id=order_id)
+                        answered = self._recancel(boundary, row, venue_order_id, report, order_id=order_id)
                         if self._restored_row(row):
                             # A restored row whose minted terminal stood for an order still resting: the
                             # re-cancel writes it `canceled` from the repaired figure, and its intent is
                             # written then, as the closed report's arm below writes it.
-                            self._answered.add(client_order_id)
+                            self._answer(client_order_id, answered)
                             self._restored_fills.discard(client_order_id)
                             self._settle_restored_intent(boundary, row)
                         continue
                     _log_resting_outside_the_cache(_row_label(row, venue_order_id), report)
-                    self._reconcile_adopted_row(
+                    answered = self._reconcile_adopted_row(
                         boundary,
                         row,
                         float(report.filled_qty),
@@ -1717,7 +1720,7 @@ class ProbeExecutor:
                         venue_order_id=venue_order_id,
                     )
                     if self._restored_row(row):
-                        self._answered.add(client_order_id)
+                        self._answer(client_order_id, answered)
                         if recancel:
                             # A restored row a fill reached whose terminal the library minted -- D7's race,
                             # the ack flagged `reconciliation` -- takes this path, and the repair is what its
@@ -1729,7 +1732,7 @@ class ProbeExecutor:
         except Exception:
             logger.critical("the startup reconciliation sweep raised -- classifying resting orders anyway", exc_info=True)
 
-    def _recancel(self, boundary: datetime, row: dict, venue_order_id: str, report, *, order_id: str | None = None) -> None:
+    def _recancel(self, boundary: datetime, row: dict, venue_order_id: str, report, *, order_id: str | None = None) -> bool:
         """The re-read pass's cancel of an order the venue still reports open: the report's fills
         repair the row first, through the arms and trips a startup's repair takes, the row re-attached
         under the Cache order's own id (`order_id`) so a later fill reads this row, then the cancel
@@ -1745,10 +1748,11 @@ class ProbeExecutor:
         that raises -- the cut not over for REST, or a refusal the venue phrases as an error --
         leaves the row and names the hand cancel, the refused-cancel arm's precedent. No counter
         moves for the re-cancel and no intent is written here -- a restored row's the caller writes
-        once the row reads `canceled` (`_settle_restored_intent`); a closed report that completes the row
-        counts `filled` through `_reconcile_adopted_row`'s arm, the startup's rule."""
+        once the row reads `canceled` (`_settle_restored_intent`), from the repair's answer, which this returns; a
+        closed report that completes the row counts `filled` through `_reconcile_adopted_row`'s arm, the startup's
+        rule."""
         label = _row_label(row, venue_order_id)
-        self._reconcile_adopted_row(
+        answered = self._reconcile_adopted_row(
             boundary, row, float(report.filled_qty), report.order_status, order_id=order_id, venue_order_id=venue_order_id
         )
         try:
@@ -1760,19 +1764,20 @@ class ProbeExecutor:
                 label,
                 exc_info=True,
             )
-            return
+            return answered
         event = {"event": "recancelled", "at": self._now().isoformat(), "venue_order_id": venue_order_id}
         try:
             update_submitted_row(self._journal_dir, boundary, row["client_order_id"], state="canceled", event=event)
         except Exception:
             logger.critical("the re-cancel of %s could not be journaled -- its row keeps the state it has", label, exc_info=True)
-            return
+            return answered
         row["state"] = "canceled"
         logger.warning(
             "re-cancelled %s -- it rested at Kraken (%s) after a terminal this engine minted; its row reads canceled",
             label,
             report.order_status.name,
         )
+        return answered
 
     def _mark_unmatched(self, boundary: datetime, row: dict, venue_order_id: str | None) -> None:
         """A row no venue report answers for, read by `venue_order_id` (`_read_id`), marked in the
@@ -1931,6 +1936,15 @@ class ProbeExecutor:
         own client order id. Every row when that read failed, since any row may then have a copy."""
         return self._restored_unread or row["client_order_id"] in self._restored or _row_venue_order_id(row) in self._restored
 
+    def _answer(self, client_order_id: str, answered: bool) -> None:
+        """A venue report applied to a restored row: the row joins `_answered` where the report left its
+        figure one the venue vouches for (`_reconcile_adopted_row`, `_reconcile_finished_row`), and leaves it
+        where the report refuted that figure, an answer an earlier read gave included."""
+        if answered:
+            self._answered.add(client_order_id)
+        else:
+            self._answered.discard(client_order_id)
+
     def _settle_restored_intent(self, boundary: datetime, row: dict) -> None:
         """A restored row's intent, written once at the row's terminal while it still reads `pending` (spec
         00120 D8), by the path that ends the row, at the row's own boundary without `self._plan`, the
@@ -1991,9 +2005,11 @@ class ProbeExecutor:
         *,
         order_id: str | None,
         venue_order_id: str | None,
-    ) -> None:
+    ) -> bool:
         """One ledgered row against the venue truth its order carries: the quantity the venue says
-        filled, and the order's status.
+        filled, and the order's status. Returns whether the row's figure is now one the venue vouches for
+        -- the report's, or the ledger's where the trade history covers it -- which is False on the negative
+        arm's trip alone, where the venue refuted a figure nothing read covers (`_answer`).
 
         The comparison takes exactly one of four arms, on a dead-band of `_OVERFILL_TOLERANCE`: the
         ledgered figure is a SUM of per-fill floats and the venue's is one exactly-rounded
@@ -2093,6 +2109,7 @@ class ProbeExecutor:
                 f"adopted order {label} shows {venue_filled:.10g} filled at the venue, "
                 f"less than the {ledgered:.10g} this engine has already recorded"
             )
+            return False
         elif overshoots:
             # The repair is journaled above, before this: the fill happened at the venue, and
             # no-fill-without-a-record has no divergence exemption.
@@ -2100,6 +2117,7 @@ class ProbeExecutor:
                 f"adopted order {label} shows {total:.10g} filled at the venue, "
                 f"more than the {ordered:.10g} the ledger says it was submitted for"
             )
+        return True
 
     def _reconcile_finished_rows(self, rows: dict, venue_orders: dict | None) -> None:
         """The rows the sweep above cannot reach (spec 00100 D16): every ledgered row this engine
@@ -2146,19 +2164,25 @@ class ProbeExecutor:
                     if not restored and order is None:
                         _log_resting_outside_the_cache(label, report)
                     if restored and float(report.filled_qty) > row["filled_qty"] + _OVERFILL_TOLERANCE:
-                        self._reconcile_adopted_row(
+                        # The copy's own id, where `_read_restored` attached the row while it was open: the repaired
+                        # row is re-attached under it, as the open sweep's tail re-attaches its row.
+                        held = self._cache_lookup(row, venue_order_id)
+                        answered = self._reconcile_adopted_row(
                             boundary,
                             row,
                             float(report.filled_qty),
                             report.order_status,
-                            order_id=None,
+                            order_id=None if held is None else str(held.client_order_id),
                             venue_order_id=venue_order_id,
                         )
                     else:
-                        self._reconcile_finished_row(boundary, row, float(report.filled_qty), label, venue_order_id=venue_order_id)
+                        answered = self._reconcile_finished_row(
+                            boundary, row, float(report.filled_qty), label, venue_order_id=venue_order_id
+                        )
                     if restored:
-                        self._answered.add(client_order_id)
-                    # A restored row's copy is read only once its figure is applied, and only for the line below.
+                        self._answer(client_order_id, answered)
+                    # A restored row's copy is never read for its figure or status: for its own id above, and for
+                    # whether the Cache holds it open in the line below.
                     if (
                         restored
                         and report.order_status not in _ADOPTED_TERMINAL_STATES
@@ -2172,9 +2196,10 @@ class ProbeExecutor:
 
     def _reconcile_finished_row(
         self, boundary: datetime, row: dict, venue_filled: float, label: str, *, venue_order_id: str | None = None
-    ) -> None:
+    ) -> bool:
         """One closed row against the venue's own figure: does the venue still report the quantity
-        this row was closed on?
+        this row was closed on? Returns whether the venue vouches for the row's figure, by the order's own
+        figure or by the trade history (`_answer`): False on the withdrawal's trip alone.
 
         ONE direction, on the same `_OVERFILL_TOLERANCE` dead-band the sweep above uses and for the
         same reason -- the ledgered figure is a sum of per-fill floats and the venue's is one
@@ -2194,7 +2219,7 @@ class ProbeExecutor:
         """
         ledgered = row["filled_qty"]
         if venue_filled >= ledgered - _OVERFILL_TOLERANCE:
-            return
+            return True
         if self._trades_cover(boundary, venue_order_id, ledgered) is True:
             logger.warning(
                 "finished order %s reads %.10g filled on its order figure against the %.10g it was closed on, and the venue's "
@@ -2203,7 +2228,7 @@ class ProbeExecutor:
                 venue_filled,
                 ledgered,
             )
-            return
+            return True
         payload = {
             "event": "withdrawn",
             "at": self._now().isoformat(),
@@ -2218,6 +2243,7 @@ class ProbeExecutor:
             f"order {label} shows {venue_filled:.10g} filled at the venue, less than the "
             f"{ledgered:.10g} this engine recorded and closed it on"
         )
+        return False
 
     def _pickup(self, now: datetime) -> None:
         path = exec_dir(self._state_dir) / PLAN_FILENAME
