@@ -21,21 +21,21 @@ GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scri
 
 ## Step 1 — the preflight over the series the rules read
 
-For each rule the push adds or changes (`git diff <base> -- infra/grafana/alerts.yaml`), read the series its expression selects, on the hosts it targets, with `uv run python infra/scripts/grafana-query.py '<selector>'` under the same `XDG_RUNTIME_DIR`; `(no series)` holds the push until a converge makes the host publish it. The rule's `noDataState` does not decide this: it covers a query that returns nothing, while a `count()`, a comparison or an `or on() vector(0)` over an absent series returns a value and pages from the first evaluation (`zcrypto-capture-textfile-missing`, the rule behind the hold of 2026-09-30, is set to `OK`).
+For each rule the push adds or changes (`git diff <base> -- infra/grafana/alerts.yaml`), read what its expression selects on each host it targets — a PromQL selector with `uv run python infra/scripts/grafana-query.py '<selector>'` under the same `XDG_RUNTIME_DIR`; `(no series)` where a healthy host always publishes holds the push until a converge makes it publish. `noDataState` does not decide this: it covers a query that returns nothing, while an `or on() vector(0)`, or a `count()` across hosts one of which is absent, returns a value and fires the rule.
 
 ## Step 2 — where to push from
 
-A push from merged `develop` is the default: summaries and panel descriptions cite repo paths, and a push from elsewhere can ship alert text naming files `develop` does not have; and the script pushes the whole tree it runs from — each rule of `alerts.yaml` and each dashboard, by uid — and its prune deletes the folder's rules that tree lacks, so a stale branch reverts what `develop` changed since. A push from a feature branch is admitted under four conditions, together:
+A push from merged `develop` is the default: summaries and panel descriptions cite repo paths, and a push from elsewhere can ship alert text naming files `develop` does not have; and the script pushes the whole tree it runs from, and its prune deletes the folder's rules that tree lacks, so a stale branch reverts what `develop` changed since. A push from a feature branch is admitted under four conditions, together:
 
 0. The branch carries `develop`'s tip at the push: `git fetch origin develop && git merge-base --is-ancestor origin/develop HEAD` exits 0; and no prune runs from a branch.
-1. The branch is the one that will merge, and the push is recorded on its pull request: a `## Grafana push` section in the body naming the branch, the pushed tip and what was pushed (dashboards, rules, a prune).
+1. The branch is the one that will merge, and the push is recorded on its pull request: a `## Grafana push` section in the body naming the branch, the pushed tip and what was pushed (dashboards, rules).
 2. The fix loop stays on that branch: a defect the push or its verification shows is fixed there and pushed again from there.
 3. A push from `develop` follows the merge, so what is live matches the merged tree; the closeout names it.
 
 ## Step 3 — verify
 
 - Read each new or changed rule's first sample by value with `grafana-query.py`, and each new panel's query the same way; `(no series)` is a fail, not a zero.
-- Render each new or changed dashboard as the script's header says, the narrowed-variable case included. The header's `curl` needs what Step 0 hands to the script's process alone: `export GRAFANA_URL=https://zcrypto2026.grafana.net` and `GRAFANA_SA_TOKEN="$(uv run python -c '...')"` with Step 0's substitution, in the shell that runs it.
+- Render each new or changed dashboard as the script's header says, the narrowed-variable case included. Its `curl` reads, in the shell that runs it, what the script's process alone held: `GRAFANA_URL=https://zcrypto2026.grafana.net` (the script's default) and `GRAFANA_SA_TOKEN` by Step 0's substitution.
 
 ## Step 4 — the prune
 
