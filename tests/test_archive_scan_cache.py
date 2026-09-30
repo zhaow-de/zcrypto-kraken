@@ -291,8 +291,7 @@ def test_load_survives_a_recursion_error(tmp_path, monkeypatch):
     "never raises", so it is caught.
 
     The defect is injected, not provoked by a deeply nested file: the depth at which CPython gives up
-    is environment-dependent — the same nesting parses cleanly under CI's coverage tracer — so
-    provoking it makes the control assertion the flaky part.
+    is environment-dependent, so provoking it makes the control assertion the flaky part.
     """
     root = tmp_path / "reconciled"
     salt = algo_salt(1.5, mint=True)
