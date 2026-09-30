@@ -224,6 +224,58 @@ def test_engine_window_admits_a_recorded_row_the_override_admitted_and_counts_it
     )
 
 
+@pytest.mark.parametrize(
+    "window",
+    [
+        {"at": BOUNDARY + 700, "floor": BOUNDARY + 408},
+        {"at": BOUNDARY + 700, "floor": BOUNDARY + 408, "arm": "journal", "override": False, "by": "hand"},
+        {"at": str(BOUNDARY + 700), "floor": BOUNDARY + 408, "arm": "journal", "override": False},
+        {"at": BOUNDARY + 700, "floor": None, "arm": "journal", "override": False},
+        {"at": BOUNDARY + 700, "floor": BOUNDARY + 408, "arm": "journal", "override": "false"},
+        {"at": BOUNDARY + 700, "floor": BOUNDARY + 408, "arm": "clock", "override": False},
+        None,
+        "journal",
+    ],
+)
+def test_engine_window_judges_a_window_that_is_not_the_plays_record_by_inference_and_names_it(tmp_path, capsys, window):
+    row = {**_row("2026-09-19T08:12:24Z", tags="engine"), "window": window}
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    captured = capsys.readouterr()
+    assert (
+        captured.out.strip() == "engine rows 1 outside window 0 failed 0 overridden 0 inferred 1 of which on the completion floor 1"
+    )
+    assert "2026-09-19T08:12:24Z" in captured.err
+
+
+OVERRIDE = {"engine_window_override": "a reason given"}
+
+
+@pytest.mark.parametrize(
+    ("row", "line"),
+    [
+        (
+            _row("2026-09-19T09:00:00Z", tags="engine", extra_vars=OVERRIDE),
+            "engine rows 1 outside window 0 failed 0 overridden 1 inferred 1 of which on the completion floor 0",
+        ),
+        (
+            _row("2026-09-19T08:12:24Z", tags="engine", extra_vars=OVERRIDE),
+            "engine rows 1 outside window 1 failed 0 overridden 1 inferred 1 of which on the completion floor 0",
+        ),
+        (
+            {**_recorded("2026-09-19T09:00:00Z", 3600, 408), "extra_vars": OVERRIDE},
+            "engine rows 1 outside window 0 failed 0 overridden 1 inferred 0 of which on the completion floor 0",
+        ),
+        (
+            _recorded("2026-09-19T08:05:00Z", 280, 1800, arm="fixed", override=True),
+            "engine rows 1 outside window 0 failed 0 overridden 1 inferred 0 of which on the completion floor 0",
+        ),
+    ],
+)
+def test_engine_window_counts_every_row_whose_run_carried_the_override_as_overridden(tmp_path, capsys, row, line):
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    assert capsys.readouterr().out.strip() == line
+
+
 def test_engine_window_reports_the_rows_without_a_record_apart_as_inferred(tmp_path, capsys):
     rows = [
         _row("2026-09-19T08:12:24Z", tags="capture,engine"),

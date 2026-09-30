@@ -366,9 +366,8 @@ c_engine_rows_outside_the_gap() {
   uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows [0-9][0-9]* outside window \([0-9][0-9]*\) .*/\1/p'
 }
 
-# The engine window's bypasses: the rows whose `window` record says the override admitted them, which the count above
-# never calls outside. An override row without a record is judged by inference, and the count above still counts it when
-# it landed outside the fixed gap.
+# The engine window's bypasses: every row whose run carried `engine_window_override`, recorded or not. One without a
+# record that landed outside the fixed gap is counted by the entry above as well.
 c_engine_window_overrides() {
   local since window=()
   since="$(round_closed_at)" || return 2
@@ -376,10 +375,7 @@ c_engine_window_overrides() {
   uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" "${window[@]}" | sed -n 's/^engine rows .* overridden \([0-9][0-9]*\) inferred .*/\1/p'
 }
 
-# A watch number, not a gate: the band's successful rows that carry no `window`, whose admission `on_the_completion_floor`
-# can only infer. A row whose run reached the engine play's assert and whose record the wrapper read carries one; an
-# `engine`-tagged run whose --limit reaches no engine host, an unreadable record or a hand-appended row carries none, so
-# the band can still gain rows.
+# A watch number, not a gate: the band's successful rows that carry no well-formed `window`, whose admission can only be inferred.
 c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
 
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }

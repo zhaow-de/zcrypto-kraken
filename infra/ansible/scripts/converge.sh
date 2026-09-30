@@ -39,8 +39,6 @@ docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_allo
 cache_config_reset cache_proxy_image_digest engine_cache_enabled"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
-# This script's own key: it names the file the engine play writes its window record into (below), so an operator's
-# is refused in either form.
 OWNKEY="zcrypto_window_record"
 
 # EXACT, word by word: a substring test answers true for `zcrypto zcrypto-red`, which is two hosts
@@ -154,10 +152,7 @@ PYCHK
 done
 IFS="$OLDIFS"
 
-# The engine play writes the floor its window assert admitted the run on into this file (site.yml), and the record
-# below copies it into the row as `window`. Every exit removes it, the refusals above having created nothing. It is
-# made absolute because run.sh plays from infra/ansible and ansible resolves a relative `dest` against the playbook's
-# directory: a relative TMPDIR would have the play write where this script neither reads nor removes, or fail there.
+# Absolute, because run.sh plays from infra/ansible and ansible resolves a relative `dest` against it.
 WREC="$(mktemp -t zcrypto-window.XXXXXX)"
 case "$WREC" in /*) : ;; *) WREC="$PWD/$WREC" ;; esac
 trap 'rm -f "$WREC"' EXIT

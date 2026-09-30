@@ -242,9 +242,8 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 # `Error`, by substring so a compound reason cannot smuggle it past, is Grafana failing
                 # to reach its own Prometheus rather than a fleet event, and nearly every rule carries
                 # `execErrState: Alerting`, so admitting it to fired-in-window would move the daily
-                # verdict on a platform hiccup. It is counted for the report's informational line, and only
-                # inside the bounds this chunk asked for: adjacent chunks share their boundary second, so a row a
-                # server returns to both would count twice, where the fired path below keeps one Alert per uid.
+                # verdict on a platform hiccup. Counted only inside the bounds this chunk asked for:
+                # adjacent chunks share their boundary second.
                 if "Error" in current:
                     if asked_from * 1000 <= stamp < asked_to * 1000:
                         hour = datetime.fromtimestamp(stamp / 1000, timezone.utc).replace(minute=0, second=0, microsecond=0)
@@ -1037,8 +1036,8 @@ class Report:
 
     @property
     def evaluation_errors_clause(self) -> str | None:
-        """The window's `(Error)` transitions in one clause, or None when there were none. Informational
-        only: `exit_code` never reads them, for the reason `read_alerts` keeps them out of fired-in-window."""
+        """Informational only: `exit_code` never reads it, for the reason `read_alerts` keeps these transitions out of
+        fired-in-window."""
         errors = self.alerts.evaluation_errors
         if not errors:
             return None

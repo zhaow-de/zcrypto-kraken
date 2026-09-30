@@ -838,6 +838,14 @@ def test_a_recorded_override_row_is_counted_as_a_bypass_and_not_as_outside_the_g
         assert _windowed(tmp_path, entry, git_dir, rows=rows).stdout == f"{entry}\t{count}\n"
 
 
+def test_an_override_row_without_a_record_inside_the_fixed_gap_is_counted_as_a_bypass(tmp_path):
+    git_dir = _history(tmp_path, closes_a_round=True)
+    row = {key: value for key, value in WINDOWED["engine-window-overrides"][1].items() if key != "window"}
+    row["ts"] = "2026-09-24T17:00:00Z"
+    for entry, count in (("engine-window-overrides", 1), ("engine-rows-outside-the-gap", 0)):
+        assert _windowed(tmp_path, entry, git_dir, rows=[row]).stdout == f"{entry}\t{count}\n"
+
+
 @pytest.mark.parametrize("entry", sorted(WINDOWED))
 def test_a_deploy_log_count_with_no_closed_round_is_an_error_and_all_still_counts(tmp_path, entry):
     git_dir = _history(tmp_path, closes_a_round=False)

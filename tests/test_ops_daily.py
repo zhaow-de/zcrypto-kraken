@@ -1045,8 +1045,6 @@ def _history(*transitions):
         # Drill K measured `Pending (NoData) -> Alerting (NoData)` off this endpoint, and these rules
         # carry `noDataState: Alerting` deliberately, so an exact match on "Alerting" drops them.
         ("Alerting (NoData)", True),
-        # `execErrState: Alerting` is Grafana failing to reach its own Prometheus. Admitting it would move
-        # the verdict on a hiccup.
         ("Alerting (Error)", False),
         # An Alerting reason nobody has measured yet costs one report line if admitted and a silent
         # all-clear over a page if dropped, so the filter is a prefix minus Error rather than a list.

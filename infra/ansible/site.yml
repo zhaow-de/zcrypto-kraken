@@ -157,9 +157,8 @@
       tags: [engine, cache-link]
 
     # converge.sh names this file and copies what lands in it into the run's deploy-log row as `window`, which the
-    # deploy-log audit judges an engine row on. `engine_window_floor` is the floor the assert compares its clock
-    # against and `engine_window_journal` that floor's own journal test, both mirrored character-for-character as the
-    # echo mirrors the window; `override` is whether the echo fired. A window the assert refused fails the play above.
+    # deploy-log audit judges an engine row on. `engine_window_floor` and `engine_window_journal` mirror the assert's
+    # floor and its journal test character-for-character, as the echo mirrors the window.
     # `noqa: run-once[task]`: the rule warns of the `free` strategy, and this play runs under the default linear one.
     - name: engine window — the floor this run was admitted on, for the deploy-log row  # noqa: run-once[task]
       ansible.builtin.copy:
