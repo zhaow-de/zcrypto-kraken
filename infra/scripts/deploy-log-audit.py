@@ -33,7 +33,7 @@ _CYCLE_SECONDS = 4 * 60 * 60
 _AFTER_BOUNDARY_SECONDS = 1800
 _BEFORE_BOUNDARY_SECONDS = 600
 # `site.yml` opens the gap this long after the boundary cycle's journalled completion, and keeps the fixed floor
-# above only when it cannot read one (spec 00083 D6). For a row without `window` this audit cannot read the journal; a
+# above only when it cannot read one (spec 00083 D6). For a row without a well-formed record this audit cannot read the journal; a
 # cycle cannot complete before its boundary, so this is the earliest the playbook can have admitted such a row.
 _AFTER_COMPLETION_SECONDS = 300
 
@@ -103,7 +103,7 @@ def carried_the_override(row: dict) -> bool:
 
 
 def on_the_completion_floor(row: dict) -> bool:
-    """For a row without `window`: one short of the fixed floor that the playbook can have admitted on a completed
+    """For a row without a well-formed record: one short of the fixed floor that the playbook can have admitted on a completed
     cycle's floor instead. Success is sufficient evidence of that, since the window assert precedes it, and not necessary: a
     run admitted and failed later counts as outside. A row that carried the bypass was admitted on its reason and not
     on a floor."""
