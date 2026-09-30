@@ -1,7 +1,7 @@
 """Every `COPY` source in the Dockerfile must survive `.dockerignore`.
 
 The image build is NOT gated at PR time: `capture-image.yml` triggers on `push` to develop/main,
-while `coverage.yml` runs on pull requests. So a Dockerfile or `.dockerignore` change passes every
+while `test-suite.yml` runs on pull requests. So a Dockerfile or `.dockerignore` change passes every
 PR check and breaks `develop` after the merge.
 """
 

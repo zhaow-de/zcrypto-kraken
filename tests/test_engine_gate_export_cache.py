@@ -120,16 +120,11 @@ def _squash(text: str) -> str:
     `\x1b[1;36m-\x1b[0m\x1b[1;36m-cache\x1b[0m` -- so the literal flag is not a substring of a styled
     panel at all, and the panel word-wraps at COLUMNS, so a phrase can break across lines. Apply this
     to the EXPECTED string as well as the actual one: the assertion stays readable and matches either
-    rendering. Provenance, counted rather than gestured at, because "the same normalisation" was doing
-    the lying: NINE other modules strip ANSI, of which TWO normalise both axes the way this one does,
-    deleting whitespace outright -- `tests/test_archive_pull.py` and `tests/test_panel_command.py`;
-    `tests/test_trades_command.py` is a third variant that collapses runs to a single space instead.
-    This file had a whitespace-only version, which is why CI went red where local runs did not.
+    rendering.
 
-    Which environments style, measured rather than assumed: `GITHUB_ACTIONS=true` alone does (that is
-    what CI trips -- `.github/workflows/coverage.yml` sets no colour variable), and `FORCE_COLOR=1`
-    does. `CI=true` alone does not, `TERM=xterm-256color` alone does not, and CliRunner's `color=True`
-    does NOT style this panel, so forcing the env is the only lever that reproduces CI here.
+    CI styles because `GITHUB_ACTIONS=true` does; `FORCE_COLOR=1` does too, while `CI=true`,
+    `TERM=xterm-256color` and CliRunner's `color=True` do not style this panel, so forcing the env is
+    the only lever that reproduces CI here.
     """
     return re.sub(r"\s+", "", _ANSI_SGR.sub("", text))
 

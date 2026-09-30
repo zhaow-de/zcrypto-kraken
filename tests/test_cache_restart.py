@@ -2,7 +2,7 @@
 this file starts, with the venue a loopback the file scripts.
 
 No environment gate, on purpose: a database is not a venue, and a skip on a missing binary would
-read as coverage. CI installs the binary from apt (`.github/workflows/coverage.yml`); a workstation
+read as coverage. CI installs the binary from apt (`.github/workflows/test-suite.yml`); a workstation
 runs its own, whose version may differ from the fleet's, so a reading a server version could move
 is named where it is asserted.
 """

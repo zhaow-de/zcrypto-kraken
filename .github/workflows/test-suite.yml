@@ -8,7 +8,7 @@ on:
     branches: [develop, main]
 
 jobs:
-  coverage:
+  suite:
     # This string IS the required status-check context on develop (.github/settings.yml).
     # GitHub reports a job's `name:` as the check-run name, so renaming it here without
     # updating that contexts list blocks every PR on a check that never reports.
@@ -54,16 +54,11 @@ jobs:
       # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
       - run: sudo apt-get update && sudo apt-get install -y valkey-server
       - run: uv sync
-      # tests/test_cache_restart.py mostly waits on its valkey-server and engine children, so it runs as a
-      # parallel step beside the rest of the suite -- in this one job, so the check keeps its name. The two
-      # share the loopback port space.
-      - parallel:
-          - name: Run the cache restart harness
-            run: uv run coverage run --parallel-mode -m pytest tests/test_cache_restart.py
-          - name: Run the rest of the suite
-            run: uv run coverage run --parallel-mode -m pytest --ignore=tests/test_cache_restart.py
-      - run: uv run coverage combine
-      - run: uv run coverage lcov -o coverage.lcov
+      # Four workers for the public runner's four vCPUs. --maxschedchunk 4 hands tests out four at a time, so the
+      # slow harness tests spread over the workers; a worker's queue still refills toward a sixteenth of the tests
+      # left, and after -x the other workers drain theirs. worksteal deals every test up front, so they drain
+      # whole shares.
+      - run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x --cov=cli --cov-report=lcov:coverage.lcov
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
