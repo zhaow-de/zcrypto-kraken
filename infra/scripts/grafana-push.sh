@@ -50,7 +50,7 @@ python3 -c "import yaml" >/dev/null 2>&1 \
 command -v jq >/dev/null 2>&1 || { echo "grafana-push: jq is required" >&2; exit 1; }
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# The bearer reaches curl as a config line on a pipe, never as an argument: a `-H` value is in argv.
+# The bearer reaches curl as a config line on a pipe: a `-H` value is in argv.
 gcurl() { curl -K <(printf 'header = "Authorization: Bearer %s"\n' "${GRAFANA_SA_TOKEN}") "$@"; }
 
 # Every dashboard under infra/grafana/*-dashboard.json is pushed, keyed by its own `uid` — add a
