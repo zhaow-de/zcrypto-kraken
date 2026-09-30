@@ -276,6 +276,24 @@ def test_engine_window_counts_every_row_whose_run_carried_the_override_as_overri
     assert capsys.readouterr().out.strip() == line
 
 
+@pytest.mark.parametrize(
+    ("row", "line"),
+    [
+        (
+            _row("2026-09-19T09:00:00Z", tags="engine", extra_vars={"engine_window_override": None}),
+            "engine rows 1 outside window 0 failed 0 overridden 0 inferred 1 of which on the completion floor 0",
+        ),
+        (
+            _row("2026-09-19T08:12:24Z", tags="engine", extra_vars={"engine_window_override": None}),
+            "engine rows 1 outside window 0 failed 0 overridden 0 inferred 1 of which on the completion floor 1",
+        ),
+    ],
+)
+def test_engine_window_reads_a_null_override_as_no_override(tmp_path, capsys, row, line):
+    assert audit.main(["engine-window", "--log", _log(tmp_path, [row])]) == 0
+    assert capsys.readouterr().out.strip() == line
+
+
 def test_engine_window_reports_the_rows_without_a_record_apart_as_inferred(tmp_path, capsys):
     rows = [
         _row("2026-09-19T08:12:24Z", tags="capture,engine"),

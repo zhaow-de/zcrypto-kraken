@@ -97,13 +97,18 @@ def inside_gap(stamp: str) -> bool:
     return since >= _AFTER_BOUNDARY_SECONDS and _CYCLE_SECONDS - since >= _BEFORE_BOUNDARY_SECONDS
 
 
+def carried_the_override(row: dict) -> bool:
+    """A JSON-null `engine_window_override` is no override: the play reads it as none."""
+    return (row.get("extra_vars") or {}).get("engine_window_override") is not None
+
+
 def on_the_completion_floor(row: dict) -> bool:
     """For a row without `window`: one short of the fixed floor that the playbook can have admitted on a completed
     cycle's floor instead. Success is sufficient evidence of that, since the window assert precedes it, and not necessary: a
     run admitted and failed later counts as outside. A row that carried the bypass was admitted on its reason and not
     on a floor."""
     since = _since_boundary(row["ts"])
-    admitted = row["rc"] == 0 and "engine_window_override" not in (row.get("extra_vars") or {})
+    admitted = row["rc"] == 0 and not carried_the_override(row)
     return admitted and _AFTER_COMPLETION_SECONDS <= since < _AFTER_BOUNDARY_SECONDS
 
 
@@ -197,11 +202,7 @@ def run_engine_window(rows: list[dict]) -> int:
     outside = [row for row in recorded if outside_on_its_record(row)]
     outside += [row for row in inferred if not inside_gap(row["ts"]) and row not in floor]
     failed = [row for row in engine if row["rc"] != 0]
-    overridden = [
-        row
-        for row in engine
-        if "engine_window_override" in (row.get("extra_vars") or {}) or (row in recorded and row["window"]["override"])
-    ]
+    overridden = [row for row in engine if carried_the_override(row) or (row in recorded and row["window"]["override"])]
     print(
         f"engine rows {len(engine)} outside window {len(outside)} failed {len(failed)} overridden {len(overridden)}"
         f" inferred {len(inferred)} of which on the completion floor {len(floor)}"
