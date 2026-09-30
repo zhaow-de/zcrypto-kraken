@@ -21,7 +21,7 @@ def test_a_result_shape_without_metric_and_value_does_not_drop_the_later_express
     dropping the expressions after it."""
     monkeypatch.setattr(gq, "vault_var", lambda name: TOKEN)
 
-    def shapes(expr, token):
+    def shapes(expr, token, **kw):
         if expr == "1":
             return [1.0]  # resultType: scalar -- not subscriptable by "metric"
         return [{"metric": {"host": "zcrypto"}, "value": [0, "1"]}]
@@ -88,3 +88,46 @@ def test_no_arguments_is_a_usage_error_not_a_silent_success(capsys):
 
     assert rc == 2
     assert "usage:" in capsys.readouterr().out
+
+
+def test_loki_routes_the_query_through_the_loki_datasource_proxy_and_is_not_an_expression(monkeypatch, capsys):
+    monkeypatch.setattr(gq, "vault_var", lambda name: TOKEN)
+    seen = []
+    monkeypatch.setattr(
+        gq,
+        "query",
+        lambda expr, token, loki=False: seen.append((expr, loki)) or [{"metric": {"host": "zcrypto"}, "value": [0, "1"]}],
+    )
+
+    rc = gq.main(["--loki", 'count_over_time({host="zcrypto"}[6h])'])
+
+    assert rc == 0
+    assert seen == [('count_over_time({host="zcrypto"}[6h])', True)]
+    assert "--loki" not in capsys.readouterr().out
+
+
+def test_query_sends_the_loki_route_and_the_bearer_as_a_header(monkeypatch):
+    seen = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"data": {"result": []}}'
+
+    def urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["auth"] = request.get_header("Authorization")
+        return _Response()
+
+    monkeypatch.setattr(gq.urllib.request, "urlopen", urlopen)
+
+    assert gq.query("x", TOKEN, loki=True) == []
+    assert "/uid/grafanacloud-logs/loki/api/v1/query?" in seen["url"]
+    assert seen["auth"] == f"Bearer {TOKEN}"
+    gq.query("x", TOKEN)
+    assert "/uid/grafanacloud-prom/api/v1/query?" in seen["url"]

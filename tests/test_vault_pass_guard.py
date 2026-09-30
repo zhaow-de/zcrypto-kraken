@@ -56,3 +56,23 @@ def test_refuses_ansible_inventory_graph_vars(tmp_path):
     r = run_under(tmp_path, "ansible-inventory", ["--graph", "--vars"])
     assert r.returncode == 1
     assert "SOPS-RAN" not in r.stdout
+
+
+def run_with_env(tmp_path, env):
+    sops = tmp_path / "env-sops"
+    sops.write_text('#!/usr/bin/env bash\necho "XDG=${XDG_RUNTIME_DIR:-unset}"\n')
+    sops.chmod(sops.stat().st_mode | stat.S_IXUSR)
+    return subprocess.run([str(SCRIPT)], capture_output=True, text=True, env={**env, "ZCRYPTO_SOPS_BIN": str(sops)})
+
+
+def test_a_shell_without_xdg_runtime_dir_hands_sops_the_uid_default(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "XDG_RUNTIME_DIR"}
+    r = run_with_env(tmp_path, env)
+    assert r.returncode == 0
+    assert r.stdout.strip() == f"XDG=/run/user/{os.getuid()}"
+
+
+def test_a_shell_with_xdg_runtime_dir_keeps_it(tmp_path):
+    r = run_with_env(tmp_path, {**os.environ, "XDG_RUNTIME_DIR": "/run/user/kept"})
+    assert r.returncode == 0
+    assert r.stdout.strip() == "XDG=/run/user/kept"
