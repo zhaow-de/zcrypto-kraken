@@ -228,8 +228,9 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
     try:
         while chunk_start < now:
             chunk_end = min(chunk_start + HISTORY_CHUNK, now)
+            asked_from, asked_to = int(chunk_start.timestamp()), int(chunk_end.timestamp())
             url = f"{GRAFANA_URL}/api/v1/rules/history?" + urllib.parse.urlencode(
-                {"from": int(chunk_start.timestamp()), "to": int(chunk_end.timestamp()), "limit": HISTORY_PAGE_LIMIT}
+                {"from": asked_from, "to": asked_to, "limit": HISTORY_PAGE_LIMIT}
             )
             payload = _get(url, token, opener)
             rows = (payload.get("data") or {}).get("values") or []
@@ -241,10 +242,13 @@ def read_alerts(token: str, *, now: datetime, window: timedelta, opener=urllib.r
                 # `Error`, by substring so a compound reason cannot smuggle it past, is Grafana failing
                 # to reach its own Prometheus rather than a fleet event, and nearly every rule carries
                 # `execErrState: Alerting`, so admitting it to fired-in-window would move the daily
-                # verdict on a platform hiccup. It is counted for the report's informational line.
+                # verdict on a platform hiccup. It is counted for the report's informational line, and only
+                # inside the bounds this chunk asked for: adjacent chunks share their boundary second, so a row a
+                # server returns to both would count twice, where the fired path below keeps one Alert per uid.
                 if "Error" in current:
-                    hour = datetime.fromtimestamp(stamp / 1000, timezone.utc).replace(minute=0, second=0, microsecond=0)
-                    errors[hour, uid] += 1
+                    if asked_from * 1000 <= stamp < asked_to * 1000:
+                        hour = datetime.fromtimestamp(stamp / 1000, timezone.utc).replace(minute=0, second=0, microsecond=0)
+                        errors[hour, uid] += 1
                     continue
                 # The history writes the state with its REASON attached, so an exact match on
                 # "Alerting" drops every firing that arrived through `noDataState: Alerting`, which

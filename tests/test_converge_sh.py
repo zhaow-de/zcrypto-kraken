@@ -752,12 +752,14 @@ def test_a_real_uncommitted_change_still_reads_dirty(tmp_path, monkeypatch):
 import re  # noqa: E402 -- the block above is the file's own section header
 
 WINDOW = {"at": 1785744500, "floor": 1785744408, "arm": "journal", "override": False}
-# The play's record task, as a fake: on the real pass only, it writes $FAKE_WINDOW into the file the wrapper named.
+# The play's record task, as a fake: on the real pass only, it writes $FAKE_WINDOW into the file the wrapper named,
+# from `ansible/` as run.sh plays from infra/ansible, and fails the play as the copy task does when it cannot write.
 WRITES_THE_RECORD = r"""#!/usr/bin/env bash
 echo "$@" >> "$(dirname "$0")/invocations.log"
 case " $* " in *" --check "*) exit 0 ;; esac
 f="$(printf '%s\n' "$*" | sed -n 's/.*"zcrypto_window_record": "\([^"]*\)".*/\1/p')"
-[ -n "$f" ] && printf '%s' "$FAKE_WINDOW" > "$f"
+mkdir -p "$(dirname "$0")/ansible" && cd "$(dirname "$0")/ansible"
+if [ -n "$f" ]; then printf '%s' "$FAKE_WINDOW" > "$f" || exit 2; fi
 exit ${FAKE_RUN_RC:-0}
 """
 
@@ -819,6 +821,25 @@ def test_an_unreadable_record_is_loud_and_still_books_the_row(tmp_path):
     rec = json.loads(log.read_text().splitlines()[0])
     assert "window" not in rec and rec["rc"] == 0
     assert "WINDOW RECORD UNREADABLE" in out
+
+
+@pytest.mark.parametrize("beside_the_playbook_too", [False, True])
+def test_a_relative_tmpdir_still_books_the_window_and_leaves_no_file(tmp_path, monkeypatch, beside_the_playbook_too):
+    (tmp_path / "rel").mkdir()
+    if beside_the_playbook_too:
+        (tmp_path / "ansible" / "rel").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TMPDIR", "rel")
+    rc, _out, log = run_recording(
+        tmp_path,
+        ["site.yml", "--limit", "zcrypto", "--tags", "engine"],
+        reply="zcrypto",
+        env={"FAKE_WINDOW": json.dumps(WINDOW)},
+        run_sh=WRITES_THE_RECORD,
+    )
+    assert rc == 0
+    assert json.loads(log.read_text().splitlines()[0]).get("window") == WINDOW
+    assert list(tmp_path.rglob("zcrypto-window.*")) == []
 
 
 @pytest.mark.parametrize(

@@ -9,8 +9,9 @@ assert ran, the floor it compared that clock against, which arm gave that floor 
 journalled completion plus 300 s; `fixed`, the boundary plus 1800 s, when that journal is unreadable), and whether
 `engine_window_override` admitted a run the window refused. The engine play writes it, after the assert passed, into the
 file converge.sh names, and converge.sh copies it into the row. A row carrying it is judged on it; a row without it was
-written before the log carried it, or by a run the assert refused or never reached, and is judged by inference and
-counted as `inferred`. `overridden` counts the recorded rows the override admitted, which are never outside.
+written before the log carried it, by a run the assert refused or never reached, by a wrapper that could not read the
+record, or by hand, and is judged by inference and counted as `inferred`. `overridden` counts the recorded rows the
+override admitted, which are never outside.
 """
 
 from __future__ import annotations

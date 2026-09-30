@@ -155,8 +155,11 @@ done
 IFS="$OLDIFS"
 
 # The engine play writes the floor its window assert admitted the run on into this file (site.yml), and the record
-# below copies it into the row as `window`. Every exit removes it, the refusals above having created nothing.
+# below copies it into the row as `window`. Every exit removes it, the refusals above having created nothing. It is
+# made absolute because run.sh plays from infra/ansible and ansible resolves a relative `dest` against the playbook's
+# directory: a relative TMPDIR would have the play write where this script neither reads nor removes, or fail there.
 WREC="$(mktemp -t zcrypto-window.XXXXXX)"
+case "$WREC" in /*) : ;; *) WREC="$PWD/$WREC" ;; esac
 trap 'rm -f "$WREC"' EXIT
 WREC_EV="$(python3 -c 'import json, sys; print(json.dumps({sys.argv[1]: sys.argv[2]}))' "$OWNKEY" "$WREC")"
 

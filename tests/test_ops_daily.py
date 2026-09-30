@@ -1045,8 +1045,8 @@ def _history(*transitions):
         # Drill K measured `Pending (NoData) -> Alerting (NoData)` off this endpoint, and these rules
         # carry `noDataState: Alerting` deliberately, so an exact match on "Alerting" drops them.
         ("Alerting (NoData)", True),
-        # `execErrState: Alerting` is Grafana failing to reach its own Prometheus -- 83.5% false over
-        # 23 days by the capture runbook's count. Admitting it would move the verdict on a hiccup.
+        # `execErrState: Alerting` is Grafana failing to reach its own Prometheus. Admitting it would move
+        # the verdict on a hiccup.
         ("Alerting (Error)", False),
         # An Alerting reason nobody has measured yet costs one report line if admitted and a silent
         # all-clear over a page if dropped, so the filter is a prefix minus Error rather than a list.
@@ -1176,6 +1176,20 @@ def test_the_history_counts_evaluation_error_transitions_by_hour_and_rule_across
     line = "Grafana evaluation errors in the window, outside the verdict: 4 transitions across 2 rules, by hour 08-28 13Z (3), 08-29 07Z (1)"
     assert line in md
     assert md.index("## Alerts firing") < md.index(line) < md.index("## Fleet checks")
+
+
+def test_an_evaluation_error_is_counted_by_the_one_chunk_whose_requested_bounds_hold_it():
+    # `now` off the whole second, as a live run's is: each chunk asks for whole seconds, the first chunk's `to` being the
+    # second's `from`, and `after_it` lies before the second chunk's own start but inside what that chunk asked for.
+    now = NOW + timedelta(microseconds=456789)
+    boundary = datetime(2026, 8, 28, 18, tzinfo=timezone.utc)
+    on_the_shared_second = (boundary, _transition("zcrypto-a", "Alerting (Error)"))
+    after_it = (boundary + timedelta(milliseconds=300), _transition("zcrypto-b", "Normal (Error)"))
+    opener = _canned(_rules(), _stamped(on_the_shared_second), _stamped(on_the_shared_second, after_it), _EMPTY_HISTORY)
+    read = ops_daily.read_alerts("tok", now=now, window=DAY, opener=opener)
+    assert read.unreadable is None
+    assert dict(read.evaluation_errors) == {(boundary, "zcrypto-a"): 1, (boundary, "zcrypto-b"): 1}
+    assert read.fired_in_window == []
 
 
 def test_a_window_without_an_evaluation_error_prints_no_line_for_them():

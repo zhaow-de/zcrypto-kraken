@@ -367,7 +367,9 @@ c_engine_rows_outside_the_gap() {
 }
 
 # A watch number, not a gate: the band's successful rows that carry no `window`, whose admission `on_the_completion_floor`
-# can only infer. A run the engine play's window assert admits carries one, so the set holds the rows from before it did.
+# can only infer. A row whose run reached the engine play's assert and whose record the wrapper read carries one; an
+# `engine`-tagged run whose --limit reaches no engine host, an unreadable record or a hand-appended row carries none, so
+# the band can still gain rows.
 c_engine_rows_on_the_completion_floor() { uv run python infra/scripts/deploy-log-audit.py engine-window --log "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}" | sed -n 's/^engine rows .*of which on the completion floor \([0-9][0-9]*\)$/\1/p'; }
 
 c_nas_rows_without_compat() { awk -F'|' '$3 ~ /^ *nas *$/' docs/reference/fleet-pins.md | grep -vc compat; }
