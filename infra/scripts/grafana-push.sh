@@ -6,8 +6,8 @@
 # Run it from a checkout that carries origin/develop's tip with infra/grafana/ clean: it pushes the
 # working tree whole, and its prune deletes the folder's rules that tree lacks. MERGED develop is the
 # default, since summaries and panel descriptions cite repo paths; a feature-branch push is admitted
-# only under .claude/skills/zcrypto-grafana-push/SKILL.md's conditions, and a prune runs from develop alone,
-# after the skill's read of the open PRs' pushes.
+# only under .claude/skills/zcrypto-grafana-push/SKILL.md's conditions; an open PR with a live push holds
+# every other push and every prune until it merges or closes, and a prune runs from develop alone.
 #
 # GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
 # `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it
@@ -258,7 +258,7 @@ else
       gcurl -fsS -X DELETE "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}" >/dev/null
       echo "grafana-push: DELETED orphaned rule ${uid}" >&2
     else
-      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 from a develop checkout at origin/develop's tip, after the skill's open-PR read, to delete" >&2
+      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
     fi
   done <<<"${orphans}"
 fi
