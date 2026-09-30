@@ -13,4 +13,6 @@ while [ "$pid" -gt 1 ] 2>/dev/null; do
   pid="$(awk '/^PPid:/{print $2}' "/proc/$pid/status" 2>/dev/null)" || break
   [ -n "$pid" ] || break
 done
+# sops reaches the gpg agent through XDG_RUNTIME_DIR, which a shell under agentboard's tmux does not carry.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 exec "${ZCRYPTO_SOPS_BIN:-/home/zhaow/go/bin/sops}" -d --extract '["vault_password"]' "$(dirname "$0")/../vault-password.sops.yaml"
