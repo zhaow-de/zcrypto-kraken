@@ -983,10 +983,7 @@ class ProbeExecutor:
         # The (row, `what`) pairs a sweep of this process marked unmatched (`_mark_unmatched`), which the
         # re-read pass leaves out.
         self._marked: set[tuple[str, str]] = set()
-        # The restored rows a venue report this process read has answered since the row's last fill or a
-        # terminal this engine minted on it: the only restored rows either intent writer writes
-        # (`_settle_restored_intent`, `_settle_pending_intents`). Written by `_answer` where a sweep applies a
-        # report to a restored row, and cleared where a fill or a mint lands on one.
+        # Restored rows a report of this process vouched for since their last fill or mint: the only ones whose intent is written.
         self._answered: set[str] = set()
         # The restored rows a fill reached and the re-read pass has not repaired since: the credit is
         # nothing (`_fill_credit`) and the pass repairs the row from the venue's cumulative figure.
@@ -1324,11 +1321,7 @@ class ProbeExecutor:
         written from the report and is sent no cancel, its stale open copy left in the Cache, and one it
         reports open is classified as an adopted one is -- cancelled unless its row is a ledgered reducer.
 
-        LAST, the window's `pending` intents are settled (`_settle_pending_intents`): no process runs
-        their plans, so each is written terminal from what its rows show, except one with an open row
-        this pass sent no cancel for -- kept, or beyond its reach -- or a restored row no report of this
-        process answered since its last fill or mint, and none when either read above failed or a sweep above
-        latched the kill switch.
+        LAST, the window's `pending` intents are settled (`_settle_pending_intents` names the ones it leaves `pending`).
         """
         try:
             resting = list(self._cache.orders_open(venue=_VENUE))
@@ -1442,10 +1435,9 @@ class ProbeExecutor:
         order's quantity, `revoked` when it ran and its order did not survive the restart, `refused`
         when it never ran -- except one with an open row this pass sent no cancel for: an order left
         resting, kept as a reducer or beyond the pass's reach, is still live and its row the live
-        record -- and one with a row of the restored set no venue report of this process answered since its
-        last fill or mint (`_answered`). Skipped whole when either read failed or this pass latched the kill
-        switch, since the rows' fills were then never compared, never read, or refuted by the venue, and are
-        no figure to journal."""
+        record -- and one with a restored row outside `_answered`. Skipped whole when either read
+        failed or this pass latched the kill switch, since the rows' fills were then never compared,
+        never read, or refuted by the venue, and are no figure to journal."""
         if venue_orders is None or not ledger_read or self._kill_tripped:
             return
         try:
@@ -1690,12 +1682,10 @@ class ProbeExecutor:
                     if report is None:
                         self._mark_unmatched(boundary, row, venue_order_id)
                         continue
-                    # The row's order is in the Cache under the id it was minted closed by -- this process's
-                    # mint in the pass, a previous process's on a restored copy -- which `_attached` may still
-                    # map to an earlier mirror, the startup's or the one `_read_restored` built under an
-                    # EXTERNAL copy's id: re-attached under that id too, this fresh dict is what a later fill's
-                    # completion guard and trip, and a terminal's intent write, read. At startup a row outside
-                    # the restored set that reaches here has no order in the Cache, and the id stays None.
+                    # Re-attached under the id the Cache holds the order by -- closed by this process's mint in the pass, or
+                    # a previous process's on a restored copy -- so no mirror `_attached` holds for the row, the one
+                    # `_read_restored` built under an EXTERNAL copy's id included, keeps a figure a later fill or a
+                    # terminal's intent write would read stale.
                     order = self._cache_lookup(row, venue_order_id) if recancel or self._restored_row(row) else None
                     order_id = None if order is None else str(order.client_order_id)
                     if recancel:
@@ -1937,9 +1927,7 @@ class ProbeExecutor:
         return self._restored_unread or row["client_order_id"] in self._restored or _row_venue_order_id(row) in self._restored
 
     def _answer(self, client_order_id: str, answered: bool) -> None:
-        """A venue report applied to a restored row: the row joins `_answered` where the report left its
-        figure one the venue vouches for (`_reconcile_adopted_row`, `_reconcile_finished_row`), and leaves it
-        where the report refuted that figure, an answer an earlier read gave included."""
+        """A report that refutes the row's figure takes back an answer an earlier read gave."""
         if answered:
             self._answered.add(client_order_id)
         else:
@@ -2007,9 +1995,8 @@ class ProbeExecutor:
         venue_order_id: str | None,
     ) -> bool:
         """One ledgered row against the venue truth its order carries: the quantity the venue says
-        filled, and the order's status. Returns whether the row's figure is now one the venue vouches for
-        -- the report's, or the ledger's where the trade history covers it -- which is False on the negative
-        arm's trip alone, where the venue refuted a figure nothing read covers (`_answer`).
+        filled, and the order's status. Returns whether the venue vouches for the row's figure now --
+        the report's, or the ledger's where the trade history covers it (`_answer`).
 
         The comparison takes exactly one of four arms, on a dead-band of `_OVERFILL_TOLERANCE`: the
         ledgered figure is a SUM of per-fill floats and the venue's is one exactly-rounded
@@ -2199,7 +2186,7 @@ class ProbeExecutor:
     ) -> bool:
         """One closed row against the venue's own figure: does the venue still report the quantity
         this row was closed on? Returns whether the venue vouches for the row's figure, by the order's own
-        figure or by the trade history (`_answer`): False on the withdrawal's trip alone.
+        figure or by the trade history (`_answer`).
 
         ONE direction, on the same `_OVERFILL_TOLERANCE` dead-band the sweep above uses and for the
         same reason -- the ledgered figure is a sum of per-fill floats and the venue's is one

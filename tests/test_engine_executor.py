@@ -8729,9 +8729,6 @@ _ONE_DOOR_MATRIX = [
 ]
 
 _ONE_DOOR_TXIDS = ("recorded", "copys", "none", "two", "differs")
-# A below read reports the row under its ledger, the trade history short of it, unread, or covering it. A minted pass
-# restores the copy closed by a previous process's mint, which `reconnect` reads again at a socket's return; an external
-# pass restores it as the EXTERNAL copy under the txid its row recorded, minted closed or acked before the first tick.
 _ONE_DOOR_BELOW = ("below-short", "below-unread", "below-covered")
 _ONE_DOOR_READS = ("answers", "omits", "fails", *_ONE_DOOR_BELOW)
 _ONE_DOOR_PASSES = (
@@ -8958,7 +8955,6 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
     terminal = _event(OrderCanceled, client_order_id=copy_id, **strategy)
 
     def _terminate(event):
-        # The venue's terminal: an EXTERNAL copy's on the external topic, the order taking it first.
         if external:
             _deliver_external_event(ex, client, event)
             return
@@ -9025,8 +9021,6 @@ def test_a_restored_row_is_read_by_its_read_id_and_the_venues_report_alone_decid
         ex.on_timer(NOW + timedelta(seconds=10))
         assert len(venue.calls) == 2  # the marked row is left out of the pass the later fill armed
     if outcome in ("marked", "unread", "refuted", "covered"):
-        # A terminal after the pass, or its replay on a closed copy, writes the intent of a row a read answered
-        # since its last fill or mint, the startup's answer before a later pass's mark among them, and of no other.
         _terminate(_event(OrderCanceled, client_order_id=copy_id, **strategy))
         answered = outcome == "covered" or pass_ == "reconnect" and outcome in ("marked", "unread")
         row = _record(tmp_path, earlier)["submitted"][0]
@@ -9278,8 +9272,8 @@ _ONE_DOOR_CALLERS = {
 _INTENT_WRITER = "update_plan_intent"
 _INTENT_WRITERS = {
     "_journal_intent": "the running plan's own intents, which no restored row belongs to",
-    "_settle_pending_intents": "the startup's settle, a restored row's intent only once a report of this process answered it",
-    "_settle_restored_intent": "a restored row's terminal, only once a report of this process answered it since its last fill",
+    "_settle_pending_intents": "the startup's settle, a restored row's intent only from `_answered`",
+    "_settle_restored_intent": "a restored row's terminal, only from `_answered`",
 }
 
 
@@ -9353,7 +9347,7 @@ def test_every_read_of_a_rows_txid_or_its_cache_copy_goes_through_the_one_door_a
     assert sorted(writers - set(_INTENT_WRITERS)) == [], (
         f"{sorted(writers - set(_INTENT_WRITERS))} write a plan intent -- a restored row's intent is written only once a "
         "venue report of this process has answered it since its last fill or mint (`_answered`); write it through "
-        "`_settle_restored_intent`, or list the writer in `_INTENT_WRITERS` with the reason it writes no restored row's"
+        "`_settle_restored_intent`, or list the writer in `_INTENT_WRITERS` with its reason"
     )
     assert sorted(set(_INTENT_WRITERS) - writers) == [], "an entry no function calls any more leaves `_INTENT_WRITERS`"
     elsewhere = sorted(
