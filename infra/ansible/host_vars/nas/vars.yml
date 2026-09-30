@@ -51,8 +51,8 @@ nas_stack_dir: /volume1/docker/zcrypto-archive
 # `NAS · archive-pull ERROR logs` inside 15 min, `zcrypto-gate-exporter-stale` at 2 h, and the hc.io
 # `zcrypto-gate-verify` dead-man stops pinging; the gate metrics freeze and the re-verification
 # rotation is STOPPED until the pin moves.
-nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:c4135ac75b72206d3499c99d476b375d1cc0c3326a4bb8acee255287bb2f3164
-nas_alloy_image: grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308
+nas_capture_image: ghcr.io/zhaow-de/zcrypto-capture@sha256:d914dad91536b56823d7a3a2b7452e9d60aa03b17e76a5651bcf77e3c54ef4dd
+nas_alloy_image: grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839
 
 # Spec 00102 D7: `full` re-hashes every segment each cycle, `incremental` hashes rsync's transfers
 # plus a rotating 1/24 slice. Flipping it is a config-only converge on the running digest, and so is the
