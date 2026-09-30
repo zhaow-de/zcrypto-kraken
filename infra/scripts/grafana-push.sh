@@ -19,9 +19,8 @@
 # `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root -- rather than
 # installing PyYAML into the system python, where a second copy drifts unseen.
 #
-# The alert rules go through Grafana's Alerting Provisioning HTTP API, one rule per call; the
-# `apiVersion: 1` / `groups:` file-provisioning shape is a different mechanism and is not accepted
-# here, and file provisioning is not available on Grafana Cloud SaaS.
+# Rules go one per call through Grafana's Alerting Provisioning HTTP API; the `apiVersion: 1` /
+# `groups:` file-provisioning shape is not accepted here and is not available on Grafana Cloud SaaS.
 #
 # Verify a DASHBOARD by RENDERING it, never by reading its JSON back: a read-back proves what was
 # stored, not what a panel DISPLAYS, and a unit that reaches a string column renders every cell `NaN`
