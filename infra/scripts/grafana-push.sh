@@ -6,10 +6,6 @@
 # Run it from MERGED develop by default: summaries and panel descriptions cite repo paths, so a push
 # from elsewhere can ship alert text naming files develop does not have. A feature-branch push is
 # admitted only under .claude/skills/zcrypto-grafana-push/SKILL.md's conditions.
-# from elsewhere can ship alert text naming files develop does not have. A push from a feature branch
-# is admitted under .claude/skills/zcrypto-grafana-push/SKILL.md's three conditions: the branch is the
-# one that will merge and its PR body records the push, the fix loop stays on that branch, and a push
-# from develop follows the merge.
 #
 # GRAFANA_SA_TOKEN is the one variable with no default. Obtain it with `grafana_auth.py`'s
 # `vault_var("grafana_sa_token")`, loaded by path the way `grafana-query.py` loads it -- it
@@ -17,7 +13,6 @@
 # extraction. Assign it by command substitution and nothing else: the value must never reach a
 # file, a log or argv. For a PromQL read-back use `infra/scripts/grafana-query.py`, which needs no
 # token from you at all.
-#
 #
 # PATH note, which the PyYAML refusal below points at: this script calls bare `python3`, and PyYAML
 # lives in the project venv, so run it with that venv first on PATH --
@@ -30,9 +25,6 @@
 # Verify a DASHBOARD by RENDERING it, never by reading its JSON back: a read-back proves what was
 # stored, not what a panel DISPLAYS, and a unit that reaches a string column renders every cell `NaN`
 # while the stored JSON looks perfect.
-# one happily and reports health=ok (T0034). Verify a DASHBOARD by RENDERING it, never by reading
-# its JSON back: a read-back proves what was stored, not what a panel DISPLAYS, and a unit that
-# reaches a string column renders every cell `NaN` while the stored JSON looks perfect.
 #
 #   curl -fsS -H "Authorization: Bearer $GRAFANA_SA_TOKEN" -o panel.png \
 #     "$GRAFANA_URL/render/d-solo/<dashboard-uid>/x?panelId=<id>&width=1100&height=420&from=now-6h&to=now"
