@@ -54,8 +54,11 @@ jobs:
       # tests/test_cache_restart.py starts a real valkey-server per scenario and fails without the binary.
       - run: sudo apt-get update && sudo apt-get install -y valkey-server
       - run: uv sync
-      # Four workers for the public runner's four vCPUs; --dist load, since worksteal deals every test out up front and -x then stops only the failing worker. pytest-cov collects the workers' coverage, which `coverage run` would not follow.
-      - run: uv run pytest -n 4 --dist load -x --cov=cli --cov-report=lcov:coverage.lcov
+      # Four workers for the public runner's four vCPUs. --dist load with --maxschedchunk 4: a worker holds a few
+      # queued tests at a time, so -x stops the run within a few tests of its first failure and the slow harness
+      # tests spread over whichever workers are idle; worksteal, or load's default quarter-share chunk, leaves each
+      # worker draining a long queue after -x. pytest-cov collects the workers' coverage.
+      - run: uv run pytest -n 4 --dist load --maxschedchunk 4 -x --cov=cli --cov-report=lcov:coverage.lcov
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
