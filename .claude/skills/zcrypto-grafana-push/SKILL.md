@@ -24,7 +24,7 @@ For each rule the push adds or changes (`git diff <base> -- infra/grafana/alerts
 
 ## Step 2 — where to push from
 
-The script pushes the working tree it runs from, whole, and its prune deletes the folder's rules that tree lacks, so a stale or dirty checkout reverts what `develop` changed since: every push starts with `git fetch origin develop && git merge-base --is-ancestor origin/develop HEAD` exiting 0 and `git status --porcelain -- infra/grafana` printing nothing, in the checkout that pushes. A push from merged `develop` is then the default: summaries and panel descriptions cite repo paths, and a push from elsewhere can ship alert text naming files `develop` does not have. A rule a branch pushed live is that branch's until its merge, and the script cannot see it — a push upserts every rule of its tree by uid and a prune deletes every folder rule its tree lacks — so before any push or prune, `gh pr list --state open --json number,body --jq '.[] | select(.body | test("## Grafana push")) | .number'` names the branches with a live push, and the push holds while one of their sections names a rule this tree would change, the prune while one names a rule this tree lacks. A push from a feature branch is admitted under three conditions, together:
+The script pushes the working tree it runs from, whole, and its prune deletes the folder's rules that tree lacks, so a stale or dirty checkout reverts what `develop` changed since: every push starts with `git fetch origin develop && git merge-base --is-ancestor origin/develop HEAD` exiting 0 and `git status --porcelain -- infra/grafana` printing nothing, in the checkout that pushes. A push from merged `develop` is then the default: summaries and panel descriptions cite repo paths, and a push from elsewhere can ship alert text naming files `develop` does not have. What a branch pushed is that branch's until its merge, and the script cannot see it: before any push or prune, `gh pr list -L 100 --json number,body --jq '.[] | select(.body | test("## Grafana push")) | .number'` lists the open PRs that pushed, and the push holds while another PR's section names a rule or dashboard this tree would change, the prune while one names a rule this tree lacks. A push from a feature branch is admitted under three conditions, together:
 
 1. The branch is the one that will merge, and the push is recorded on its pull request: a `## Grafana push` section in the body naming the branch, the pushed tip and what was pushed (dashboards, rules).
 2. The fix loop stays on that branch: a defect the push or its verification shows is fixed there and pushed again from there.
@@ -37,7 +37,7 @@ The script pushes the working tree it runs from, whole, and its prune deletes th
 
 ## Step 4 — the prune
 
-`GRAFANA_PRUNE=1` turns the script's orphan report into deletions, scoped to our folder, from a `develop` checkout that passes Step 2's freshness test; a superseded rule is pruned only in `.claude/rules/fleet-deploys.md`'s order.
+`GRAFANA_PRUNE=1` turns the script's orphan report into deletions, scoped to our folder, from a `develop` checkout that passes Step 2's freshness test and its open-PR read; a superseded rule is pruned only in `.claude/rules/fleet-deploys.md`'s order.
 
 ## Closeout
 
