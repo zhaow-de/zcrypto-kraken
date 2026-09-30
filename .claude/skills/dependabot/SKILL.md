@@ -102,9 +102,9 @@ A branch that carries a 2c fix commit is read before the push by a different age
 # The rebase rewrote history, so the push must be forced (lease-guarded).
 git push --force-with-lease origin "$(git branch --show-current)"
 
-# coverage.yml runs on pull_request into develop/main (dependabot targets develop), so a
+# test-suite.yml runs on pull_request into develop/main (dependabot targets develop), so a
 # Dependabot PR DOES report a "Full test suite" check — wait for it, and merge only when green.
-# coverage.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
+# test-suite.yml sets fail-on-error: false on the Coveralls upload step, so a red "Full
 # test suite" check is always a real pytest failure — never an upload/secrets artifact.
 #
 # Poll the check-runs OF THE PUSHED SHA. **Never `gh pr view --json statusCheckRollup` here** —
@@ -112,7 +112,7 @@ git push --force-with-lease origin "$(git branch --show-current)"
 # Allowlist green: only `completed` is decided. A denylist of the pending states lets `waiting` — a job
 # held by a deployment-protection rule — read as green.
 # **An EMPTY result is pending, never green.** On a freshly force-pushed SHA it means the checks
-# have not registered yet; `coverage.yml` triggers on `pull_request` into develop/main and branch
+# have not registered yet; `test-suite.yml` triggers on `pull_request` into develop/main and branch
 # protection requires the `Full test suite` context, so "this repo runs no checks" is not a state
 # this loop can be in. Requiring that run BY NAME is what makes the empty window pending.
 # Run this as its OWN command and re-read it every ~45 s — never one long foreground loop —
