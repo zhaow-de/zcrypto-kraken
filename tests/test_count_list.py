@@ -44,7 +44,7 @@ def _corpus_entries() -> set[str]:
 def test_this_checkout_carries_what_the_counts_measure_from():
     """The STATE the guards need, asked of the checkout rather than read off a workflow file.
 
-    Reading `.github/workflows/coverage.yml` can only see that a step is written: `|| true`, an
+    Reading `.github/workflows/test-suite.yml` can only see that a step is written: `|| true`, an
     `echo` prefix, a commented-out command in a block `run:` or a later shallow re-checkout all
     leave such a case green while the state never arrives. This asks the one question instead — and
     a `pull_request` checkout is detached at the merge ref with `origin/develop` alone, so both

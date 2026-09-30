@@ -127,7 +127,7 @@ def _squash(text: str) -> str:
     This file had a whitespace-only version, which is why CI went red where local runs did not.
 
     Which environments style, measured rather than assumed: `GITHUB_ACTIONS=true` alone does (that is
-    what CI trips -- `.github/workflows/coverage.yml` sets no colour variable), and `FORCE_COLOR=1`
+    what CI trips -- `.github/workflows/test-suite.yml` sets no colour variable), and `FORCE_COLOR=1`
     does. `CI=true` alone does not, `TERM=xterm-256color` alone does not, and CliRunner's `color=True`
     does NOT style this panel, so forcing the env is the only lever that reproduces CI here.
     """

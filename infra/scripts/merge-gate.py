@@ -467,7 +467,7 @@ def evaluate(
     if pending:
         fails.append(f"{len(pending)} CI check(s) still running — wait; nothing else blocks a merge on pending")
     if not rollup:
-        fails.append("no CI checks reported yet — wait for coverage.yml to register")
+        fails.append("no CI checks reported yet — wait for test-suite.yml to register")
     if _UNCHECKED_BOX.search(_as_a_reader_sees_it(body, keep_collapsed=True)):
         fails.append(
             "PR description has unchecked checklist item(s): a `- [ ]`, `* [ ]` or `1. [ ]` box, inside `<details>` or a quote too"

@@ -52,7 +52,7 @@ branches:
         # onto main before merging, and the release PR is cut from develop by definition.
         strict: false
         contexts:
-          # `coverage.yml` triggers on pull requests into `main` as well as `develop`, so this
+          # `test-suite.yml` triggers on pull requests into `main` as well as `develop`, so this
           # context does report here; develop's block below carries the exact-name warning.
           - Full test suite
       # Required. Enforce all configured restrictions for administrators. Set to true to enforce required status checks for repository administrators. Set to null to disable.
@@ -74,7 +74,7 @@ branches:
         # before merging, so each merge would stale every other open PR.
         strict: false
         contexts:
-          # Must equal `jobs.coverage.name` in .github/workflows/coverage.yml EXACTLY --
+          # Must equal `jobs.suite.name` in .github/workflows/test-suite.yml EXACTLY --
           # GitHub reports a job's `name:` as the check-run name. It is not the workflow's
           # own `name:`. A context that never reports blocks every PR permanently, and
           # enforce_admins is true here, so that includes the owner.

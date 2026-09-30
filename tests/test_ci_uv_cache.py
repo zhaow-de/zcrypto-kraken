@@ -6,7 +6,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
-COVERAGE = WORKFLOWS / "coverage.yml"
+SUITE = WORKFLOWS / "test-suite.yml"
 WARMER = WORKFLOWS / "uv-cache.yml"
 # setup-uv folds the first five into its cache key (`computeKeys` in its src/cache/restore-cache.ts),
 # with the runner's OS and its cache-format version; `cache-local-path` decides the path the cache is
@@ -39,9 +39,9 @@ def _setup_uv(job: dict) -> dict:
 
 
 def test_the_warmer_and_the_suite_compute_the_same_cache_key():
-    coverage, warmer = _only_job(_load(COVERAGE)), _only_job(_load(WARMER))
-    assert coverage["runs-on"] == warmer["runs-on"]
-    suite, warm = _setup_uv(coverage), _setup_uv(warmer)
+    suite_job, warmer = _only_job(_load(SUITE)), _only_job(_load(WARMER))
+    assert suite_job["runs-on"] == warmer["runs-on"]
+    suite, warm = _setup_uv(suite_job), _setup_uv(warmer)
     assert suite["uses"] == warm["uses"]
     for name in KEY_INPUTS:
         assert suite.get("with", {}).get(name) == warm.get("with", {}).get(name), name
@@ -49,7 +49,7 @@ def test_the_warmer_and_the_suite_compute_the_same_cache_key():
 
 
 def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool, has_base: bool = True) -> str:
-    (lock,) = [s for s in _only_job(_load(COVERAGE))["steps"] if s.get("id") == "lock"]
+    (lock,) = [s for s in _only_job(_load(SUITE))["steps"] if s.get("id") == "lock"]
     repo = tmp_path / "repo"
     repo.mkdir(parents=True)
 
@@ -76,7 +76,7 @@ def _lock_step_output(tmp_path: Path, *, lockfile_changed: bool, has_base: bool 
 
 
 def test_a_pull_request_saves_the_cache_only_when_it_changes_the_lockfile(tmp_path):
-    job = _only_job(_load(COVERAGE))
+    job = _only_job(_load(SUITE))
     step = _setup_uv(job)
     assert step["with"].get("save-cache") == SAVE_WHEN_THE_LOCK_CHANGED
     (lock,) = [s for s in job["steps"] if s.get("id") == "lock"]

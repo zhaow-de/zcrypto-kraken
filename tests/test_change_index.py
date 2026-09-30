@@ -105,7 +105,7 @@ def _unmeasurable(why: str) -> NoReturn:
     """A corpus this guard cannot read fails, everywhere, and never skips.
 
     A skip is indistinguishable from a pass in a summary line, so a checkout that cannot answer
-    must say so out loud; `coverage.yml` asks for the whole history precisely so this never fires
+    must say so out loud; `test-suite.yml` asks for the whole history precisely so this never fires
     in CI. Deciding it on an environment name instead would put a second opt-in key behind a skip,
     which `tests/test_live_venue_opt_in.py` exists to refuse.
     """
