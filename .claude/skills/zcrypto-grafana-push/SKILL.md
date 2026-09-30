@@ -31,13 +31,10 @@ A push from merged `develop` is the default: summaries and panel descriptions ci
 2. The fix loop stays on that branch: a defect the push or its verification shows is fixed there and pushed again from there.
 3. A push from `develop` follows the merge, so what is live matches the merged tree; the closeout names it.
 
-
 ## Step 3 — verify
 
 - Read each new or changed rule's first sample by value with `grafana-query.py`, and each new panel's query the same way; `(no series)` is a fail, not a zero.
 - Render each new or changed dashboard as the script's header says, the narrowed-variable case included.
-- Read each new or changed rule's first sample by value with `grafana-query.py`, and each new panel's query the same way; `(no series)` is a fail, not a zero.
-- Verify a dashboard by rendering it rather than by reading its JSON back: the script's header carries the `render/d-solo` form and the narrowed-variable case that renames the value field.
 
 ## Step 4 — the prune
 
