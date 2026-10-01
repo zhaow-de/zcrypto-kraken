@@ -1658,6 +1658,14 @@ def _dark_with_exposure_lookback(rule) -> int:
     return _duration_seconds(selector.group(1))
 
 
+def _dark_with_exposure_unobserved_reads(rule) -> float:
+    """What node A reads over a window with no position sample: its own `or on() vector(N)`."""
+    node_a = next(n for n in rule["data"] if n["refId"] == "A")
+    fallback = re.search(r"or on\(\) vector\(([0-9.]+)\)\s*$", node_a["model"]["expr"])
+    assert fallback, f"node A no longer ends in an `or on() vector(N)` fallback: {node_a['model']['expr']!r}"
+    return float(fallback.group(1))
+
+
 def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads():
     """`relativeTimeRange.from` does not feed a range selector on an instant node, so a mismatch here
     breaks nothing at evaluation time. What it breaks is the record: this file declares a node's
@@ -1797,8 +1805,8 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
     """A CHARACTERISATION of the rule's own blindness, which stays: with no `zcrypto_exec_position`
     sample in the window, node A's `or on() vector(0)` supplies the same 0 a flat book publishes, so both
-    histories get the same quiet verdict. A node A that tells the two apart leaves this green: the
-    replay takes only the lookback and `for:` from the rule."""
+    histories get the same quiet verdict. The fallback, the lookback and `for:` are read out of the rule,
+    so a node A that tells the two apart turns this RED."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
@@ -1821,9 +1829,16 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
         f"firing histories and pins nothing: {sorted(quiet_flat)[:3]}"
     )
 
-    unobserved = _replay_dark_with_exposure(never_observed, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    unobserved = _replay_dark_with_exposure(
+        never_observed,
+        goes_dark,
+        lookback=lookback,
+        hold_for=hold_for,
+        span=span,
+        unobserved_reads=_dark_with_exposure_unobserved_reads(rule),
+    )
     assert unobserved == quiet_flat, (
-        f"the replay now tells an unmade observation apart from a measured flat book: {sorted(unobserved ^ quiet_flat)[:3]}"
+        f"the rule now tells an unmade observation apart from a measured flat book: {sorted(unobserved ^ quiet_flat)[:3]}"
     )
 
 
