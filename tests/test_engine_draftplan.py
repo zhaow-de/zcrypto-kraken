@@ -209,6 +209,7 @@ def _placed(symbol: str, side: str, *, notional: float | None = None, qty: float
         venue_b=0.0,
         price=price,
         ordermin=ordermin,
+        lot_step=1e-08,
         delta_eur=0.0,
         outcome="placed",
         side=side,
@@ -925,7 +926,7 @@ def test_a_venue_record_holding_the_books_spot_lots_drafts_buys_and_sells():
     assert {d.symbol: d.engine_held for d in result.decisions if d.engine_held} == {
         f"{base}/EUR": qty for base, qty in _LOTS.items()
     }
-    assert "engine held differs" not in result.report
+    assert "differs from Kraken held" not in result.report
 
 
 def test_a_venue_record_holding_the_books_spot_lots_drafts_the_exit():
@@ -959,6 +960,18 @@ def test_positions_reading_zero_while_kraken_holds_the_lots_draft_what_matching_
 
     assert {d.engine_held for d in result.decisions} == {0}
     assert result.plan_text == _day_two_draft(targets).plan_text
+
+
+def test_the_report_says_what_the_engines_figure_is_and_names_the_legs_over_a_lot_step_from_krakens():
+    venue = _venue(cycle_ts=_DAY_TWO, positions={"SOL/EUR": 0.11999999, "XRP/EUR": -10.0})
+
+    result = _draft({}, boundary=_DAY_TWO, venue=venue, export=_export(1000.0, **_LOTS))
+
+    assert (
+        "engine held is the engine Cache's net -- 0 on a leg held through a restart, negative on a leg sold since one -- and "
+        "Kraken's exports are the book: nothing is drafted from it. It differs from Kraken held by more than a lot step on: "
+        "BTC/EUR, ETH/EUR, XRP/EUR\n"
+    ) in result.report
 
 
 def test_the_reserve_day_drafts_the_exit_of_the_legs_still_held_when_the_sold_legs_read_negative():
@@ -1176,14 +1189,14 @@ def test_the_command_writes_the_plan_and_the_decision_rows(tmp_path, monkeypatch
     assert [i.symbol for i in plan.intents] == ["SOL/EUR", "BTC/EUR", "ETH/EUR"]
     assert len(decisions.read_text().splitlines()) == len(LEGS)
     assert f"plan written to {plan_path}" in out
-    assert "engine held differs from Kraken held on: SOL/EUR" in out
+    assert "It differs from Kraken held by more than a lot step on: SOL/EUR\n" in out
 
     again, out = _invoke(monkeypatch, args)
 
     assert again.exit_code == 0, out
     assert [i.symbol for i in parse_plan((decisions.parent / f"{_id(2)}.json").read_text()).intents] == ["ADA/EUR"]
     assert len(decisions.read_text().splitlines()) == 2 * len(LEGS)
-    assert f"engine held differs from Kraken held on: SOL/EUR (in {_id(1)}, drafted after the record)" in out
+    assert f"by more than a lot step on: SOL/EUR (in {_id(1)}, drafted after the record)\n" in out
 
 
 def test_a_refused_command_writes_nothing(tmp_path, monkeypatch):

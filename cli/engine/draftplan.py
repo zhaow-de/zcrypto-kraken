@@ -79,6 +79,7 @@ class LegDecision:
     venue_b: float
     price: float
     ordermin: float
+    lot_step: float
     delta_eur: float
     outcome: str  # placed (drafted into this run's plan) | queued | carried | on-target
     side: str | None = None  # the delta's direction
@@ -381,6 +382,7 @@ def decide_leg(
         venue_b=venue_b,
         price=price,
         ordermin=constraints.ordermin,
+        lot_step=constraints.lot_step,
         delta_eur=target - kraken_held * price,
         outcome="carried",
     )
@@ -623,10 +625,14 @@ def _render(
     differ = [
         leg.symbol + (f" (in {since_record[leg.symbol]}, drafted after the record)" if leg.symbol in since_record else "")
         for leg in decisions
-        if leg.engine_held is not None and not math.isclose(leg.engine_held, leg.kraken_held, rel_tol=1e-9, abs_tol=1e-9)
+        if leg.engine_held is not None and round(abs(leg.engine_held - leg.kraken_held) / leg.lot_step, 6) > 1
     ]
     if differ:
-        lines.append(f"engine held differs from Kraken held on: {', '.join(differ)}")
+        lines.append(
+            "engine held is the engine Cache's net -- 0 on a leg held through a restart, negative on a leg sold since one -- "
+            "and Kraken's exports are the book: nothing is drafted from it. It differs from Kraken held by more than a lot "
+            f"step on: {', '.join(differ)}"
+        )
     if outside:
         lines.append(
             "balances outside the nine legs, never drafted: " + ", ".join(f"{c} {v:.10g}" for c, v in sorted(outside.items()))
