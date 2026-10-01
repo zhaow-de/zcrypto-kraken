@@ -566,8 +566,7 @@ def test_a_draft_past_a_one_intent_plans_last_drop_is_refused(hour, clock, fragm
     [
         (_venue(balances={"EUR": 1050.0, "SOL": "abc"}), "SOL balance 'abc' is unreadable"),
         (_venue(balances={"EUR": 1050.0, "XDG": "nan"}), "XDG balance 'nan' is unreadable"),
-        (_venue(positions={"BTC/EUR": -0.0002}), "a BTC/EUR position of -0.0002 -- a short is no spot lot"),
-        (_venue(positions={"ETH/BTC": "x"}), "ETH/BTC position 'x' is unreadable"),
+        (_venue(positions={"BTC/EUR": "x"}), "BTC/EUR position 'x' is unreadable"),
         (_venue(positions={"SOL/EUR": "nan"}), "SOL/EUR position 'nan' is unreadable"),
         (
             {"schema_version": 2, "cycle_ts": BOUNDARY.isoformat(), "code_version": "test", "status": "error", "error": "down"},
@@ -575,7 +574,7 @@ def test_a_draft_past_a_one_intent_plans_last_drop_is_refused(hour, clock, fragm
         ),
     ],
 )
-def test_a_venue_record_the_draft_cannot_read_b_or_spot_from_is_refused(venue, fragment):
+def test_a_venue_record_the_draft_cannot_read_b_or_a_legs_position_from_is_refused(venue, fragment):
     with pytest.raises(DraftPlanError, match=re.escape(fragment)):
         _draft({"BTC/EUR": 0.0177}, venue=venue)
 
@@ -894,6 +893,45 @@ def test_a_venue_record_holding_the_books_spot_lots_drafts_the_exit():
         ("XRP/EUR", "sell", 10.0),
     ]
     assert (_leg(result, "SOL/EUR").outcome, _leg(result, "SOL/EUR").qty) == ("queued", 0.12)
+
+
+def test_a_negative_position_in_the_venue_record_is_carried_and_decides_nothing():
+    venue = _venue(balances={"EUR": 1000.0, "SOL": 0.2}, positions={"SOL/EUR": -0.08, "LINK/EUR": -0.58882411})
+
+    result = _draft({"BTC/EUR": 0.0177}, venue=venue, export=_export(1000.0, SOL=0.12))
+
+    assert [(i.symbol, i.side, i.qty, i.notional_eur) for i in parse_plan(result.plan_text).intents] == [
+        ("SOL/EUR", "sell", 0.12, None),
+        ("BTC/EUR", "buy", None, 12.74),
+    ]
+    assert _leg(result, "SOL/EUR").engine_held == -0.08
+    assert next(row for row in result.rows if row["symbol"] == "SOL/EUR")["engine_held"] == -0.08
+
+
+def test_positions_reading_zero_while_kraken_holds_the_lots_draft_what_matching_positions_draft():
+    targets = {"BTC/EUR": 0.0297, "ETH/EUR": 0.0125, "SOL/EUR": 0.004, "XRP/EUR": 0.0183, "ADA/EUR": 0.01}
+
+    result = _draft(targets, boundary=_DAY_TWO, venue=_venue(cycle_ts=_DAY_TWO), export=_export(1000.0, **_LOTS))
+
+    assert {d.engine_held for d in result.decisions} == {0}
+    assert result.plan_text == _day_two_draft(targets).plan_text
+
+
+def test_the_reserve_day_drafts_the_exit_of_the_legs_still_held_when_the_sold_legs_read_negative():
+    reserve = _noon(EXIT_DAYS[1])
+    sold = {"BTC": 0.0002, "XRP": 10.0, "LTC": 0.2}
+    still_held = {base: qty for base, qty in _HELD.items() if base not in sold}
+    venue = _venue(cycle_ts=reserve, balances={"EUR": 900.0} | _HELD, positions={f"{base}/EUR": -qty for base, qty in sold.items()})
+
+    result = _draft({}, boundary=reserve, venue=venue, export=_export(930.0, **still_held), exiting=True)
+
+    assert [(i.symbol, i.side, i.qty) for i in parse_plan(result.plan_text).intents] == [
+        ("ETH/EUR", "sell", 0.005),
+        ("ADA/EUR", "sell", 50.0),
+        ("SOL/EUR", "sell", 0.1),
+    ]
+    assert {d.symbol for d in result.decisions if d.outcome == "on-target"} == {f"{base}/EUR" for base in sold}
+    assert {d.symbol for d in result.decisions if d.outcome == "queued"} == {"DOGE/EUR", "AVAX/EUR"}
 
 
 # ---- the box's calendar ------------------------------------------------------------------------------

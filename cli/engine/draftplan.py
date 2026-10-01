@@ -259,8 +259,9 @@ def parse_balance_export(doc: object) -> BalanceExport:
 
 
 def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], dict[str, float], dict]:
-    """Each leg's ordermin and lot step, the engine's held per symbol, and the balances b is read from, off the venue
-    record of `cycle_ts`'s boundary. A position there sums the lots the engine's Cache holds open, spot lots included."""
+    """Each leg's ordermin and lot step, the engine's held per leg, and the balances b is read from, off the venue
+    record of `cycle_ts`'s boundary. A position there is the engine Cache's net -- 0 on a lot held through a restart,
+    negative on one sold since -- so it is carried into the report and decides nothing."""
     if doc.get("status") != "ok" or doc.get("schema_version") != 2:
         raise DraftPlanError(
             f"the venue record is not an ok schema-2 snapshot (status {doc.get('status')!r}, schema_version "
@@ -285,17 +286,16 @@ def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], d
             raise DraftPlanError(f"the venue record's {symbol} ordermin {ordermin!r} or lot step {lot_step!r} is not positive")
         constraints[symbol] = Constraints(ordermin=ordermin, lot_step=lot_step)
     positions: dict[str, float] = {}
-    for symbol, size in doc["state"]["positions"].items():
+    for symbol in LEGS:
+        if symbol not in doc["state"]["positions"]:
+            continue
+        size = doc["state"]["positions"][symbol]
         try:
             held = float(size)
         except TypeError, ValueError:
             held = math.nan
         if not math.isfinite(held):
             raise DraftPlanError(f"the venue record's {symbol} position {size!r} is unreadable")
-        if held < 0:
-            raise DraftPlanError(
-                f"the venue record carries a {symbol} position of {held:.10g} -- a short is no spot lot, and the box is spot only"
-            )
         positions[symbol] = held
     return constraints, positions, doc["state"]["balances"]
 
