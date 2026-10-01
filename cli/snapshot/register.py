@@ -102,10 +102,9 @@ def render_markdown(snapshot: dict) -> str:
         )
 
     # The ⏱ cost facts. A fee ladder renders as its base tier + depth, never in full: a 10-tier table
-    # per pair would bury the row a reader actually checks. Since sweep #3 AssetPairs serves no
-    # ladder on any pair, so those cells read `-` and `kraken-fee-schedule.md` alone carries the
-    # fees. margin_rate IS the borrow/rollover rate the master plan calls externally owned, so an
-    # "unchanged" verdict that never looked at these columns was never worth much.
+    # per pair would bury the row a reader actually checks. margin_rate IS the borrow/rollover rate the
+    # master plan calls externally owned, so an "unchanged" verdict that never looked at these columns
+    # was never worth much.
     lines += [
         "",
         "## Fee schedule, borrow rate & margin bands",

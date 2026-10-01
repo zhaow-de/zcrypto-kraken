@@ -184,7 +184,6 @@ def test_the_listing_takes_the_account_s_fee_tier_from_trade_volume(venue):
     ],
 )
 def test_a_trade_volume_failure_yields_the_listing_at_zero_fees(venue, fault):
-    """#5005's fallback, onto the public fees AssetPairs serves empty."""
     for name, value in fault.items():
         setattr(venue, name, value)
     zero = (Decimal(0), Decimal(0))

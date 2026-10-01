@@ -155,8 +155,7 @@ class KrakenLoopback:
     """What the venue holds, and what reached it. A test mutates the holdings between reads."""
 
     # Every AssetPairs row, this one and the tokenized one, goes out with `fees` and `fees_maker` empty
-    # whatever ladder it carries, as Kraken serves both listings: a listing whose TradeVolume read fails
-    # therefore loads at zero fees.
+    # whatever ladder it carries, as Kraken serves both listings.
     asset_pairs: dict[str, Any]
     # AssetPairs rows answered to `aclass_base=tokenized_asset`, which the adapter asks for beside the
     # currency listing. TradeVolume here carries no fee for them, which fails the whole listing: a
