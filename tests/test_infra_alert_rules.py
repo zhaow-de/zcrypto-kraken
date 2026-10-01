@@ -1658,6 +1658,13 @@ def _dark_with_exposure_lookback(rule) -> int:
     return _duration_seconds(selector.group(1))
 
 
+def _dark_with_exposure_unobserved_reads(rule) -> float:
+    node_a = next(n for n in rule["data"] if n["refId"] == "A")
+    fallback = re.search(r"or on\(\) vector\(([0-9.]+)\)\s*$", node_a["model"]["expr"])
+    assert fallback, f"node A no longer ends in an `or on() vector(N)` fallback: {node_a['model']['expr']!r}"
+    return float(fallback.group(1))
+
+
 def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads():
     """`relativeTimeRange.from` does not feed a range selector on an instant node, so a mismatch here
     breaks nothing at evaluation time. What it breaks is the record: this file declares a node's
@@ -1795,18 +1802,18 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
 
 def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
-    """A CHARACTERISATION of the blindness `T0187` records, not an approval of it: with no
-    `zcrypto_exec_position` sample in the window, node A's `or on() vector(0)` supplies the same 0 a
-    flat book publishes, so both histories get the same quiet verdict. It is meant to go RED the day
-    that gap closes -- green here is not the rule being sound."""
+    """A CHARACTERISATION of the rule's blindness, not a requirement of it: node A's trailing `or on() vector(N)`
+    literal, its lookback and `for:` are read out of the rule, so a changed fallback literal turns this red. A presence
+    arm inside node A, or a separate presence node feeding the condition, is not modelled; such a change takes its own
+    test."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
     dark_at = 3600
     flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
-    # No child on the gauge, so no series at all: `run()`'s startup seed publishes no symbol when the
-    # journal holds no readable ok schema-2 venue record (and its `except Exception` swallows a raise),
-    # and no fill has set one since. Not a published 0 -- an absence.
+    # No child on the gauge, so no series at all: a boot whose journal seed found no readable ok
+    # schema-2 venue record and whose first-tick venue read failed, until the next re-read pass or a
+    # fill. Not a published 0 -- an absence.
     never_observed = []
     # Stopped at the flat history's own horizon: past it that history is unobserved too, and the two
     # stop being different things to compare.
@@ -1821,18 +1828,24 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
         f"firing histories and pins nothing: {sorted(quiet_flat)[:3]}"
     )
 
-    unobserved = _replay_dark_with_exposure(never_observed, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    unobserved = _replay_dark_with_exposure(
+        never_observed,
+        goes_dark,
+        lookback=lookback,
+        hold_for=hold_for,
+        span=span,
+        unobserved_reads=_dark_with_exposure_unobserved_reads(rule),
+    )
     assert unobserved == quiet_flat, (
-        f"the rule now tells an unmade observation apart from a measured flat book -- if that is `T0187` closing, "
-        f"this assertion is what the fix changes: {sorted(unobserved ^ quiet_flat)[:3]}"
+        f"the rule now tells an unmade observation apart from a measured flat book: {sorted(unobserved ^ quiet_flat)[:3]}"
     )
 
 
 def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
     """About the replay, not the rule: told to read an empty window as something other than 0, the same
     harness gives the two histories different verdicts and still leaves the flat one quiet inside its
-    own horizon. It is a seam a fix could turn on -- which one is undecided -- exercised so that a
-    change of expectation there is a changed assertion rather than a rewritten harness."""
+    own horizon. It is the seam a change to the rule would turn on, exercised so that a change of
+    expectation is a changed assertion rather than a rewritten harness."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
