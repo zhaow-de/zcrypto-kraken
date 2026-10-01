@@ -1802,8 +1802,10 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
 
 def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
-    """A CHARACTERISATION of the rule's blindness, not a requirement of it: node A's fallback, lookback and `for:` are
-    read out of the rule, so a node A that tells the two histories apart turns this red."""
+    """A CHARACTERISATION of the rule's blindness, not a requirement of it: node A's trailing `or on() vector(N)`
+    literal, its lookback and `for:` are read out of the rule, so a changed fallback literal turns this red. A presence
+    arm inside node A, or a separate presence node feeding the condition, is not modelled; such a change takes its own
+    test."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
