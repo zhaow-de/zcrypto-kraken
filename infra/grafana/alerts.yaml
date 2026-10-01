@@ -4549,10 +4549,10 @@ rules:
     data:
       # `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
       # cadvisor). `process_start_time_seconds` is kept and moves on every restart, which is the same
-      # fact from inside the process. A converge restarts on purpose and this pages once for it --
-      # an attended converge's own record in the channel. Any other firing is the OOM-kill or a
-      # crash, and nothing else reports either: the container is back in seconds, the dead-man
-      # keeps pinging, and the log-dead rules never see a gap that short.
+      # fact from inside the process. A converge or a restart by hand restarts on purpose and this
+      # pages once for it -- the action's own record in the channel. A firing with no such action
+      # is the OOM-kill or a crash, and nothing else reports either: the container is back in
+      # seconds, the dead-man keeps pinging, and the log-dead rules never see a gap that short.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 900, to: 0}
@@ -4580,8 +4580,8 @@ rules:
     annotations:
       summary: >-
         A daemon in the fleet restarted in the last 15 minutes — `job` says which: a capture or engine
-        daemon, the ops liquidations poller, or Alloy itself (`integrations/self`). If a converge or an Alloy
-        bump just ran on that host, this is that action's own record and needs nothing. If nothing was converged, the daemon was OOM-killed or crashed and came
+        daemon, the ops liquidations poller, or Alloy itself (`integrations/self`). If a converge, an Alloy
+        bump or a restart by hand just ran on that host, this is that action's own record and the page itself needs nothing. If no one restarted it, the daemon was OOM-killed or crashed and came
         back on its own — read `RestartCount` on the container and the memory panels, and check whether
         parquet is advancing. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-daemon-restarted
       __dashboardUid__: "zcrypto-fleet"
