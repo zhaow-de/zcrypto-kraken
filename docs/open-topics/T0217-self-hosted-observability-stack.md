@@ -32,12 +32,6 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 
 ## Suggested next steps
 
-- The owner's open decisions, each recorded in the spec:
-  - Go: self-host as above, pay for Grafana Cloud Pro, or stay on the free tier.
-  - Whether any host ships to both stacks while rung 2's box runs, and which.
-  - What covers the exposure rule while the node is down, once Grafana Cloud is retired: a thin Grafana Cloud leg kept for it, or the engine's healthchecks.io check and a hand-read procedure.
-  - The node's public surface: the UI and API behind the bridgehead's client certificates with ingest alone public, or a public login.
-  - Reboots and patching: an unattended reboot slot with a monthly hand patch pass, or attended reboots.
-  - Backup: rebuild from git with history lost, the provider's backups, or a pull to the NAS.
-- Write the spec and its plan.
-- Build in this order: the node and its role taking a shadow push; dual-shipping, the primary last and after the box; the cutover of paging; the retirement of the Grafana Cloud leg and the keep-alive.
+- The owner's decisions of 2026-10-01 are recorded in `docs/specs/00121-self-hosted-observability-design.md`: self-host; the bridgehead, ops and the three cache nodes ship to both stacks inside rung 2's box; the engine's healthchecks.io check and a hand read cover the exposure rule while the node is down; one public hostname under Grafana's own authentication; an unattended reboot slot with a monthly hand patch pass; the repo plus the provider's backups.
+- The owner reviews the spec; then its plan, reviewed by `zcrypto-plan-review` before the first task.
+- Build in the spec's four phases: the node taking a shadow push; dual-shipping, the primary last and after the box; the cutover of paging; the retirement of the Grafana Cloud leg and the keep-alive.
