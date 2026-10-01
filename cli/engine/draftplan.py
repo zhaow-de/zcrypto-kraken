@@ -13,6 +13,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 
 from cli.engine.errors import EngineError
 from cli.engine.instruments import _floor_to_step
@@ -398,12 +399,28 @@ def decide_leg(
         qty = _floor_to_step(kraken_held, constraints.lot_step)
         reason = "the whole leg" if exiting else "the whole leg: the remainder would be under ordermin"
     if 0 < venue_b < qty:
-        return replace(
-            leg,
-            side="sell",
-            reason=f"the venue record's b {venue_b:.10g} is under the sell qty {qty:.10g}, which the engine refuses -- restart "
-            "it inside an inter-cycle gap, then draft from the first boundary record written after the restart",
-        )
+        # `executor._classify_spot_close`'s refusal; it admits a sell of no more than b.
+        capped = _floor_to_step(venue_b, constraints.lot_step)
+        if capped < constraints.ordermin:
+            return replace(
+                leg,
+                side="sell",
+                reason=f"the venue record's b {venue_b:.10g} is under the sell qty {qty:.10g}, which the engine refuses, and "
+                f"under ordermin {constraints.ordermin:.10g}, so no part of the sell is placeable -- the leg cannot be sold "
+                "through the engine while the venue record carries that b: see the venue record's balances in the rung-2 "
+                "procedure, `engine-rung-2-box` in infra/runbooks/engine-procedures.md",
+            )
+        left = float(Decimal(str(qty)) - Decimal(str(capped)))
+        if left < constraints.ordermin:
+            rest = f"the remaining {left:.10g} is under ordermin {constraints.ordermin:.10g}: dust"
+        else:
+            rest = (
+                f"the remaining {left:.10g} carries to a later draft, which sells up to b again -- to sell more at once, "
+                "restart the engine inside an inter-cycle gap, which raises b for a coin Kraken holds, and draft from the "
+                "first boundary record written after it"
+            )
+        reason = f"capped at the venue record's b {venue_b:.10g}, under the sell qty {qty:.10g}; {rest}"
+        qty = capped
     return replace(leg, outcome="placed", side="sell", qty=qty, reason=reason)
 
 

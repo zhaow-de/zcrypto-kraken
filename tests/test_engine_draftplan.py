@@ -186,7 +186,7 @@ def _leg(result, symbol: str) -> LegDecision:
     return next(d for d in result.decisions if d.symbol == symbol)
 
 
-def _decide(symbol="SOL/EUR", *, weight=0.0, price=100.0, ordermin=0.06, lot_step=1e-08, held=0.0, venue_b=0.0):
+def _decide(symbol="SOL/EUR", *, weight=0.0, price=100.0, ordermin=0.06, lot_step=1e-08, held=0.0, venue_b=0.0, exiting=False):
     return decide_leg(
         symbol,
         weight=weight,
@@ -195,6 +195,7 @@ def _decide(symbol="SOL/EUR", *, weight=0.0, price=100.0, ordermin=0.06, lot_ste
         kraken_held=held,
         engine_held=held,
         venue_b=venue_b,
+        exiting=exiting,
     )
 
 
@@ -278,14 +279,58 @@ def test_a_whole_cent_buy_keeps_its_cent_under_float_noise():
     assert (leg.outcome, leg.notional_eur) == ("placed", 21.60)
 
 
-@pytest.mark.parametrize(("venue_b", "outcome"), [(0.05, "carried"), (0.0, "placed"), (0.1, "placed")])
-def test_a_sell_the_venue_record_refutes_carries(venue_b, outcome):
+@pytest.mark.parametrize("venue_b", [0.0, 0.1, 0.2])
+def test_a_sell_the_venue_records_b_does_not_refute_is_placed_at_its_own_qty(venue_b):
     leg = _decide(held=0.1, venue_b=venue_b)
 
-    assert leg.outcome == outcome
-    if outcome == "carried":
-        assert "b 0.05 is under the sell qty 0.1" in leg.reason
-        assert "first boundary record written after the restart" in leg.reason
+    assert (leg.outcome, leg.qty, leg.reason) == ("placed", 0.1, "the whole leg: the remainder would be under ordermin")
+
+
+def test_a_sell_over_the_venue_records_b_is_capped_at_b_and_a_remainder_under_ordermin_is_dust():
+    leg = _decide(held=0.30000002, venue_b=0.3, exiting=True)
+
+    assert (leg.outcome, leg.side, leg.qty) == ("placed", "sell", 0.3)
+    assert leg.reason == (
+        "capped at the venue record's b 0.3, under the sell qty 0.30000002; the remaining 2e-08 is under ordermin 0.06: dust"
+    )
+
+
+def test_a_capped_sell_whose_remainder_reaches_ordermin_carries_it_and_names_the_restart():
+    leg = _decide("XRP/EUR", price=1.3, ordermin=1.65, held=10.0, venue_b=5.0, exiting=True)
+
+    assert (leg.outcome, leg.side, leg.qty) == ("placed", "sell", 5.0)
+    assert leg.reason == (
+        "capped at the venue record's b 5, under the sell qty 10; the remaining 5 carries to a later draft, which sells up "
+        "to b again -- to sell more at once, restart the engine inside an inter-cycle gap, which raises b for a coin Kraken "
+        "holds, and draft from the first boundary record written after it"
+    )
+
+
+def test_a_capped_sell_is_b_floored_to_the_lot_step():
+    leg = _decide(held=1.0, venue_b=0.1239, lot_step=0.001)
+
+    assert (leg.outcome, leg.qty) == ("placed", 0.123)
+    assert "the remaining 0.877 carries" in leg.reason
+
+
+@pytest.mark.parametrize(
+    ("venue_b", "shown", "qty"), [(1e-08, "1e-08", None), (0.05999999, "0.05999999", None), (0.06, None, 0.06)]
+)
+def test_a_b_under_ordermin_places_nothing_and_sends_the_reader_to_the_procedure(venue_b, shown, qty):
+    leg = _decide(held=0.1, venue_b=venue_b)
+
+    assert (leg.side, leg.qty) == ("sell", qty)
+    if qty is None:
+        assert leg.outcome == "carried"
+        assert leg.reason == (
+            f"the venue record's b {shown} is under the sell qty 0.1, which the engine refuses, and under ordermin 0.06, so no "
+            "part of the sell is placeable -- the leg cannot be sold through the engine while the venue record carries that "
+            "b: see the venue record's balances in the rung-2 procedure, `engine-rung-2-box` in "
+            "infra/runbooks/engine-procedures.md"
+        )
+    else:
+        assert leg.outcome == "placed"
+        assert leg.reason.endswith("the remaining 0.04 is under ordermin 0.06: dust")
 
 
 def test_a_negative_target_is_read_as_zero_and_sells_the_leg_whole():
@@ -931,6 +976,27 @@ def test_the_reserve_day_drafts_the_exit_of_the_legs_still_held_when_the_sold_le
     ]
     assert {d.symbol for d in result.decisions if d.outcome == "on-target"} == {f"{base}/EUR" for base in sold}
     assert {d.symbol for d in result.decisions if d.outcome == "queued"} == {"DOGE/EUR", "AVAX/EUR"}
+
+
+def test_the_exit_caps_a_leg_a_reward_lifted_over_the_venue_records_b_and_the_engine_admits_the_sell():
+    from cli.engine.execgate import GateLevel
+    from cli.engine.executor import _classify_spot_close
+
+    venue = _venue(cycle_ts=EXIT_BOUNDARY, balances={"EUR": 1000.0, "SOL": 0.12})
+
+    result = _draft({}, boundary=EXIT_BOUNDARY, venue=venue, export=_export(1000.0, SOL=0.12000001), exiting=True)
+
+    assert _leg(result, "SOL/EUR").reason == (
+        "exit: target 0; capped at the venue record's b 0.12, under the sell qty 0.12000001; the remaining 1e-08 is under "
+        "ordermin 0.06: dust"
+    )
+    (intent,) = parse_plan(result.plan_text).intents
+    assert (intent.symbol, intent.qty) == ("SOL/EUR", 0.12)
+    balances = venue["state"]["balances"]
+    for level in (GateLevel.FULL, GateLevel.REDUCE_ONLY):
+        decision = _classify_spot_close(intent, balances=balances, level=level)
+        assert (decision.refusal, decision.qty) == (None, 0.12)
+    assert _classify_spot_close(replace(intent, qty=0.12000001), balances=balances, level=GateLevel.FULL).refusal is not None
 
 
 # ---- the box's calendar ------------------------------------------------------------------------------
