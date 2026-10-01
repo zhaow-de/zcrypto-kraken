@@ -1514,29 +1514,24 @@ rules:
     data:
       # The degrading-primary detector (T0003 records the origin).
       #
-      # A primary that is quietly falling apart -- reconnecting constantly, dropping seconds at a time
-      # -- trips NOTHING else: every gap is healed by the secondary, so residual stays flat; it keeps
-      # pinging, so its dead-man stays green; it keeps producing finals, so source-lag stays low. The
-      # RATE at which it needs healing is the only thing that reveals it.
+      # A primary that is quietly falling apart, dropping seconds at a time, trips no other gap rule:
+      # every gap is healed by the secondary, so residual stays flat; it keeps pinging, so its
+      # dead-man stays green; it keeps producing finals, so source-lag stays low. The RATE at which it
+      # needs healing reveals it.
       #
       # Reads `healable`, not `healed`: `healed_gap_seconds` counts minted repair only, so it reads 0
       # wherever minting is off, and `ops_reconcile_mint` selects the mode -- this signal must not
       # depend on the mode. `healable` counts the seconds the secondary WITNESSED and could cover, in
       # both modes.
       #
-      # PROVISIONAL: 300 s per pair per day is BOUNDED, not fitted. Below it, the worst benign day
-      # the record allows: a rollout and a same-day capture rollback, each the size of the worst
-      # converge measured to 2026-09-17 (108 s per pair), plus one organic drop, 261 s; the worst
-      # day measured is that 108. Above it, a degradation the size this fleet has measured: every
-      # reconnect at 7.5 a day, the primary's rate over the 13 days to that date, turned into a 43 s
-      # silent death, 324 s, or seven such drops. Divided by the live pair count, so 300 is
-      # WALL-CLOCK seconds per pair -- undivided it is a cross-stream sum that tightens silently
+      # PROVISIONAL: 300 s per pair per day is BOUNDED, not fitted. Divided by the live pair count, so
+      # 300 is WALL-CLOCK seconds per pair -- undivided it is a cross-stream sum that tightens silently
       # with every pair added. A single pair's long silence pages the stream-silent rules first and
       # reaches this one only past 300 s times the pair count; a mean cannot exceed its largest
       # pair, so a day crosses 300 only when some pair booked more than 300 s in it. Blind to any
-      # gap under the reconciler's 30 s floor, clean-close reconnects among them:
-      # zcrypto_capture_reconnects_total is charted, not alerted. The reminder in
-      # infra/runbooks/ops.md counts the organic days the real fit needs.
+      # gap under the reconciler's 30 s floor, clean-close reconnects among them, which
+      # zcrypto-capture-reconnect-rate reads instead. The reminder in infra/runbooks/ops.md counts
+      # the organic days the real fit needs.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
@@ -3224,6 +3219,50 @@ rules:
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "103"
       unit: "failed resubscribes -- errors plus ack timeouts -- in the last day"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-reconnect-rate
+    title: "Capture · reconnect rate high (degrading host or venue)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The arm zcrypto-reconcile-healable-gap-rate cannot see: a clean-close reconnect resubscribes
+      # in 2-8 s, under the reconciler's 30 s floor, so a rising reconnect rate books no healable
+      # seconds at any magnitude. `increase()` handles the reset at a recreate.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'increase(zcrypto_capture_reconnects_total{host=~"zcrypto|zcrypto-red"}[1d])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            # 30.5, not 30: increase() extrapolates to the window edges, so exactly 30 reconnects
+            # reads about 30.02 and `gt 30` would page at 30. 30.5 is silent at 30 and fires at 31.
+            - evaluator: {type: gt, params: [30.5]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A capture host made more than 30 reconnect attempts to Kraken in 24h, against a usual 7-9 a day: many drops, or one outage of about 20 minutes. Both capture hosts high together is the venue; one alone is that host degrading. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-reconnect-rate"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "103"
+      unit: "reconnects in the last day"
     labels:
       severity: warning
     notification_settings:

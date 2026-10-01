@@ -350,11 +350,6 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_capture_rows_held_total",
     "zcrypto_logship_shipped_lines_total",
     "zcrypto_logship_last_success_timestamp_seconds",
-    # Reconnects run 32-35/week per host (measured 2026-07-26): that is BASELINE, not a fault, so a
-    # naive threshold here is pure alarm fatigue. T0035's trigger is a reconnect counter RESET
-    # alongside a process_start_time_seconds jump (a crash-restart), which needs the correlation,
-    # not a raw count -- it stays that topic's work.
-    "zcrypto_capture_reconnects_total",
     # Cumulative gap seconds. No rule reads THIS counter and none is owed: the paging half is on
     # `zcrypto_capture_seconds_since_last_book_message`, which never touches
     # `gap_monitor.is_healthy()` -- so a bad bar there costs a false page rather than darkening the
@@ -529,6 +524,19 @@ def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
     assert "count by (pair)" in expr, "the threshold must be per-stream, not a cross-stream sum"
     minutes = _threshold(rule) / 60.0
     assert f"{minutes:.0f} minutes" in summary, f"summary claims a different quantity than {_threshold(rule)}s implies"
+
+
+def test_the_reconnect_rate_pages_per_host_over_a_day_at_the_count_its_summary_states():
+    rule = _rule("zcrypto-capture-reconnect-rate")
+    expr = rule["data"][0]["model"]["expr"]
+
+    assert re.fullmatch(r'increase\(zcrypto_capture_reconnects_total\{host=~"zcrypto\|zcrypto-red"\}\[1d\]\)', expr), expr
+    assert rule["data"][1]["model"]["conditions"][0]["evaluator"]["type"] == "gt"
+    stated = re.search(r"more than (\d+) reconnect attempts to Kraken in 24h", rule["annotations"]["summary"])
+    assert stated, rule["annotations"]["summary"]
+    assert _threshold(rule) == int(stated.group(1)) + 0.5, (
+        "increase() extrapolates past the count, so the bar sits half a step above it"
+    )
 
 
 def test_the_healable_gap_summary_defers_the_loss_question_to_the_field_that_answers_it():

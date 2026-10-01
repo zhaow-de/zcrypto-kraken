@@ -698,8 +698,14 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
 def _unscoped(expr: str) -> str:
     """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
     ops-only rule carries it in its own; the pairing compares the two without that one matcher on
-    either side."""
-    return expr.replace('{host="ops"}', "").strip()
+    either side. `$host` is read as the engine board's one host, the primary, on every board,
+    though the fleet, logs and cache boards' `$host` offer others."""
+    return (
+        expr.replace('{host="ops"}', "")
+        .replace('host=~"$capture_host"', 'host=~"zcrypto|zcrypto-red"')
+        .replace('host=~"$host"', 'host="zcrypto"')
+        .strip()
+    )
 
 
 def _rule_panel_pairs():
@@ -773,10 +779,10 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     # own reading. New entries are not acceptable: the guard exists to stop this class growing.
     known = {"zcrypto-ops-tapebars-not-advancing"}
     pairs = list(_rule_panel_pairs())
-    # Pairing is string equality once the ops scope is dropped, so reformatting one expression drops
-    # that rule from coverage with no failure anywhere. The floor makes a collapse visible. Lower it
-    # only when a rule or panel is deliberately retired.
-    assert len(pairs) >= 64, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
+    # Pairing is string equality after `_unscoped`, so reformatting one expression, or a scope it
+    # stops reading, drops rules from coverage with no failure anywhere. The floor makes a collapse
+    # visible. Lower it only when a rule or panel is deliberately retired.
+    assert len(pairs) >= 90, f"rule-to-panel pairing collapsed to {len(pairs)}"
     bad = []
     for uid, panel, target, evaluator, condition in pairs:
         if uid in known:
@@ -817,11 +823,12 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
             bad.append(f"{uid}: panel {panel['id']} refId {ref} has no threshold at all, per-series or default")
             continue
 
-        # The bar marks where the rule fires. For a `gt 0` counter that point is the first value
-        # that trips it -- a line at 0 would paint a healthy panel red -- so 0 < bar <= 1 is the
-        # same statement. Any other offset (a bar at twice the rule's value) is the defect.
+        # For a `gt 0` rule a line at 0 would paint a healthy panel red, so its bar sits in
+        # 0 < bar <= 1; every other rule's bar is its evaluator.
         def marks_the_rule(v: float) -> bool:
-            return v == evaluator or (evaluator == 0 and 0 < v <= 1)
+            if evaluator == 0 and condition == "gt":
+                return 0 < v <= 1
+            return v == evaluator
 
         if not any(marks_the_rule(s["value"]) for s in steps):
             bad.append(f"{uid}: panel {panel['id']} refId {ref} bars at {[s['value'] for s in steps]}, rule fires at {evaluator}")
