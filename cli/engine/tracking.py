@@ -352,8 +352,8 @@ _MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})
 # Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
 # over, while failing on a deposit would fail every export. `settled` is a hand settle's delivery pair, which the journal
 # holds no row for; `collateralconversion` is the venue's own currency swap for a margin fee, keyed to the position's
-# opening trade.
-_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion"})
+# opening trade; `staking` is a reward the venue credits on a spot holding, its commission taken in the coin.
+_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion", "staking"})
 
 
 def read_ledger_export(path: Path) -> list[LedgerRow]:

@@ -707,12 +707,12 @@ def test_a_row_type_this_reader_has_not_met_is_counted_by_type(tmp_path):
     p = _export(
         tmp_path,
         [
-            '"L7","X1","2026-08-31 00:00:00","staking","","currency","ZEUR","0.01","0.0","848.0"',
+            '"L7","X1","2026-08-31 00:00:00","adjustment","","currency","ZEUR","0.01","0.0","848.0"',
             '"LA","Q1","2026-08-31 04:00:00","withdrawal","","currency","ZEUR","-10.0","0.0","835.0"',
         ],
     )
     out = reconcile_ledger(read_ledger_export(p), [])
-    assert out["ignored"] == {"staking": 1} and out["known"] == {"withdrawal": 1}
+    assert out["ignored"] == {"adjustment": 1} and out["known"] == {"withdrawal": 1}
     assert out["status"] == "insufficient-data" and out["matched"] == 0 and out["unmatched"] == []
 
 
@@ -792,6 +792,13 @@ def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
     assert out["rollover_fees_eur"] == pytest.approx(0.0080)
     assert out["known"] == {"collateralconversion": 2, "settled": 2, "deposit": 1}
     assert out["ignored"] == {}
+
+
+def test_a_staking_reward_row_is_a_known_no_fill_type(tmp_path):
+    reward = _real_row("L1", "ST-1", "2026-10-01 14:02:58", "staking", "", "SOL", "0.0000000171", "0.0000000051", "SOL")
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, [reward], header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"staking": 1}, {}, [])
+    assert out["status"] == "insufficient-data"
 
 
 def test_a_header_only_export_reads_no_rows_and_decides_nothing(tmp_path):
@@ -1201,12 +1208,12 @@ def test_a_row_type_the_reader_has_not_met_is_named_in_the_report(tmp_path, mixe
     # Carried in the payload AND printed: the operator reading the rendered block is the one who has
     # to decide what a type the reader has not met means, and a count only a `--json` consumer sees
     # is invisible.
-    p = _export(tmp_path, ['"L7","X1","2026-08-31 00:00:00","staking","","currency","ZEUR","0.01","0.0","848.0"'])
+    p = _export(tmp_path, ['"L7","X1","2026-08-31 00:00:00","adjustment","","currency","ZEUR","0.01","0.0","848.0"'])
     argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
     run = _invoke(mixed_schema_fixture, argv)
     assert run.exit_code == 0, run.stdout
-    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"staking": 1}
-    assert "staking 1" in run.stdout
+    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"adjustment": 1}
+    assert "adjustment 1" in run.stdout
 
 
 def test_the_rollover_figure_prints_at_four_decimals_and_the_no_fill_rows_are_named(tmp_path, mixed_schema_fixture):
