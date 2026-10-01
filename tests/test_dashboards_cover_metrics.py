@@ -698,8 +698,8 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
 def _unscoped(expr: str) -> str:
     """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
     ops-only rule carries it in its own; the pairing compares the two without that one matcher on
-    either side. A picker is read as the hosts its board offers -- `$host` as the engine board's
-    one, the primary, though the fleet, logs and cache boards' `$host` offer others."""
+    either side. `$host` is read as the engine board's one host, the primary, on every board,
+    though the fleet, logs and cache boards' `$host` offer others."""
     return (
         expr.replace('{host="ops"}', "")
         .replace('host=~"$capture_host"', 'host=~"zcrypto|zcrypto-red"')
