@@ -296,6 +296,16 @@ def test_a_sell_over_the_venue_records_b_is_capped_at_b_and_a_remainder_under_or
     )
 
 
+def test_a_partial_sell_capped_at_b_says_its_remainder_under_ordermin_is_not_drafted_and_never_calls_it_dust():
+    leg = _decide(weight=50.0 / 720, held=1.0, venue_b=0.45)
+
+    assert (leg.outcome, leg.side, leg.qty) == ("placed", "sell", 0.45)
+    assert leg.reason == (
+        "capped at the venue record's b 0.45, under the sell qty 0.5; the remaining 0.05 of the sell is under ordermin 0.06 "
+        "and is not drafted"
+    )
+
+
 def test_a_capped_sell_whose_remainder_reaches_ordermin_carries_it_and_names_the_restart():
     leg = _decide("XRP/EUR", price=1.3, ordermin=1.65, held=10.0, venue_b=5.0, exiting=True)
 

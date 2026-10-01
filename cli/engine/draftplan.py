@@ -397,7 +397,8 @@ def decide_leg(
     if qty < constraints.ordermin:
         return replace(leg, side="sell", reason=f"sell {qty:.10g} is under ordermin {constraints.ordermin:.10g}")
     reason = ""
-    if kraken_held - qty < constraints.ordermin:
+    whole = kraken_held - qty < constraints.ordermin
+    if whole:
         qty = _floor_to_step(kraken_held, constraints.lot_step)
         reason = "the whole leg" if exiting else "the whole leg: the remainder would be under ordermin"
     if 0 < venue_b < qty:
@@ -413,8 +414,11 @@ def decide_leg(
                 "procedure, `engine-rung-2-box` in infra/runbooks/engine-procedures.md",
             )
         left = float(Decimal(str(qty)) - Decimal(str(capped)))
-        if left < constraints.ordermin:
+        if left < constraints.ordermin and whole:
             rest = f"the remaining {left:.10g} is under ordermin {constraints.ordermin:.10g}: dust"
+        elif left < constraints.ordermin:
+            # Not dust: the account keeps the rest of the leg, and only this part of the sell goes unplaced.
+            rest = f"the remaining {left:.10g} of the sell is under ordermin {constraints.ordermin:.10g} and is not drafted"
         else:
             rest = (
                 f"the remaining {left:.10g} carries to a later draft, which sells up to b again -- to sell more at once, "
