@@ -83,6 +83,13 @@ Charged on the **extended (borrowed) currency**, at that currency's rate — a r
 
 Plus: standard spot trade fees on **both** the open and close of a margin position (none on settling **in kind**) — the maker/taker fee is paid twice on top of the open + rollover; **3% liquidation fee** at index on forced liquidation.
 
+## Rewards on spot holdings and the small-balance conversion (read 2026-10-01)
+
+Two things Kraken books on the spot account with no order and no trade behind them, each read from `kraken ledgers` on 2026-10-01. `zcrypto engine tracking-report --ledger-export` counts both among the rows with no fill behind them.
+
+- **Rewards on spot holdings (Auto Earn, formerly Kraken Rewards) — ledger type `staking`, a 30 % commission taken in the coin.** On account-wide on this account, switched off per program under Kraken's Earn settings: eligible assets worth more than 1 USD accrue daily and are paid weekly, each payment one `staking` row whose `amount` is the reward and whose `fee` is Kraken's commission in the same coin. The two rows read, both booked 2026-10-01 14:02:58Z: SOL +1.71e-08 with fee 5.1e-09, BNB +1e-07 with fee 3e-08 — 30 % each, leaving SOL 1.2e-08 and BNB 7e-08 on the account. A short holding earns: SOL was last held on 2026-09-24, 0.06 for five minutes, and BNB 1.99999 for four minutes on 2026-10-01. The owner leaves it on for rung 2 (2026-10-01).
+- **The small-balance conversion ("Convert small balances") — ledger rows `spend` and `receive` with subtype `dustsweeping`, no trade.** Kraken's own function, on the Kraken app, Kraken Web and Kraken Pro Web with no API endpoint: every balance worth under about 1 USD into one chosen asset, at a documented 3 % fee, once per 24 hours. Run once, 2026-10-01 22:28:44Z, SOL and BNB into EUR: `spend` SOL −1.17e-08 with fee 3e-10, `spend` BNB −7e-08 with fee 0, `receive` EUR +0.0001 with fee 0, each with `subtype` `dustsweeping` and `aclass` `currency`, under one refid. The fee Kraken took is the SOL row's 3e-10, beside its amount the whole 1.2e-08 held; the BNB row carries none at that size. `kraken trades-history` gained no row, and both coins read 0 afterwards.
+
 ## Provenance & cost-model note
 
 Sources: Kraken "Cross-platform fee tier changes (July 2026)" support article; kraken.com/features/margin-trading; kraken.com/features/fee-schedule; "How trading fees work on Kraken".
