@@ -828,7 +828,9 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
         # that trips it -- a line at 0 would paint a healthy panel red -- so 0 < bar <= 1 is the
         # same statement. Any other offset (a bar at twice the rule's value) is the defect.
         def marks_the_rule(v: float) -> bool:
-            return v == evaluator or (evaluator == 0 and 0 < v <= 1)
+            if evaluator == 0 and condition == "gt":
+                return 0 < v <= 1
+            return v == evaluator
 
         if not any(marks_the_rule(s["value"]) for s in steps):
             bad.append(f"{uid}: panel {panel['id']} refId {ref} bars at {[s['value'] for s in steps]}, rule fires at {evaluator}")
