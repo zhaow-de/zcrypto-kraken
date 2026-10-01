@@ -37,7 +37,7 @@ class PairSnapshot:
     ordermin: str | None
     costmin: str | None
     status: str | None
-    # Full ladders, not just the base tier, so a drift diff can name WHICH tier moved.
+    # Full ladders, not just the base tier: should AssetPairs serve a ladder again, a diff of two snapshots names which tier moved.
     fees_taker: tuple[tuple[float, float], ...]
     fees_maker: tuple[tuple[float, float], ...]
     fee_taker_base: float | None

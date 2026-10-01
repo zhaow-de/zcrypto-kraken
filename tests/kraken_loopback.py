@@ -154,10 +154,13 @@ def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side
 class KrakenLoopback:
     """What the venue holds, and what reached it. A test mutates the holdings between reads."""
 
+    # Every AssetPairs row, this one and the tokenized one, goes out with `fees` and `fees_maker` empty
+    # whatever ladder it carries, as Kraken serves both listings: a listing whose TradeVolume read fails
+    # therefore loads at zero fees.
     asset_pairs: dict[str, Any]
     # AssetPairs rows answered to `aclass_base=tokenized_asset`, which the adapter asks for beside the
     # currency listing. TradeVolume here carries no fee for them, which fails the whole listing: a
-    # test serving them refuses TradeVolume through `errors`, and the listing takes public fees.
+    # test serving them refuses TradeVolume through `errors`.
     tokenized_asset_pairs: dict[str, Any] = field(default_factory=dict)
     open_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
     closed_orders: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -203,7 +206,8 @@ class KrakenLoopback:
             return None, [self.errors[name]]
         if path == "/0/public/AssetPairs":
             tokenized = "tokenized_asset" in query.get("aclass_base", [])
-            return (self.tokenized_asset_pairs if tokenized else self.asset_pairs), []
+            rows = self.tokenized_asset_pairs if tokenized else self.asset_pairs
+            return {key: row | {"fees": [], "fees_maker": []} for key, row in rows.items()}, []
         if path == "/0/public/Depth":
             pair = query.get("pair", [""])[-1]
             if pair not in self.books:
