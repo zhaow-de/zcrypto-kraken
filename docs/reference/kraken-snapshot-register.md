@@ -42,16 +42,10 @@ to be pulled from `AssetPairs` as ground truth" note.
 ## Endpoint-reported fee ladder, borrow rate & margin bands
 
 > **The fee columns here are NOT the fee source of truth — `kraken-fee-schedule.md` is.**
-> Since sweep #3 (2026-10-01) Kraken's public `AssetPairs` serves **no fee ladder on any pair** — `fees` and
-> `fees_maker` are empty on all 1455 — so the fee columns read `-`. Through sweep #2 it served the
-> **pre-2026-07-09 schedule**, base 0.25 % maker / 0.40 % taker. The schedule actually in force since 2026-07-09 is
-> **0.40 % maker / 0.80 % taker** at tier 1, with breaks at \$2.5k/\$10k/\$25k — account-confirmed on
-> the logged-in Fee tab and recorded in `kraken-fee-schedule.md`, which supersedes these columns for
-> every costing purpose.
->
-> **What these columns are for, then:** they were a **drift detector on the endpoint itself**, and with
-> the ladder gone from the endpoint they detect nothing. The account read — authenticated `kraken volume`,
-> step 6 of the sweep — is now the only machine read of the fee level as well as of the tier.
+> Since sweep #3 Kraken's public `AssetPairs` serves **no fee ladder on any pair**, so the fee columns read `-` and
+> detect nothing. The schedule in force since 2026-07-09 is **0.40 % maker / 0.80 % taker** at tier 1, with breaks at
+> \$2.5k/\$10k/\$25k, recorded in `kraken-fee-schedule.md`; the account read — authenticated `kraken volume`, step 6
+> of the sweep — is the machine read of the level and the tier.
 
 | Symbol | Taker % (base) | Maker % (base) | Fee tiers | Borrow: base (shorts) | Borrow: quote (longs) | Collateral value | Margin call | Margin stop | Long limit | Short limit |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -80,12 +74,11 @@ quote currency**, so the quote column prices the book's long leg. That agreement
 because the borrow rate is the term that makes alt shorts ~2× BTC shorts and drives the
 short-BTC-only thesis.
 
-`margin_rate` lives on the *asset*, not the pair. The fee columns rendered base tier plus ladder depth
-while the endpoint served a ladder; the snapshots through sweep #2 keep the full 12-tier ladders.
+`margin_rate` lives on the *asset*, not the pair.
 
 **Account-gated, but not human-gated:** the account's realised fee **tier** depends on 30-day volume and needs the
-live account — served by authenticated `kraken volume`, so the sweep reads it **automatically** and records it in the log below;
-the log below holds the standing value (tier 1, \$1,832.80 30-day spot volume, read 2026-10-01), and `kraken-fee-schedule.md` owns the ladder that value selects from (⏱ account-confirmed 2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
+live account — served by authenticated `kraken volume`, so the sweep reads it **automatically** and records it in the log below,
+which holds the standing value; `kraken-fee-schedule.md` owns the ladder that value selects from (⏱ account-confirmed 2026-07-07). MiCA status, tax rules and market-data pricing have no endpoint at all and are human
 re-reads at the go/no-go.
 
 ## Symbol-alias ledger
