@@ -17,7 +17,7 @@ The fleet ships metrics and logs with Grafana Alloy to Grafana Cloud's free tier
 
 ## Findings so far
 
-An assessment of 2026-10-01 weighed three designs. Its conclusions follow; its figures are the spec's to re-derive.
+`docs/research/92.self-hosted-observability-assessment.md` is the assessment of 2026-10-01, which weighed three designs. Its conclusions follow; its figures are the spec's to re-derive.
 
 - **The stores are the choice, not Grafana.** Grafana holds no metrics or logs. Keeping Grafana as the evaluator keeps the rule file, the dashboards and the push script in their present shape.
 - **Recommended: Grafana OSS on SQLite, one Prometheus as the remote_write receiver, single-binary Loki.** No alert expression is rewritten, and the evaluator's call to its store becomes a local one.
