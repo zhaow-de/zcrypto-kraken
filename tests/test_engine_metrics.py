@@ -1875,6 +1875,23 @@ def test_run_builds_the_execution_metrics_seeds_positions_and_installs_the_execu
     assert registry.get_sample_value("zcrypto_exec_orders_total", {"outcome": "submitted"}) == 1.0
 
 
+def test_run_with_a_journal_that_seeds_no_position_still_hands_the_executor_its_metrics(tmp_path, monkeypatch):
+    registry = CollectorRegistry()
+    monkeypatch.setattr(command, "build_registry", lambda: registry)
+    monkeypatch.setattr(command, "start_metrics_server", lambda port, reg: True)
+    monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
+    engine_cfg = _run_env(monkeypatch, tmp_path)
+    assert command._seed_exec_positions(engine_cfg.journal_dir) is None
+    installed = {}
+    monkeypatch.setattr(executor_module, "set_executor_hooks", lambda **kwargs: installed.update(kwargs))
+
+    cli_result = runner.invoke(app, ["engine", "run"])
+
+    assert cli_result.exit_code == 0, cli_result.output
+    assert isinstance(installed["metrics"], command._ExecutionMetrics)
+    assert "zcrypto_exec_position{" not in generate_latest(registry).decode()
+
+
 def test_run_installs_the_hooks_with_no_metrics_when_the_exporter_is_off(tmp_path, monkeypatch):
     """The ledger runs with the exporter off, so the executor must too -- with both hooks None
     rather than an unbuilt registry's gauges."""
@@ -1898,6 +1915,8 @@ def test_a_raising_execution_metrics_seed_never_prevents_the_engine_from_startin
     monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
     _run_env(monkeypatch, tmp_path)
     monkeypatch.setattr(command, "_seed_exec_positions", _raise)
+    installed = {}
+    monkeypatch.setattr(executor_module, "set_executor_hooks", lambda **kwargs: installed.update(kwargs))
 
     with _zcrypto_caplog_attached(caplog), caplog.at_level("ERROR"):
         cli_result = runner.invoke(app, ["engine", "run"])
@@ -1906,6 +1925,7 @@ def test_a_raising_execution_metrics_seed_never_prevents_the_engine_from_startin
     assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
     # The families still exist -- the seed failed, not the registration.
     assert registry.get_sample_value("zcrypto_exec_orders_total", {"outcome": "refused"}) == 0.0
+    assert isinstance(installed["metrics"], command._ExecutionMetrics)
 
 
 def test_the_tracking_state_series_is_absent_until_a_week_has_been_scored():

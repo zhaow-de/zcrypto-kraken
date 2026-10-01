@@ -360,3 +360,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #630 | 2026-09-30 | feat(engine): 00120 — the engine-side half of the engine's cache | — | 00118, 00120 | T0213 |
 | #631 | 2026-09-30 | fix(ops): the daily-pass hand-offs of 09-28/29 and T0212's strict form | — | — | T0212 |
 | #644 | 2026-10-01 | feat(infra): a capture host's reconnect rate pages above 30 a day | — | — | T0205 |
+| #645 | 2026-10-01 | docs(engine): the cache's live proof; T0187 and T0183 resolve on it | — | 00120 | T0183, T0187 |
