@@ -949,10 +949,11 @@ def test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_secon
         "[ERROR] SHADOW-001.nautilus_infrastructure::redis::queries: Failed to load account KRAKEN-001: "
         "Failed to convert value to target type: Unknown currency: XDG"
     ), (
-        f"{_BUMP}: the second restart with DOGE held no longer fails the stored account's load on the code `XDG`. The "
-        "procedure documents that line as known on every start from that one on -- drop the note, and read what the "
-        "venue record carries for a coin the venue stopped listing, since an account that loads is replayed from the "
-        f"store at every start: {failed_loads}"
+        f"{_BUMP}: the second restart with DOGE held no longer fails the stored account's load on the code `XDG`. That "
+        "ERROR is the stored account, which carries DOGE under the adapter's code `XDG` from the first restart on, failing "
+        "to load because no process registers `XDG` as a currency; the start completes regardless. An account that loads "
+        "is replayed from the store at every start, so read what the venue record then carries for a coin the venue "
+        f"stopped listing: {failed_loads}"
     )
     carried = [record["venue_state_at_start"]["balances"].get("XDG") for record in (first, second)]
     assert carried == [lot, lot], (
@@ -968,9 +969,10 @@ def test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_secon
         for record in (bought, first, second)
     ]
     assert burst == [(0, 0), (1, 1), (1, 1)], (
-        f"{_BUMP}: a cached instrument whose base currency the process does not register no longer logs one "
-        "deserialize ERROR and one load ERROR at every start after the one that cached it -- the ERROR burst each "
-        f"engine start logs is this, once per such instrument: {burst}"
+        f"{_BUMP}: a cached instrument whose base currency no process registers no longer logs one `Failed to deserialize "
+        "currency` ERROR and one `Failed to load instrument` ERROR at every start after the one that cached it. Those are "
+        "the two lines of the ERROR burst an engine start logs over a full cache, where they do not come in equal "
+        f"numbers: {burst}"
     )
 
 
