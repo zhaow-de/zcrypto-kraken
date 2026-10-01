@@ -698,9 +698,8 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
 def _unscoped(expr: str) -> str:
     """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
     ops-only rule carries it in its own; the pairing compares the two without that one matcher on
-    either side. A capture panel scopes by the `$capture_host` picker where the capture rules name
-    both hosts, and an engine panel by the engine board's `$host`, whose one host is the primary, so
-    each picker is read as the hosts it offers."""
+    either side. A picker is read as the hosts its board offers -- `$host` as the engine board's
+    one, the primary, though the fleet, logs and cache boards' `$host` offer others."""
     return (
         expr.replace('{host="ops"}', "")
         .replace('host=~"$capture_host"', 'host=~"zcrypto|zcrypto-red"')
@@ -824,9 +823,8 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
             bad.append(f"{uid}: panel {panel['id']} refId {ref} has no threshold at all, per-series or default")
             continue
 
-        # The bar marks where the rule fires. For a `gt 0` counter that point is the first value
-        # that trips it -- a line at 0 would paint a healthy panel red -- so 0 < bar <= 1 is the
-        # same statement. Any other offset (a bar at twice the rule's value) is the defect.
+        # For a `gt 0` rule a line at 0 would paint a healthy panel red, so its bar sits in
+        # 0 < bar <= 1; every other rule's bar is its evaluator.
         def marks_the_rule(v: float) -> bool:
             if evaluator == 0 and condition == "gt":
                 return 0 < v <= 1
