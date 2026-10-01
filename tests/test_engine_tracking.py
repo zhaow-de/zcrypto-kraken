@@ -801,6 +801,46 @@ def test_a_staking_reward_row_is_a_known_no_fill_type(tmp_path):
     assert out["status"] == "insufficient-data"
 
 
+_DUST_REFID_AND_TIME = ("TSX3N62-E5ELZ-R6K74Z", "2026-10-01 22:28:44")
+_DUST_CONVERSION = [
+    _real_row("LODHU3-H4F6C-STWVQ5", *_DUST_REFID_AND_TIME, "spend", "dustsweeping", "SOL", "-0.0000000117", "0.0000000003", "SOL"),
+    _real_row("LMM375-VGYQ5-6SB757", *_DUST_REFID_AND_TIME, "spend", "dustsweeping", "BNB", "-0.00000007", "0", "BNB"),
+    _real_row("LRFCN6-7GM5S-ST6GOT", *_DUST_REFID_AND_TIME, "receive", "dustsweeping", "EUR", "0.0001", "0"),
+]
+
+
+def test_the_small_balance_conversions_spend_and_receive_rows_are_known_no_fill_rows_counted_as_dustsweeping(tmp_path):
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, _DUST_CONVERSION, header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"dustsweeping": 3}, {}, [])
+    assert out["status"] == "insufficient-data"
+
+
+@pytest.mark.parametrize("subtype", ["", "anything-else"])
+def test_a_spend_or_receive_row_of_any_other_subtype_is_a_type_the_reader_has_not_met(tmp_path, subtype):
+    rows = [
+        _real_row("L1", "R-1", "2026-10-01 22:28:44", "spend", subtype, "SOL", "-0.06", "0", "SOL"),
+        _real_row("L2", "R-1", "2026-10-01 22:28:44", "receive", subtype, "EUR", "6.20", "0.09"),
+    ]
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, rows, header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"]) == ({}, {"spend": 1, "receive": 1})
+
+
+def test_the_dustsweeping_subtype_excuses_no_row_but_a_spend_or_a_receive(tmp_path):
+    rows = [
+        _real_row("L1", "T-UNKNOWN", "2026-10-01 22:28:44", "trade", "dustsweeping", "EUR", "0.0001", "0"),
+        _real_row("L2", "X-1", "2026-10-01 22:28:44", "adjustment", "dustsweeping", "SOL", "-0.0000000117", "0", "SOL"),
+    ]
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, rows, header=_REAL_HEADER)), [])
+    assert (out["status"], out["unmatched"]) == ("FAILED", ["T-UNKNOWN"])
+    assert (out["known"], out["ignored"]) == ({}, {"adjustment": 1})
+
+
+def test_an_export_without_the_subtype_column_is_refused_by_name(tmp_path):
+    p = _export(tmp_path, [], header="txid,refid,time,type,aclass,asset,amount,fee,balance")
+    with pytest.raises(EngineError, match="has no subtype column"):
+        read_ledger_export(p)
+
+
 def test_a_header_only_export_reads_no_rows_and_decides_nothing(tmp_path):
     # "ok" here would be a clean bill over a comparison that never happened, indistinguishable from an
     # export whose every trade or margin row matched; `n_rows` separates it from one carrying neither.
