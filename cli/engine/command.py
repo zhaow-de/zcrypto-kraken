@@ -2032,7 +2032,7 @@ def draft_plan(
     exiting: bool = typer.Option(
         False,
         "--exit",
-        help="Draft the box's exit: every leg's target is 0, so each held leg is sold whole and nothing is bought.",
+        help="Draft the box's exit: every leg's target is 0 and nothing is bought.",
     ),
     discard: Optional[str] = typer.Option(
         None,

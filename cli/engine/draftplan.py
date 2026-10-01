@@ -1,8 +1,7 @@
 """Draft one rung-2 probe plan: each leg's target from the newest cycle record, minus what Kraken itself says is held.
 
 Pure functions over parsed inputs. The two network reads -- the public ticker and the status page's maintenance feed --
-take their opener as an argument, so no test reaches the venue. Nothing here holds a credential or places an order: the
-plan is a file the account owner copies to the engine host, checks with `probe-plan --check` and places by hand."""
+take their opener as an argument, so no test reaches the venue. Nothing here holds a credential or places an order."""
 
 from __future__ import annotations
 
@@ -28,11 +27,12 @@ MIN_BUY_EUR = 0.50
 CASH_RESERVE_EUR = 5.0
 PLAN_CAP_EUR = 95.0
 MAX_INTENTS = 3
+INTENT_TIME_BOX = timedelta(minutes=15)
 BALANCE_MAX_AGE = timedelta(minutes=30)
 GROSS_JUMP_HIGH = 1.8
 GROSS_JUMP_LOW = 0.55
-# The boundaries a drop window follows, and its slots: the gaps clear valkey2's reboot slot (13:15-13:30Z) and
-# valkey3's (17:25Z).
+# The boundaries a drop window follows, and its slots, whose gaps clear valkey2's and valkey3's
+# `base_unattended_upgrades_reboot_time`.
 DROP_SLOTS: dict[int, tuple[tuple[time, time], ...]] = {
     12: ((time(12, 10), time(13, 15)), (time(13, 30), time(15, 0))),
     16: ((time(16, 10), time(17, 15)), (time(17, 30), time(19, 0))),
@@ -43,7 +43,7 @@ _MAINTENANCE_FEED = "https://status.kraken.com/api/v2/scheduled-maintenances.jso
 _TIMEOUT_SECONDS = 30
 _BASES = frozenset(symbol.split("/")[0] for symbol in LEGS)
 _PLAN_ID = re.compile(r"r2-(\d{8})-(\d+)")
-# `infra/scripts/deploy-log-audit.py`'s `api_impacting` match: case-folded, and word-bounded so `restart` is not `REST`.
+# `infra/scripts/deploy-log-audit.py`'s `_NAMES_AN_API`, whose `api_impacting` docstring says why.
 _NAMES_AN_API = re.compile(r"(?<![A-Za-z0-9])(?:websocket|rest)(?![A-Za-z0-9])", re.IGNORECASE)
 
 
@@ -140,6 +140,10 @@ def drop_slots(boundary: datetime) -> tuple[tuple[datetime, datetime], ...]:
     )
 
 
+def last_drop(window_end: datetime, intents: int) -> datetime:
+    return window_end - intents * INTENT_TIME_BOX
+
+
 def _instant(raw: object) -> datetime:
     moment = datetime.fromisoformat(raw)
     if moment.utcoffset() is None:
@@ -148,8 +152,7 @@ def _instant(raw: object) -> datetime:
 
 
 def maintenance_conflicts(feed: dict, start: datetime, end: datetime) -> list[str]:
-    """Each published WebSocket/REST maintenance overlapping [start, end], named with its own window. A window the
-    feed spells unreadably on such an entry refuses rather than reads as clear."""
+    """Each published WebSocket/REST maintenance overlapping [start, end], named with its own window."""
     entries = feed.get("scheduled_maintenances")
     if not isinstance(entries, list) or not entries:
         raise DraftPlanError(
@@ -188,8 +191,6 @@ def _amount(value: object, what: str) -> float:
 
 
 def parse_balance_export(doc: object) -> BalanceExport:
-    """The extended balance export: `{asset: {balance, hold_trade, ...}}`, the asset in either Kraken spelling (`XDG` or
-    `XXDG` is DOGE). A hold on EUR or a leg's base is a resting order, so the previous plan is not terminal."""
     # flatten imports nautilus; at module level every `zcrypto engine --help` would pay for it.
     from cli.engine.flatten import resolve_base
 
@@ -361,8 +362,7 @@ def decide_leg(
 
 
 def trim_buys_to_cash(decisions: list[LegDecision], free_eur: float) -> list[LegDecision]:
-    """Buys beyond free EUR less the reserve are cut from the smallest buy up; a buy cut under its floor carries whole.
-    Counted in whole cents, so a sum of cent amounts never drifts across the budget."""
+    """Buys are counted in whole cents, so a sum of cent amounts never drifts across the budget."""
     budget = round(_floor_to_step(free_eur - CASH_RESERVE_EUR, 0.01) * 100) if free_eur > CASH_RESERVE_EUR else 0
     buys = sorted((d for d in decisions if d.outcome == "placed" and d.side == "buy"), key=lambda d: (d.notional_eur, d.symbol))
     excess = sum(round(d.notional_eur * 100) for d in buys) - budget
@@ -390,8 +390,7 @@ def trim_buys_to_cash(decisions: list[LegDecision], free_eur: float) -> list[Leg
     return [trimmed.get(d.symbol, d) for d in decisions]
 
 
-def assemble_plans(decisions: list[LegDecision]) -> list[list[LegDecision]]:
-    """Sells before buys, each side largest first, filled in order into plans of at most `MAX_INTENTS` and `PLAN_CAP_EUR`."""
+def assemble_plans(decisions: list[LegDecision], max_intents: int = MAX_INTENTS) -> list[list[LegDecision]]:
     ordered = sorted((d for d in decisions if d.outcome == "placed"), key=lambda d: (d.side != "sell", -d.eur, d.symbol))
     plans: list[list[LegDecision]] = []
     total = 0.0
@@ -401,7 +400,7 @@ def assemble_plans(decisions: list[LegDecision]) -> list[list[LegDecision]]:
                 f"{leg.symbol}'s {leg.side} of {leg.eur:.2f} EUR is over the {PLAN_CAP_EUR:.0f} EUR plan cap on its own -- "
                 "no plan can carry it"
             )
-        if not plans or len(plans[-1]) == MAX_INTENTS or total + leg.eur > PLAN_CAP_EUR:
+        if not plans or len(plans[-1]) == max_intents or total + leg.eur > PLAN_CAP_EUR:
             plans.append([])
             total = 0.0
         plans[-1].append(leg)
@@ -428,11 +427,18 @@ def plan_document(plan_id: str, created_at: datetime, legs: list[LegDecision]) -
     return {"plan_id": plan_id, "created_at": created_at.isoformat(), "intents": intents}
 
 
-def ruling_refusals(plan: ProbePlan, prices: dict[str, float], *, exiting: bool = False) -> list[str]:
+def ruling_refusals(
+    plan: ProbePlan, prices: dict[str, float], *, exiting: bool = False, window_end: datetime | None = None
+) -> list[str]:
     """What the ruling refuses in a parsed plan; a sell's EUR is its qty at the leg's drafted price."""
     reasons: list[str] = []
     if len(plan.intents) > MAX_INTENTS:
         reasons.append(f"{len(plan.intents)} intents, over the {MAX_INTENTS} a plan may carry")
+    if window_end is not None and plan.created_at > (by := last_drop(window_end, len(plan.intents))):
+        reasons.append(
+            f"a plan of {len(plan.intents)} intent(s) created at {plan.created_at.astimezone(timezone.utc):%H:%M:%S}Z is past "
+            f"its last drop at {by:%H:%M}Z"
+        )
     sides = [intent.side for intent in plan.intents]
     if "buy" in sides and "sell" in sides[sides.index("buy") :]:
         reasons.append("a buy precedes a sell -- sells come first")
@@ -586,8 +592,7 @@ def draft(
     exiting: bool = False,
     discard: str | None = None,
 ) -> Draft:
-    """Every local refusal runs before either network read. `exiting` sets every leg's target to 0; `discard` names
-    today's newest plan as never placed, so its legs may be drafted again."""
+    """Every refusal that needs no price runs before either network read."""
     now = now.astimezone(timezone.utc)
     boundary = latest_boundary(now)
     if record.cycle_ts < boundary:
@@ -606,10 +611,14 @@ def draft(
             f"the balance export is dated {-age.total_seconds() / 60:.0f} minutes after now -- check the workstation's clock"
         )
     slots = drop_slots(record.cycle_ts)
-    if now > slots[-1][1]:
+    window_end = slots[-1][1]
+    box_minutes = f"{INTENT_TIME_BOX.total_seconds() / 60:.0f} minutes"
+    fits = min(MAX_INTENTS, (window_end - now) // INTENT_TIME_BOX)
+    if fits < 1:
         raise DraftPlanError(
-            f"it is {now:%H:%M}Z, past the last drop at {slots[-1][1]:%H:%M}Z of the window after the {record.cycle_ts:%H}Z "
-            "record -- a plan drafted now could not be placed inside it"
+            f"it is {now:%H:%M:%S}Z, past {last_drop(window_end, 1):%H:%M}Z, the last drop of a one-intent plan in the window "
+            f"after the {record.cycle_ts:%H}Z record -- each intent takes {box_minutes} before the window's "
+            f"{window_end:%H:%M}Z end"
         )
     rows_in = list(log_rows)
     discard_row = None
@@ -630,7 +639,7 @@ def draft(
     venue_bs = {symbol: venue_balance(venue_balances, symbol.split("/")[0]) for symbol in LEGS}
     weights = leg_weights(record)
     today = placed_today(rows_in, now.date())
-    conflicts = maintenance_conflicts(read_feed(), slots[0][0], slots[-1][1])
+    conflicts = maintenance_conflicts(read_feed(), slots[0][0], window_end)
     if conflicts:
         raise DraftPlanError("a published Kraken WebSocket/REST maintenance overlaps the drop window: " + "; ".join(conflicts))
     prices = mid_prices(read_ticker())
@@ -663,7 +672,7 @@ def draft(
     if exiting:
         decisions = [replace(d, reason="; ".join(filter(None, ("exit: target 0", d.reason)))) for d in decisions]
     decisions = trim_buys_to_cash(decisions, export.free_eur)
-    plans = assemble_plans(decisions)
+    plans = assemble_plans(decisions, max_intents=fits)
     plan_id = next_plan_id(rows_in, now.date()) if plans else None
     decisions = queue_later_plans(decisions, plans, plan_id)
 
@@ -674,7 +683,7 @@ def draft(
             parsed = parse_plan(plan_text)
         except ProbePlanError as exc:
             raise DraftPlanError(f"the drafted plan does not parse: {exc}") from exc
-        refusals = ruling_refusals(parsed, prices, exiting=exiting)
+        refusals = ruling_refusals(parsed, prices, exiting=exiting, window_end=window_end)
         if refusals:
             raise DraftPlanError("the drafted plan is refused: " + "; ".join(refusals))
 
@@ -706,14 +715,23 @@ def draft(
     header = [
         f"cycle record {record.cycle_ts:%Y-%m-%d %H:%M}Z, drafted {minutes} min after it; balance export "
         f"{age.total_seconds() / 60:.0f} min old",
-        "drop window "
-        + ", ".join(f"{a:%H:%M}-{b:%H:%M}Z" for a, b in slots)
-        + ": no published WebSocket/REST maintenance overlaps it",
+        f"no published WebSocket/REST maintenance overlaps {slots[0][0]:%H:%M}-{window_end:%H:%M}Z, the window after the "
+        f"{record.cycle_ts:%H}Z record",
         f"free EUR {export.free_eur:.2f}; buys capped at free EUR - {CASH_RESERVE_EUR:.0f}",
         gross_line(gross, record.cycle_ts, rows_in),
     ]
+    if plans:
+        drops = [*slots[:-1], (slots[-1][0], last_drop(window_end, len(plans[0])))]
+        drop_line = (
+            "drop window "
+            + ", ".join(f"{a:%H:%M}-{b:%H:%M}Z" for a, b in drops)
+            + f" for this plan's {len(plans[0])} intent(s), {box_minutes} each before {window_end:%H:%M}Z"
+        )
+        if fits < MAX_INTENTS:
+            drop_line += f"; a plan drafted at {now:%H:%M:%S}Z fits at most {fits}"
+        header.insert(2, drop_line)
     if exiting:
-        header.insert(0, "EXIT: every leg's target is 0 -- each held leg is sold whole, nothing is bought")
+        header.insert(0, "EXIT: every leg's target is 0 -- nothing is bought")
     if discard_row is not None:
         header.append(f"{discard} discarded as never placed: its legs may be drafted again today")
     since_record = {symbol: plan for symbol, (plan, at) in today.items() if at >= record.cycle_ts}

@@ -5,7 +5,7 @@ import json
 import os
 import re
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 import cli.engine.command as command
 from cli.__main__ import app
 from cli.engine.draftplan import (
+    INTENT_TIME_BOX,
     LEGS,
     Constraints,
     DraftPlanError,
@@ -342,8 +343,8 @@ def test_an_intent_over_the_cap_on_its_own_is_refused():
 # ---- the ruling's refusals on a plan -----------------------------------------------------------------
 
 
-def _plan(*intents: dict):
-    return parse_plan(json.dumps({"plan_id": "r2-20261005-1", "created_at": NOW.isoformat(), "intents": list(intents)}))
+def _plan(*intents: dict, created_at: datetime = NOW):
+    return parse_plan(json.dumps({"plan_id": "r2-20261005-1", "created_at": created_at.isoformat(), "intents": list(intents)}))
 
 
 def _buy(symbol="BTC/EUR", notional=10.0, **extra) -> dict:
@@ -373,6 +374,22 @@ def test_a_plan_inside_the_ruling_draws_no_refusal():
 )
 def test_the_ruling_refuses(intents, fragment):
     assert any(fragment in reason for reason in ruling_refusals(_plan(*intents), PRICES))
+
+
+def test_the_ruling_reads_a_plans_last_drop_by_its_own_intent_count():
+    end = BOUNDARY + timedelta(hours=3)
+    created = datetime(2026, 10, 5, 14, 15, 1, tzinfo=UTC)
+
+    assert ruling_refusals(_plan(_sell(), _buy(), created_at=created), PRICES, window_end=end) == []
+    assert ruling_refusals(_plan(_sell(), _buy(), _buy("ETH/EUR"), created_at=created), PRICES, window_end=end) == [
+        "a plan of 3 intent(s) created at 14:15:01Z is past its last drop at 14:15Z"
+    ]
+
+
+def test_the_last_drop_gives_each_intent_the_executors_time_box():
+    from cli.engine.executor import _TIME_BOX
+
+    assert INTENT_TIME_BOX == _TIME_BOX
 
 
 # ---- the plan id, the windows and the inputs ------------------------------------------------------------
@@ -408,7 +425,7 @@ def test_a_websocket_or_rest_window_overlapping_the_drop_window_conflicts(entry,
 
 
 def test_a_maintenance_overlapping_the_drop_window_refuses_the_draft():
-    entry = _maintenance("Order Entry System Maintenance", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z", ("WebSocket",))
+    entry = _maintenance("Order Entry System Maintenance", "2026-10-05T14:50:00Z", "2026-10-05T15:30:00Z", ("WebSocket",))
 
     with pytest.raises(DraftPlanError, match="Order Entry System Maintenance"):
         _draft({"BTC/EUR": 0.0177}, feed=_feed(entry))
@@ -466,21 +483,24 @@ def test_a_balance_export_over_30_minutes_old_or_dated_after_now_is_refused(minu
         assert _draft({"BTC/EUR": 0.0177}, written=written).plan_text is not None
 
 
+def _at(boundary: datetime, clock: str) -> datetime:
+    return datetime.combine(boundary.date(), time.fromisoformat(clock), tzinfo=UTC)
+
+
 @pytest.mark.parametrize(
-    ("cycle_ts", "minutes", "fragment"),
+    ("hour", "clock", "fragment"),
     [
-        (BOUNDARY, 3 * 60 + 1, "it is 15:01Z, past the last drop at 15:00Z"),
-        (BOUNDARY + timedelta(hours=4), 3 * 60 + 30, "it is 19:30Z, past the last drop at 19:00Z"),
+        (12, "14:45:01", "it is 14:45:01Z, past 14:45Z, the last drop of a one-intent plan in the window after the 12Z record"),
+        (12, "15:00:00", "it is 15:00:00Z, past 14:45Z"),
+        (16, "18:45:01", "it is 18:45:01Z, past 18:45Z, the last drop of a one-intent plan in the window after the 16Z record"),
+        (16, "19:30:00", "it is 19:30:00Z, past 18:45Z"),
     ],
 )
-def test_a_draft_past_the_windows_last_drop_is_refused(cycle_ts, minutes, fragment):
+def test_a_draft_past_a_one_intent_plans_last_drop_is_refused(hour, clock, fragment):
+    boundary = BOUNDARY.replace(hour=hour)
+
     with pytest.raises(DraftPlanError, match=fragment):
-        _draft(
-            record=_record({"BTC/EUR": 0.0177}, cycle_ts=cycle_ts),
-            venue=_venue(cycle_ts=cycle_ts),
-            now=cycle_ts + timedelta(minutes=minutes),
-        )
-    assert _draft(now=BOUNDARY + timedelta(hours=3)).report
+        _draft(record=_record({"BTC/EUR": 0.0177}, cycle_ts=boundary), venue=_venue(cycle_ts=boundary), now=_at(boundary, clock))
 
 
 @pytest.mark.parametrize(
@@ -732,6 +752,41 @@ def test_a_day_with_nothing_placeable_drafts_no_plan():
     assert (result.plan_id, result.plan_text) == (None, None)
     assert "nothing placeable" in result.report
     assert len(result.rows) == len(LEGS)
+
+
+@pytest.mark.parametrize(
+    ("hour", "clock", "drops", "intents"),
+    [
+        (12, "14:15:00", "12:10-13:15Z, 13:30-14:15Z", 3),
+        (12, "14:15:01", "12:10-13:15Z, 13:30-14:30Z", 2),
+        (12, "14:30:00", "12:10-13:15Z, 13:30-14:30Z", 2),
+        (12, "14:30:01", "12:10-13:15Z, 13:30-14:45Z", 1),
+        (12, "14:45:00", "12:10-13:15Z, 13:30-14:45Z", 1),
+        (16, "18:15:00", "16:10-17:15Z, 17:30-18:15Z", 3),
+        (16, "18:15:01", "16:10-17:15Z, 17:30-18:30Z", 2),
+        (16, "18:30:00", "16:10-17:15Z, 17:30-18:30Z", 2),
+        (16, "18:30:01", "16:10-17:15Z, 17:30-18:45Z", 1),
+        (16, "18:45:00", "16:10-17:15Z, 17:30-18:45Z", 1),
+    ],
+)
+def test_a_plan_drops_15_minutes_per_intent_before_the_windows_end(hour, clock, drops, intents):
+    boundary = BOUNDARY.replace(hour=hour)
+
+    result = _draft(
+        record=_record(TARGETS, cycle_ts=boundary),
+        venue=_venue(cycle_ts=boundary, balances={"EUR": 1000.0, "SOL": 0.12}),
+        export=_export(1000.0, SOL=0.12),
+        now=_at(boundary, clock),
+    )
+
+    drafted = [i.symbol for i in parse_plan(result.plan_text).intents]
+    assert drafted == ["SOL/EUR", "BTC/EUR", "ETH/EUR"][:intents]
+    assert {d.symbol for d in result.decisions if d.outcome == "queued"} == {"SOL/EUR", "BTC/EUR", "ETH/EUR", "ADA/EUR"} - set(
+        drafted
+    )
+    assert f"drop window {drops} for this plan's {intents} intent(s), 15 minutes each before {hour + 3}:00Z" in result.report
+    assert (f"a plan drafted at {clock}Z fits at most {intents}" in result.report) is (intents < 3)
+    assert f"no published WebSocket/REST maintenance overlaps {hour}:10-{hour + 3}:00Z" in result.report
 
 
 # ---- the command -------------------------------------------------------------------------------------
