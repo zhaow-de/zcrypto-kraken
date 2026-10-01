@@ -37,13 +37,11 @@ DROP_SLOTS: dict[int, tuple[tuple[time, time], ...]] = {
     12: ((time(12, 10), time(13, 15)), (time(13, 30), time(15, 0))),
     16: ((time(16, 10), time(17, 15)), (time(17, 30), time(19, 0))),
 }
-# The box's calendar, four ISO weeks from a Monday: a slipped box moves BOX_FIRST_DAY, and every date below follows.
 BOX_FIRST_DAY = date(2026, 10, 5)
 BOX_DAYS = 28
 BOX_LAST_DAY = BOX_FIRST_DAY + timedelta(days=BOX_DAYS - 1)
 RESTART_DAY = BOX_FIRST_DAY + timedelta(days=25)
 EXIT_DAYS = (BOX_FIRST_DAY + timedelta(days=26), BOX_FIRST_DAY + timedelta(days=27))
-# The restart day's window is the 12Z record's first slot alone: the planned restart and its drills take the rest.
 RESTART_DAY_LAST_DROP = datetime.combine(RESTART_DAY, DROP_SLOTS[12][0][1], tzinfo=timezone.utc)
 RESTART_NOT_BEFORE = DROP_SLOTS[12][1][0]
 
@@ -303,7 +301,6 @@ def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], d
 
 
 def refuse_open_margin_positions(doc: object) -> None:
-    """`doc` is Kraken's open-positions export: an object keyed by position id, empty when nothing is open."""
     error = doc.get("error") if isinstance(doc, dict) else None
     if error and isinstance(error, (str, list)):
         raise DraftPlanError(f"the positions export is an error answer, not positions: {doc.get('message') or error}")
@@ -394,7 +391,7 @@ def decide_leg(
     if leg.delta_eur > 0:
         if leg.delta_eur < leg.buy_floor:
             return replace(leg, side="buy", reason=f"buy {leg.delta_eur:.4f} EUR is under the buy floor {leg.buy_floor:.4f} EUR")
-        # Rounded first: 720 * 0.03 is 21.599999999999998 in floats, and a whole-cent delta would floor a cent low.
+        # Rounded first, or a whole-cent delta's float noise floors it a cent low.
         return replace(leg, outcome="placed", side="buy", notional_eur=_floor_to_step(round(leg.delta_eur, 9), 0.01))
     qty = _floor_to_step(kraken_held - target / price, constraints.lot_step)
     if qty < constraints.ordermin:
