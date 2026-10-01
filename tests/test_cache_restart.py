@@ -820,6 +820,8 @@ def _open_positions(dump: dict) -> list[tuple[str, float]]:
 
 
 _SOL = {"pair": PAIR, "symbol": SYMBOL, "coin": "SOL", "quote": SOL_QUOTE}
+# Kraken's own spellings: the pair `XDGEUR`, the BalanceEx code `XXDG`, which the adapter reports as `XDG`.
+_DOGE = {"pair": "XDGEUR", "symbol": "DOGE/EUR", "coin": "XXDG", "quote": ("DOGE/EUR.KRAKEN", "0.2", "0.3")}
 _EUR_ONLY = {"balances": {"ZEUR": lb.balance("1000.00000000")}}
 
 
@@ -913,6 +915,62 @@ def test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_resta
         f"{_BUMP}: the account no longer keeps a coin at the lot once it is sold whole and the node restarted with the "
         f"venue's balance at 0. {stale}: {held['venue_state_at_end']['balances']} at the selling process's end, "
         f"{flat['venue_state_at_start']['balances']} after the restart"
+    )
+
+
+def _lines(log: str, text: str) -> list[str]:
+    return [line for line in log.splitlines() if text in line]
+
+
+def test_a_doge_lot_held_across_two_restarts_fails_the_account_load_on_the_second_and_the_account_still_carries_it(tmp_path):
+    # A pair whose base no process registers, cached by the first process and unreadable by every later one.
+    basket = _basket_pairs()
+    pairs = basket | {"QQQZEUR": basket["ADAEUR"] | {"base": "QQQZ", "altname": "QQQZEUR", "wsname": "QQQZ/EUR"}}
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        node.drop_plan("p-doge-buy", leverage=None, notional_eur=25.0, symbol=_DOGE["symbol"])
+        bought, holdings, [fill] = _spot_process(node, 1, _EUR_ONLY, _DOGE, pairs=pairs)
+        first, _, _ = _spot_process(node, 2, holdings, _DOGE, pairs=pairs)
+        second, _, _ = _spot_process(node, 3, holdings, _DOGE, pairs=pairs)
+    finally:
+        valkey.stop()
+
+    lot = fill["qty"]
+    for record in (bought, first, second):
+        assert record["errors"] == [], record["errors"]
+        assert "at_start" in record and "Unresolved positions" not in record["log"]
+    assert holdings["balances"]["XXDG"]["balance"] == f"{lot:.8f}"
+
+    failed_loads = [_lines(record["log"], "Failed to load account") for record in (bought, first, second)]
+    assert failed_loads[:2] == [[], []], failed_loads
+    assert len(failed_loads[2]) == 1 and failed_loads[2][0].endswith(
+        "[ERROR] SHADOW-001.nautilus_infrastructure::redis::queries: Failed to load account KRAKEN-001: "
+        "Failed to convert value to target type: Unknown currency: XDG"
+    ), (
+        f"{_BUMP}: the second restart with DOGE held no longer fails the stored account's load on the code `XDG`. The "
+        "procedure documents that line as known on every start from that one on -- drop the note, and read what the "
+        "venue record carries for a coin the venue stopped listing, since an account that loads is replayed from the "
+        f"store at every start: {failed_loads}"
+    )
+    carried = [record["venue_state_at_start"]["balances"].get("XDG") for record in (first, second)]
+    assert carried == [lot, lot], (
+        f"{_BUMP}: the account no longer carries DOGE, as `XDG`, at the lot after each restart, the failed load "
+        f"included -- the venue record's balance for DOGE is read from it: {carried}"
+    )
+
+    burst = [
+        (
+            len(_lines(record["log"], "Failed to deserialize currency QQQZ")),
+            len(_lines(record["log"], "Failed to load instrument QQQZ/EUR.KRAKEN")),
+        )
+        for record in (bought, first, second)
+    ]
+    assert burst == [(0, 0), (1, 1), (1, 1)], (
+        f"{_BUMP}: a cached instrument whose base currency the process does not register no longer logs one "
+        "deserialize ERROR and one load ERROR at every start after the one that cached it -- the ERROR burst each "
+        f"engine start logs is this, once per such instrument: {burst}"
     )
 
 
