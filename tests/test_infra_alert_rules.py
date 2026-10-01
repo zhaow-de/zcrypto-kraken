@@ -1797,10 +1797,8 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
     """A CHARACTERISATION of the rule's own blindness, which stays: with no `zcrypto_exec_position`
     sample in the window, node A's `or on() vector(0)` supplies the same 0 a flat book publishes, so both
-    histories get the same quiet verdict. `T0187` was resolved at the source instead -- the startup pass
-    gives the gauge every basket child at the first tick (`test_engine_executor.py`'s
-    `test_a_start_whose_journal_seeds_no_position_gives_the_gauge_every_basket_child_at_the_first_tick`)
-    -- so green here is not the rule being sound, and a rule change that tells the two apart turns it RED."""
+    histories get the same quiet verdict. Green here is not the rule being sound: `T0187` closed the
+    unobserved state at the source, and a rule change that tells the two apart turns it RED."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
@@ -1825,17 +1823,16 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
 
     unobserved = _replay_dark_with_exposure(never_observed, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
     assert unobserved == quiet_flat, (
-        f"the rule now tells an unmade observation apart from a measured flat book -- if that is `T0187` closing, "
-        f"this assertion is what the fix changes: {sorted(unobserved ^ quiet_flat)[:3]}"
+        f"the rule now tells an unmade observation apart from a measured flat book -- "
+        f"this assertion is what that rule change updates: {sorted(unobserved ^ quiet_flat)[:3]}"
     )
 
 
 def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
     """About the replay, not the rule: told to read an empty window as something other than 0, the same
     harness gives the two histories different verdicts and still leaves the flat one quiet inside its
-    own horizon. It is the seam a change to the rule would turn on -- `T0187` was resolved at the source
-    rather than here -- exercised so that a change of expectation is a changed assertion rather than a
-    rewritten harness."""
+    own horizon. It is the seam a change to the rule would turn on, exercised so that a change of
+    expectation is a changed assertion rather than a rewritten harness."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
