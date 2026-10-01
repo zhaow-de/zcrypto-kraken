@@ -1534,9 +1534,9 @@ rules:
       # with every pair added. A single pair's long silence pages the stream-silent rules first and
       # reaches this one only past 300 s times the pair count; a mean cannot exceed its largest
       # pair, so a day crosses 300 only when some pair booked more than 300 s in it. Blind to any
-      # gap under the reconciler's 30 s floor, clean-close reconnects among them:
-      # zcrypto_capture_reconnects_total is charted, not alerted. The reminder in
-      # infra/runbooks/ops.md counts the organic days the real fit needs.
+      # gap under the reconciler's 30 s floor, clean-close reconnects among them, which
+      # zcrypto-capture-reconnect-rate reads instead. The reminder in infra/runbooks/ops.md counts
+      # the organic days the real fit needs.
       #
       # `and resets(...) == 0` guards the same counter-reset hazard as the residual-gap rule (T0044),
       # and MORE so here: this window is 24h, so a ledger correction would false-page for a full day.
@@ -3224,6 +3224,50 @@ rules:
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "103"
       unit: "failed resubscribes -- errors plus ack timeouts -- in the last day"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-capture-reconnect-rate
+    title: "Capture · reconnect rate high (degrading host or venue)"
+    ruleGroup: zcrypto-capture
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The arm zcrypto-reconcile-healable-gap-rate cannot see: a clean-close reconnect resubscribes
+      # in 2-8 s, under the reconciler's 30 s floor, so a rising reconnect rate books no healable
+      # seconds at any magnitude. The bar sits near twice the busiest day on the board (17), against
+      # a usual 7-9 a day per host. One series per host: both hosts high together is the venue or a
+      # converge day, one host alone is that host. `increase()` handles the reset at a recreate.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 86400, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'increase(zcrypto_capture_reconnects_total{host=~"zcrypto|zcrypto-red"}[1d])'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [30]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "A capture host reconnected to Kraken more than 30 times in 24h, against a usual 7-9 a day. Both capture hosts high together is the venue; one alone is that host degrading, its drops healed by the other host and so invisible to every gap rule. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-reconnect-rate"
+      __dashboardUid__: "zcrypto-integrity"
+      __panelId__: "103"
+      unit: "reconnects in the last day"
     labels:
       severity: warning
     notification_settings:

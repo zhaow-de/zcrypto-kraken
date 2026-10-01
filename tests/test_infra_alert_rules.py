@@ -531,6 +531,14 @@ def test_the_healable_gap_rate_is_denominated_in_the_unit_its_summary_claims():
     assert f"{minutes:.0f} minutes" in summary, f"summary claims a different quantity than {_threshold(rule)}s implies"
 
 
+def test_the_reconnect_rate_pages_per_host_over_a_day_at_the_count_its_summary_states():
+    rule = _rule("zcrypto-capture-reconnect-rate")
+    expr = rule["data"][0]["model"]["expr"]
+
+    assert re.fullmatch(r'increase\(zcrypto_capture_reconnects_total\{host=~"zcrypto\|zcrypto-red"\}\[1d\]\)', expr), expr
+    assert f"more than {_threshold(rule):g} times in 24h" in rule["annotations"]["summary"]
+
+
 def test_the_healable_gap_summary_defers_the_loss_question_to_the_field_that_answers_it():
     """`healable` counts the silence a gap was ADMITTED on, which is `claimed_seconds`; what a splice
     inserted is `healed_seconds` and the permanent shortfall is `residual_seconds`. A summary that

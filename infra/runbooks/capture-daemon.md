@@ -97,6 +97,32 @@ Both `zcrypto-capture-resubscribe-rate` and `zcrypto-capture-resubscribe-failing
 
 ______________________________________________________________________
 
+<a name="zcrypto-capture-reconnect-rate"></a>
+
+## zcrypto-capture-reconnect-rate — ALERT
+
+### What you are seeing
+
+A **warning** Grafana alert, `Capture · reconnect rate high (degrading host or venue)`: `increase(zcrypto_capture_reconnects_total{host=~"zcrypto|zcrypto-red"}[1d]) > 30`, held `for: 30m`, on the integrity board's "Recovery ladder — 24h increase" panel. A capture host reconnected to Kraken's WebSocket more than 30 times in a day, against a usual 7 to 9 a day per host. The page carries `host`: it names the host that crossed the bar.
+
+### What it means
+
+`zcrypto_capture_reconnects_total` counts every pass of the reconnect loop in `cli/capture/ws_client.py` — a clean close (`WS connection closed, reconnecting: …` at WARNING) and a failed connect attempt (`WS connect attempt failed, reconnecting: …`) alike — so it bounds the distinct drops from above. A clean-close reconnect resubscribes in 2-8 s and loses those seconds of L2 on that host; the other capture host covers them, so the residual-gap rules stay flat, and they sit under the reconciler's 30 s floor, so [`zcrypto-reconcile-healable-gap-rate`](ops.md#zcrypto-reconcile-healable-gap-rate) books none of them. This rule is the only one that sees a host reconnecting ever more often.
+
+### What to do
+
+1. **Read both capture hosts by value**: `uv run python infra/scripts/grafana-query.py 'increase(zcrypto_capture_reconnects_total{host=~"zcrypto|zcrypto-red"}[1d])'`. Both high together is the venue or the network edge the hosts share: check `zcrypto-capture-venue-not-online` ([`capture.md#zcrypto-capture-venue-not-online`](capture.md#zcrypto-capture-venue-not-online)) and Kraken's status page, and there is nothing to do on the hosts. `(no series)` is a fault of the scrape, not a quiet day.
+2. **Rule out our own day.** A converge or a restart of the capture daemon drops and re-opens the socket; `docs/reference/deploy-log.jsonl`'s rows for the last 24h on the named host say whether the day was ours.
+3. **One host alone: read why it closes.** On that host, `sudo docker logs --since 24h zcrypto-capture 2>&1 | grep -E "WS connection closed|WS connect attempt failed|still failing"`. The close reason after the colon separates a venue-side close from a keepalive timeout (`no close frame received or sent`), and a run of `connect attempt failed` lines is the host's own network or DNS; read `zcrypto-capture-load-high` and the host's memory beside it.
+4. **Do not restart to make it stop.** A reconnecting daemon is still capturing, and the other host covers its seconds; a restart drops live, unbackfillable L2 on its own. A restart is the [stuck-pair section](#zcrypto-capture-book-desync-stuck)'s remedy, not this one's.
+5. **A rate that stays high on one host for two days or more is work to file**, with the host, the close reasons and the daily counts from step 1.
+
+### Retire when
+
+`zcrypto-capture-reconnect-rate` is absent from `infra/grafana/alerts.yaml`, or `cli/capture/ws_client.py` no longer counts `reconnects_total`.
+
+______________________________________________________________________
+
 <a name="zcrypto-capture-watermark-breached"></a>
 
 ## zcrypto-capture-watermark-breached — ALERT
