@@ -699,8 +699,14 @@ def _unscoped(expr: str) -> str:
     """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
     ops-only rule carries it in its own; the pairing compares the two without that one matcher on
     either side. A capture panel scopes by the `$capture_host` picker where the capture rules name
-    both hosts, so the picker is read as the two hosts it offers."""
-    return expr.replace('{host="ops"}', "").replace('host=~"$capture_host"', 'host=~"zcrypto|zcrypto-red"').strip()
+    both hosts, and an engine panel by the engine board's `$host`, whose one host is the primary, so
+    each picker is read as the hosts it offers."""
+    return (
+        expr.replace('{host="ops"}', "")
+        .replace('host=~"$capture_host"', 'host=~"zcrypto|zcrypto-red"')
+        .replace('host=~"$host"', 'host="zcrypto"')
+        .strip()
+    )
 
 
 def _rule_panel_pairs():
@@ -777,7 +783,7 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     # Pairing is string equality after `_unscoped`, so reformatting one expression, or a scope it
     # stops reading, drops rules from coverage with no failure anywhere. The floor makes a collapse
     # visible. Lower it only when a rule or panel is deliberately retired.
-    assert len(pairs) >= 87, f"rule-to-panel pairing collapsed to {len(pairs)}"
+    assert len(pairs) >= 90, f"rule-to-panel pairing collapsed to {len(pairs)}"
     bad = []
     for uid, panel, target, evaluator, condition in pairs:
         if uid in known:
