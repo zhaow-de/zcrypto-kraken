@@ -1032,9 +1032,9 @@ def test_seed_exec_positions_after_a_catch_up_restart_folds_no_repair_of_a_fill_
 
 
 def test_seed_exec_positions_reads_a_book_closed_by_a_split_fill_as_exactly_flat(tmp_path):
-    """The record's 0.001 closed by a maker's 0.0007 and the fallback's 0.0003 folds to 5.4e-20, which the
-    dark-with-exposure rule reads as exposure and the gauge never shows, its flat reading an exact 0 over an empty
-    `positions_open`; the fold snaps a symbol within `FLAT_TOLERANCE` of zero to 0.0, and the assertion is exact."""
+    """The record's 0.001 closed by a maker's 0.0007 and the fallback's 0.0003 folds to 5.4e-20, which the gauge
+    never shows, its flat reading an exact 0 over an empty `positions_open`; the fold snaps a symbol within
+    `FLAT_TOLERANCE` of zero to 0.0, and the assertion is exact."""
     journal_dir = tmp_path / "journal"
     boundary = datetime(2026, 9, 25, 20, 0, tzinfo=UTC)
     _write_venue_record_v2(journal_dir, boundary, positions={"BTC/EUR": 0.001}, snapshot_at=boundary + timedelta(seconds=90))

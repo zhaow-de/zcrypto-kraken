@@ -402,8 +402,8 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
     # `zcrypto_exec_position` keeps its exclusion for its BARE VALUE, which stays no fault at any
-    # level -- but it is no longer unwatched: zcrypto-engine-dark-with-exposure pages on it non-zero
-    # at last sight WITH the engine's scrape gone, a conjunction the attended-window reasoning above
+    # level -- but it is no longer unwatched: zcrypto-engine-dark-with-exposure pages on it above its
+    # dust floor at last sight WITH the engine's scrape gone, a conjunction the attended-window reasoning above
     # does not cover, since nobody is watching the board when the engine is the thing that left.
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
