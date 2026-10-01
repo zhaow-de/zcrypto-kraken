@@ -77,7 +77,6 @@ Excluded, with the reason:
 
 **Resolved 2026-10-01.** Every member carries a test whose empty case fails against the pre-fix literal beside a populated control (PR #463), and the census over `cli/` and `infra/` is closed: its last entry, the dark-with-exposure rule, is excluded for a reason since `T0187` resolved at the source. Recurrence, a new member written later, was never this topic's criterion and is not registered.
 
-
 | site | computes | was | now |
 |---|---|---|---|
 | `cli/tick/reconcile.py` · `_match_stats` | the within-tolerance pct | `100.0` | `None` — unreachable arm, no test can drive it (Findings) |
