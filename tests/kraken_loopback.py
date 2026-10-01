@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import threading
 import time
@@ -150,6 +151,19 @@ def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side
     }
 
 
+def spot_trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy") -> dict[str, Any]:
+    """One TradesHistory row for a spot fill of `txid`: no `leverage` and no `posstatus`, with the
+    `postxid` and `margin` Kraken still sends on it, both of which the adapter's model requires."""
+    row = trade_row(txid, pair, vol=vol, price=price, trade_id=trade_id, side=side)
+    row.update(postxid="TKH2SE-M7IF5-CFI7LT", margin="0.00000")
+    del row["leverage"], row["posstatus"]
+    return row
+
+
+# The listings a venue keeps while no loopback serves it, by field name.
+_CARRIED = ("open_orders", "closed_orders", "positions", "trades", "balances")
+
+
 @dataclass
 class KrakenLoopback:
     """What the venue holds, and what reached it. A test mutates the holdings between reads."""
@@ -194,7 +208,19 @@ class KrakenLoopback:
     # The `count` CancelOrder answers: 1 as Kraken answers a cancel it executed, 0 the other answer a
     # test serves, since which one Kraken gives for a txid already closed is unmeasured.
     cancel_count: int = 1
+    # AddOrder mints `OLOOP<txid_base + n>`, so a loopback serving a venue an earlier one took orders
+    # for mints past them.
+    txid_base: int = 0
     base_url: str = ""
+
+    def holdings(self) -> dict[str, Any]:
+        """The venue as the next loopback is to serve it: a copy of the five listings, and the txids minted."""
+        state = {name: copy.deepcopy(getattr(self, name)) for name in _CARRIED}
+        return state | {"txid_base": self.txid_base + len(self.add_orders)}
+
+    def hold(self, holdings: dict[str, Any]) -> None:
+        for name, value in copy.deepcopy(holdings).items():
+            setattr(self, name, value)
 
     def answer(self, method: str, path: str, query: dict[str, list[str]], form: dict[str, str]) -> tuple[Any, list[str]]:
         name = path.rsplit("/", 1)[-1]
@@ -245,7 +271,7 @@ class KrakenLoopback:
             return {"trades": page, "count": len(self.trades)}, []
         if path == "/0/private/AddOrder":
             self.add_orders.append(form)
-            txid = f"OLOOP{len(self.add_orders)}-AAAAA-BBBBBB"
+            txid = f"OLOOP{self.txid_base + len(self.add_orders)}-AAAAA-BBBBBB"
             if self.on_add_order is not None:
                 self.on_add_order(form, txid)
             return {"descr": {"order": "loopback"}, "txid": [txid]}, []

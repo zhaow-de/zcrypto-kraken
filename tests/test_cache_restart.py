@@ -38,6 +38,7 @@ INSTALL = "sudo apt-get install -y valkey-server"
 PAIR, SYMBOL, INSTRUMENT = "SOLEUR", "SOL/EUR", "SOL/EUR.KRAKEN"
 PRICE = 150.0
 QTY = 1.0
+SOL_QUOTE = (INSTRUMENT, f"{PRICE:.2f}", f"{PRICE + 0.1:.2f}")
 ENGINE_USER, ENGINE_PASSWORD = "engine", "engine-harness-password"
 ADMIN_USER, ADMIN_PASSWORD = "admin", "admin-harness-password"
 # Phase windows: the executor's startup pass runs on its first tick at 5 s and the plan is picked up on
@@ -176,15 +177,29 @@ class _Node:
         self.records: list[dict] = []
         self.logs: list[str] = []
 
-    def drop_plan(self, plan_id: str, *, leverage: int | None = 2, notional_eur: float = PRICE * QTY) -> None:
-        intent = {"symbol": SYMBOL, "side": "buy", "action": "open", "mode": "execute", "notional_eur": notional_eur}
-        if leverage is not None:
-            intent["leverage"] = leverage
+    def _drop(self, plan_id: str, intent: dict) -> None:
         plan = {"plan_id": plan_id, "created_at": datetime.now(timezone.utc).isoformat(), "intents": [intent]}
         (exec_dir(self.state) / PLAN_FILENAME).write_text(json.dumps(plan))
 
+    def drop_plan(self, plan_id: str, *, leverage: int | None = 2, notional_eur: float = PRICE * QTY, symbol: str = SYMBOL) -> None:
+        intent = {"symbol": symbol, "side": "buy", "action": "open", "mode": "execute", "notional_eur": notional_eur}
+        if leverage is not None:
+            intent["leverage"] = leverage
+        self._drop(plan_id, intent)
+
+    def drop_spot_sell(self, plan_id: str, *, qty: float, symbol: str = SYMBOL) -> None:
+        self._drop(plan_id, {"symbol": symbol, "side": "sell", "action": "close", "mode": "execute", "qty": qty})
+
     def run(
-        self, phase: int, venue: lb.KrakenLoopback, data: lb.WsPeer, exec_: lb.WsPeer, *, window: int, valkey_port=None
+        self,
+        phase: int,
+        venue: lb.KrakenLoopback,
+        data: lb.WsPeer,
+        exec_: lb.WsPeer,
+        *,
+        window: int,
+        valkey_port=None,
+        quote: tuple[str, str, str] = SOL_QUOTE,
     ) -> dict:
         out = self.root / f"phase{phase}.json"
         args = {
@@ -199,9 +214,9 @@ class _Node:
             "base_url": venue.base_url,
             "ws_public": data.url,
             "ws_private": exec_.url,
-            "instrument": INSTRUMENT,
-            "bid": f"{PRICE:.2f}",
-            "ask": f"{PRICE + 0.1:.2f}",
+            "instrument": quote[0],
+            "bid": quote[1],
+            "ask": quote[2],
             "quote_every": 3,
             "window_secs": window,
             "out": str(out),
@@ -304,6 +319,52 @@ def _script_cancel_ack(venue: lb.KrakenLoopback, exec_: lb.WsPeer, wire: dict) -
         threading.Thread(target=frame, daemon=True).start()
 
     venue.on_cancel_order = on_cancel_order
+
+
+def _script_spot_fills(venue: lb.KrakenLoopback, exec_: lb.WsPeer, *, pair: str, symbol: str, coin: str, fills: list) -> None:
+    """Every AddOrder fills whole as a spot order: the two frames, the closed order, the spot trade row
+    and the coin's BalanceEx row, which a sale to zero removes. OpenPositions stays as it was."""
+
+    def on_add_order(form: dict, txid: str) -> None:
+        side, volume, price = form["type"], form["volume"], form["price"]
+        qty, px = float(volume), float(price)
+        n = venue.txid_base + len(venue.add_orders)
+        cl_ord_id = form.get("cl_ord_id")
+        fills.append({"txid": txid, "side": side, "qty": qty, "price": px})
+        venue.open_orders[txid] = dict(lb.open_order(pair, price=price, volume=volume, side=side), oflags="fciq")
+
+        def frames() -> None:
+            time.sleep(0.3)
+            if not exec_.subscribed.wait(30):
+                return
+            exec_.send_execution(lb.exec_new(txid, cl_ord_id, symbol=symbol, qty=qty, price=px, side=side))
+            time.sleep(0.7)
+            exec_.send_execution(
+                lb.exec_trade(
+                    txid, cl_ord_id, symbol=symbol, qty=qty, price=px, last_qty=qty, cum_qty=qty,
+                    exec_id=f"TLOOP{n}-AAAAA-AAAAAA", trade_id=1000 + n, side=side,
+                )
+            )  # fmt: skip
+            del venue.open_orders[txid]
+            venue.closed_orders[txid] = dict(
+                lb.closed_order(pair, price=price, volume=volume, side=side, status="closed", vol_exec=volume),
+                oflags="fciq",
+                price=f"{px:.5f}",
+                cost=f"{qty * px:.5f}",
+            )
+            venue.trades[f"TLOOP{n}-AAAAA-AAAAAA"] = lb.spot_trade_row(
+                txid, pair, vol=volume, price=price, trade_id=1000 + n, side=side
+            )
+            held = float(venue.balances.get(coin, lb.balance("0"))["balance"])
+            held = round(held + qty if side == "buy" else held - qty, 8)
+            if held > 0:
+                venue.balances[coin] = lb.balance(f"{held:.8f}")
+            else:
+                venue.balances.pop(coin, None)
+
+        threading.Thread(target=frames, daemon=True).start()
+
+    venue.on_add_order = on_add_order
 
 
 def _basket_pairs() -> dict:
@@ -752,6 +813,107 @@ def test_an_empty_cache_beside_open_ledger_rows_is_a_cold_start_the_pass_reconci
     assert (row["filled_qty"], row["state"]) == (0.4, "canceled")
     [intent] = node.intents()
     assert intent["outcome"] == "revoked"
+
+
+def _open_positions(dump: dict) -> list[tuple[str, float]]:
+    return sorted((p["strategy_id"], p["signed_qty"]) for p in dump["positions"] if p["is_open"])
+
+
+_SOL = {"pair": PAIR, "symbol": SYMBOL, "coin": "SOL", "quote": SOL_QUOTE}
+_EUR_ONLY = {"balances": {"ZEUR": lb.balance("1000.00000000")}}
+
+
+def _spot_process(node: _Node, n: int, holdings: dict, leg: dict = _SOL, *, pairs: dict | None = None) -> tuple[dict, dict, list]:
+    """One node process over a venue holding `holdings`, every order it places filled whole as a spot
+    order: its record, the venue's holdings afterwards, and the fills."""
+    fills: list = []
+    with lb.serve_with_sockets(pairs or _basket_pairs()) as (venue, data, exec_):
+        venue.hold(holdings)
+        _script_spot_fills(venue, exec_, pair=leg["pair"], symbol=leg["symbol"], coin=leg["coin"], fills=fills)
+        record = node.run(n, venue, data, exec_, window=PHASE1_WINDOW, quote=leg["quote"])
+        record["private_calls"] = list(venue.private_calls)
+        return record, venue.holdings(), fills
+
+
+_BUMP = "the nautilus build the tree pins no longer does what this test recorded of it"
+
+
+def test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_restarted_and_the_account_keeps_its_coin(tmp_path):
+    valkey = _Valkey(tmp_path / "valkey")
+    try:
+        valkey.start()
+        node = _Node(tmp_path / "node", valkey.port)
+        node.drop_plan("p-spot-buy", leverage=None)
+        bought, holdings, _ = _spot_process(node, 1, _EUR_ONLY)
+        node.drop_spot_sell("p-spot-sell", qty=QTY)
+        held, sold_out, _ = _spot_process(node, 2, holdings)
+        flat, _, _ = _spot_process(node, 3, sold_out)
+    finally:
+        valkey.stop()
+
+    for record in (bought, held, flat):
+        assert record["errors"] == [], record["errors"]
+        assert "Unresolved positions" not in record["log"]
+    assert [(row["order"]["side"], row["state"], row["filled_qty"]) for row in node.rows()] == [
+        ("buy", "filled", QTY),
+        ("sell", "filled", QTY),
+    ], node.rows()
+    assert (holdings["balances"]["SOL"]["balance"], "SOL" in sold_out["balances"]) == (f"{QTY:.8f}", False)
+
+    assert "OpenPositions" in held["private_calls"] and holdings["positions"] == {}, held["private_calls"]
+    assert (_restore_lines(held["log"]), _open_positions(held["at_start"])) == (
+        [
+            "0 order(s), 2 position(s) restored",
+            f"position {INSTRUMENT} {-QTY} @ {PRICE} (EXTERNAL)",
+            f"position {INSTRUMENT} {QTY} @ {PRICE} (ShadowStrategy-000)",
+        ],
+        [("EXTERNAL", -QTY), ("ShadowStrategy-000", QTY)],
+    ), (
+        f"{_BUMP}: a restart over a spot lot under spot_account_type=MARGIN no longer books an EXTERNAL short equal to the "
+        "lot beside the strategy's long. The rules that the engine's held figures are not read after a restart, and that an "
+        "exit is engine sells followed by one restart, were written for that offset -- re-read both against what a "
+        f"restart restores now: {_restore_lines(held['log'])}"
+    )
+    assert held["venue_state_at_start"]["positions"][SYMBOL] == 0.0, (
+        f"{_BUMP}: the venue record's position for a spot lot held across a restart is no longer the Cache's net of 0"
+    )
+    assert f"the venue holds {QTY} {SYMBOL} where the Cache reads 0.0 -- the position gauge takes the venue's figure" in held["log"]
+    gauge = [qty for symbol, qty in held["metrics"]["positions"] if symbol == SYMBOL]
+    assert (gauge[0], gauge[-1]) == (QTY, 0.0), gauge
+
+    assert _open_positions(held["at_end"]) == [("EXTERNAL", -QTY)], (
+        f"{_BUMP}: the engine's sale of a restored spot lot no longer closes the strategy's long and leaves the EXTERNAL "
+        f"short alone, the Cache at minus the lot until the next restart: {_open_positions(held['at_end'])}"
+    )
+    settled = [qty for symbol, qty in flat["metrics"]["positions"] if symbol == SYMBOL]
+    assert (_restore_lines(flat["log"]), _open_positions(flat["at_start"]), settled, "the venue holds" in flat["log"]) == (
+        ["0 order(s), 0 position(s) restored"],
+        [],
+        [0.0],
+        False,
+    ), (
+        f"{_BUMP}: one restart after a restored spot lot was sold whole no longer leaves the Cache with nothing open, "
+        f"which the exit by engine sells followed by one restart rests on: {_restore_lines(flat['log'])}"
+    )
+
+    stale = (
+        "The engine's spot-sell check (`_classify_spot_close`) and `draft-plan`'s cap on a sell read the venue record's "
+        "balances as a figure taken at a start, raised by a later start and never lowered -- re-read both, and the "
+        "clearing of the stored account before an entry, against what the account carries now"
+    )
+    assert "SOL" not in bought["venue_state_at_end"]["balances"], (
+        f"{_BUMP}: the account the venue record is built from now carries a coin inside the process that bought it. "
+        f"{stale}: {bought['venue_state_at_end']['balances']}"
+    )
+    assert held["venue_state_at_start"]["balances"].get("SOL") == QTY, (
+        f"{_BUMP}: a restart with the lot held no longer puts the coin on the account at the venue's balance. "
+        f"{stale}: {held['venue_state_at_start']['balances']}"
+    )
+    assert (held["venue_state_at_end"]["balances"].get("SOL"), flat["venue_state_at_start"]["balances"].get("SOL")) == (QTY, QTY), (
+        f"{_BUMP}: the account no longer keeps a coin at the lot once it is sold whole and the node restarted with the "
+        f"venue's balance at 0. {stale}: {held['venue_state_at_end']['balances']} at the selling process's end, "
+        f"{flat['venue_state_at_start']['balances']} after the restart"
+    )
 
 
 def _silent_listener() -> tuple[int, threading.Event]:
