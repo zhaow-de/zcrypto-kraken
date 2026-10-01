@@ -1590,9 +1590,11 @@ class ProbeStrategy(Strategy):
         positions = self.cache.positions_open(venue=KRAKEN_VENUE)
         account = self.portfolio.account(KRAKEN_VENUE)
         post_buy_balances = {str(c): str(b.total) for c, b in account.balances().items()} if account else {}
-        print(f"      post-buy: open positions={len(positions)}, balances={post_buy_balances}")
-        print("      note: a SPOT buy under spot_account_type=MARGIN may open no OpenPositions row --")
-        print("            RECORD what this build reports there. Wallet truth is the raw Balance endpoint.")
+        print(f"      post-buy: positions open in this node's Cache={len(positions)}, Cache account balances={post_buy_balances}")
+        print("      note: both figures are this node's Cache, not Kraken's answer. The count is booked from the fill")
+        print("            above; Kraken's OpenPositions lists margin positions only, so a spot lot is never a row")
+        print("            there -- `kraken positions -o json` on the workstation is Kraken's own list. The balances")
+        print("            are the account as read at connect, which a fill does not move.")
 
         try:
             planned_sell, sell = self.plan_market(
