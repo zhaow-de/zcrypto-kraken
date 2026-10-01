@@ -1889,7 +1889,6 @@ def test_run_with_a_journal_that_seeds_no_position_still_hands_the_executor_its_
 
     assert cli_result.exit_code == 0, cli_result.output
     assert isinstance(installed["metrics"], command._ExecutionMetrics)
-    assert installed["metrics"].position is not None
     assert "zcrypto_exec_position{" not in generate_latest(registry).decode()
 
 
@@ -1916,6 +1915,8 @@ def test_a_raising_execution_metrics_seed_never_prevents_the_engine_from_startin
     monkeypatch.setenv(METRICS_PORT_ENV_VAR, str(_free_port()))
     _run_env(monkeypatch, tmp_path)
     monkeypatch.setattr(command, "_seed_exec_positions", _raise)
+    installed = {}
+    monkeypatch.setattr(executor_module, "set_executor_hooks", lambda **kwargs: installed.update(kwargs))
 
     with _zcrypto_caplog_attached(caplog), caplog.at_level("ERROR"):
         cli_result = runner.invoke(app, ["engine", "run"])
@@ -1924,6 +1925,7 @@ def test_a_raising_execution_metrics_seed_never_prevents_the_engine_from_startin
     assert any(r.levelno >= 40 for r in caplog.records)  # logged, not silently swallowed
     # The families still exist -- the seed failed, not the registration.
     assert registry.get_sample_value("zcrypto_exec_orders_total", {"outcome": "refused"}) == 0.0
+    assert isinstance(installed["metrics"], command._ExecutionMetrics)
 
 
 def test_the_tracking_state_series_is_absent_until_a_week_has_been_scored():

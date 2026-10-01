@@ -1659,7 +1659,6 @@ def _dark_with_exposure_lookback(rule) -> int:
 
 
 def _dark_with_exposure_unobserved_reads(rule) -> float:
-    """What node A reads over a window with no position sample: its own `or on() vector(N)`."""
     node_a = next(n for n in rule["data"] if n["refId"] == "A")
     fallback = re.search(r"or on\(\) vector\(([0-9.]+)\)\s*$", node_a["model"]["expr"])
     assert fallback, f"node A no longer ends in an `or on() vector(N)` fallback: {node_a['model']['expr']!r}"
@@ -1803,10 +1802,8 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
 
 def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
-    """A CHARACTERISATION of the rule's own blindness, which stays: with no `zcrypto_exec_position`
-    sample in the window, node A's `or on() vector(0)` supplies the same 0 a flat book publishes, so both
-    histories get the same quiet verdict. The fallback, the lookback and `for:` are read out of the rule,
-    so a node A that tells the two apart turns this RED."""
+    """A CHARACTERISATION of the rule's blindness, not a requirement of it: node A's fallback, lookback and `for:` are
+    read out of the rule, so a node A that tells the two histories apart turns this red."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 

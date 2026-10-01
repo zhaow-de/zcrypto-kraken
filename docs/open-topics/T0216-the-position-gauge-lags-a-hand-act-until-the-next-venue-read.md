@@ -1,6 +1,6 @@
 ---
 status: open
-ripe_when: 'any one arm: RUNG 3 starts — the memo''s `**RUNG 3 — full weights` entry records a start and not only its `DependsOn`; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.'
+ripe_when: 'any one arm: RUNG 2 starts — the memo''s `**RUNG 2 — concentrated, time-boxed` entry records a start and not only its `DependsOn`; or an engine restart is planned while a position is open with nobody attending it; or `zcrypto-engine-cycle-stale` stops covering darkness on its own — `grep -c "uid: zcrypto-engine-cycle-stale" infra/grafana/alerts.yaml` reads 0, its `severity:` is no longer `critical`, or it gains a `zcrypto_exec_position` reference.'
 ---
 
 # The position gauge lags a hand act until the next venue read
@@ -15,11 +15,10 @@ It is the quiet direction of the gauge's error: a hand-opened position the engin
 
 ## Findings so far
 
-- Split out of `T0187` on its resolution (2026-10-01): `T0187` was opened for the gauge with no series at all, which D27's seed and D28's first-tick read close; this span is the staleness its acceptance of 2026-09-09 priced, and spec `00119`'s D27 and D28 named `T0187` as its home until then.
-- The acceptance's grounds, carried here with its arms: darkness is guarded independently by `zcrypto-engine-cycle-stale` at `critical`; a hand act during an armed window is the owner's attended act; and the alert-layer alternative, a presence-aware node A, pages on a book the engine reported flat (`T0187`'s replay, `tests/test_infra_alert_rules.py`).
-- D28 narrowed the span from a whole process life to one re-read interval; the WARNING `the venue holds <qty> <symbol> where the Cache reads <qty>` marks each settle that moved the gauge.
+- Split out of `T0187` at its resolution: this span is the staleness its acceptance of 2026-09-09 priced.
+- The acceptance's other grounds: a hand act during an armed window is the owner's attended act; and the alert-layer alternative, a presence-aware node A, pages on a book the engine reported flat (`T0187`'s replay, `tests/test_infra_alert_rules.py`).
+- The WARNING `the venue holds <qty> <symbol> where the Cache reads <qty>` marks each read that moved the gauge.
 
 ## Suggested next steps
 
 - At the trigger, measure the span on the account's record: from the rung's ledger, the hand acts and the time each took to reach the gauge (the WARNING line's stamp against Kraken's trade time), and decide whether a shorter re-read interval while armed, or a read on each external order event, is owed.
-- If `zcrypto-engine-cycle-stale` is ever re-shaped, re-read this span's backstop before the change merges.
