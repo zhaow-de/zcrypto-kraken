@@ -265,7 +265,7 @@
       "id": 103,
       "type": "timeseries",
       "title": "Recovery ladder — 24h increase",
-      "description": "Is the desync recovery path being exercised more than it should be, and does it work? Two page lines, both held for `for: 30m`. Resubscribes over 24 hours above 1.5 mean the rate is re-elevating or a pair is flapping. Rejected frames and missing unsubscribe acks are SUMMED before the same 1.5 line, because that is how the alert evaluates them — one of each is two and pages, while two separate per-counter series would both read green. 1.5 rather than 1 because a single increment extrapolates to about 1.0007 and would page on one genuine self-healed event. Reconnects are context only: no alert watches them. Neither resubscribe counter carries a pair label, so this says THAT the rate rose, not which pair — the desync panel above names the pair. Scoped by the capture-machine picker.",
+      "description": "Is the desync recovery path being exercised more than it should be, and does it work? Three page lines, all held for `for: 30m`. Resubscribes over 24 hours above 1.5 mean the rate is re-elevating or a pair is flapping. Rejected frames and missing unsubscribe acks are SUMMED before the same 1.5 line, because that is how the alert evaluates them — one of each is two and pages, while two separate per-counter series would both read green. 1.5 rather than 1 because a single increment extrapolates to about 1.0007 and would page on one genuine self-healed event. Reconnects above 30.5 a day on one host page as `zcrypto-capture-reconnect-rate`: the usual day is 7 to 9, both hosts high together is the venue, one alone is that host. Neither resubscribe counter carries a pair label, so this says THAT the rate rose, not which pair — the desync panel above names the pair. Scoped by the capture-machine picker.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -302,7 +302,7 @@
           },
           "expr": "increase(zcrypto_capture_reconnects_total{host=~\"$capture_host\"}[1d])",
           "refId": "C",
-          "legendFormat": "{{host}} reconnects (context)"
+          "legendFormat": "{{host}} reconnects"
         }
       ],
       "fieldConfig": {
@@ -378,6 +378,36 @@
                     {
                       "color": "red",
                       "value": 1.5
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 30.5
                     }
                   ]
                 }
@@ -1099,6 +1129,36 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.001
+                    }
+                  ]
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byFrameRefID",

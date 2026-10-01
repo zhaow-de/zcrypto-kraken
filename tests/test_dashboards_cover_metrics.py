@@ -698,8 +698,9 @@ def test_a_single_target_merged_table_matches_its_value_by_type():
 def _unscoped(expr: str) -> str:
     """A panel may pin the rule's own expression to the ops exporter with `{host="ops"}`, and an
     ops-only rule carries it in its own; the pairing compares the two without that one matcher on
-    either side."""
-    return expr.replace('{host="ops"}', "").strip()
+    either side. A capture panel scopes by the `$capture_host` picker where the capture rules name
+    both hosts, so the picker is read as the two hosts it offers."""
+    return expr.replace('{host="ops"}', "").replace('host=~"$capture_host"', 'host=~"zcrypto|zcrypto-red"').strip()
 
 
 def _rule_panel_pairs():
