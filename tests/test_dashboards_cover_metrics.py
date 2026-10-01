@@ -774,10 +774,10 @@ def test_a_panels_red_line_agrees_with_the_rule_it_charts():
     # own reading. New entries are not acceptable: the guard exists to stop this class growing.
     known = {"zcrypto-ops-tapebars-not-advancing"}
     pairs = list(_rule_panel_pairs())
-    # Pairing is string equality once the ops scope is dropped, so reformatting one expression drops
-    # that rule from coverage with no failure anywhere. The floor makes a collapse visible. Lower it
-    # only when a rule or panel is deliberately retired.
-    assert len(pairs) >= 87, f"rule-to-panel pairing collapsed to {len(pairs)} -- an expr was reformatted"
+    # Pairing is string equality after `_unscoped`, so reformatting one expression, or a scope it
+    # stops reading, drops rules from coverage with no failure anywhere. The floor makes a collapse
+    # visible. Lower it only when a rule or panel is deliberately retired.
+    assert len(pairs) >= 87, f"rule-to-panel pairing collapsed to {len(pairs)}"
     bad = []
     for uid, panel, target, evaluator, condition in pairs:
         if uid in known:

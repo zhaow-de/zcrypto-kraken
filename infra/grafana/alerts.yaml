@@ -3259,7 +3259,7 @@ rules:
     execErrState: Alerting
     for: 30m
     annotations:
-      summary: "A capture host made more than 30 reconnect attempts to Kraken in 24h, against a usual 7-9 a day: many drops, or one outage of about 20 minutes, each failed attempt counting. Both capture hosts high together is the venue; one alone is that host degrading. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-reconnect-rate"
+      summary: "A capture host made more than 30 reconnect attempts to Kraken in 24h, against a usual 7-9 a day: many drops, or one outage of about 20 minutes. Both capture hosts high together is the venue; one alone is that host degrading. Runbook: infra/runbooks/capture-daemon.md#zcrypto-capture-reconnect-rate"
       __dashboardUid__: "zcrypto-integrity"
       __panelId__: "103"
       unit: "reconnects in the last day"
