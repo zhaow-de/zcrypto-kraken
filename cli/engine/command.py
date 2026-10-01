@@ -2000,6 +2000,13 @@ def _read_draft_record(path: Path) -> CycleRecord:
     return record
 
 
+def _read_draft_export(path: Path, what: str) -> tuple[object, datetime]:
+    try:
+        return json.loads(path.read_text()), datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except (OSError, ValueError) as exc:
+        raise _abort(f"could not read the {what} export {path}: {exc}") from exc
+
+
 @engine_app.command(name="draft-plan")
 def draft_plan(
     cycle_path: Path = typer.Option(
@@ -2018,6 +2025,12 @@ def draft_plan(
         help="Kraken's extended balance (BalanceEx) as JSON, exported on this workstation right before the draft. Refused when over 30 "
         "minutes old or dated after now.",
     ),
+    positions_path: Path = typer.Option(
+        ...,
+        "--positions",
+        help="Kraken's open margin positions (OpenPositions) as JSON, exported beside the balance: an empty object when nothing is "
+        "open. Refused when it lists a position, and when over 30 minutes old or dated after now.",
+    ),
     out: Optional[Path] = typer.Option(
         None,
         "--out",
@@ -2032,19 +2045,20 @@ def draft_plan(
     exiting: bool = typer.Option(
         False,
         "--exit",
-        help="Draft the box's exit: every leg's target is 0 and nothing is bought.",
+        help="Draft the box's exit: every leg's target is 0 and nothing is bought. Refused except on the box's two exit days, "
+        "which refuse a draft without it.",
     ),
     discard: Optional[str] = typer.Option(
         None,
         "--discard",
         metavar="PLAN_ID",
-        help="Today's newest plan, never placed -- refused at --check, or expired before it was placed. Recorded in the "
+        help="One of today's plans, never placed -- refused at --check, or expired before it was placed. Recorded in the "
         "decision log, and its legs may be drafted again today.",
     ),
 ) -> None:
     """Draft the next rung-2 probe plan: each leg's target minus what Kraken holds, sells first.
 
-    Workstation-only and read-only towards the venue: it reads the two journal records, the balance export, the public ticker and Kraken's maintenance feed, writes one plan file and appends to the decision log, and places nothing. The owner copies the plan to the engine host, runs `probe-plan --check` there and places it. Exits non-zero on any refusal, writing nothing."""
+    Workstation-only and read-only towards the venue: it reads the two journal records, the balance and positions exports, the public ticker and Kraken's maintenance feed, writes one plan file and appends to the decision log, and places nothing. The owner copies the plan to the engine host, runs `probe-plan --check` there and places it. Exits non-zero on any refusal, writing nothing."""
     from cli.engine.venueledger import read_venue_record, validate_venue_record
 
     now = _utc_now()
@@ -2059,11 +2073,8 @@ def draft_plan(
         validate_venue_record(venue)
     except (OSError, ValueError, EngineJournalError) as exc:
         raise _abort(f"could not read the venue record {venue_path}: {exc}") from exc
-    try:
-        balances = json.loads(balances_path.read_text())
-        balances_written_at = datetime.fromtimestamp(balances_path.stat().st_mtime, tz=timezone.utc)
-    except (OSError, ValueError) as exc:
-        raise _abort(f"could not read the balance export {balances_path}: {exc}") from exc
+    balances, balances_written_at = _read_draft_export(balances_path, "balance")
+    positions, positions_written_at = _read_draft_export(positions_path, "positions")
     try:
         log_text = decisions_path.read_text() if decisions_path.exists() else ""
     except OSError as exc:
@@ -2075,6 +2086,8 @@ def draft_plan(
             venue=venue,
             balances=balances,
             balances_written_at=balances_written_at,
+            positions=positions,
+            positions_written_at=positions_written_at,
             log_rows=parse_decision_log(log_text),
             now=now,
             read_ticker=lambda: fetch_ticker(opener=_urlopen),

@@ -28,7 +28,7 @@ CASH_RESERVE_EUR = 5.0
 PLAN_CAP_EUR = 95.0
 MAX_INTENTS = 3
 INTENT_TIME_BOX = timedelta(minutes=15)
-BALANCE_MAX_AGE = timedelta(minutes=30)
+EXPORT_MAX_AGE = timedelta(minutes=30)
 GROSS_JUMP_HIGH = 1.8
 GROSS_JUMP_LOW = 0.55
 # The boundaries a drop window follows, and its slots, whose gaps clear valkey2's and valkey3's
@@ -37,6 +37,15 @@ DROP_SLOTS: dict[int, tuple[tuple[time, time], ...]] = {
     12: ((time(12, 10), time(13, 15)), (time(13, 30), time(15, 0))),
     16: ((time(16, 10), time(17, 15)), (time(17, 30), time(19, 0))),
 }
+# The box's calendar, four ISO weeks from a Monday: a slipped box moves BOX_FIRST_DAY, and every date below follows.
+BOX_FIRST_DAY = date(2026, 10, 5)
+BOX_DAYS = 28
+BOX_LAST_DAY = BOX_FIRST_DAY + timedelta(days=BOX_DAYS - 1)
+RESTART_DAY = BOX_FIRST_DAY + timedelta(days=25)
+EXIT_DAYS = (BOX_FIRST_DAY + timedelta(days=26), BOX_FIRST_DAY + timedelta(days=27))
+# The restart day's window is the 12Z record's first slot alone: the planned restart and its drills take the rest.
+RESTART_DAY_LAST_DROP = datetime.combine(RESTART_DAY, DROP_SLOTS[12][0][1], tzinfo=timezone.utc)
+RESTART_NOT_BEFORE = DROP_SLOTS[12][1][0]
 
 _TICKER_URL = "https://api.kraken.com/0/public/Ticker"
 _MAINTENANCE_FEED = "https://status.kraken.com/api/v2/scheduled-maintenances.json"
@@ -144,6 +153,19 @@ def last_drop(window_end: datetime, intents: int) -> datetime:
     return window_end - intents * INTENT_TIME_BOX
 
 
+def box_day_refusal(day: date, *, exiting: bool) -> str | None:
+    if not BOX_FIRST_DAY <= day <= BOX_LAST_DAY:
+        return f"{day:%a %Y-%m-%d} is outside the box, {BOX_FIRST_DAY:%a %Y-%m-%d} to {BOX_LAST_DAY:%a %Y-%m-%d}"
+    if day in EXIT_DAYS and not exiting:
+        return f"{day:%a %Y-%m-%d} is an exit day -- only --exit drafts on it, and nothing is bought"
+    if exiting and day not in EXIT_DAYS:
+        return (
+            f"{day:%a %Y-%m-%d} is not an exit day -- --exit drafts on {EXIT_DAYS[0]:%a %Y-%m-%d} and "
+            f"{EXIT_DAYS[1]:%a %Y-%m-%d} alone"
+        )
+    return None
+
+
 def _instant(raw: object) -> datetime:
     moment = datetime.fromisoformat(raw)
     if moment.utcoffset() is None:
@@ -238,8 +260,9 @@ def parse_balance_export(doc: object) -> BalanceExport:
     return BalanceExport(held=held, free_eur=found["EUR"][1], outside=outside)
 
 
-def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], dict]:
-    """Each leg's ordermin and lot step, and the balances b is read from, off the venue record of `cycle_ts`'s boundary."""
+def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], dict[str, float], dict]:
+    """Each leg's ordermin and lot step, the engine's held per symbol, and the balances b is read from, off the venue
+    record of `cycle_ts`'s boundary. A position there sums the lots the engine's Cache holds open, spot lots included."""
     if doc.get("status") != "ok" or doc.get("schema_version") != 2:
         raise DraftPlanError(
             f"the venue record is not an ok schema-2 snapshot (status {doc.get('status')!r}, schema_version "
@@ -263,14 +286,42 @@ def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], d
         if not (ordermin > 0 and lot_step > 0):
             raise DraftPlanError(f"the venue record's {symbol} ordermin {ordermin!r} or lot step {lot_step!r} is not positive")
         constraints[symbol] = Constraints(ordermin=ordermin, lot_step=lot_step)
+    positions: dict[str, float] = {}
     for symbol, size in doc["state"]["positions"].items():
         try:
-            open_size = float(size)
-        except (TypeError, ValueError) as exc:
-            raise DraftPlanError(f"the venue record's {symbol} position {size!r} is unreadable") from exc
-        if open_size != 0:
-            raise DraftPlanError(f"the venue record carries a {symbol} margin position of {open_size:.10g} -- the box is spot only")
-    return constraints, doc["state"]["balances"]
+            held = float(size)
+        except TypeError, ValueError:
+            held = math.nan
+        if not math.isfinite(held):
+            raise DraftPlanError(f"the venue record's {symbol} position {size!r} is unreadable")
+        if held < 0:
+            raise DraftPlanError(
+                f"the venue record carries a {symbol} position of {held:.10g} -- a short is no spot lot, and the box is spot only"
+            )
+        positions[symbol] = held
+    return constraints, positions, doc["state"]["balances"]
+
+
+def refuse_open_margin_positions(doc: object) -> None:
+    """`doc` is Kraken's open-positions export: an object keyed by position id, empty when nothing is open."""
+    error = doc.get("error") if isinstance(doc, dict) else None
+    if error and isinstance(error, (str, list)):
+        raise DraftPlanError(f"the positions export is an error answer, not positions: {doc.get('message') or error}")
+    if isinstance(error, list):
+        raise DraftPlanError(
+            "the positions export is a REST answer envelope {error, result}, not the position map the open-positions export prints"
+        )
+    if not isinstance(doc, dict):
+        raise DraftPlanError("the positions export must be a JSON object of position id -> position, empty when nothing is open")
+    stray = [str(txid) for txid, row in doc.items() if not (isinstance(row, dict) and "pair" in row)]
+    if stray:
+        raise DraftPlanError(
+            "the positions export is not the position map the open-positions export prints: "
+            f"{', '.join(stray)} carries no position's pair"
+        )
+    if doc:
+        named = "; ".join(f"{txid} ({row['pair']} {row.get('side')} {row.get('vol')})" for txid, row in doc.items())
+        raise DraftPlanError(f"Kraken reports an open margin position {named}: the box is spot only")
 
 
 def venue_balance(balances: dict, base: str) -> float:
@@ -343,7 +394,8 @@ def decide_leg(
     if leg.delta_eur > 0:
         if leg.delta_eur < leg.buy_floor:
             return replace(leg, side="buy", reason=f"buy {leg.delta_eur:.4f} EUR is under the buy floor {leg.buy_floor:.4f} EUR")
-        return replace(leg, outcome="placed", side="buy", notional_eur=_floor_to_step(leg.delta_eur, 0.01))
+        # Rounded first: 720 * 0.03 is 21.599999999999998 in floats, and a whole-cent delta would floor a cent low.
+        return replace(leg, outcome="placed", side="buy", notional_eur=_floor_to_step(round(leg.delta_eur, 9), 0.01))
     qty = _floor_to_step(kraken_held - target / price, constraints.lot_step)
     if qty < constraints.ordermin:
         return replace(leg, side="sell", reason=f"sell {qty:.10g} is under ordermin {constraints.ordermin:.10g}")
@@ -363,7 +415,7 @@ def decide_leg(
 
 def trim_buys_to_cash(decisions: list[LegDecision], free_eur: float) -> list[LegDecision]:
     """Buys are counted in whole cents, so a sum of cent amounts never drifts across the budget."""
-    budget = round(_floor_to_step(free_eur - CASH_RESERVE_EUR, 0.01) * 100) if free_eur > CASH_RESERVE_EUR else 0
+    budget = round(_floor_to_step(round(free_eur - CASH_RESERVE_EUR, 9), 0.01) * 100) if free_eur > CASH_RESERVE_EUR else 0
     buys = sorted((d for d in decisions if d.outcome == "placed" and d.side == "buy"), key=lambda d: (d.notional_eur, d.symbol))
     excess = sum(round(d.notional_eur * 100) for d in buys) - budget
     trimmed: dict[str, LegDecision] = {}
@@ -432,12 +484,20 @@ def ruling_refusals(
 ) -> list[str]:
     """What the ruling refuses in a parsed plan; a sell's EUR is its qty at the leg's drafted price."""
     reasons: list[str] = []
+    created = plan.created_at.astimezone(timezone.utc)
+    if refusal := box_day_refusal(created.date(), exiting=exiting):
+        reasons.append(refusal)
     if len(plan.intents) > MAX_INTENTS:
         reasons.append(f"{len(plan.intents)} intents, over the {MAX_INTENTS} a plan may carry")
-    if window_end is not None and plan.created_at > (by := last_drop(window_end, len(plan.intents))):
+    if created.date() == RESTART_DAY:
+        if created > RESTART_DAY_LAST_DROP:
+            reasons.append(
+                f"a plan created at {created:%H:%M:%S}Z on {RESTART_DAY:%a %Y-%m-%d} is past that day's last drop at "
+                f"{RESTART_DAY_LAST_DROP:%H:%M}Z -- no plan follows the planned restart"
+            )
+    elif window_end is not None and created > (by := last_drop(window_end, len(plan.intents))):
         reasons.append(
-            f"a plan of {len(plan.intents)} intent(s) created at {plan.created_at.astimezone(timezone.utc):%H:%M:%S}Z is past "
-            f"its last drop at {by:%H:%M}Z"
+            f"a plan of {len(plan.intents)} intent(s) created at {created:%H:%M:%S}Z is past its last drop at {by:%H:%M}Z"
         )
     sides = [intent.side for intent in plan.intents]
     if "buy" in sides and "sell" in sides[sides.index("buy") :]:
@@ -574,9 +634,24 @@ def _render(
     if len(plans) > 1:
         queued = ", ".join(leg.symbol for plan in plans[1:] for leg in plan)
         lines.append(
-            f"{len(plans) - 1} more plan(s) queued ({queued}): draft again from a fresh balance export once {plan_id} is terminal"
+            f"{len(plans) - 1} more plan(s) queued ({queued}): draft again from fresh balance and positions exports once "
+            f"{plan_id} is terminal"
         )
     return "\n".join(lines)
+
+
+def _export_age(what: str, written_at: datetime, now: datetime) -> timedelta:
+    age = now - written_at
+    if age > EXPORT_MAX_AGE:
+        raise DraftPlanError(
+            f"the {what} export is {age.total_seconds() / 60:.0f} minutes old, over {EXPORT_MAX_AGE.total_seconds() / 60:.0f} "
+            "-- take it again right before drafting"
+        )
+    if age < -timedelta(minutes=1):
+        raise DraftPlanError(
+            f"the {what} export is dated {-age.total_seconds() / 60:.0f} minutes after now -- check the workstation's clock"
+        )
+    return age
 
 
 def draft(
@@ -585,6 +660,8 @@ def draft(
     venue: dict,
     balances: object,
     balances_written_at: datetime,
+    positions: object,
+    positions_written_at: datetime,
     log_rows: list[dict],
     now: datetime,
     read_ticker: Callable[[], dict],
@@ -594,48 +671,57 @@ def draft(
 ) -> Draft:
     """Every refusal that needs no price runs before either network read."""
     now = now.astimezone(timezone.utc)
+    if refusal := box_day_refusal(now.date(), exiting=exiting):
+        raise DraftPlanError(refusal)
     boundary = latest_boundary(now)
     if record.cycle_ts < boundary:
         raise DraftPlanError(
             f"the cycle record is for {record.cycle_ts:%Y-%m-%d %H:%M}Z, older than the latest boundary "
             f"{boundary:%Y-%m-%d %H:%M}Z -- draft from that boundary's record"
         )
-    age = now - balances_written_at
-    if age > BALANCE_MAX_AGE:
-        raise DraftPlanError(
-            f"the balance export is {age.total_seconds() / 60:.0f} minutes old, over {BALANCE_MAX_AGE.total_seconds() / 60:.0f} "
-            "-- export the balances again right before drafting"
-        )
-    if age < -timedelta(minutes=1):
-        raise DraftPlanError(
-            f"the balance export is dated {-age.total_seconds() / 60:.0f} minutes after now -- check the workstation's clock"
-        )
+    age = _export_age("balance", balances_written_at, now)
+    _export_age("positions", positions_written_at, now)
     slots = drop_slots(record.cycle_ts)
     window_end = slots[-1][1]
     box_minutes = f"{INTENT_TIME_BOX.total_seconds() / 60:.0f} minutes"
-    fits = min(MAX_INTENTS, (window_end - now) // INTENT_TIME_BOX)
-    if fits < 1:
-        raise DraftPlanError(
-            f"it is {now:%H:%M:%S}Z, past {last_drop(window_end, 1):%H:%M}Z, the last drop of a one-intent plan in the window "
-            f"after the {record.cycle_ts:%H}Z record -- each intent takes {box_minutes} before the window's "
-            f"{window_end:%H:%M}Z end"
-        )
+    restart_day = now.date() == RESTART_DAY
+    if restart_day:
+        if record.cycle_ts.hour != 12:
+            raise DraftPlanError(
+                f"the {record.cycle_ts:%H}Z record of {RESTART_DAY:%a %Y-%m-%d}, the restart day, drafts nothing -- only the "
+                "12Z record drafts that day: no plan follows the planned restart"
+            )
+        if now > RESTART_DAY_LAST_DROP:
+            raise DraftPlanError(
+                f"it is {now:%H:%M:%S}Z, past {RESTART_DAY_LAST_DROP:%H:%M}Z, the last drop on {RESTART_DAY:%a %Y-%m-%d} for a "
+                "plan of any size -- the planned restart and its drills take the rest of the window"
+            )
+        fits = MAX_INTENTS
+    else:
+        fits = min(MAX_INTENTS, (window_end - now) // INTENT_TIME_BOX)
+        if fits < 1:
+            raise DraftPlanError(
+                f"it is {now:%H:%M:%S}Z, past {last_drop(window_end, 1):%H:%M}Z, the last drop of a one-intent plan in the "
+                f"window after the {record.cycle_ts:%H}Z record -- each intent takes {box_minutes} before the window's "
+                f"{window_end:%H:%M}Z end"
+            )
     rows_in = list(log_rows)
     discard_row = None
     if discard is not None:
-        newest = max(
-            (plan for plan, _ in placed_today(rows_in, now.date()).values()),
+        live = sorted(
+            {plan for plan, _ in placed_today(rows_in, now.date()).values()},
             key=lambda plan: int(_PLAN_ID.fullmatch(plan).group(2)),
-            default=None,
         )
-        if discard != newest:
+        if discard not in live:
             raise DraftPlanError(
-                f"{discard} is not today's newest plan in the decision log ({newest or 'none'}) -- only that one can be discarded"
+                f"{discard} is not one of today's plans the decision log still holds legs under ({', '.join(live) or 'none'}) "
+                "-- a plan is discarded on the day it was drafted, and once"
             )
         discard_row = {"drafted_at": now.isoformat(), "plan_id": discard, "outcome": "discarded", "reason": "never placed"}
         rows_in.append(discard_row)
     export = parse_balance_export(balances)
-    constraints, venue_balances = venue_view(venue, record.cycle_ts)
+    refuse_open_margin_positions(positions)
+    constraints, engine_held, venue_balances = venue_view(venue, record.cycle_ts)
     venue_bs = {symbol: venue_balance(venue_balances, symbol.split("/")[0]) for symbol in LEGS}
     weights = leg_weights(record)
     today = placed_today(rows_in, now.date())
@@ -651,7 +737,7 @@ def draft(
             price=prices[symbol],
             constraints=constraints[symbol],
             kraken_held=export.held[symbol.split("/")[0]],
-            engine_held=None if record.held is None else record.held.get(symbol.split("/")[0]),
+            engine_held=engine_held.get(symbol),
             venue_b=venue_bs[symbol],
             exiting=exiting,
         )
@@ -720,7 +806,14 @@ def draft(
         f"free EUR {export.free_eur:.2f}; buys capped at free EUR - {CASH_RESERVE_EUR:.0f}",
         gross_line(gross, record.cycle_ts, rows_in),
     ]
-    if plans:
+    if plans and restart_day:
+        header.insert(
+            2,
+            f"drop window {slots[0][0]:%H:%M}-{RESTART_DAY_LAST_DROP:%H:%M}Z for this plan's {len(plans[0])} intent(s): on "
+            f"{RESTART_DAY:%a %Y-%m-%d} a plan of any size drops by {RESTART_DAY_LAST_DROP:%H:%M}Z, and the planned restart "
+            f"follows after {RESTART_NOT_BEFORE:%H:%M}Z -- no plan follows it",
+        )
+    elif plans:
         drops = [*slots[:-1], (slots[-1][0], last_drop(window_end, len(plans[0])))]
         drop_line = (
             "drop window "

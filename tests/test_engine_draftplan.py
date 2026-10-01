@@ -14,8 +14,12 @@ from typer.testing import CliRunner
 import cli.engine.command as command
 from cli.__main__ import app
 from cli.engine.draftplan import (
+    BOX_FIRST_DAY,
+    BOX_LAST_DAY,
+    EXIT_DAYS,
     INTENT_TIME_BOX,
     LEGS,
+    RESTART_DAY,
     Constraints,
     DraftPlanError,
     LegDecision,
@@ -29,6 +33,7 @@ from cli.engine.draftplan import (
     mid_prices,
     next_plan_id,
     parse_balance_export,
+    refuse_open_margin_positions,
     ruling_refusals,
     trim_buys_to_cash,
 )
@@ -37,8 +42,10 @@ from cli.engine.probeplan import parse_plan
 from cli.engine.store import BASKET, PAIR_KEYS
 
 UTC = timezone.utc
-BOUNDARY = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+BOUNDARY = datetime.combine(BOX_FIRST_DAY, time(12), tzinfo=UTC)
 NOW = BOUNDARY + timedelta(minutes=12)
+DAY = BOX_FIRST_DAY.isoformat()
+EVE = BOX_FIRST_DAY - timedelta(days=1)
 ORDERMIN = {
     "BTC/EUR": 5e-05,
     "ETH/EUR": 0.001,
@@ -66,7 +73,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 runner = CliRunner()
 
 
-def _record(targets: dict[str, float] | None = None, *, cycle_ts: datetime = BOUNDARY, held: dict | None = None) -> CycleRecord:
+def _record(targets: dict[str, float] | None = None, *, cycle_ts: datetime = BOUNDARY) -> CycleRecord:
     four_hour_last = cycle_ts - timedelta(hours=4)
     daily_last = cycle_ts.replace(hour=0) - timedelta(days=1)
     snapshots = tuple(
@@ -82,8 +89,15 @@ def _record(targets: dict[str, float] | None = None, *, cycle_ts: datetime = BOU
         completed_at=cycle_ts + timedelta(seconds=102),
         code_version="test",
         builder_path="fast",
-        held=held,
     )
+
+
+def _id(n: int, day: date = BOX_FIRST_DAY) -> str:
+    return f"r2-{day:%Y%m%d}-{n}"
+
+
+def _noon(day: date) -> datetime:
+    return datetime.combine(day, time(12), tzinfo=UTC)
 
 
 def _venue(*, cycle_ts: datetime = BOUNDARY, balances: dict | None = None, positions: dict | None = None) -> dict:
@@ -108,7 +122,7 @@ def _venue(*, cycle_ts: datetime = BOUNDARY, balances: dict | None = None, posit
         "state": {
             "snapshot_at": (cycle_ts + timedelta(seconds=90)).isoformat(),
             "instruments": instruments,
-            "positions": positions if positions is not None else {symbol: 0 for symbol in BASKET},
+            "positions": {symbol: 0 for symbol in BASKET} | (positions or {}),
             "balances": balances if balances is not None else {"EUR": 1050.0},
         },
         "concordance": {"ok": True, "failures": []},
@@ -134,16 +148,33 @@ def _maintenance(name: str, begins: str, ends: str, components: tuple[str, ...] 
 
 
 def _feed(*entries: dict) -> dict:
-    funding = _maintenance("Banking Circle Funding Maintenance", "2026-10-05T13:00:00.000Z", "2026-10-05T13:30:00.000Z")
+    funding = _maintenance("Banking Circle Funding Maintenance", f"{DAY}T13:00:00.000Z", f"{DAY}T13:30:00.000Z")
     return {"page": {"id": "page"}, "scheduled_maintenances": [funding, *entries]}
 
 
-def _draft(targets=None, *, record=None, venue=None, export=None, rows=(), now=NOW, written=None, feed=None, **options):
+def _draft(
+    targets=None,
+    *,
+    boundary=BOUNDARY,
+    record=None,
+    venue=None,
+    export=None,
+    positions=None,
+    rows=(),
+    now=None,
+    written=None,
+    positions_written=None,
+    feed=None,
+    **options,
+):
+    now = now if now is not None else boundary + timedelta(minutes=12)
     return draft(
-        record=record if record is not None else _record(targets),
-        venue=venue if venue is not None else _venue(),
+        record=record if record is not None else _record(targets, cycle_ts=boundary),
+        venue=venue if venue is not None else _venue(cycle_ts=boundary),
         balances=export if export is not None else _export(),
         balances_written_at=written if written is not None else now - timedelta(minutes=2),
+        positions=positions if positions is not None else {},
+        positions_written_at=positions_written if positions_written is not None else now - timedelta(minutes=2),
         log_rows=list(rows),
         now=now,
         read_ticker=_ticker,
@@ -240,6 +271,14 @@ def test_a_buy_is_floored_to_the_cent():
     assert (leg.outcome, leg.notional_eur) == ("placed", 12.74)
 
 
+def test_a_whole_cent_buy_keeps_its_cent_under_float_noise():
+    assert 720 * 0.03 < 21.60
+
+    leg = _decide("LTC/EUR", weight=0.03, price=50.0, ordermin=0.01)
+
+    assert (leg.outcome, leg.notional_eur) == ("placed", 21.60)
+
+
 @pytest.mark.parametrize(("venue_b", "outcome"), [(0.05, "carried"), (0.0, "placed"), (0.1, "placed")])
 def test_a_sell_the_venue_record_refutes_carries(venue_b, outcome):
     leg = _decide(held=0.1, venue_b=venue_b)
@@ -287,6 +326,14 @@ def test_a_trim_that_leaves_a_buy_above_its_floor_keeps_the_rest_of_it():
     assert (out["ETH/EUR"].outcome, out["ETH/EUR"].notional_eur) == ("placed", 3.0)
     assert "trimmed by 1.00 EUR" in out["ETH/EUR"].reason
     assert out["BTC/EUR"].notional_eur == 20.0
+
+
+def test_the_cash_budget_keeps_its_cent_under_float_noise():
+    assert 1028.86 - 5 < 1023.86
+
+    out = trim_buys_to_cash([_placed("BTC/EUR", "buy", notional=1023.86)], free_eur=1028.86)
+
+    assert (out[0].outcome, out[0].notional_eur) == ("placed", 1023.86)
 
 
 def test_no_buy_survives_free_eur_under_the_reserve_and_sells_are_untouched():
@@ -344,7 +391,7 @@ def test_an_intent_over_the_cap_on_its_own_is_refused():
 
 
 def _plan(*intents: dict, created_at: datetime = NOW):
-    return parse_plan(json.dumps({"plan_id": "r2-20261005-1", "created_at": created_at.isoformat(), "intents": list(intents)}))
+    return parse_plan(json.dumps({"plan_id": _id(1), "created_at": created_at.isoformat(), "intents": list(intents)}))
 
 
 def _buy(symbol="BTC/EUR", notional=10.0, **extra) -> dict:
@@ -378,7 +425,7 @@ def test_the_ruling_refuses(intents, fragment):
 
 def test_the_ruling_reads_a_plans_last_drop_by_its_own_intent_count():
     end = BOUNDARY + timedelta(hours=3)
-    created = datetime(2026, 10, 5, 14, 15, 1, tzinfo=UTC)
+    created = _at(BOUNDARY, "14:15:01")
 
     assert ruling_refusals(_plan(_sell(), _buy(), created_at=created), PRICES, window_end=end) == []
     assert ruling_refusals(_plan(_sell(), _buy(), _buy("ETH/EUR"), created_at=created), PRICES, window_end=end) == [
@@ -396,26 +443,24 @@ def test_the_last_drop_gives_each_intent_the_executors_time_box():
 
 
 def test_the_plan_id_counts_up_within_the_day_from_the_decision_log():
-    rows = [{"plan_id": "r2-20261005-1"}, {"plan_id": "r2-20261005-2"}, {"plan_id": None}, {"plan_id": "r2-20261004-7"}, {}]
+    rows = [{"plan_id": _id(1)}, {"plan_id": _id(2)}, {"plan_id": None}, {"plan_id": _id(7, EVE)}, {}]
 
-    assert next_plan_id(rows, date(2026, 10, 5)) == "r2-20261005-3"
-    assert next_plan_id(rows, date(2026, 10, 6)) == "r2-20261006-1"
+    assert next_plan_id(rows, BOX_FIRST_DAY) == _id(3)
+    assert next_plan_id(rows, BOX_FIRST_DAY + timedelta(days=1)) == _id(1, BOX_FIRST_DAY + timedelta(days=1))
 
 
 @pytest.mark.parametrize(
     ("entry", "conflict"),
     [
         (
-            _maintenance(
-                "Order Entry System Maintenance", "2026-10-05T14:50:00Z", "2026-10-05T15:30:00Z", ("Website", "WebSocket")
-            ),
+            _maintenance("Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z", ("Website", "WebSocket")),
             True,
         ),
-        (_maintenance("Derivatives Platform Maintenance", "2026-10-05T11:00:00Z", "2026-10-05T12:10:00Z", ("REST API",)), True),
-        (_maintenance("Scheduled maintenance for REST and WebSocket", "2026-10-05T13:20:00Z", "2026-10-05T13:25:00Z"), True),
-        (_maintenance("Kraken Website and API Maintenance", "2026-10-05T15:01:00Z", "2026-10-05T15:16:00Z", ("REST",)), False),
-        (_maintenance("Kraken Website and API Maintenance", "2026-10-05T15:00:00Z", "2026-10-05T15:16:00Z", ("REST",)), True),
-        (_maintenance("Restricted funding restart", "2026-10-05T14:00:00Z", "2026-10-05T14:30:00Z", ("Interest",)), False),
+        (_maintenance("Derivatives Platform Maintenance", f"{DAY}T11:00:00Z", f"{DAY}T12:10:00Z", ("REST API",)), True),
+        (_maintenance("Scheduled maintenance for REST and WebSocket", f"{DAY}T13:20:00Z", f"{DAY}T13:25:00Z"), True),
+        (_maintenance("Kraken Website and API Maintenance", f"{DAY}T15:01:00Z", f"{DAY}T15:16:00Z", ("REST",)), False),
+        (_maintenance("Kraken Website and API Maintenance", f"{DAY}T15:00:00Z", f"{DAY}T15:16:00Z", ("REST",)), True),
+        (_maintenance("Restricted funding restart", f"{DAY}T14:00:00Z", f"{DAY}T14:30:00Z", ("Interest",)), False),
     ],
 )
 def test_a_websocket_or_rest_window_overlapping_the_drop_window_conflicts(entry, conflict):
@@ -425,7 +470,7 @@ def test_a_websocket_or_rest_window_overlapping_the_drop_window_conflicts(entry,
 
 
 def test_a_maintenance_overlapping_the_drop_window_refuses_the_draft():
-    entry = _maintenance("Order Entry System Maintenance", "2026-10-05T14:50:00Z", "2026-10-05T15:30:00Z", ("WebSocket",))
+    entry = _maintenance("Order Entry System Maintenance", f"{DAY}T14:50:00Z", f"{DAY}T15:30:00Z", ("WebSocket",))
 
     with pytest.raises(DraftPlanError, match="Order Entry System Maintenance"):
         _draft({"BTC/EUR": 0.0177}, feed=_feed(entry))
@@ -437,7 +482,7 @@ def test_a_maintenance_overlapping_the_drop_window_refuses_the_draft():
         ({"scheduled_maintenances": []}, "lists no maintenances"),
         ({"page": {}}, "lists no maintenances"),
         (_feed(_maintenance("REST maintenance", "soon", "later")), "carries no readable window"),
-        (_feed(_maintenance("REST maintenance", "2026-10-05T14:00:00", "2026-10-05T15:00:00")), "carries no offset"),
+        (_feed(_maintenance("REST maintenance", f"{DAY}T14:00:00", f"{DAY}T15:00:00")), "carries no offset"),
     ],
 )
 def test_a_feed_that_cannot_clear_the_window_refuses(feed, fragment):
@@ -454,7 +499,7 @@ def test_the_16z_fallback_has_its_own_drop_window_and_other_boundaries_have_none
 
 
 def test_a_record_older_than_the_latest_boundary_is_refused():
-    with pytest.raises(DraftPlanError, match="older than the latest boundary 2026-10-05 16:00Z"):
+    with pytest.raises(DraftPlanError, match=f"older than the latest boundary {DAY} 16:00Z"):
         _draft({"BTC/EUR": 0.0177}, now=BOUNDARY + timedelta(hours=4, minutes=12))
 
 
@@ -467,7 +512,7 @@ def test_the_16z_record_drafts_inside_its_own_window():
         now=fallback + timedelta(minutes=12),
     )
 
-    assert result.plan_id == "r2-20261005-1"
+    assert result.plan_id == _id(1)
 
 
 @pytest.mark.parametrize(
@@ -481,6 +526,19 @@ def test_a_balance_export_over_30_minutes_old_or_dated_after_now_is_refused(minu
             _draft({"BTC/EUR": 0.0177}, written=written)
     else:
         assert _draft({"BTC/EUR": 0.0177}, written=written).plan_text is not None
+
+
+@pytest.mark.parametrize(
+    ("minutes", "fragment"),
+    [(31, "the positions export is 31 minutes old, over 30"), (29, None), (-10, "the positions export is dated 10 minutes after")],
+)
+def test_a_positions_export_over_30_minutes_old_or_dated_after_now_is_refused(minutes, fragment):
+    written = NOW - timedelta(minutes=minutes)
+    if fragment:
+        with pytest.raises(DraftPlanError, match=fragment):
+            _draft({"BTC/EUR": 0.0177}, positions_written=written)
+    else:
+        assert _draft({"BTC/EUR": 0.0177}, positions_written=written).plan_text is not None
 
 
 def _at(boundary: datetime, clock: str) -> datetime:
@@ -508,8 +566,9 @@ def test_a_draft_past_a_one_intent_plans_last_drop_is_refused(hour, clock, fragm
     [
         (_venue(balances={"EUR": 1050.0, "SOL": "abc"}), "SOL balance 'abc' is unreadable"),
         (_venue(balances={"EUR": 1050.0, "XDG": "nan"}), "XDG balance 'nan' is unreadable"),
-        (_venue(positions={"BTC/EUR": 0.0002}), "a BTC/EUR margin position of 0.0002 -- the box is spot only"),
+        (_venue(positions={"BTC/EUR": -0.0002}), "a BTC/EUR position of -0.0002 -- a short is no spot lot"),
         (_venue(positions={"ETH/BTC": "x"}), "ETH/BTC position 'x' is unreadable"),
+        (_venue(positions={"SOL/EUR": "nan"}), "SOL/EUR position 'nan' is unreadable"),
         (
             {"schema_version": 2, "cycle_ts": BOUNDARY.isoformat(), "code_version": "test", "status": "error", "error": "down"},
             "not an ok schema-2 snapshot (status 'error'",
@@ -576,6 +635,38 @@ def test_an_export_the_draft_cannot_trust_is_refused(doc, fragment):
         parse_balance_export(doc)
 
 
+_POSITIONS_AS_PRINTED = '{"TU7O4B-NJL5A-GY5DRP":{"asset_class":"forex","cost":6.156,"fee":0.05048,"margin":3.078,"misc":"","oflags":"","ordertxid":"OAHUQV-4Z3XL-7N4LUX","ordertype":"market","pair":"SOLEUR","posstatus":"open","rollovertm":"1790298560","side":"buy","terms":"0.0200% per 4 hours","time":"1790284160.725662","vol":0.06,"vol_closed":0.0}}'
+
+
+@pytest.mark.parametrize(
+    ("doc", "fragment"),
+    [
+        (
+            json.loads(_POSITIONS_AS_PRINTED),
+            "Kraken reports an open margin position TU7O4B-NJL5A-GY5DRP (SOLEUR buy 0.06): the box is spot only",
+        ),
+        ({"TXID-A": {"pair": "XXBTZEUR"}}, "position TXID-A (XXBTZEUR None None): the box is spot only"),
+        ({"TXID-A": {"pair": "XXBTZEUR"}, "TXID-B": 1}, "not the position map the open-positions export prints: TXID-B carries no"),
+        ({"result": {}}, "not the position map the open-positions export prints: result carries no position's pair"),
+        ({"error": ""}, "not the position map the open-positions export prints: error carries no position's pair"),
+        ({"error": "auth", "message": "Invalid key"}, "the positions export is an error answer, not positions: Invalid key"),
+        ({"error": ["EAPI:Invalid key"]}, "the positions export is an error answer, not positions: ['EAPI:Invalid key']"),
+        ({"error": [], "result": {}}, "a REST answer envelope {error, result}"),
+        ([], "must be a JSON object of position id -> position, empty when nothing is open"),
+        ("{}", "must be a JSON object"),
+    ],
+)
+def test_a_positions_export_that_does_not_show_the_account_spot_only_is_refused(doc, fragment):
+    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
+        refuse_open_margin_positions(doc)
+    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
+        _draft({"BTC/EUR": 0.0177}, positions=doc)
+
+
+def test_the_positions_export_with_nothing_open_is_an_empty_object():
+    assert refuse_open_margin_positions(json.loads("{}\n")) is None
+
+
 @pytest.mark.parametrize(("bid", "ask"), [("104.0", "103.9"), ("0", "103.9"), ("nan", "103.9")])
 def test_a_touch_that_is_not_a_market_is_refused(bid, ask):
     ticker = _ticker()
@@ -612,16 +703,16 @@ def test_the_ticker_is_read_for_the_nine_legs_and_an_error_answer_refuses():
 TARGETS = {"BTC/EUR": 0.0177, "ETH/EUR": 0.0176, "SOL/EUR": -0.01, "DOGE/EUR": 0.002, "ADA/EUR": 0.01, "LINK/EUR": 0.05}
 
 
-def _book_draft(**kwargs):
-    venue = _venue(balances={"EUR": 1000.0, "SOL": 0.12})
-    return _draft(TARGETS, venue=venue, export=_export(1000.0, SOL=0.12), **kwargs)
+def _book_draft(boundary=BOUNDARY, **kwargs):
+    venue = _venue(cycle_ts=boundary, balances={"EUR": 1000.0, "SOL": 0.12}, positions={"SOL/EUR": 0.12})
+    return _draft(TARGETS, boundary=boundary, venue=venue, export=_export(1000.0, SOL=0.12), **kwargs)
 
 
 def test_the_draft_places_sells_first_and_queues_what_a_plan_cannot_carry():
     result = _book_draft()
 
     plan = parse_plan(result.plan_text)
-    assert plan.plan_id == "r2-20261005-1"
+    assert plan.plan_id == _id(1)
     assert plan.created_at == NOW
     assert [(i.symbol, i.side, i.action, i.qty, i.notional_eur, i.leverage) for i in plan.intents] == [
         ("SOL/EUR", "sell", "close", 0.12, None, None),
@@ -636,7 +727,7 @@ def test_the_draft_places_sells_first_and_queues_what_a_plan_cannot_carry():
 
 
 def test_the_draft_writes_one_decision_row_per_leg():
-    result = _book_draft(rows=[{"plan_id": "r2-20261005-1"}])
+    result = _book_draft(rows=[{"plan_id": _id(1)}])
 
     assert [row["symbol"] for row in result.rows] == list(LEGS)
     sol = next(row for row in result.rows if row["symbol"] == "SOL/EUR")
@@ -646,12 +737,12 @@ def test_the_draft_writes_one_decision_row_per_leg():
         "weight": -0.01,
         "target_eur": 0.0,
         "kraken_held": 0.12,
-        "engine_held": None,
+        "engine_held": 0.12,
         "venue_b": 0.12,
         "outcome": "placed",
         "side": "sell",
         "qty": 0.12,
-        "plan_id": "r2-20261005-2",
+        "plan_id": _id(2),
     }
     assert {key: sol[key] for key in expected} == expected
     assert {row["plan_id"] for row in result.rows if row["outcome"] != "placed"} == {None}
@@ -662,14 +753,14 @@ def test_the_draft_writes_one_decision_row_per_leg():
 )
 def test_a_gross_jump_against_the_previous_attended_record_is_flagged(previous, fragment):
     rows = [
-        {"cycle_ts": "2026-10-03T12:00:00+00:00", "record_gross": 9.0},
-        {"cycle_ts": "2026-10-04T12:00:00+00:00", "record_gross": previous},
+        {"cycle_ts": _noon(EVE - timedelta(days=1)).isoformat(), "record_gross": 9.0},
+        {"cycle_ts": _noon(EVE).isoformat(), "record_gross": previous},
         {"cycle_ts": BOUNDARY.isoformat(), "record_gross": 9.0},
     ]
 
     report = _book_draft(rows=rows).report
 
-    assert f"gross 0.1073 against {previous:.4f} at 2026-10-04 12:00Z: {fragment}" in report
+    assert f"gross 0.1073 against {previous:.4f} at {EVE} 12:00Z: {fragment}" in report
     assert fragment.endswith("FLAGGED") is ("FLAGGED" in report)
 
 
@@ -678,43 +769,64 @@ def _placed_row(symbol: str, plan_id: str, drafted_at: datetime = NOW) -> dict:
 
 
 def test_a_leg_a_plan_of_today_carried_is_never_drafted_again_that_day():
-    rows = [_placed_row("SOL/EUR", "r2-20261005-1"), _placed_row("BTC/EUR", "r2-20261004-1", NOW - timedelta(days=1))]
+    rows = [_placed_row("SOL/EUR", _id(1)), _placed_row("BTC/EUR", _id(1, EVE), NOW - timedelta(days=1))]
 
     result = _book_draft(rows=rows)
 
     sol = _leg(result, "SOL/EUR")
     assert (sol.outcome, sol.qty) == ("carried", None)
-    assert sol.reason == "r2-20261005-1 carried it earlier today; never re-placed the same day"
-    assert result.plan_id == "r2-20261005-2"
+    assert sol.reason == f"{_id(1)} carried it earlier today; never re-placed the same day"
+    assert result.plan_id == _id(2)
     assert [i.symbol for i in parse_plan(result.plan_text).intents] == ["BTC/EUR", "ETH/EUR", "ADA/EUR"]
 
 
 def test_a_discarded_plan_frees_its_legs():
-    rows = [_placed_row("SOL/EUR", "r2-20261005-1"), _placed_row("BTC/EUR", "r2-20261005-2")]
+    rows = [_placed_row("SOL/EUR", _id(1)), _placed_row("BTC/EUR", _id(2))]
 
-    result = _book_draft(rows=rows, discard="r2-20261005-2")
+    result = _book_draft(rows=rows, discard=_id(2))
 
     assert result.rows[0] | {"drafted_at": None} == {
         "drafted_at": None,
-        "plan_id": "r2-20261005-2",
+        "plan_id": _id(2),
         "outcome": "discarded",
         "reason": "never placed",
     }
     assert [row["symbol"] for row in result.rows[1:]] == list(LEGS)
     assert (_leg(result, "SOL/EUR").outcome, _leg(result, "BTC/EUR").outcome) == ("carried", "placed")
-    assert result.plan_id == "r2-20261005-3"
+    assert result.plan_id == _id(3)
     assert _leg(_book_draft(rows=[*rows, result.rows[0]]), "BTC/EUR").outcome == "placed"
-    with pytest.raises(DraftPlanError, match="only that one can be discarded"):
-        _book_draft(rows=rows, discard="r2-20261005-1")
+
+
+def test_any_plan_of_today_not_already_discarded_can_be_discarded():
+    rows = [
+        _placed_row("SOL/EUR", _id(1)),
+        _placed_row("BTC/EUR", _id(2)),
+        _placed_row("ETH/EUR", _id(1, EVE), NOW - timedelta(days=1)),
+    ]
+
+    earlier = _book_draft(rows=rows, discard=_id(1))
+
+    assert (_leg(earlier, "SOL/EUR").outcome, _leg(earlier, "BTC/EUR").outcome) == ("placed", "carried")
+    assert earlier.plan_id == _id(3)
+    with pytest.raises(DraftPlanError, match=re.escape(f"{_id(1)} is not one of today's plans") + ".*" + re.escape(f"({_id(2)})")):
+        _book_draft(rows=[*rows, earlier.rows[0]], discard=_id(1))
+    with pytest.raises(DraftPlanError, match=re.escape(f"({_id(1)}, {_id(2)})")):
+        _book_draft(rows=rows, discard=_id(1, EVE))
+    with pytest.raises(DraftPlanError, match=r"\(none\) -- a plan is discarded on the day it was drafted, and once"):
+        _book_draft(discard=_id(1))
 
 
 _HELD = {"BTC": 0.0002, "ETH": 0.005, "SOL": 0.1, "XRP": 10.0, "DOGE": 100.0, "LTC": 0.2, "ADA": 50.0, "AVAX": 1.0, "DOT": 3.0}
 
 
+EXIT_BOUNDARY = _noon(EXIT_DAYS[0])
+
+
 def test_the_exit_sells_every_held_leg_whole_and_buys_nothing():
     result = _draft(
         {symbol: 0.05 for symbol in LEGS},
-        venue=_venue(balances={"EUR": 900.0} | _HELD),
+        boundary=EXIT_BOUNDARY,
+        venue=_venue(cycle_ts=EXIT_BOUNDARY, balances={"EUR": 900.0} | _HELD),
         export=_export(900.0, **_HELD),
         exiting=True,
     )
@@ -739,11 +851,142 @@ def test_the_exit_sells_every_held_leg_whole_and_buys_nothing():
 
 
 def test_the_exit_on_a_flat_book_drafts_nothing():
-    result = _draft({symbol: 0.05 for symbol in LEGS}, exiting=True)
+    result = _draft({symbol: 0.05 for symbol in LEGS}, boundary=EXIT_BOUNDARY, exiting=True)
 
     assert result.plan_id is None
     assert {d.outcome for d in result.decisions} == {"on-target"}
-    assert ruling_refusals(_plan(_sell(), _buy()), PRICES, exiting=True) == ["a buy in an exit plan -- the exit only sells"]
+    assert ruling_refusals(_plan(_sell(), _buy(), created_at=EXIT_BOUNDARY), PRICES, exiting=True) == [
+        "a buy in an exit plan -- the exit only sells"
+    ]
+
+
+_LOTS = {"BTC": 0.00029, "ETH": 0.0076, "SOL": 0.12, "XRP": 10.0}
+_DAY_TWO = BOUNDARY + timedelta(days=1)
+
+
+def _day_two_draft(targets, boundary=_DAY_TWO, **options):
+    venue = _venue(cycle_ts=boundary, positions={f"{base}/EUR": qty for base, qty in _LOTS.items()})
+    return _draft(targets, boundary=boundary, venue=venue, export=_export(1000.0, **_LOTS), **options)
+
+
+def test_a_venue_record_holding_the_books_spot_lots_drafts_buys_and_sells():
+    result = _day_two_draft({"BTC/EUR": 0.0297, "ETH/EUR": 0.0125, "SOL/EUR": 0.004, "XRP/EUR": 0.0183, "ADA/EUR": 0.01})
+
+    assert [(i.symbol, i.side, i.qty, i.notional_eur) for i in parse_plan(result.plan_text).intents] == [
+        ("SOL/EUR", "sell", 0.12, None),
+        ("ETH/EUR", "sell", 0.00379715, None),
+        ("ADA/EUR", "buy", None, 7.2),
+    ]
+    assert _leg(result, "SOL/EUR").reason == "the whole leg: the remainder would be under ordermin"
+    assert (_leg(result, "BTC/EUR").outcome, _leg(result, "XRP/EUR").outcome) == ("carried", "carried")
+    assert {d.symbol: d.engine_held for d in result.decisions if d.engine_held} == {
+        f"{base}/EUR": qty for base, qty in _LOTS.items()
+    }
+    assert "engine held differs" not in result.report
+
+
+def test_a_venue_record_holding_the_books_spot_lots_drafts_the_exit():
+    result = _day_two_draft({symbol: 0.05 for symbol in LEGS}, boundary=EXIT_BOUNDARY, exiting=True)
+
+    assert [(i.symbol, i.side, i.qty) for i in parse_plan(result.plan_text).intents] == [
+        ("BTC/EUR", "sell", 0.00029),
+        ("ETH/EUR", "sell", 0.0076),
+        ("XRP/EUR", "sell", 10.0),
+    ]
+    assert (_leg(result, "SOL/EUR").outcome, _leg(result, "SOL/EUR").qty) == ("queued", 0.12)
+
+
+# ---- the box's calendar ------------------------------------------------------------------------------
+
+
+def _named(day: date) -> str:
+    return f"{day:%a %Y-%m-%d}"
+
+
+def test_the_box_is_four_iso_weeks_from_a_monday_with_its_restart_on_the_last_friday():
+    assert BOX_FIRST_DAY.isoweekday() == 1
+    assert (BOX_LAST_DAY - BOX_FIRST_DAY, BOX_LAST_DAY.isoweekday()) == (timedelta(days=27), 7)
+    assert (RESTART_DAY, EXIT_DAYS) == (BOX_LAST_DAY - timedelta(days=2), (BOX_LAST_DAY - timedelta(days=1), BOX_LAST_DAY))
+
+
+@pytest.mark.parametrize("day", [EVE, BOX_LAST_DAY + timedelta(days=1)])
+@pytest.mark.parametrize("exiting", [False, True])
+def test_a_draft_dated_outside_the_box_is_refused(day, exiting):
+    fragment = f"{_named(day)} is outside the box, {_named(BOX_FIRST_DAY)} to {_named(BOX_LAST_DAY)}"
+
+    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
+        _draft(TARGETS, boundary=_noon(day), exiting=exiting)
+    assert ruling_refusals(_plan(_sell(), created_at=_noon(day)), PRICES, exiting=exiting)[0] == fragment
+
+
+def test_the_boxs_first_and_last_days_draft():
+    assert _draft(TARGETS).plan_id == _id(1)
+    assert _day_two_draft({}, boundary=_noon(BOX_LAST_DAY), exiting=True).plan_id == _id(1, BOX_LAST_DAY)
+
+
+@pytest.mark.parametrize("day", EXIT_DAYS)
+def test_an_exit_day_refuses_a_draft_without_exit(day):
+    fragment = f"{_named(day)} is an exit day -- only --exit drafts on it, and nothing is bought"
+
+    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
+        _draft(TARGETS, boundary=_noon(day))
+    assert ruling_refusals(_plan(_sell(), created_at=_noon(day)), PRICES) == [fragment]
+    assert ruling_refusals(_plan(_sell(), created_at=_noon(day)), PRICES, exiting=True) == []
+    fallback = _noon(day) + timedelta(hours=4)
+    assert _day_two_draft({}, boundary=fallback, exiting=True).plan_id == _id(1, day)
+
+
+@pytest.mark.parametrize("day", [BOX_FIRST_DAY, RESTART_DAY - timedelta(days=1), RESTART_DAY])
+def test_exit_is_refused_on_every_day_but_the_two_exit_days(day):
+    fragment = f"{_named(day)} is not an exit day -- --exit drafts on {_named(EXIT_DAYS[0])} and {_named(EXIT_DAYS[1])} alone"
+
+    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
+        _day_two_draft({}, boundary=_noon(day), exiting=True)
+    assert ruling_refusals(_plan(_sell(), created_at=_noon(day)), PRICES, exiting=True) == [fragment]
+
+
+RESTART_BOUNDARY = _noon(RESTART_DAY)
+
+
+@pytest.mark.parametrize("clock", ["12:12:00", "13:15:00"])
+def test_the_restart_day_drops_a_plan_of_any_size_by_13_15z(clock):
+    result = _book_draft(boundary=RESTART_BOUNDARY, now=_at(RESTART_BOUNDARY, clock))
+
+    assert [i.symbol for i in parse_plan(result.plan_text).intents] == ["SOL/EUR", "BTC/EUR", "ETH/EUR"]
+    assert (
+        f"drop window 12:10-13:15Z for this plan's 3 intent(s): on {_named(RESTART_DAY)} a plan of any size drops by 13:15Z, "
+        "and the planned restart follows after 13:30Z -- no plan follows it"
+    ) in result.report
+    assert "13:30-" not in result.report
+    assert "no published WebSocket/REST maintenance overlaps 12:10-15:00Z" in result.report
+
+
+@pytest.mark.parametrize("clock", ["13:15:01", "13:40:00", "14:20:00"])
+def test_the_restart_day_refuses_a_draft_past_13_15z(clock):
+    fragment = f"it is {clock}Z, past 13:15Z, the last drop on {_named(RESTART_DAY)} for a plan of any size"
+
+    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
+        _book_draft(boundary=RESTART_BOUNDARY, now=_at(RESTART_BOUNDARY, clock))
+
+
+def test_the_restart_days_16z_record_drafts_nothing():
+    fallback = RESTART_BOUNDARY + timedelta(hours=4)
+    fragment = f"the 16Z record of {_named(RESTART_DAY)}, the restart day, drafts nothing -- only the 12Z record drafts that day"
+
+    with pytest.raises(DraftPlanError, match=re.escape(fragment) + ": no plan follows the planned restart"):
+        _book_draft(boundary=fallback)
+
+
+def test_the_ruling_reads_the_restart_days_last_drop_for_a_plan_of_any_size():
+    end = RESTART_BOUNDARY + timedelta(hours=3)
+    three = (_sell(), _buy(), _buy("ETH/EUR"))
+
+    assert ruling_refusals(_plan(*three, created_at=_at(RESTART_BOUNDARY, "13:15:00")), PRICES, window_end=end) == []
+    assert ruling_refusals(_plan(_sell(), created_at=_at(RESTART_BOUNDARY, "13:15:01")), PRICES) == [
+        f"a plan created at 13:15:01Z on {_named(RESTART_DAY)} is past that day's last drop at 13:15Z -- no plan follows the "
+        "planned restart"
+    ]
+    assert len(ruling_refusals(_plan(_sell(), created_at=_at(RESTART_BOUNDARY, "16:12:00")), PRICES)) == 1
 
 
 def test_a_day_with_nothing_placeable_drafts_no_plan():
@@ -803,15 +1046,18 @@ def _opener(feed: dict):
     return opener
 
 
-def _command_inputs(tmp_path, *, export_age=timedelta(minutes=3)):
+def _command_inputs(tmp_path, *, export_age=timedelta(minutes=3), positions="{}\n"):
     cycle = tmp_path / "cycle-12.json"
-    cycle.write_text(to_json(_record(TARGETS, held={base: 0 for base in ("BTC", "ETH", "SOL", "ADA")})))
+    cycle.write_text(to_json(_record(TARGETS)))
     venue = tmp_path / "venue-12.json"
     venue.write_text(json.dumps(_venue(balances={"EUR": 1000.0, "SOL": 0.12})))
     balances = tmp_path / "balances.json"
     balances.write_text(json.dumps(_export(1000.0, SOL=0.12)))
+    held = tmp_path / "positions.json"
+    held.write_text(positions)
     stamp = (NOW - export_age).timestamp()
     os.utime(balances, (stamp, stamp))
+    os.utime(held, (stamp, stamp))
     decisions = tmp_path / "rung2" / "decisions.jsonl"
     args = [
         "engine",
@@ -822,6 +1068,8 @@ def _command_inputs(tmp_path, *, export_age=timedelta(minutes=3)):
         str(venue),
         "--balances",
         str(balances),
+        "--positions",
+        str(held),
         "--decisions",
         str(decisions),
     ]
@@ -841,7 +1089,7 @@ def test_the_command_writes_the_plan_and_the_decision_rows(tmp_path, monkeypatch
     result, out = _invoke(monkeypatch, args)
 
     assert result.exit_code == 0, out
-    plan_path = decisions.parent / "r2-20261005-1.json"
+    plan_path = decisions.parent / f"{_id(1)}.json"
     plan = parse_plan(plan_path.read_text())
     assert [i.symbol for i in plan.intents] == ["SOL/EUR", "BTC/EUR", "ETH/EUR"]
     assert len(decisions.read_text().splitlines()) == len(LEGS)
@@ -851,9 +1099,9 @@ def test_the_command_writes_the_plan_and_the_decision_rows(tmp_path, monkeypatch
     again, out = _invoke(monkeypatch, args)
 
     assert again.exit_code == 0, out
-    assert [i.symbol for i in parse_plan((decisions.parent / "r2-20261005-2.json").read_text()).intents] == ["ADA/EUR"]
+    assert [i.symbol for i in parse_plan((decisions.parent / f"{_id(2)}.json").read_text()).intents] == ["ADA/EUR"]
     assert len(decisions.read_text().splitlines()) == 2 * len(LEGS)
-    assert "engine held differs from Kraken held on: SOL/EUR (in r2-20261005-1, drafted after the record)" in out
+    assert f"engine held differs from Kraken held on: SOL/EUR (in {_id(1)}, drafted after the record)" in out
 
 
 def test_a_refused_command_writes_nothing(tmp_path, monkeypatch):
@@ -863,6 +1111,23 @@ def test_a_refused_command_writes_nothing(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert "draft refused: the balance export is 45 minutes old" in out
+    assert not decisions.parent.exists()
+
+
+def test_the_command_refuses_on_an_open_margin_position_and_without_the_positions_export(tmp_path, monkeypatch):
+    args, decisions = _command_inputs(tmp_path, positions=_POSITIONS_AS_PRINTED)
+
+    result, out = _invoke(monkeypatch, args)
+
+    assert result.exit_code == 1
+    assert "draft refused: Kraken reports an open margin position TU7O4B-NJL5A-GY5DRP" in out
+    assert not decisions.parent.exists()
+
+    at = args.index("--positions")
+    missing, out = _invoke(monkeypatch, args[:at] + args[at + 2 :])
+
+    assert missing.exit_code == 2
+    assert "--positions" in out
     assert not decisions.parent.exists()
 
 
@@ -879,7 +1144,7 @@ def test_the_decision_log_defaults_under_the_configured_data_dir(tmp_path, monke
 
     if configured:
         assert result.exit_code == 0, out
-        assert (tmp_path / "data" / "rung2" / "r2-20261005-1.json").exists()
+        assert (tmp_path / "data" / "rung2" / f"{_id(1)}.json").exists()
         assert len((tmp_path / "data" / "rung2" / "decisions.jsonl").read_text().splitlines()) == len(LEGS)
     else:
         assert result.exit_code == 1
@@ -903,7 +1168,7 @@ def test_the_plan_is_written_before_its_rows(tmp_path, monkeypatch):
 
     assert result.exit_code == 1
     assert f"{plan_path} was written without its rows" in out
-    assert parse_plan(plan_path.read_text()).plan_id == "r2-20261005-1"
+    assert parse_plan(plan_path.read_text()).plan_id == _id(1)
 
 
 def test_the_command_never_overwrites_a_plan(tmp_path, monkeypatch):
