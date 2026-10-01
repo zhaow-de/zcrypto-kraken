@@ -1,6 +1,5 @@
 ---
-status: partial
-ripe_when: 'T0187 is resolved: ls docs/open-topics/archive/T0187-*.md succeeds'
+status: resolved
 ---
 
 # A reconciliation reports a perfect score when it compared nothing
@@ -53,7 +52,7 @@ Excluded, with the reason:
 - `realized_internals`' `except (EngineError, PortfolioError)` arm keeps `identity_ok=False` — deliberate: `available=False` is that return's headline, and `soak_report` gates every internals read on it.
 - `cli/engine/soak.py`'s `identity_detail` — a compound sentinel, not a summary: `worst |diff|=… at n/a` is what a window with no comparison renders, nothing in the tree aggregates the string, and `identity_ok: None` is the headline beside it. A non-finite `diff` once rendered that same string with the comparisons counted, which was `T0188` — a different defect, in the comparison rather than in the empty branch, and not this topic's to fix; it was fixed there, so such a pair is now counted unmeasurable rather than compared and the detail names it beside the worst-diff text.
 - `cli/capture/gap_monitor.py`'s `is_healthy` — **excluded by upstream refusal.** `_default_pairs` refuses an empty pair list and the capture role refuses an empty `capture_pairs` at the converge (`T0185`), so `is_healthy([])` is unreachable through the daemon; `is_healthy` itself is untouched, per spec `00073` D3.
-- `infra/grafana/alerts.yaml`'s `zcrypto-engine-dark-with-exposure` — **excluded by transfer to `T0187`**, a member by shape whose fix is not an edit to the expression that carries it. Node A reads `max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)`, and with no position sample anywhere in the window that fallback yields 0 — a value the metric genuinely takes and the quiet direction at once — so the rule reads *no exposure* over an unmade observation and cannot fire. The same `or on() vector(0)` on node B is what makes the rule page on both darkness routes and what lets `noDataState: Alerting` mean what it says, which the rule's own comment defends at length; the fix that keeps that design is a separate presence check, so the blindness is itself visible. An alert-rule change also needs a push from merged `develop` on the owner's word, which is why it is a topic rather than a commit.
+- `infra/grafana/alerts.yaml`'s `zcrypto-engine-dark-with-exposure` — **excluded: the state it cannot see is closed at the source (`T0187`, resolved 2026-10-01)**, a member by shape whose fix is not an edit to the expression that carries it. Node A reads `max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)`, and with no position sample anywhere in the window that fallback yields 0 — a value the metric genuinely takes and the quiet direction at once. The same `or on() vector(0)` on node B is what makes the rule page on both darkness routes and what lets `noDataState: Alerting` mean what it says, which the rule's own comment defends at length, so the expression stays. What it cannot see no longer arises past a boot's first tick: the journal seed and the startup pass's venue read (spec `00119`'s D27 and D28) give the gauge every basket child, measured live at the cache proof's restart on 2026-10-01 and pinned by `tests/test_engine_executor.py::test_a_start_whose_journal_seeds_no_position_gives_the_gauge_every_basket_child_at_the_first_tick`; an empty window now takes a boot with nothing to seed from and a failed venue read at its first tick, which `T0187`'s resolution names.
 
 **The two flagged sites, adjudicated once `cli/engine/soak.py` came into scope.** Neither is a member.
 
@@ -74,7 +73,10 @@ Excluded, with the reason:
 
 **Two things recorded rather than fixed.** `_match_stats`'s `else None` arm is unreachable — `reconcile`'s own empty-intervals return fires first, proven by a `12345.0` mutation of that arm surviving the suite — so its census row below is the family's shape stated where the shape belongs, not a live defect removed. And `all_match: False` on an empty join still conflates *nothing was compared* with *compared and disagreed*; it is the fail-safe direction and the only other one a boolean has, so a caller that needs to tell them apart reads `n_joined` beside it.
 
-## Done so far
+## Resolution
+
+**Resolved 2026-10-01: both arms of the criterion hold.** Arm (b) held since PR #463. Arm (a) held once the census's last member, the dark-with-exposure rule, was excluded for a reason rather than by transfer: `T0187` resolved at the source on the owner's ruling, the exclusion above re-trued with it. Recurrence, a new member written later, was never this topic's criterion and is not registered: every test here is per-symptom, and a sweep instrument for the family would need to see a string verdict and a loop that falls through with no emptiness test, which the census found no general way to grep for.
+
 
 | site | computes | was | now |
 |---|---|---|---|
@@ -114,10 +116,3 @@ Two properties of the result, stated rather than inherited. `crosscheck_series` 
 **`d4_active`'s pair closed a gap it did not open.** It asserts `None` on an empty null and `False` on a hundred-bar null of unit multipliers — the measured INACTIVE arm, which nothing pinned before — with `test_analyze_soak_context_and_d4` holding the ACTIVE one and a render test pinning all three lines, so the two measured renderings stay byte-identical.
 
 **Arm (b) holds over every row.** `reconcile_series`'s `volume_rel_diff_max` was the one breach — the field was already `None` on an empty overlap, but no test ever called `reconcile_series` on a populated frame and asked for it, so replacing its measured value with an unconditional `None` left the suite green. It now has a control that plants one row's volume deviation among identical rows and asserts the maximum, which a mean would also fail.
-
-## Suggested next steps
-
-**The topic resolves when both hold**: (a) the census is closed over `cli/` and `infra/` — every site matching the family's definition, an empty-denominator branch returning a value the metric can genuinely take, is either fixed or listed under *Excluded* with its reason, **and an exclusion by TRANSFER to another topic is not a reason** — an entry that defers the fix, rather than showing the site cannot exhibit the defect, leaves this arm open until the topic it names lands — and (b) every member carries a test whose empty case fails against the pre-fix literal, with a populated control beside it. Nothing else gates resolution; in particular `T0184` does not, because it is not a member. Arm (b) holds. The `gap_monitor` member is excluded rather than pending, `T0185`'s refusal having landed, so arm (a) no longer waits on it.
-
-- **Arm (a) holds no earlier than `T0187` lands.** The alert rule is the one member left whose exclusion is a *transfer* rather than a reason: nothing about the site stops it exhibiting the defect, and the tree still reads *no exposure* over an unmade observation until `T0187`'s presence check is pushed. The ruling that its fix does not belong in the expression is recorded above and is not to be re-derived.
-- **Recurrence is a separate question.** Every test on this branch is per-symptom; none would catch a new member being written. That is the natural follow-on and is deliberately not a resolution criterion here, or the topic could never close — and the sweep instrument it would need is now known to be blind to a string verdict and to a loop that falls through with no emptiness test.

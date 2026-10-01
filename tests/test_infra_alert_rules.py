@@ -1795,18 +1795,20 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
 
 
 def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot_tell_them_apart():
-    """A CHARACTERISATION of the blindness `T0187` records, not an approval of it: with no
-    `zcrypto_exec_position` sample in the window, node A's `or on() vector(0)` supplies the same 0 a
-    flat book publishes, so both histories get the same quiet verdict. It is meant to go RED the day
-    that gap closes -- green here is not the rule being sound."""
+    """A CHARACTERISATION of the rule's own blindness, which stays: with no `zcrypto_exec_position`
+    sample in the window, node A's `or on() vector(0)` supplies the same 0 a flat book publishes, so both
+    histories get the same quiet verdict. `T0187` was resolved at the source instead -- the startup pass
+    gives the gauge every basket child at the first tick (`test_engine_executor.py`'s
+    `test_a_start_whose_journal_seeds_no_position_gives_the_gauge_every_basket_child_at_the_first_tick`)
+    -- so green here is not the rule being sound, and a rule change that tells the two apart turns it RED."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
     dark_at = 3600
     flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
-    # No child on the gauge, so no series at all: `run()`'s startup seed publishes no symbol when the
-    # journal holds no readable ok schema-2 venue record (and its `except Exception` swallows a raise),
-    # and no fill has set one since. Not a published 0 -- an absence.
+    # No child on the gauge, so no series at all: a boot whose journal seed found no readable ok
+    # schema-2 venue record and whose first-tick venue read failed, until the next re-read pass or a
+    # fill. Not a published 0 -- an absence.
     never_observed = []
     # Stopped at the flat history's own horizon: past it that history is unobserved too, and the two
     # stop being different things to compare.
@@ -1831,8 +1833,9 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
 def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
     """About the replay, not the rule: told to read an empty window as something other than 0, the same
     harness gives the two histories different verdicts and still leaves the flat one quiet inside its
-    own horizon. It is a seam a fix could turn on -- which one is undecided -- exercised so that a
-    change of expectation there is a changed assertion rather than a rewritten harness."""
+    own horizon. It is the seam a change to the rule would turn on -- `T0187` was resolved at the source
+    rather than here -- exercised so that a change of expectation is a changed assertion rather than a
+    rewritten harness."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
 
