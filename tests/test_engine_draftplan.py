@@ -19,7 +19,6 @@ from cli.engine.draftplan import (
     EXIT_DAYS,
     INTENT_TIME_BOX,
     LEGS,
-    RESTART_DAY,
     Constraints,
     DraftPlanError,
     LegDecision,
@@ -941,10 +940,10 @@ def _named(day: date) -> str:
     return f"{day:%a %Y-%m-%d}"
 
 
-def test_the_box_is_four_iso_weeks_from_a_monday_with_its_restart_on_the_last_friday():
+def test_the_box_is_four_iso_weeks_from_a_monday_and_exits_on_its_last_two_days():
     assert BOX_FIRST_DAY.isoweekday() == 1
     assert (BOX_LAST_DAY - BOX_FIRST_DAY, BOX_LAST_DAY.isoweekday()) == (timedelta(days=27), 7)
-    assert (RESTART_DAY, EXIT_DAYS) == (BOX_LAST_DAY - timedelta(days=2), (BOX_LAST_DAY - timedelta(days=1), BOX_LAST_DAY))
+    assert EXIT_DAYS == (BOX_LAST_DAY - timedelta(days=1), BOX_LAST_DAY)
 
 
 @pytest.mark.parametrize("day", [EVE, BOX_LAST_DAY + timedelta(days=1)])
@@ -974,7 +973,10 @@ def test_an_exit_day_refuses_a_draft_without_exit(day):
     assert _day_two_draft({}, boundary=fallback, exiting=True).plan_id == _id(1, day)
 
 
-@pytest.mark.parametrize("day", [BOX_FIRST_DAY, RESTART_DAY - timedelta(days=1), RESTART_DAY])
+LAST_FRIDAY = EXIT_DAYS[0] - timedelta(days=1)
+
+
+@pytest.mark.parametrize("day", [BOX_FIRST_DAY, LAST_FRIDAY])
 def test_exit_is_refused_on_every_day_but_the_two_exit_days(day):
     fragment = f"{_named(day)} is not an exit day -- --exit drafts on {_named(EXIT_DAYS[0])} and {_named(EXIT_DAYS[1])} alone"
 
@@ -983,48 +985,24 @@ def test_exit_is_refused_on_every_day_but_the_two_exit_days(day):
     assert ruling_refusals(_plan(_sell(), created_at=_noon(day)), PRICES, exiting=True) == [fragment]
 
 
-RESTART_BOUNDARY = _noon(RESTART_DAY)
+@pytest.mark.parametrize(
+    ("hour", "clock", "drops", "intents"),
+    [
+        (12, "13:15:01", "12:10-13:15Z, 13:30-14:15Z", 3),
+        (12, "14:45:00", "12:10-13:15Z, 13:30-14:45Z", 1),
+        (16, "16:12:00", "16:10-17:15Z, 17:30-18:15Z", 3),
+    ],
+)
+def test_the_last_friday_drafts_like_any_other_box_day(hour, clock, drops, intents):
+    boundary = _noon(LAST_FRIDAY).replace(hour=hour)
 
+    result = _book_draft(boundary=boundary, now=_at(boundary, clock))
 
-@pytest.mark.parametrize("clock", ["12:12:00", "13:15:00"])
-def test_the_restart_day_drops_a_plan_of_any_size_by_13_15z(clock):
-    result = _book_draft(boundary=RESTART_BOUNDARY, now=_at(RESTART_BOUNDARY, clock))
-
-    assert [i.symbol for i in parse_plan(result.plan_text).intents] == ["SOL/EUR", "BTC/EUR", "ETH/EUR"]
-    assert (
-        f"drop window 12:10-13:15Z for this plan's 3 intent(s): on {_named(RESTART_DAY)} a plan of any size drops by 13:15Z, "
-        "and the planned restart follows after 13:30Z -- no plan follows it"
-    ) in result.report
-    assert "13:30-" not in result.report
-    assert "no published WebSocket/REST maintenance overlaps 12:10-15:00Z" in result.report
-
-
-@pytest.mark.parametrize("clock", ["13:15:01", "13:40:00", "14:20:00"])
-def test_the_restart_day_refuses_a_draft_past_13_15z(clock):
-    fragment = f"it is {clock}Z, past 13:15Z, the last drop on {_named(RESTART_DAY)} for a plan of any size"
-
-    with pytest.raises(DraftPlanError, match=re.escape(fragment)):
-        _book_draft(boundary=RESTART_BOUNDARY, now=_at(RESTART_BOUNDARY, clock))
-
-
-def test_the_restart_days_16z_record_drafts_nothing():
-    fallback = RESTART_BOUNDARY + timedelta(hours=4)
-    fragment = f"the 16Z record of {_named(RESTART_DAY)}, the restart day, drafts nothing -- only the 12Z record drafts that day"
-
-    with pytest.raises(DraftPlanError, match=re.escape(fragment) + ": no plan follows the planned restart"):
-        _book_draft(boundary=fallback)
-
-
-def test_the_ruling_reads_the_restart_days_last_drop_for_a_plan_of_any_size():
-    end = RESTART_BOUNDARY + timedelta(hours=3)
-    three = (_sell(), _buy(), _buy("ETH/EUR"))
-
-    assert ruling_refusals(_plan(*three, created_at=_at(RESTART_BOUNDARY, "13:15:00")), PRICES, window_end=end) == []
-    assert ruling_refusals(_plan(_sell(), created_at=_at(RESTART_BOUNDARY, "13:15:01")), PRICES) == [
-        f"a plan created at 13:15:01Z on {_named(RESTART_DAY)} is past that day's last drop at 13:15Z -- no plan follows the "
-        "planned restart"
-    ]
-    assert len(ruling_refusals(_plan(_sell(), created_at=_at(RESTART_BOUNDARY, "16:12:00")), PRICES)) == 1
+    plan = parse_plan(result.plan_text)
+    assert [i.symbol for i in plan.intents] == ["SOL/EUR", "BTC/EUR", "ETH/EUR"][:intents]
+    assert f"drop window {drops} for this plan's {intents} intent(s), 15 minutes each before {hour + 3}:00Z" in result.report
+    assert "planned restart" not in result.report
+    assert ruling_refusals(plan, PRICES, window_end=boundary + timedelta(hours=3)) == []
 
 
 def test_a_day_with_nothing_placeable_drafts_no_plan():

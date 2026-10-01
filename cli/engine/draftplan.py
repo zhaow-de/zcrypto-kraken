@@ -40,10 +40,7 @@ DROP_SLOTS: dict[int, tuple[tuple[time, time], ...]] = {
 BOX_FIRST_DAY = date(2026, 10, 5)
 BOX_DAYS = 28
 BOX_LAST_DAY = BOX_FIRST_DAY + timedelta(days=BOX_DAYS - 1)
-RESTART_DAY = BOX_FIRST_DAY + timedelta(days=25)
 EXIT_DAYS = (BOX_FIRST_DAY + timedelta(days=26), BOX_FIRST_DAY + timedelta(days=27))
-RESTART_DAY_LAST_DROP = datetime.combine(RESTART_DAY, DROP_SLOTS[12][0][1], tzinfo=timezone.utc)
-RESTART_NOT_BEFORE = DROP_SLOTS[12][1][0]
 
 _TICKER_URL = "https://api.kraken.com/0/public/Ticker"
 _MAINTENANCE_FEED = "https://status.kraken.com/api/v2/scheduled-maintenances.json"
@@ -486,13 +483,7 @@ def ruling_refusals(
         reasons.append(refusal)
     if len(plan.intents) > MAX_INTENTS:
         reasons.append(f"{len(plan.intents)} intents, over the {MAX_INTENTS} a plan may carry")
-    if created.date() == RESTART_DAY:
-        if created > RESTART_DAY_LAST_DROP:
-            reasons.append(
-                f"a plan created at {created:%H:%M:%S}Z on {RESTART_DAY:%a %Y-%m-%d} is past that day's last drop at "
-                f"{RESTART_DAY_LAST_DROP:%H:%M}Z -- no plan follows the planned restart"
-            )
-    elif window_end is not None and created > (by := last_drop(window_end, len(plan.intents))):
+    if window_end is not None and created > (by := last_drop(window_end, len(plan.intents))):
         reasons.append(
             f"a plan of {len(plan.intents)} intent(s) created at {created:%H:%M:%S}Z is past its last drop at {by:%H:%M}Z"
         )
@@ -681,27 +672,13 @@ def draft(
     slots = drop_slots(record.cycle_ts)
     window_end = slots[-1][1]
     box_minutes = f"{INTENT_TIME_BOX.total_seconds() / 60:.0f} minutes"
-    restart_day = now.date() == RESTART_DAY
-    if restart_day:
-        if record.cycle_ts.hour != 12:
-            raise DraftPlanError(
-                f"the {record.cycle_ts:%H}Z record of {RESTART_DAY:%a %Y-%m-%d}, the restart day, drafts nothing -- only the "
-                "12Z record drafts that day: no plan follows the planned restart"
-            )
-        if now > RESTART_DAY_LAST_DROP:
-            raise DraftPlanError(
-                f"it is {now:%H:%M:%S}Z, past {RESTART_DAY_LAST_DROP:%H:%M}Z, the last drop on {RESTART_DAY:%a %Y-%m-%d} for a "
-                "plan of any size -- the planned restart and its drills take the rest of the window"
-            )
-        fits = MAX_INTENTS
-    else:
-        fits = min(MAX_INTENTS, (window_end - now) // INTENT_TIME_BOX)
-        if fits < 1:
-            raise DraftPlanError(
-                f"it is {now:%H:%M:%S}Z, past {last_drop(window_end, 1):%H:%M}Z, the last drop of a one-intent plan in the "
-                f"window after the {record.cycle_ts:%H}Z record -- each intent takes {box_minutes} before the window's "
-                f"{window_end:%H:%M}Z end"
-            )
+    fits = min(MAX_INTENTS, (window_end - now) // INTENT_TIME_BOX)
+    if fits < 1:
+        raise DraftPlanError(
+            f"it is {now:%H:%M:%S}Z, past {last_drop(window_end, 1):%H:%M}Z, the last drop of a one-intent plan in the "
+            f"window after the {record.cycle_ts:%H}Z record -- each intent takes {box_minutes} before the window's "
+            f"{window_end:%H:%M}Z end"
+        )
     rows_in = list(log_rows)
     discard_row = None
     if discard is not None:
@@ -803,14 +780,7 @@ def draft(
         f"free EUR {export.free_eur:.2f}; buys capped at free EUR - {CASH_RESERVE_EUR:.0f}",
         gross_line(gross, record.cycle_ts, rows_in),
     ]
-    if plans and restart_day:
-        header.insert(
-            2,
-            f"drop window {slots[0][0]:%H:%M}-{RESTART_DAY_LAST_DROP:%H:%M}Z for this plan's {len(plans[0])} intent(s): on "
-            f"{RESTART_DAY:%a %Y-%m-%d} a plan of any size drops by {RESTART_DAY_LAST_DROP:%H:%M}Z, and the planned restart "
-            f"follows after {RESTART_NOT_BEFORE:%H:%M}Z -- no plan follows it",
-        )
-    elif plans:
+    if plans:
         drops = [*slots[:-1], (slots[-1][0], last_drop(window_end, len(plans[0])))]
         drop_line = (
             "drop window "
