@@ -353,7 +353,7 @@ rules:
   # outright: unattended engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-
   # dead, and the healthchecks.io dead-man switch, and a bare `up == 0` page would only add detection
   # latency nothing needs. What the scrape-level signal DOES buy is a conjunction nothing else can
-  # express -- zcrypto-engine-dark-with-exposure below pairs it with a non-zero position at last
+  # express -- zcrypto-engine-dark-with-exposure below pairs it with a position open at last
   # sight, scoped `host="zcrypto"` on both halves for exactly the reason above.
   - uid: zcrypto-engine-cycle-stale
     title: "Engine · cycles have stopped"
@@ -435,6 +435,14 @@ rules:
     # a max would keep paging over a position closed hours before the engine went dark. `abs`,
     # because a short is exposure too.
     #
+    # Node C counts `$A` as a position above 0.000001 base units, not above 0. The gauge carries
+    # Kraken's own holdings, and Kraken credits a staking reward on a spot lot held for minutes --
+    # 1e-08 of a coin, left on an account that is otherwise flat, which no order can close. The
+    # floor sits under every basket leg's `ordermin` (docs/reference/kraken-snapshot-register.md;
+    # the replay reads that table), so a lot an order can place counts. A remainder between the
+    # floor and its leg's `ordermin` still arms the rule: `max()` folds the legs into one number, so
+    # one floor serves twelve minimums.
+    #
     # Node B reads the scrape's VALUE, not its presence -- the one place this rule must NOT copy the
     # zcrypto-alloy-dark-* rules. `engine_app` is a STATIC scrape target (see the capture role's
     # config.alloy), so nothing removes it when the container stops: the series stays present reading
@@ -486,7 +494,7 @@ rules:
         model:
           datasource: {type: "__expr__", uid: "__expr__"}
           type: math
-          expression: "$A > 0 && $B < 1"
+          expression: "$A > 0.000001 && $B < 1"
           refId: C
       - refId: D
         queryType: ""
@@ -507,8 +515,8 @@ rules:
     for: 10m
     annotations:
       summary: >-
-        The engine's last reported position was non-zero and its scrape has read 0, or been gone, for
-        over 10 minutes — either the engine is dark with exposure open, or the capture primary's
+        The engine's last reported position was above 0.000001 base units, the dust floor, and its
+        scrape has read 0, or been gone, for over 10 minutes — either the engine is dark with exposure open, or the capture primary's
         telemetry plane is dark and the engine is fine. Check `Fleet · Alloy dark — Capture primary`
         FIRST: it counts the host's series instead of reading this scrape's value, so it stays >= 1
         while Alloy is up and co-fires only on the telemetry route — where the position stands and
