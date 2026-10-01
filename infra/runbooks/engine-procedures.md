@@ -420,6 +420,201 @@ No `leverage` key — its absence is what makes this a spot order — and a spot
 
 ______________________________________________________________________
 
+<a name="engine-rung-2-box"></a>
+
+## engine-rung-2-box — PROCEDURE
+
+### What you are seeing
+
+You are running — or about to enter — the rung-2 box: four ISO weeks, 2026-W41 to W44, Monday 2026-10-05 to Sunday 2026-11-01, of hand-placed spot plans that follow the engine's 12Z targets. **Nothing has fired**: you opened this because a day's window is due, the box is about to start or end, or something in the box needs a decision.
+
+Real money moves and is held overnight and through weekends: a nine-leg spot book of roughly EUR 70 at today's governor setting and about EUR 150 at the largest the model's targets have been, placed at most EUR 95 a plan, on the host that holds the live trade key. The box is fixed at entry: it is neither extended nor ended early, and a pause inside it moves none of its dates.
+
+### What it means
+
+The box runs on the [probe-window procedure](#engine-probe-window)'s machinery — the same plan files, `--check`, `mv` placement, gate read, ledger read and drills — with a daily cadence in place of single windows. Every step below that reuses one of that procedure's steps names it. What the box changes:
+
+- **The book is nine spot legs, fixed at entry**: BTC/EUR, ETH/EUR, SOL/EUR, XRP/EUR, DOGE/EUR, LTC/EUR, ADA/EUR, AVAX/EUR and DOT/EUR. LINK/EUR, ETH/BTC and SOL/BTC are not traded in the box (no count command: a plan's legs are the owner's sign-off; the helper refuses a tenth). No intent carries a `leverage` key, and nothing is shorted.
+- **A leg's target is EUR 720 times its weight** in the newest boundary record's `final_targets`. The governor's multiplier is already inside that weight: follow it as published, and re-scale nothing onto fewer legs. A negative weight reads as 0, and that leg is sold whole.
+- **A plan is the target minus what Kraken itself says is held** — the balance export taken right before the draft, not the engine's venue record. Each leg's difference becomes one intent or a carry:
+  - a **buy** when the difference is at least 1.05 × the leg's `ordermin` × its price and at least EUR 0.50 — `{"symbol": "<leg>", "side": "buy", "action": "open", "mode": "execute", "notional_eur": <floored to the cent>}`;
+  - a **sell** when the coin to shed is at least the leg's `ordermin` — `{"symbol": "<leg>", "side": "sell", "action": "close", "mode": "execute", "qty": <floored to the lot step>}` — and the whole leg, its held quantity lot-floored, when the sell would leave less than `ordermin` behind;
+  - **carried** below those floors: no intent, and the difference recorded as carried;
+  - **trimmed** when the buys come to more than Kraken's free EUR less 5: the smallest buys are cut first and carried.
+- **A sell the engine would refuse is not drafted.** At gate level `full` the engine refuses a spot sell when the newest venue record holds a balance of that coin above zero but below the sell's `qty` — that record's balances are read when the engine connects, so they lag every fill since the engine last started — with `the venue record refutes the signed qty` (no count command: `_classify_spot_close` in `cli/engine/executor.py` holds the refusal). Such a sell carries. Its remedy is an engine restart inside an inter-cycle gap ([step 5](#rung-2-after-a-restart)), after which the sell is drafted from the first boundary record written since that restart. The pre-entry proof decides whether the rule can act at all: if its 20Z venue record, written after its restart, carries no LINK balance, the record holds the margin account's free EUR and no coin balance, the rule never fires, and Fri 10-30's restart is the multi-lot restore proof alone (the owner's pre-approval of 2026-10-01).
+- **A plan is sells before buys, at most 3 `execute` intents, and at most EUR 95 in all** — its `notional_eur` plus each sell's `qty` × price; the rendered `exec_max_plan_notional_eur` stays 100.0. Its `plan_id` is `r2-<YYYYMMDD>-<n>`. One plan runs at a time: the next is drafted from a fresh balance export once the previous one is terminal, and each plan is checked and placed within 60 minutes of its own `created_at`.
+- **An intent that ended `unfilled`, `partial`, `refused` or `rejected` is not re-placed the same day**; the next window's target minus held absorbs it. The helper holds this: it carries each leg a plan drafted earlier today already carried, with the reason `<plan_id> carried it earlier today; never re-placed the same day`, since it cannot see whether that plan filled (no count command: `placed_today` in `cli/engine/draftplan.py` reads the decision log for it). A plan drafted and not placed — refused at `--check`, or expired before its `mv` — is named on the next draft with `--discard <plan_id>`, once the ledger read shows no entry under that id; that frees its legs, and the helper takes only the day's newest plan. An `ambiguous` or `revoked` intent halts that symbol until Kraken's open orders are read.
+- **The plan-drafting helper, the engine CLI's `draft-plan` command, does the arithmetic**: read-only, on the workstation. It reads the copied `cycle-<HH>.json` and `venue-<HH>.json`, your balance export, the public ticker and the Kraken maintenance feed (read whole), and refuses — with nothing drafted — a record older than the latest boundary, a balance export older than 30 minutes, a draft after the window's last drop, a leg outside the nine, any leverage, a plan over EUR 95, and a published Kraken WebSocket or REST window overlapping the drop window. A sell the venue record would refute is carried on its own row, and the rest of the plan is drafted. It emits one plan, sells first, a decision table, and one row per leg to the decision log — target, Kraken held, engine held, the venue record's balance, placed or carried and why. It catches what `--check` does not: `--check` compares a buy with `costmin` alone, counts a sell's notional as 0 and reads no balance against a sell (no count command: `_intent_floor_check` and `plan_refusals` in `cli/engine/command.py` and `cli/engine/probeplan.py` are the two checks).
+- **The decision log is `data/rung2/decisions.jsonl`** in the checkout the helper runs from — its root, where `zcrypto.toml` sets `data_dir` — and each plan is written beside it as `data/rung2/<plan_id>.json`. The log is the helper's: a line in it that is not JSON makes each later draft refuse, so nothing is added to it by hand (no count command: the log is on the workstation, outside the tree). What the helper does not know — each placed intent's outcome and filled quantity, the window's minutes, a multiplier read, a stop, a week's read — goes in `data/rung2/days.md`, one dated heading a day. `data/` is unversioned: before the day's first draft, copy the log aside with `cp -p data/rung2/decisions.jsonl data/rung2/decisions.prev.jsonl`, and delete that copy once the exit report is recorded.
+- **Arming is the arm file alone.** The host's `/opt/zcrypto-engine/zcrypto.toml` stays `exec_armed = true` through the box, while the tree's template renders `false` and no converge has carried it there. This departs from the probe-window procedure's disarm step 2, which converges the config back to `false` the same day: the ruling accepts the one key that leaves for the box's four weeks, so disarm step 4 holds throughout — after a restore of `/var/lib/zcrypto-engine`, and before the engine starts, delete `armed` and `probe-plan.json` if present. The arm file is placed at the day's first drop and removed when the last plan is terminal, at the latest 55 minutes before the next boundary; a day the helper drafts nothing is a day without it. The restart hold is written at each engine start and cleared by you after [step 5](#rung-2-after-a-restart).
+- **One converge tag re-renders the engine's config: `engine`.** The render is the task `render the engine zcrypto.toml` in `infra/ansible/roles/engine/tasks/main.yml`; no task in that role carries a tag of its own, so all of them run under the `engine` tag `infra/ansible/site.yml` gives the role and under no other; an un-tagged run reaches them too, and the primary refuses one unless it skips `engine` (no count command: tags on a run are the operator's; the deploy-log rows below are where they land). A box-time `--tags engine` run renders the tree's `exec_armed = false`, its handler restarts the engine, and the box cannot arm again without an arm PR and its converge. Two more tags reach the engine without rendering its config: `docker`, which can take the engine with it (the probe-window procedure's *Where everything lives*), and `cache-link`, whose changed mesh config restarts `wg-quick@zcache0` under the engine's cache traffic. Checkable after the fact: `docs/reference/deploy-log.jsonl` carries no row dated inside the box whose `limit` reaches `zcrypto` and whose `tags` are empty or name `engine`, `docker` or `cache-link`, and `sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine` moved only at your own restarts. The cache nodes' own play, `converge the cache nodes — the engine's Valkey replica set`, restarts Valkey or Sentinel under the engine's cache; [step 10](#rung-2-what-not-to-do) says when it may run.
+- **What pages while the book is held.** `zcrypto-engine-dark-with-exposure` is live from the first fill to the exit, overnight included ([`engine.md#zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure)). `zcrypto-engine-exec-armed-too-long` stays quiet: a window's arm file lasts under three hours. A restart that latched the hold pages nothing; the next window's gate read is where it shows.
+
+Times are UTC. The owner's local clock moves an hour on 2026-10-25; the windows do not.
+
+### What to do
+
+Where each command runs: the **workstation** is your machine, at the root of the checkout the helper runs from — each command that starts with kraken or uv run, and the ssh and scp that reach the host; the **host** is a shell on `zcrypto` (`ssh zcrypto`) — each command that starts with sudo. `kraken-cli` is workstation-only (CLAUDE.md `## Secrets`).
+
+#### 1. Before entry — five gates, by Sun 2026-10-04 20:00Z
+
+1. **The tree's disarm revert is merged** — `exec_armed = false` in `infra/ansible/roles/engine/templates/zcrypto.toml.j2` on `develop` — and not converged: the gate read (the probe-window procedure's) carries no `config_not_armed`.
+2. **This entry ruling is recorded** in `docs/research/14.phase6-decisions.md`.
+3. **The plan-drafting helper is merged**: the `draft-plan` command's `--help` prints its options.
+4. **The reference-data sweep is read**: `docs/reference/kraken-snapshot-register.md` re-rendered by the `zcrypto-refdata-sweep` routine, its verdict read from the rendered tables.
+5. **The pre-entry single-lot spot proof has passed**: one spot lot held across an engine restart, its boot line's restored figure equal to Kraken's, recorded in `docs/reference/drill-log.md`.
+
+**A gate still open at Sun 2026-10-04 20:00Z moves the whole box one week**: W42 to W45, Mon 2026-10-12 to Sun 2026-11-08. Every date below moves with it — the planned restart to Fri 11-06, the exit to Sat 11-07 and Sun 11-08, the disarm converge to Mon 11-09, the first weekly read to Mon 10-19 with `--gate-from 2026-W46`, the exit report to Fri 11-13.
+
+#### 2. Entry day — Mon 2026-10-05
+
+1. **Funding has landed.** The owner's 2 BNB, deposited and sold to EUR on 2026-10-01, brought Kraken's EUR to 1,443.41; no other deposit or withdrawal is made during the box (no count command: a transfer is an operator act on Kraken nothing in the tree records). On the workstation `kraken extended-balance -o json` reads EUR and no coin above dust. **Record Kraken's equity now** — the account's total in EUR on Kraken's own balance page — as the entry value [the account stop](#rung-2-account-stop) reads against.
+2. **Run the probe-window procedure's pre-probe steps 1–8 once**, at entry, and again after an engine restart or image change — not per window, a recorded deviation from that procedure. Step 3 reads `2.0.0rc6.dev20260921` and that version's record; step 8's four CLI counts and the held amount go beside the boot line in the entry's arming record, as that step says.
+3. **Arm steps 1–3 do not run**: the host's config is armed already. On the host, read the gate: `level=none`, `reasons=arm_file_absent` — the proof cleared the hold its own restart wrote. `restart_hold` among the reasons means the engine started again after the proof: work [step 5](#rung-2-after-a-restart) item 3, the restore read, and its item 5, the hold, before going on — item 2's pre-probe steps already ran after that start. Run the venue-truth read: each position `0.0`, and the balances as the engine read them at its last start — the record reads them when the engine connects, so the proof's LINK can still show there and the BNB sale's EUR does not. Item 1's Kraken export is the funding read.
+4. **Drills A and B, in spot form, from 12:10Z** (the probe-window procedure's section 3): arm step 6 places the arm file, then drill A's plan without its `leverage` key:
+   ```json
+   {
+     "plan_id": "drill-a-2026-10-05",
+     "created_at": "<now, e.g. 2026-10-05T12:12:00+00:00>",
+     "intents": [
+       {"symbol": "BTC/EUR", "side": "buy", "action": "open", "mode": "rest-cancel", "notional_eur": 20.0}
+     ]
+   }
+   ```
+   Read it back as drill A step 6 reads it (`rest_cancel_ok`, `filled_qty 0.0`, one order row `canceled`), then drill B with its own `plan_id`. Drill B step 4 re-creates the arm file when the day's first plan follows inside this window, and is skipped otherwise.
+5. **Then the day's window**, [step 3](#rung-2-the-day-s-window) from its item 1.
+
+<a name="rung-2-the-day-s-window"></a>
+
+#### 3. Each day's window — the 12Z record to the arm file's removal
+
+Drops fall in **12:10–13:15Z and 13:30–15:00Z** — none across valkey2's reboot slot at 13:25, none in the hour before 16Z (the probe-window procedure's first execute rule) — and the arm file is gone by **15:05Z**. A plan runs its intents one after another, and an `execute` intent runs up to its 15-minute time box and then its IOC attempts, so a plan of k intents drops by 15:00Z less 15 minutes per intent — **14:45Z for one, 14:30Z for two, 14:15Z for three** — or the arm file's removal at 15:05Z revokes the intent still in flight.
+
+1. **Copy the 12Z records from the host** — on the workstation, into `data/rung2/`, about two minutes after the boundary, and not from the NAS mount, which receives them on its hourly pull, up to an hour later:
+   ```
+   ssh zcrypto sudo tar -C /var/lib/zcrypto-engine/journal/<YYYY-MM-DD> -cf - cycle-12.json venue-12.json | tar -C data/rung2 -xf -
+   ```
+   Both files arrive, or `tar` names the one missing and exits non-zero: a cycle that failed writes `failed-cycle-12.json` in place of `cycle-12.json` ([`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) step 3 reads the same directory). A failed or missing 12Z record gives this window to [the 16Z fallback](#rung-2-the-16z-fallback).
+2. **Read the gate** on the host: `sudo docker exec zcrypto-engine zcrypto engine exec-status` → `level=none`, `reasons=arm_file_absent`. `restart_hold` among the reasons sends you to [step 5](#rung-2-after-a-restart) first; `kill_switch` is [the account stop](#rung-2-account-stop); `config_not_armed` means an engine converge ran inside the box — stop, and take it to the owner, since nothing here re-arms the config.
+3. **Read Kraken's equity** on its balance page against the entry value — EUR 60 or more below it is [the account stop](#rung-2-account-stop) — and **take the balance export** on the workstation, right before the draft:
+   ```
+   kraken extended-balance -o json > data/rung2/balance.json
+   ```
+4. **Draft with the helper** on the workstation, the log copied aside first at the day's first draft (*What it means*):
+   ```
+   uv run zcrypto engine draft-plan --cycle data/rung2/cycle-12.json --venue data/rung2/venue-12.json --balances data/rung2/balance.json
+   ```
+   A draft with no intent is the day: no arm file, and the rows are its record — go to item 9. Otherwise read the decision table before anything else:
+   - each of the nine legs has a row: target, Kraken held, engine held, the venue record's balance, and placed or carried with its reason;
+   - a leg a plan drafted earlier today already carried reads `carried`, `<plan_id> carried it earlier today; never re-placed the same day` — confirm it against the day's ledger read (item 7);
+   - the header's gross line: the record's `final_targets` summed in absolute value over all twelve legs, against the previous attended record's in the decision log, reading `FLAGGED` at 1.8× or more or 0.55× or less. Follow the targets as published all the same, and once the NAS has the day's record, read the multiplier with [step 9](#rung-2-exit-report) item 7's `decompose` command, the day's date as both `--since` and `--until`, and record it in `data/rung2/days.md`.
+5. **Copy the plan to the host under the staging name and validate it** — drill A step 2, verbatim, with the helper's `data/rung2/<plan_id>.json` as `plan.json`, then drill A step 3 on the host: `sudo docker exec zcrypto-engine zcrypto engine probe-plan /var/lib/zcrypto-engine/exec/probe-plan.staging.json --check`. A buy reads `  [<i>] <leg> buy open execute: notional <x> EUR, costmin <c> EUR`, a sell `  [<i>] <leg> sell close execute: qty <q>, ordermin <o>, lot step <s>`, and the last line `plan ok: <n> intent(s), total notional <x> EUR`, a total that counts the buys alone. The intents are the decision table's placed rows, figure for figure. `plan refused: …` means a fresh draft with `--discard <plan_id>` naming the refused plan, not an edit by hand.
+6. **Place the plan** on the host. At the day's first plan, place the arm file first, unless drill B left it in place — arm step 6: `sudo touch /var/lib/zcrypto-engine/exec/armed`, gate read `level=full`, `reasons=-`. Then drill A step 4, after `date -u` reads inside a drop range and by the plan's own drop limit (this step's opening paragraph): `sudo mv /var/lib/zcrypto-engine/exec/probe-plan.staging.json /var/lib/zcrypto-engine/exec/probe-plan.json`. Within about five seconds `sudo ls -l /var/lib/zcrypto-engine/exec/` shows no `probe-plan.json` (drill A step 5).
+7. **Read the ledger by value** on the host — the probe-window procedure's ledger read, `HOURS` covering the window — until each intent carries an outcome and each order row a terminal `state`; a plan that halted shows its later intents `refused`, `not run -- …`. Each fill carries its fee and liquidity side (that procedure's verify item 2). An `ambiguous` or `revoked` intent halts its symbol: on the workstation, read `kraken open-orders -o json` and establish what reached the venue before that symbol is drafted again; one Kraken's orders do not explain is [the account stop](#rung-2-account-stop).
+8. **The next plan** starts again at item 3 — a fresh balance export, the helper again, the next `r2-<YYYYMMDD>-<n>` — once the previous plan is terminal, and drops by its own limit (this step's opening paragraph).
+9. **Remove the arm file** on the host once the last plan is terminal, by 15:05Z at the latest — disarm step 1: `sudo rm /var/lib/zcrypto-engine/exec/armed`, gate read `level=none`, `reasons=arm_file_absent`. Write the day's entry in `data/rung2/days.md`: each placed intent's outcome and filled quantity, and the window's minutes from the copy to this removal.
+
+<a name="rung-2-the-16z-fallback"></a>
+
+#### 4. The 16Z fallback — the same day, when 12Z could not run or finish
+
+The 16Z boundary's window takes a day whose 12Z window did not run or did not finish, and a sell the stale-balance rule carried to a restart in the 12Z gap. It places nothing the 12Z window already attempted that day: the helper carries those legs, as step 3 item 4 reads.
+
+1. **Run step 3 from item 1 with the 16Z record**: the same copy with `cycle-16.json` and `venue-16.json` — the helper refuses the 12Z pair once 16Z has passed.
+2. **Drops fall in 16:10–17:15Z and 17:30–19:00Z**, clear of valkey3's reboot slot at 17:25 and of the hour before 20Z, a plan of k intents by 19:00Z less 15 minutes per intent — 18:45Z, 18:30Z, 18:15Z — and the arm file is gone by **19:05Z**.
+3. **Place the arm file at this window's first drop** (arm step 6), whether or not the 12Z window placed one.
+
+<a name="rung-2-after-a-restart"></a>
+
+#### 5. After an engine restart — the hold, the restore, the drills
+
+Three things restart the engine in the box: a restart nobody planned — a reboot from the provider's side, or a start the supervisor healed — which the next gate read shows as `restart_hold`; the restart a sell carried by the stale-balance rule needs; and the planned restart of Fri 2026-10-30 ([step 8](#rung-2-the-last-days)). The engine host does not reboot itself: its upgrades install unattended and its reboot waits for you (no count command: `base_unattended_upgrades_automatic_reboot` in `infra/ansible/group_vars/capture_host/vars.yml` holds it), so a reboot of `zcrypto` you take inside the box is a restart under this step, inside an inter-cycle gap like a planned one.
+
+1. **A planned restart takes its reads first.** Inside the inter-cycle gap — 5 minutes past the boundary record's `completed_at` to 15 minutes before the next boundary, read from the record and not the clock ([`engine-adhoc-key-read`](#engine-adhoc-key-read) step 3) — with no plan in flight, the arm file removed, and clear of the cache nodes' reboot slots at 09:25, 13:25 and 17:25. On the workstation, read the Kraken maintenance feed whole with [`order-semantics-verification.md`](order-semantics-verification.md) §1.1's command, and wait out each entry whose `components` or own `name` carries WebSocket or REST as a word and that reaches the restart; an empty feed, or an error, is no evidence the gap is clear (`.claude/rules/fleet-deploys.md`). Take [the restart rule](#engine-restart-margin-position)'s four reads; its `kraken positions -o json`, on the workstation, lists no margin position, since the book holds none.
+2. **Restart, on the host, reading the start time either side**:
+   ```
+   sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine
+   sudo systemctl restart zcrypto-engine
+   sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine
+   ```
+   The restart command is [`engine.md#zcrypto-engine-cycle-stale`](engine.md#zcrypto-engine-cycle-stale) step 4's.
+3. **Read the restore against Kraken.** On the host, the boot's lines, with pre-probe step 8's command — `sudo docker logs zcrypto-engine --since "$(sudo docker inspect --format '{{.State.StartedAt}}' zcrypto-engine)"` — read for the `Received … order(s)`, `Reconciliation complete`, `cache restore`, `Unresolved positions`, `Failed to get mass status` and `could not be read at start` lines.
+   Confirm the output is non-empty before reading anything into it. On the workstation, take a fresh `kraken extended-balance -o json`: each leg's `cache restore: position <instrument> <quantity> @ <entry price> (<strategy>)` lines, summed, equal Kraken's held quantity of that coin, and `kraken open-orders -o json` lists no order. A restore that does not match Kraken, an `Unresolved positions` line, or a `could not be read at start` line — the pattern also matches the `at startup` spellings — is [the account stop](#rung-2-account-stop).
+4. **The probe-window procedure's pre-probe steps 1–8 again**, as step 2 item 2 says: step 3 reads the running version against its record, and step 8's counts go beside the new boot line.
+5. **Clear the hold** on the host — arm steps 4 and 5: the gate read shows `level=none`, `reasons=arm_file_absent,restart_hold`; then `sudo rm /var/lib/zcrypto-engine/exec/restart-hold`, and the gate read shows `reasons=arm_file_absent`.
+6. **Drills A and B in spot form**, as on entry day (step 2 item 4), each with a `plan_id` the ledger does not already hold for today or yesterday. The arm file they need is removed by 55 minutes before the next boundary, and stays down unless a funded plan follows inside the window.
+7. **A sell the stale-balance rule carried** is drafted from the first boundary record written after this restart: after a restart in the 12Z gap, that is the 16Z record and [the 16Z fallback](#rung-2-the-16z-fallback).
+
+<a name="rung-2-account-stop"></a>
+
+#### 6. The account stop — pause, and resume on the owner's written word
+
+1. **Any one of these stops the box's plans** (no count command: each is an operator read of Kraken, the ledger or the host, and nothing in the tree records the pause):
+   - Kraken's equity is EUR 60 or more below the entry value;
+   - the kill switch tripped — work [`engine.md#zcrypto-engine-exec-kill-tripped`](engine.md#zcrypto-engine-exec-kill-tripped) beside this;
+   - an `ambiguous` or `revoked` outcome that Kraken's open and closed orders do not explain;
+   - a trade row in Kraken's ledger export that no journaled fill matches, made by a hand act or the red button;
+   - a restore that does not match Kraken ([step 5](#rung-2-after-a-restart) item 3);
+   - a difference between the engine's held and Kraken's held that the day's rows do not explain.
+2. **Place no new plan, and remove the arm file** on the host: `sudo rm /var/lib/zcrypto-engine/exec/armed`. Removing it mid-plan revokes the intent in flight, so read the ledger, and `kraken open-orders -o json` on the workstation, after it.
+3. **Record the stop** in `data/rung2/days.md` — the trigger, the reading, the time.
+4. **Resume only on the owner's written word** (no count command: the word is the owner's act), recorded beside the stop. A pause moves none of the box's dates.
+
+#### 7. Each Monday from 2026-10-12 — the weekly read
+
+1. **Export Kraken's ledger** (Kraken → History → Export → Ledgers) from 2026-10-05 to the Sunday just closed.
+2. **Run the tracking report from the box's first day**, not from the week's: the report takes held from the fills inside its window, so a window that starts mid-box scores a book without the buys before it.
+   ```
+   uv run zcrypto engine tracking-report \
+     --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-10-05 --until <the Sunday just closed> \
+     --gate-from 2026-W45 --ledger-export <the export>.csv
+   ```
+   `--gate-from 2026-W45` places each box week before the boundary, so the report labels each one rung 2 and decides none (the probe-window procedure's verify item 8 says how to read that echo).
+3. **Read the drift as description, not a verdict.** It is scored against each record's own NAV of 1000, not EUR 720, and LINK/EUR is not held, so it carries a standing gap — about 28% of the nine legs' gross weight plus LINK's whole weight, as a share of NAV — that is the box's sizing, not tracking error.
+4. **Read the ledger reconciliation** as verify item 3 does: each unmatched id explained by a repair or by your own account act, and a trade nobody can account for is [the account stop](#rung-2-account-stop).
+5. **Record the week** in `data/rung2/days.md`: its labels, drift, cost lines and the reconciliation's verdict.
+
+<a name="rung-2-the-last-days"></a>
+
+#### 8. The last three days — Fri 10-30 restart, Sat 10-31 exit, Sun 11-01 reserve
+
+1. **Fri 2026-10-30 — the planned restart, with the book held, inside the 12Z gap.** The day's window is cut short so the restart and its drills fit inside that gap: drops in 12:10–13:15Z alone, so the last plan is terminal by about 14:00Z. Once it is and the arm file is removed, restart as [step 5](#rung-2-after-a-restart) says, after 13:30Z — clear of valkey2's slot — and by 14:15Z, with drills A and B finished and their arm file removed by 15:05Z. The boot's restore lines are the multi-lot restore proof: each leg's lines, summed, equal Kraken's held. Where the stale-balance rule can act (*What it means*), the order matters too: the restart re-reads each leg's balance into the venue record, so Saturday's whole-leg sells clear it, and a buy placed after the restart would leave its leg's balance short of its sell again.
+2. **Sat 2026-10-31 — the exit, in the 12Z window.** Step 3 with `--exit` added to item 4's command: every leg's target is 0, so each held leg is sold whole, its `qty` Kraken's held lot-floored, and nothing is bought; the report's first line opens `EXIT: every leg's target is 0`. The plan rules hold as on other days: at most 3 sells and EUR 95 a plan, one plan at a time, each from a fresh balance export. `--exit` is passed on the exit's two days alone (no count command: the helper reads no date for it). A leg already below its `ordermin` is dust no order can clear, and stays.
+3. **Sun 2026-11-01 — the reserve window**, 12Z as usual, drafted with `--exit` again, for a Saturday exit sell that ended `unfilled`, `partial`, `refused` or `rejected`. A draft with nothing left to sell places no arm file.
+4. **The box ends flat**: on the workstation, the balance export shows each of the nine coins below its `ordermin`, and `kraken open-orders -o json` and `kraken positions -o json` list nothing; on the host, the newest venue record's `positions` carries its twelve entries, each `0.0` or a leg's dust below its `ordermin`. Unlike verify item 5, where each position reads `0.0` and dust shows in the balances alone, a spot leg's unsellable remainder is a position in the engine's cache, so it shows in `positions` too.
+5. **Then the deferred disarm converge, on Mon 2026-11-02**, the day after the box, so no engine converge falls inside it — the probe-window procedure's disarm step 2 with the tree already reading `false`, inside an inter-cycle gap, the maintenance feed read whole at planning time and again right before (`.claude/rules/fleet-deploys.md`), its preview changing the one line `exec_armed = true` → `exec_armed = false`. Disarm step 3 then reads three reasons, and the venue record written after its restart is the flat reading with fresh balances (verify item 4).
+
+<a name="rung-2-exit-report"></a>
+
+#### 9. The exit report — read in W45, by Fri 2026-11-06
+
+Recorded in `docs/research/14.phase6-decisions.md`, from these readings:
+
+1. **The ruling as fixed at entry**, unchanged.
+2. **The tracking report over the box** — step 7's command with `--until 2026-11-01` and the box's whole ledger export.
+3. **The fee re-pricing reading** (`docs/open-topics/T0214-cost-basis-re-priced-at-rung-2.md`): the cost basis re-priced from the box's own fills, the population stated, fees from the ledger export. With no taker fill in the box, the record says the taker share is unobserved, and that term stays open until rung 3.
+4. **The decision log** — `data/rung2/decisions.jsonl` with `data/rung2/days.md`: each day, each leg, target, Kraken held, engine held, the venue record's balance, placed or carried and why, and the window's minutes.
+5. **The exec-ledger and held tallies** — the ledger read with `HOURS` reaching back to 2026-10-05: plans, intents by outcome, orders, fills; and engine held against Kraken's held, per leg, at exit.
+6. **The account reconciliation** — Kraken's equity at entry and at exit, the one deposit, fees, and the realized result, from the ledger export.
+7. **The governor over the box**: `uv run zcrypto engine decompose --journal-dir /mnt/zhao-crypto/engine-journal --since 2026-10-05 --until 2026-11-01`.
+8. **The ops log** — the box's entries in `docs/reference/ops-journal/2026-10.md` and `2026-11.md`.
+9. **The Blockpit re-sync** — the Kraken depot re-synced, as the probe-window procedure's execute step 7 does it, with pass or fail.
+
+<a name="rung-2-what-not-to-do"></a>
+
+#### 10. What not to do
+
+- **No hand trade in Kraken's web UI** (no count command: a hand act on Kraken is the owner's, and the weekly reconciliation is where it shows). It pauses the box: [the account stop](#rung-2-account-stop).
+- **No red button except in an emergency** (no count command: a press is the owner's act). `sudo zcrypto-flatten --execute` ([`engine-flatten`](#engine-flatten)) sells the whole account and stops the engine; it pauses the box like a hand trade.
+- **No engine-touching converge against `zcrypto`** (no count command: tags are the operator's; the deploy-log check in *What it means* reads them afterwards) — no `--tags engine`, `docker` or `cache-link`, and no un-tagged run. The one converge the box owes is step 8's, on Mon 2026-11-02 after it.
+- **A cache-node converge takes one node per run** — the cache play's own charter — **outside the day's window and away from an engine restart** (no count command: a run's limit and time are the operator's; the deploy-log rows record them).
+- **PR #646 stays unmerged.** Its nautilus bump is a version the arming record does not list; the engine image and nautilus `2.0.0rc6.dev20260921` are frozen through the box.
+- **No edit of `/opt/zcrypto-engine/zcrypto.toml` on the host** (no count command: a hand edit on the host is an operator act nothing in the tree records), and no plan written in place of `probe-plan.json` — a plan is placed by `mv`.
+
+### Retire when
+
+The exit report is recorded in `docs/research/14.phase6-decisions.md` — by Fri 2026-11-06, or Fri 2026-11-13 if the box slipped a week. The box is over; what rung 3 runs is its own procedure.
+
 <a name="engine-tracking-band"></a>
 
 ## engine-tracking-band — PROCEDURE
