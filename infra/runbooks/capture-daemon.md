@@ -103,7 +103,7 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert, `Capture · reconnect rate high (degrading host or venue)`, on the integrity board's "Recovery ladder — 24h increase" panel: the capture host its `host` label names reconnected to Kraken's WebSocket more than 30 times in a day, against a usual 7 to 9.
+A **warning** Grafana alert, `Capture · reconnect rate high (degrading host or venue)`, on the integrity board's "Recovery ladder — 24h increase" panel: the capture host its `host` label names made more than 30 reconnect attempts to Kraken's WebSocket in a day, against a usual 7 to 9: many drops, or one outage of about 20 minutes, each failed attempt counting.
 
 ### What it means
 

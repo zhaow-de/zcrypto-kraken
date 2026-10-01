@@ -531,7 +531,8 @@ def test_the_reconnect_rate_pages_per_host_over_a_day_at_the_count_its_summary_s
     expr = rule["data"][0]["model"]["expr"]
 
     assert re.fullmatch(r'increase\(zcrypto_capture_reconnects_total\{host=~"zcrypto\|zcrypto-red"\}\[1d\]\)', expr), expr
-    stated = re.search(r"more than (\d+) times in 24h", rule["annotations"]["summary"])
+    assert rule["data"][1]["model"]["conditions"][0]["evaluator"]["type"] == "gt"
+    stated = re.search(r"more than (\d+) reconnect attempts to Kraken in 24h", rule["annotations"]["summary"])
     assert stated, rule["annotations"]["summary"]
     assert _threshold(rule) == int(stated.group(1)) + 0.5, (
         "increase() extrapolates past the count, so the bar sits half a step above it"
