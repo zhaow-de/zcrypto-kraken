@@ -214,16 +214,27 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "adopted-row sweep and the unmatched counter all go dark at once"
     )
     assert config.generate_missing_orders is True, (
-        "this one is INHERITED rather than stated, and it gates the synthetic adjustment that "
-        "aligns the Cache's startup position with the venue -- the position cli/engine/venuestate.py "
-        "freezes into the VenueState the cycle sizes off. False would let the two disagree silently"
+        "this one is INHERITED rather than stated, and it gates the synthetic adjustment that moves "
+        "the Cache's startup position to the adapter's position report -- the position "
+        "cli/engine/venuestate.py freezes into the VenueState the cycle sizes off. For a margin "
+        "position the report is the venue's figure, and False would let the two disagree silently. "
+        "For a spot lot under spot_account_type=MARGIN it is a FLAT the adapter writes for a position "
+        "OpenPositions does not list, so the adjustment books an EXTERNAL short equal to the lot at "
+        "a restart over it and the Cache reads 0 beside a lot the venue holds: the spot-lot case in "
+        "tests/test_cache_restart.py holds that and turns red on the build that ends it. False keeps "
+        "the restored lot, makes a fill taken while the engine was down a refused start, and leaves a "
+        "position closed while it was down open in the Cache"
     )
     assert config.filter_position_reports is False, (
         "also inherited. True makes the library's reconciliation skip reconcile_position_report "
         "entirely, so startup creates NO position from the venue's own position reports and the "
-        "Cache the VenueState is frozen from reads empty against an open position. Upstream "
+        "Cache the VenueState is frozen from reads empty against an open margin position. Upstream "
         "documents the flag for accounts several nodes trade -- which is this account's shape, so "
-        "it is a plausible thing for someone to reach for rather than a theoretical flip"
+        "it is a plausible thing for someone to reach for rather than a theoretical flip, the more so "
+        "as True restores a spot lot held across a restart without the EXTERNAL short the spot-lot "
+        "case in tests/test_cache_restart.py holds. True also drops a fill taken while the engine was "
+        "down without a line, no longer refuses a cold start over an open margin position, and leaves "
+        "a position closed while the engine was down open in the Cache"
     )
     assert config.allow_overfills is False, (
         "also inherited, and cli/engine/executor.py names it in the paragraph bounding what covers "
