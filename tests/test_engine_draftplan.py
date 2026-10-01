@@ -965,12 +965,12 @@ def test_positions_reading_zero_while_kraken_holds_the_lots_draft_what_matching_
 def test_the_report_says_what_the_engines_figure_is_and_names_the_legs_over_a_lot_step_from_krakens():
     venue = _venue(cycle_ts=_DAY_TWO, positions={"SOL/EUR": 0.11999999, "XRP/EUR": -10.0})
 
-    result = _draft({}, boundary=_DAY_TWO, venue=venue, export=_export(1000.0, **_LOTS))
+    result = _draft({}, boundary=_DAY_TWO, venue=venue, export=_export(1000.0, **_LOTS, DOT=1.2e-08))
 
     assert (
         "engine held is the engine Cache's net -- 0 on a leg held through a restart, negative on a leg sold since one -- and "
         "Kraken's exports are the book: nothing is drafted from it. It differs from Kraken held by more than a lot step on: "
-        "BTC/EUR, ETH/EUR, XRP/EUR\n"
+        "BTC/EUR, ETH/EUR, XRP/EUR, DOT/EUR\n"
     ) in result.report
 
 
