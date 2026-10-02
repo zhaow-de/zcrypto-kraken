@@ -48,7 +48,10 @@ KEEP_REGEX_FILES = {
     "zcrypto-valkey1": REPO / "infra/ansible/roles/cache/files/config.alloy",
     "zcrypto-valkey2": REPO / "infra/ansible/roles/cache/files/config.alloy",
     "zcrypto-valkey3": REPO / "infra/ansible/roles/cache/files/config.alloy",
+    "zcrypto-mon": REPO / "infra/ansible/roles/mon/files/config.alloy",
 }
+# The hosts whose config ships with no keep and no drop list, so every family they publish exists.
+UNFILTERED_HOSTS = frozenset({"zcrypto-mon"})
 
 # Where a producer LIVES -> the hosts that run it, so an unscoped rule over an app family can still
 # be pinned per host. Ansible roles carry the deployment target in their path, which makes this
@@ -334,6 +337,10 @@ def keep_regexes() -> dict[str, re.Pattern[str]]:
     compiled = {}
     for host, path in KEEP_REGEX_FILES.items():
         blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", path.read_text(), re.DOTALL)
+        if host in UNFILTERED_HOSTS:
+            assert blocks == [], f"{path}: {host} is listed as unfiltered and its config carries a relabel block"
+            compiled[host] = re.compile(r"\A.*\Z", re.DOTALL)
+            continue
         keeps = [b for b in blocks if "action" in b and '"keep"' in b]
         assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
         match = re.search(r'regex\s*=\s*"([^"]+)"', keeps[0])
@@ -426,7 +433,8 @@ def test_every_alerted_family_is_admitted_where_its_rule_selects():
     keeps, problems = keep_regexes(), []
     for uid, family, hosts, why in sorted(_admission_expectations()):
         if hosts is None:
-            if not any(keep.match(family) for keep in keeps.values()):
+            # An unfiltered host admits every family, so its admitting this one is no evidence the family exists.
+            if not any(keep.match(family) for host, keep in keeps.items() if host not in UNFILTERED_HOSTS):
                 problems.append(
                     f"    {family} -- rule {uid} names no host, and NO host's keep-regex admits it, so the"
                     f" rule reads NoData forever"
@@ -854,3 +862,35 @@ def test_a_label_values_host_variable_reaches_only_the_nodes_its_selector_admits
     assert _host_variables({"templating": {"list": [{**variable, "regex": "/valkey[12]/"}]}})["h"] == CACHE_NODES - {
         "zcrypto-valkey3"
     }
+
+
+def test_an_unfiltered_host_admits_every_family_and_a_filtered_one_does_not():
+    keeps = keep_regexes()
+    for family in ("node_filesystem_avail_bytes", "prometheus_tsdb_head_series", "grafana_alerting_rule_evaluations_total"):
+        assert keeps["zcrypto-mon"].match(family), family
+    assert not keeps["zaccess"].match("prometheus_tsdb_head_series")
+    assert UNFILTERED_HOSTS <= set(KEEP_REGEX_FILES)
+
+
+def test_a_family_only_an_unfiltered_host_admits_is_still_refused(monkeypatch):
+    family = "zcrypto_family_no_keep_list_admits_total"
+    assert keep_regexes()["zcrypto-mon"].match(family) and publishing_hosts(family) is None
+    monkeypatch.setitem(globals(), "_admission_expectations", lambda: [("a-rule", family, None, _BECAUSE_PUBLISHED)])
+    with pytest.raises(AssertionError, match="NO host's keep-regex admits it"):
+        test_every_alerted_family_is_admitted_where_its_rule_selects()
+
+
+def test_the_slack_template_and_the_logs_board_name_every_host_of_the_topology():
+    """A host the template's map lacks reaches a phone as its raw label, and one the Logs board's list lacks ships log
+    lines that board cannot select."""
+    template = (REPO / "infra/grafana/notification-templates/zcrypto-slack.tmpl").read_text()
+    define = template[template.index('{{ define "zcrypto.host" -}}') :]
+    named = dict(re.findall(r'eq \. "([^"]+)" \}\}(.+)', define[: define.index("{{- end -}}")]))
+    assert set(named) == set(KEEP_REGEX_FILES), (
+        f"only in the template {sorted(set(named) - set(KEEP_REGEX_FILES))}, only in the topology {sorted(set(KEEP_REGEX_FILES) - set(named))}"
+    )
+    (board,) = [dash for filename, dash in dashboards() if filename == "zcrypto-logs-dashboard.json"]
+    (variable,) = [v for v in board["templating"]["list"] if v["name"] == "host"]
+    listed = {value: text for text, value in (option.split(" : ") for option in variable["query"].split(", "))}
+    offered = {option["value"]: option["text"] for option in variable["options"] if option["value"] != "$__all"}
+    assert listed == offered == named, f"the query lists {listed}, the options offer {offered}, the template names {named}"

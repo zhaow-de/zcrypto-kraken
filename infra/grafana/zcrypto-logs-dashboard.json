@@ -979,13 +979,13 @@
         "name": "host",
         "label": "Host",
         "type": "custom",
-        "query": "Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess, Cache 1 : zcrypto-valkey1, Cache 2 : zcrypto-valkey2, Cache 3 : zcrypto-valkey3",
+        "query": "Capture primary : zcrypto, Capture secondary : zcrypto-red, Ops : ops, NAS : nas, Edge : zaccess, Cache 1 : zcrypto-valkey1, Cache 2 : zcrypto-valkey2, Cache 3 : zcrypto-valkey3, Monitor : zcrypto-mon",
         "multi": true,
         "includeAll": true,
         "allValue": "",
         "hide": 0,
         "skipUrlSync": false,
-        "description": "Which machines the panels below select. All expands to the eight pinned machines joined into one matcher \u2014 the option list is the pin, so a stray label value cannot appear here. The edge machine ships metrics only and no log lines at all, so selecting it on its own empties every panel on this board by construction rather than by fault. This list is a second place to edit when a machine joins the fleet.",
+        "description": "Which machines the panels below select. All expands to the nine pinned machines joined into one matcher \u2014 the option list is the pin, so a stray label value cannot appear here. The edge machine ships metrics only and no log lines at all, so selecting it on its own empties every panel on this board by construction rather than by fault. The monitor machine's log lines are held by its own Grafana and no other, so elsewhere selecting it on its own empties this board the same way. This list is a second place to edit when a machine joins the fleet.",
         "current": {
           "selected": true,
           "text": [
@@ -1040,6 +1040,11 @@
             "selected": false,
             "text": "Cache 3",
             "value": "zcrypto-valkey3"
+          },
+          {
+            "selected": false,
+            "text": "Monitor",
+            "value": "zcrypto-mon"
           }
         ]
       },

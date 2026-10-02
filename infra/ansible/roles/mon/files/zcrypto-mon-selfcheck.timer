@@ -1,0 +1,13 @@
+# Installed by the `mon` Ansible role at /etc/systemd/system/zcrypto-mon-selfcheck.timer; edit this file
+# and re-converge instead of editing the host's copy.
+[Unit]
+Description=Every-5-minutes self-check of the observability node
+
+[Timer]
+# Every 5 minutes, off the minute boundary: the check's 600 s timeout and 600 s grace tolerate one missed
+# slot before paging. No Persistent=: a slot missed while the node was down is the signal.
+OnCalendar=*:0/5:23
+Unit=zcrypto-mon-selfcheck.service
+
+[Install]
+WantedBy=timers.target

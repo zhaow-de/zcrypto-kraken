@@ -26,6 +26,7 @@
   {{- else if eq . "zcrypto-valkey1" }}Cache 1
   {{- else if eq . "zcrypto-valkey2" }}Cache 2
   {{- else if eq . "zcrypto-valkey3" }}Cache 3
+  {{- else if eq . "zcrypto-mon" }}Monitor
   {{- else }}{{ template "zcrypto.esc" . }}{{ end }}
 {{- end -}}
 

@@ -45,3 +45,10 @@ mon_grafana_api: "http://127.0.0.1:{{ mon_grafana_port }}"
 # minted one before it is written: a value of another shape makes the request fail with the value in the error.
 # It ends in \Z because `$` also matches before a trailing newline, the one shape that has done that.
 mon_token_pattern: '^glsa_[A-Za-z0-9]{32}_[0-9a-f]{8}\Z'
+
+# The directory the node's Alloy textfile collector reads.
+mon_textfile_dir: /var/lib/zcrypto-node-textfile
+
+# The healthchecks.io ping URL of the node's self-check. Empty skips the ping, the ops role's semantics: the
+# check is minted when the node's power-off drill is scheduled, and until then the timer runs and pings nothing.
+mon_selfcheck_healthcheck_url: ""

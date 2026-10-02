@@ -476,3 +476,64 @@ def test_the_play_runs_the_role_under_its_own_tag_with_no_container_runtime():
         ("chrony", ["chrony"]),
         ("mon", ["mon"]),
     ]
+
+
+# --- the node's own Alloy: on loopback, with no credential and no filter -----------------------------------------
+ALLOY = ROLE / "files/config.alloy"
+
+
+def _alloy_blocks() -> dict[str, list]:
+    lines = [line for line in ALLOY.read_text().splitlines() if not line.strip().startswith("//")]
+    return dict(_blocks(lines))
+
+
+def _assigned(block: list, key: str) -> str:
+    (value,) = [line.split("=", 1)[1].strip() for line, _ in block if line.split("=")[0].strip() == key]
+    return value
+
+
+def test_the_node_ships_to_its_own_stores_on_loopback_with_no_credential_and_no_filter():
+    blocks = _alloy_blocks()
+    remote = blocks['prometheus.remote_write "mon"']
+    endpoint = dict(remote)["endpoint"]
+    assert endpoint == [(f'url = "http://127.0.0.1:{DEFAULTS["mon_prometheus_port"]}/api/v1/write"', [])], endpoint
+    assert dict(remote)["external_labels ="] == [('host = "zcrypto-mon",', [])]
+    assert dict(blocks['loki.write "mon"'])["endpoint"] == [
+        (f'url = "http://127.0.0.1:{DEFAULTS["mon_loki_port"]}/loki/api/v1/push"', [])
+    ]
+    kinds = {line.split()[0] for line in blocks}
+    assert not kinds & {"prometheus.relabel", "write_relabel_config"}, "the node's leg carries no keep or drop list"
+
+
+def test_the_node_scrapes_its_host_itself_and_its_three_services():
+    blocks = _alloy_blocks()
+    unix = blocks['prometheus.exporter.unix "host"']
+    assert _assigned(unix, "set_collectors") == '["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]'
+    assert dict(unix)["textfile"] == [(f'directory = "{DEFAULTS["mon_textfile_dir"]}"', [])]
+    assert 'prometheus.exporter.self "alloy"' in {line.removesuffix(" {}") for line in blocks}
+    ports = {"grafana": "mon_grafana_port", "prometheus": "mon_prometheus_port", "loki": "mon_loki_port"}
+    for job, port in ports.items():
+        scrape = blocks[f'prometheus.scrape "{job}"']
+        assert _assigned(scrape, "targets") == f'[{{"__address__" = "127.0.0.1:{DEFAULTS[port]}"}}]', job
+        assert _assigned(scrape, "job_name") == f'"{job}"'
+    for name, block in blocks.items():
+        if name.startswith("prometheus.scrape "):
+            assert _assigned(block, "forward_to") == "[prometheus.remote_write.mon.receiver]", name
+            assert _assigned(block, "scrape_interval") == '"60s"', name
+
+
+def test_the_journal_keep_rule_names_the_units_this_role_runs():
+    relabel = _alloy_blocks()['loki.relabel "journal_units"']
+    (keep,) = [rule for line, rule in relabel if line == "rule" and ('action        = "keep"', []) in rule]
+    (pattern,) = re.findall(r'^"\((.*)\)\\\\\.service"$', _assigned(keep, "regex"))
+    timers = {p.name.removesuffix(".timer") for p in (ROLE / "files").glob("*.timer")}
+    assert set(pattern.split("|")) == {"grafana-server", "prometheus", "loki", "caddy", "alloy"} | timers
+    assert ('replacement  = "zcrypto-mon"', []) in [entry for line, rule in relabel if line == "rule" for entry in rule]
+
+
+def test_the_alloy_config_is_validated_and_alloy_restarted_on_a_change():
+    tasks = load_tasks(TASKS)
+    copy = find_task(tasks, "alloy config — the node's own metrics and journals, written to its stores on loopback")
+    assert copy["ansible.builtin.copy"]["validate"] == "alloy validate %s" and copy["notify"] == "restart alloy"
+    (handler,) = [h for h in yaml.safe_load(HANDLERS.read_text()) if h["name"] == "restart alloy"]
+    assert handler["ansible.builtin.systemd_service"] == {"name": "alloy", "state": "restarted"}
