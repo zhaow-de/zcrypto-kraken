@@ -46,8 +46,8 @@ cd infra/ansible
 # secondary only — the everyday case
 ./scripts/run.sh site.yml --limit zcrypto-red -e capture_image_digest=sha256:<...>
 
-# the live primary — restarts capture and/or the engine
-./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e capture_image_digest=sha256:<...>
+# the live primary — restarts capture, and skips the engine and its play's cache-link role
+./scripts/run.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true -e capture_image_digest=sha256:<...>
 
 # engine deploy — the guard gates this too (a failed assert drops the host from later plays,
 # so WITHOUT the flag the engine play silently skips instead of deploying)
@@ -100,7 +100,7 @@ listens. If you lose `zcrypto-deploy@10022` access:
      vault password (needs the GPG key); `ansible-vault view files/deploy_<host>_ed25519` prints
      that host's private key — the deploy keys are per-machine (`deploy_zcrypto_ed25519`,
      `deploy_zcrypto-red_ed25519`, `deploy_zcrypto-ops_ed25519`; see `files/README.md`).
-3. Once back in, re-assert the intended (hardened) state. For the primary that means `./scripts/run.sh site.yml --limit zcrypto -e converge_primary=true -e capture_image_digest=sha256:<...>` — the flag is required, and it restarts live capture, so pick the moment.
+3. Once back in, re-assert the intended (hardened) state. For the primary that means `./scripts/run.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true -e capture_image_digest=sha256:<...>` — the flag is required, and it restarts live capture, so pick the moment.
 
 ## Rebuild from scratch (portability)<a name="rebuild-from-scratch-portability"></a>
 
@@ -115,7 +115,7 @@ listens. If you lose `zcrypto-deploy@10022` access:
 ## Key rotation<a name="key-rotation"></a>
 
 Regenerate a keypair, `ansible-vault encrypt` the new private key into `files/`, update the matching
-`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `-e converge_primary=true`),
+`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `--skip-tags engine -e converge_primary=true`, except for `sync_authorized_key`, which only the engine role installs: rotating it is the `--tags engine` command under [Running it](#running-it) with the running digests, which restarts the engine whenever its `--check` reports a file the role renders as changed — the config among them, rendered with the tree's `exec_armed` whatever the host runs — so plan it under [the restart rule](runbooks/engine-procedures.md#engine-restart-margin-position)),
 verify the new key works, then remove the old key's `authorized_key` entry and re-run.
 
 ## Deploy image note<a name="deploy-image-note"></a>
