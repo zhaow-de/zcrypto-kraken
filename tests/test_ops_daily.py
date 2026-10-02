@@ -3084,7 +3084,7 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
-    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
+    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"}
     assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
@@ -3110,15 +3110,21 @@ def _published_ssh_stanzas(repo: Path) -> dict[str, dict[str, str]]:
     return stanzas
 
 
-def test_every_published_ssh_destination_has_a_stanza_and_the_cache_nodes_match_the_inventory():
+def test_every_published_ssh_destination_has_a_stanza_and_the_linode_nodes_match_the_inventory():
     repo = Path(__file__).resolve().parents[1]
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", (repo / "docs/reference/fleet.md").read_text(), re.M))
     stanzas = _published_ssh_stanzas(repo)
     for fleet_host, destination in rows.items():
         assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
     ansible = repo / "infra/ansible"
-    group = yaml.safe_load((ansible / "group_vars/cache_host/vars.yml").read_text())
-    for node in ("zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"):
+    groups = {
+        "zcrypto-valkey1": "cache_host",
+        "zcrypto-valkey2": "cache_host",
+        "zcrypto-valkey3": "cache_host",
+        "zcrypto-mon": "mon_host",
+    }
+    for node, group_name in groups.items():
+        group = yaml.safe_load((ansible / f"group_vars/{group_name}/vars.yml").read_text())
         stanza = stanzas[rows[node]]
         host_vars = yaml.safe_load((ansible / f"host_vars/{node}/vars.yml").read_text())
         assert stanza["HostName"] == host_vars["ansible_host"], (node, stanza)
@@ -3173,6 +3179,32 @@ def test_on_a_cache_node_a_restart_that_is_not_alloy_is_the_operators(step, host
 
 def test_the_cache_allowlist_leaves_a_daemon_restart_on_ops_autonomous():
     assert ops_daily.classify_action("sudo systemctl restart docker", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize("host", ["zcrypto-mon", "mon"])
+def test_the_observability_node_is_a_telemetry_host_under_either_of_its_names(host):
+    step = "sudo systemctl restart alloy"
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f"ssh mon {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    ("step", "host"),
+    [
+        ("sudo systemctl restart prometheus", "zcrypto-mon"),
+        ("sudo systemctl restart loki", "zcrypto-mon"),
+        ("sudo systemctl restart loki.service", "zcrypto-mon"),
+        ("sudo systemctl stop grafana-server", "zcrypto-mon"),
+        ("sudo systemctl start grafana-server", "zcrypto-mon"),
+        ("sudo systemctl restart caddy", "zcrypto-mon"),
+        ("ssh mon sudo systemctl restart prometheus", None),
+        ("sudo systemctl restart alloy prometheus", "zcrypto-mon"),
+    ],
+)
+def test_on_the_observability_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
+    """A store restarted under a running Grafana puts every rule that reads it in error, and a stopped Grafana or edge
+    stops evaluation or ingest: each stays the operator's, in the order the node's runbook gives."""
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------

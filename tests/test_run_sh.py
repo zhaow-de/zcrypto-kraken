@@ -12,7 +12,17 @@ import pytest
 import yaml
 
 SCRIPT = Path(__file__).resolve().parent.parent / "infra" / "ansible" / "scripts" / "run.sh"
-HOSTS = ("zcrypto", "zcrypto-red", "zcrypto-ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3")
+HOSTS = (
+    "zcrypto",
+    "zcrypto-red",
+    "zcrypto-ops",
+    "nas",
+    "zaccess",
+    "zcrypto-valkey1",
+    "zcrypto-valkey2",
+    "zcrypto-valkey3",
+    "zcrypto-mon",
+)
 DEFAULT = [f"files/deploy_{h}_ed25519" for h in HOSTS]
 INVENTORY = SCRIPT.parent.parent / "inventory" / "hosts.yml"
 
@@ -154,6 +164,11 @@ def test_a_host_without_a_key_file_keeps_the_listed_order(tmp_path):
 def test_a_cache_node_limit_offers_its_key_first(tmp_path):
     added, _, _ = run(tmp_path, ["site.yml", "--limit", "zcrypto-valkey2", "--tags", "cache"])
     assert added == ["files/deploy_zcrypto-valkey2_ed25519", *[k for k in DEFAULT if "valkey2" not in k]]
+
+
+def test_the_observability_node_limit_offers_its_key_first(tmp_path):
+    added, _, _ = run(tmp_path, ["site.yml", "--limit", "zcrypto-mon", "--tags", "mon"])
+    assert added == ["files/deploy_zcrypto-mon_ed25519", *DEFAULT[:-1]]
 
 
 def _inventory_hosts(node: dict) -> set[str]:

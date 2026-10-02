@@ -3,6 +3,14 @@
 Unattended-Upgrade::Origins-Pattern {
         "origin=Debian,codename=${distro_codename},label=Debian-security";
 };
+{% if base_unattended_upgrades_package_blacklist %}
+
+Unattended-Upgrade::Package-Blacklist {
+{% for package in base_unattended_upgrades_package_blacklist %}
+        "{{ package }}";
+{% endfor %}
+};
+{% endif %}
 
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";

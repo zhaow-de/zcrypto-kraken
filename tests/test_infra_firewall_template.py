@@ -78,6 +78,7 @@ EXTRA_PORT_VARS = ("firewall_extra_tcp_ports", "firewall_extra_udp_ports", "fire
 OPENERS = {
     "group_vars/access_host/vars.yml": ["firewall_extra_tcp_ports", "firewall_extra_udp_ports"],
     "group_vars/cache_host/vars.yml": ["firewall_extra_udp_ports", "firewall_interface_tcp_ports"],
+    "group_vars/mon_host/vars.yml": ["firewall_extra_tcp_ports"],
     "host_vars/zcrypto/vars.yml": ["firewall_extra_udp_ports"],
 }
 
@@ -143,3 +144,13 @@ def test_the_copied_var_files_alone_red_nothing(tmp_path, monkeypatch):
     """The true positive beside it: the copy passes until the case above plants something."""
     monkeypatch.setitem(globals(), "VAR_ROOTS", _var_roots_copy(tmp_path))
     test_only_the_opener_files_open_extra_ports()
+
+
+def test_the_observability_node_opens_443_and_nothing_else():
+    """One public name on one port: 80 stays shut, so the edge's certificate is issued over 443 alone, and the stores'
+    and Grafana's own ports are never opened."""
+    declared = yaml.safe_load((ANSIBLE / "group_vars/mon_host/vars.yml").read_text())
+    assert declared["firewall_extra_tcp_ports"] == [443], declared
+    out = _render({**BASE, "firewall_extra_tcp_ports": declared["firewall_extra_tcp_ports"]})
+    accepts = [line.strip() for line in out.splitlines() if line.strip().startswith(("tcp dport", "udp dport", "iifname"))]
+    assert accepts == ["tcp dport 10022 accept", "tcp dport { 443 } accept"], accepts

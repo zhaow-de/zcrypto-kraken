@@ -1,0 +1,14 @@
+# The observability node: Linode 4 GB, Debian 13, in a region apart from the engine host's.
+ansible_host: zcrypto-mon.zhaow.me
+# The base role defaults to "zcrypto"; without this the node would converge to the primary's hostname.
+base_hostname: zcrypto-mon
+# 06:25 is 145 min past a 4 h bar boundary and an hour from the bridgehead's 05:25, the nearest slot.
+# The node reboots by hand, so this is the attended window; the base role's collision assert reads it.
+base_unattended_upgrades_reboot_time: "06:25"
+# A reboot blanks rule evaluation for its duration. Patches install; the reboot is a human act, and
+# the node's pending-reboot rule fires until it is taken.
+base_unattended_upgrades_automatic_reboot: "false"
+# Debian's package restarts the daemon on upgrade, and a store restarted under a running Grafana
+# puts every rule that reads it in error. Upgraded in the monthly hand pass instead.
+base_unattended_upgrades_package_blacklist: ["prometheus$"]
+deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-mon_ed25519.pub') }}"
