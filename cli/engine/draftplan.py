@@ -259,8 +259,7 @@ def parse_balance_export(doc: object) -> BalanceExport:
 
 def venue_view(doc: dict, cycle_ts: datetime) -> tuple[dict[str, Constraints], dict[str, float], dict]:
     """Each leg's ordermin and lot step, the engine's held per leg, and the balances b is read from, off the venue
-    record of `cycle_ts`'s boundary. A position there is the engine Cache's net -- 0 on a lot held through a restart,
-    negative on one sold since -- so it is carried into the report and decides nothing."""
+    record of `cycle_ts`'s boundary."""
     if doc.get("status") != "ok" or doc.get("schema_version") != 2:
         raise DraftPlanError(
             f"the venue record is not an ok schema-2 snapshot (status {doc.get('status')!r}, schema_version "
@@ -417,7 +416,7 @@ def decide_leg(
         if left < constraints.ordermin and whole:
             rest = f"the remaining {left:.10g} is under ordermin {constraints.ordermin:.10g}: dust"
         elif left < constraints.ordermin:
-            # Not dust: the account keeps the rest of the leg, and only this part of the sell goes unplaced.
+            # Not dust: the account keeps the rest of the leg.
             rest = f"the remaining {left:.10g} of the sell is under ordermin {constraints.ordermin:.10g} and is not drafted"
         else:
             rest = (
