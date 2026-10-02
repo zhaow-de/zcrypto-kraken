@@ -500,10 +500,11 @@ Drops fall in **12:10–13:15Z and 13:30–15:00Z** — none across valkey2's re
    ```
    Both files arrive, or the host's `tar` names the one missing. A cycle not yet journaled is copied again a few minutes later; one that failed writes `failed-cycle-12.json` in place of `cycle-12.json`, and gives this window to [the 16Z fallback](#rung-2-the-16z-fallback).
 2. **Read the gate** on the host: `sudo docker exec zcrypto-engine zcrypto engine exec-status` → `level=none`, `reasons=arm_file_absent`. `restart_hold` among the reasons sends you to [step 5](#rung-2-after-a-restart) first; `kill_switch` is [the account stop](#rung-2-account-stop); `config_not_armed` means an engine converge ran inside the box — stop, and take it to the owner, since nothing here re-arms the config.
-3. **Read Kraken's equity** on its balance page against the entry value — EUR 60 or more below it is [the account stop](#rung-2-account-stop) — and **take the balance export and the positions export** on the workstation, right before the draft; Kraken's Auto Earn stays off for the box — with it on, a filled buy can land in the earn wallet as a row such as `DOT.F` in the balance export, which the helper refuses as `outside the spot wallet` until the coin is back in spot:
+3. **Read Kraken's equity** on its balance page against the entry value — EUR 60 or more below it is [the account stop](#rung-2-account-stop) — and **take the balance export and the positions export** on the workstation, right before the draft:
    ```
    kraken extended-balance -o json > data/rung2/balance.json && kraken positions -o json > data/rung2/positions.json
    ```
+   Kraken's Auto Earn is on for the account: left on at entry, the owner's decision on it deferred until after the stored-account clearing (`docs/research/14.phase6-decisions.md`). A reward is credited on a held coin about weekly, as a ledger row of type `staking`, and the credits read on 2026-10-01 landed in the spot wallet under the coin's own code. It is part of Kraken's held, which the helper drafts against, and an expected row, neither a hand act nor a stop. A balance under an earn code such as `DOT.F` has not been seen on this account; the helper refuses one as `outside the spot wallet`, and that goes to the owner.
 4. **Draft with the helper** on the workstation, the log copied aside first at the day's first draft once it exists (*What it means*):
    ```
    uv run zcrypto engine draft-plan --cycle data/rung2/cycle-12.json --venue data/rung2/venue-12.json --balances data/rung2/balance.json --positions data/rung2/positions.json
@@ -580,7 +581,7 @@ The box plans no engine restart. What restarts the engine inside it is a restart
    ```
    `--gate-from 2026-W45` places each box week before the boundary, so the report labels each one rung 2 and decides none (the probe-window procedure's verify item 8 says how to read that echo).
 3. **Read the drift as description, not a verdict.** It is scored against each record's own NAV of 1000, not EUR 720, and LINK/EUR is not held, so it carries a standing gap — about 28% of the nine legs' gross weight plus LINK's whole weight, as a share of NAV — that is the box's sizing, not tracking error.
-4. **Read the ledger reconciliation** as verify item 3 does: each unmatched id explained by a repair or by your own account act, and a trade nobody can account for is [the account stop](#rung-2-account-stop).
+4. **Read the ledger reconciliation** as verify item 3 does: each unmatched id explained by a repair or by your own account act, and a trade nobody can account for is [the account stop](#rung-2-account-stop). The `rows with no fill behind them by construction:` line carries the week's reward credits as `staking <n>`: expected rows, read against the legs held that week.
 5. **Record the week** in `data/rung2/days.md`: its labels, drift, cost lines and the reconciliation's verdict.
 
 <a name="rung-2-the-last-days"></a>
@@ -616,6 +617,7 @@ Recorded in `docs/research/14.phase6-decisions.md`, from these readings:
 
 - **No hand trade in Kraken's web UI** (no count command: a hand act on Kraken is the owner's, and the weekly reconciliation is where it shows). It pauses the box: [the account stop](#rung-2-account-stop).
 - **No red button except in an emergency** (no count command: a press is the owner's act). `sudo zcrypto-flatten --execute` ([`engine-flatten`](#engine-flatten)) sells the whole account and stops the engine; it pauses the box like a hand trade.
+- **No small-balance conversion on Kraken's site while the engine runs** (no count command: a conversion is the owner's act on Kraken, and the ledger export is where it shows). Kraken's "Convert small balances" offers each balance under about 1 USD, a small leg among them, and booked as a trade with the engine running it would leave an `EXTERNAL` position in the engine's book that a restart does not close. It is done with the engine stopped and followed by the stored-account clearing ([`engine-clear-stored-account`](#engine-clear-stored-account) step 6), which runs on a flat account: inside the box, reward dust stays where it is.
 - **No engine-touching converge against `zcrypto`** (no count command: tags are the operator's; the deploy-log check in *What it means* reads them afterwards) — no `--tags engine`, `docker` or `cache-link`, and no un-tagged run. The one converge the box owes is step 8's, on Mon 2026-11-02 after it.
 - **A cache-node converge takes one node per run** — the cache play's own charter — **outside the day's window and away from an engine restart** (no count command: a run's limit and time are the operator's; the deploy-log rows record them).
 - **PR #646 stays unmerged.** Its nautilus bump is a version the arming record does not list; the engine image and nautilus `2.0.0rc6.dev20260921` are frozen through the box.
