@@ -43,7 +43,7 @@ mon_token_cache: "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/zcrypto/gr
 mon_grafana_api: "http://127.0.0.1:{{ mon_grafana_port }}"
 # What a service-account token looks like. A cached value is held to it before it is placed in a header, and a
 # minted one before it is written: a value of another shape makes the request fail with the value in the error.
-# It ends in \Z because `$` also matches before a trailing newline, the one shape that has done that.
+# It ends in \Z because `$` also matches before a trailing newline.
 mon_token_pattern: '^glsa_[A-Za-z0-9]{32}_[0-9a-f]{8}\Z'
 
 # The directory the node's Alloy textfile collector reads.

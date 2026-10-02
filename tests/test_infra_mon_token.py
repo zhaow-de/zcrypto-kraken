@@ -91,8 +91,7 @@ def test_a_cached_value_reaches_a_header_only_in_a_tokens_shape(cached, kept):
 
 
 def test_the_pattern_ends_where_the_string_ends():
-    """`$` also matches before a trailing newline, and a token stored with one failed a request with the token in
-    the error text."""
+    """`$` also matches before a trailing newline."""
     assert PATTERN.endswith("\\Z") and "$" not in PATTERN, PATTERN
     assert re.match(PATTERN, WELL_SHAPED) and not re.match(PATTERN, WELL_SHAPED + "\n")
 

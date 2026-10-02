@@ -217,8 +217,7 @@
       become: false
       when: mon_token_mint
 
-    # The token goes in on stdin with no newline added: one stored with a trailing newline fails the next
-    # converge's probe with the token in the error text.
+    # No newline added: a newline-tailed cache fails the shape check, so every converge re-mints while the tools read it.
     - name: encrypt the minted token under the repo's vault password
       ansible.builtin.command:
         argv: [ansible-vault, encrypt_string, --stdin-name, "{{ mon_token_var }}"]
