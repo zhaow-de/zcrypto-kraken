@@ -1,0 +1,258 @@
+---
+# The observability node (spec 00121): Grafana on SQLite, one Prometheus as the remote_write receiver,
+# single-binary Loki, Caddy as the one public listener, and the node's own Alloy. Packages followed from
+# apt, never forced or held; tests/test_infra_mon_role.py holds what the public login rests on.
+
+# First, so a missing or misshapen vault value fails here by name and not inside a no_log task. The two
+# generated strings are letters and digits, the admin's name `u` and 16 hex digits, the two hashes bcrypt's.
+- name: refuse a missing or misshapen secret, naming the key and never the value
+  ansible.builtin.assert:
+    that: mon_secret_faults | length == 0
+    fail_msg: >-
+      {{ mon_secret_faults | join(', ') }} in host_vars/zcrypto-mon/vault.yml: missing, or not the shape
+      its generator writes. Re-generate it with infra/runbooks/mon.md's mon-secrets procedure.
+  vars:
+    mon_secret_faults: >-
+      {{ ([['mon_grafana_admin_password', mon_grafana_admin_password | default('')],
+           ['mon_grafana_secret_key', mon_grafana_secret_key | default('')]]
+          | rejectattr('1', 'match', '[A-Za-z0-9]{32,}\Z') | map('first') | list)
+         + ([['mon_grafana_admin_user', mon_grafana_admin_user | default('')]]
+            | rejectattr('1', 'match', 'u[0-9a-f]{16}\Z') | map('first') | list)
+         + ([['mon_ingest_fleet_password_hash', mon_ingest_fleet_password_hash | default('')],
+             ['mon_ingest_logship_password_hash', mon_ingest_logship_password_hash | default('')]]
+            | rejectattr('1', 'match', '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z') | map('first') | list) }}
+
+# ---- Packages and their sources ------------------------------------------------------------------
+- name: add the Grafana apt repository (grafana, loki, alloy)
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: https://apt.grafana.com/gpg.key
+  register: mon_grafana_repo
+
+- name: add the Caddy apt repository
+  ansible.builtin.deb822_repository:
+    name: caddy
+    types: [deb]
+    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
+    suites: [any-version]
+    components: [main]
+    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+  register: mon_caddy_repo
+
+# A preview on a node that never had the repositories cannot see their packages: apt fails on a name its
+# cache does not hold, and converge.sh stops on a failed preview. Every task below that needs an installed
+# package or its unit skips exactly that case, and every real converge runs it.
+- name: note a preview that runs before the repositories exist
+  ansible.builtin.set_fact:
+    mon_repos_previewed: "{{ ansible_check_mode and (mon_grafana_repo is changed or mon_caddy_repo is changed) }}"
+
+# Unconditional: a converge that added a repository and failed before this would otherwise never see it.
+- name: refresh the apt cache, so the candidates below are the repositories' own
+  ansible.builtin.apt:
+    update_cache: true
+  changed_when: false
+
+- name: read which loki apt would install
+  ansible.builtin.command: apt-cache policy loki
+  register: mon_loki_policy
+  changed_when: false
+  check_mode: false
+
+# Debian's own `loki` is unrelated software under the same name.
+- name: refuse a loki candidate that does not come from apt.grafana.com
+  ansible.builtin.assert:
+    that: mon_loki_policy.stdout is search(mon_loki_origin_pattern)
+    fail_msg: >-
+      apt's candidate for `loki` is not Grafana's: Debian carries an unrelated package of that name.
+      Read `apt-cache policy loki` on the node; the candidate's source line must name apt.grafana.com.
+  vars:
+    mon_loki_candidate: "{{ mon_loki_policy.stdout | regex_search('Candidate: (\\S+)', '\\1') | default(['none'], true) | first }}"
+    mon_loki_origin_pattern: "\\n\\s+(\\*\\*\\* )?{{ mon_loki_candidate | regex_escape }} \\d+\\n(\\s{8}.*\\n)*?\\s{8}\\d+ https://apt\\.grafana\\.com[/ ]"
+  when: not mon_repos_previewed
+
+- name: prometheus present, from Debian main, without the node exporter it recommends
+  ansible.builtin.apt:
+    name: [prometheus, curl]
+    state: present
+    install_recommends: false
+  register: mon_debian_install
+
+- name: grafana, loki and alloy present — versions FOLLOWED from apt, never forced or held
+  ansible.builtin.apt:
+    name: [grafana, loki, alloy]
+    state: present
+  register: mon_grafana_install
+  when: not mon_repos_previewed
+
+- name: caddy present — version FOLLOWED from apt, never forced or held
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+  register: mon_caddy_install
+  when: not mon_repos_previewed
+
+# A preview that would install a package has no unit of it for systemd to find, the fail2ban role's case.
+- name: note a preview that runs before the packages are installed
+  ansible.builtin.set_fact:
+    mon_units_previewed: >-
+      {{ ansible_check_mode and (mon_repos_previewed or mon_debian_install is changed
+         or mon_grafana_install is changed or mon_caddy_install is changed) }}
+
+# ---- Prometheus: the remote_write receiver --------------------------------------------------------
+- name: prometheus flags — loopback, the receiver, the retention
+  ansible.builtin.template:
+    src: prometheus.default.j2
+    dest: /etc/default/prometheus
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart prometheus
+
+- name: prometheus config — no scrape job, the out-of-order window
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: promtool check config %s
+  notify: restart prometheus
+
+# ---- Loki: the single binary on the local filesystem ----------------------------------------------
+- name: loki's data directory
+  ansible.builtin.file:
+    path: "{{ mon_loki_dir }}"
+    state: directory
+    owner: loki
+    group: root
+    mode: "0750"
+
+- name: loki config — loopback, filesystem storage, the compactor's retention
+  ansible.builtin.template:
+    src: loki-config.yml.j2
+    dest: /etc/loki/config.yml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: loki -verify-config -config.file %s
+  notify: restart loki
+
+# ---- Grafana ---------------------------------------------------------------------------------------
+# The unit runs as `grafana`, and a $__file{} it cannot read stops Grafana at start.
+- name: grafana's admin name and two secrets, each a file read through $__file{}
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "/etc/grafana/{{ item.file }}"
+    owner: root
+    group: grafana
+    mode: "0640"
+  loop:
+    - {file: admin_user, value: "{{ mon_grafana_admin_user }}"}
+    - {file: admin_password, value: "{{ mon_grafana_admin_password }}"}
+    - {file: secret_key, value: "{{ mon_grafana_secret_key }}"}
+  loop_control:
+    label: "{{ item.file }}"
+  no_log: true
+  notify: restart grafana
+
+- name: grafana.ini
+  ansible.builtin.template:
+    src: grafana.ini.j2
+    dest: /etc/grafana/grafana.ini
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: restart grafana
+
+- name: the two datasources, file-provisioned read-only under the uids the rule file names
+  ansible.builtin.template:
+    src: datasources.yml.j2
+    dest: /etc/grafana/provisioning/datasources/zcrypto.yml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: restart grafana
+
+- name: the empty directory the folder's provider reads
+  ansible.builtin.file:
+    path: "{{ mon_folder_anchor_dir }}"
+    state: directory
+    owner: root
+    group: grafana
+    mode: "0750"
+
+- name: the folder the push writes into, anchored under its uid
+  ansible.builtin.template:
+    src: folder-anchor.yml.j2
+    dest: /etc/grafana/provisioning/dashboards/zcrypto.yml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: restart grafana
+
+- name: grafana-server drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/grafana-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: grafana-server drop-in — after its stores, waiting for both to be ready
+  ansible.builtin.template:
+    src: grafana-server.dropin.conf.j2
+    dest: /etc/systemd/system/grafana-server.service.d/10-zcrypto-mon.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart grafana
+
+# ---- Caddy: the one public listener ----------------------------------------------------------------
+# Validated by the installed binary before it replaces the live file, so a Caddyfile this Caddy cannot
+# parse fails the converge and the edge keeps serving the old one. It carries the ingest users' hashes.
+- name: Caddyfile — the two ingest paths behind basic auth, two refusals, everything else to grafana
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: caddy
+    mode: "0640"
+    validate: caddy validate --adapter caddyfile --config %s
+  no_log: true
+  diff: false
+  notify: reload caddy
+
+# ---- Services --------------------------------------------------------------------------------------
+- name: prometheus and loki enabled + started
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [prometheus, loki]
+  when: not mon_units_previewed
+
+# The stores carry their rendered configs before Grafana starts against them, on a first converge and
+# on every later one.
+- name: apply the pending store and grafana restarts
+  ansible.builtin.meta: flush_handlers
+
+- name: grafana-server enabled + started
+  ansible.builtin.systemd_service:
+    name: grafana-server
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not mon_units_previewed
+
+- name: caddy enabled + started
+  ansible.builtin.systemd_service:
+    name: caddy
+    enabled: true
+    state: started
+  when: not mon_units_previewed

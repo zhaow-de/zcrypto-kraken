@@ -1,0 +1,69 @@
+# Rendered by the `mon` role at /etc/grafana/grafana.ini — edit infra/ansible/roles/mon/templates/grafana.ini.j2.
+# tests/test_infra_mon_role.py holds the settings the public login rests on.
+
+[server]
+http_addr = 127.0.0.1
+http_port = {{ mon_grafana_port }}
+domain = {{ mon_hostname }}
+root_url = https://{{ mon_hostname }}/
+
+[security]
+# A generated name, never the default one: the lockout below is by account name, and a name a stranger
+# can guess is one a stranger can keep locked. Grafana reads it only when it creates its database.
+admin_user = $__file{/etc/grafana/admin_user}
+admin_password = $__file{/etc/grafana/admin_password}
+secret_key = $__file{/etc/grafana/secret_key}
+cookie_secure = true
+cookie_samesite = strict
+disable_brute_force_login_protection = false
+
+[auth]
+disable_login_form = false
+
+[auth.basic]
+enabled = false
+
+[auth.anonymous]
+enabled = false
+# Hides the version in /api/health alone: the login page still serves it to anyone, so an advisory
+# is answered by reading it and patching the same day, never by this setting.
+hide_version = true
+
+[auth.proxy]
+enabled = false
+
+[auth.jwt]
+enabled = false
+
+[users]
+allow_sign_up = false
+allow_org_create = false
+
+[snapshots]
+enabled = false
+external_enabled = false
+
+[public_dashboards]
+enabled = false
+
+[plugins]
+plugin_admin_enabled = false
+# The Prometheus and Loki datasources are plugins bundled with the package. The preinstaller would
+# download others at each start and replace the bundled ones with a newer release.
+preinstall_disabled = true
+
+[feature_toggles]
+sqlExpressions = false
+
+[database]
+wal = true
+
+[unified_alerting.state_history]
+enabled = true
+backend = loki
+loki_remote_url = http://127.0.0.1:{{ mon_loki_port }}
+
+[analytics]
+reporting_enabled = false
+check_for_updates = false
+check_for_plugin_updates = false

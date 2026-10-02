@@ -3062,8 +3062,10 @@ def test_every_register_a_preview_guard_reads_is_set_in_its_own_role(role):
         for task, gates in iter_tasks(load_tasks(path) or []):
             if task.get("register"):
                 registered.add(task["register"])
-            for gate in gates:
-                if "ansible_check_mode" in gate:
-                    read.update(re.findall(r"\b([a-z_][a-z0-9_]*) is changed", gate))
+            # A fact whose value names check mode is a preview guard too: the gates read it by the fact's name.
+            facts = (str(value) for value in (task.get("ansible.builtin.set_fact") or {}).values())
+            for guard in (*gates, *facts):
+                if "ansible_check_mode" in guard:
+                    read.update(re.findall(r"\b([a-z_][a-z0-9_]*) is changed", guard))
     assert read, role
     assert read <= registered, (role, sorted(read - registered))

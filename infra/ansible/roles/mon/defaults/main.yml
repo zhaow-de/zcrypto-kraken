@@ -1,0 +1,35 @@
+---
+# Defaults for the `mon` role (spec 00121): the fleet's metrics, logs and alert evaluation on one node.
+# The vaulted values it reads are host_vars/zcrypto-mon/vault.yml's: the role's first task names them.
+
+# The one public name: Caddy's site address and Grafana's root_url, from which every Slack link is built.
+mon_hostname: zcrypto-mon.zhaow.me
+mon_acme_email: zhaow.km@gmail.com
+
+# Every listener but Caddy's binds loopback.
+mon_grafana_port: 3000
+mon_prometheus_port: 9090
+mon_loki_port: 3100
+mon_loki_grpc_port: 9096
+
+# One retention for both stores.
+mon_retention_days: 90
+# 16 GiB in Prometheus 2.53's units, above what the period holds, so the period governs; the node's
+# retention-by-size rule pages when it stops governing.
+mon_prometheus_retention_size: 16GB
+# How late a shipper may write after an outage; its WAL keeps eight hours.
+mon_prometheus_out_of_order_window: 8h
+mon_loki_dir: /var/lib/loki
+
+# The folder every rule and dashboard is pushed into and the two datasource uids the rule file, the dashboards
+# and the tools name: Grafana Cloud's, reused so that nothing which names them moves.
+mon_folder_uid: bfrxdfoybx98gb
+mon_folder_title: zcrypto
+mon_folder_anchor_dir: /var/lib/grafana/zcrypto-folder-anchor
+mon_prom_ds_uid: grafanacloud-prom
+mon_loki_ds_uid: grafanacloud-logs
+
+# Caddy's two ingest users: `fleet` for the Alloys on both paths, `logship` for the applications' own log push
+# on the Loki path alone, so that push can be revoked without blinding fleet telemetry.
+mon_ingest_fleet_user: fleet
+mon_ingest_logship_user: logship

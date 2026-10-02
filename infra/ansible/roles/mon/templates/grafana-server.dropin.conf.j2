@@ -1,0 +1,13 @@
+# Rendered by the `mon` role at /etc/systemd/system/grafana-server.service.d/10-zcrypto-mon.conf — edit
+# infra/ansible/roles/mon/templates/grafana-server.dropin.conf.j2.
+[Unit]
+After=prometheus.service loki.service
+
+[Service]
+# After= orders the start and does not wait for readiness. A Grafana evaluating against a store that is not
+# ready puts every rule that reads it in error, and a rule in error pages unless its execErrState is OK.
+ExecStartPre=/usr/bin/curl -fsS -o /dev/null --max-time 3 --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:{{ mon_prometheus_port }}/-/ready
+ExecStartPre=/usr/bin/curl -fsS -o /dev/null --max-time 3 --retry 40 --retry-delay 3 --retry-all-errors http://127.0.0.1:{{ mon_loki_port }}/ready
+TimeoutStartSec=600
+# Below the stores' default of 0: a killed Grafana loses up to fifteen minutes of silences.
+OOMScoreAdjust=-500

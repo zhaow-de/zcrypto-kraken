@@ -1,0 +1,2 @@
+# Rendered by the `mon` role at /etc/default/prometheus — edit infra/ansible/roles/mon/templates/prometheus.default.j2.
+ARGS="--web.listen-address=127.0.0.1:{{ mon_prometheus_port }} --web.enable-remote-write-receiver --storage.tsdb.retention.time={{ mon_retention_days }}d --storage.tsdb.retention.size={{ mon_prometheus_retention_size }}"

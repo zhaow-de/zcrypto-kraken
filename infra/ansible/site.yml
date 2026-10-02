@@ -325,3 +325,5 @@
       tags: [fail2ban]
     - role: chrony
       tags: [chrony]
+    - role: mon
+      tags: [mon]

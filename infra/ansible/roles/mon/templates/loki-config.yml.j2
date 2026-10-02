@@ -1,0 +1,43 @@
+# Rendered by the `mon` role at /etc/loki/config.yml — edit infra/ansible/roles/mon/templates/loki-config.yml.j2.
+auth_enabled: false
+
+server:
+  http_listen_address: 127.0.0.1
+  http_listen_port: {{ mon_loki_port }}
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: {{ mon_loki_grpc_port }}
+  log_level: info
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: {{ mon_loki_dir }}
+  storage:
+    filesystem:
+      chunks_directory: {{ mon_loki_dir }}/chunks
+      rules_directory: {{ mon_loki_dir }}/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2020-10-24"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Without the compactor's retention Loki keeps every line for good.
+compactor:
+  working_directory: {{ mon_loki_dir }}/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+limits_config:
+  retention_period: {{ mon_retention_days * 24 }}h
+
+analytics:
+  reporting_enabled: false

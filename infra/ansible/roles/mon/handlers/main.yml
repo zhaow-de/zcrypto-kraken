@@ -1,0 +1,41 @@
+---
+# In file order, which is the order a flush runs them in: a store is restarted with Grafana stopped
+# around it, since a Grafana evaluating against a restarting store puts every rule that reads it in
+# error. `restart grafana` listens to both store handlers, so it starts Grafana again after either; on a
+# stopped unit `restarted` is a start. Each skips a preview that runs before its package is installed.
+- name: reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: stop grafana around a store restart
+  ansible.builtin.systemd_service:
+    name: grafana-server
+    state: stopped
+  listen: [restart prometheus, restart loki]
+  when: not mon_units_previewed
+
+- name: restart prometheus
+  ansible.builtin.systemd_service:
+    name: prometheus
+    state: restarted
+  when: not mon_units_previewed
+
+- name: restart loki
+  ansible.builtin.systemd_service:
+    name: loki
+    state: restarted
+  when: not mon_units_previewed
+
+- name: restart grafana
+  ansible.builtin.systemd_service:
+    name: grafana-server
+    state: restarted
+    daemon_reload: true
+  listen: [restart prometheus, restart loki]
+  when: not mon_units_previewed
+
+- name: reload caddy
+  ansible.builtin.systemd_service:
+    name: caddy
+    state: reloaded
+  when: not mon_units_previewed

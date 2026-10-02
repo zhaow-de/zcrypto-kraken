@@ -1,0 +1,5 @@
+# Rendered by the `mon` role at /etc/prometheus/prometheus.yml — edit infra/ansible/roles/mon/templates/prometheus.yml.j2.
+# A remote_write receiver: every sample arrives through /api/v1/write, so this file names no scrape job.
+storage:
+  tsdb:
+    out_of_order_time_window: {{ mon_prometheus_out_of_order_window }}
