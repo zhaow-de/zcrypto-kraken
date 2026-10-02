@@ -115,7 +115,7 @@ listens. If you lose `zcrypto-deploy@10022` access:
 ## Key rotation<a name="key-rotation"></a>
 
 Regenerate a keypair, `ansible-vault encrypt` the new private key into `files/`, update the matching
-`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `--skip-tags engine -e converge_primary=true`, except for `sync_authorized_key`, which only the engine role installs: rotating it is an engine converge, the `--tags engine` command under [Running it](#running-it), and that run restarts the engine whenever its `--check` reports a file the role renders as changed — the config among them, rendered with the tree's `exec_armed` whatever the host runs — so it is planned as an engine restart, under [the restart rule](runbooks/engine-procedures.md#engine-restart-margin-position)),
+`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `--skip-tags engine -e converge_primary=true`, except for `sync_authorized_key`, which only the engine role installs: rotating it is the `--tags engine` command under [Running it](#running-it) with the running digests, which restarts the engine whenever its `--check` reports a file the role renders as changed — the config among them, rendered with the tree's `exec_armed` whatever the host runs — so plan it under [the restart rule](runbooks/engine-procedures.md#engine-restart-margin-position)),
 verify the new key works, then remove the old key's `authorized_key` entry and re-run.
 
 ## Deploy image note<a name="deploy-image-note"></a>
