@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -278,3 +279,102 @@ def test_with_a_webhook_a_receiver_absent_by_uid_is_posted_and_then_verified(sta
     posted = [json.loads(d)["uid"] for m, p, d in stack.recorded() if (m, p) == ("POST", "api/v1/provisioning/contact-points")]
     assert posted == ["zcrypto-slack-logs"]
     assert done.returncode == 1 and "Slack integration verification FAILED for uid=zcrypto-slack-logs name=logs" in done.stderr
+
+
+# --- GRAFANA_SKIP_RULE_GROUPS: one tree feeds two stacks, and a stack never receives a group it is told to skip ----
+_MON_RULE = """  - uid: r3
+    title: three
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    data:
+      - refId: A
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+      - refId: C
+        datasourceUid: __expr__
+"""
+
+
+@pytest.fixture
+def stack_with_a_mon_rule(stack):
+    alerts = stack.root / "infra" / "grafana" / "alerts.yaml"
+    alerts.write_text(_ALERTS + _MON_RULE, encoding="utf-8")
+    stack.respond(
+        "GET",
+        "api/v1/provisioning/alert-rules/r3",
+        {"uid": "r3", "data": [{"datasourceUid": "prom-x"}, {"datasourceUid": "__expr__"}]},
+    )
+    return stack
+
+
+def _rule_calls(stack, uid: str) -> list[tuple[str, str]]:
+    return [(m, p) for m, p, d in stack.recorded() if p.endswith(f"alert-rules/{uid}") or (d and json.loads(d).get("uid") == uid)]
+
+
+def test_a_push_that_names_no_stack_sends_no_rule_of_the_observability_node(stack_with_a_mon_rule):
+    done = stack_with_a_mon_rule.run()
+    assert done.returncode == 0, done.stderr
+    assert _rule_calls(stack_with_a_mon_rule, "r3") == [], "the node's rule reached a stack the push was not told is the node"
+    assert _rule_calls(stack_with_a_mon_rule, "r2") != []
+    assert "grafana-push: skipping 1 rule(s) of group(s): zcrypto-mon" in done.stderr
+    assert "skip-groups=zcrypto-mon" in done.stderr.splitlines()[0]
+
+
+def test_a_skipped_groups_rule_found_live_is_an_orphan_and_a_prune_deletes_it(stack_with_a_mon_rule):
+    stack = stack_with_a_mon_rule
+    stack.respond(
+        "GET",
+        "api/v1/provisioning/alert-rules",
+        [{"uid": "r1", "folderUID": "fold-x"}, {"uid": "r2", "folderUID": "fold-x"}, {"uid": "r3", "folderUID": "fold-x"}],
+    )
+    done = stack.run()
+    assert re.findall(r"ORPHAN \(live but not in alerts\.yaml\): (\S+)", done.stderr) == ["r3"]
+    done = stack.run(GRAFANA_PRUNE="1")
+    assert done.returncode == 0, done.stderr
+    assert [p for m, p, _ in stack.recorded() if m == "DELETE"] == ["api/v1/provisioning/alert-rules/r3"]
+
+
+def test_the_nodes_push_passes_the_variable_empty_and_sends_its_own_group(stack_with_a_mon_rule):
+    done = stack_with_a_mon_rule.run(GRAFANA_SKIP_RULE_GROUPS="")
+    assert done.returncode == 0, done.stderr
+    assert ("POST", "api/v1/provisioning/alert-rules") in _rule_calls(stack_with_a_mon_rule, "r3")
+    assert ("GET", "api/v1/provisioning/alert-rules/r3") in _rule_calls(stack_with_a_mon_rule, "r3")
+    assert "rule(s) of group(s)" not in done.stderr and "skip-groups=<none>" in done.stderr.splitlines()[0]
+
+
+def test_several_groups_are_skipped_by_name_and_a_rule_of_no_group_is_always_sent(stack_with_a_mon_rule):
+    alerts = stack_with_a_mon_rule.root / "infra" / "grafana" / "alerts.yaml"
+    alerts.write_text(alerts.read_text().replace("uid: r2\n    title: two\n", "uid: r2\n    title: two\n    ruleGroup: other\n"))
+    done = stack_with_a_mon_rule.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon other")
+    assert done.returncode == 0, done.stderr
+    assert _rule_calls(stack_with_a_mon_rule, "r2") == [] and _rule_calls(stack_with_a_mon_rule, "r3") == []
+    assert _rule_calls(stack_with_a_mon_rule, "r1") != []
+    assert "grafana-push: skipping 2 rule(s) of group(s): zcrypto-mon other" in done.stderr
+
+
+def _cloud_url() -> str:
+    (default,) = re.findall(r'^export GRAFANA_URL="\$\{GRAFANA_URL:-([^}]+)\}"$', _SCRIPT.read_text(), re.M)
+    return default
+
+
+@pytest.mark.parametrize("skipped", ["", "other"], ids=["no group skipped", "another group skipped"])
+def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, skipped):
+    done = stack_with_a_mon_rule.run(GRAFANA_URL=_cloud_url(), GRAFANA_SKIP_RULE_GROUPS=skipped)
+    assert done.returncode != 0
+    assert stack_with_a_mon_rule.recorded() == [], "the refusal comes before the first call"
+    assert "refusing to push to Grafana Cloud without skipping the zcrypto-mon rule group" in done.stderr
+
+
+@pytest.mark.parametrize(
+    "env", [{}, {"GRAFANA_SKIP_RULE_GROUPS": "other zcrypto-mon"}], ids=["the default", "a list naming the group"]
+)
+def test_a_push_addressed_to_grafana_cloud_that_skips_the_nodes_group_runs(stack_with_a_mon_rule, env):
+    done = stack_with_a_mon_rule.run(GRAFANA_URL=_cloud_url(), **env)
+    assert done.returncode == 0, done.stderr
+    assert _rule_calls(stack_with_a_mon_rule, "r3") == [] and _rule_calls(stack_with_a_mon_rule, "r1") != []
+
+
+def test_the_committed_default_skips_exactly_the_observability_nodes_group():
+    (default,) = re.findall(
+        r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', _SCRIPT.read_text(), re.M
+    )
+    assert default == "zcrypto-mon"

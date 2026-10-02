@@ -21,6 +21,14 @@
 # `PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh` from the repo root -- rather than
 # installing PyYAML into the system python, where a second copy drifts unseen.
 #
+# Two stacks take this push until the Grafana Cloud leg retires. With no GRAFANA_URL it goes to Grafana
+# Cloud and leaves out the observability node's own rule group, which has no data there. The node's push
+# names the node, its own token, no skipped group and, unless it mints or moves the node's contact points,
+# an empty webhook, so that one exported for the other stack is not sent to this one:
+#   GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= GRAFANA_SLACK_WEBHOOK_URL= \
+#     GRAFANA_SA_TOKEN=<the node's token> ...
+# with the token read by `grafana_auth.py`'s `stack("mon")`.
+#
 # Rules go one per call through Grafana's Alerting Provisioning HTTP API; the `apiVersion: 1` /
 # `groups:` file-provisioning shape is not accepted here and is not available on Grafana Cloud SaaS.
 #
@@ -44,7 +52,25 @@ export GRAFANA_URL="${GRAFANA_URL:-https://zcrypto2026.grafana.net}"
 export GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
 export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
 export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
-echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID" >&2
+# The rule groups this push leaves out, space-separated: none of their rules is sent, and one found live is
+# reported as an orphan, which a prune deletes. `-`, never `:-`: set and empty skips no group, which is how the
+# observability node's own push sends its group.
+export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-zcrypto-mon}"
+echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
+# Grafana Cloud never takes the observability node's group: it has no data there, and a rule of it that fires
+# on no data would page the main channel. The default above skips the group only while the variable is unset,
+# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call.
+case "${GRAFANA_URL}" in
+  *.grafana.net | *.grafana.net/*)
+    case " ${GRAFANA_SKIP_RULE_GROUPS} " in
+      *" zcrypto-mon "*) ;;
+      *)
+        echo "grafana-push: refusing to push to Grafana Cloud without skipping the zcrypto-mon rule group -- GRAFANA_SKIP_RULE_GROUPS is set and does not name it: unset it for a Grafana Cloud push, or name the node in GRAFANA_URL" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 
 command -v python3 >/dev/null 2>&1 || { echo "grafana-push: python3 is required" >&2; exit 1; }
 python3 -c "import yaml" >/dev/null 2>&1 \
@@ -187,8 +213,13 @@ echo "grafana-push: pushing alert rules"
 # from this script's own environment (the provisioning API has no template substitution of its
 # own).
 rules_json=$(python3 -c '
-import json, sys, yaml
-print(json.dumps(yaml.safe_load(open(sys.argv[1]))["rules"]))
+import json, os, sys, yaml
+skipped = os.environ["GRAFANA_SKIP_RULE_GROUPS"]
+rules = yaml.safe_load(open(sys.argv[1]))["rules"]
+kept = [r for r in rules if r.get("ruleGroup") not in skipped.split()]
+if len(kept) != len(rules):
+    print(f"grafana-push: skipping {len(rules) - len(kept)} rule(s) of group(s): {skipped}", file=sys.stderr)
+print(json.dumps(kept))
 ' "${root}/infra/grafana/alerts.yaml")
 
 rule_uids=$(jq -r '.[].uid' <<<"${rules_json}")
