@@ -12,11 +12,12 @@ description: Push the committed dashboards and alert rules to Grafana Cloud — 
 From the repo root, once Steps 1 and 2 pass:
 
 ```bash
-GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; print(vault_var("grafana_sa_token"))')" \
+GRAFANA_SLACK_WEBHOOK_URL= \
+  GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; print(vault_var("grafana_sa_token"))')" \
   PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh
 ```
 
-`GRAFANA_SLACK_WEBHOOK_URL` stays unset on a routine push: the receivers are live.
+A routine push passes `GRAFANA_SLACK_WEBHOOK_URL` empty: the receivers are live, and a shell that exported the node's shadow webhook then leaves Grafana Cloud's receivers where they point.
 
 ## Step 1 — the preflight over the series the rules read
 
