@@ -16,22 +16,32 @@
   delegate_to: localhost
   become: false
 
-# An unreadable cache is an absent one: the token is re-minted and the file rewritten.
-- name: read the token cache
-  ansible.builtin.include_vars:
-    file: "{{ mon_token_cache }}"
-    name: mon_token_cached
-  when: mon_token_cache_stat.stat.exists
-  failed_when: false
-  no_log: true
+# An unreadable cache is an absent one: the token is re-minted and the file rewritten. The rescue is for a cache
+# that cannot be decrypted: a vaulted value is decrypted where it is first used, so the read passes and the shape
+# check is the task that fails.
+- name: take the cached token, an unreadable cache for an absent one
+  block:
+    - name: read the token cache
+      ansible.builtin.include_vars:
+        file: "{{ mon_token_cache }}"
+        name: mon_token_cached
+      when: mon_token_cache_stat.stat.exists
+      failed_when: false
+      no_log: true
 
-- name: keep the cached token only when it has a token's shape
-  ansible.builtin.set_fact:
-    mon_token_candidate: >-
-      {{ (mon_token_cached | default({}))[mon_token_var] | default('') | string
-         if ((mon_token_cached | default({}))[mon_token_var] | default('') | string) is match(mon_token_pattern)
-         else '' }}
-  no_log: true
+    - name: keep the cached token only when it has a token's shape
+      ansible.builtin.set_fact:
+        mon_token_candidate: >-
+          {{ (mon_token_cached | default({}))[mon_token_var] | default('') | string
+             if ((mon_token_cached | default({}))[mon_token_var] | default('') | string) is match(mon_token_pattern)
+             else '' }}
+      no_log: true
+
+  rescue:
+    - name: keep no token from a cache that cannot be decrypted
+      ansible.builtin.set_fact:
+        mon_token_candidate: ""
+      no_log: true
 
 - name: ask grafana whose token the cached one is
   ansible.builtin.uri:

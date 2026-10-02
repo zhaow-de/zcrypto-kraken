@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ansible.errors import AnsibleTemplateError
+from ansible.parsing.vault import EncryptedString
 
 from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
 
@@ -19,6 +21,8 @@ DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 PATTERN = DEFAULTS["mon_token_pattern"]
 # Assembled, never spelled: no tracked file carries a token-shaped literal, this one included.
 WELL_SHAPED = "glsa_" + "a" * 32 + "_" + "0" * 8
+# No vault secret is in reach of a test, so a vaulted value here is one that cannot be decrypted.
+UNDECRYPTABLE = EncryptedString(ciphertext="a ciphertext no vault secret opens")
 SECRET_NAMES = ("mon_grafana_admin_password", "mon_session", "mon_token_candidate", "mon_token_cached", "mon_token_minted")
 # The admin's name is a secret too, matched where a task templates it: the lockout refusal's message names the key.
 ADMIN_NAME_TEMPLATED = re.compile(r"\{\{[^}]*\bmon_grafana_admin_user\b")
@@ -30,6 +34,20 @@ def _tasks() -> list[tuple[dict, tuple[str, ...]]]:
 
 def _uri(task: dict) -> dict:
     return task.get("ansible.builtin.uri", {})
+
+
+def _candidate(variables: dict) -> dict:
+    # Ansible's own order: a task of the block that fails hands over to the rescue, and a vaulted value that cannot
+    # be decrypted fails the task that first uses it, which is the shape check and not the read.
+    (cache,) = [task for task in load_tasks(TOKEN) if "rescue" in task]
+    read, check = cache["block"]
+    assert (read["name"], check["name"]) == ("read the token cache", "keep the cached token only when it has a token's shape")
+    try:
+        return set_facts(check, variables)
+    except AnsibleTemplateError as refused:
+        assert "undecryptable" in str(refused), "only a value that cannot be decrypted may fail the shape check"
+        (rescue,) = cache["rescue"]
+        return set_facts(rescue, variables)
 
 
 def test_the_token_tasks_run_only_outside_check_mode():
@@ -56,15 +74,15 @@ def test_every_call_goes_to_grafana_on_loopback():
         (WELL_SHAPED + "0", ""),
         ("", ""),
         (None, ""),
+        (UNDECRYPTABLE, ""),
     ],
-    ids=["a token", "a trailing newline", "a leading space", "another prefix", "too long", "empty", "no cache"],
+    ids=["a token", "a trailing newline", "a leading space", "another prefix", "too long", "empty", "no cache", "undecryptable"],
 )
 def test_a_cached_value_reaches_a_header_only_in_a_tokens_shape(cached, kept):
-    task = find_task(load_tasks(TOKEN), "keep the cached token only when it has a token's shape")
     variables = {"mon_token_var": DEFAULTS["mon_token_var"], "mon_token_pattern": PATTERN}
     if cached is not None:
         variables["mon_token_cached"] = {DEFAULTS["mon_token_var"]: cached}
-    assert set_facts(task, variables) == {"mon_token_candidate": kept}
+    assert _candidate(variables) == {"mon_token_candidate": kept}
     probe = find_task(load_tasks(TOKEN), "ask grafana whose token the cached one is")
     assert _uri(probe)["headers"] == {"Authorization": "Bearer {{ mon_token_candidate }}"}
     assert when_conditions(probe) == ["mon_token_candidate | length > 0"]
