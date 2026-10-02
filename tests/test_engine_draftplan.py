@@ -344,6 +344,18 @@ def test_a_b_under_ordermin_places_nothing_and_sends_the_reader_to_the_procedure
         assert leg.reason.endswith("the remaining 0.04 is under ordermin 0.06: dust")
 
 
+def test_the_procedure_the_carried_leg_names_opens_an_item_with_the_words_it_sends_the_reader_to():
+    reason = _decide(held=0.1, venue_b=1e-08).reason
+    words, anchor, page = re.search(r"see (.+) in the rung-2 procedure, `([\w-]+)` in (\S+)$", reason).groups()
+    text = (Path(__file__).resolve().parents[1] / page).read_text()
+    section = text[text.index(f'<a name="{anchor}"></a>') :]
+    section = section[: section.index('<a name="engine-', 1)]
+
+    assert re.search(rf"\*\*{re.escape(words)}\b", section, re.I), (
+        f"no item of `{anchor}` in {page} opens with {words!r}, the words the helper's carried-leg line sends its reader to"
+    )
+
+
 def test_a_negative_target_is_read_as_zero_and_sells_the_leg_whole():
     leg = _decide(weight=-0.01, held=0.1)
 
