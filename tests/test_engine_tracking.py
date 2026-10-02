@@ -796,6 +796,13 @@ def test_a_staking_reward_row_is_a_known_no_fill_type(tmp_path):
     assert out["status"] == "insufficient-data"
 
 
+def test_a_transfer_row_is_a_known_no_fill_type(tmp_path):
+    transfer = _real_row("L1", "TR-1", "2026-10-01 14:02:58", "transfer", "", "EUR", "25.00", "0", "")
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, [transfer], header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"transfer": 1}, {}, [])
+    assert out["status"] == "insufficient-data"
+
+
 _DUST_REFID_AND_TIME = ("TSX3N62-E5ELZ-R6K74Z", "2026-10-01 22:28:44")
 _DUST_CONVERSION = [
     _real_row("LODHU3-H4F6C-STWVQ5", *_DUST_REFID_AND_TIME, "spend", "dustsweeping", "SOL", "-0.0000000117", "0.0000000003", "SOL"),
