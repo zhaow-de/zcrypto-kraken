@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import http.client
 import importlib.util
 import inspect
@@ -755,6 +756,20 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
     assert len(autonomous) / len(reads) >= 0.70, (
         f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
         f"refused sample: {sorted(c for c in reads if c not in autonomous)[:12]}"
+    )
+
+
+def test_the_stored_account_block_hashes_to_the_digest_its_section_prints():
+    page = (_RUNBOOKS / "engine-procedures.md").read_text()
+    section = page[page.index('<a name="engine-clear-stored-account"></a>') :]
+    block = re.search(r"^```bash\n(.*?)^```$", section, re.S | re.M).group(1)
+    # What the block's two `IFS= read -r -d ''` lines hold, and its check line hashes: each heredoc's body, whole.
+    texts = [re.search(rf"<<'{tag}'\n(.*?\n){tag}\n", block, re.S).group(1) for tag in ("PY", "SH")]
+    printed = re.search(r"sha256sum` prints `([0-9a-f]{64})`", section).group(1)
+
+    assert hashlib.sha256("".join(texts).encode()).hexdigest() == printed, (
+        "the block under engine-clear-stored-account no longer hashes to the digest its check line prints -- an "
+        "operator's paste check would refuse the page's own block; an edit to the block states its new digest"
     )
 
 
