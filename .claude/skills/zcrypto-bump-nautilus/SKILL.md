@@ -34,7 +34,7 @@ Run on the bump branch, before any money:
 - `tests/test_nautilus_adapter.py` — the installed version equals the pin.
 - `tests/test_nautilus_interface_pin.py` — the symbols, shapes and values `cli/` depends on, at the paths it imports them from; this file answers "what changed under us" in one run.
 - `tests/test_kraken_wheel_contract.py`, `tests/test_kraken_order_semantics_probe.py` and `tests/test_order_semantics_probe.py` — the harness and its contract against the new wheel.
-- `tests/test_cache_restart.py` — the two-process restart harness against a real `valkey-server`, the library's restore and reconciliation paths on this build. Its spot-lot and DOGE cases record what `2.0.0rc6.dev20260921` does and are expected red where that is fixed — the restored lot's `EXTERNAL` offset, the stored account keeping its coin, which the engine's own read of Kraken's balances turns red as an upstream fix does, and the `XDG` account load, which a build past upstream PR #5155 turns red: `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md`'s `## For the next pin` says what each red is, and each is written to the new record before its case is re-recorded.
+- `tests/test_cache_restart.py` — the two-process restart harness against a real `valkey-server`, the library's restore and reconciliation paths on this build. Its spot-lot and DOGE cases record what `2.0.0rc6.dev20260921` does and are expected red where that is fixed: `docs/reference/adapter-verification/2.0.0rc6.dev20260921.md`'s `## For the next pin` says what each red is, and each is written to the new record before its case is re-recorded.
 - `tests/test_engine_stub_fidelity.py` — each engine-suite double classified against the installed type, the guard that catches a real type moving under a stub; with it `tests/test_engine_node.py`, `tests/test_kraken_window_reads.py` and `tests/test_engine_flatten.py`, which build the node or drive the client on this wheel.
 
 A change one of these reports is read, then either absorbed on the branch or the reason the build is held; the guard is re-pinned to the new shape, not loosened.
@@ -49,7 +49,7 @@ Then the premises: each spec whose decisions rest on the library's startup or re
 
 ## Step 5 — the write-up
 
-`order-semantics-verification.md` §7.4, whole, on the same branch, Step 3's premise readings on the record page. A version's note in `cli/engine/order-semantics-verified.json` records what that pass said, dated; a later bump leaves an earlier note as written. Probe 5's `post-buy:` line is recorded as what it prints, the probe node's own Cache: its count is no row of Kraken's OpenPositions, the reading the `2.0.0rc6.dev20260921` record's observation 3 corrects.
+`order-semantics-verification.md` §7.4, whole, on the same branch, Step 3's premise readings on the record page. A version's note in `cli/engine/order-semantics-verified.json` records what that pass said, dated; a later bump leaves an earlier note as written.
 
 ## Step 6 — landing and rollout
 
@@ -60,5 +60,5 @@ Then the premises: each spec whose decisions rest on the library's startup or re
 ## Closeout
 
 - The engine restart rule's lift, when this build carries #5065: `docs/open-topics/T0158-go-live-drill-program-execution.md`'s trigger names it.
-- Rung 3's precondition, when this build carries the adapter's fix of the spot-lot restore: the two reads `docs/research/00.master-plan.md` §12 names, together — Step 3's spot-lot case red at its restore assertion, and one spot lot restored live across an engine restart at Kraken's quantity with no `EXTERNAL` line beside it; the case red at another assertion, or alone, does not meet it.
+- Rung 3's precondition, when this build carries the adapter's fix of the spot-lot restore: the two reads `docs/research/00.master-plan.md` §12 names, together — Step 3's spot-lot case red at its restore assertion, and one spot lot restored live across an engine restart at Kraken's quantity with no `EXTERNAL` line beside it.
 - `.local/memo.md`'s upstream watch list re-trued to what the next bump waits on.
