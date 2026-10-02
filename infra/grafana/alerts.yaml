@@ -435,13 +435,11 @@ rules:
     # a max would keep paging over a position closed hours before the engine went dark. `abs`,
     # because a short is exposure too.
     #
-    # Node C counts `$A` as a position above 0.000001 base units, not above 0. The gauge carries
-    # Kraken's own holdings, and Kraken credits a staking reward on a spot lot held for minutes --
-    # 1e-08 of a coin, left on an account that is otherwise flat, which no order can close. The
-    # floor sits under every basket leg's `ordermin` (docs/reference/kraken-snapshot-register.md;
-    # the replay reads that table), so a lot an order can place counts. A remainder between the
-    # floor and its leg's `ordermin` still arms the rule: `max()` folds the legs into one number, so
-    # one floor serves twelve minimums.
+    # Node C's floor: the gauge carries Kraken's own holdings, and a staking reward credited on a
+    # lot already sold leaves a remainder no order can close. The floor sits under every basket
+    # leg's `ordermin` (docs/reference/kraken-snapshot-register.md; the replay reads that table), so
+    # a lot an order can place counts. A remainder between the floor and its leg's `ordermin` still
+    # arms the rule: `max()` folds the legs into one number, so one floor serves every leg.
     #
     # Node B reads the scrape's VALUE, not its presence -- the one place this rule must NOT copy the
     # zcrypto-alloy-dark-* rules. `engine_app` is a STATIC scrape target (see the capture role's
@@ -4549,10 +4547,9 @@ rules:
     data:
       # `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
       # cadvisor). `process_start_time_seconds` is kept and moves on every restart, which is the same
-      # fact from inside the process. A converge or a restart by hand restarts on purpose and this
-      # pages once for it -- the action's own record in the channel. A firing with no such action
-      # is the OOM-kill or a crash, and nothing else reports either: the container is back in
-      # seconds, the dead-man keeps pinging, and the log-dead rules never see a gap that short.
+      # fact from inside the process. An OOM-kill or a crash is reported by nothing else: the
+      # container is back in seconds, the dead-man keeps pinging, and the log-dead rules never see a
+      # gap that short.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 900, to: 0}
@@ -4580,10 +4577,11 @@ rules:
     annotations:
       summary: >-
         A daemon in the fleet restarted in the last 15 minutes — `job` says which: a capture or engine
-        daemon, the ops liquidations poller, or Alloy itself (`integrations/self`). If a converge, an Alloy
-        bump or a restart by hand just ran on that host, this is that action's own record and the page itself needs nothing. If no one restarted it, the daemon was OOM-killed or crashed and came
-        back on its own — read `RestartCount` on the container and the memory panels, and check whether
-        parquet is advancing. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-daemon-restarted
+        daemon, the ops liquidations poller, or Alloy itself (`integrations/self`). If a converge, an
+        Alloy bump, a reboot or a restart by hand just ran on that host, this is that action's own
+        record and the page itself needs nothing. If none did, the daemon was OOM-killed or crashed and
+        came back on its own — read `RestartCount` on the container and the memory panels, and check
+        whether parquet is advancing. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-daemon-restarted
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "601"
       unit: "daemon process starts in the last 15 minutes"
