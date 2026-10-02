@@ -249,11 +249,11 @@ $RUN --probes 5 --apply --probe5 --evidence-dir "$EVID"
 
 `--probe5` is required on top of `--apply`; without it the row reads `GATED` and nothing is submitted.
 
-Watch for, in order: `BUY filled <qty> @ <px>` → the post-buy balance/position print → the closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
+Watch for, in order: `BUY filled <qty> @ <px>` → the `post-buy:` print of the node's own Cache → the closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
 
 - If the buy fills and the sell does not, the harness prints `POSITION LEFT OPEN` and a note telling you to flatten by hand. Do that immediately at Kraken → Trade, before anything else.
 - A note that the closing quantity was "floored … dust will remain" means a sliver of BTC stays in the wallet: the closing leg was rounded down to the pair's lot step (`size_increment`), so the remainder is smaller than one lot step and no order can carry it. That is terminal dust, not a position; record it, do not chase it.
-- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is per build: read it on the build in front of you and record it in that version's `docs/reference/adapter-verification/` record. Either answer is a pass; probe 5 is judged on the fill and the flat close.
+- The `post-buy:` line, `positions open in this node's Cache=<n>, Cache account balances=<dict>`, prints the probe node's own Cache and not Kraken's answer: the count is booked from the fill above it, and the balances are the account as read at connect, which a fill does not move. Kraken's OpenPositions lists margin positions, so a spot lot is no row there — `kraken positions -o json` on the workstation printed `{}` with a spot lot held on 2026-10-01 — and probe 5 buys and sells back to back, which leaves no moment to read Kraken between the two. Record the line as printed in that version's `docs/reference/adapter-verification/` record; probe 5 is judged on the fill and the flat close.
 
 Record the fee from the fill and compare it with `cli/costs/fees.py`'s tier-1 taker rate, 0.80 %/side. A materially different number is a cost-model input, not an adapter failure.
 
