@@ -179,7 +179,7 @@ Entry `B`: decision-to-flat in minutes, what was open when the clock started, wh
 
 ### What this proves
 
-That the one alert nothing else covers actually pages a phone (a non-zero position at last sight with the engine's scrape gone), and how long an operator stays unaware of an unwatched position. Every other drill on this page is about an engine that is still answering.
+That the one alert nothing else covers actually pages a phone (a position above the rule's dust floor at last sight with the engine's scrape gone), and how long an operator stays unaware of an unwatched position. Every other drill on this page is about an engine that is still answering.
 
 ### Preconditions
 
