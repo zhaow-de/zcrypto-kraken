@@ -34,12 +34,29 @@ Do all of these before the first credentialed run.
 
 #### 1.1 Kraken maintenance window
 
+On the workstation, both of Kraken's feeds read whole. `START` and `END` are the act's window in UTC — this run's, or the stop, start or restart another page sends you here for. `START` as written is the minute you run it, a planning-time read types a time in `END`'s form in its place, and `END` is the act's end, typed over the example:
+
 ```
-curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json \
-  | python3 -c 'import json,sys; [print(m["name"], m["scheduled_for"], [c["name"] for c in m["components"]]) for m in json.load(sys.stdin)["scheduled_maintenances"]]'
+START=$(date -u +%Y-%m-%dT%H:%MZ) END=2026-10-05T15:05Z python3 - <<'PY'
+import json, os, re, urllib.request
+from datetime import datetime
+t = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
+start, end = t(os.environ["START"]), t(os.environ["END"])
+assert start < end, "END is not later than START"
+word = re.compile(r"\b(websocket|rest)\b", re.I)
+for feed in ("scheduled-maintenances", "scheduled-maintenances/upcoming"):
+    d = json.load(urllib.request.urlopen(f"https://status.kraken.com/api/v2/{feed}.json", timeout=30))
+    ms = d["scheduled_maintenances"]
+    print(f"== {feed}: updated_at {d['page']['updated_at']}, {len(ms)} entries; act window {start:%m-%d %H:%M}-{end:%m-%d %H:%M}Z")
+    for m in ms:
+        names = [m["name"], *(c["name"] for c in m["components"])]
+        venue = any(word.search(n) for n in names)
+        hit = venue and t(m["scheduled_for"]) < end and t(m["scheduled_until"]) > start
+        print("STOP " if hit else "venue" if venue else "-    ", m["status"], m["scheduled_for"], m["scheduled_until"], m["name"], names[1:])
+PY
 ```
 
-Abort if a window the converge bullet of `.claude/rules/fleet-deploys.md` names overlaps your run; an empty `components` array is not an absent impact. An empty feed is never evidence the window is clear: check again immediately before the run (§5).
+Each feed prints its `updated_at`, its entry count and the act window first, then one line per entry: `STOP` where the entry's own name or one of its components carries `WebSocket` or `REST` as a word, whatever its case, and its window overlaps `START`–`END`; `venue` where it carries the word outside that window. The first feed is the 50 most recent entries, the second the entries still upcoming. A `STOP` line stops the act: abort, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; an empty `components` array is not an absent impact, which is why the entry's own name is read too. A failed fetch, a traceback, `END is not later than START` or `0 entries` is never evidence the window is clear: fetch again, and check again immediately before the run (§5).
 
 #### 1.2 The engine's 4-hour boundary
 
