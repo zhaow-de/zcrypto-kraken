@@ -115,7 +115,7 @@ listens. If you lose `zcrypto-deploy@10022` access:
 ## Key rotation<a name="key-rotation"></a>
 
 Regenerate a keypair, `ansible-vault encrypt` the new private key into `files/`, update the matching
-`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `--skip-tags engine -e converge_primary=true`),
+`*_authorized_key` in `group_vars/capture_host/vars.yml`, re-run `site.yml` (installs the new pubkey; the primary needs `--skip-tags engine -e converge_primary=true`, except for `sync_authorized_key`, which the engine role installs: that key takes the engine deploy command under [Running it](#running-it) with the running digests, inside the engine's inter-cycle gap),
 verify the new key works, then remove the old key's `authorized_key` entry and re-run.
 
 ## Deploy image note<a name="deploy-image-note"></a>
