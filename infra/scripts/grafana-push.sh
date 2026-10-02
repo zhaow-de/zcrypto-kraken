@@ -59,9 +59,11 @@ export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-zcrypto-mon}"
 echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
 # Grafana Cloud never takes the observability node's group: it has no data there, and a rule of it that fires
 # on no data would page the main channel. The default above skips the group only while the variable is unset,
-# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call.
-case "${GRAFANA_URL}" in
-  *.grafana.net | *.grafana.net/*)
+# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call. The
+# host part alone is matched, lowercased and without its port: a `:443` or an upper-cased host is the same stack.
+push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host%%:*}"; push_host="${push_host,,}"
+case "${push_host}" in
+  *.grafana.net)
     case " ${GRAFANA_SKIP_RULE_GROUPS} " in
       *" zcrypto-mon "*) ;;
       *)

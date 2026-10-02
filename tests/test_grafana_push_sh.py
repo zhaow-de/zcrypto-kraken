@@ -356,9 +356,18 @@ def _cloud_url() -> str:
     return default
 
 
+def _cloud_url_forms() -> list[str]:
+    url = _cloud_url()
+    scheme, _, host = url.partition("://")
+    return [url, f"{url}:443", f"{url}:443/", f"{scheme}://{host.upper()}", f"{scheme}://{host.upper()}:443"]
+
+
 @pytest.mark.parametrize("skipped", ["", "other"], ids=["no group skipped", "another group skipped"])
-def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, skipped):
-    done = stack_with_a_mon_rule.run(GRAFANA_URL=_cloud_url(), GRAFANA_SKIP_RULE_GROUPS=skipped)
+@pytest.mark.parametrize(
+    "url", _cloud_url_forms(), ids=["the default", "a port", "a port and a path", "an upper-cased host", "both"]
+)
+def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, url, skipped):
+    done = stack_with_a_mon_rule.run(GRAFANA_URL=url, GRAFANA_SKIP_RULE_GROUPS=skipped)
     assert done.returncode != 0
     assert stack_with_a_mon_rule.recorded() == [], "the refusal comes before the first call"
     assert "refusing to push to Grafana Cloud without skipping the zcrypto-mon rule group" in done.stderr
