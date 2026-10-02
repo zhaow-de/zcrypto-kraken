@@ -374,8 +374,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
             if missing:
                 raise EngineError(
                     f"the ledger export {path} has no {', '.join(missing)} column -- its header reads "
-                    f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting: this reader "
-                    "places and sums rows by those names, and a defaulted column reads as a plausible value"
+                    f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting"
                 )
             rows: list[LedgerRow] = []
             # A row ordinal, not a physical line number: a quoted field may carry a newline, after
