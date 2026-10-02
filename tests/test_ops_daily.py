@@ -696,6 +696,17 @@ _DESTRUCTIVE = (
 )
 
 
+def _destructive(command: str) -> bool:
+    # A compose command naming its file is the bare one: `compose -f <file> up` carries `compose up`.
+    return any(tok in re.sub(r"\bcompose(?: (?:-f|--file) \S+)+", "compose", command) for tok in _DESTRUCTIVE)
+
+
+@pytest.mark.parametrize("verb", ["up -d cache-proxy", "down", "restart", "config"])
+def test_a_compose_command_naming_its_file_carries_the_bare_commands_token(verb):
+    assert _destructive(f"sudo docker compose -f /opt/zcrypto-engine/compose.yaml {verb}")
+    assert not _destructive("sudo docker compose -f /opt/zcrypto-engine/compose.yaml ps")
+
+
 def _runbook_commands() -> list[str]:
     """Every backtick span AND every fenced-block line that parses as a command -- engine.md's
     `cycle --at … --replace` lives in a fenced block, invisible to a backtick-only sweep."""
@@ -738,8 +749,7 @@ def test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous():
     offenders = [
         c
         for c in _runbook_commands()
-        if any(tok in c for tok in _DESTRUCTIVE)
-        and ops_daily.classify_action(f"`{c}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+        if _destructive(c) and ops_daily.classify_action(f"`{c}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     ]
     assert not offenders, f"destructive commands classified autonomous: {offenders}"
 
@@ -749,7 +759,7 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
     halt-at-step-1 rather than fixed it. Close a red here by WIDENING the allowlist with
     corpus-justified read heads, never by narrowing the extraction -- that games a safety floor by
     shrinking its denominator."""
-    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    reads = [c for c in _runbook_commands() if not _destructive(c)]
     autonomous = [
         c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     ]
@@ -2792,7 +2802,7 @@ def test_the_classify_subcommand_resolves_through_the_live_resolver(monkeypatch)
 def test_the_runbook_corpus_reads_identically_under_the_identity_resolver():
     """The true positive for the whole change: with every operand resolving to itself, the reads the
     runbooks really run are as autonomous as they were before any resolution existed."""
-    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    reads = [c for c in _runbook_commands() if not _destructive(c)]
     print(f"read-only runbook commands classified: {len(reads)}")
     autonomous = [
         c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
