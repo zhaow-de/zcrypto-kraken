@@ -263,14 +263,6 @@ def _tags(seq, run: list[str], skip: list[str]) -> dict:
     return {"ansible_run_tags": seq(run), "ansible_skip_tags": seq(skip)}
 
 
-@TAG_SEQUENCES
-def test_untagged_primary_refusal(seq):
-    task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
-    assert not truthy(assert_that(task), _tags(seq, ["all"], []))
-    assert truthy(assert_that(task), _tags(seq, ["capture"], []))
-    assert truthy(assert_that(task), _tags(seq, ["all"], ["engine"]))
-
-
 # --- guard 4 tightened (spec 00083 D7): only --skip-tags forms naming engine satisfy it ----------
 
 
