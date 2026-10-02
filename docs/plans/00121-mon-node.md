@@ -49,6 +49,7 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 - `infra/scripts/grafana_auth.py`, `grafana-query.py` (Task 5); `infra/scripts/grafana-push.sh` (Task 6).
 - `infra/grafana/alerts.yaml`, `fleet-health-dashboard.json`, `notification-templates/zcrypto-slack.tmpl`; `infra/runbooks/mon.md`, `observability.md` (Tasks 4 and 7).
 - `docs/reference/fleet.md`: Hosts and Reboots (Task 1); Services and instruments, Telemetry labels (Task 7).
+- `docs/open-topics/T0085-final-pre-golive-steps.md`: the go-live rotation round's scope gains the node's credentials (Task 7).
 - `.claude/skills/zcrypto-grafana-push/SKILL.md`: the preflight and the verify step leave the skipped group's rules and the node's dashboard row to the node (Task 8).
 - `tests/test_run_sh.py`, `test_converge_sh.py`, `test_infra_converge_guards.py`, `test_infra_unattended_upgrades.py`, `test_infra_firewall_template.py`, `test_pins_converged.py`, `test_deploy_log_audit.py`, `test_ops_daily.py`, `test_ops_daily_soak.py`, `test_reboot_check.py`, `test_dashboards_cover_metrics.py`, `test_grafana_auth.py`, `test_grafana_query.py`, `test_grafana_push_sh.py`, `test_infra_alert_rules.py`: the contracts the new host, role and seams fall under (Tasks 1 to 7); new: `tests/test_infra_mon_role.py` (Tasks 2, 4), `tests/test_infra_mon_token.py` (Task 3), `tests/test_mon_selfcheck.py` (Task 4).
 
@@ -78,7 +79,7 @@ Co-Authored-By: Claude <actual executing model> <noreply@anthropic.com>
 - Modify: `infra/ansible/scripts/converge.sh` (`HOSTS`, `TAGNAMES`, `EVKEYS` and their comments)
 - Modify: `infra/ansible/files/README.md`
 - Modify: `infra/scripts/deploy-log-audit.py`
-- Modify: `infra/scripts/count-list.sh` (the host loop of `attended-hosts-with-automatic-reboot`)
+- Modify: `infra/scripts/count-list.sh` (the host loop of `attended-hosts-with-automatic-reboot` and the comment that names its hosts)
 - Modify: `infra/scripts/ops_daily.py` (the two alias maps, `_TELEMETRY_HOSTS`, a second allowlist in `_classify_one`)
 - Modify: `infra/external-systems.md` (the key sentence and a `Host mon` stanza in the SSH config block)
 - Modify: `docs/reference/fleet.md` (one Hosts row; the Reboots bullet)
@@ -940,6 +941,18 @@ with
 NO_VENUE_EXPOSURE = frozenset({"nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"})
 ```
 
+`infra/scripts/count-list.sh` — replace the text below, which is part of a longer line whose rest stays
+
+```bash
+-- the capture pair and ops --
+```
+
+with
+
+```bash
+-- the capture pair, ops and the observability node --
+```
+
 `infra/scripts/count-list.sh` — replace
 
 ```bash
@@ -1713,22 +1726,26 @@ def test_no_package_is_forced_held_or_pinned_to_a_version():
 _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"changed": False, "skipped": True}
 
 
-# The second fact is true when any one of four things is: each has a case in which it alone is.
+# The first fact is true when either of two registers changed and the second when any one of four things is:
+# each of the six has a case in which it alone is.
 @pytest.mark.parametrize(
-    ("check", "repos", "debian", "grafana", "caddy", "expected"),
+    ("check", "grafana_repo", "caddy_repo", "debian", "grafana", "caddy", "expected"),
     [
-        (True, _CHANGED, _CHANGED, _SKIPPED, _SKIPPED, (True, True)),  # a fresh node's preview
-        (True, _CHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # the repositories alone still to write
-        (True, _UNCHANGED, _CHANGED, _UNCHANGED, _UNCHANGED, (False, True)),  # prometheus alone still to install
-        (True, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, (False, True)),  # a Grafana package alone
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, (False, True)),  # caddy alone
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
-        (False, _CHANGED, _CHANGED, _CHANGED, _CHANGED, (False, False)),  # the real first converge
+        (True, _CHANGED, _CHANGED, _CHANGED, _SKIPPED, _SKIPPED, (True, True)),  # a fresh node's preview
+        (True, _CHANGED, _UNCHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # Grafana's repository alone still to write
+        (True, _UNCHANGED, _CHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # Caddy's repository alone still to write
+        (True, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, _UNCHANGED, (False, True)),  # prometheus alone still to install
+        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, (False, True)),  # a Grafana package alone
+        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, (False, True)),  # caddy alone
+        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
+        (False, _CHANGED, _CHANGED, _CHANGED, _CHANGED, _CHANGED, (False, False)),  # the real first converge
     ],
 )
-def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, repos, debian, grafana, caddy, expected):
+def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(
+    check, grafana_repo, caddy_repo, debian, grafana, caddy, expected
+):
     tasks = load_tasks(TASKS)
-    variables = {"ansible_check_mode": check, "mon_grafana_repo": repos, "mon_caddy_repo": _UNCHANGED}
+    variables = {"ansible_check_mode": check, "mon_grafana_repo": grafana_repo, "mon_caddy_repo": caddy_repo}
     first = set_facts(find_task(tasks, "note a preview that runs before the repositories exist"), variables)
     variables |= first | {"mon_debian_install": debian, "mon_grafana_install": grafana, "mon_caddy_install": caddy}
     second = set_facts(find_task(tasks, "note a preview that runs before the packages are installed"), variables)
@@ -2458,7 +2475,7 @@ Expected: no failure and no skip.
 uv run pytest tests/test_infra_mon_role.py tests/test_infra_converge_guards.py tests/test_converge_sh.py tests/test_run_sh.py tests/test_deploy_log_audit.py tests/test_infra_unattended_upgrades.py tests/test_infra_firewall_template.py tests/test_chrony_role.py tests/test_infra_cache_templates.py tests/test_infra_compose_templates.py tests/test_infra_alloy_series.py tests/test_config_selectors_are_parsed.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_prose_chars.py -q -p no:cacheprovider
 ```
 
-Expected: no failure (`2007 passed` on the tree this plan was written against). `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds` walks the new role's files.
+Expected: no failure (`2008 passed` on the tree this plan was written against). `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds` walks the new role's files.
 
 - [ ] **Step 9: The commit gate**
 
@@ -2525,7 +2542,7 @@ Run: `git status --porcelain`
 
 Expected: empty.
 
-- [ ] **Step 12: Prove the guards with thirty-six probes, then record their verdicts by a message-only amend**
+- [ ] **Step 12: Prove the guards with thirty-seven probes, then record their verdicts by a message-only amend**
 
 Every probe runs from the worktree root on the committed tree, one at a time. The controls: Grafana's bind address widened; the 404 answered 403; Prometheus's listener widened; the out-of-order key misspelled; Loki's schema version changed; Loki dropped from the unit's `After=`; the datasources' prune switched off; a port default moved; the `restart loki` handler deleted; `promtool`'s subcommand changed; the play's group renamed; a repository's register renamed. The mutations take away, one at a time, each thing the public login, the edge, the stores' ordering and the preview rest on:
 
@@ -2555,7 +2572,7 @@ infra/scripts/mutate-probe.sh --file $R/templates/Caddyfile.j2 \
   --mutation '/^\t\t\t{{ mon_ingest_logship_user }} /d' -- $ROLE
 infra/scripts/mutate-probe.sh --file $R/templates/Caddyfile.j2 \
   --control 's/respond 404/respond 403/' \
-  --mutation '/handle \/api\/v1\/write {/,/reverse_proxy/{/basic_auth {/,/}/d}' -- $ROLE
+  --mutation '/handle \/api\/v1\/write {/,/reverse_proxy/{/basic_auth {/,/^\t\t}$/d}' -- $ROLE
 infra/scripts/mutate-probe.sh --file $R/templates/Caddyfile.j2 \
   --control 's/respond 404/respond 403/' \
   --mutation 's#path /metrics /metrics/\* /swagger\*#path /metrics /swagger*#' -- $ROLE
@@ -2603,6 +2620,9 @@ infra/scripts/mutate-probe.sh --file $R/tasks/main.yml \
   --mutation 's/u\[0-9a-f\]{16}/[a-z]{4,}/' -- $ROLE
 infra/scripts/mutate-probe.sh --file $R/tasks/main.yml \
   --control 's/^    validate: promtool check config %s$/    validate: promtool check rules %s/' \
+  --mutation 's/ or mon_caddy_repo is changed)/)/' -- $ROLE
+infra/scripts/mutate-probe.sh --file $R/tasks/main.yml \
+  --control 's/^    validate: promtool check config %s$/    validate: promtool check rules %s/' \
   --mutation 's/and (mon_repos_previewed or mon_debian_install is changed$/and (mon_debian_install is changed/' -- $ROLE
 infra/scripts/mutate-probe.sh --file $R/tasks/main.yml \
   --control 's/^    validate: promtool check config %s$/    validate: promtool check rules %s/' \
@@ -2643,10 +2663,10 @@ infra/scripts/mutate-probe.sh --file $R/tasks/main.yml \
   -- uv run pytest tests/test_infra_converge_guards.py::test_every_register_a_preview_guard_reads_is_set_in_its_own_role -q -p no:cacheprovider
 ```
 
-Expected: each of the thirty-six runs ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend -F-` with the whole message of Step 10 re-supplied and nothing else changed, with:
+Expected: each of the thirty-seven runs ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend -F-` with the whole message of Step 10 re-supplied and nothing else changed, with:
 
 ```
-Probe: `infra/scripts/mutate-probe.sh`, thirty-six runs, each KILLED with its control proven.
+Probe: `infra/scripts/mutate-probe.sh`, thirty-seven runs, each KILLED with its control proven.
 `grafana.ini.j2`, control the bind address widened: basic auth switched on, KILLED, control proven;
 the `[auth.proxy]` section deleted, KILLED, control proven; the version shown, KILLED, control
 proven; alert history returned to annotations, KILLED, control proven; the admin's name returned to
@@ -2666,8 +2686,9 @@ a port moved: the folder uid changed, KILLED, control proven. The handlers, cont
 deleted: Grafana's stop no longer listening to a Loki restart, KILLED, control proven; a handler's
 preview gate removed, KILLED, control proven. The tasks, control `promtool`'s subcommand changed: a
 one-character secret admitted, KILLED, control proven; a guessable admin name admitted, KILLED,
-control proven; the repositories, then the Debian install, then Caddy's install dropped from the
-second preview fact, each KILLED, control proven; any origin admitted for `loki`, KILLED, control
+control proven; Caddy's repository dropped from the first preview fact, KILLED, control proven; the
+repositories, then the Debian install, then Caddy's install dropped from the second preview fact,
+each KILLED, control proven; any origin admitted for `loki`, KILLED, control
 proven; Caddy's install run in a preview with no repository, KILLED, control proven; a unit's start
 run in a preview with no unit, KILLED, control proven; a unit's gate inverted, KILLED, control
 proven; the three secret files' group returned to root, KILLED, control proven; the Caddyfile's
@@ -2731,6 +2752,8 @@ PATTERN = DEFAULTS["mon_token_pattern"]
 # Assembled, never spelled: no tracked file carries a token-shaped literal, this one included.
 WELL_SHAPED = "glsa_" + "a" * 32 + "_" + "0" * 8
 SECRET_NAMES = ("mon_grafana_admin_password", "mon_session", "mon_token_candidate", "mon_token_cached", "mon_token_minted")
+# The admin's name is a secret too, matched where a task templates it: the lockout refusal's message names the key.
+ADMIN_NAME_TEMPLATED = re.compile(r"\{\{[^}]*\bmon_grafana_admin_user\b")
 
 
 def _tasks() -> list[tuple[dict, tuple[str, ...]]]:
@@ -2905,7 +2928,7 @@ def test_a_refused_sign_in_is_repaired_once_from_the_vault_and_never_retried():
 def test_every_task_that_carries_a_secret_is_silent_and_the_session_is_always_ended():
     for task, _ in _tasks():
         text = yaml.safe_dump({k: v for k, v in task.items() if k not in ("name", "when", "register")})
-        if any(name in text for name in SECRET_NAMES):
+        if any(name in text for name in SECRET_NAMES) or ADMIN_NAME_TEMPLATED.search(text):
             assert task.get("no_log") is True, f"{task['name']} carries a secret and would print it on failure"
     (session,) = [task for task in load_tasks(TOKEN) if "always" in task]
     assert [task["name"] for task in session["always"]] == ["end the admin session"]
@@ -3236,7 +3259,7 @@ Expected: no failure and no skip.
 uv run pytest tests/test_infra_mon_token.py tests/test_infra_mon_role.py tests/test_infra_converge_guards.py tests/test_converge_sh.py tests/test_deploy_log_audit.py tests/test_grafana_auth.py tests/test_config_selectors_are_parsed.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_prose_chars.py -q -p no:cacheprovider
 ```
 
-Expected: no failure (`1827 passed` on the tree this plan was written against).
+Expected: no failure (`1828 passed` on the tree this plan was written against).
 
 - [ ] **Step 8: The commit gate**
 
@@ -3291,9 +3314,9 @@ Run: `git status --porcelain`
 
 Expected: empty.
 
-- [ ] **Step 11: Prove the guards with fourteen probes, then record their verdicts by a message-only amend**
+- [ ] **Step 11: Prove the guards with fifteen probes, then record their verdicts by a message-only amend**
 
-Every probe runs from the worktree root on the committed tree, one at a time. The controls: the service account renamed in the defaults; the sign-out moved off loopback; the include's file renamed. The mutations take away each of the five corrections, the vaulted admin name and each limit on the credential, and the last writes a token-shaped literal into a tracked file, assembled by the shell so that this plan carries none:
+Every probe runs from the worktree root on the committed tree, one at a time. The controls: the service account renamed in the defaults; the sign-out moved off loopback; the include's file renamed. The mutations take away each of the five corrections, the vaulted admin name and each limit on the credential, one hands the admin's name, with no other secret beside it, to a task that is not silenced, and the last writes a token-shaped literal into a tracked file, assembled by the shell so that this plan carries none:
 
 ```bash
 R=infra/ansible/roles/mon
@@ -3330,6 +3353,9 @@ infra/scripts/mutate-probe.sh --file $R/tasks/token.yml \
   --mutation '/^    - name: mint the tools. token$/,/^$/{/no_log: true/d}' -- $TOKEN
 infra/scripts/mutate-probe.sh --file $R/tasks/token.yml \
   --control 's/^        url: "{{ mon_grafana_api }}\/logout"$/        url: "https:\/\/zcrypto-mon.zhaow.me\/logout"/' \
+  --mutation '/^- name: wait for grafana to answer$/a\  vars: {mon_asked_as: "{{ mon_grafana_admin_user }}"}' -- $TOKEN
+infra/scripts/mutate-probe.sh --file $R/tasks/token.yml \
+  --control 's/^        url: "{{ mon_grafana_api }}\/logout"$/        url: "https:\/\/zcrypto-mon.zhaow.me\/logout"/' \
   --mutation 's/^    that: mon_login.status == 200 or mon_login_again.status == 200$/    that: true/' -- $TOKEN
 infra/scripts/mutate-probe.sh --file $R/tasks/token.yml \
   --control 's/^        url: "{{ mon_grafana_api }}\/logout"$/        url: "https:\/\/zcrypto-mon.zhaow.me\/logout"/' \
@@ -3342,10 +3368,10 @@ infra/scripts/mutate-probe.sh --file $R/defaults/main.yml \
   --mutation "\$a # glsa_$(printf 'a%.0s' $(seq 32))_00000000" -- $TOKEN
 ```
 
-Expected: each of the fourteen runs ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend -F-` with the whole message of Step 9 re-supplied and nothing else changed, with:
+Expected: each of the fifteen runs ends `mutate-probe: KILLED (control proven, tree restored byte-identically)`. Then replace the `PROBE_VERDICT` line of the commit message, by `git commit --amend -F-` with the whole message of Step 9 re-supplied and nothing else changed, with:
 
 ```
-Probe: `infra/scripts/mutate-probe.sh`, fourteen runs, each KILLED with its control proven. The
+Probe: `infra/scripts/mutate-probe.sh`, fifteen runs, each KILLED with its control proven. The
 role's defaults, control the service account renamed: the pattern ended `$`, KILLED, control
 proven; a token-shaped literal written into the file, KILLED, control proven. `tasks/token.yml`,
 control the sign-out moved off loopback: a newline added on the way into `ansible-vault`, KILLED,
@@ -3354,10 +3380,11 @@ override dropped from the reset, KILLED, control proven; the second sign-in made
 name, KILLED, control proven; the account created an Admin, KILLED,
 control proven; the cache written under `become`, KILLED, control proven; the login comparison
 dropped from the mint decision, KILLED, control proven; the other tokens deleted without a mint,
-KILLED, control proven; the mint's `no_log` dropped, KILLED, control proven; the lockout refusal
-made to pass, KILLED, control proven; the sign-out moved from `always` to `rescue`, KILLED, control
-proven. `tasks/main.yml`, control the include's file renamed: the include run in check mode,
-KILLED, control proven.
+KILLED, control proven; the mint's `no_log` dropped, KILLED, control proven; the admin's name
+handed to a task with no `no_log`, KILLED, control proven; the lockout refusal made to pass, KILLED,
+control proven; the sign-out moved from `always` to `rescue`, KILLED, control proven.
+`tasks/main.yml`, control the include's file renamed: the include run in check mode, KILLED, control
+proven.
 ```
 
 Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | grep -c PROBE_VERDICT` — Expected: `0`.
@@ -4382,7 +4409,7 @@ Expected: no failure; `tests/test_dashboards_cover_metrics.py` skips nothing new
 uv run pytest tests/test_mon_selfcheck.py tests/test_infra_mon_role.py tests/test_infra_mon_token.py tests/test_reboot_check.py tests/test_clock_offset.py tests/test_dashboards_cover_metrics.py tests/test_infra_alloy_series.py tests/test_infra_alloy_stages.py tests/test_infra_alert_rules.py tests/test_grafana_push_sh.py tests/test_ops_daily.py tests/test_deploy_log_audit.py tests/test_scripts_have_tests.py tests/test_error_paths_are_logged.py tests/test_config_selectors_are_parsed.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_prose_chars.py -q -p no:cacheprovider
 ```
 
-Expected: no failure (`2184 passed, 1 skipped` on the tree this plan was written against). `tests/test_scripts_have_tests.py` reads the new script's test; `tests/test_grafana_push_sh.py` reads the Slack template the push sends.
+Expected: no failure (`2185 passed, 1 skipped` on the tree this plan was written against). `tests/test_scripts_have_tests.py` reads the new script's test; `tests/test_grafana_push_sh.py` reads the Slack template the push sends.
 
 - [ ] **Step 10: The commit gate**
 
@@ -5132,7 +5159,7 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 - The default is taken with `${GRAFANA_SKIP_RULE_GROUPS-zcrypto-mon}`, the unset-only form: set and empty means "skip none", which is how the node's push sends its own group, and `:-` would turn that push back into Grafana Cloud's. `test_the_committed_default_skips_exactly_the_observability_nodes_group` reads the line itself.
 - A skipped group's rule found live is reported through the script's existing orphan path, with no new mechanism: the rule is not in the pushed set, so the read-back names it, and `GRAFANA_PRUNE=1` deletes it. That is what removes a node rule pushed to Grafana Cloud by mistake.
 - The variable names groups, never uids, and a rule that carries no `ruleGroup` is always sent.
-- The unset-only default keeps the node's group off Grafana Cloud only while the variable is unset, and the node's push leaves it set and empty in the shell that ran it. So the script ties the group to the destination: a push whose `GRAFANA_URL` is a `grafana.net` stack and whose skip list does not name `zcrypto-mon` is refused before any call. The test reads the Grafana Cloud URL off the script's own default line, so the refusal's pattern and the default cannot part.
+- The unset-only default keeps the node's group off Grafana Cloud only while the variable is unset, and a caller can set or export it empty, or to a list without the group, for a push that reaches Grafana Cloud. The node's own published push is not that caller: its prefix assignment scopes the empty value to the one command and leaves the shell's unset. So the script ties the group to the destination: a push whose `GRAFANA_URL` is a `grafana.net` stack and whose skip list does not name `zcrypto-mon` is refused before any call. The test reads the Grafana Cloud URL off the script's own default line, so the refusal's pattern and the default cannot part.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5235,7 +5262,6 @@ def _cloud_url() -> str:
 
 @pytest.mark.parametrize("skipped", ["", "other"], ids=["no group skipped", "another group skipped"])
 def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, skipped):
-    """The shell that pushed the node still holds the emptied variable when the next push names no stack."""
     done = stack_with_a_mon_rule.run(GRAFANA_URL=_cloud_url(), GRAFANA_SKIP_RULE_GROUPS=skipped)
     assert done.returncode != 0
     assert stack_with_a_mon_rule.recorded() == [], "the refusal comes before the first call"
@@ -5277,8 +5303,10 @@ with
 ```bash
 # Two stacks take this push until the Grafana Cloud leg retires. With no GRAFANA_URL it goes to Grafana
 # Cloud and leaves out the observability node's own rule group, which has no data there. The node's push
-# names the node, its own token and no skipped group:
-#   GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= GRAFANA_SA_TOKEN=<the node's token> ...
+# names the node, its own token, no skipped group and, unless it mints or moves the node's contact points,
+# an empty webhook, so that one exported for the other stack is not sent to this one:
+#   GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= GRAFANA_SLACK_WEBHOOK_URL= \
+#     GRAFANA_SA_TOKEN=<the node's token> ...
 # with the token read by `grafana_auth.py`'s `stack("mon")`.
 #
 # Rules go one per call through Grafana's Alerting Provisioning HTTP API; the `apiVersion: 1` /
@@ -5301,8 +5329,8 @@ export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
 export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-zcrypto-mon}"
 echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
 # Grafana Cloud never takes the observability node's group: it has no data there, and a rule of it that fires
-# on no data would page the main channel. The shell that pushed the node still holds the emptied variable, so
-# a push addressed to Grafana Cloud that does not skip the group is refused here, before any call.
+# on no data would page the main channel. The default above skips the group only while the variable is unset,
+# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call.
 case "${GRAFANA_URL}" in
   *.grafana.net | *.grafana.net/*)
     case " ${GRAFANA_SKIP_RULE_GROUPS} " in
@@ -5351,7 +5379,7 @@ Expected: `18 passed`.
 uv run pytest tests/test_grafana_push_sh.py tests/test_grafana_push.py tests/test_dashboards_cover_metrics.py tests/test_infra_alert_rules.py tests/test_infra_mon_role.py tests/test_ops_daily.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_prose_chars.py -q -p no:cacheprovider
 ```
 
-Expected: no failure (`1585 passed` on the tree this plan was written against).
+Expected: no failure (`1586 passed` on the tree this plan was written against).
 
 - [ ] **Step 6: The commit gate and the commit**
 
@@ -5372,9 +5400,9 @@ there. The node's push passes the variable empty and names the node's URL and to
 every group. The default is taken with `-`, never `:-`, so set-and-empty skips nothing instead of
 falling back.
 
-That default holds only while the variable is unset, and the shell that pushed the node still holds
-it empty. So a push addressed to a `grafana.net` stack whose skip list does not name `zcrypto-mon`
-is refused before any call.
+That default holds only while the variable is unset, and a caller can export it empty or as a list
+without the group. So a push addressed to a `grafana.net` stack whose skip list does not name
+`zcrypto-mon` is refused before any call.
 
 Cases: a push naming no stack sends no rule of the node's group and says so on its first line; a
 skipped group's rule found live is an orphan and a prune deletes it; the node's push sends its own
@@ -5438,26 +5466,28 @@ Run: `git status --porcelain` — Expected: empty; `git log -1 --format=%B | gre
 - Modify: `infra/grafana/fleet-health-dashboard.json` (a row and eight panels, ids 900 to 908, at the end of `panels`)
 - Modify: `infra/runbooks/observability.md` (one sentence pointing at the node's own Alloy-dark section)
 - Modify: `docs/reference/fleet.md` (four Services rows; one Telemetry labels bullet)
+- Modify: `docs/open-topics/T0085-final-pre-golive-steps.md` (the rotation scope gains the node's credentials)
 - Test: `tests/test_infra_alert_rules.py`
 - Test: `tests/test_ops_daily.py` (the reminder's cases; the existing case over the committed files admits the reminder)
 
 **Interfaces:**
 - Consumes: Task 4's labels and jobs (`host="zcrypto-mon"`; `integrations/unix`, `grafana`, `prometheus`, `loki`; `container="grafana-server"`) and its `UNFILTERED_HOSTS`; Task 5's `--stack mon` on both tools; Task 6's `GRAFANA_SKIP_RULE_GROUPS` and its default line; Task 1's `mon` alias, converge shapes and `_MON_AUTONOMOUS_OBJECTS`; the rule file's helpers in `tests/test_infra_alert_rules.py` (`_rules`, `_rule`, `_prom_exprs`, `_duration_seconds`, `PUSH`, `ANSIBLE`); the runbook page's four-part section form and `infra/runbooks/README.md`.
-- Produces, for the Rollout and phases 2 to 4: the rule group `zcrypto-mon` and its eight uids; the anchors of `infra/runbooks/mon.md`, five procedures (`mon-push`, `mon-secrets`, `mon-token-rotate`, `mon-store-restart`, `mon-patch-pass`) and one per rule; the Fleet health board's row `Observability node`, panels 901 to 908; the daily pass's reminder `mon patch pass`, due a month after the node's last full converge in `docs/reference/deploy-log.jsonl`.
+- Produces, for the Rollout and phases 2 to 4: the rule group `zcrypto-mon` and its eight uids; the anchors of `infra/runbooks/mon.md`, four procedures (`mon-push`, `mon-secrets`, `mon-token-rotate`, `mon-store-restart`), the scheduled reminder `mon-patch-pass` and one per rule; the Fleet health board's row `Observability node`, panels 901 to 908; the daily pass's reminder `mon patch pass`, due a month after the node's last full converge in `docs/reference/deploy-log.jsonl`.
 
 **What this task decides: the eight rules' thresholds and `for` values, each verified by value at the first push (Rollout R9).** The spec states two (the series bar and the retention rule's meaning); the rest are this plan's, each with its basis in one clause.
 - `zcrypto-alloy-dark-mon`, critical: `count(up{host="zcrypto-mon"}) or on() vector(0)` below 1 for 10 m, NoData alerting; the fleet's per-host Alloy-dark rules' own shape and duration. First push: reads 5, one per scrape job.
 - `zcrypto-mon-disk-low`, warning: root filesystem free below 0.15 for 30 m; `zaccess-disk-high`'s bar and duration, the ops and cache root-disk rules' too, which on 80 GB leaves 12 GB, more than both stores are sized to hold. First push: one series, above 0.9.
 - `zcrypto-mon-reboot-pending`, warning: `node_reboot_required{host="zcrypto-mon"}` above 0.5 for 15 m; `zcrypto-capture-reboot-pending`'s bar and duration, which a test holds equal. First push: one series, 0; no series is a fail, the timer not having run.
 - `zcrypto-mon-store-down`, critical: the count of stores up and ready below 2 for 3 m, NoData OK; three scrapes, so one failed scrape does not page and a restart in the role's order is over before the rule next evaluates. Loki counts only while its ingester is `ACTIVE` in the ring; its `/ready` is a separate signal, which the self-check and Grafana's unit read; a dark Alloy returns nothing here and is the first rule's page. First push: reads 2.
-- `zcrypto-mon-sqlite-locked`, warning, receiver `logs`: any `database is locked` line of Grafana's in 15 m that is not a retry, `for: 0s`; the burst rules' window. Grafana 13.2 logs `Database locked, sleeping then retrying` at info on its ordinary retry path, at each start and beside its own cleanup job, and that line carries the string too: the selector leaves it out, so the rule counts a write Grafana gave up on, the assessment's trigger for PostgreSQL. First push: reads 0, beside R9's read that the stream it selects has lines.
+- `zcrypto-mon-sqlite-locked`, warning, receiver `logs`: any `database is locked` line of Grafana's in 15 m that is not a retry, `for: 0s`; the burst rules' window. Grafana 13.2 logs `Database locked, sleeping then retrying` at info on its ordinary retry path, at each start and beside its own cleanup job, and that line carries the string too: the selector leaves it out, so the rule counts an operation Grafana gave up on with its database locked, a write whose retries ran out or a request it could not authenticate, and the failed write is the assessment's trigger for PostgreSQL. First push: reads 0, beside R9's read that the stream it selects has lines.
 - `zcrypto-mon-ingest-dark`, critical: `count(up{host!="zcrypto-mon"}) or on() vector(0)` below 1 for 5 m, NoData alerting; half the Alloy-dark rules' 10 m, so with the five minutes a vanished series stays readable it pages about ten minutes after ingest stops and five ahead of the first per-host page, which a test holds. First push: reads 0 and fires, by design, until phase 2's first host ships; the shadow channel takes it (spec D18).
 - `zcrypto-mon-series-high`, warning: `prometheus_tsdb_head_series{host="zcrypto-mon"}` above 20,000 for 3 h; the spec's bar, held for three hours because the head keeps a restarted shipper's old series until its next truncation. First push: the node's own unfiltered count alone, read and recorded (`## What this plan asks of the spec` says why the reading matters).
 - `zcrypto-mon-retention-by-size`, warning: `increase(prometheus_tsdb_size_retentions_total{host="zcrypto-mon"}[6h])` above 0, `for: 0s`; any deletion by the size cap is the event, and six hours spans three of Prometheus's two-hour compactions. First push: reads 0.
 
 **What else this task decides:**
 - Each rule but `zcrypto-mon-ingest-dark` selects `host="zcrypto-mon"` and nothing else, and no rule outside the group carries a `host` matcher that admits the node, a regex or a negative one included: `test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group` holds both directions, so a rule pushed to both stacks does not name a host Grafana Cloud never receives. A rule with no `host` matcher is outside that test: it reads whatever hosts its stack holds, and the spec's comparison by value is what shows an extra row from the node.
-- The monthly patch pass is brought due by the daily pass, on the refdata sweep's pattern: `read_reminders` gains `mon patch pass`, owed a month after the node's last full converge, the last successful `site.yml` row of `docs/reference/deploy-log.jsonl` whose `limit` is `zcrypto-mon` and whose `tags` and `skip_tags` are empty. The node's first converge is such a row, the pass's own re-converge is written as one, and every other procedure on the page converges under `--tags mon`, so the record is the row the pass already leaves and nothing new is kept. A log with no such row yields no reminder: the node is not built.
+- The monthly patch pass is brought due by the daily pass, on the refdata sweep's pattern: `read_reminders` gains `mon patch pass`, owed a month after the node's last full converge, the last successful `site.yml` row of `docs/reference/deploy-log.jsonl` whose `limit` is `zcrypto-mon` and whose `tags` and `skip_tags` are empty. The node's first converge is such a row and the pass's own re-converge is written as one, so nothing new is kept; the page's procedures converge under `--tags mon` and leave the count alone. The row does not say why it was run: an un-tagged converge of the node made for another reason restarts the month as the pass's own does, so such a run is followed by the pass, and `mon-patch-pass`'s What it means says so. A log with no such row yields no reminder: the node is not built. A node deleted in a rollback leaves its rows in the log, so the rollback also takes the reminder out of `read_reminders`, or the daily report reads it owed on a host that is gone (spec D25).
+- The go-live credential round learns the node's credentials in the commit that creates the procedures it rotates them by: T0085's rotation scope gains them, naming the `mon.md` procedure that rotates each one the page covers. The family is every credential this plan mints, by where it lives: the tools' token in the controller-side cache (Task 3), which that topic's own check of `infra/ansible/files/` and every `vault.yml` does not reach; the five values of `host_vars/zcrypto-mon/vault.yml` and the two ingest passwords of `group_vars/observed/vault.yml` (P2), the admin's name among them, which is named as the one value the round leaves alone; `slack_shadow_webhook_url` (P3); and the deploy key (O0).
 - Until the node pages the main channel, its pending-reboot rule reaches the shadow channel alone, so the patch pass reads the reboot flag itself, and the reminder is what brings the pass, and that read, to a person.
 - `_UID_HOST` gains seven of the eight uids; `zcrypto-mon-ingest-dark` is left out because it pins no one host.
 - The runbook page is `infra/runbooks/mon.md`, in the directory's four-part form. Its commands are written so the daily pass's classifier reads them: `systemctl is-active` over at most three units a line, one `&&` line for the upgrade, `--stack mon` on each read. The corpus floor `tests/test_ops_daily.py` holds, 0.70 of runbook commands classified autonomous, stays above its bar with the page added.
@@ -5869,7 +5899,8 @@ Expected: `12 failed`, the rest passed: seven of the eight new rule-file cases m
       # A text match, since the line is Grafana's own and carries no label for it. Grafana's retry of
       # a locked write logs the same text at info, `Database locked, sleeping then retrying`, at each
       # start and beside its cleanup job: the second filter leaves those out, so what is counted is
-      # a write Grafana gave up on. The window is the burst rules' 15 minutes.
+      # an operation Grafana gave up on, a write whose retries ran out or a request it could not
+      # authenticate. The window is the burst rules' 15 minutes.
       - refId: A
         queryType: instant
         relativeTimeRange: {from: 900, to: 0}
@@ -5904,10 +5935,10 @@ Expected: `12 failed`, the rest passed: seven of the eight new rule-file cases m
     execErrState: Alerting
     for: 0s
     annotations:
-      summary: "Grafana gave up on a write to its embedded SQLite database in the last 15 minutes: the database stayed locked through its retries, and the line it logged is not one of those retries. While a push runs it is a call that push failed on, and the push is run again; recurring with no push running, it is the sign that the database has outgrown SQLite, the recorded condition for moving Grafana's own state to PostgreSQL. Runbook: infra/runbooks/mon.md#zcrypto-mon-sqlite-locked"
+      summary: "Grafana gave up on a database operation in the last 15 minutes: its embedded SQLite database stayed locked, and the line it logged is not one of its ordinary retries. While a push runs it is usually one of Grafana's own jobs, its cleanup or its state save, giving up behind the push, and the push's exit status says whether a call of its own failed; recurring with no push running, it is the sign that the database has outgrown SQLite, the recorded condition for moving Grafana's own state to PostgreSQL. Runbook: infra/runbooks/mon.md#zcrypto-mon-sqlite-locked"
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "905"
-      unit: "failed writes logging `database is locked` in the last 15 minutes"
+      unit: "operations given up on with `database is locked` in the last 15 minutes"
     labels:
       severity: warning
     notification_settings:
@@ -6478,8 +6509,8 @@ with
     {
       "id": 905,
       "type": "timeseries",
-      "title": "Monitor — Grafana writes failed on a locked database",
-      "description": "Is Grafana's embedded database keeping up? Each point is the number of writes Grafana gave up on with `database is locked` in the fifteen minutes before it, its ordinary retries left out; the alert pages on the first one. One while a push runs is a call that push failed on; a steady run with no push is the sign the database has outgrown SQLite.",
+      "title": "Monitor — Grafana operations failed on a locked database",
+      "description": "Is Grafana's embedded database keeping up? Each point is the number of operations Grafana gave up on with `database is locked` in the fifteen minutes before it, its ordinary retries left out; the alert pages on the first one. One while a push runs is usually Grafana's own cleanup or state-save job giving up behind the push; a steady run with no push is the sign the database has outgrown SQLite.",
       "datasource": {
         "type": "loki",
         "uid": "grafanacloud-logs"
@@ -6498,7 +6529,7 @@ with
           },
           "expr": "sum(count_over_time({host=\"zcrypto-mon\", container=\"grafana-server\"} |= \"database is locked\" != \"sleeping then retrying\" [15m])) or on() vector(0)",
           "refId": "A",
-          "legendFormat": "failed writes in the last 15 minutes"
+          "legendFormat": "failed operations in the last 15 minutes"
         }
       ],
       "fieldConfig": {
@@ -6810,7 +6841,7 @@ Create `infra/runbooks/mon.md`:
 ````markdown
 # Monitor runbooks — the observability node
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, replace one of its secrets, re-mint the tools' token, restart one of its stores or run its monthly patch pass: the procedures at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 Everything here is one Linode VPS, `zcrypto-mon` (the workstation's ssh alias `mon`; `Monitor` in Slack and on the Fleet health board), reached by people and tools as `https://zcrypto-mon.zhaow.me`. It runs no containers: Grafana (`grafana-server`), Prometheus, Loki, Caddy and Alloy are apt packages under systemd. Caddy is the one public listener, on 443: it passes `/api/v1/write` to Prometheus and `/loki/api/v1/push` to Loki behind basic auth, answers 404 for `/metrics`, for what lies under it and for `/swagger`, and passes everything else to Grafana, whose own login and tokens guard it. Grafana, Prometheus, Loki and Alloy listen on loopback: `127.0.0.1:3000`, `:9090`, `:3100` and `:12345`. The node's own Alloy ships the node's metrics and journals to its own stores under `host="zcrypto-mon"`. A timer, `zcrypto-mon-selfcheck`, reads every five minutes whether Grafana's rule scheduler is ticking, a fleet sample is fresh and Loki is ready, and its journal line says what it read.
 
@@ -6830,21 +6861,21 @@ Nothing fired. The rule file, a dashboard or the notification template changed, 
 
 ### What it means
 
-`infra/scripts/grafana-push.sh` pushes to the stack its environment names. With no `GRAFANA_URL` it goes to Grafana Cloud and leaves the `zcrypto-mon` rule group out; the node's push names the node, reads the node's own token and passes `GRAFANA_SKIP_RULE_GROUPS` empty, so the node's group is sent. The conditions on where a push runs from are `.claude/skills/zcrypto-grafana-push/SKILL.md`'s, for this stack as for the other. The token is the Editor service-account token the `mon` role minted into `~/.config/zcrypto/grafana-mon.vault.yml` at its last converge; `grafana_auth.py` reads it as the `mon` stack.
+`infra/scripts/grafana-push.sh` pushes to the stack its environment names. With no `GRAFANA_URL` it goes to Grafana Cloud and leaves the `zcrypto-mon` rule group out; the node's push names the node, reads the node's own token and passes `GRAFANA_SKIP_RULE_GROUPS` empty, so the node's group is sent. A push or a prune that names the node and leaves that variable out takes the script's default instead: its first line reads `skip-groups=zcrypto-mon`, it sends the node no rule of the node's own group and reports the group's rules as orphans, and with `GRAFANA_PRUNE=1` it deletes them, until a push by step 1 puts them back. The script rewrites both contact points when `GRAFANA_SLACK_WEBHOOK_URL` holds a value, whichever channel's it is, so a routine push passes that variable empty: a shell that exported the other stack's webhook then leaves the node's receivers where they point. The conditions on where a push runs from are `.claude/skills/zcrypto-grafana-push/SKILL.md`'s, for this stack as for the other. The token is the Editor service-account token the `mon` role minted into `~/.config/zcrypto/grafana-mon.vault.yml` at its last converge; `grafana_auth.py` reads it as the `mon` stack.
 
 ### What to do
 
 1. **Push**, from the repo root, in a checkout that passes the push skill's freshness test:
 
    ```bash
-   GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= \
+   GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= GRAFANA_SLACK_WEBHOOK_URL= \
      GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; s = g.stack("mon"); print(g.vault_var(s.token_var, s.vault_file))')" \
      PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh
    ```
 
-   Its first line reads `stack=https://zcrypto-mon.zhaow.me` and `skip-groups=<none>`; a first line naming another stack means the variables did not reach the script, and nothing after it is the node's.
+   Its first line reads `stack=https://zcrypto-mon.zhaow.me` and `skip-groups=<none>`; a first line naming another stack means the variables did not reach the script, and nothing after it is the node's. Its `GRAFANA_SLACK_WEBHOOK_URL not set` line says the two contact points were left as they are.
 
-2. **A push that mints or moves the node's two contact points** — the first push after a rebuild, or a change of channel — also carries the webhook, as `GRAFANA_SLACK_WEBHOOK_URL="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; print(vault_var("slack_shadow_webhook_url"))')"` in front of step 1's line. The node pages the shadow channel, so the value is `slack_shadow_webhook_url`; a routine push leaves the variable unset.
+2. **A push that mints or moves the node's two contact points** — the first push after a rebuild, or a change of channel — carries the webhook: it is step 1's line with the empty `GRAFANA_SLACK_WEBHOOK_URL=` replaced by `GRAFANA_SLACK_WEBHOOK_URL="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; print(vault_var("slack_shadow_webhook_url"))')"`. The node pages the shadow channel, so the value is `slack_shadow_webhook_url`.
 
 3. **Confirm by value.** `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-mon"})'` reads 5, and the `Alerts` section of `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` names no rule as unhealthy.
 
@@ -6953,23 +6984,42 @@ ______________________________________________________________________
 
 <a name="mon-patch-pass"></a>
 
-## mon-patch-pass — PROCEDURE: the monthly patch pass
+## mon-patch-pass — SCHEDULED REMINDER: the monthly patch pass
 
 ### What you are seeing
 
-Nothing fired. The daily pass's reminders read `OWED mon patch pass`: a month has gone by since the node's last full converge, and the packages the node does not upgrade by itself are due their pass.
+The daily pass's reminders read `OWED mon patch pass`: a month has gone by since the node's last full converge, and the packages the node does not upgrade by itself are due their pass. It is not an alert, and nothing is wrong on the node.
 
 ### What it means
 
-Unattended upgrades install Debian's security patches alone. Grafana, Loki, Alloy and Caddy come from their vendors' repositories, which that origin does not cover, and `prometheus` is on the node's unattended-upgrades blacklist because its package restarts the daemon on upgrade. All five are upgraded here, by hand, once a month. The reminder counts the month from the node's last full converge in `docs/reference/deploy-log.jsonl`, the one that names no tag, which step 4 runs; the other procedures on this page converge under `--tags mon` and leave the count where it is. A Grafana upgrade is a reviewed change: the provisioning endpoints the push script calls are marked deprecated upstream. Grafana's login is public, so an advisory that needs no authentication is patched the day it is read, outside the monthly pass. Prometheus's, Loki's and Grafana's packages each restart their own daemon when they are upgraded, so the order of step 3 is what keeps Grafana stopped while the stores restart.
+Unattended upgrades install Debian's security patches alone. Grafana, Loki, Alloy and Caddy come from their vendors' repositories, which that origin does not cover, and `prometheus` is on the node's unattended-upgrades blacklist because its package restarts the daemon on upgrade. All five are upgraded here, by hand, once a month. The reminder counts the month from the node's last full converge in `docs/reference/deploy-log.jsonl`, the one that names no tag, which step 4 runs; the procedures on this page converge under `--tags mon` and leave the count where it is. The log does not say why a converge was run, so an un-tagged converge of the node made for another reason restarts the month too: such a run is followed by this pass, in the same sitting. A Grafana upgrade is a reviewed change: the provisioning endpoints the push script calls are marked deprecated upstream. Grafana's login is public, so an advisory that needs no authentication is patched the day it is read, outside the monthly pass. Prometheus's, Loki's and Grafana's packages each restart their own daemon when they are upgraded, so the order of step 3 is what keeps Grafana stopped while the stores restart.
 
 ### What to do
 
 1. **Read Grafana's security advisories first**, `https://grafana.com/security/security-advisories/`, against the installed version: `ssh mon dpkg-query -W grafana loki alloy caddy prometheus`.
+
 2. **Read what would move**, on the node: `sudo apt-get update`, then `apt list --upgradable`.
+
 3. **Upgrade the stores with Grafana stopped, then Grafana**, on the node, as one line: `sudo systemctl stop grafana-server && sudo apt-get -o Dpkg::Options::=--force-confold install --only-upgrade loki alloy caddy prometheus && sudo apt-get -o Dpkg::Options::=--force-confold install --only-upgrade grafana && sudo systemctl start grafana-server`. The stores' packages restart them inside the first install, while Grafana is stopped. Grafana's package restarts it at the end of the second, behind its unit's wait for both stores, and the last command starts it when the pass upgraded no Grafana. `--force-confold` keeps the role's file wherever a package ships a changed config, and asks nothing: the package's own `/etc/default/prometheus` would start Prometheus on its 15-day default retention, which deletes the older blocks. A line that stops part-way leaves Grafana stopped: run its remaining commands by hand, the start last.
+
 4. **Re-converge in full**, from the workstation, so the role's files are what the upgraded packages run: `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon`, naming no tag. Its preview shows no change to a rendered file; a change there is a package that replaced a config, and the converge puts the role's back. The row it appends to `docs/reference/deploy-log.jsonl` is the record the reminder counts the next month from.
-5. **After a Grafana upgrade, run the acceptance reads**: `mon-push` step 1, which re-sends the tree and reads the template back byte-identical and each rule's datasource; then `mon-push` step 3; then, in the node's UI, open one firing rule's Slack message and follow its panel link and its silence link.
+
+5. **After a Grafana upgrade, run the acceptance reads.** An upgrade can rename an ini key or move a default, so these read what the node's hardening and its rule cadence rest on. First `mon-push` step 1, which re-sends the tree and reads the template back byte-identical and each rule's datasource, then `mon-push` step 3. Then, from the workstation at the repository root:
+
+   ```bash
+   ssh mon 'sudo ls /var/lib/grafana/plugins 2>/dev/null | wc -l'
+   for p in /metrics /metrics/plugins/prometheus /swagger; do curl -sS -o /dev/null -w "$p %{http_code}\n" "https://zcrypto-mon.zhaow.me$p"; done
+   curl -sS -o /dev/null -w '%{http_code}\n' -u probe:probe https://zcrypto-mon.zhaow.me/api/org
+   curl -sS https://zcrypto-mon.zhaow.me/api/health
+   mon_get() { uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; s = g.stack("mon"); print("Authorization: Bearer " + g.vault_var(s.token_var, s.vault_file))' | curl -fsS -H @- "https://zcrypto-mon.zhaow.me$1"; }
+   mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[] | {interval, bad: [.rules[] | select(.health != "ok") | .name]}] | "intervals=\(map(.interval) | unique) unhealthy=\(map(.bad) | add)"'
+   mon_get /api/v1/provisioning/policies | jq -c '{receiver, group_by, routes: (.routes // [] | length)}'
+   mon_get /api/v1/provisioning/mute-timings | jq -c .
+   mon_get /api/v1/ngalert | jq -r .alertmanagersChoice
+   ```
+
+   In order: `0`, the plugin preinstaller still off; three lines ending `404`, the paths Grafana serves without a login still refused at the edge; `401`, basic auth still off; a health body with `"database": "ok"` and no `version` key; `intervals=[60] unhealthy=[]`, each group still evaluated at the 60 s the push does not set; `{"receiver":"metrics","group_by":["grafana_folder","alertname"],"routes":0}` and `[]`, the notification policy as the push left it and no mute timing; `internal`, Grafana's own Alertmanager. A reading that differs is the upgrade having moved a key or a default: it is fixed in the role's `grafana.ini.j2` or `Caddyfile.j2` on a branch and converged before the pass is done. Last, in the node's UI, open one firing rule's Slack message and follow its panel link and its silence link.
+
 6. **Read the reboot flag**, on the node: `ls /run/reboot-required`. `No such file or directory` is no reboot pending; the file listed is one, taken by `zcrypto-mon-reboot-pending` below from its first step. Until the node pages the main channel, that alert reaches the shadow channel alone, and this read is the one that brings a pending reboot to a person.
 
 ### Retire when
@@ -7083,16 +7133,16 @@ ______________________________________________________________________
 
 ### What you are seeing
 
-A **warning** Grafana alert from the node, `Monitor · Grafana's database locked`: Grafana gave up on a write with `database is locked` in the last fifteen minutes. It clears by itself when the window empties and sends no resolved message.
+A **warning** Grafana alert from the node, `Monitor · Grafana's database locked`: Grafana gave up on a database operation with `database is locked` in the last fifteen minutes. It clears by itself when the window empties and sends no resolved message.
 
 ### What it means
 
-Grafana keeps its own state — rules, dashboards, alert instances, silences — in an embedded SQLite database, `/var/lib/grafana/grafana.db`, in WAL mode. A write that finds the database locked sleeps and is retried, and each retry logs `Database locked, sleeping then retrying` at info: those lines are routine, at each start and beside Grafana's own cleanup job, and the rule leaves them out. What it counts is the line logged when the retries ran out and the write failed. While a push runs, which writes each rule in turn, that is a call the push failed on. Lines that keep coming with no push running are the recorded condition for moving Grafana's state to PostgreSQL.
+Grafana keeps its own state — rules, dashboards, alert instances, silences — in an embedded SQLite database, `/var/lib/grafana/grafana.db`, in WAL mode. A write that finds the database locked sleeps and is retried, and each retry logs `Database locked, sleeping then retrying` at info: those lines are routine, at each start and beside Grafana's own cleanup job, and the rule leaves them out. What it counts is a line logged when Grafana gave up with the database still locked: a write whose retries ran out, or a request it could not authenticate because the session read failed. While a push runs, which writes each rule in turn, such a line is usually one of Grafana's own jobs, its cleanup or its state save, giving up behind the push: the push's exit status says whether a call of its own failed. Lines that keep coming with no push running are the recorded condition for moving Grafana's state to PostgreSQL.
 
 ### What to do
 
 1. **Read the lines**, from the workstation: `uv run python infra/scripts/grafana-query.py --stack mon --loki 'sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked" != "sleeping then retrying" [24h]))'`, and on the node `sudo journalctl -u grafana-server --no-pager --since -1h | grep 'database is locked' | grep -vc 'sleeping then retrying'`.
-2. **A push was running**: run it again once it has ended, by `mon-push`; the rule clears fifteen minutes after the last line.
+2. **A push was running**: read how it ended. A push that exited 0 lost nothing and is not run again; one that exited non-zero is run again by `mon-push`. The rule clears fifteen minutes after the last line.
 3. **No push was running, and the count keeps rising across a day**: take it to the owner as the trigger for PostgreSQL. A restart by `mon-store-restart` step 1 and step 3 clears a lock a crashed writer left.
 
 ### Retire when
@@ -7187,7 +7237,7 @@ with
 have theirs at `cache.md#zcrypto-alloy-dark-cache-1`, since their set is watched from the other two nodes while one is dark. The observability node's own sibling, `zcrypto-alloy-dark-mon`, is evaluated on that node and nowhere else, and has its section at `mon.md#zcrypto-alloy-dark-mon`.)
 ```
 
-- [ ] **Step 6: The fleet page**
+- [ ] **Step 6: The fleet page and the go-live rotation round's scope**
 
 `docs/reference/fleet.md` — after
 
@@ -7216,10 +7266,31 @@ insert
 - The observability node ships to its own stores and to no other, under `host="zcrypto-mon"`, shown as `Monitor` in Slack: that host value exists on the node's Grafana and not on Grafana Cloud. Its Grafana, Prometheus and Loki series carry `job` `grafana`, `prometheus` and `loki`, and its log lines the unit's name as `container`: `grafana-server`, `prometheus`, `loki`, `caddy`, `alloy`, `zcrypto-mon-selfcheck`, `zcrypto-reboot-check`.
 ```
 
+The go-live credential round's scope, in the topic that owns it. The block sits inside the rotation-scope bullet, so each of its lines keeps the bullet's two-space indent:
+
+`docs/open-topics/T0085-final-pre-golive-steps.md` — after
+
+```markdown
+  Decided by the owner 2026-08-04.
+```
+
+insert (the insert opens with 1 blank line, kept)
+
+```markdown
+
+  **The observability node's credentials** (`zcrypto-mon`, added with the node; the first sits outside the tree, so the check above, of `infra/ansible/files/` and every `vault.yml`, does not reach it):
+  - the tools' Grafana token, `mon_grafana_tools_token` — an Editor service-account token the `mon` role mints into `~/.config/zcrypto/grafana-mon.vault.yml` on the workstation, outside the tree. It reads every metric and log line the node holds and can rewrite its rules and contact points, and each push carries it in its environment. Rotated by `infra/runbooks/mon.md`'s `mon-token-rotate`;
+  - `mon_grafana_admin_password` and `mon_grafana_secret_key` (`host_vars/zcrypto-mon/vault.yml`) — by `mon-secrets` steps 1 and 3 of the same page; a replaced secret key leaves Grafana unable to read the webhook it stored, so it is followed by `mon-push` step 2;
+  - `mon_grafana_admin_user`, in the same file, is **not rotated**: Grafana takes the admin's name when it creates its database and refuses another afterwards, so a regenerated name fails the node's next converge at its sign-in (`mon-secrets` step 5);
+  - the two ingest pairs — `mon_ingest_fleet_password` and `mon_ingest_logship_password` (`group_vars/observed/vault.yml`) with their bcrypt hashes (`host_vars/zcrypto-mon/vault.yml`) — by `mon-secrets` steps 2 to 4: a password and its hash together, then the converge of each host that ships to the node;
+  - `slack_shadow_webhook_url` (`group_vars/all/vault.yml`) — a bearer capability as `slack_webhook_url` is; re-minted in Slack and re-vaulted, it reaches the node's contact points by `mon-push` step 2;
+  - the node's deploy key, `infra/ansible/files/deploy_zcrypto-mon_ed25519`, with the deploy set above.
+```
+
 - [ ] **Step 7: Run the tests and the runbook instruments**
 
 ```bash
-uv run pytest tests/test_infra_alert_rules.py tests/test_dashboards_cover_metrics.py tests/test_ops_daily.py tests/test_runbook_triggers.py tests/test_runbook_internal_tokens.py tests/test_internal_terms_not_operator_visible.py tests/test_fleet_contracts.py tests/test_guidance_guard.py -q -p no:cacheprovider
+uv run pytest tests/test_infra_alert_rules.py tests/test_dashboards_cover_metrics.py tests/test_ops_daily.py tests/test_runbook_triggers.py tests/test_runbook_internal_tokens.py tests/test_internal_terms_not_operator_visible.py tests/test_fleet_contracts.py tests/test_guidance_guard.py tests/test_open_topics_frontmatter.py -q -p no:cacheprovider
 for entry in runbook-sections-without-a-trigger runbook-sections-without-a-retire-when runbook-universals-without-a-count; do infra/scripts/count-list.sh "$entry"; done
 ```
 
@@ -7231,7 +7302,7 @@ Expected: no failure; each of the three count lines ends `0`.
 uv run pytest tests/test_infra_alert_rules.py tests/test_dashboards_cover_metrics.py tests/test_ops_daily.py tests/test_ops_daily_soak.py tests/test_fleet_contracts.py tests/test_guidance_guard.py tests/test_count_list.py tests/test_runbook_internal_tokens.py tests/test_runbook_triggers.py tests/test_guidance_refs_resolve.py tests/test_internal_terms_not_operator_visible.py tests/test_code_prose_citations.py tests/test_message_citations.py tests/test_merge_gate.py tests/test_grafana_push_sh.py tests/test_infra_alloy_series.py tests/test_infra_alloy_stages.py tests/test_infra_grafana_keepalive.py tests/test_infra_unattended_upgrades.py tests/test_infra_mon_role.py tests/test_engine_soak.py tests/test_engine_metrics.py tests/test_engine_journal_prune.py tests/test_engine_execgate.py tests/test_prose_chars.py -q -p no:cacheprovider
 ```
 
-Expected: no failure (`2472 passed, 4 skipped` on the tree this plan was written against).
+Expected: no failure (`2473 passed, 4 skipped` on the tree this plan was written against).
 
 Run: `uv run pre-commit run -a`
 
@@ -7240,7 +7311,7 @@ Expected: every hook Passed; `mdformat` owns `infra/runbooks/mon.md` and may re-
 ```bash
 git add infra/grafana/alerts.yaml infra/grafana/fleet-health-dashboard.json infra/runbooks/mon.md \
   infra/runbooks/observability.md infra/scripts/ops_daily.py docs/reference/fleet.md tests/test_infra_alert_rules.py \
-  tests/test_ops_daily.py
+  tests/test_ops_daily.py docs/open-topics/T0085-final-pre-golive-steps.md
 git commit -F- <<'MSG'
 feat(alerts): the zcrypto-mon rule group, its runbook page and its Fleet health row
 
@@ -7249,7 +7320,7 @@ leaves it out of Grafana Cloud, where the node has no series. Eight rules, each 
 `infra/runbooks/mon.md` and its panel in a new row of the Fleet health board: the node's own Alloy
 dark (below one scrape target for 10 m); the root filesystem under 15% free for 30 m; a reboot
 pending for 15 m, the capture rule's bar and duration; a store down or not ready, fewer than two
-for 3 m, Loki counted only while its ingester is active; a write Grafana gave up on with
+for 3 m, Loki counted only while its ingester is active; an operation Grafana gave up on with
 `database is locked`, a burst rule on the `logs` receiver whose selector leaves out the retry lines
 Grafana logs with the same text at each start; ingest dark, no fleet series for 5 m, half the
 per-host Alloy-dark rules' wait so it pages ahead of them when the node's edge fails; head series
@@ -7257,17 +7328,26 @@ above 20,000 for 3 h; and a block deleted by the size cap in the last 6 h. Each 
 ingest-dark selects the node and nothing else, and no rule outside the group carries a `host`
 matcher that admits it.
 
-The runbook page carries five procedures beside the eight alert sections: pushing to the node,
-generating or replacing one of its vaulted secrets, re-minting the tools' token, restarting a store
-by hand with Grafana stopped around it, and the monthly patch pass over the packages the node does
-not upgrade by itself. The pass upgrades the stores with Grafana stopped and Grafana after them,
-since the stores' packages and Grafana's each restart their own daemon, keeps the role's config
-files, and reads the reboot flag, which reaches no one's channel until the node pages the main
-one. The daily pass maps seven of the uids to the node; ingest-dark pins no one host. The fleet
-page gains the node's four Services rows and its Telemetry labels.
+The runbook page carries four procedures and one scheduled reminder beside the eight alert
+sections: pushing to the node, generating or replacing one of its vaulted secrets, re-minting the
+tools' token, restarting a store by hand with Grafana stopped around it, and the monthly patch pass
+over the packages the node does not upgrade by itself. The pass upgrades the stores with Grafana
+stopped and Grafana after them, since the stores' packages and Grafana's each restart their own
+daemon, keeps the role's config files, re-reads after a Grafana upgrade what the node's hardening
+and rule cadence rest on, and reads the reboot flag, which reaches no one's channel until the node
+pages the main one. The daily pass maps seven of the uids to the node; ingest-dark pins no one
+host. The fleet page gains the node's four Services rows and its Telemetry labels.
 
 The patch pass has a trigger: the daily pass's reminders gain `mon patch pass`, due a month after
-the node's last full converge in the deploy log, the row the pass's own re-converge leaves.
+the node's last full converge in the deploy log, the row the pass's own re-converge leaves. An
+un-tagged converge of the node made for another reason leaves the same row, so it is followed by
+the pass.
+
+The go-live credential round's scope, in `docs/open-topics/T0085-final-pre-golive-steps.md`, gains
+the node's credentials, naming the procedure on the new page that rotates each one the page
+covers: the tools' token, which lives outside the tree; the admin password and the secret key; the
+two ingest pairs; the shadow channel's webhook; the deploy key; and the admin's name, which the
+round leaves alone.
 
 Cases: the group's eight rules against their sections and panels; the push default against the
 group's two dead-men; a rule reading the node exactly when it is in the group; ingest-dark ahead of
@@ -7467,7 +7547,7 @@ Expected: an empty status; no citation refused; the `probe-verdicts-without-the-
 
 ## Rollout (attended)
 
-**Operator steps (attended).** Nothing below is an executor step: each reaches the node, the Linode Cloud Manager, DNS, Slack, GitHub, Grafana Cloud or the node's Grafana, or writes a secret. Phase P runs on this branch before its pull request opens, so the code and its secrets merge together; phase R runs from merged `develop`. `W$` is the workstation at the repository root, `H$` a shell on the node, reached as `ssh mon` once R4 has written the alias. Every converge goes through `infra/ansible/scripts/converge.sh`, which previews, asks for the typed `--limit` and appends its line to `docs/reference/deploy-log.jsonl`; it is never wrapped in `timeout`. A port is opened in two layers, each by its own hand: the nftables rules the firewall role renders from the vars Task 1 commits, and the Linode Cloud Firewall, edited in the Cloud Manager. No secret is typed on a command line or shown: the vault values are generated by a script that prints none of them, the webhook is read without echo, and a token or password reaches the process that presents it through its environment or its stdin, from `vault_var` inside a command substitution.
+**Operator steps (attended).** Nothing below is an executor step: each reaches the node, the Linode Cloud Manager, DNS, Slack, GitHub, Grafana Cloud or the node's Grafana, or writes a secret. Phase P runs on this branch before its pull request opens, so the code and its secrets merge together; phase R runs from merged `develop`. `W$` is the workstation at the repository root, `H$` a shell on the node, reached as `ssh mon` once R3 has written the alias. Every converge goes through `infra/ansible/scripts/converge.sh`, which previews, asks for the typed `--limit` and appends its line to `docs/reference/deploy-log.jsonl`; it is never wrapped in `timeout`. A port is opened in two layers, each by its own hand: the nftables rules the firewall role renders from the vars Task 1 commits, and the Linode Cloud Firewall, edited in the Cloud Manager. No secret is typed on a command line or shown: the vault values are generated by a script that prints none of them, the webhook is read without echo, and a token or password reaches the process that presents it through its environment or its stdin, from `vault_var` inside a command substitution.
 
 **The Kraken maintenance read is not owed for this node, and neither is the engine's gap.** `.claude/rules/fleet-deploys.md` binds the read to the venue-facing hosts, `zcrypto`, `zcrypto-red` and `zcrypto-ops`, where the `capture`, `engine` and `ops` roles run. `zcrypto-mon` runs none of them and speaks to no venue (the spec's invariant); Task 1 enters it in `NO_VENUE_EXPOSURE`, the set `infra/scripts/count-list.sh converges-inside-a-kraken-window` leaves out, and `tests/test_deploy_log_audit.py::test_the_venue_facing_derivation_still_holds` holds that none of its vars or its role names the venue. No step below converges or restarts `zcrypto`, `zcrypto-red` or `zcrypto-ops`, so no step falls under the engine's inter-cycle gap or the capture pair's hour; the daily report R9 runs takes its two read-only ssh reads, of `zcrypto` and of ops, whichever stack it is given.
 
@@ -7591,7 +7671,7 @@ W$ ls ~/.config/zcrypto/ 2>/dev/null
 
 `git status --porcelain` prints nothing (a dirty tree is recorded as `dirty` on every deploy-log line). `CAP` holds what R10's commit message quotes, and the count line R10 compares its own against. The listing shows no `grafana-mon.vault.yml` before the first converge; one left by an earlier build of the node is harmless, since its token is refused and the converge mints again.
 
-**R1. The Linode, its Backups and its two records, by hand.** In the Cloud Manager: a Linode `g6-standard-2` (4 GB, 2 vCPU, 80 GB), Debian 13, in a region apart from the engine host's, label `zcrypto-mon`, the owner's master key as root's, Backups enabled at creation. At the DNS host of `zhaow.me`: an A record and an AAAA record for `zcrypto-mon`, the node's two public addresses.
+**R1. The Linode, its Backups and its two records, read where they stand.** The Linode and its records exist before this runsheet starts: the name resolves on both families and root's ssh answers on port 22. R1 therefore reads them, and what reads otherwise is corrected before R2 (a resize, a rebuild on Debian 13, the Backups toggle). In the Cloud Manager, on the Linode's own page: the plan `g6-standard-2` (4 GB, 2 vCPU, 80 GB); the image Debian 13; the label `zcrypto-mon`; its region, read beside the engine host's on that Linode's page, the two apart, and the same region is a stop that goes to the owner, since moving the node changes its addresses; and, on its Backups tab, Backups enabled, which are enabled now if they are not. The owner's master key as root's is what R3's bootstrap proves. At the DNS host of `zhaow.me`: an A record and an AAAA record for `zcrypto-mon`, the node's two public addresses. The plan, region and Backups readings go into R10's message. A node created anew after a loss takes the same values, with Backups enabled at creation.
 
 ```
 W$ A=$(dig +short A zcrypto-mon.zhaow.me) && AAAA=$(dig +short AAAA zcrypto-mon.zhaow.me) && echo "$A $AAAA"
@@ -7600,7 +7680,7 @@ W$ dig +short CAA zcrypto-mon.zhaow.me; dig +short CAA zhaow.me
 
 The two addresses are the ones the Cloud Manager shows. The CAA read, the name's own set and then its parent's, which applies while the name has none: no `issue` tag, or one that admits `letsencrypt.org`, Caddy's issuer. An `issuewild` tag governs wildcard names and not this one, so the parent's `0 issuewild "comodoca.com"` standing alone is a pass. An `issue` tag naming other authorities alone stops the certificate at R3: give the name its own set, as `zaccess.zhaow.me` has, never a wider one at the parent.
 
-**R2. The node's Cloud Firewall, by hand.** In the Cloud Manager: a firewall `zcrypto-mon`, inbound policy Drop, outbound policy Accept; inbound rules Accept TCP `22`, TCP `10022` and TCP `443`, each for IPv4 and IPv6 from all sources, and Accept ICMP for both; attached to the node. Nothing about the owner's home address enters a rule. Port 80 takes no rule.
+**R2. The node's Cloud Firewall, by hand.** In the Cloud Manager, the firewall `zcrypto-mon` is created, or read and corrected where it already exists, to this state: inbound policy Drop, outbound policy Accept; inbound rules Accept TCP `22`, TCP `10022` and TCP `443`, each for IPv4 and IPv6 from all sources, and Accept ICMP for both; attached to the node, which the firewall's Linodes tab lists. Nothing about the owner's home address enters a rule. Port 80 takes no rule. The rule list and the attachment are read in the Cloud Manager and nowhere else: the port read below shows a port closed alike whether this layer drops it, nftables does, or nothing listens on it.
 
 ```
 W$ for a in "$A" "$AAAA"; do for p in 22 80 443 10022; do timeout 5 bash -c "</dev/tcp/$a/$p" 2>/dev/null && echo "$a $p open" || echo "$a $p closed"; done; done
@@ -7622,7 +7702,7 @@ Between the second line and the third, the `Host mon` stanza of `infra/external-
 W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon
 ```
 
-The preview is the first proof the spec owes: on a node with none of the packages its recap reads `failed=0`, with the two repositories and the rendered files `changed`, and with the origin check, the installs of `grafana`, `loki`, `alloy` and `caddy`, every unit start, the timers and `the tools' service account and its one token` reading `skipping`. A preview that fails stops here: the failing task is a preview guard this plan's Review Focus names, fixed on a branch that merges before R3 is run again, never worked around by converging without the preview. After the typed limit, the real pass's recap reads `failed=0 unreachable=0`. A real pass that fails after it rendered a store's config has lost that store's queued restart, and the next pass renders nothing and queues none: once a pass has succeeded, and before R4, restart both stores by `infra/runbooks/mon.md`'s `mon-store-restart`. Its token tasks show nothing but their names (`no_log`); a pass that stops at `refuse to go on when the vaulted password is still refused` met the login lockout and is re-run after five minutes with no sign-in in between. Then:
+The preview is the first proof the spec owes: on a node with none of the packages its recap reads `failed=0`, with the two repositories and the rendered files `changed`, and with the origin check, the installs of `grafana`, `loki`, `alloy` and `caddy`, every unit start, the timers and `the tools' service account and its one token` reading `skipping`. A preview that fails stops here: the failing task is a preview guard this plan's Review Focus names, fixed on a branch that merges, after which R3 is resumed at this `converge.sh` line, never worked around by converging without the preview. The bootstrap is not run again: the node it left has `zcrypto-deploy`, so its re-bootstrap refusal would fire. After the typed limit, the real pass's recap reads `failed=0 unreachable=0`. A real pass that fails after it rendered a store's config has lost that store's queued restart, and the next pass renders nothing and queues none: once a pass has succeeded, and before R4, restart both stores by `infra/runbooks/mon.md`'s `mon-store-restart`. Its token tasks show nothing but their names (`no_log`); a pass that stops at `refuse to go on when the vaulted password is still refused` met the login lockout and is re-run after five minutes with no sign-in in between. Then:
 
 ```
 W$ ssh mon hostname
@@ -7631,7 +7711,7 @@ W$ infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags mon
 W$ for a in "$A" "$AAAA"; do for p in 22 80 443 10022; do timeout 5 bash -c "</dev/tcp/$a/$p" 2>/dev/null && echo "$a $p open" || echo "$a $p closed"; done; done
 ```
 
-`zcrypto-mon`; `600` with a non-zero size, and `1`; the second converge's real pass reads `changed=0 failed=0`, the cached token kept and nothing re-rendered (a task that reads `changed` there is a finding: its fix is a branch whose pull request is opened before R10's, and R10's message names that pull request by number); the ports read `443 open` and `10022 open`, `22 closed` (the hardening role removed the bootstrap drop-in) and `80 closed`, on both addresses. Then remove the TCP `22` rule from the `zcrypto-mon` firewall in the Cloud Manager and run the port read again: the same reading.
+`zcrypto-mon`; `600` with a non-zero size, and `1`; the second converge's real pass reads `changed=0 failed=0`, the cached token kept and nothing re-rendered (a task that reads `changed` there is a finding: its fix is a branch whose pull request is opened before R10's, and R10's message names that pull request by number); the ports read `443 open` and `10022 open`, `22 closed` (the hardening role removed the bootstrap drop-in) and `80 closed`, on both addresses. Then remove the TCP `22` rule from the `zcrypto-mon` firewall in the Cloud Manager and run the port read again: the same reading. sshd left port 22 at the converge, so the port read cannot show that rule gone: the firewall's rule list is what does, and it now reads TCP `10022` and TCP `443` for both families and ICMP, with no other inbound rule, still attached to the node.
 
 **R4. The node, read on the node** (Tasks 1, 2 and 4).
 
@@ -7653,7 +7733,7 @@ W$ ssh mon 'sudo ls /var/lib/grafana/plugins 2>/dev/null | wc -l'
 W$ ssh mon dpkg-query -W grafana loki alloy caddy prometheus
 ```
 
-In order. The public listeners are three lines, `*:443`, `0.0.0.0:10022` and `[::]:10022`: Caddy's one socket for both families and sshd's two, since the hardening role lists both addresses for it. A fourth line is a stop. The loopback ones are 3000, 9090, 3100 with Loki's gRPC 9096, 12345 and Caddy's admin 2019. The chain accepts `10022` and `443` and names no other port. Prometheus has `0` scrape targets, the receiver alone. Six `active` lines, then five `enabled` ones: a unit that is started and not enabled is gone at the first reboot. `2`. A line reading `Unattended-Upgrade::Package-Blacklist:: "prometheus$";`, the rendered block as apt parses it. `2`, one `hash_cache` per ingest path, so the bcrypt cost is paid once per shipper after a Caddy reload. `3`, the cloudsmith build carrying the three modules the Caddyfile uses. A `node_reboot_required` line reading 0, or 1 when the first patches want a reboot, in which case the node is rebooted by hand now, before anything depends on it. The self-check's line reads `selfcheck: rules=FAIL (…) fleet=FAIL (…) loki=ok (…) -> not pinging`: no rule is pushed yet and no fleet host ships. No line there, or a unit that failed with `Failed to load environment files`, is a stop before R8: it is systemd unable to read the root-only file for a unit under a dynamic user, which this read is the first to prove. `0`, no plugin downloaded: the preinstaller is off, and the two datasources' plugins are the package's own under `/var/lib/grafana/plugins-bundled`, which R9's `unhealthy=[]` shows loaded. The five versions go into R10's message, and Grafana's is read against the fix version of each advisory the spec's measured basis lists (`https://grafana.com/security/security-advisories/`: CVE-2026-42127, CVE-2026-8609, CVE-2026-27880, CVE-2026-33382 and CVE-2026-21720, which need no authentication, then CVE-2026-42129, CVE-2025-3454, CVE-2026-21724, CVE-2025-12141, CVE-2026-13719, CVE-2026-33380 and CVE-2026-27876); an installed version below the fix of one that needs no authentication stops the rollout with `ssh mon sudo systemctl stop caddy` until the package carries it.
+In order. The public listeners are three lines, `*:443`, `0.0.0.0:10022` and `[::]:10022`: Caddy's one socket for both families and sshd's two, since the hardening role lists both addresses for it. A fourth line is a stop. The loopback ones are 3000, 9090, 3100 with Loki's gRPC 9096, 12345 and Caddy's admin 2019. The chain accepts `10022` and `443` and names no other port. Prometheus has `0` scrape targets, the receiver alone. Six `active` lines, then five `enabled` ones: a unit that is started and not enabled is gone at the first reboot. `2`. A line reading `Unattended-Upgrade::Package-Blacklist:: "prometheus$";`, the rendered block as apt parses it. `2`, one `hash_cache` per ingest path, so the bcrypt cost is paid once per shipper after a Caddy reload. `3`, the cloudsmith build carrying the three modules the Caddyfile uses. A `node_reboot_required` line reading 0, or 1 when the first patches want a reboot, in which case the node is rebooted by hand now, before anything depends on it. The self-check's line reads `selfcheck: rules=FAIL (…) fleet=FAIL (…) loki=ok (…) -> not pinging`: no rule is pushed yet and no fleet host ships. No line there, or a unit that failed with `Failed to load environment files`, is a stop before R8: it is systemd unable to read the root-only file for a unit under a dynamic user, which this read is the first to prove. `0`, no plugin downloaded: the preinstaller is off, and the two datasources' plugins are the package's own under `/var/lib/grafana/plugins-bundled`, which R9's `unhealthy=[]` shows loaded. The five versions go into R10's message, and Grafana's is read against the fix version of each advisory the spec's measured basis lists (`https://grafana.com/security/security-advisories/`: CVE-2026-42127, CVE-2026-8609, CVE-2026-27880, CVE-2026-33382 and CVE-2026-21720, which need no authentication, then CVE-2026-42129, CVE-2025-3454, CVE-2026-21724, CVE-2025-12141, CVE-2026-13719, CVE-2026-33380 and CVE-2026-27876); an installed version below the fix of one that needs no authentication stops the rollout with `ssh mon sudo systemctl stop caddy` until the package carries it. The stop is registered where the daily pass evaluates it, in a pull request of its own: T0217's `ripe_when` is rewritten, through the `topic-ops` skill, to name the advisory and its fix version, ripe when `ssh mon apt-cache policy grafana` reads a candidate at or above that version, with the stopped Caddy and this step recorded under the topic's findings. The rollout resumes here, with `grafana` upgraded by `infra/runbooks/mon.md`'s `mon-patch-pass` step 3 and Caddy started.
 
 **R5. The edge, read from outside** (Task 2).
 
@@ -7775,7 +7855,7 @@ W$ uv run python infra/scripts/grafana-query.py --stack mon 'count by (job) (up{
 W$ ssh mon 'for u in grafana-server prometheus loki alloy caddy; do printf "%s " $u; systemctl show $u -p MemoryCurrent --value; done; free -m | sed -n 2p'
 ```
 
-Five jobs, `integrations/unix`, `integrations/self`, `grafana`, `prometheus` and `loki`, 1 each; one resident-memory series per process that exports it, Loki's and Prometheus's among them; one head-series value. All three readings go into R10's message. The head-series value is the node's own unfiltered contribution with no fleet host shipping: it is what `## What this plan asks of the spec` asks the spec to add to its sizing, and a value above 12,000 goes to the owner before phase 2 is planned, since the fleet's 9,400 to 10,600 land on top of it against a 20,000 bar.
+Five jobs, `integrations/unix`, `integrations/self`, `grafana`, `prometheus` and `loki`, 1 each; one resident-memory series per process that exports it, Loki's and Prometheus's among them; one head-series value. All three readings go into R10's message. The head-series value is the node's own unfiltered contribution with no fleet host shipping: it is what `## What this plan asks of the spec` asks the spec to add to its sizing, and it goes to the owner before phase 2 is planned, whatever it reads: the fleet's 9,400 to 10,600 land on top of it against a 20,000 bar, so a reading from 9,400 up can already put the expected head at the bar, and whether the bar and the cap rise or the node's self-scrape is thinned is the owner's choice, which the spec's open question leaves to this reading.
 
 **R8. The first push, to the shadow channel** (Tasks 5 to 7). A workstation command under `.claude/skills/zcrypto-grafana-push/SKILL.md`'s Step 2, its conditions on where a push runs from, from merged `develop`. The skill's Step 1 preflight and Step 3 render are written for a push to Grafana Cloud and are not this push's: on a node no host ships to yet, each fleet rule reads `(no series)` by design, and R9 is this push's verification. It is `infra/runbooks/mon.md`'s `mon-push` with its step 2, the webhook, because this push mints the node's two contact points:
 
@@ -7844,19 +7924,19 @@ W$ uv run pre-commit run -a
 W$ git add docs/reference/deploy-log.jsonl docs/reference/fleet.md
 ```
 
-The status names `docs/reference/deploy-log.jsonl`; `diff` prints nothing, the count being the one R0 kept, the node's rows outside its set; the tests pass. `docs/reference/fleet.md` is re-trued where the node read differently from what Tasks 1 and 7 wrote (the region, a port, a unit name). The commit is `chore(fleet): the observability node runs Grafana, Prometheus, Loki and Caddy and takes a shadow push of every rule`, its message carrying R4's five versions and the advisory read, R5's two address lines, R6's two acceptances, R7's memory and head-series readings, and R9's reads and the two store stops, with the trailer of `## Global Constraints`. The node takes no `docs/reference/fleet-pins.md` row and no pruner entry: its packages are followed from apt.
+The status names `docs/reference/deploy-log.jsonl`; `diff` prints nothing, the count being the one R0 kept, the node's rows outside its set; the tests pass. `docs/reference/fleet.md` is re-trued where the node read differently from what Tasks 1 and 7 wrote (the region, a port, a unit name). The commit is `chore(fleet): the observability node runs Grafana, Prometheus, Loki and Caddy and takes a shadow push of every rule`, its message carrying R1's plan, region and Backups readings, R4's five versions and the advisory read, R5's two address lines, R6's two acceptances, R7's memory and head-series readings, and R9's reads and the two store stops, with the trailer of `## Global Constraints`. The node takes no `docs/reference/fleet-pins.md` row and no pruner entry: its packages are followed from apt.
 
 ## Resolution
 
-The branch delivers phase 1 of the spec: the node's place in the fleet, the `mon` role, the stack table, the push's skip list, the node's rule group, runbook page and dashboard row, in Tasks 1 to 7, and the two sentences that let the push skill's checks pass a Grafana Cloud push with the node's group in the tree, in Task 8. Once `## Rollout (attended)` has run, `zcrypto-mon` evaluates every rule of the tree against its own stores and pages a shadow channel; no fleet host ships to it, Grafana Cloud is what it was, and rolling back is deleting the Linode, the role staying inert (spec D25).
+The branch delivers phase 1 of the spec: the node's place in the fleet, the `mon` role, the stack table, the push's skip list, the node's rule group, runbook page and dashboard row, in Tasks 1 to 7, and the two sentences that let the push skill's checks pass a Grafana Cloud push with the node's group in the tree, in Task 8. Once `## Rollout (attended)` has run, `zcrypto-mon` evaluates every rule of the tree against its own stores and pages a shadow channel; no fleet host ships to it, Grafana Cloud is what it was, and rolling back is deleting the Linode and taking the patch pass's reminder out of `read_reminders`, the role staying inert (spec D25).
 
 Two of the spec's open questions are settled here. The series the self-check reads as "rule evaluation is fresh" is `grafana_alerting_ticker_last_consumed_tick_timestamp_seconds` within 60 s, beside `grafana_alerting_schedule_alert_rules` at 1 or more (Task 4). The thresholds and `for` of the node's eight rules are Task 7's list, each read by value at R9. The items the spec left unmeasured and assigned to this phase's first converge are read in the Rollout: the deb's first start under the role and certificate issuance over 443 alone (R3, R5), the cloudsmith Caddy's module set (R4), both ingest paths through Caddy's basic auth (R6), Loki's and Prometheus's memory (R7), and the installed Grafana's version against each listed advisory's fix (R4).
 
-It does not deliver phases 2 to 4, each a plan of its own under this serial. Phase 2's plan takes from this one: the `fleet` and `logship` passwords in `group_vars/observed/vault.yml` for the shippers' `MON_*` names; `grafana_auth.STACKS` for `infra/scripts/grafana-compare.py`; `mon_selfcheck_healthcheck_url` for the minted healthchecks.io check; the self-check's fleet read and `zcrypto-mon-ingest-dark`, both of which turn healthy at the first shipping host; and R7's head-series reading for its sizing. The push skill's two-stack wording, the exposure page's "read ingest-dark first" step and the `prometheus` blacklist's review are named where they fall: phase 2's first dual push, phase 3's cutover, whose change list in the spec names `infra/runbooks/engine.md` for the step, and the store-restart drill. From R3's first converge the daily pass's reminders carry `mon patch pass`, which is what brings the node's monthly pass, and its read of the reboot flag, to a person while the node pages the shadow channel alone. T0217 stays open until the phase that delivers its solution merges; `docs/reference/fleet.md` is re-trued twice, by Tasks 1 and 7 on this branch and by R10's records pull request where the node read differently.
+It does not deliver phases 2 to 4, each a plan of its own under this serial. Phase 2's plan takes from this one: the `fleet` and `logship` passwords in `group_vars/observed/vault.yml` for the shippers' `MON_*` names; `grafana_auth.STACKS` for `infra/scripts/grafana-compare.py`; `mon_selfcheck_healthcheck_url` for the minted healthchecks.io check; the self-check's fleet read and `zcrypto-mon-ingest-dark`, both of which turn healthy at the first shipping host; and R7's head-series reading for its sizing, which goes to the owner before that plan is written. The push skill's two-stack wording, the exposure page's "read ingest-dark first" step and the `prometheus` blacklist's review are named where they fall: phase 2's first dual push, phase 3's cutover, whose change list in the spec names `infra/runbooks/engine.md` for the step, and the store-restart drill. From R3's first converge the daily pass's reminders carry `mon patch pass`, which is what brings the node's monthly pass, and its read of the reboot flag, to a person while the node pages the shadow channel alone. T0085's rotation scope carries the node's credentials from Task 7's commit, so the go-live round rotates them with the fleet's. T0217 stays open until the phase that delivers its solution merges; `docs/reference/fleet.md` is re-trued twice, by Tasks 1 and 7 on this branch and by R10's records pull request where the node read differently.
 
 ## What this plan asks of the spec
 
-The plan itself changes no line of the spec. The spec was amended for each item below, the first seven when this plan was committed, and the fifth and sixth again with the six after them when its review was folded, except the second, which stays the owner's call once R7 has read the real figure and is carried in the spec's open questions; none blocks a task.
+The plan itself changes no line of the spec. The spec was amended for each item below, the first seven when this plan was committed, the fifth and sixth again with the six after them when its first review was folded, and the eleventh to the thirteenth again with the fourteenth when its second was, except the second, which stays the owner's call once R7 has read the real figure and is carried in the spec's open questions; none blocks a task.
 
 - D7's pattern ended `$`, which under Ansible's `match`, Python's, also matches before a trailing newline, the one shape D7's first correction exists to refuse. It now ends `\Z`, as the role's does.
 - D10's sizing and D16's series bar count the fleet and not the node. The node's own Alloy ships unfiltered too: Grafana's, Loki's and Prometheus's own `/metrics`, Alloy's and the host's came to between 9,700 and 10,300 series on the workstation's loopback (Grafana 5,819, Loki 2,277, Prometheus 591, Alloy 544, the host 458 on 24 cores, fewer on the node's two). With the fleet's 9,400 to 10,600 on top, the expected head is near 20,000, which is D16's bar, described there as "about twice the expected count", and the margin under the 8 GiB cap shrinks from three or four times to under two. R7 reads the real figure. The choices are the owner's: raise the bar and re-state the sizing, or thin the node's self-scrape at its source, which is the one endpoint the "never filtered" invariant was not written about.
@@ -7868,6 +7948,7 @@ The plan itself changes no line of the spec. The spec was amended for each item 
 - D4 refused `/metrics` and left what lies under it: Grafana serves a metrics tree per plugin, `/metrics/plugins/<id>`, without a login. D4 and the phase-1 proofs now name `/metrics/*`.
 - D5 and D7 named no admin login, which left Grafana's default. The lockout D2 relies on is by account name, so under the default name a stranger's guesses would keep the role's sign-in and the owner's locked. They now carry a generated name, vaulted beside the password, and "What stays manual" lists it.
 - D5 was silent on Grafana's plugin preinstaller, which downloads plugins from grafana.com at each start and replaces the bundled Prometheus and Loki datasources with a newer release. D5 now turns it off, and the measured basis carries the reading.
-- D5 and D16 described the database-lock rule as `database is locked` in Grafana's journal. Grafana's ordinary retries log that text at info, so D16's rule is now a write Grafana gave up on.
-- D18's invariant, a `zcrypto-mon` rule never pushed to Grafana Cloud, held only while `GRAFANA_SKIP_RULE_GROUPS` was unset. D18 now carries the push's refusal.
-- D3 named the monthly patch pass and nothing that starts it, and through phases 1 and 2 the node's pending-reboot rule reaches a channel no one reads. D3 now names the daily pass's reminder and the pass's own read of the reboot flag, and the phase-1 list `infra/scripts/ops_daily.py`'s reminder. The phase-3 list names `infra/runbooks/engine.md`, for the exposure page's first step, which D16 and D20 speak of and no list carried.
+- D5 and D16 described the database-lock rule as `database is locked` in Grafana's journal. Grafana's ordinary retries log that text at info, so D16's rule is now an operation Grafana gave up on.
+- D18's invariant, a `zcrypto-mon` rule never pushed to Grafana Cloud, held only while `GRAFANA_SKIP_RULE_GROUPS` was unset. D18 now carries the push's refusal, and gives as its reason a caller that exports the variable empty or as a list without the group: the node's own push scopes its empty value to one command.
+- D3 named the monthly patch pass and nothing that starts it, and through phases 1 and 2 the node's pending-reboot rule reaches a channel no one reads. D3 now names the daily pass's reminder and the pass's own read of the reboot flag, and the phase-1 list `infra/scripts/ops_daily.py`'s reminder. The reminder counts from the node's last un-tagged converge whatever it was run for, so D3 says a converge made for another reason is followed by the pass, and D25 that a rollback of phase 1 removes the reminder with the node.
+- The spec mints credentials (D4's two ingest users, D6's token in a cache outside the tree, D7's vaulted values, D18's shadow webhook) and named no place for them in the go-live rotation round, whose own scope check reads the tree alone. The phase-1 list now names that round's topic, which Task 7 edits. The phase-3 list names `infra/runbooks/engine.md`, for the exposure page's first step, which D16 and D20 speak of and no list carried.
