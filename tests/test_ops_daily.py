@@ -782,6 +782,17 @@ def test_the_stored_account_block_hashes_to_the_digest_its_section_prints():
     )
 
 
+def test_the_stored_account_check_line_hashes_both_texts_the_block_reads():
+    page = (_RUNBOOKS / "engine-procedures.md").read_text()
+    section = page[page.index('<a name="engine-clear-stored-account"></a>') :]
+    command = re.search(r"`([^`]*sha256sum)` prints `[0-9a-f]{64}`", section).group(1)
+
+    assert command == """printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum""", (
+        f"the check line under engine-clear-stored-account reads {command!r}: the digest beside it is of the Python "
+        "text followed by the function's text, each whole, so another command prints another digest over a correct paste"
+    )
+
+
 def test_the_red_button_is_never_autonomous():
     """The unattended daily pass reads these runbooks and classifies every command in them. This
     one closes the whole book at market; nothing may ever run it without a person."""
