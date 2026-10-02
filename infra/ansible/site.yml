@@ -22,13 +22,15 @@
 
     # spec 00082 guard 4: even with converge_primary granted, an UN-TAGGED run on the primary pulls
     # in the engine play, whose digest assert fails the host closed — and "fixing" that with
-    # -e engine_image_digest=... restarts the LIVE trade engine. Tags must be named explicitly.
+    # -e engine_image_digest=... restarts the LIVE trade engine. A run naming no tags carries `all`,
+    # and so does one that names `all` beside others: either way every play runs.
     - name: refuse an un-tagged run on the live primary
       ansible.builtin.assert:
-        that: (ansible_run_tags | list) != ['all'] or 'engine' in ansible_skip_tags
+        that: "'all' not in ansible_run_tags or 'engine' in ansible_skip_tags"
         fail_msg: >-
-          This run names no tags — on the live primary that sweeps in every play, including the
-          engine play. Scope it explicitly: --tags capture, --tags engine, or --skip-tags engine.
+          This run names no tags, or names `all` among them — on the live primary that sweeps in
+          every play, including the engine play. Scope it explicitly: --tags capture, --tags engine,
+          or --skip-tags engine.
       when: inventory_hostname in groups['engine_host']
       tags: [always]
 
