@@ -299,6 +299,20 @@ def test_bare_run_still_refused(seq):
     assert not truthy(assert_that(_untag_guard()), _tags(seq, ["all"], []))
 
 
+@TAG_SEQUENCES
+@pytest.mark.parametrize(
+    ("run", "skip", "passes"),
+    [
+        (["all", "capture"], [], False),
+        (["all", "capture"], ["engine"], True),
+        (["capture", "engine"], [], True),
+    ],
+    ids=["all-and-capture", "all-and-capture-skipping-engine", "capture-and-engine"],
+)
+def test_all_among_the_run_tags_is_refused_unless_engine_is_skipped(seq, run, skip, passes):
+    assert truthy(assert_that(_untag_guard()), _tags(seq, run, skip)) is passes
+
+
 WINDOW = "engine window — refuse a converge outside the inter-cycle gap"
 
 
