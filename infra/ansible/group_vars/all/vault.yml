@@ -1,7 +1,7 @@
 # group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY. Read the next paragraph before editing:
 # ten of these DO render onto managed hosts, so this is not a workstation-only file.
 #
-# MIXED CUSTODY — do not read this file as workstation-only. Ten of the fifteen values ARE
+# MIXED CUSTODY — do not read this file as workstation-only. Ten of the sixteen values ARE
 # rendered onto managed hosts through inventory. Seven are WireGuard secrets, three of them the zaccess tunnel's:
 # `zaccess_wg_bridgehead_private_key` and `zaccess_wg_preshared_key` by `roles/access`,
 # `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`, both templating
@@ -17,13 +17,13 @@
 # `zcrypto` by `roles/engine` (engine.env and haproxy.cfg) and read by `roles/cache` on the three nodes;
 # rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`.
 #
-# The other five never reach a host. Four are read from the WORKSTATION BY FILE PATH:
+# The other six never reach a host. Four are read from the WORKSTATION BY FILE PATH:
 # `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py`,
 # `healthchecks_readonly_api_key` by `ops_daily.py`'s direct dead-man read (all three through
 # `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +
 # `zaccess_client_p12_pass` by `infra/scripts/zaccess-extract-client-cert.sh`.
 #
-# `slack_webhook_url` is the odd one: NOTHING in production reads it from this file. It is vaulted
+# `slack_webhook_url` is the odd one, `slack_shadow_webhook_url` at the end of this file its sibling: NOTHING in production reads it from this file. It is vaulted
 # here and reaches `grafana-push.sh` through the environment as `GRAFANA_SLACK_WEBHOOK_URL`, the
 # same way that script takes `GRAFANA_SA_TOKEN` — grafana-push.sh opens no vault at all and only
 # documents the read recipe in a comment. Its only file-path reader is a test.
@@ -302,3 +302,19 @@ cache_sentinel_requirepass: !vault |
           32326636323866663134353432373866313962636437306363383730303930656138313333333961
           62353039316433663039633734333761303833326236386230333661366364386536616630643932
           663666343165666564363632333365613266
+
+# The shadow Slack channel's incoming-webhook URL (spec 00121), minted and vaulted by the owner. The
+# observability node's two contact points are minted with it: it reaches grafana-push.sh through the
+# environment as GRAFANA_SLACK_WEBHOOK_URL, as slack_webhook_url does (infra/runbooks/mon.md's mon-push),
+# and nothing in production reads it from this file. Treat as a credential.
+slack_shadow_webhook_url: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          65663465336165393434316338633638323730393239633665303531653637323665336164303335
+          3037336630373232323534363764343732616531366439310a306264343063326166386462316339
+          65343031316161313438333266393534313530316362393437366232633235323563373735383463
+          3630326563346630350a383036636439653137643233316137326334323834313965343632303239
+          31643733643561633038656132383964353863313838366661363638373739303233363762303036
+          32316135383530646364303066633366326466623863396563663762633434373863373162396436
+          61383230316133353032313134656562383530323335303063343763323537396666363433323436
+          64373863383333303230656430613666633661313965653665623064333462656137633835343161
+          3933
