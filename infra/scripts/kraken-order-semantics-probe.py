@@ -64,8 +64,7 @@ strategy, so its client order ids carry the infix `-001-000-`. This harness mint
 `O-<YYYYMMDD>-<HHMMSS>-901-P6V-<n>` -- nautilus's own id SHAPE, with tags the engine structurally
 cannot emit. At 27 characters or more it never reaches Kraken whole: the adapter sends a non-UUID
 id over 18 characters as `O` plus its last 17, so it goes out as `O-<HHMMSS>-901-P6V-<n>` while
-`<n>` is one digit, the infix intact. What Kraken accepted on 2026-07-10 was an 18-character cut
-of nautilus's shape, not a 27-character id. Each id is asserted distinct from the engine's infix
+`<n>` is one digit, the infix intact. Each id is asserted distinct from the engine's infix
 before submission.
 """
 
