@@ -2025,6 +2025,66 @@ def test_the_real_register_yields_a_refdata_reminder():
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
     assert read.unreadable is None, read.unreadable
+    # The committed deploy log decides whether the observability node's patch pass is a third.
+    assert {r.name for r in read.reminders} - {"mon patch pass"} == {"refdata sweep", "healable re-derivation"}
+
+
+def _converge(ts: str, *, limit="zcrypto-mon", tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
+    return {"ts": ts, "limit": limit, "tags": tags, "skip_tags": skip_tags, "rc": rc, "playbook": playbook}
+
+
+def _deploy_log(tmp_path, *rows):
+    log = tmp_path / "deploy-log.jsonl"
+    log.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return log
+
+
+_MON_LOG = (
+    _converge("2026-10-06T09:00:00Z"),  # the node's first converge
+    _converge("2026-11-03T10:00:00Z"),  # a patch pass's re-converge
+    _converge("2026-11-20T10:00:00Z", tags="mon"),  # a token re-mint or a replaced secret, which is no pass
+    _converge("2026-11-21T10:00:00Z", rc=2),  # a full converge that failed
+    _converge("2026-11-22T10:00:00Z", limit="zcrypto-ops"),
+    _converge("2026-11-23T10:00:00Z", playbook="bootstrap.yml"),
+    _converge("2026-11-24T10:00:00Z", skip_tags="engine"),  # a converge that skipped a tag, which is no full one
+)
+
+
+@pytest.mark.parametrize(
+    "now,status,owed",
+    [
+        (datetime(2026, 11, 28, 3, 0, tzinfo=timezone.utc), "due in 5 days", False),
+        (datetime(2026, 12, 3, 3, 0, tzinfo=timezone.utc), "due in 0 days", True),
+        (datetime(2026, 12, 9, 3, 0, tzinfo=timezone.utc), "OVERDUE by 6 days", True),
+    ],
+)
+def test_the_mon_patch_pass_is_due_a_month_after_the_nodes_last_full_converge(tmp_path, now, status, owed):
+    read = ops_daily.read_reminders(
+        "tok",
+        now=now,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(tmp_path, *_MON_LOG),
+    )
+    patch = _reminder(read, "mon patch pass")
+    assert patch.status.startswith(status) and "2026-11-03" in patch.status, patch.status
+    assert patch.owed is owed
+    assert patch.runbook == "infra/runbooks/mon.md#mon-patch-pass"
+    assert read.unreadable is None
+
+
+@pytest.mark.parametrize("rows", [(), _MON_LOG[2:]], ids=["an empty log", "no full converge of the node"])
+def test_a_deploy_log_with_no_full_converge_of_the_node_owes_no_patch_pass(tmp_path, rows):
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(tmp_path, *rows),
+    )
+    assert read.unreadable is None, read.unreadable
     assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
 
 

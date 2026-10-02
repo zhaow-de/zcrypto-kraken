@@ -2112,7 +2112,9 @@ def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
 
 # --- the pending-reboot family: the hosts that never reboot themselves ---------------------------
 # The capture pair and ops run `Automatic-Reboot "false"` and publish the reboot-check flag; a host left out of a
-# matcher reboots by hand with nothing paging.
+# matcher reboots by hand with nothing paging. The observability node reboots by hand too and stays out of this set:
+# the family is pushed to Grafana Cloud, which holds no series of the node, so its flag pages through its own group's
+# `zcrypto-mon-reboot-pending`, held at the end of this file.
 _REBOOT_HOSTS = frozenset({"zcrypto", "zcrypto-red", "ops"})
 _REBOOT_FAMILY = (
     "zcrypto-capture-reboot-pending",
@@ -2163,3 +2165,144 @@ def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_s
     late = _duration_seconds(rule["for"]) + 60 + 60
     left_at_page = evaluator["params"][0] * _TMP_INODES - _FILL_PER_HOUR * late / 3600
     assert left_at_page >= _FILL_PER_HOUR, f"{left_at_page:.0f} inodes left at the page, under an hour at {_FILL_PER_HOUR}/h"
+
+
+# --- the observability node's own group: evaluated on the node alone -----------------------------
+_MON_GROUP = "zcrypto-mon"
+_MON_RULES = {
+    "zcrypto-alloy-dark-mon": ("critical", "901"),
+    "zcrypto-mon-disk-low": ("warning", "902"),
+    "zcrypto-mon-reboot-pending": ("warning", "903"),
+    "zcrypto-mon-store-down": ("critical", "904"),
+    "zcrypto-mon-sqlite-locked": ("warning", "905"),
+    "zcrypto-mon-ingest-dark": ("critical", "906"),
+    "zcrypto-mon-series-high": ("warning", "907"),
+    "zcrypto-mon-retention-by-size": ("warning", "908"),
+    "zcrypto-mon-shipper-loss": ("warning", "909"),
+}
+
+
+def _mon_rules() -> list[dict]:
+    return [r for r in _rules() if r["ruleGroup"] == _MON_GROUP]
+
+
+def _evaluator(rule: dict) -> dict:
+    return next(q for q in rule["data"] if q["model"].get("type") == "threshold")["model"]["conditions"][0]["evaluator"]
+
+
+def test_the_mon_group_is_its_rules_each_with_its_own_section_and_panel():
+    found = {
+        r["uid"]: (r["labels"]["severity"], r["annotations"]["__panelId__"])
+        for r in _mon_rules()
+        if r["annotations"]["__dashboardUid__"] == "zcrypto-fleet"
+    }
+    assert found == _MON_RULES
+    for rule in _mon_rules():
+        assert rule["annotations"]["summary"].endswith(f"Runbook: infra/runbooks/mon.md#{rule['uid']}"), rule["uid"]
+
+
+def test_the_push_keeps_the_mon_group_off_grafana_cloud_by_default():
+    """Grafana Cloud holds no series of the node, so the group's two dead-men would page there for good."""
+    (skipped,) = re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', PUSH.read_text(), re.M)
+    assert skipped.split() == [_MON_GROUP]
+    dead_men = sorted(r["uid"] for r in _mon_rules() if r["noDataState"] == "Alerting")
+    assert dead_men == ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"], dead_men
+
+
+def _admits_the_node(op: str, value: str) -> bool:
+    matched = bool(re.fullmatch(value, "zcrypto-mon")) if "~" in op else value == "zcrypto-mon"
+    return matched if op in ("=", "=~") else not matched
+
+
+def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
+    """A rule outside the group whose `host` matcher admitted the node would be pushed to Grafana Cloud, where the node
+    has no series. A rule outside the group with no `host` matcher is not held here."""
+    for rule in _rules():
+        matchers = [
+            (op, value)
+            for q in rule["data"]
+            for op, value in re.findall(r'\bhost\s*(=~|!=|!~|=)\s*"([^"]*)"', str((q.get("model") or {}).get("expr", "")))
+        ]
+        admits_the_node = [(op, value) for op, value in matchers if _admits_the_node(op, value)]
+        if rule["ruleGroup"] != _MON_GROUP:
+            assert not admits_the_node, f"{rule['uid']} is pushed to both stacks and its matcher {admits_the_node} admits the node"
+        elif rule["uid"] == "zcrypto-mon-ingest-dark":
+            assert matchers == [("!=", "zcrypto-mon")], matchers
+        elif rule["uid"] == "zcrypto-mon-shipper-loss":
+            assert matchers == [], f"it reads each shipper the node holds, and names none: {matchers}"
+        else:
+            assert matchers and set(matchers) == {("=", "zcrypto-mon")}, (rule["uid"], matchers)
+
+
+def test_ingest_dark_pages_ahead_of_every_per_host_alloy_dark_rule():
+    """Every fleet host absent at once is the node's edge, and the page that says so has to arrive before the per-host
+    pages and the exposure page that the same fault produces."""
+    ingest = _rule("zcrypto-mon-ingest-dark")
+    assert _prom_exprs(ingest) == ['count(up{host!="zcrypto-mon"}) or on() vector(0)']
+    assert _evaluator(ingest) == {"type": "lt", "params": [1]}
+    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] != _MON_GROUP]
+    assert len(per_host) == 8, [r["uid"] for r in per_host]
+    assert all(_duration_seconds(ingest["for"]) < _duration_seconds(r["for"]) for r in per_host)
+    assert _duration_seconds(ingest["for"]) < _duration_seconds(_rule("zcrypto-engine-dark-with-exposure")["for"])
+
+
+def test_the_store_rule_counts_two_stores_and_leaves_a_dark_alloy_to_its_own_rule():
+    rule = _rule("zcrypto-mon-store-down")
+    (expr,) = _prom_exprs(rule)
+    for leg in ('up{host="zcrypto-mon", job="prometheus"} == 1', 'up{host="zcrypto-mon", job="loki"} == 1'):
+        assert expr.count(leg) == 1, leg
+    assert expr.endswith('and on() (up{host="zcrypto-mon", job="integrations/unix"} == 1)')
+    assert _evaluator(rule) == {"type": "lt", "params": [2]}
+    assert rule["noDataState"] == "OK", "a dark Alloy returns nothing here, and that is zcrypto-alloy-dark-mon's page"
+    assert "alert history is not written" in rule["annotations"]["summary"]
+
+
+def test_the_two_budget_fences_read_what_prometheus_reports_about_itself():
+    series = _rule("zcrypto-mon-series-high")
+    assert _prom_exprs(series) == ['prometheus_tsdb_head_series{host="zcrypto-mon"}']
+    assert _evaluator(series) == {"type": "gt", "params": [40000]}
+    retention = _rule("zcrypto-mon-retention-by-size")
+    (expr,) = _prom_exprs(retention)
+    assert expr == 'increase(prometheus_tsdb_size_retentions_total{host="zcrypto-mon"}[6h])'
+    assert retention["data"][0]["relativeTimeRange"] == {"from": 21600, "to": 0}
+    assert _evaluator(retention) == {"type": "gt", "params": [0]}
+
+
+def test_the_database_lock_rule_is_a_burst_rule_over_grafanas_own_journal():
+    rule = _rule("zcrypto-mon-sqlite-locked")
+    (query,) = [q for q in rule["data"] if q["datasourceUid"] == "${GRAFANA_LOKI_DS_UID}"]
+    # The retry line carries the same text at info, at every start: without the second filter the rule fires on it.
+    assert query["model"]["expr"] == (
+        'sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked"'
+        ' != "sleeping then retrying" [15m])) or on() vector(0)'
+    )
+    assert (rule["for"], rule["notification_settings"]["receiver"]) == ("0s", "logs")
+    alloy = (ANSIBLE / "roles/mon/files/config.alloy").read_text()
+    (units,) = re.findall(r'^\s*regex\s*=\s*"\(([a-z|-]+)\)\\\\\.service"$', alloy, re.M)
+    assert "grafana-server" in units.split("|"), (
+        "the node's Alloy no longer ships Grafana's journal, so this rule would read nothing"
+    )
+
+
+def test_the_node_reboot_rule_keeps_the_capture_rules_bar_and_duration():
+    ours, theirs = _rule("zcrypto-mon-reboot-pending"), _rule("zcrypto-capture-reboot-pending")
+    assert _prom_exprs(ours) == ['node_reboot_required{host="zcrypto-mon"}']
+    assert (_evaluator(ours), ours["for"]) == (_evaluator(theirs), theirs["for"])
+
+
+def test_the_shipper_loss_rule_reads_alloys_two_loss_counters_and_keeps_the_logship_rules_window_and_wait():
+    ours, theirs = _rule("zcrypto-mon-shipper-loss"), _rule("zcrypto-logship-lines-dropped")
+    # The log counter's own `host` is its destination's, so that arm takes the shipper's `host` from `up`, on `instance`.
+    assert _prom_exprs(ours) == [
+        'sum by (host) (increase(prometheus_remote_storage_samples_failed_total{job="integrations/self"}[6h])'
+        ' or sum by (instance) (increase(loki_write_dropped_entries_total{job="integrations/self"}[6h]))'
+        ' * on (instance) group_left (host) count by (instance, host) (up{job="integrations/self"}))'
+    ]
+    assert ours["data"][0]["relativeTimeRange"] == theirs["data"][0]["relativeTimeRange"] == {"from": 21600, "to": 0}
+    assert (_evaluator(ours), ours["for"]) == (_evaluator(theirs), theirs["for"])
+    assert ours["noDataState"] == "OK", "a shipper that delivers no metrics delivers no counter: its alloy-dark rule's page"
+    alloy = (ANSIBLE / "roles/mon/files/config.alloy").read_text()
+    (scraped,) = re.findall(r"^\s*targets\s*=\s*array\.concat\((.*)\)$", alloy, re.M)
+    assert "prometheus.exporter.self.alloy.targets" in scraped.split(", "), (
+        "the node's Alloy no longer scrapes itself, so on the node this rule would read nothing"
+    )

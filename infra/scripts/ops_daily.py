@@ -99,6 +99,13 @@ _UID_HOST = {
     "zcrypto-alloy-dark-cache-1": "zcrypto-valkey1",
     "zcrypto-alloy-dark-cache-2": "zcrypto-valkey2",
     "zcrypto-alloy-dark-cache-3": "zcrypto-valkey3",
+    "zcrypto-alloy-dark-mon": "zcrypto-mon",
+    "zcrypto-mon-disk-low": "zcrypto-mon",
+    "zcrypto-mon-reboot-pending": "zcrypto-mon",
+    "zcrypto-mon-store-down": "zcrypto-mon",
+    "zcrypto-mon-sqlite-locked": "zcrypto-mon",
+    "zcrypto-mon-series-high": "zcrypto-mon",
+    "zcrypto-mon-retention-by-size": "zcrypto-mon",
 }
 
 
@@ -324,6 +331,24 @@ def _a_month_after(d: date) -> date:
 HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+MON_PATCH_RUNBOOK = "infra/runbooks/mon.md#mon-patch-pass"
+MON_NODE = "zcrypto-mon"
+
+
+def last_full_converge(log: Path, host: str) -> date | None:
+    """The date of `host`'s last successful `site.yml` converge that named no tag, or None when the log holds none."""
+    if not log.exists():
+        return None
+    found = None
+    for line in log.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        whole = row.get("playbook") == "site.yml" and not row.get("tags") and not row.get("skip_tags")
+        if whole and row.get("limit") == host and row.get("rc") == 0:
+            found = date.fromisoformat(row["ts"][:10])
+    return found
 
 
 @dataclass(frozen=True)
@@ -341,12 +366,19 @@ class RemindersRead:
 
 
 def read_reminders(
-    token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen, register: Path = REGISTER
+    token: str,
+    *,
+    now: datetime,
+    window: timedelta,
+    opener=urllib.request.urlopen,
+    register: Path = REGISTER,
+    deploy_log: Path = DEPLOY_LOG,
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
     nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
-    the register's last re-confirmation row plus the monthly cadence, the healable re-derivation from
-    whether its counter moved in the window.
+    the register's last re-confirmation row plus the monthly cadence, the observability node's patch
+    pass from its last full converge in the deploy log plus the same cadence, the healable
+    re-derivation from whether its counter moved in the window.
 
     An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
     every other read here.
@@ -369,6 +401,18 @@ def read_reminders(
             read.reminders.append(
                 Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
             )
+
+    try:
+        patched = last_full_converge(deploy_log, MON_NODE)
+    except _UNREACHABLE as exc:
+        note(f"the deploy log could not be read: {exc}")
+    else:
+        # No full converge on record is a node that is not built: nothing is owed on it.
+        if patched is not None:
+            days = (_a_month_after(patched) - now.date()).days
+            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            last_pass = f"{status} (last full converge {patched.isoformat()})"
+            read.reminders.append(Reminder("mon patch pass", last_pass, owed=days <= 0, runbook=MON_PATCH_RUNBOOK))
 
     hours = max(1, int(window.total_seconds() // 3600))
     try:

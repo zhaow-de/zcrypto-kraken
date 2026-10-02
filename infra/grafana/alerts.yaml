@@ -5635,3 +5635,412 @@ rules:
       severity: warning
     notification_settings:
       receiver: logs
+
+  # ---- zcrypto-mon: the observability node's own rules -------------------------------------------
+  # Pushed to the node alone: grafana-push.sh leaves this group out of a push that names no stack
+  # (GRAFANA_SKIP_RULE_GROUPS), since Grafana Cloud holds no `host="zcrypto-mon"` series and the two
+  # dead-men here would page there for good. A rule cannot page the death of the node it runs on:
+  # that is the node's healthchecks.io self-check, not a rule of this group.
+  - uid: zcrypto-alloy-dark-mon
+    title: "Fleet · Alloy dark — Monitor"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The family's shape, `zcrypto-alloy-dark-nas` above: presence of `up`, with the fallback
+          # that lets noDataState stay Alerting.
+          expr: >-
+            count(up{host="zcrypto-mon"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "The observability node's own Alloy has shipped no metrics for >10m. The node's host, Grafana, Prometheus and Loki series are dark, so every other rule of the node's own group is blind until this clears; the fleet's rules read the fleet's own Alloys and are unaffected. First checks on the node: `systemctl status alloy`, then `journalctl -u alloy -n 50`; a restart is the usual fix. Runbook: infra/runbooks/mon.md#zcrypto-alloy-dark-mon"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "901"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-disk-low
+    title: "Monitor · root filesystem low"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # The threshold and the duration are zaccess-disk-high's. On this node's 80 GB the bar leaves
+          # 12 GB, more than both stores are expected to hold between them.
+          expr: >-
+            node_filesystem_avail_bytes{host="zcrypto-mon", mountpoint="/"} / node_filesystem_size_bytes{host="zcrypto-mon", mountpoint="/"}
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [0.15]}  # < 15% free
+    noDataState: OK
+    execErrState: Alerting
+    for: 30m
+    annotations:
+      summary: "The observability node's root filesystem has been below 15% free for 30+ minutes. Prometheus's blocks, Loki's chunks, Grafana's database and the journal share it: a full disk stops ingestion and then evaluation. Runbook: infra/runbooks/mon.md#zcrypto-mon-disk-low"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "902"
+      unit: "of the root filesystem still free (a fraction, not a percent)"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-reboot-pending
+    title: "Monitor · reboot pending, reboot by hand"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # The node runs unattended-upgrades with Automatic-Reboot "false": patches install, the reboot is
+      # a human act, and this rule is what makes the pending one visible. The capture pair's rule,
+      # zcrypto-capture-reboot-pending, cannot carry this host: it is pushed to Grafana Cloud too,
+      # where this host has no series.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 3600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'node_reboot_required{host="zcrypto-mon"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0.5]}  # == 1, pending
+    noDataState: OK
+    execErrState: Alerting
+    # zcrypto-capture-reboot-pending's duration: one failed publish does not page.
+    for: 15m
+    annotations:
+      summary: "The observability node has a pending reboot (/run/reboot-required) and does not reboot itself. Reboot it by hand in its 06:25 UTC slot: rule evaluation stops for the reboot's duration, and Grafana starts again only once both stores answer ready. Runbook: infra/runbooks/mon.md#zcrypto-mon-reboot-pending"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "903"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-store-down
+    title: "Monitor · a store down or not ready"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # How many of the two stores the node's Alloy scrapes as up, Loki counted only while its
+          # ingester is ACTIVE in the ring. The `and on()` arm leaves a dark Alloy to
+          # zcrypto-alloy-dark-mon: with no host scrape the query returns nothing, and noDataState is
+          # OK. Prometheus itself down is this rule's own ERROR state, since the query has nowhere to
+          # run.
+          expr: >-
+            (count((up{host="zcrypto-mon", job="prometheus"} == 1) or ((up{host="zcrypto-mon", job="loki"} == 1) and on(host) (loki_ring_members{host="zcrypto-mon", name="ingester", state="ACTIVE"} == 1))) or on() vector(0)) and on() (up{host="zcrypto-mon", job="integrations/unix"} == 1)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [2]}
+    noDataState: OK
+    execErrState: Alerting
+    # Three scrapes at 60 s: a store restarted in the role's order, with Grafana stopped around it,
+    # is back inside one, and a single failed scrape does not page.
+    for: 3m
+    annotations:
+      summary: "Fewer than two of the observability node's stores are up and ready: Prometheus or Loki is down, or Loki's ingester is not ACTIVE. If this page is in its ERROR state, Prometheus is the store that is down. While Loki is down the rules that read logs are in error and alert history is not written: a transition in that time is missing from the daily pass's fired-in-window list. Runbook: infra/runbooks/mon.md#zcrypto-mon-store-down"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "904"
+      unit: "stores up and ready, of 2"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-sqlite-locked
+    title: "Monitor · Grafana's database locked"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # A text match, since the line is Grafana's own and carries no label for it. Grafana's retry of
+      # a locked write logs the same text at info, `Database locked, sleeping then retrying`, at each
+      # start and beside its cleanup job: the second filter leaves those out, so what is counted is
+      # an operation Grafana gave up on, a write whose retries ran out or a request it could not
+      # authenticate. The window is the burst rules' 15 minutes.
+      - refId: A
+        queryType: instant
+        relativeTimeRange: {from: 900, to: 0}
+        datasourceUid: "${GRAFANA_LOKI_DS_UID}"
+        model:
+          expr: >-
+            sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked" != "sleeping then retrying" [15m])) or on() vector(0)
+          queryType: instant
+          refId: A
+      - refId: B
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: reduce
+          reducer: last
+          expression: "A"
+          refId: B
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "B"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK  # `or on() vector(0)` makes a clean window evaluate to 0, not NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Grafana gave up on a database operation in the last 15 minutes: its embedded SQLite database stayed locked, and the line it logged is not one of its ordinary retries. While a push runs it is usually one of Grafana's own jobs, its cleanup or its state save, giving up behind the push, and the push's exit status says whether a call of its own failed; recurring with no push running, it is the sign that the database has outgrown SQLite, the recorded condition for moving Grafana's own state to PostgreSQL. Runbook: infra/runbooks/mon.md#zcrypto-mon-sqlite-locked"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "905"
+      unit: "operations given up on with `database is locked` in the last 15 minutes"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: logs
+
+  - uid: zcrypto-mon-ingest-dark
+    title: "Monitor · ingest dark, every fleet host absent at once"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # Every host but the node itself: the fleet arrives through Caddy, the node's own Alloy on
+          # loopback, so this goes to 0 on a fault of the edge or its certificate and never on one
+          # host's.
+          expr: >-
+            count(up{host!="zcrypto-mon"}) or on() vector(0)
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: lt, params: [1]}
+    noDataState: Alerting
+    execErrState: Alerting
+    # Half the Alloy-dark rules' 10m, so that with the five minutes a vanished series stays readable
+    # this pages about ten minutes after ingest stops and five ahead of the first per-host page.
+    for: 5m
+    annotations:
+      summary: "No fleet host has a sample on the observability node: every host went absent at once, which is the node's own edge, its certificate or its firewall, not the fleet. The per-host Alloy-dark pages and the engine-dark-with-exposure page that follow within minutes are this fault seen from each rule, and the fleet itself may be healthy and still shipping to its other destination. Runbook: infra/runbooks/mon.md#zcrypto-mon-ingest-dark"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "906"
+      unit: "fleet series present"
+    labels:
+      severity: critical
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-series-high
+    title: "Monitor · head series above budget"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 600, to: 0}
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: 'prometheus_tsdb_head_series{host="zcrypto-mon"}'
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [40000]}
+    noDataState: OK
+    execErrState: Alerting
+    # The head keeps a series a restarted shipper stopped writing until its next truncation, up to
+    # three hours, so a restart's doubled count clears itself and growth that stays pages.
+    for: 3h
+    annotations:
+      summary: "The observability node's Prometheus has held more than 40,000 series in its head for three hours. The node ships unfiltered, so this bar is the series budget's fence: a new exporter, a label that grew a value per request, or a shipper's collector set widened. Memory and disk follow the count. Runbook: infra/runbooks/mon.md#zcrypto-mon-series-high"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "907"
+      unit: "series in the head"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-retention-by-size
+    title: "Monitor · Prometheus retention cut by size"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 21600, to: 0}  # 6h, matching the increase window below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          # Prometheus deletes blocks at most once per two-hour compaction, so six hours keeps
+          # consecutive cuts one firing and clears six hours after the last.
+          expr: >-
+            increase(prometheus_tsdb_size_retentions_total{host="zcrypto-mon"}[6h])
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Prometheus on the observability node deleted a block because its size cap was reached, in the last 6 hours: the store now keeps less than its 90 days, and the size cap, not the period, governs what is kept. The series count or the sample rate outgrew what the cap was sized for. Runbook: infra/runbooks/mon.md#zcrypto-mon-retention-by-size"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "908"
+      unit: "blocks deleted by the size cap in the last 6 hours"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics
+
+  - uid: zcrypto-mon-shipper-loss
+    title: "Monitor · a shipper lost samples or log lines"
+    ruleGroup: zcrypto-mon
+    folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
+    orgId: 1
+    condition: C
+    data:
+      # Alloy's own two loss counters, from each shipper the node holds: no host is named, so a fleet
+      # host is read from the day it ships here. A sample counts once a destination refused it for
+      # good and a log entry once Alloy gave its batch up; what is still being retried counts in
+      # neither. The log counter's own `host` label is its destination's and wins over the
+      # shipper's external label, so that arm is summed by `instance` and takes the shipper's `host`
+      # from `up`. Not prometheus_remote_storage_samples_dropped_total: that one counts the series
+      # a shipper's own relabel rules drop.
+      - refId: A
+        queryType: ""
+        relativeTimeRange: {from: 21600, to: 0}  # 6h, matching the increase windows below
+        datasourceUid: "${GRAFANA_PROM_DS_UID}"
+        model:
+          expr: >-
+            sum by (host) (increase(prometheus_remote_storage_samples_failed_total{job="integrations/self"}[6h]) or sum by (instance) (increase(loki_write_dropped_entries_total{job="integrations/self"}[6h])) * on (instance) group_left (host) count by (instance, host) (up{job="integrations/self"}))
+          instant: true
+          refId: A
+      - refId: C
+        queryType: ""
+        relativeTimeRange: {from: 0, to: 0}
+        datasourceUid: "__expr__"
+        model:
+          datasource: {type: "__expr__", uid: "__expr__"}
+          type: threshold
+          expression: "A"
+          refId: C
+          conditions:
+            - evaluator: {type: gt, params: [0]}
+    noDataState: OK
+    execErrState: Alerting
+    # zcrypto-logship-lines-dropped's window and wait: the same loss, in the applications' own push.
+    for: 15m
+    annotations:
+      summary: "The Alloy on the named host lost telemetry for good in the last 6 hours: a destination refused its samples, or it gave up on a batch of log lines after its retries. Samples it is still retrying are not counted. The rules that read that host's logs or metrics now reason over an incomplete stream, so their silence no longer means healthy. Runbook: infra/runbooks/mon.md#zcrypto-mon-shipper-loss"
+      __dashboardUid__: "zcrypto-fleet"
+      __panelId__: "909"
+      unit: "samples failed for good and log entries dropped in the last 6 hours"
+    labels:
+      severity: warning
+    notification_settings:
+      receiver: metrics

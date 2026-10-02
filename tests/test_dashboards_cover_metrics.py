@@ -364,6 +364,14 @@ def publishing_hosts(family: str) -> frozenset[str] | None:
 _BECAUSE_SELECTED = "selects that host"
 _BECAUSE_FLEET_WIDE = "names no host, so it is a fleet-wide guard over the whole topology"
 _BECAUSE_PUBLISHED = "names no host, and this repo publishes the family on that host"
+_BECAUSE_NODE_ONLY = "names no host and is pushed to the observability node alone, whose own leg carries no filter"
+PUSH = REPO / "infra/scripts/grafana-push.sh"
+
+
+def node_only_groups() -> frozenset[str]:
+    """The rule groups a push that names no stack leaves out, so that they are evaluated on the observability node alone."""
+    (skipped,) = re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', PUSH.read_text(), re.M)
+    return frozenset(skipped.split())
 
 
 def _admission_expectations() -> list[tuple[str, str, frozenset[str] | None, str]]:
@@ -375,6 +383,8 @@ def _admission_expectations() -> list[tuple[str, str, frozenset[str] | None, str
         for expr in _prom_expressions(rule):
             for family in promql_families(expr):
                 hosts, why = selected_hosts(expr, family), _BECAUSE_SELECTED
+                if hosts is None and rule["ruleGroup"] in node_only_groups():
+                    hosts, why = UNFILTERED_HOSTS, _BECAUSE_NODE_ONLY
                 if hosts is None:
                     # An unscoped `node_*` rule is fleet-wide: every host runs a node exporter, and a
                     # host whose keep-list omits the family is structurally unable to fail the rule.
@@ -894,3 +904,17 @@ def test_the_slack_template_and_the_logs_board_name_every_host_of_the_topology()
     listed = {value: text for text, value in (option.split(" : ") for option in variable["query"].split(", "))}
     offered = {option["value"]: option["text"] for option in variable["options"] if option["value"] != "$__all"}
     assert listed == offered == named, f"the query lists {listed}, the options offer {offered}, the template names {named}"
+
+
+def test_a_rule_that_names_no_host_is_held_to_the_unfiltered_hosts_only_in_a_group_pushed_to_the_node_alone(monkeypatch):
+    family = "zcrypto_family_no_keep_list_admits_total"
+    (node_only,) = node_only_groups()
+
+    def rule(group: str) -> dict:
+        return {"uid": f"a-rule-of-{group}", "ruleGroup": group, "data": [{"datasourceUid": PROM_DS, "model": {"expr": family}}]}
+
+    monkeypatch.setitem(globals(), "_rules", lambda: (rule(node_only), rule("zcrypto-fleet")))
+    assert _admission_expectations() == [
+        (f"a-rule-of-{node_only}", family, UNFILTERED_HOSTS, _BECAUSE_NODE_ONLY),
+        ("a-rule-of-zcrypto-fleet", family, None, _BECAUSE_PUBLISHED),
+    ]
