@@ -761,13 +761,8 @@ def _real_row(txid, refid, time, type_, subtype, asset, amount, fee, feecurrency
 
 
 def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
-    """Six row types the venue's export carries, one arm each -- `trade` and
-    `margin` matched by trade id, `rollover` summed, `settled` and `collateralconversion` known
-    no-fill types beside `deposit`, nothing left for `ignored`. A journaled spot fill T-1 and two
-    margin fills, T-2 charged in euro and T-3 in EURC after the venue's par conversion beside it;
-    the rollovers carry T-2, the position's opening trade, and the settle an id of its own; the spot
-    fill's BTC leg carries a fee in BTC, outside the euro figure. The shape and the asset spellings
-    are the export's; the figures are synthetic."""
+    """Six of the export's row types, one arm each. The shape and the asset spellings are the export's;
+    the figures are synthetic."""
     p = _export(
         tmp_path,
         [
