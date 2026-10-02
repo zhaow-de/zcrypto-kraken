@@ -254,8 +254,8 @@ def test_every_engine_window_guard_task_also_gates_a_cache_link_converge():
     assert truthy(when_conditions(link), {"ansible_run_tags": ["cache-link"], "ansible_skip_tags": []})
 
 
-# ansible-core hands a task ansible_run_tags and ansible_skip_tags as tuples (lists before 2.19), and
-# a tuple never equals a list literal.
+# ansible-core hands a task these tags as tuples; a condition written for one sequence type
+# fails the other type's cases.
 TAG_SEQUENCES = pytest.mark.parametrize("seq", [tuple, list])
 
 
