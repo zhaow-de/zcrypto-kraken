@@ -830,3 +830,326 @@ On the host, it prints the newest cycle record with its `cycle_ts` and `complete
 ### Retire when
 
 The engine no longer takes the trade key as container environment — i.e. the engine role no longer renders `engine.env` to `/opt/zcrypto-engine/engine.env`.
+
+______________________________________________________________________
+
+<a name="engine-clear-stored-account"></a>
+
+## engine-clear-stored-account — PROCEDURE
+
+### What you are seeing
+
+**Nothing fired.** The engine refuses a spot sell with `the venue record refutes the signed qty` — or, under the restart hold, `the venue record's balance does not cover the signed qty` — while Kraken holds the quantity, and the newest `venue-<HH>.json` lists under `balances` a coin Kraken holds none of, or holds more of: the venue-truth read of [`engine-probe-window`](#engine-probe-window) prints that record, and `kraken extended-balance -o json` on the workstation prints Kraken's side. Dust left by a staking reward and a coin held at one engine start and sold since both read this way.
+
+**This page covers one state: the account flat at Kraken, the arm file off, the gate at `level=none`.** That is the state the procedure was measured in. With a spot lot held it is not run from this page: the clear is one more engine restart, and what a cleared account reads at a start over a held lot is unmeasured. Inside the rung-2 box a stale figure on a held leg is [the restart step](#rung-2-after-a-restart)'s — a start taken with the lot held raises that coin's stored figure to Kraken's — and the stale figure of a coin not held waits for a flat book.
+
+### What it means
+
+The engine keeps its Kraken account in the cache as a list of account events, the key `trader-SHADOW-001:accounts:KRAKEN-001`: each start appends what Kraken's balance read returned, and the next start replays the whole list. Kraken's read leaves out a coin whose balance is zero and the replay keeps each coin's newest figure, so a coin the account once carried stays at that figure after it is sold or converted, through each later restart. The boundary cycle writes the account's balances into the venue record, and the spot-sell check (`_classify_spot_close` in `cli/engine/executor.py`) refuses a sell when the record shows a positive balance under the sell quantity. Deleting the list while the engine is stopped makes the next start build the account from Kraken's read alone. The orders, the positions, the ledger and the journal are not touched, and a balance Kraken really holds comes back at that start, at Kraken's figure.
+
+The delete is a write, and the cache admits writes from the `engine` user alone; the operator's `vk` function on a cache node is the read-only one. That user's password is the `ZCRYPTO_CACHE_PASSWORD` line of `/opt/zcrypto-engine/engine.env`. The block below reads the line inside one Python process on the engine host and sends it in one `AUTH` through the engine's own cache proxy, so it reaches no argument list, no output and no shell history; a refused `AUTH` prints the server's error word and nothing after it. The process runs in the proxy container's network namespace, where the proxy listens on loopback, so the write lands on the node the Sentinels name as the primary, the one the engine loads from.
+
+The stop and the start are an engine restart, with what a restart carries: [the restart rule](#engine-restart-margin-position)'s reads before it, the inter-cycle gap, the Kraken maintenance feed, the restart hold latched at the start, and the pages a stopped engine raises, which step 4 names.
+
+### What to do
+
+1. **Admit the run.** On the workstation, never on a host (no count command: `infra/scripts/count-list.sh kraken-cli-on-infra-surfaces` counts the tree's own surfaces, and a command typed on a host leaves no record there): `kraken open-orders -o json` lists no order, `kraken positions -o json` prints `{}`, and `kraken extended-balance -o json` carries no coin above dust — the positions read prints `{}` with a spot lot held too, so the balance read is the one that says no lot is held. On the host: the gate read prints `level=none`, and `sudo ls -l /var/lib/zcrypto-engine/exec/` lists no `armed` and no `probe-plan.json`. Then [the restart rule](#engine-restart-margin-position)'s four reads; the inter-cycle gap as step 3 of [`engine-adhoc-key-read`](#engine-adhoc-key-read) reads it off the journal; and the Kraken maintenance feed, read whole with [`order-semantics-verification.md`](order-semantics-verification.md) §1.1's command for an entry that reaches the stop or the start. The feed is read again immediately before step 6's start and before each further stop or restart this page leads to; an entry that reaches the act holds it, and an engine that is down then stays down until the entry has passed.
+
+2. **Paste the block into a shell on `zcrypto`, once per login.** It defines two variables holding the Python text and the function's text, and the function `acct`; it runs nothing.
+
+```bash
+IFS= read -r -d '' ACCT_PY <<'PY'
+import json, socket, sys, time
+
+sys.tracebacklimit = 0
+MODE = sys.argv[1] if len(sys.argv) > 1 else ""
+OPT, BAD = {}, []
+for a in sys.argv[2:]:
+    name, sep, value = a.partition("=")
+    if sep and value and name in ("key", "addr", "env") and name not in OPT:
+        OPT[name] = value
+    else:
+        BAD.append(a)
+ADDR = OPT.get("addr", "127.0.0.1")
+ENV_FILE = OPT.get("env", "/opt/zcrypto-engine/engine.env")
+KEY = OPT.get("key", "trader-SHADOW-001:accounts:KRAKEN-001")
+ASIDE = "aside:" + KEY
+NAME = "ZCRYPTO_CACHE_PASSWORD="
+CONN = []
+
+
+class Refused(Exception):
+    pass
+
+
+def enc(*words):
+    out = b"*%d\r\n" % len(words)
+    for w in words:
+        b = w if isinstance(w, bytes) else str(w).encode()
+        out += b"$%d\r\n%s\r\n" % (len(b), b)
+    return out
+
+
+def dec(r):
+    line = r.readline()
+    if not line.endswith(b"\r\n"):
+        raise ConnectionError
+    kind, body = line[:1], line[1:-2]
+    if kind == b"+":
+        return body.decode()
+    if kind == b"-":
+        raise Refused(body.decode("ascii", "replace"))
+    if kind == b":":
+        return int(body)
+    if kind == b"$":
+        n = int(body)
+        return None if n < 0 else r.read(n + 2)[:-2]
+    if kind == b"*":
+        n = int(body)
+        return None if n < 0 else [dec(r) for _ in range(n)]
+    raise ConnectionError
+
+
+def connect():
+    secret = ""
+    with open(ENV_FILE) as f:
+        for line in f:
+            if line.startswith(NAME):
+                secret = line[len(NAME):].rstrip("\n")
+    if not secret:
+        raise Refused("the env file carries no cache password line")
+    last, deadline = "no attempt", time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            s = socket.create_connection((ADDR, 6379), timeout=max(0.5, min(5, deadline - time.monotonic())))
+            r = s.makefile("rb")
+            s.sendall(enc("AUTH", "engine", secret))
+            try:
+                dec(r)
+            except Refused as e:
+                # The first word alone: a server's error text can repeat the arguments it was sent.
+                raise Refused("AUTH refused (%s)" % str(e).split(" ")[0]) from None
+            s.settimeout(10)
+            CONN[:] = [s, r]
+            return
+        except OSError as e:
+            last = type(e).__name__
+            time.sleep(max(0, min(1, deadline - time.monotonic())))
+    raise Refused("nothing answered on %s:6379 in 30 s (%s)" % (ADDR, last))
+
+
+def cmd(*words):
+    CONN[0].sendall(enc(*words))
+    return dec(CONN[1])
+
+
+def text(reply):
+    return reply.decode("utf-8", "replace") if isinstance(reply, bytes) else reply
+
+
+def primary(required):
+    info = dict(l.split(":", 1) for l in text(cmd("INFO", "replication")).splitlines() if ":" in l)
+    server = dict(l.split(":", 1) for l in text(cmd("INFO", "server")).splitlines() if ":" in l)
+    print("answering: role %s, version %s, replicas connected %s" % (info.get("role"), server.get("valkey_version", server.get("redis_version")), info.get("connected_slaves")))
+    for k in sorted(info):
+        if k.startswith("slave") and "=" in info[k]:
+            print("  %s %s" % (k, info[k]))
+    if required and info.get("role") != "master":
+        raise Refused("the node answering is not the primary: nothing changed")
+
+
+def show(key):
+    if not cmd("EXISTS", key):
+        print("  %s: absent" % key)
+        return
+    kind = cmd("TYPE", key)
+    if kind != "list":
+        print("  %s: type %s" % (key, kind))
+        return
+    rows = cmd("LRANGE", key, "0", "-1")
+    print("  %s: list, %d entries" % (key, len(rows)))
+    merged = {}
+    for i, raw in enumerate(rows):
+        try:
+            d = json.loads(raw)
+            bal = dict((b["currency"], b["total"].split(" ")[0]) for b in d["balances"])
+            print("    [%d] %s %s" % (i, d.get("ts_event"), " ".join("%s=%s" % kv for kv in sorted(bal.items())) or "no balances"))
+            for c, v in bal.items():
+                merged[c] = "%s (entry %d)" % (v, i)
+        except Exception:
+            print("    [%d] not read as an account event, %d bytes" % (i, len(raw)))
+    print("    newest figure per currency: %s" % (", ".join("%s %s" % kv for kv in sorted(merged.items())) or "none"))
+
+
+def do_list():
+    primary(False)
+    cursor, keys = "0", set()
+    while True:
+        cursor, batch = cmd("SCAN", cursor, "COUNT", "1000")
+        cursor = text(cursor)
+        keys.update(text(k) for k in batch)
+        if cursor == "0":
+            break
+    keys = sorted(keys)
+    kinds = []
+    for at in range(0, len(keys), 500):
+        chunk = keys[at:at + 500]
+        CONN[0].sendall(b"".join(enc("TYPE", k) for k in chunk))
+        kinds += [dec(CONN[1]) for _ in chunk]
+    groups, singles = {}, []
+    for k, kind in zip(keys, kinds):
+        parts = k.split(":")
+        if k.startswith("trader-") and len(parts) > 2 and parts[1] in ("currencies", "instruments", "orders", "positions"):
+            groups[(":".join(parts[:2]) + ":*", kind)] = groups.get((":".join(parts[:2]) + ":*", kind), 0) + 1
+        else:
+            singles.append((k, kind))
+    print("%d keys" % len(keys))
+    for (g, kind), n in sorted(groups.items()):
+        print("  %6d %-6s %s" % (n, kind, g))
+    for k, kind in singles:
+        print("  %6d %-6s %s" % (1, kind, k))
+    accounts = [k for k in keys if ":accounts:" in k and not k.startswith("aside:")]
+    print("%d key(s) carrying :accounts:" % len(accounts))
+    for k in accounts:
+        show(k)
+    asides = [k for k in keys if k.startswith("aside:")]
+    print("%d aside copy(ies), each an earlier clear's" % len(asides))
+    for k in asides:
+        show(k)
+    if KEY not in keys:
+        print("NOTE: %s is absent" % KEY)
+
+
+def do_check():
+    primary(False)
+    show(KEY)
+    show(ASIDE)
+
+
+def do_clear():
+    primary(True)
+    kind = cmd("TYPE", KEY)
+    if kind != "list":
+        raise Refused("%s is type %s, not a list: nothing changed" % (KEY, kind))
+    before = cmd("LRANGE", KEY, "0", "-1")
+    if cmd("EXISTS", ASIDE):
+        if cmd("TYPE", ASIDE) != "list" or cmd("LRANGE", ASIDE, "0", "-1") != before:
+            raise Refused("%s exists and differs from the key: nothing changed" % ASIDE)
+        print("the aside copy is already there and identical")
+    else:
+        print("COPY -> %s" % cmd("COPY", KEY, ASIDE))
+        if cmd("LRANGE", ASIDE, "0", "-1") != before:
+            raise Refused("the aside copy differs from the key: the key is untouched")
+    print("%s: %d entries, identical to the key" % (ASIDE, len(before)))
+    print("DEL -> %s" % cmd("DEL", KEY))
+    print("EXISTS %s -> %s" % (KEY, cmd("EXISTS", KEY)))
+    print("replicas acknowledging -> %s" % cmd("WAIT", "2", "5000"))
+    print("CLEARED")
+
+
+def do_restore():
+    primary(True)
+    if cmd("TYPE", ASIDE) != "list":
+        raise Refused("no aside copy at %s: nothing changed" % ASIDE)
+    want = cmd("LRANGE", ASIDE, "0", "-1")
+    print("COPY REPLACE -> %s" % cmd("COPY", ASIDE, KEY, "REPLACE"))
+    if cmd("LRANGE", KEY, "0", "-1") != want:
+        raise Refused("the restored key differs from the aside copy")
+    print("%s: %d entries, identical to the aside copy, which stays" % (KEY, len(want)))
+    print("replicas acknowledging -> %s" % cmd("WAIT", "2", "5000"))
+    print("RESTORED")
+
+
+def do_drop():
+    primary(True)
+    if not cmd("EXISTS", ASIDE):
+        raise Refused("no aside copy at %s: nothing changed" % ASIDE)
+    if cmd("TYPE", KEY) != "list":
+        raise Refused("%s is absent, so the aside copy is the one copy left: nothing changed" % KEY)
+    print("DEL -> %s" % cmd("DEL", ASIDE))
+    print("EXISTS %s -> %s" % (ASIDE, cmd("EXISTS", ASIDE)))
+    print("replicas acknowledging -> %s" % cmd("WAIT", "2", "5000"))
+    print("DROPPED")
+
+
+MODES = {"list": do_list, "check": do_check, "clear": do_clear, "restore": do_restore, "drop": do_drop}
+try:
+    if BAD:
+        raise Refused("not understood: %s -- after the mode, key=<name> or addr=<address>, each one word: nothing changed" % " ".join(BAD))
+    if MODE not in MODES or ":accounts:" not in KEY or KEY.startswith("aside:"):
+        raise Refused("usage: list | check | clear | restore | drop, then optional key=<name with :accounts:> addr=<address>")
+    connect()
+    MODES[MODE]()
+except Refused as e:
+    print("REFUSED: %s" % e)
+    sys.exit(1)
+except BaseException as e:
+    print("FAILED: %s" % type(e).__name__)
+    sys.exit(2)
+PY
+IFS= read -r -d '' ACCT_SH <<'SH'
+acct() {
+  local pid rc
+  case "${1:-}" in
+    clear|restore)
+      if sudo docker inspect --format '{{.State.Status}}' zcrypto-engine >/dev/null 2>&1; then
+        echo "REFUSED: a zcrypto-engine container exists; $1 runs with the unit stopped"
+        return 1
+      fi ;;
+  esac
+  case " $* " in
+    *" addr="*)
+      printf '%s\n' "$ACCT_PY" | sudo python3 - "$@"
+      rc=$? ;;
+    *)
+      pid="$(sudo docker inspect --format '{{.State.Pid}}' zcrypto-cache-proxy 2>/dev/null)"
+      if ! [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
+        echo "REFUSED: no running zcrypto-cache-proxy container"
+        return 1
+      fi
+      printf '%s\n' "$ACCT_PY" | sudo nsenter -t "$pid" -n python3 - "$@"
+      rc=$? ;;
+  esac
+  case "${1:-}" in
+    clear|restore)
+      if sudo docker inspect --format '{{.State.Status}}' zcrypto-engine >/dev/null 2>&1; then
+        echo "WARNING: a zcrypto-engine container exists now -- it was started while $1 ran and may have loaded the account first: stop the unit, then acct check"
+      fi ;;
+  esac
+  return $rc
+}
+SH
+eval "$ACCT_SH"
+```
+
+`declare -f acct >/dev/null && echo ok` prints `ok`, and `printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum` prints `98dbfb8bf65dd37bad4ce4ee67201ce872d985c13599d2328d60fef90c569e67`: a paste that lost or changed a line of either text prints another digest and is pasted again. `acct list` and `acct check` read; `acct clear` copies the key to `aside:trader-SHADOW-001:accounts:KRAKEN-001`, compares the copy with the key entry by entry, and deletes the key; `acct restore` copies the aside copy back over the key and keeps it; `acct drop` deletes the aside copy. `clear` and `restore` refuse while a `zcrypto-engine` container exists, and print a `WARNING:` line when one exists once they are done. `key=<name>` after the mode names another account key; `addr=<address>` reaches a proxy by address from the host's own namespace and is not used on this page; a word after the mode that is neither is refused. While `acct` runs, no `systemctl` line is typed in a second terminal.
+
+3. **Read the store while the engine runs**: `acct list`. It prints the node that answered — `role master` and two `slave` lines, each `state=online` — then the keys by group and type, then each key carrying `:accounts:` entry by entry, oldest first, with the balances each start read and the newest figure per currency, which is what the next start will replay, then the aside copies. Expect one account key, `trader-SHADOW-001:accounts:KRAKEN-001`, a list, and `0 aside copy(ies)`. A second account key, or one that is not a list: stop here. A key under another name: pass it as `key=<name>` to each call below. An aside copy is what an earlier clear left behind, and `acct clear` refuses over one that differs from the key: step 8 says when it is deleted, and that comes before this run goes on.
+
+4. **Stop the engine, and bring the proxy back alone at once.** The unit's stop removes the proxy with the engine. A stopped engine pages, and nothing is silenced: `Cache · proxy has no backend` (critical) once the proxy has been absent for two minutes; `Engine · cycles have stopped` (critical) from about five minutes after the stop, because that rule alerts on its series being absent — its runbook section reads the page as a boundary that left no record, which is not what happened here; `Engine · the execution gate's heartbeat has stopped` (warning) from about ten minutes, the same way; `Engine · position open at last report and the engine is not reporting` (critical) after ten minutes down when a leg of the position gauge last read above the rule's floor of 0.000001 base units ([`engine.md#zcrypto-engine-dark-with-exposure`](engine.md#zcrypto-engine-dark-with-exposure)); and `Fleet · a daemon restarted` (warning) after the start. The two absent-series pages clear by themselves once the engine runs: the new process publishes both gauges at its start. Measured on 2026-10-01, a stop of seven minutes with the proxy left down: the proxy page 3 min 32 s after the stop, the cycles page 6 min 22 s after it, both resolved within five minutes of the start, the restart page 3 min 34 s after the start, and no other page.
+
+```
+sudo systemctl stop zcrypto-engine
+sudo docker compose -f /opt/zcrypto-engine/compose.yaml up -d cache-proxy
+```
+
+The first returns within the engine's twenty-second stop grace; the second prints `Container zcrypto-cache-proxy  Started` and names no `zcrypto-engine` container. `acct check` then prints the key as step 3 did and the aside copy `absent`; its first answer can take a few seconds, the time the proxy's checks need to pass twice, and `REFUSED: nothing answered … in 30 s` is the proxy routing no backend. An `nsenter:` line and no `answering:` line is the namespace not entered: nothing was sent to the store, and step 6 starts the engine on it as it was.
+
+5. **Clear**: `acct clear`. It prints `COPY -> 1`, the aside copy's entry count `identical to the key`, `DEL -> 1`, `EXISTS trader-SHADOW-001:accounts:KRAKEN-001 -> 0`, `replicas acknowledging -> 2` and `CLEARED`. A line opening `REFUSED:` names what stopped it and what state it left: before `COPY` nothing changed; after `COPY` and before `DEL` the key is whole and the aside copy exists, and a second `acct clear` goes on from there. `NOREPLICAS` is the primary refusing a write while no replica follows it within ten seconds — [`cache.md#zcrypto-cache-replicas-short`](cache.md#zcrypto-cache-replicas-short) — and `replicas acknowledging -> 1` is one replica behind, which the Cache board names; the engine is started once both read `lag=0` or `lag=1` in `acct check`. `FAILED: KeyboardInterrupt` is Ctrl-C, `FAILED: TimeoutError` a command the primary held past ten seconds, and a dropped ssh session prints nothing. After each of the three — a new login pastes the block again — `acct check` says where the clear stopped: the key and no aside copy, nothing was done; the key and an aside copy, copied and not deleted; no key and an aside copy, done. `acct clear` goes on from the first two. A `WARNING: a zcrypto-engine container exists now` line means the unit was started while `acct clear` ran, and that engine may hold the old list in memory: stop it as in step 4 and go on from what `acct check` prints.
+
+6. **Start the engine**, once the maintenance feed has been read again and `kraken extended-balance -o json` still reads as in step 1; the proxy is taken down first so the unit starts both as it does at each start:
+
+```
+sudo docker compose -f /opt/zcrypto-engine/compose.yaml down
+sudo systemctl start zcrypto-engine
+```
+
+Read the boot line where the restart rule at the head of this page reads it, on the Logs board under container `engine`: `cache restore: 0 order(s), 0 position(s) restored`, and no `the venue holds … where the Cache reads …` WARNING. The start latches the restart hold; leave it latched — the procedure that places the next plan clears it and takes what its own steps ask after a restart. A small balance converted on Kraken's site in the same stop is confirmed, and read back as gone in `kraken extended-balance -o json`, before this step and while the engine is still stopped: a balance still at Kraken when the engine starts comes back into the new account, and a conversion Kraken books as a trade while the engine runs leaves an `EXTERNAL` position in the engine's book that a restart does not close.
+
+7. **Verify.** `acct check` prints the key as a new list whose entries carry what Kraken holds and nothing else, and the aside copy with its old entries. The key `absent` after the start means the engine loaded the old list before the delete landed: restart it once more inside the gap, under step 1's reads. The decisive read is the first venue record written after the start, at the next 4-hourly boundary: its `balances` carry what Kraken holds, EUR alone on a flat account.
+
+8. **Delete the aside copy** once that record reads right: `acct drop`, which prints `DEL -> 1` and `DROPPED`, and refuses while the key itself is absent. Until then the way back is: stop the engine and bring the proxy up as in step 4, `acct restore`, then step 6; the next start replays the old list as before the clear.
+
+### Retire when
+
+`_classify_spot_close` in `cli/engine/executor.py` no longer reads the venue record's balances. `persist_account_events` in `_cache_config` (`cli/engine/node.py`) is no such condition: with it off the stored account is still kept and replayed, as the offline restart harness measured.
