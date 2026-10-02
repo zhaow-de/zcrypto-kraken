@@ -880,12 +880,12 @@ MODE = sys.argv[1] if len(sys.argv) > 1 else ""
 OPT, BAD = {}, []
 for a in sys.argv[2:]:
     name, sep, value = a.partition("=")
-    if sep and value and name in ("key", "addr", "env") and name not in OPT:
+    if sep and value and name == "key" and name not in OPT:
         OPT[name] = value
     else:
         BAD.append(a)
-ADDR = OPT.get("addr", "127.0.0.1")
-ENV_FILE = OPT.get("env", "/opt/zcrypto-engine/engine.env")
+ADDR = "127.0.0.1"
+ENV_FILE = "/opt/zcrypto-engine/engine.env"
 KEY = OPT.get("key", "trader-SHADOW-001:accounts:KRAKEN-001")
 ASIDE = "aside:" + KEY
 NAME = "ZCRYPTO_CACHE_PASSWORD="
@@ -1089,9 +1089,9 @@ def do_drop():
 MODES = {"list": do_list, "check": do_check, "clear": do_clear, "restore": do_restore, "drop": do_drop}
 try:
     if BAD:
-        raise Refused("not understood: %s -- after the mode, key=<name> or addr=<address>, each one word: nothing changed" % " ".join(BAD))
+        raise Refused("not understood: %s -- after the mode, key=<name> alone, one word: nothing changed" % " ".join(BAD))
     if MODE not in MODES or ":accounts:" not in KEY or KEY.startswith("aside:"):
-        raise Refused("usage: list | check | clear | restore | drop, then optional key=<name with :accounts:> addr=<address>")
+        raise Refused("usage: list | check | clear | restore | drop, then optional key=<name with :accounts:>")
     connect()
     MODES[MODE]()
 except Refused as e:
@@ -1111,19 +1111,13 @@ acct() {
         return 1
       fi ;;
   esac
-  case " $* " in
-    *" addr="*)
-      printf '%s\n' "$ACCT_PY" | sudo python3 - "$@"
-      rc=$? ;;
-    *)
-      pid="$(sudo docker inspect --format '{{.State.Pid}}' zcrypto-cache-proxy 2>/dev/null)"
-      if ! [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
-        echo "REFUSED: no running zcrypto-cache-proxy container"
-        return 1
-      fi
-      printf '%s\n' "$ACCT_PY" | sudo nsenter -t "$pid" -n python3 - "$@"
-      rc=$? ;;
-  esac
+  pid="$(sudo docker inspect --format '{{.State.Pid}}' zcrypto-cache-proxy 2>/dev/null)"
+  if ! [ "${pid:-0}" -gt 0 ] 2>/dev/null; then
+    echo "REFUSED: no running zcrypto-cache-proxy container"
+    return 1
+  fi
+  printf '%s\n' "$ACCT_PY" | sudo nsenter -t "$pid" -n python3 - "$@"
+  rc=$?
   case "${1:-}" in
     clear|restore)
       if sudo docker inspect --format '{{.State.Status}}' zcrypto-engine >/dev/null 2>&1; then
@@ -1136,7 +1130,7 @@ SH
 eval "$ACCT_SH"
 ```
 
-`declare -f acct >/dev/null && echo ok` prints `ok`, and `printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum` prints `98dbfb8bf65dd37bad4ce4ee67201ce872d985c13599d2328d60fef90c569e67`: a paste that lost or changed a line of either text prints another digest and is pasted again. `clear` and `restore` refuse while a `zcrypto-engine` container exists, and while `acct` runs no `systemctl` line is typed in a second terminal.
+`declare -f acct >/dev/null && echo ok` prints `ok`, and `printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum` prints `b8da39812c0d0697a806d31b260533de9511e5462ef33ff393a05c729e1050b5`: a paste that lost or changed a line of either text prints another digest and is pasted again. `clear` and `restore` refuse while a `zcrypto-engine` container exists, and while `acct` runs no `systemctl` line is typed in a second terminal.
 
 3. **Read the store while the engine runs**: `acct list`. It prints the node that answered — `role master` and two `slave` lines, each `state=online` — then the keys by group and type, then each key carrying `:accounts:` entry by entry, oldest first, with the balances each start read and the newest figure per currency, which is what the next start will replay, then the aside copies. Expect one account key, `trader-SHADOW-001:accounts:KRAKEN-001`, a list, and `0 aside copy(ies)`. A second account key, or one that is not a list: stop here. A key under another name: pass it as `key=<name>` to each call below. An aside copy is what an earlier clear left behind, and `acct clear` refuses over one that differs from the key, so it is deleted before this run goes on. Where the key's entries open with the copy's own, that clear copied and did not delete, whatever a start since has added to the key: the copy holds nothing the key lacks, and `acct drop` deletes it here, printing `DEL -> 1` and `DROPPED`. Where they do not, the copy is a finished clear's way back, and step 8 says when it is deleted.
 
