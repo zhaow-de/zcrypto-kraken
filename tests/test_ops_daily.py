@@ -697,7 +697,6 @@ _DESTRUCTIVE = (
 
 
 def _destructive(command: str) -> bool:
-    # A compose command naming its file is the bare one: `compose -f <file> up` carries `compose up`.
     return any(tok in re.sub(r"\bcompose(?: (?:-f|--file) \S+)+", "compose", command) for tok in _DESTRUCTIVE)
 
 
