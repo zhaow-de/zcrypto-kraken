@@ -32,6 +32,6 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 
 ## Suggested next steps
 
-- The owner's decisions of 2026-10-01 are recorded in `docs/specs/00121-self-hosted-observability-design.md`: self-host; the bridgehead, ops and the three cache nodes ship to both stacks inside rung 2's box; the engine's healthchecks.io check and a hand read cover the exposure rule while the node is down; one public hostname under Grafana's own authentication; unattended upgrades with the reboot taken by hand and a monthly hand patch pass; 90 days of retention; the repo plus the provider's backups.
+- The design and the owner's decisions are `docs/specs/00121-self-hosted-observability-design.md`; phase 1's plan is `docs/plans/00121-mon-node.md`, and each later phase takes its own once the phase before it has been read.
 - The owner reviewed the spec on 2026-10-01; its plan follows, reviewed by `zcrypto-plan-review` before the first task.
 - Build in the spec's four phases: the node taking a shadow push; dual-shipping, the primary last and after the box; the cutover of paging; the retirement of the Grafana Cloud leg and the keep-alive.
