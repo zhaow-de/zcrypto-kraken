@@ -26,11 +26,11 @@
     # and so does one that names `all` beside others: either way every play runs.
     - name: refuse an un-tagged run on the live primary
       ansible.builtin.assert:
-        that: "'all' not in ansible_run_tags or 'engine' in ansible_skip_tags"
+        that: "('all' not in ansible_run_tags and 'tagged' not in ansible_run_tags) or 'engine' in ansible_skip_tags"
         fail_msg: >-
-          This run names no tags, or names `all` among them — on the live primary that sweeps in
-          every play, including the engine play. Scope it explicitly: --tags capture, --tags engine,
-          or --skip-tags engine.
+          This run names no tags, or names `all` or `tagged` among them — on the live primary that
+          sweeps in every play, including the engine play. Scope it explicitly: --tags capture,
+          --tags engine, or --skip-tags engine.
       when: inventory_hostname in groups['engine_host']
       tags: [always]
 
