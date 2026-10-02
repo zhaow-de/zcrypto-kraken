@@ -256,3 +256,9 @@
     enabled: true
     state: started
   when: not mon_units_previewed
+
+# ---- The tools' credential -------------------------------------------------------------------------
+# Every task in it calls Grafana's API or acts on what one returned, so a preview skips it whole.
+- name: the tools' service account and its one token
+  ansible.builtin.include_tasks: token.yml
+  when: not ansible_check_mode

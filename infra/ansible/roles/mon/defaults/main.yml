@@ -33,3 +33,15 @@ mon_loki_ds_uid: grafanacloud-logs
 # on the Loki path alone, so that push can be revoked without blinding fleet telemetry.
 mon_ingest_fleet_user: fleet
 mon_ingest_logship_user: logship
+
+# The one service account the workstation's tools hold a token of, and where the role caches that token on the
+# controller: outside the tree, since it is minted here and re-minted by any converge that finds it unusable.
+mon_service_account: zcrypto-tools
+mon_token_var: mon_grafana_tools_token
+mon_token_cache: "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/zcrypto/grafana-mon.vault.yml"
+# Grafana on loopback, where the role signs in with the vaulted admin password to manage the service account.
+mon_grafana_api: "http://127.0.0.1:{{ mon_grafana_port }}"
+# What a service-account token looks like. A cached value is held to it before it is placed in a header, and a
+# minted one before it is written: a value of another shape makes the request fail with the value in the error.
+# It ends in \Z because `$` also matches before a trailing newline, the one shape that has done that.
+mon_token_pattern: '^glsa_[A-Za-z0-9]{32}_[0-9a-f]{8}\Z'
