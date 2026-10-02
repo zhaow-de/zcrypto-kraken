@@ -152,8 +152,8 @@ def trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side
 
 
 def spot_trade_row(txid: str, pair: str, *, vol: str, price: str, trade_id: int, side: str = "buy") -> dict[str, Any]:
-    """One TradesHistory row for a spot fill of `txid`: no `leverage` and no `posstatus`, with the
-    `postxid` and `margin` Kraken still sends on it, both of which the adapter's model requires."""
+    """One TradesHistory row for a spot fill of `txid`: Kraken still sends `postxid` and `margin` on one,
+    and the adapter's model requires both."""
     row = trade_row(txid, pair, vol=vol, price=price, trade_id=trade_id, side=side)
     row.update(postxid="TKH2SE-M7IF5-CFI7LT", margin="0.00000")
     del row["leverage"], row["posstatus"]
@@ -214,7 +214,7 @@ class KrakenLoopback:
     base_url: str = ""
 
     def holdings(self) -> dict[str, Any]:
-        """The venue as the next loopback is to serve it: a copy of the five listings, and the txids minted."""
+        """The venue as the next loopback is to serve it: a copy of each listing, and the txids minted."""
         state = {name: copy.deepcopy(getattr(self, name)) for name in _CARRIED}
         return state | {"txid_base": self.txid_base + len(self.add_orders)}
 

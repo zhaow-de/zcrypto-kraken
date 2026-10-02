@@ -761,7 +761,7 @@ def _real_row(txid, refid, time, type_, subtype, asset, amount, fee, feecurrency
 
 
 def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
-    """The closed world: the six row types the venue's export carries, one arm each -- `trade` and
+    """Six row types the venue's export carries, one arm each -- `trade` and
     `margin` matched by trade id, `rollover` summed, `settled` and `collateralconversion` known
     no-fill types beside `deposit`, nothing left for `ignored`. A journaled spot fill T-1 and two
     margin fills, T-2 charged in euro and T-3 in EURC after the venue's par conversion beside it;
