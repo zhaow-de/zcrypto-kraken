@@ -908,6 +908,7 @@ def test_the_round_three_escapes_are_refused(cmd):
         ("sudo docker inspect grafana-alloy --format '{{.State.Status}} {{.RestartCount}} {{.State.OOMKilled}}'", "ops"),
         ("sudo docker exec zcrypto-engine zcrypto engine exec-status", "zcrypto"),
         ("uv run python infra/scripts/grafana-query.py 'up{job=\"capture_app\"}'", "ops"),
+        ("uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host=\"zcrypto-mon\"})'", "ops"),
         ("sudo docker logs --since 5h zcrypto-engine | grep 'not scored'", "zcrypto"),
     ],
 )
@@ -916,6 +917,16 @@ def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
     `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
     `docker exec` fronting a genuine read, and PromQL full of braces and quotes."""
     assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+def test_the_query_tools_stack_flag_takes_a_name_and_nothing_else():
+    """The value is a stack's name: one that carries a shell's or a URL's characters is no name, and is refused."""
+    for value in ("https://example.invalid", "mon;id", "../mon"):
+        step = f"uv run python infra/scripts/grafana-query.py --stack {value} 'up'"
+        assert ops_daily.classify_action(step, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, value
+    assert ops_daily.classify_action("uv run python infra/scripts/grafana-query.py --stack", host="ops", resolve=_identity) is (
+        ops_daily.Tier.PREPARED
+    )
 
 
 def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
@@ -1700,6 +1711,51 @@ def test_a_vault_that_cannot_be_read_exits_2(monkeypatch, capsys):
 def test_a_bad_since_suffix_is_a_usage_error_not_a_traceback():
     assert ops_daily.main(["report", "--since", "24w"]) == 2
     assert ops_daily.main(["report", "--since", "abc"]) == 2
+
+
+def _a_quiet_pass(monkeypatch) -> dict:
+    """Every reader stubbed to an empty read that records the stack URL it would have built its request from."""
+    seen: dict = {"vault": [], "urls": []}
+    monkeypatch.setattr(ops_daily, "GRAFANA_URL", ops_daily.GRAFANA_URL)  # main rebinds it; this puts it back
+    monkeypatch.setattr(
+        ops_daily.grafana_auth, "vault_var", lambda name, vault_file: seen["vault"].append((name, vault_file)) or "tok"
+    )
+
+    def reading(empty):
+        return lambda *a, **k: seen["urls"].append(ops_daily.GRAFANA_URL) or empty
+
+    monkeypatch.setattr(ops_daily, "read_alerts", reading(ops_daily.AlertsRead()))
+    monkeypatch.setattr(ops_daily, "read_logs", reading(ops_daily.LogsRead()))
+    monkeypatch.setattr(ops_daily, "read_deadmen", reading(ops_daily.DeadmenRead(via_prometheus=0.0)))
+    monkeypatch.setattr(ops_daily, "read_verdict", reading([]))
+    monkeypatch.setattr(ops_daily, "read_reminders", reading(ops_daily.RemindersRead()))
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "ssh_read", _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp()))))
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
+    return seen
+
+
+def test_the_pass_reads_grafana_cloud_when_no_stack_is_named(monkeypatch, capsys):
+    seen = _a_quiet_pass(monkeypatch)
+    assert ops_daily.main(["report"]) == 0
+    assert seen["vault"] == [("grafana_sa_token", ops_daily.grafana_auth.VAULT_FILE)]
+    assert set(seen["urls"]) == {"https://zcrypto2026.grafana.net"} and len(seen["urls"]) == 5
+
+
+def test_the_pass_reads_the_named_stack_at_its_own_url_with_its_own_token(monkeypatch, capsys):
+    seen = _a_quiet_pass(monkeypatch)
+    assert ops_daily.main(["report", "--stack", "mon", "--since", "24h"]) == 0
+    mon = ops_daily.grafana_auth.STACKS["mon"]
+    assert seen["vault"] == [(mon.token_var, mon.vault_file)]
+    assert set(seen["urls"]) == {"https://zcrypto-mon.zhaow.me"} and len(seen["urls"]) == 5
+
+
+@pytest.mark.parametrize("argv", [["report", "--stack", "prod"], ["report", "--stack"]], ids=["unknown", "no value"])
+def test_a_stack_the_pass_cannot_resolve_is_a_usage_error_before_any_read(monkeypatch, capsys, argv):
+    seen = _a_quiet_pass(monkeypatch)
+    assert ops_daily.main(argv) == 2
+    assert seen["vault"] == [] and seen["urls"] == []
+    assert "--stack takes one of cloud, mon" in capsys.readouterr().out
 
 
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
@@ -2632,7 +2688,7 @@ def test_the_runner_is_keyword_only_and_carries_no_live_default():
 
 def test_the_upgrade_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
     """The reader is wired into the report `main` prints: a check nothing appends reports nothing."""
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
@@ -2872,7 +2928,7 @@ def test_the_shim_exits_with_what_main_returns(tmp_path):
 
 def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
     """The cgroup row reaches the report `main` prints -- nothing else in this file drives that wiring."""
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
@@ -2889,7 +2945,7 @@ def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsy
 def test_an_uncapped_bridge_moves_the_pass_to_attention(monkeypatch, capsys):
     """The wiring proved in the direction that matters: an uncapped cgroup must reach `exit_code`,
     not merely be appended somewhere the verdict never reads."""
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))

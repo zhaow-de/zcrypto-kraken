@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "grafana_auth.py"
 _spec = importlib.util.spec_from_file_location("grafana_auth", _SCRIPT)
@@ -116,3 +117,49 @@ def test_vault_var_reads_the_file_it_is_given(monkeypatch):
     got = ga.vault_var("engine_healthcheck_url", vault_file="group_vars/engine_host/vault.yml")
     assert got == "https://example.invalid/abc"
     assert seen["path"].endswith("group_vars/engine_host/vault.yml")
+
+
+# --- the stack table: one tree feeds two Grafanas until the Grafana Cloud leg retires --------------
+MON_DEFAULTS = Path(__file__).resolve().parents[1] / "infra/ansible/roles/mon/defaults/main.yml"
+
+
+def test_the_table_holds_the_two_stacks_and_reads_cloud_when_none_is_named():
+    assert set(ga.STACKS) == {"cloud", "mon"}
+    assert ga.DEFAULT_STACK == "cloud", "the default moves at the cutover, with the push script's own"
+    assert ga.stack() is ga.STACKS["cloud"] and ga.GRAFANA_URL == ga.STACKS["cloud"].url
+    cloud = ga.STACKS["cloud"]
+    assert (cloud.url, cloud.token_var, cloud.vault_file) == ("https://zcrypto2026.grafana.net", "grafana_sa_token", ga.VAULT_FILE)
+
+
+def test_the_mon_stack_is_the_role_s_public_name_and_the_cache_the_role_writes():
+    """The role mints the token into a file outside the tree; a tool reading another file or another variable finds
+    nothing, or yesterday's token."""
+    defaults = yaml.safe_load(MON_DEFAULTS.read_text())
+    mon = ga.STACKS["mon"]
+    assert mon.url == f"https://{defaults['mon_hostname']}"
+    assert mon.token_var == defaults["mon_token_var"]
+    assert defaults["mon_token_cache"] == "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/zcrypto/grafana-mon.vault.yml"
+    assert mon.vault_file == str(Path.home() / ".config/zcrypto/grafana-mon.vault.yml")
+    assert Path(mon.vault_file).is_absolute() and not Path(mon.vault_file).is_relative_to(ga.ANSIBLE_DIR.parents[1])
+
+
+def test_an_unknown_stack_is_refused_by_name():
+    with pytest.raises(SystemExit) as refused:
+        ga.stack("grafana-cloud")
+    assert str(refused.value) == "unknown stack 'grafana-cloud': one of cloud, mon"
+
+
+def test_a_stack_s_token_is_read_from_its_own_file(monkeypatch):
+    seen = {}
+
+    class FakeLoader:
+        def set_vault_secrets(self, secrets): ...
+
+        def load_from_file(self, path):
+            seen["path"] = path
+            return {"mon_grafana_tools_token": TOKEN}
+
+    monkeypatch.setattr(ga, "_load_ansible_vault", lambda: (FakeLoader(), object()))
+    mon = ga.stack("mon")
+    assert ga.vault_var(mon.token_var, mon.vault_file) == TOKEN
+    assert seen["path"] == mon.vault_file, "an absolute vault file is read where it is, never under infra/ansible"

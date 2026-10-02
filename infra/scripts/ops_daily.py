@@ -1168,19 +1168,31 @@ def main(argv: list[str]) -> int:
         print(tier.value)
         return 0 if tier is Tier.AUTONOMOUS else 3
     if not argv or argv[0] != "report":
-        print('usage: ops-daily.py report [--since 24h] [--journal-entry]\n       ops-daily.py classify --host <host> "<command>"')
+        print(
+            "usage: ops-daily.py report [--since 24h] [--journal-entry] [--stack cloud|mon]\n"
+            '       ops-daily.py classify --host <host> "<command>"'
+        )
         return 2
     try:
         window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
     except (KeyError, ValueError, IndexError) as exc:
         print(f"--since takes a count and h or d, like 24h or 3d: {exc}")
         return 2
+    # One stack per pass: the three endpoint builders read `GRAFANA_URL` when called, so the name is rebound here.
+    global GRAFANA_URL
+    try:
+        named = argv[argv.index("--stack") + 1] if "--stack" in argv else grafana_auth.DEFAULT_STACK
+        stack = grafana_auth.STACKS[named]
+    except KeyError, IndexError:
+        print(f"--stack takes one of {', '.join(sorted(grafana_auth.STACKS))}")
+        return 2
+    GRAFANA_URL = stack.url
     now = datetime.now(timezone.utc)
     # The vault is a SOURCE like any other. A locked GPG agent raises `CalledProcessError`, which is
     # a `SubprocessError` and NOT an `OSError`, so `_UNREACHABLE` does not cover it -- and uncaught
     # it exits 1, the attention code, for a credential the pass could not read.
     try:
-        token = grafana_auth.vault_var("grafana_sa_token")
+        token = grafana_auth.vault_var(stack.token_var, stack.vault_file)
     except Exception as exc:
         # The catch is deliberately broad -- `vault_var` fails across unrelated exception hierarchies
         # and a narrow tuple would be guaranteed incomplete -- so keep the traceback for the case
@@ -1433,7 +1445,7 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("hostname",)),
     # The repo's own read-only instruments. Their operands are PromQL and paths, so the class is a
     # literal: the scanner has already refused every metacharacter that was active where it stood.
-    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),

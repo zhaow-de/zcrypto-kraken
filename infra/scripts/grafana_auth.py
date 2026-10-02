@@ -12,13 +12,39 @@ from __future__ import annotations
 import configparser
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 ANSIBLE_DIR = Path(__file__).resolve().parents[1] / "ansible"
 VAULT_FILE = "group_vars/all/vault.yml"
 
-# Deliberately baked in rather than re-guessed: a wrong datasource uid is accepted happily and still
-# reports health=ok, so a guess fails silently.
-GRAFANA_URL = "https://zcrypto2026.grafana.net"
+
+class Stack(NamedTuple):
+    """One Grafana the tools address: where it answers, and the vault variable and file holding its token."""
+
+    url: str
+    token_var: str
+    vault_file: str
+
+
+# Baked in rather than re-guessed: a wrong URL or datasource uid is accepted happily and still reports
+# health=ok, so a guess fails silently. Two stacks until the Grafana Cloud leg retires. `mon`'s token is
+# minted by the `mon` role into a vault-encrypted cache outside the tree, the role's `mon_token_cache` and
+# `mon_token_var`; `vault_var` reads an absolute file where it is.
+STACKS = {
+    "cloud": Stack("https://zcrypto2026.grafana.net", "grafana_sa_token", VAULT_FILE),
+    "mon": Stack(
+        "https://zcrypto-mon.zhaow.me", "mon_grafana_tools_token", str(Path.home() / ".config/zcrypto/grafana-mon.vault.yml")
+    ),
+}
+# The stack a tool reads when none is named: the one that pages.
+DEFAULT_STACK = "cloud"
+GRAFANA_URL = STACKS[DEFAULT_STACK].url
+
+
+def stack(name: str = DEFAULT_STACK) -> Stack:
+    if name not in STACKS:
+        raise SystemExit(f"unknown stack {name!r}: one of {', '.join(sorted(STACKS))}")
+    return STACKS[name]
 
 
 def vault_password_file() -> Path:
