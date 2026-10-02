@@ -306,10 +306,20 @@ def test_bare_run_still_refused(seq):
         (["all", "capture"], [], False),
         (["all", "capture"], ["engine"], True),
         (["capture", "engine"], [], True),
+        (["tagged"], [], False),
+        (["tagged"], ["engine"], True),
+        (["tagged", "capture"], [], False),
     ],
-    ids=["all-and-capture", "all-and-capture-skipping-engine", "capture-and-engine"],
+    ids=[
+        "all-and-capture",
+        "all-and-capture-skipping-engine",
+        "capture-and-engine",
+        "tagged-alone",
+        "tagged-alone-skipping-engine",
+        "tagged-and-capture",
+    ],
 )
-def test_all_among_the_run_tags_is_refused_unless_engine_is_skipped(seq, run, skip, passes):
+def test_all_or_tagged_among_the_run_tags_is_refused_unless_engine_is_skipped(seq, run, skip, passes):
     assert truthy(assert_that(_untag_guard()), _tags(seq, run, skip)) is passes
 
 
