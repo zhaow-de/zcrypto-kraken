@@ -101,11 +101,10 @@ def render_markdown(snapshot: dict) -> str:
             f"| {ordermin} | {costmin} | {status} |"
         )
 
-    # The ⏱ cost facts. Rendered as base tier + ladder depth rather than the full ladders: the
-    # ladders live in the snapshot JSON for a drift diff to name WHICH tier moved, but a 10-tier
-    # table per pair would bury the row a reader actually checks. Fees are the largest term in the
-    # cost model and margin_rate IS the borrow/rollover rate the master plan calls externally owned,
-    # so an "unchanged" verdict that never looked at these columns was never worth much.
+    # The ⏱ cost facts. A fee ladder renders as its base tier + depth, never in full: a 10-tier table
+    # per pair would bury the row a reader actually checks. margin_rate IS the borrow/rollover rate the
+    # master plan calls externally owned, so an "unchanged" verdict that never looked at these columns
+    # was never worth much.
     lines += [
         "",
         "## Fee schedule, borrow rate & margin bands",

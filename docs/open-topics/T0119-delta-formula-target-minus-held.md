@@ -19,10 +19,10 @@ This is the intent-vs-holdings drift defect: without it, the tiny-live sleeve's 
 
 - Measured 2026-07-30: 0 of 801 journaled intended orders clear `ordermin` at §12's tiny-live size — under the current formula the sleeve would emit nothing, indefinitely.
 - The held-position source is consumed: spec `00089` landed the `held` read (iter-138), and the executor sizes a closer from the Cache's live position; startup reconciliation fail-closes the node. This topic owns the open-order formula and its tests.
-- The formula interacts with the restart→reduce-only policy ([[T0018]]): after a restart, held is re-read from the venue, so the accumulation gap survives restarts by construction — a property worth a test, not an assumption.
+- The formula does not survive a restart on the rung-2 pin (`docs/reference/drill-log.md`, entry `spot-proof`): `held` is the engine Cache's net position, not a figure re-read from the venue, and on nautilus-trader `2.0.0rc6.dev20260921` under `spot_account_type=MARGIN` a restart restores every held spot lot beside an equal `EXTERNAL` short, so `held` reads 0 on a lot Kraken holds and `target − held` would buy the whole book again. The fix is upstream's; rung 3's precondition in master plan §12 is a pinned build that carries it, and says how it is read.
 
 ## Suggested next steps
 
 - **(autonomous)** Implement `delta = target − held` in the executor's order computation, with the accumulation gap journaled per asset per cycle (the gap series is [[T0118]]'s live counterpart and the rung-3 tracking-error input).
-- **(autonomous)** Tests: sub-`ordermin` deltas accumulate and place on crossing; a partial fill leaves the remainder in the gap; restart re-derives the gap from venue state bit-identically.
+- **(autonomous)** Tests: sub-`ordermin` deltas accumulate and place on crossing; a partial fill leaves the remainder in the gap; restart re-derives the gap from venue state bit-identically — with a spot lot held across it, on a pin that carries the restore's fix: `held` after the restart equals Kraken's holding.
 - **(autonomous)** Wire the gap series into the order/position/PnL metrics families ([[T0018]] / [[T0095]] inheritance) so drift is observable from Grafana, not only from the journal.

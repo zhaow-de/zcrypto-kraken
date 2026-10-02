@@ -335,14 +335,15 @@ class LedgerRow(NamedTuple):
     refid: str
     at: datetime
     type: str
+    subtype: str
     asset: str
     amount: float
     fee: float
 
 
 # The columns this reader USES, not the whole documented header: a venue that ADDS a column must
-# not break the read, while one that drops a column the arithmetic depends on must.
-_LEDGER_COLUMNS = ("txid", "refid", "time", "type", "asset", "amount", "fee")
+# not break the read, while one that drops a column the read depends on must.
+_LEDGER_COLUMNS = ("txid", "refid", "time", "type", "subtype", "asset", "amount", "fee")
 # The assets a fee is summed under as euro: the venue's two spellings, and EURC, which it charges a margin open's fee in
 # after converting euro to it at par beside the row, the export's `collateralconversion` pair, so a EURC fee counts at par.
 _EURO_FEE_ASSETS = frozenset(EUR_CODES) | {"EURC"}
@@ -352,8 +353,12 @@ _MATCHED_LEDGER_TYPES = frozenset({"trade", "margin"})
 # Row types with no fill behind them BY CONSTRUCTION -- an allowlist, so an unknown type is reported rather than passed
 # over, while failing on a deposit would fail every export. `settled` is a hand settle's delivery pair, which the journal
 # holds no row for; `collateralconversion` is the venue's own currency swap for a margin fee, keyed to the position's
-# opening trade.
-_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion"})
+# opening trade; `staking` is a reward the venue credits on a spot holding.
+_NO_FILL_LEDGER_TYPES = frozenset({"deposit", "withdrawal", "transfer", "settled", "collateralconversion", "staking"})
+# The venue's small-balance conversion writes no trade: a `spend` row per coin and a `receive` row for the proceeds, each
+# with this subtype.
+_DUST_SWEEP_SUBTYPE = "dustsweeping"
+_DUST_SWEEP_TYPES = frozenset({"spend", "receive"})
 
 
 def read_ledger_export(path: Path) -> list[LedgerRow]:
@@ -369,8 +374,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
             if missing:
                 raise EngineError(
                     f"the ledger export {path} has no {', '.join(missing)} column -- its header reads "
-                    f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting: this reader's "
-                    "arithmetic is keyed on those names, and a defaulted column parses into a plausible number"
+                    f"{', '.join(header) or '(empty)'}. Refusing rather than defaulting"
                 )
             rows: list[LedgerRow] = []
             # A row ordinal, not a physical line number: a quoted field may carry a newline, after
@@ -384,6 +388,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
                         raw["refid"],
                         at if at.tzinfo is not None else at.replace(tzinfo=UTC),
                         raw["type"],
+                        raw["subtype"],
                         raw["asset"],
                         float(raw["amount"]),
                         float(raw["fee"]),
@@ -398,7 +403,7 @@ def read_ledger_export(path: Path) -> list[LedgerRow]:
 
 def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
     """An unmatched venue trade or margin row FAILS the comparison; an export with neither decides nothing; a known
-    no-fill type is counted under `known`, an unknown type under `ignored`."""
+    no-fill row is counted under `known`, an unknown type under `ignored`."""
     journaled = {f.trade_id for f in fills}
     matched = 0
     compared = 0
@@ -429,6 +434,8 @@ def reconcile_ledger(rows: list[LedgerRow], fills: list[Fill]) -> dict:
                 unmatched.append(row.refid)
         elif row.type in _NO_FILL_LEDGER_TYPES:
             known[row.type] = known.get(row.type, 0) + 1
+        elif row.subtype == _DUST_SWEEP_SUBTYPE and row.type in _DUST_SWEEP_TYPES:
+            known[row.subtype] = known.get(row.subtype, 0) + 1
         else:
             ignored[row.type] = ignored.get(row.type, 0) + 1
     return {

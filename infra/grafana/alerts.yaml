@@ -353,7 +353,7 @@ rules:
   # outright: unattended engine liveness rides zcrypto-engine-cycle-stale below, zcrypto-engine-log-
   # dead, and the healthchecks.io dead-man switch, and a bare `up == 0` page would only add detection
   # latency nothing needs. What the scrape-level signal DOES buy is a conjunction nothing else can
-  # express -- zcrypto-engine-dark-with-exposure below pairs it with a non-zero position at last
+  # express -- zcrypto-engine-dark-with-exposure below pairs it with a position open at last
   # sight, scoped `host="zcrypto"` on both halves for exactly the reason above.
   - uid: zcrypto-engine-cycle-stale
     title: "Engine · cycles have stopped"
@@ -435,6 +435,12 @@ rules:
     # a max would keep paging over a position closed hours before the engine went dark. `abs`,
     # because a short is exposure too.
     #
+    # Node C's floor: the gauge carries Kraken's own holdings, and a staking reward credited on a
+    # lot already sold leaves a remainder no order can close. The floor sits under every basket
+    # leg's `ordermin` (docs/reference/kraken-snapshot-register.md; the replay reads that table), so
+    # a lot an order can place counts. A remainder between the floor and its leg's `ordermin` still
+    # arms the rule: `max()` folds the legs into one number, so one floor serves every leg.
+    #
     # Node B reads the scrape's VALUE, not its presence -- the one place this rule must NOT copy the
     # zcrypto-alloy-dark-* rules. `engine_app` is a STATIC scrape target (see the capture role's
     # config.alloy), so nothing removes it when the container stops: the series stays present reading
@@ -486,7 +492,7 @@ rules:
         model:
           datasource: {type: "__expr__", uid: "__expr__"}
           type: math
-          expression: "$A > 0 && $B < 1"
+          expression: "$A > 0.000001 && $B < 1"
           refId: C
       - refId: D
         queryType: ""
@@ -507,8 +513,8 @@ rules:
     for: 10m
     annotations:
       summary: >-
-        The engine's last reported position was non-zero and its scrape has read 0, or been gone, for
-        over 10 minutes — either the engine is dark with exposure open, or the capture primary's
+        The engine's last reported position was above 0.000001 base units, the dust floor, and its
+        scrape has read 0, or been gone, for over 10 minutes — either the engine is dark with exposure open, or the capture primary's
         telemetry plane is dark and the engine is fine. Check `Fleet · Alloy dark — Capture primary`
         FIRST: it counts the host's series instead of reading this scrape's value, so it stays >= 1
         while Alloy is up and co-fires only on the telemetry route — where the position stands and
@@ -4541,10 +4547,9 @@ rules:
     data:
       # `RestartCount` was a bake abort signal read by hand on the host; it has no metric (no
       # cadvisor). `process_start_time_seconds` is kept and moves on every restart, which is the same
-      # fact from inside the process. A converge restarts on purpose and this pages once for it --
-      # an attended converge's own record in the channel. Any other firing is the OOM-kill or a
-      # crash, and nothing else reports either: the container is back in seconds, the dead-man
-      # keeps pinging, and the log-dead rules never see a gap that short.
+      # fact from inside the process. An OOM-kill or a crash is reported by nothing else: the
+      # container is back in seconds, the dead-man keeps pinging, and the log-dead rules never see a
+      # gap that short.
       - refId: A
         queryType: ""
         relativeTimeRange: {from: 900, to: 0}
@@ -4572,10 +4577,11 @@ rules:
     annotations:
       summary: >-
         A daemon in the fleet restarted in the last 15 minutes — `job` says which: a capture or engine
-        daemon, the ops liquidations poller, or Alloy itself (`integrations/self`). If a converge or an Alloy
-        bump just ran on that host, this is that action's own record and needs nothing. If nothing was converged, the daemon was OOM-killed or crashed and came
-        back on its own — read `RestartCount` on the container and the memory panels, and check whether
-        parquet is advancing. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-daemon-restarted
+        daemon, the ops liquidations poller, or Alloy itself (`integrations/self`). If a converge, an
+        Alloy bump, a reboot or a restart by hand just ran on that host, this is that action's own
+        record and the page itself needs nothing. If none did, the daemon was OOM-killed or crashed and
+        came back on its own — read `RestartCount` on the container and the memory panels, and check
+        whether parquet is advancing. Runbook: infra/runbooks/fleet.md#zcrypto-fleet-daemon-restarted
       __dashboardUid__: "zcrypto-fleet"
       __panelId__: "601"
       unit: "daemon process starts in the last 15 minutes"

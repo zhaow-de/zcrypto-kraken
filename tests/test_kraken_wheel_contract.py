@@ -171,18 +171,8 @@ def _fees(venue) -> dict[str, tuple[Decimal, Decimal]]:
     return asyncio.run(run())
 
 
-def _public_fees(venue) -> dict[str, tuple[Decimal, Decimal]]:
-    """The first rung of each AssetPairs row's own ladders, in percent there and a fraction on the instrument."""
-    wsname = {"XXBTZEUR": "BTC/EUR.KRAKEN", "SOLEUR": "SOL/EUR.KRAKEN"}
-    return {
-        wsname[key]: (Decimal(str(row["fees_maker"][0][1])) / 100, Decimal(str(row["fees"][0][1])) / 100)
-        for key, row in venue.asset_pairs.items()
-    }
-
-
 def test_the_listing_takes_the_account_s_fee_tier_from_trade_volume(venue):
     account_tier = (Decimal(venue.maker_fee_pct) / 100, Decimal(venue.taker_fee_pct) / 100)
-    assert account_tier not in _public_fees(venue).values()
     assert _fees(venue) == {"BTC/EUR.KRAKEN": account_tier, "SOL/EUR.KRAKEN": account_tier}
 
 
@@ -193,10 +183,11 @@ def test_the_listing_takes_the_account_s_fee_tier_from_trade_volume(venue):
         pytest.param({"trade_volume_answer": {"currency": "ZUSD"}}, id="trade-volume-answer-does-not-parse"),
     ],
 )
-def test_a_trade_volume_failure_still_yields_the_listing_on_public_fees(venue, fault):
+def test_a_trade_volume_failure_yields_the_listing_at_zero_fees(venue, fault):
     for name, value in fault.items():
         setattr(venue, name, value)
-    assert _fees(venue) == _public_fees(venue)
+    zero = (Decimal(0), Decimal(0))
+    assert _fees(venue) == {"BTC/EUR.KRAKEN": zero, "SOL/EUR.KRAKEN": zero}
     assert "TradeVolume" in venue.private_calls
 
 

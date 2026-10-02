@@ -83,15 +83,20 @@ Charged on the **extended (borrowed) currency**, at that currency's rate — a r
 
 Plus: standard spot trade fees on **both** the open and close of a margin position (none on settling **in kind**) — the maker/taker fee is paid twice on top of the open + rollover; **3% liquidation fee** at index on forced liquidation.
 
+## Rewards on spot holdings and the small-balance conversion (read 2026-10-01)
+
+Two things Kraken books on the spot account with no order and no trade behind them, each read from `kraken ledgers` on 2026-10-01. `zcrypto engine tracking-report --ledger-export` counts both among the rows with no fill behind them.
+
+- **Rewards on spot holdings (Auto Earn, formerly Kraken Rewards) — ledger type `staking`, a 30 % commission taken in the coin.** On account-wide on this account, left on for now (`docs/research/14.phase6-decisions.md`, `[iter-173]`); it can be turned off per program under Kraken's Earn settings. Eligible assets worth more than 1 USD accrue daily and are paid weekly, each payment one `staking` row whose `amount` is the reward and whose `fee` is Kraken's commission in the same coin, and a holding of minutes earns: the two rows of 2026-10-01 and the holdings that earned them are in the `spot-proof` entry of `docs/reference/drill-log.md`.
+- **The small-balance conversion ("Convert small balances") — ledger rows `spend` and `receive` with subtype `dustsweeping`, no trade.** Kraken's own function, on the Kraken app, Kraken Web and Kraken Pro Web with no API endpoint: every balance worth under about 1 USD into one chosen asset, at a documented 3 % fee, once per 24 hours. Run once, 2026-10-01 22:28:44Z, SOL and BNB into EUR: `spend` SOL −1.17e-08 with fee 3e-10, `spend` BNB −7e-08 with fee 0, `receive` EUR +0.0001 with fee 0, each with `subtype` `dustsweeping` and `aclass` `currency`, under one refid. The fee Kraken took is the SOL row's 3e-10, beside its amount the whole 1.2e-08 held; the BNB row carries none at that size. `kraken trades-history` gained no row, and both coins read 0 afterwards.
+
 ## Provenance & cost-model note
 
 Sources: Kraken "Cross-platform fee tier changes (July 2026)" support article; kraken.com/features/margin-trading; kraken.com/features/fee-schedule; "How trading fees work on Kraken".
 
 **This file is the fee source of truth; the snapshot register is not.** `kraken-snapshot-register.md`
-renders the fee ladder Kraken's public `AssetPairs` endpoint reports, and that endpoint was still
-serving the **pre-2026-07-09** schedule (0.25 %/0.40 % base, breaks at \$10k/\$50k) when checked on
-2026-08-04 — nearly a month after this schedule took effect. Those columns are kept there as a
-**drift detector on the endpoint**, explicitly not as a costing anchor: the day they move is the day
-the API propagated a change, and the reconciliation runs back to this file. The register's borrow
-and margin columns do agree with the table above and need no such caveat. The re-confirmation
+renders the fee ladder Kraken's public `AssetPairs` endpoint reports, which lagged this schedule by
+weeks and since sweep #3 serves none; a ladder that reappears there is reconciled back to this file,
+never adopted as a costing anchor. The register's borrow and margin columns do agree
+with the table above and need no such caveat. The re-confirmation
 routine for both files is the `zcrypto-refdata-sweep` skill. **Cost-model action:** the Phase-2 explicit-cost model must adopt this July-9 schedule (base taker **0.80%**, maker **0.40%**), not the master-plan §1/§4/§14 snapshot (0.25%/0.40%). The change *reinforces* the plan's thesis — maker-first execution, no fast taker mean-reversion at our size — with worse absolute numbers. All values ⏱: the current tier and volumes come from `kraken volume`; the ladder's shape, the AoP qualification ladder and the margin bands are reconfirmed on the live Fee tab and the margin order form at Phase 0 and go-live.

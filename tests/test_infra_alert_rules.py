@@ -402,8 +402,8 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_fills_total",
     "zcrypto_exec_fees_eur_total",
     # `zcrypto_exec_position` keeps its exclusion for its BARE VALUE, which stays no fault at any
-    # level -- but it is no longer unwatched: zcrypto-engine-dark-with-exposure pages on it non-zero
-    # at last sight WITH the engine's scrape gone, a conjunction the attended-window reasoning above
+    # level -- but it is no longer unwatched: zcrypto-engine-dark-with-exposure pages on it above its
+    # dust floor at last sight WITH the engine's scrape gone, a conjunction the attended-window reasoning above
     # does not cover, since nobody is watching the board when the engine is the thing that left.
     "zcrypto_exec_position",
     "zcrypto_exec_realized_pnl_eur",
@@ -1673,6 +1673,29 @@ def _dark_with_exposure_unobserved_reads(rule) -> float:
     return float(fallback.group(1))
 
 
+def _dark_with_exposure_floor(rule) -> float:
+    node_c = next(n for n in rule["data"] if n["refId"] == "C")
+    floor = re.fullmatch(r"\$A > ([0-9.eE+-]+) && \$B < 1", node_c["model"]["expression"])
+    assert floor, f"node C is no longer `$A > <floor> && $B < 1`: {node_c['model']['expression']!r}"
+    return float(floor.group(1))
+
+
+def _basket_ordermins() -> dict[str, float]:
+    lines = (REPO / "docs/reference/kraken-snapshot-register.md").read_text().splitlines()
+
+    def cells(row: str) -> list[str]:
+        return [cell.strip() for cell in row.strip().strip("|").split("|")]
+
+    header = next(i for i, line in enumerate(lines) if line.startswith("| Symbol |") and "| Ordermin |" in line)
+    column = cells(lines[header]).index("Ordermin")
+    ordermins = {}
+    for row in lines[header + 2 :]:
+        if not row.startswith("|"):
+            break
+        ordermins[cells(row)[0]] = float(cells(row)[column])
+    return ordermins
+
+
 def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads():
     """`relativeTimeRange.from` does not feed a range selector on an instant node, so a mismatch here
     breaks nothing at evaluation time. What it breaks is the record: this file declares a node's
@@ -1688,7 +1711,7 @@ def test_the_dark_with_exposure_range_declares_the_window_its_expression_reads()
 
 
 def _replay_dark_with_exposure(
-    published, up_at, *, lookback, hold_for, span, a_form="lookbacked", b_form="value", unobserved_reads=0.0
+    published, up_at, *, lookback, hold_for, floor, span, a_form="lookbacked", b_form="value", unobserved_reads=0.0
 ):
     """Evaluation timestamps at which the rule is FIRING, over one `(position, scrape)` history.
 
@@ -1711,7 +1734,7 @@ def _replay_dark_with_exposure(
 
     firing, run = set(), 0
     for t in range(0, span, _EVAL_INTERVAL):
-        if a(t) > 0 and b(t) < 1:
+        if a(t) > floor and b(t) < 1:
             run += _EVAL_INTERVAL
             if run >= hold_for:
                 firing.add(t)
@@ -1725,6 +1748,7 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     out of `alerts.yaml`, never restated here, so this fails when the rule changes."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+    floor = _dark_with_exposure_floor(rule)
 
     dark_at = 3600
     closed_at = 1800
@@ -1743,7 +1767,7 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     def alloy_goes_dark(t):  # the plane goes dark; the series is REMOVED, not set to 0
         return 1 if t < dark_at else None
 
-    firing = _replay_dark_with_exposure(open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    firing = _replay_dark_with_exposure(open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span)
     assert firing, "a position open at last report and no engine scrape does not page -- the rule cannot fire"
     assert dark_at <= min(firing) <= dark_at + hold_for, (
         f"first page at {min(firing)}s is not within `for: {rule['for']}` of the engine going dark at {dark_at}s"
@@ -1754,15 +1778,19 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
         f"an operator asleep through a daily pass would find it self-resolved"
     )
 
-    quiet_flat = _replay_dark_with_exposure(flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    quiet_flat = _replay_dark_with_exposure(flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span)
     assert not quiet_flat, (
         f"a dark engine with NOTHING exposed pages here too, which is cycle-stale's job: {sorted(quiet_flat)[:3]}"
     )
 
-    quiet_scraping = _replay_dark_with_exposure(open_throughout, lambda t: 1, lookback=lookback, hold_for=hold_for, span=span)
+    quiet_scraping = _replay_dark_with_exposure(
+        open_throughout, lambda t: 1, lookback=lookback, hold_for=hold_for, floor=floor, span=span
+    )
     assert not quiet_scraping, f"a healthy engine holding a position pages: {sorted(quiet_scraping)[:3]}"
 
-    quiet_closed = _replay_dark_with_exposure(closed_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    quiet_closed = _replay_dark_with_exposure(
+        closed_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span
+    )
     assert not quiet_closed, (
         f"a position CLOSED before the engine went dark still pages -- that is `max_over_time` behaviour, and it "
         f"keeps this page up for the rest of the day over money that is not at risk: {sorted(quiet_closed)[:3]}"
@@ -1771,7 +1799,9 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     # The SECOND darkness route, which the rule fires on deliberately: the primary's Alloy takes the
     # series away and `or on() vector(0)` supplies the 0. Replayed because it is half of what this
     # rule does and because control 2 below rests on the two routes reaching `$B < 1` differently.
-    alloy_route = _replay_dark_with_exposure(open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    alloy_route = _replay_dark_with_exposure(
+        open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span
+    )
     assert alloy_route, "a position open with the primary's whole plane dark does not page -- the accepted double-page is gone"
 
     # The two controls: each replays the TRUE POSITIVE through a defective form of one node and
@@ -1780,7 +1810,7 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     # (1) Node A read instant, its lookback stripped: the gauge holds its last value only to
     # Prometheus's staleness horizon, so the condition never survives to `for`.
     unlookbacked = _replay_dark_with_exposure(
-        open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, a_form="instant"
+        open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span, a_form="instant"
     )
     assert not unlookbacked, (
         f"an instant read of the position gauge fires too, so this replay is not proving the lookback: {sorted(unlookbacked)[:3]}"
@@ -1791,7 +1821,7 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     # the real behaviour of a static scrape target: model the dark scrape as an ABSENT series and
     # `count()` falls through its own fallback to 0 and fires here too.
     presence_counting = _replay_dark_with_exposure(
-        open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, b_form="presence"
+        open_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span, b_form="presence"
     )
     assert not presence_counting, (
         f"a presence count fires on a dead exporter, so this replay is not proving the value read: {sorted(presence_counting)[:3]}"
@@ -1801,11 +1831,43 @@ def test_a_dark_engine_with_exposure_pages_and_the_three_healthy_shapes_do_not()
     # fires. Asserting it here is what makes the sentence above checkable -- a replay that modelled
     # the dead exporter as an absent series would turn the control green for the wrong reason.
     presence_on_alloy_route = _replay_dark_with_exposure(
-        open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, span=span, b_form="presence"
+        open_then_dark, alloy_goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span, b_form="presence"
     )
     assert presence_on_alloy_route, (
         "the presence form stays quiet even when the series is ABSENT, so this replay is not modelling the "
         "`or on() vector(0)` fallback and control 2 proves nothing"
+    )
+
+
+def test_dust_on_the_position_gauge_is_no_exposure_and_the_smallest_lot_an_order_can_place_is():
+    from cli.engine.store import BASKET
+
+    rule = _rule(_DARK_WITH_EXPOSURE)
+    lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+    floor = _dark_with_exposure_floor(rule)
+
+    ordermins = _basket_ordermins()
+    assert set(ordermins) == set(BASKET), f"the register's table is not the basket: {sorted(set(ordermins) ^ set(BASKET))}"
+    smallest_lot = min(ordermins.values())
+
+    dark_at = 3600
+    span = dark_at + lookback
+    dust_then_dark = [(t, 1e-08) for t in range(0, dark_at, _EVAL_INTERVAL)]
+    lot_then_dark = [(t, smallest_lot) for t in range(0, dark_at, _EVAL_INTERVAL)]
+
+    def goes_dark(t):
+        return 1 if t < dark_at else 0
+
+    on_dust = _replay_dark_with_exposure(dust_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span)
+    assert not on_dust, (
+        f"1e-08 of a coin on the gauge pages as an open position -- no order can close it, and a flat account "
+        f"would page on every engine outage: {sorted(on_dust)[:3]}"
+    )
+
+    on_a_lot = _replay_dark_with_exposure(lot_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span)
+    assert on_a_lot, (
+        f"a held lot of {smallest_lot:g}, the smallest `ordermin` in the basket, does not page with the engine dark -- "
+        f"the floor {floor:g} has reached a quantity an order can place"
     )
 
 
@@ -1816,6 +1878,7 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
     test."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+    floor = _dark_with_exposure_floor(rule)
 
     dark_at = 3600
     flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
@@ -1830,7 +1893,7 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
     def goes_dark(t):
         return 1 if t < dark_at else 0
 
-    quiet_flat = _replay_dark_with_exposure(flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span)
+    quiet_flat = _replay_dark_with_exposure(flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span)
     assert not quiet_flat, (
         f"a flat book the engine DID report pages inside its own horizon, so the comparison below is between two "
         f"firing histories and pins nothing: {sorted(quiet_flat)[:3]}"
@@ -1841,6 +1904,7 @@ def test_a_position_never_observed_is_as_quiet_as_a_flat_one_and_the_rule_cannot
         goes_dark,
         lookback=lookback,
         hold_for=hold_for,
+        floor=floor,
         span=span,
         unobserved_reads=_dark_with_exposure_unobserved_reads(rule),
     )
@@ -1856,6 +1920,7 @@ def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
     expectation is a changed assertion rather than a rewritten harness."""
     rule = _rule(_DARK_WITH_EXPOSURE)
     lookback, hold_for = _dark_with_exposure_lookback(rule), _duration_seconds(rule["for"])
+    floor = _dark_with_exposure_floor(rule)
 
     dark_at = 3600
     flat_then_dark = [(t, 0.0) for t in range(0, dark_at, _EVAL_INTERVAL)]
@@ -1866,12 +1931,12 @@ def test_the_replay_can_separate_an_unobserved_window_from_a_published_zero():
 
     never_observed = []
     unobserved = _replay_dark_with_exposure(
-        never_observed, goes_dark, lookback=lookback, hold_for=hold_for, span=span, unobserved_reads=1.0
+        never_observed, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span, unobserved_reads=1.0
     )
     assert unobserved, "the replay cannot express an unobserved window as anything but a flat book, so no fix can be replayed"
 
     still_quiet_flat = _replay_dark_with_exposure(
-        flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, span=span, unobserved_reads=1.0
+        flat_then_dark, goes_dark, lookback=lookback, hold_for=hold_for, floor=floor, span=span, unobserved_reads=1.0
     )
     assert not still_quiet_flat, (
         f"reading an unobserved window as exposure also pages on a book the engine reported flat -- that trades the "

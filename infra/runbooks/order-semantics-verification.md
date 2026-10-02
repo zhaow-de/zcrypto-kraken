@@ -34,12 +34,29 @@ Do all of these before the first credentialed run.
 
 #### 1.1 Kraken maintenance window
 
+On the workstation, both of Kraken's feeds read whole. `START` and `END` are the act's window in UTC — this run's, or the stop, start or restart another page sends you here for. `START` as written is the minute you run it, a planning-time read types a time in `END`'s form in its place, and `END` is the act's end, typed over the example:
+
 ```
-curl -s https://status.kraken.com/api/v2/scheduled-maintenances.json \
-  | python3 -c 'import json,sys; [print(m["name"], m["scheduled_for"], [c["name"] for c in m["components"]]) for m in json.load(sys.stdin)["scheduled_maintenances"]]'
+START=$(date -u +%Y-%m-%dT%H:%MZ) END=2026-10-05T15:05Z python3 - <<'PY'
+import json, os, re, urllib.request
+from datetime import datetime
+t = lambda s: datetime.fromisoformat(s.replace("Z", "+00:00"))
+start, end = t(os.environ["START"]), t(os.environ["END"])
+assert start < end, "END is not later than START"
+word = re.compile(r"\b(websocket|rest)\b", re.I)
+for feed in ("scheduled-maintenances", "scheduled-maintenances/upcoming"):
+    d = json.load(urllib.request.urlopen(f"https://status.kraken.com/api/v2/{feed}.json", timeout=30))
+    ms = d["scheduled_maintenances"]
+    print(f"== {feed}: updated_at {d['page']['updated_at']}, {len(ms)} entries; act window {start:%m-%d %H:%M}-{end:%m-%d %H:%M}Z")
+    for m in ms:
+        names = [m["name"], *(c["name"] for c in m["components"])]
+        venue = any(word.search(n) for n in names)
+        hit = venue and t(m["scheduled_for"]) < end and t(m["scheduled_until"]) > start
+        print("STOP " if hit else "venue" if venue else "-    ", m["status"], m["scheduled_for"], m["scheduled_until"], m["name"], names[1:])
+PY
 ```
 
-Abort if a window the converge bullet of `.claude/rules/fleet-deploys.md` names overlaps your run; an empty `components` array is not an absent impact. An empty feed is never evidence the window is clear: check again immediately before the run (§5).
+A `STOP` line stops the act, the test being the converge bullet's in `.claude/rules/fleet-deploys.md`; `venue` marks an entry carrying the word outside the window, and an entry's own name is read because an empty `components` array is not an absent impact. A failed fetch, a traceback, `END is not later than START` or `0 entries` on the first feed, the 50 most recent entries, is never evidence the window is clear: fetch again, and check again immediately before the run (§5). `0 entries` on the second feed, the upcoming ones, beside a first feed that printed its entries, is nothing upcoming.
 
 #### 1.2 The engine's 4-hour boundary
 
@@ -232,11 +249,11 @@ $RUN --probes 5 --apply --probe5 --evidence-dir "$EVID"
 
 `--probe5` is required on top of `--apply`; without it the row reads `GATED` and nothing is submitted.
 
-Watch for, in order: `BUY filled <qty> @ <px>` → the post-buy balance/position print → the closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
+Watch for, in order: `BUY filled <qty> @ <px>` → the `post-buy:` print of the node's own Cache → the closing `SELL` plan → `market sell @ <px> filled` → verdict `PASS`.
 
 - If the buy fills and the sell does not, the harness prints `POSITION LEFT OPEN` and a note telling you to flatten by hand. Do that immediately at Kraken → Trade, before anything else.
 - A note that the closing quantity was "floored … dust will remain" means a sliver of BTC stays in the wallet: the closing leg was rounded down to the pair's lot step (`size_increment`), so the remainder is smaller than one lot step and no order can carry it. That is terminal dust, not a position; record it, do not chase it.
-- Whether a spot buy under `spot_account_type=MARGIN` shows an OpenPositions row is per build: read it on the build in front of you and record it in that version's `docs/reference/adapter-verification/` record. Either answer is a pass; probe 5 is judged on the fill and the flat close.
+- The `post-buy:` line is the probe node's own Cache, as the note printed under it says, and probe 5 buys and sells back to back, which leaves no moment to read Kraken between the two. Record the line as printed in that version's `docs/reference/adapter-verification/` record; probe 5 is judged on the fill and the flat close.
 
 Record the fee from the fill and compare it with `cli/costs/fees.py`'s tier-1 taker rate, 0.80 %/side. A materially different number is a cost-model input, not an adapter failure.
 

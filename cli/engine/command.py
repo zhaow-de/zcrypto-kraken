@@ -23,6 +23,7 @@ from prometheus_client import Counter, Gauge
 from cli.config import AppConfig, ConfigError, EngineConfig, load_config, resolve_data_dir
 from cli.engine.concordance import CycleOutcome, GateStatus, HashMismatchError, compare_targets, evaluate_gate, replay_cycle
 from cli.engine.cycle import CycleResult, run_cycle, set_metrics_sink
+from cli.engine.draftplan import DraftPlanError, draft, fetch_maintenance_feed, fetch_ticker, parse_decision_log
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import LEVEL_CODE, ExecutionGate, GateVerdict, write_restart_hold
 from cli.engine.execledger import ledgered_plan_ids, read_exec_record, validate_exec_record, write_exec_record
@@ -70,7 +71,7 @@ DEFAULT_NAVS = (500.0, 1000.0, 2500.0, 5000.0, 10000.0)
 _API_KEY_VAR = "KRAKEN_SPOT_API_KEY"
 _API_SECRET_VAR = "KRAKEN_SPOT_API_SECRET"
 _REFDATA_GLOB = "kraken-refdata-*.json"
-_urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-export healthcheck ping
+_urlopen = urllib.request.urlopen  # module-level so tests can stub the gate-export ping and draft-plan's two reads
 
 engine_app = typer.Typer(
     no_args_is_help=True,
@@ -1988,3 +1989,138 @@ def probe_plan(
         raise _abort("plan refused: " + "; ".join(refusals))
     total = sum(i.notional_eur or 0.0 for i in plan.intents)
     typer.echo(f"plan ok: {len(plan.intents)} intent(s), total notional {total:.2f} EUR")
+
+
+def _read_draft_record(path: Path) -> CycleRecord:
+    try:
+        record = from_json(path.read_text())
+        validate_record(record)
+    except (OSError, EngineJournalError) as exc:
+        raise _abort(f"could not read the cycle record {path}: {exc}") from exc
+    return record
+
+
+def _read_draft_export(path: Path, what: str) -> tuple[object, datetime]:
+    try:
+        return json.loads(path.read_text()), datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    except (OSError, ValueError) as exc:
+        raise _abort(f"could not read the {what} export {path}: {exc}") from exc
+
+
+@engine_app.command(name="draft-plan")
+def draft_plan(
+    cycle_path: Path = typer.Option(
+        ...,
+        "--cycle",
+        help="The newest cycle-<HH>.json; its final_targets set each leg's target. Refused when older than the latest boundary.",
+    ),
+    venue_path: Path = typer.Option(
+        ...,
+        "--venue",
+        help="The venue-<HH>.json of the same boundary: each leg's ordermin and lot step, and the balance b the engine checks a sell against.",
+    ),
+    balances_path: Path = typer.Option(
+        ...,
+        "--balances",
+        help="Kraken's extended balance (BalanceEx) as JSON, exported on this workstation right before the draft. Refused when over 30 "
+        "minutes old or dated after now.",
+    ),
+    positions_path: Path = typer.Option(
+        ...,
+        "--positions",
+        help="Kraken's open margin positions (OpenPositions) as JSON, exported beside the balance: an empty object when nothing is "
+        "open. Refused when it lists a position, and when over 30 minutes old or dated after now.",
+    ),
+    out: Optional[Path] = typer.Option(
+        None,
+        "--out",
+        help="Where the plan is written, never over an existing file. Default: <plan_id>.json beside the decision log.",
+    ),
+    decisions_path: Optional[Path] = typer.Option(
+        None,
+        "--decisions",
+        help="The decision log (JSON lines): one row per leg is appended on every draft, and the plan_id sequence and the "
+        "legs today's plans carried are read from it. Default: <data_dir>/rung2/decisions.jsonl, data_dir from zcrypto.toml.",
+    ),
+    exiting: bool = typer.Option(
+        False,
+        "--exit",
+        help="Draft the box's exit: every leg's target is 0 and nothing is bought. Refused except on the box's two exit days, "
+        "which refuse a draft without it.",
+    ),
+    discard: Optional[str] = typer.Option(
+        None,
+        "--discard",
+        metavar="PLAN_ID",
+        help="One of today's plans, never placed -- refused at --check, or expired before it was placed. Recorded in the "
+        "decision log, and its legs may be drafted again today.",
+    ),
+) -> None:
+    """Draft the next rung-2 probe plan: each leg's target minus what Kraken holds, sells first.
+
+    Workstation-only and read-only towards the venue: it reads the two journal records, the balance and positions exports, the public ticker and Kraken's maintenance feed, writes one plan file and appends to the decision log, and places nothing. The owner copies the plan to the engine host, runs `probe-plan --check` there and places it. Exits non-zero on any refusal, writing nothing."""
+    from cli.engine.venueledger import read_venue_record, validate_venue_record
+
+    now = _utc_now()
+    if decisions_path is None:
+        try:
+            decisions_path = resolve_data_dir(_load_app_config()) / "rung2" / "decisions.jsonl"
+        except ConfigError as exc:
+            raise _abort(f"{exc} Or pass --decisions.") from exc
+    record = _read_draft_record(cycle_path)
+    try:
+        venue = read_venue_record(venue_path)
+        validate_venue_record(venue)
+    except (OSError, ValueError, EngineJournalError) as exc:
+        raise _abort(f"could not read the venue record {venue_path}: {exc}") from exc
+    balances, balances_written_at = _read_draft_export(balances_path, "balance")
+    positions, positions_written_at = _read_draft_export(positions_path, "positions")
+    try:
+        log_text = decisions_path.read_text() if decisions_path.exists() else ""
+    except OSError as exc:
+        raise _abort(f"could not read the decision log {decisions_path}: {exc}") from exc
+
+    try:
+        result = draft(
+            record=record,
+            venue=venue,
+            balances=balances,
+            balances_written_at=balances_written_at,
+            positions=positions,
+            positions_written_at=positions_written_at,
+            log_rows=parse_decision_log(log_text),
+            now=now,
+            read_ticker=lambda: fetch_ticker(opener=_urlopen),
+            read_feed=lambda: fetch_maintenance_feed(opener=_urlopen),
+            exiting=exiting,
+            discard=discard,
+        )
+    except DraftPlanError as exc:
+        raise _abort(f"draft refused: {exc}") from exc
+
+    plan_path = None
+    if result.plan_text is not None:
+        plan_path = out if out is not None else decisions_path.parent / f"{result.plan_id}.json"
+        if plan_path.exists():
+            raise _abort(f"{plan_path} already exists -- a drafted plan is never overwritten")
+    try:
+        if plan_path is not None:
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            with plan_path.open("x") as plan_file:
+                plan_file.write(result.plan_text + "\n")
+    except OSError as exc:
+        raise _abort(f"could not write the plan: {exc}") from exc
+    try:
+        decisions_path.parent.mkdir(parents=True, exist_ok=True)
+        with decisions_path.open("a") as log:
+            log.writelines(json.dumps(row, sort_keys=True) + "\n" for row in result.rows)
+    except OSError as exc:
+        written = f" -- {plan_path} was written without its rows; delete it before drafting again" if plan_path else ""
+        raise _abort(f"could not append the decision rows: {exc}{written}") from exc
+
+    typer.echo(result.report)
+    if plan_path is not None:
+        typer.echo(
+            f"plan written to {plan_path} -- copy it to the engine host, run `zcrypto engine probe-plan <path> --check` there"
+        )
+    typer.echo(f"{len(result.rows)} decision row(s) appended to {decisions_path}")

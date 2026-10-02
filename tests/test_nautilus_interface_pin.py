@@ -214,16 +214,19 @@ def test_the_exec_engine_defaults_we_rely_on_are_unchanged():
         "adopted-row sweep and the unmatched counter all go dark at once"
     )
     assert config.generate_missing_orders is True, (
-        "this one is INHERITED rather than stated, and it gates the synthetic adjustment that "
-        "aligns the Cache's startup position with the venue -- the position cli/engine/venuestate.py "
-        "freezes into the VenueState the cycle sizes off. False would let the two disagree silently"
+        "this one is INHERITED rather than stated, and it gates the synthetic adjustment that moves "
+        "the Cache's startup position to the adapter's position report -- the position "
+        "cli/engine/venuestate.py freezes into the VenueState the cycle sizes off: the venue's figure "
+        "for a margin position, and for a spot lot a FLAT that books the EXTERNAL short. The restart "
+        "cases in tests/test_cache_restart.py hold what False costs"
     )
     assert config.filter_position_reports is False, (
         "also inherited. True makes the library's reconciliation skip reconcile_position_report "
         "entirely, so startup creates NO position from the venue's own position reports and the "
-        "Cache the VenueState is frozen from reads empty against an open position. Upstream "
+        "Cache the VenueState is frozen from reads empty against an open margin position. Upstream "
         "documents the flag for accounts several nodes trade -- which is this account's shape, so "
-        "it is a plausible thing for someone to reach for rather than a theoretical flip"
+        "it is a plausible thing for someone to reach for rather than a theoretical flip. The restart "
+        "cases in tests/test_cache_restart.py hold what True costs"
     )
     assert config.allow_overfills is False, (
         "also inherited, and cli/engine/executor.py names it in the paragraph bounding what covers "
