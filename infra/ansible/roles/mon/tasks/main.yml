@@ -31,6 +31,7 @@
     suites: [stable]
     components: [main]
     signed_by: https://apt.grafana.com/gpg.key
+    install_python_debian: true
   register: mon_grafana_repo
 
 - name: add the Caddy apt repository
@@ -41,6 +42,7 @@
     suites: [any-version]
     components: [main]
     signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    install_python_debian: true
   register: mon_caddy_repo
 
 # A preview on a node that never had the repositories cannot see their packages: apt fails on a name its
