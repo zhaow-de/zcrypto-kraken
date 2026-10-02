@@ -22,7 +22,7 @@ import os
 import sys
 import time
 import traceback
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 
@@ -43,6 +43,7 @@ from cli.config import CacheSettings, EngineConfig  # noqa: E402
 from cli.engine import executor as executor_module  # noqa: E402
 from cli.engine import node as node_module  # noqa: E402
 from cli.engine.venue import VenueStatus  # noqa: E402
+from cli.engine.venuestate import venue_state_from_cache  # noqa: E402
 from cli.logging import configure  # noqa: E402
 
 # The engine's own log shape: plain text on stdout at INFO, where the boot line and the library's
@@ -186,6 +187,12 @@ def _dump(cache) -> dict:
     return {"orders": orders, "positions": positions}
 
 
+def _venue_state(cache) -> dict:
+    """The positions and balances a venue record written now would carry, by the engine's own reader."""
+    state = venue_state_from_cache(cache, clock=lambda: datetime.now(timezone.utc))
+    return {"positions": dict(state.positions), "balances": dict(state.balances)}
+
+
 class _Recorder:
     """The executor's metrics hook, recording the position and realized readings it publishes."""
 
@@ -236,6 +243,7 @@ class ShadowStrategy(node_module.ShadowStrategy):
             super().on_start()
             RECORD["strategy_id"] = str(self.strategy_id)
             RECORD["at_start"] = _dump(self.cache)
+            RECORD["venue_state_at_start"] = _venue_state(self.cache)
             self.clock.set_timer("child-quote", timedelta(seconds=CONFIG["quote_every"]), callback=self._quote)
             self.clock.set_time_alert(
                 "child-stop", self.clock.utc_now() + timedelta(seconds=CONFIG["window_secs"]), callback=self._stop
@@ -261,6 +269,7 @@ class ShadowStrategy(node_module.ShadowStrategy):
     def _stop(self, event) -> None:
         try:
             RECORD["at_end"] = _dump(self.cache)
+            RECORD["venue_state_at_end"] = _venue_state(self.cache)
             executor = self._executor
             RECORD["attached"] = sorted(executor._attached) if executor is not None else None
             RECORD["restored"] = sorted(getattr(executor, "_restored", ()) or ()) if executor is not None else None

@@ -103,7 +103,7 @@ ssh red 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'   # role re
 
 # primary — converge_primary is required; --skip-tags engine satisfies site.yml's un-tagged-run refusal.
 # Never answer that refusal with -e engine_image_digest: it restarts the LIVE trade engine.
-# It also converges cache_link (site.yml's engine play, tag cache-link): a changed zcache0.conf restarts the primary's wg-quick@zcache0, which carries no engine traffic yet.
+# It skips cache_link too: a changed zcache0.conf lands at a `--tags cache-link` converge inside the engine's gap.
 ./scripts/converge.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true \
   -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh zcrypto 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'
@@ -142,7 +142,7 @@ Host-specific additions:
 - **capture hosts**: `up{job="capture_app"} == 1`; capture container `RestartCount` unchanged and its newest parquet still advancing (`sudo find /var/lib/zcrypto-capture -name '*.parquet' -mmin -3 | wc -l` > 0) — proving the bump really did not touch the daemon. `up{job="engine_app"}` is a valid check only on the primary; on the secondary it reads 0 permanently by design.
 - **cache nodes**: the node's series list is `CACHE_REQUIRED`; `redis_up{host="<host>"}` reads 1 on two series, `job="valkey"` and `job="sentinel"`; the leg's two `docker inspect` reads print the same lines, proving the bump did not touch Valkey or Sentinel.
 
-**Expect `Fleet · a daemon restarted` (`zcrypto-fleet-daemon-restarted`, `job="integrations/self"`) once per host, ~2–3 min after each recreate** — Alloy's own `process_start_time_seconds` moved, and that rule is the bump's own record in the channel; it self-clears within 15 min and needs nothing. A firing that outlives the 15 minutes, or clears and returns with no bump, is a crash loop — under a restart loop `changes(process_start_time_seconds[15m])` never empties, so the instance stays firing rather than firing a second time. The rule selects no cache node, so a cache node's recreate pages nothing.
+**Expect `Fleet · a daemon restarted` (`zcrypto-fleet-daemon-restarted`, `job="integrations/self"`) once per host, ~3–8 min after each recreate** — Alloy's own `process_start_time_seconds` moved, and that rule is the bump's own record in the channel; it self-clears within 15 min and needs nothing. A firing that outlives the 15 minutes, or clears and returns with no bump, is a crash loop — under a restart loop `changes(process_start_time_seconds[15m])` never empties, so the instance stays firing rather than firing a second time. The rule selects no cache node, so a cache node's recreate pages nothing.
 
 **Expect `Ops · ERROR logs` to fire on the ops bump, ~35 s after the recreate.** The OUTGOING container logs two `service=remotecfg … err="noop client"` errors as it shuts down (remote config is unused here, so there is nothing to unregister from). The rule's container enumeration includes alloy, with `for: 0s` over a 15 m window, so it fires on the old container's dying breath and self-clears ~15 min later. Confirm it is that and not something real: the lines are timestamped ~200 ms BEFORE the new container's `StartedAt`, and `docker logs grafana-alloy` on the new one shows zero errors. Only ops's ERROR rule enumerates the alloy container; the other six recreates trip nothing.
 

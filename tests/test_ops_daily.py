@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import http.client
 import importlib.util
 import inspect
@@ -695,6 +696,16 @@ _DESTRUCTIVE = (
 )
 
 
+def _destructive(command: str) -> bool:
+    return any(tok in re.sub(r"\bcompose(?: (?:-f|--file) \S+)+", "compose", command) for tok in _DESTRUCTIVE)
+
+
+@pytest.mark.parametrize("verb", ["up -d cache-proxy", "down", "restart", "config"])
+def test_a_compose_command_naming_its_file_carries_the_bare_commands_token(verb):
+    assert _destructive(f"sudo docker compose -f /opt/zcrypto-engine/compose.yaml {verb}")
+    assert not _destructive("sudo docker compose -f /opt/zcrypto-engine/compose.yaml ps")
+
+
 def _runbook_commands() -> list[str]:
     """Every backtick span AND every fenced-block line that parses as a command -- engine.md's
     `cycle --at … --replace` lives in a fenced block, invisible to a backtick-only sweep."""
@@ -737,8 +748,7 @@ def test_no_runbook_command_carrying_a_destructive_token_is_ever_autonomous():
     offenders = [
         c
         for c in _runbook_commands()
-        if any(tok in c for tok in _DESTRUCTIVE)
-        and ops_daily.classify_action(f"`{c}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+        if _destructive(c) and ops_daily.classify_action(f"`{c}`", host="zcrypto", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     ]
     assert not offenders, f"destructive commands classified autonomous: {offenders}"
 
@@ -748,13 +758,38 @@ def test_most_read_only_diagnostics_are_autonomous_on_ops():
     halt-at-step-1 rather than fixed it. Close a red here by WIDENING the allowlist with
     corpus-justified read heads, never by narrowing the extraction -- that games a safety floor by
     shrinking its denominator."""
-    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    reads = [c for c in _runbook_commands() if not _destructive(c)]
     autonomous = [
         c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
     ]
     assert len(autonomous) / len(reads) >= 0.70, (
         f"only {len(autonomous)}/{len(reads)} read-only diagnostics classify autonomous; "
         f"refused sample: {sorted(c for c in reads if c not in autonomous)[:12]}"
+    )
+
+
+def test_the_stored_account_block_hashes_to_the_digest_its_section_prints():
+    page = (_RUNBOOKS / "engine-procedures.md").read_text()
+    section = page[page.index('<a name="engine-clear-stored-account"></a>') :]
+    block = re.search(r"^```bash\n(.*?)^```$", section, re.S | re.M).group(1)
+    # What the block's two `IFS= read -r -d ''` lines hold, and its check line hashes: each heredoc's body, whole.
+    texts = [re.search(rf"<<'{tag}'\n(.*?\n){tag}\n", block, re.S).group(1) for tag in ("PY", "SH")]
+    printed = re.search(r"sha256sum` prints `([0-9a-f]{64})`", section).group(1)
+
+    assert hashlib.sha256("".join(texts).encode()).hexdigest() == printed, (
+        "the block under engine-clear-stored-account no longer hashes to the digest its check line prints -- an "
+        "operator's paste check would refuse the page's own block; an edit to the block states its new digest"
+    )
+
+
+def test_the_stored_account_check_line_hashes_both_texts_the_block_reads():
+    page = (_RUNBOOKS / "engine-procedures.md").read_text()
+    section = page[page.index('<a name="engine-clear-stored-account"></a>') :]
+    command = re.search(r"`([^`]*sha256sum)` prints `[0-9a-f]{64}`", section).group(1)
+
+    assert command == """printf '%s' "$ACCT_PY$ACCT_SH" | sha256sum""", (
+        f"the check line under engine-clear-stored-account reads {command!r}: the digest beside it is of the Python "
+        "text followed by the function's text, each whole, so another command prints another digest over a correct paste"
     )
 
 
@@ -2777,7 +2812,7 @@ def test_the_classify_subcommand_resolves_through_the_live_resolver(monkeypatch)
 def test_the_runbook_corpus_reads_identically_under_the_identity_resolver():
     """The true positive for the whole change: with every operand resolving to itself, the reads the
     runbooks really run are as autonomous as they were before any resolution existed."""
-    reads = [c for c in _runbook_commands() if not any(tok in c for tok in _DESTRUCTIVE)]
+    reads = [c for c in _runbook_commands() if not _destructive(c)]
     print(f"read-only runbook commands classified: {len(reads)}")
     autonomous = [
         c for c in reads if ops_daily.classify_action(f"`{c}`", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS

@@ -32,6 +32,7 @@ READERS = {
     # the next cycle overwrites within four hours. Named here because the row must not read as "consumes
     # nothing": it publishes a verdict off an unvalidated record, bounded by that overwrite.
     ("cli/engine/command.py", "_seed_cycle_state"): "completed_at only, plus the startup gauge it seeds",
+    ("cli/engine/command.py", "_read_draft_record"): "validates",
     ("cli/engine/command.py", "_window_records"): "validates",
     ("cli/engine/cycle.py", "_previous_success"): "validates",
     ("cli/engine/executor.py", "_cycle_records_through"): "validates",

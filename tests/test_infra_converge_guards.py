@@ -254,14 +254,13 @@ def test_every_engine_window_guard_task_also_gates_a_cache_link_converge():
     assert truthy(when_conditions(link), {"ansible_run_tags": ["cache-link"], "ansible_skip_tags": []})
 
 
-def test_untagged_primary_refusal():
-    task = find_task(load_tasks(SITE), "refuse an un-tagged run on the live primary")
-    refuse = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
-    tagged = {"ansible_run_tags": ["capture"], "ansible_skip_tags": []}
-    skip_scoped = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]}
-    assert not truthy(assert_that(task), refuse)
-    assert truthy(assert_that(task), tagged)
-    assert truthy(assert_that(task), skip_scoped)
+# ansible-core hands a task these tags as tuples; a condition written for one sequence type
+# fails the other type's cases.
+TAG_SEQUENCES = pytest.mark.parametrize("seq", [tuple, list])
+
+
+def _tags(seq, run: list[str], skip: list[str]) -> dict:
+    return {"ansible_run_tags": seq(run), "ansible_skip_tags": seq(skip)}
 
 
 # --- guard 4 tightened (spec 00083 D7): only --skip-tags forms naming engine satisfy it ----------
@@ -272,24 +271,48 @@ def _untag_guard():
     return find_task(tasks, "refuse an un-tagged run on the live primary")
 
 
-def test_unrelated_skip_tags_now_refused():
-    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["something-else"]}
-    assert not truthy(assert_that(_untag_guard()), v)
+@TAG_SEQUENCES
+def test_unrelated_skip_tags_now_refused(seq):
+    assert not truthy(assert_that(_untag_guard()), _tags(seq, ["all"], ["something-else"]))
 
 
-def test_skip_tags_engine_passes():
-    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": ["engine"]}
-    assert truthy(assert_that(_untag_guard()), v)
+@TAG_SEQUENCES
+def test_skip_tags_engine_passes(seq):
+    assert truthy(assert_that(_untag_guard()), _tags(seq, ["all"], ["engine"]))
 
 
-def test_explicit_tags_still_pass():
-    v = {"ansible_run_tags": ["capture"], "ansible_skip_tags": []}
-    assert truthy(assert_that(_untag_guard()), v)
+@TAG_SEQUENCES
+def test_explicit_tags_still_pass(seq):
+    assert truthy(assert_that(_untag_guard()), _tags(seq, ["capture"], []))
 
 
-def test_bare_run_still_refused():
-    v = {"ansible_run_tags": ["all"], "ansible_skip_tags": []}
-    assert not truthy(assert_that(_untag_guard()), v)
+@TAG_SEQUENCES
+def test_bare_run_still_refused(seq):
+    assert not truthy(assert_that(_untag_guard()), _tags(seq, ["all"], []))
+
+
+@TAG_SEQUENCES
+@pytest.mark.parametrize(
+    ("run", "skip", "passes"),
+    [
+        (["all", "capture"], [], False),
+        (["all", "capture"], ["engine"], True),
+        (["capture", "engine"], [], True),
+        (["tagged"], [], False),
+        (["tagged"], ["engine"], True),
+        (["tagged", "capture"], [], False),
+    ],
+    ids=[
+        "all-and-capture",
+        "all-and-capture-skipping-engine",
+        "capture-and-engine",
+        "tagged-alone",
+        "tagged-alone-skipping-engine",
+        "tagged-and-capture",
+    ],
+)
+def test_all_or_tagged_among_the_run_tags_is_refused_unless_engine_is_skipped(seq, run, skip, passes):
+    assert truthy(assert_that(_untag_guard()), _tags(seq, run, skip)) is passes
 
 
 WINDOW = "engine window — refuse a converge outside the inter-cycle gap"

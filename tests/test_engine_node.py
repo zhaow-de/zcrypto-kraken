@@ -1287,9 +1287,9 @@ def test_the_builder_is_given_the_production_client_and_engine_configs(tmp_path,
     assert str(exec_config.account_id) == "KRAKEN-001"
     assert exec_config.spot_account_type == AccountType.MARGIN
     assert exec_config.margin_balance_asset == "ZEUR"
-    # Matched literally against the loaded instrument's `quote_currency.code`, which is "ZEUR" for
-    # every EUR pair -- only the instrument ID is normalized, not the quote Currency, so a
-    # plausible-looking "EUR" correction would silently empty spot position reporting.
+    # Unread under MARGIN (the comment at the field in cli/engine/node.py). Pinned so a switch off it does not
+    # inherit the adapter's "USDT" default; there it is matched literally against the instrument's
+    # `quote_currency.code`, "ZEUR" for every EUR pair, so "EUR" would match no instrument.
     assert exec_config.spot_positions_quote_currency == "ZEUR"
     # D10: submission stays on REST. The library default is True; `_KRAKEN_ERROR_MARKERS` and
     # `_on_rejected`'s three-way verdict in cli/engine/executor.py are derived against REST

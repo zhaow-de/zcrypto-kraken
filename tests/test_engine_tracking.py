@@ -707,12 +707,12 @@ def test_a_row_type_this_reader_has_not_met_is_counted_by_type(tmp_path):
     p = _export(
         tmp_path,
         [
-            '"L7","X1","2026-08-31 00:00:00","staking","","currency","ZEUR","0.01","0.0","848.0"',
+            '"L7","X1","2026-08-31 00:00:00","adjustment","","currency","ZEUR","0.01","0.0","848.0"',
             '"LA","Q1","2026-08-31 04:00:00","withdrawal","","currency","ZEUR","-10.0","0.0","835.0"',
         ],
     )
     out = reconcile_ledger(read_ledger_export(p), [])
-    assert out["ignored"] == {"staking": 1} and out["known"] == {"withdrawal": 1}
+    assert out["ignored"] == {"adjustment": 1} and out["known"] == {"withdrawal": 1}
     assert out["status"] == "insufficient-data" and out["matched"] == 0 and out["unmatched"] == []
 
 
@@ -761,13 +761,8 @@ def _real_row(txid, refid, time, type_, subtype, asset, amount, fee, feecurrency
 
 
 def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
-    """The closed world: the six row types the venue's export carries, one arm each -- `trade` and
-    `margin` matched by trade id, `rollover` summed, `settled` and `collateralconversion` known
-    no-fill types beside `deposit`, nothing left for `ignored`. A journaled spot fill T-1 and two
-    margin fills, T-2 charged in euro and T-3 in EURC after the venue's par conversion beside it;
-    the rollovers carry T-2, the position's opening trade, and the settle an id of its own; the spot
-    fill's BTC leg carries a fee in BTC, outside the euro figure. The shape and the asset spellings
-    are the export's; the figures are synthetic."""
+    """Six of the export's row types, one arm each. The shape and the asset spellings are the export's;
+    the figures are synthetic."""
     p = _export(
         tmp_path,
         [
@@ -792,6 +787,60 @@ def test_every_row_type_of_the_real_export_lands_in_exactly_one_place(tmp_path):
     assert out["rollover_fees_eur"] == pytest.approx(0.0080)
     assert out["known"] == {"collateralconversion": 2, "settled": 2, "deposit": 1}
     assert out["ignored"] == {}
+
+
+def test_a_staking_reward_row_is_a_known_no_fill_type(tmp_path):
+    reward = _real_row("L1", "ST-1", "2026-10-01 14:02:58", "staking", "", "SOL", "0.0000000171", "0.0000000051", "SOL")
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, [reward], header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"staking": 1}, {}, [])
+    assert out["status"] == "insufficient-data"
+
+
+def test_a_transfer_row_is_a_known_no_fill_type(tmp_path):
+    transfer = _real_row("L1", "TR-1", "2026-10-01 14:02:58", "transfer", "", "EUR", "25.00", "0", "")
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, [transfer], header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"transfer": 1}, {}, [])
+    assert out["status"] == "insufficient-data"
+
+
+_DUST_REFID_AND_TIME = ("TSX3N62-E5ELZ-R6K74Z", "2026-10-01 22:28:44")
+_DUST_CONVERSION = [
+    _real_row("LODHU3-H4F6C-STWVQ5", *_DUST_REFID_AND_TIME, "spend", "dustsweeping", "SOL", "-0.0000000117", "0.0000000003", "SOL"),
+    _real_row("LMM375-VGYQ5-6SB757", *_DUST_REFID_AND_TIME, "spend", "dustsweeping", "BNB", "-0.00000007", "0", "BNB"),
+    _real_row("LRFCN6-7GM5S-ST6GOT", *_DUST_REFID_AND_TIME, "receive", "dustsweeping", "EUR", "0.0001", "0"),
+]
+
+
+def test_the_small_balance_conversions_spend_and_receive_rows_are_known_no_fill_rows_counted_as_dustsweeping(tmp_path):
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, _DUST_CONVERSION, header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"], out["unmatched"]) == ({"dustsweeping": 3}, {}, [])
+    assert out["status"] == "insufficient-data"
+
+
+@pytest.mark.parametrize("subtype", ["", "anything-else"])
+def test_a_spend_or_receive_row_of_any_other_subtype_is_a_type_the_reader_has_not_met(tmp_path, subtype):
+    rows = [
+        _real_row("L1", "R-1", "2026-10-01 22:28:44", "spend", subtype, "SOL", "-0.06", "0", "SOL"),
+        _real_row("L2", "R-1", "2026-10-01 22:28:44", "receive", subtype, "EUR", "6.20", "0.09"),
+    ]
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, rows, header=_REAL_HEADER)), [])
+    assert (out["known"], out["ignored"]) == ({}, {"spend": 1, "receive": 1})
+
+
+def test_the_dustsweeping_subtype_excuses_no_row_but_a_spend_or_a_receive(tmp_path):
+    rows = [
+        _real_row("L1", "T-UNKNOWN", "2026-10-01 22:28:44", "trade", "dustsweeping", "EUR", "0.0001", "0"),
+        _real_row("L2", "X-1", "2026-10-01 22:28:44", "adjustment", "dustsweeping", "SOL", "-0.0000000117", "0", "SOL"),
+    ]
+    out = reconcile_ledger(read_ledger_export(_export(tmp_path, rows, header=_REAL_HEADER)), [])
+    assert (out["status"], out["unmatched"]) == ("FAILED", ["T-UNKNOWN"])
+    assert (out["known"], out["ignored"]) == ({}, {"adjustment": 1})
+
+
+def test_an_export_without_the_subtype_column_is_refused_by_name(tmp_path):
+    p = _export(tmp_path, [], header="txid,refid,time,type,aclass,asset,amount,fee,balance")
+    with pytest.raises(EngineError, match="has no subtype column"):
+        read_ledger_export(p)
 
 
 def test_a_header_only_export_reads_no_rows_and_decides_nothing(tmp_path):
@@ -1201,12 +1250,12 @@ def test_a_row_type_the_reader_has_not_met_is_named_in_the_report(tmp_path, mixe
     # Carried in the payload AND printed: the operator reading the rendered block is the one who has
     # to decide what a type the reader has not met means, and a count only a `--json` consumer sees
     # is invisible.
-    p = _export(tmp_path, ['"L7","X1","2026-08-31 00:00:00","staking","","currency","ZEUR","0.01","0.0","848.0"'])
+    p = _export(tmp_path, ['"L7","X1","2026-08-31 00:00:00","adjustment","","currency","ZEUR","0.01","0.0","848.0"'])
     argv = _tracking_argv(mixed_schema_fixture, "--simulated-fills", "--ledger-export", str(p))
     run = _invoke(mixed_schema_fixture, argv)
     assert run.exit_code == 0, run.stdout
-    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"staking": 1}
-    assert "staking 1" in run.stdout
+    assert json.loads(_invoke(mixed_schema_fixture, argv + ["--json"]).stdout)["reconciliation"]["ignored"] == {"adjustment": 1}
+    assert "adjustment 1" in run.stdout
 
 
 def test_the_rollover_figure_prints_at_four_decimals_and_the_no_fill_rows_are_named(tmp_path, mixed_schema_fixture):
