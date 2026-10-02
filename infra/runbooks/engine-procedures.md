@@ -812,6 +812,21 @@ ssh forwards local stdin into the container, so the script never lands on the en
 
 3. **Run it inside the engine play's own window.** The read shares the trade key with the still-running engine, so one engine order or cancel may be rejected around it; the engine reconciles that at its next 4-hourly boundary. The window is the one `site.yml`'s `engine window — refuse a converge outside the inter-cycle gap` asserts: start at least 30 min after a boundary (00/04/08/12/16/20 UTC) and finish at least 15 min before the next. The 30 min is the FALLBACK floor. Once the boundary's cycle has journaled `completed_at` into `/var/lib/zcrypto-engine/journal/<YYYY-MM-DD>/cycle-<HH>.json`, the assert substitutes 5 min past that completion — it does not take the earlier of the two, so a cycle that ran past B+25 min puts the floor *after* B+30. Read the journal rather than treating B+30 as always safe (no count command: the `engine window` assert in `infra/ansible/site.yml` holds the substitution).
 
+```
+sudo python3 - <<'PY'
+import json, pathlib
+from datetime import datetime, timedelta
+root = pathlib.Path("/var/lib/zcrypto-engine/journal")
+p = max(root.glob("*/cycle-*.json"), key=lambda q: q.stat().st_mtime)
+d = json.loads(p.read_text())
+print(p, "cycle_ts", d["cycle_ts"])
+print("  completed_at:", d["completed_at"])
+print("  the gap opens:", (datetime.fromisoformat(d["completed_at"]) + timedelta(minutes=5)).isoformat())
+PY
+```
+
+On the host, it prints the newest cycle record with its `cycle_ts` and `completed_at`, and that time plus five minutes, which is where the gap opens. A `cycle_ts` that is not the boundary just passed means that boundary's cycle has not journaled: it is still running, or it failed and `sudo ls -l /var/lib/zcrypto-engine/journal/$(date -u +%F)/` lists `failed-cycle-<HH>.json`, and the gap then opens at the fallback floor, 30 minutes past the boundary.
+
 ### Retire when
 
 The engine no longer takes the trade key as container environment — i.e. the engine role no longer renders `engine.env` to `/opt/zcrypto-engine/engine.env`.
