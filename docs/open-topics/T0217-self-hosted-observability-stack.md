@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: "2026-10-05"
 ---
 
@@ -30,7 +30,11 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 - **Size**: a new host and role, dual-shipping in every Alloy config, a cutover and a retirement — large, with many attended converges.
 - **Not verified by the assessment**: the Prometheus engine version Grafana Cloud runs, which decides whether range selectors read identically on both stacks; the memory Prometheus and Loki need at this scale; the unlicensed Enterprise build's licence text.
 
+## Done so far
+
+- Phase 1, the node taking a shadow push: spec `docs/specs/00121-self-hosted-observability-design.md` and plan `docs/plans/00121-mon-node.md`, built and merged as PR #652 (`cb85a29bc`, 2026-10-03); the attended rollout R0 to R10 run 2026-10-03, the node `zcrypto-mon` (Linode `g6-standard-2`, Debian 13, `de-fra-2`, Backups on) running Grafana 13.2.3, Prometheus 2.53.3, Loki 3.7.8, Caddy 2.11.7 and Alloy 1.20.1 at `https://zcrypto-mon.zhaow.me`, every rule pushed to its own stack paging the shadow channel, and R9's acceptance read by value: 115 rules healthy at 60 s, the node's nine rules by value, both store stops, the head series 9,740 after the push (8,033 before it). Two findings of the acceptance fixed on their own branches before this record: PR #653 (`cookie_samesite = lax`, kept on the owner's word as Grafana's default) and PR #654 (the edge answers the cookieless `HEAD` Slack for macOS pre-resolves a link with, so a Slack link opens its target).
+
 ## Suggested next steps
 
-- The design and the owner's decisions are `docs/specs/00121-self-hosted-observability-design.md`; phase 1's plan is `docs/plans/00121-mon-node.md`, and each later phase takes its own once the phase before it has been read.
-- Build in the spec's four phases: the node taking a shadow push; dual-shipping, the primary last and after the box; the cutover of paging; the retirement of the Grafana Cloud leg and the keep-alive.
+- Phase 2, dual-shipping, the primary last and after the box: its plan skeleton is `docs/plans/00121-dual-shipping.md` on branch `docs/t0217-phase-2-plan`, filled from the rollout's readings and reviewed by `zcrypto-plan-review` before its first task. It carries three small items the rollout left: the self-check naming the absent series where it says "no scheduler tick"; the push script's orphan wording for a skipped group's rule; the push skill's `mon-push` pointer promising a per-rule read its step 3 does not carry.
+- Phase 3, the cutover of paging, and phase 4, the retirement of the Grafana Cloud leg and the keep-alive: each takes its own plan once the phase before it has been read.
