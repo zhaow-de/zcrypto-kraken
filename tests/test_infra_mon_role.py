@@ -62,7 +62,7 @@ def _ini() -> configparser.ConfigParser:
         ("security", "admin_password", "$__file{/etc/grafana/admin_password}"),
         ("security", "secret_key", "$__file{/etc/grafana/secret_key}"),
         ("security", "cookie_secure", "true"),
-        ("security", "cookie_samesite", "strict"),
+        ("security", "cookie_samesite", "lax"),
         ("security", "disable_brute_force_login_protection", "false"),
         ("auth", "disable_login_form", "false"),
         ("auth.basic", "enabled", "false"),
