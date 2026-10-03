@@ -378,18 +378,23 @@ def _cloud_url() -> str:
     return default
 
 
-def _cloud_url_forms() -> list[str]:
+def _cloud_url_forms() -> dict[str, str]:
     url = _cloud_url()
     scheme, _, host = url.partition("://")
-    return [url, f"{url}:443", f"{url}:443/", f"{scheme}://{host.upper()}", f"{scheme}://{host.upper()}:443", f"{url}."]
+    return {
+        "the default": url,
+        "a port": f"{url}:443",
+        "a port and a path": f"{url}:443/",
+        "an upper-cased host": f"{scheme}://{host.upper()}",
+        "both": f"{scheme}://{host.upper()}:443",
+        "a trailing dot": f"{url}.",
+        "a user and a password": f"{scheme}://u:p@{host}",
+        "a bare user and a port": f"{scheme}://u@{host}:443",
+    }
 
 
 @pytest.mark.parametrize("skipped", ["", "other"], ids=["no group skipped", "another group skipped"])
-@pytest.mark.parametrize(
-    "url",
-    _cloud_url_forms(),
-    ids=["the default", "a port", "a port and a path", "an upper-cased host", "both", "a trailing dot"],
-)
+@pytest.mark.parametrize("url", _cloud_url_forms().values(), ids=_cloud_url_forms().keys())
 def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, url, skipped):
     done = stack_with_a_mon_rule.run(GRAFANA_URL=url, GRAFANA_SKIP_RULE_GROUPS=skipped)
     assert done.returncode != 0
@@ -406,8 +411,13 @@ def test_a_push_addressed_to_grafana_cloud_that_skips_the_nodes_group_runs(stack
     assert _rule_calls(stack_with_a_mon_rule, "r3") == [] and _rule_calls(stack_with_a_mon_rule, "r1") != []
 
 
-def test_a_cloud_host_spelled_with_a_trailing_dot_reads_the_default_that_skips_the_nodes_group(stack_with_a_mon_rule):
-    done = stack_with_a_mon_rule.run(GRAFANA_URL=f"{_cloud_url()}.")
+# The stub curl keys its answers on the path after the host, so a URL that carries its own slash is not one it can run whole.
+_RUNNABLE_SPELLINGS = {name: url for name, url in _cloud_url_forms().items() if name != "the default" and not url.endswith("/")}
+
+
+@pytest.mark.parametrize("url", _RUNNABLE_SPELLINGS.values(), ids=_RUNNABLE_SPELLINGS.keys())
+def test_every_spelling_of_the_cloud_host_reads_the_default_that_skips_the_nodes_group(stack_with_a_mon_rule, url):
+    done = stack_with_a_mon_rule.run(GRAFANA_URL=url)
     assert done.returncode == 0, done.stderr
     assert _rule_calls(stack_with_a_mon_rule, "r3") == []
     assert _rule_calls(stack_with_a_mon_rule, "r1") != []

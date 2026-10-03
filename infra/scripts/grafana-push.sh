@@ -50,7 +50,8 @@ export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
 export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
 # The rule groups this push leaves out, space-separated: none of their rules is sent, and one found live is
 # reported as an orphan, which a prune deletes. `-`, never `:-`: set and empty skips no group whatever the host.
-push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host%%:*}"; push_host="${push_host%.}"; push_host="${push_host,,}"
+# The host is parsed off the scheme, the path, any userinfo, the port and a trailing dot, then lower-cased.
+push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host##*@}"; push_host="${push_host%%:*}"; push_host="${push_host%.}"; push_host="${push_host,,}"
 case "${push_host}" in
   *.grafana.net) skip_default="zcrypto-mon" ;;
   *) skip_default="" ;;
