@@ -36,5 +36,5 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 
 ## Suggested next steps
 
-- Phase 2, dual-shipping, the primary last and after the box: its plan skeleton is `docs/plans/00121-dual-shipping.md` on branch `docs/t0217-phase-2-plan`. Three items the rollout left are its to carry: `zcrypto-mon-selfcheck.py`'s "no scheduler tick" naming the absent series; `grafana-push.sh`'s `ORPHAN` line for a rule of a skipped group; the push skill promising a per-rule read that `mon-push` step 3 does not carry.
+- Phase 2, dual-shipping, the primary last and after the box: its plan skeleton is `docs/plans/00121-dual-shipping.md` on branch `docs/t0217-phase-2-plan`. Two items the rollout left are its to carry: `zcrypto-mon-selfcheck.py`'s "no scheduler tick" naming the absent series; `grafana-push.sh`'s `ORPHAN` line for a rule of a skipped group.
 - Phase 3, the cutover of paging, and phase 4, the retirement of the Grafana Cloud leg and the keep-alive: each takes its own plan once the phase before it has been read.
