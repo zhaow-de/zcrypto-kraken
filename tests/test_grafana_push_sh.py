@@ -381,12 +381,14 @@ def _cloud_url() -> str:
 def _cloud_url_forms() -> list[str]:
     url = _cloud_url()
     scheme, _, host = url.partition("://")
-    return [url, f"{url}:443", f"{url}:443/", f"{scheme}://{host.upper()}", f"{scheme}://{host.upper()}:443"]
+    return [url, f"{url}:443", f"{url}:443/", f"{scheme}://{host.upper()}", f"{scheme}://{host.upper()}:443", f"{url}."]
 
 
 @pytest.mark.parametrize("skipped", ["", "other"], ids=["no group skipped", "another group skipped"])
 @pytest.mark.parametrize(
-    "url", _cloud_url_forms(), ids=["the default", "a port", "a port and a path", "an upper-cased host", "both"]
+    "url",
+    _cloud_url_forms(),
+    ids=["the default", "a port", "a port and a path", "an upper-cased host", "both", "a trailing dot"],
 )
 def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, url, skipped):
     done = stack_with_a_mon_rule.run(GRAFANA_URL=url, GRAFANA_SKIP_RULE_GROUPS=skipped)
@@ -402,6 +404,14 @@ def test_a_push_addressed_to_grafana_cloud_that_skips_the_nodes_group_runs(stack
     done = stack_with_a_mon_rule.run(GRAFANA_URL=_cloud_url(), **env)
     assert done.returncode == 0, done.stderr
     assert _rule_calls(stack_with_a_mon_rule, "r3") == [] and _rule_calls(stack_with_a_mon_rule, "r1") != []
+
+
+def test_a_cloud_host_spelled_with_a_trailing_dot_reads_the_default_that_skips_the_nodes_group(stack_with_a_mon_rule):
+    done = stack_with_a_mon_rule.run(GRAFANA_URL=f"{_cloud_url()}.")
+    assert done.returncode == 0, done.stderr
+    assert _rule_calls(stack_with_a_mon_rule, "r3") == [], "the node's rule reached Grafana Cloud spelled with a trailing dot"
+    assert _rule_calls(stack_with_a_mon_rule, "r1") != []
+    assert "skip-groups=zcrypto-mon" in done.stderr.splitlines()[0]
 
 
 def test_the_committed_default_skips_the_observability_nodes_group_on_grafana_cloud_and_no_group_elsewhere():

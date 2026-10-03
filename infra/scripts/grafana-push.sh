@@ -49,11 +49,8 @@ export GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
 export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
 export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
 # The rule groups this push leaves out, space-separated: none of their rules is sent, and one found live is
-# reported as an orphan, which a prune deletes. The default is keyed to the host the push addresses: the
-# observability node's own group when that host is Grafana Cloud, where the group has no data, and no group
-# otherwise, so a push or a prune addressed to the node sends the node's group with nothing passed. `-`, never
-# `:-`: set and empty skips no group whatever the host.
-push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host%%:*}"; push_host="${push_host,,}"
+# reported as an orphan, which a prune deletes. `-`, never `:-`: set and empty skips no group whatever the host.
+push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host%%:*}"; push_host="${push_host%.}"; push_host="${push_host,,}"
 case "${push_host}" in
   *.grafana.net) skip_default="zcrypto-mon" ;;
   *) skip_default="" ;;
