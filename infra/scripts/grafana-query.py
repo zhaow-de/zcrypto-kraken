@@ -26,7 +26,6 @@ grafana_auth = importlib.util.module_from_spec(_auth_spec)
 _auth_spec.loader.exec_module(grafana_auth)
 
 GRAFANA_URL = grafana_auth.GRAFANA_URL
-vault_var = grafana_auth.vault_var
 
 PROM_DS_UID = "grafanacloud-prom"
 LOKI_DS_UID = "grafanacloud-logs"
