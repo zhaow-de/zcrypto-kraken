@@ -49,14 +49,20 @@ export GRAFANA_PROM_DS_UID="${GRAFANA_PROM_DS_UID:-grafanacloud-prom}"
 export GRAFANA_LOKI_DS_UID="${GRAFANA_LOKI_DS_UID:-grafanacloud-logs}"
 export GRAFANA_ALERT_FOLDER_UID="${GRAFANA_ALERT_FOLDER_UID:-bfrxdfoybx98gb}"
 # The rule groups this push leaves out, space-separated: none of their rules is sent, and one found live is
-# reported as an orphan, which a prune deletes. `-`, never `:-`: set and empty skips no group, which is how the
-# observability node's own push sends its group.
-export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-zcrypto-mon}"
-echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
-# Grafana Cloud never takes the observability node's group: it has no data there, and a rule of it that fires
-# on no data would page the main channel. The default above skips the group only while the variable is unset,
-# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call.
+# reported as an orphan, which a prune deletes. The default is keyed to the host the push addresses: the
+# observability node's own group when that host is Grafana Cloud, where the group has no data, and no group
+# otherwise, so a push or a prune addressed to the node sends the node's group with nothing passed. `-`, never
+# `:-`: set and empty skips no group whatever the host.
 push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host%%:*}"; push_host="${push_host,,}"
+case "${push_host}" in
+  *.grafana.net) skip_default="zcrypto-mon" ;;
+  *) skip_default="" ;;
+esac
+export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-${skip_default}}"
+echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
+# Grafana Cloud never takes the observability node's group: a rule of it that fires on no data would page the
+# main channel. The default above skips the group only while the variable is unset, so a push addressed to
+# Grafana Cloud whose list does not name the group is refused here, before any call.
 case "${push_host}" in
   *.grafana.net)
     case " ${GRAFANA_SKIP_RULE_GROUPS} " in

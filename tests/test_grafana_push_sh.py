@@ -311,7 +311,7 @@ def _rule_calls(stack, uid: str) -> list[tuple[str, str]]:
 
 
 def test_a_push_that_names_no_stack_sends_no_rule_of_the_observability_node(stack_with_a_mon_rule):
-    done = stack_with_a_mon_rule.run()
+    done = stack_with_a_mon_rule.run(GRAFANA_URL="")
     assert done.returncode == 0, done.stderr
     assert _rule_calls(stack_with_a_mon_rule, "r3") == [], "the node's rule reached a stack the push was not told is the node"
     assert _rule_calls(stack_with_a_mon_rule, "r2") != []
@@ -326,9 +326,9 @@ def test_a_skipped_groups_rule_found_live_is_an_orphan_and_a_prune_deletes_it(st
         "api/v1/provisioning/alert-rules",
         [{"uid": "r1", "folderUID": "fold-x"}, {"uid": "r2", "folderUID": "fold-x"}, {"uid": "r3", "folderUID": "fold-x"}],
     )
-    done = stack.run()
+    done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon")
     assert re.findall(r"ORPHAN \(live but not in alerts\.yaml\): (\S+)", done.stderr) == ["r3"]
-    done = stack.run(GRAFANA_PRUNE="1")
+    done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon", GRAFANA_PRUNE="1")
     assert done.returncode == 0, done.stderr
     assert [p for m, p, _ in stack.recorded() if m == "DELETE"] == ["api/v1/provisioning/alert-rules/r3"]
 
@@ -339,6 +339,28 @@ def test_the_nodes_push_passes_the_variable_empty_and_sends_its_own_group(stack_
     assert ("POST", "api/v1/provisioning/alert-rules") in _rule_calls(stack_with_a_mon_rule, "r3")
     assert ("GET", "api/v1/provisioning/alert-rules/r3") in _rule_calls(stack_with_a_mon_rule, "r3")
     assert "rule(s) of group(s)" not in done.stderr and "skip-groups=<none>" in done.stderr.splitlines()[0]
+
+
+def test_a_push_to_a_host_that_is_not_grafana_cloud_sends_the_nodes_group_with_nothing_passed(stack_with_a_mon_rule):
+    done = stack_with_a_mon_rule.run()
+    assert done.returncode == 0, done.stderr
+    assert ("POST", "api/v1/provisioning/alert-rules") in _rule_calls(stack_with_a_mon_rule, "r3")
+    assert "rule(s) of group(s)" not in done.stderr and "skip-groups=<none>" in done.stderr.splitlines()[0]
+
+
+def test_a_prune_to_a_host_that_is_not_grafana_cloud_with_nothing_passed_deletes_nothing_of_the_nodes_group(
+    stack_with_a_mon_rule,
+):
+    stack = stack_with_a_mon_rule
+    stack.respond(
+        "GET",
+        "api/v1/provisioning/alert-rules",
+        [{"uid": "r1", "folderUID": "fold-x"}, {"uid": "r3", "folderUID": "fold-x"}, {"uid": "old", "folderUID": "fold-x"}],
+    )
+    done = stack.run(GRAFANA_PRUNE="1")
+    assert done.returncode == 0, done.stderr
+    assert re.findall(r"DELETED orphaned rule (\S+)", done.stderr) == ["old"]
+    assert [p for m, p, _ in stack.recorded() if m == "DELETE"] == ["api/v1/provisioning/alert-rules/old"]
 
 
 def test_several_groups_are_skipped_by_name_and_a_rule_of_no_group_is_always_sent(stack_with_a_mon_rule):
@@ -382,8 +404,10 @@ def test_a_push_addressed_to_grafana_cloud_that_skips_the_nodes_group_runs(stack
     assert _rule_calls(stack_with_a_mon_rule, "r3") == [] and _rule_calls(stack_with_a_mon_rule, "r1") != []
 
 
-def test_the_committed_default_skips_exactly_the_observability_nodes_group():
-    (default,) = re.findall(
-        r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', _SCRIPT.read_text(), re.M
-    )
-    assert default == "zcrypto-mon"
+def test_the_committed_default_skips_the_observability_nodes_group_on_grafana_cloud_and_no_group_elsewhere():
+    text = _SCRIPT.read_text()
+    assert re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', text, re.M) == ["zcrypto-mon"]
+    assert re.findall(r'^  \*\) skip_default="([^"]*)" ;;$', text, re.M) == [""]
+    assert re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-\$\{skip_default\}\}"$', text, re.M) == [
+        'export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-${skip_default}}"'
+    ]

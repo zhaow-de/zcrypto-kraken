@@ -369,8 +369,8 @@ PUSH = REPO / "infra/scripts/grafana-push.sh"
 
 
 def node_only_groups() -> frozenset[str]:
-    """The rule groups a push that names no stack leaves out, so that they are evaluated on the observability node alone."""
-    (skipped,) = re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', PUSH.read_text(), re.M)
+    """The rule groups a push addressed to Grafana Cloud leaves out by default, so that they are evaluated on the observability node alone."""
+    (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
     return frozenset(skipped.split())
 
 

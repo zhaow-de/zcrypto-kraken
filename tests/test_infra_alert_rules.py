@@ -2200,7 +2200,7 @@ def test_the_mon_group_is_its_rules_each_with_its_own_section_and_panel():
 
 
 def test_the_push_keeps_the_mon_group_off_grafana_cloud_by_default():
-    (skipped,) = re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', PUSH.read_text(), re.M)
+    (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
     assert skipped.split() == [_MON_GROUP]
     dead_men = sorted(r["uid"] for r in _mon_rules() if r["noDataState"] == "Alerting")
     assert dead_men == ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"], dead_men
