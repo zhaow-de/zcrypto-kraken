@@ -136,7 +136,10 @@ def _caddyfile() -> dict[str, list]:
 def _site() -> dict[str, list]:
     caddyfile = _caddyfile()
     assert set(caddyfile) == {"", DEFAULTS["mon_hostname"]}, f"one global block and one site: {sorted(caddyfile)}"
-    return dict(caddyfile[DEFAULTS["mon_hostname"]])
+    site = caddyfile[DEFAULTS["mon_hostname"]]
+    lines = [line for line, _ in site]
+    assert len(lines) == len(set(lines)), "a repeated handle or matcher: Caddy routes by the first, this dict by the last"
+    return dict(site)
 
 
 def _users(handle: list) -> list[str]:
@@ -172,7 +175,7 @@ def test_the_two_paths_grafana_serves_without_a_login_answer_404_at_the_edge():
     assert site["handle @served_without_a_login"] == [("respond 404", [])]
 
 
-def test_a_cookieless_head_on_a_page_is_answered_at_the_edge_and_one_on_the_api_is_not():
+def test_a_cookieless_head_on_a_linked_page_path_is_answered_at_the_edge_and_nothing_else_is():
     site = _site()
     matchers = [line for line in site if line.startswith("@")]
     assert matchers == [
@@ -181,7 +184,7 @@ def test_a_cookieless_head_on_a_page_is_answered_at_the_edge_and_one_on_the_api_
     ], matchers
     assert site["@a_page_link_pre_resolved_without_a_login"] == [
         ("method HEAD", []),
-        ("not path /api/*", []),
+        ("path /d/* /alerting/*", []),
         ("not header_regexp Cookie grafana_session=", []),
     ]
     assert site["handle @a_page_link_pre_resolved_without_a_login"] == [("respond 200", [])]

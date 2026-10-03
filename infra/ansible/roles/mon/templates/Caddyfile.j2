@@ -37,7 +37,7 @@
 	# a navigation, so answering it here lets the client open the link as written.
 	@a_page_link_pre_resolved_without_a_login {
 		method HEAD
-		not path /api/*
+		path /d/* /alerting/*
 		not header_regexp Cookie grafana_session=
 	}
 	handle @a_page_link_pre_resolved_without_a_login {
