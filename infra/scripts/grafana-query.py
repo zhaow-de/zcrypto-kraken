@@ -63,7 +63,19 @@ def main(argv: list[str]) -> int:
         return 2
     stack = grafana_auth.stack(name)
     GRAFANA_URL = stack.url
-    token = vault_var(stack.token_var, stack.vault_file)
+    from ansible.errors import AnsibleFileNotFound
+
+    try:
+        token = vault_var(stack.token_var, stack.vault_file)
+    except AnsibleFileNotFound:
+        # The `mon` cache lives outside the tree, so on a fresh controller its absence is the normal
+        # state and gets one line; any other vault failure keeps its traceback, as a real bug should.
+        print(
+            f"no token for stack {name!r}: {stack.vault_file} is missing; the node's converge writes it"
+            " (infra/runbooks/mon.md, mon-token-rotate)",
+            file=sys.stderr,
+        )
+        return 1
     failed = False
     for expr in argv:
         # The RENDER is inside the try, not just the request: a scalar (`1`) or a range selector

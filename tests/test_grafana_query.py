@@ -174,6 +174,28 @@ def test_the_mon_stack_is_read_at_its_own_url_with_its_own_token(monkeypatch, ca
     assert "--stack" not in capsys.readouterr().out, "the flag and its value are not expressions"
 
 
+def test_a_missing_token_cache_is_one_stderr_line_naming_the_stack_and_the_converge_not_a_traceback(monkeypatch, capsys, tmp_path):
+    import ansible.parsing.vault as v
+
+    seen = _Recorded(monkeypatch)
+    monkeypatch.setattr(gq, "vault_var", gq.grafana_auth.vault_var)  # the real read, over a file that is not there
+    monkeypatch.setattr(gq.grafana_auth, "vault_password", lambda: b"pw")
+    monkeypatch.setattr(gq.grafana_auth, "_CONTEXT_READY", False)
+    monkeypatch.setattr(v.VaultSecretsContext, "initialize", classmethod(lambda cls, ctx: None))
+    mon = gq.grafana_auth.STACKS["mon"]
+    missing = str(tmp_path / ".config" / "zcrypto" / "grafana-mon.vault.yml")
+    monkeypatch.setitem(gq.grafana_auth.STACKS, "mon", mon._replace(vault_file=missing))
+
+    rc = gq.main(["--stack", "mon", 'up{host="zcrypto-mon"}'])
+    out = capsys.readouterr()
+
+    assert rc == 1
+    assert seen.urls == [], "nothing was queried without a token"
+    assert "Traceback" not in out.err and "AnsibleFileNotFound" not in out.err
+    assert out.err.count("\n") == 1
+    assert "'mon'" in out.err and missing in out.err and "converge" in out.err and "mon-token-rotate" in out.err
+
+
 @pytest.mark.parametrize(
     "argv", [["--stack", "prod", "up"], ["up", "--stack"]], ids=["an unknown stack", "no stack after the flag"]
 )
