@@ -139,7 +139,6 @@ def test_the_tick_bar_is_one_minute(capsys):
 
 
 def test_with_no_ping_url_a_healthy_node_reads_everything_and_pings_nothing(capsys):
-    """The check is minted when the power-off drill is scheduled; until then the timer runs and pings nothing."""
     rc, asked, out = _run(capsys, env={**ENV, "MON_SELFCHECK_HEALTHCHECK_URL": ""})
     assert rc == 0 and len(asked) == 3 and out.endswith("-> healthy, and no ping URL is set")
 

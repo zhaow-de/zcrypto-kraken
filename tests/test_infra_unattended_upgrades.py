@@ -82,7 +82,6 @@ def test_the_ops_node_reboots_by_hand():
 
 
 def test_the_observability_node_reboots_by_hand():
-    """A reboot there blanks rule evaluation for its duration, so it is taken by hand, in the node's slot."""
     assert _group_hosts("mon_host") == {"zcrypto-mon"}
     assert _yaml(MON_HOST_VARS)[VAR] == "false"
 
@@ -169,7 +168,6 @@ def test_an_empty_blacklist_renders_the_file_the_fleet_already_has():
 
 
 def test_the_observability_node_keeps_prometheus_for_a_hand_pass():
-    """Debian's package restarts the daemon on upgrade, under a Grafana that pages on every evaluation error."""
     declared = _yaml(MON_HOST_VARS)[BLACKLIST]
     assert declared == ["prometheus$"], declared
     lines = _render(**{VAR: "false", BLACKLIST: declared}).splitlines()

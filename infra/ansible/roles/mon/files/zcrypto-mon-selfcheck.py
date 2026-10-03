@@ -3,8 +3,7 @@
 
 A rule cannot page the death of the node it runs on, so this pings a healthchecks.io check only while the node
 does its job: Grafana's rule scheduler is ticking, a fleet host's sample is fresh in Prometheus, and Loki answers
-ready. A failing check sends nothing and exits 0: the missing ping is the page. The unit's Environment= lines
-name the three loopback endpoints; its environment file carries the ping URL, empty until the check is minted.
+ready. A failing check sends nothing and exits 0: the missing ping is the page.
 tests/test_mon_selfcheck.py drives this file.
 """
 

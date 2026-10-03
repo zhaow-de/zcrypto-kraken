@@ -3,8 +3,7 @@
 # single-binary Loki, Caddy as the one public listener, and the node's own Alloy. Packages followed from
 # apt, never forced or held; tests/test_infra_mon_role.py holds what the public login rests on.
 
-# First, so a missing or misshapen vault value fails here by name and not inside a no_log task. The two
-# generated strings are letters and digits, the admin's name `u` and 16 hex digits, the two hashes bcrypt's.
+# First, so a missing or misshapen vault value fails here by name and not inside a no_log task.
 - name: refuse a missing or misshapen secret, naming the key and never the value
   ansible.builtin.assert:
     that: mon_secret_faults | length == 0
@@ -327,8 +326,6 @@
     state: started
   when: not (ansible_check_mode and mon_reboot_timer_install is changed)
 
-# A rule cannot page the death of the node it runs on: the self-check pings a healthchecks.io check
-# while the node does its job, and the missing ping is the page.
 - name: install the self-check script
   ansible.builtin.copy:
     src: zcrypto-mon-selfcheck.py

@@ -2,7 +2,7 @@
 # In file order, which is the order a flush runs them in: a store is restarted with Grafana stopped
 # around it, since a Grafana evaluating against a restarting store puts every rule that reads it in
 # error. `restart grafana` listens to both store handlers, so it starts Grafana again after either; on a
-# stopped unit `restarted` is a start. Each skips a preview that runs before its package is installed.
+# stopped unit `restarted` is a start.
 - name: reload systemd
   ansible.builtin.systemd_service:
     daemon_reload: true
