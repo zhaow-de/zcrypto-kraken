@@ -2245,6 +2245,8 @@ def test_the_store_rule_counts_two_stores_and_leaves_a_dark_alloy_to_its_own_rul
     (expr,) = _prom_exprs(rule)
     for leg in ('up{host="zcrypto-mon", job="prometheus"} == 1', 'up{host="zcrypto-mon", job="loki"} == 1'):
         assert expr.count(leg) == 1, leg
+    loki_ready = 'and on(host) (loki_ring_members{host="zcrypto-mon", name="ingester", state="ACTIVE"} == 1)'
+    assert expr.count(loki_ready) == 1, "the Loki leg is up AND its ingester ACTIVE in the ring, the series Loki 3.x exports"
     assert expr.endswith('and on() (up{host="zcrypto-mon", job="integrations/unix"} == 1)')
     assert _evaluator(rule) == {"type": "lt", "params": [2]}
     assert rule["noDataState"] == "OK", "a dark Alloy returns nothing here, and that is zcrypto-alloy-dark-mon's page"
