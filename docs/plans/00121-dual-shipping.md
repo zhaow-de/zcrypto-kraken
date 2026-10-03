@@ -36,7 +36,7 @@
 - Every commit is green over the changed files' consumers, the tests each task's consumer step names; never the full suite locally, which is CI's on every push.
 - `uv run pre-commit run -a` runs clean before every commit; a run that rewrites files is re-run until clean and the rewrites staged.
 - A new Markdown paragraph or list item is one line: no column wrap, no filler blank lines. A universal word in a new runbook bullet (every, never, always, only, any, cannot) carries its `(set: …; count: …)` or `(no count command: …)` clause, or the bullet is worded without it.
-- Task 4 alone edits files under `.claude/`, the two skills `zcrypto-grafana-push` and `zcrypto-bump-alloy`, in a `claude` commit that carries no other file; no task edits `CLAUDE.md`.
+- Task 4 alone edits files under `.claude/`, the three skills `zcrypto-grafana-push`, `zcrypto-bump-alloy` and `zcrypto-daily-ops`, in a `claude` commit that carries no other file; no task edits `CLAUDE.md`.
 - A commit message ends with this trailer, the placeholder replaced by the executing model's own name, followed by the executing session's `Claude-Session:` line where its harness supplies one:
 
 ```
@@ -180,6 +180,7 @@ MSG
 **Files:**
 - Create: `infra/scripts/grafana-compare.py`
 - Create: `tests/test_grafana_compare.py`
+- Modify: `infra/scripts/ops_daily.py` (the `## Comparison` section: the preceding day's `grafana-compare.py` last line while both stacks are live, absent otherwise) and `tests/test_ops_daily.py` (the section present with both stacks, absent with one)
 - Modify: `infra/runbooks/mon.md` (a `mon-compare` procedure, one invocation and how a difference is read)
 - Modify: `infra/scripts/grafana-push.sh` (the orphan report: a live rule whose group `GRAFANA_SKIP_RULE_GROUPS` skipped is in `alerts.yaml` and is reported as such, never as `ORPHAN (live but not in alerts.yaml)` — the keep list is built from the rules file before the skip, so a skipped group's rules are neither pushed nor called orphans; phase 1's rollout left it, and its test in `tests/test_grafana_push_sh.py` drives a push with the node's group skipped against a live list that carries it)
 
@@ -191,7 +192,7 @@ MSG
 - The 24 instants are the top of each UTC hour of the preceding day, or of `--day`; each query node is sent as an instant query with `time=<epoch>` to both stacks, Loki nodes through `/loki/api/v1/query` with the node's own `expr`, so the two stacks answer the same question at the same instant and the rule's own range selector supplies the window.
 - A difference is any of: a label set present on one stack and not the other, a value differing by more than a relative 1e-6, an empty result against a non-empty one; an empty result on both is a match. A stack that cannot be reached, a 4xx or 5xx, or a malformed body ends the run as a failure named per stack, never as a match or a skip.
 - Rows whose `host` label is `zcrypto-mon` are dropped from both result sets before the comparison; nodes of rules in `EXCLUDED_GROUPS` and of the seven `DIRECT_SHIPPED_RULES` are not sent. A test holds `DIRECT_SHIPPED_RULES` equal to what the measured basis's listing prints for the tree, so an eighth rule that selects a direct shipper's stream fails the test rather than the comparison.
-- The seven daily runs are the owner's hand command for now, each run's last line going into the topic's findings by the cutover pull request; whether the daily pass runs it instead is the owner's question at the end of this skeleton.
+- The seven daily runs are the daily operations pass's (the owner's word of 2026-10-03): `infra/scripts/ops_daily.py` gains a step that runs `grafana-compare.py` for the preceding day while both stacks are live and prints its last line under a `## Comparison` section, which Task 4's daily-ops skill edit names; each day's journal entry carries that line, and the cutover pull request cites the seven.
 - The test stubs `vault_var` and the opener the way `tests/test_grafana_query.py` does, feeding canned result sets: the same, a value off by 1e-5, a missing label set, empty against empty, empty against one row, a stack refusing, the exclusions by name, the instants' alignment.
 
 - [ ] **Step 1: Write the failing tests**
@@ -248,6 +249,7 @@ uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbo
 
 **Files:**
 - Modify: `.claude/skills/zcrypto-grafana-push/SKILL.md` (every push in the dual period goes to both stacks from one checkout; the node's invocation per `mon.md#mon-push`; the two sentences phase 1 added stay)
+- Modify: `.claude/skills/zcrypto-daily-ops/SKILL.md` (the `## Comparison` section Task 2's step prints, and a difference as a cutover finding)
 - Modify: `.claude/skills/zcrypto-bump-alloy/SKILL.md` (Step 3's shipping-health `grep` now prints a `failed_total` and a `dropped_entries_total` per destination; both must read 0, and the node's own `zcrypto-mon-shipper-loss` is the fleet-wide reading)
 
 **Interfaces:**
@@ -255,7 +257,7 @@ uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_runbo
 - Produces: a push skill a push to either stack passes; a bump skill whose Step 3 reads both destinations.
 
 **What this task decides, where the spec leaves it open:**
-- The daily-ops skill takes no edit in this phase: its telemetry clause already names the node's Alloy unit (phase 1's Task 8), and the comparison's daily run is the owner's question.
+- The daily-ops skill names the `## Comparison` section the pass prints while both stacks are live (the owner's word of 2026-10-03, Task 2's step) and what a difference there means: a finding for the cutover pull request, never a remediation; its telemetry clause already names the node's Alloy unit (phase 1's Task 8).
 
 - [ ] **Step 1: The two edits**
 - [ ] **Step 2: The consumers** — `uv run pytest tests/test_internal_terms_not_operator_visible.py tests/test_skills.py -q -p no:cacheprovider` (the skill tests the tree holds at the plan's base).
