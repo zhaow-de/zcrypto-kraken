@@ -80,9 +80,9 @@ prometheus.remote_write "grafana" {
     }
 
     // Series minimization is a design principle, not an afterthought (00043): drop Alloy's own
-    // `go_*`/`alloy_*` self-metrics first -- this is NOT a no-op: `prometheus.exporter.self "alloy"`
-    // above feeds the `host` scrape, and this rule is what keeps its internals out of remote_write.
-    // Then keep-only the host/container/gate/process series this stack actually wants. Target:
+    // `go_*`/`alloy_*` self-metrics, then keep-only the host/container/gate/process series this
+    // stack actually wants; the keep alone already excludes the self-metrics, so the drop is
+    // parity, not load. Target:
     // comfortably under 1k active series. This list is provisional -- confirm the actual
     // active-series count at the NAS deploy shakedown and trim/extend here. The six ProcessCollector
     // families (00069 T7) are Alloy's own -- no daemon runs on the NAS, so there is no app or

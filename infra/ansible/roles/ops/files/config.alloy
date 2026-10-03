@@ -172,12 +172,11 @@ prometheus.remote_write "grafana" {
       password = sys.env("GRAFANA_PROM_PASSWORD")
     }
 
-    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics first -- this is
-    // NOT a no-op: `prometheus.exporter.self "alloy"` above feeds the `host` scrape, and this rule
-    // is what keeps its internals out of remote_write. Then keep-only the host + textfile + app
-    // series this stack actually wants. T0051 (spec 00054): a `keep` action drops everything it
-    // does not list, so a series missing here does not merely go undashboarded -- it does not
-    // exist. The reconcile/trade-backfill families (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*)
+    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
+    // the host + textfile + app series this stack actually wants; the keep alone already excludes
+    // the self-metrics, so the drop is parity, not load. T0051 (spec 00054): a `keep` action drops
+    // everything it does not list, so a series missing here does not merely go undashboarded -- it
+    // does not exist. The reconcile/trade-backfill families (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*)
     // DO publish here since 00054's cutover -- this paragraph used to frame them as "Task 6's
     // future"; that move landed: the overlay writer moved to this host at spec 00054 D2, and the
     // NAS's stale copy of those families was deleted at the 2026-07-16 cutover. OPS_REQUIRED in

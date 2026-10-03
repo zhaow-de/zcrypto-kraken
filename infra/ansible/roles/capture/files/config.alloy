@@ -144,9 +144,9 @@ prometheus.remote_write "grafana" {
       password = sys.env("GRAFANA_PROM_PASSWORD")
     }
 
-    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics first -- this is
-    // NOT a no-op: `prometheus.exporter.self "alloy"` above feeds the `host` scrape, and this rule
-    // is what keeps its internals out of remote_write. Then keep-only the series this stack wants.
+    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
+    // the series this stack wants; the keep alone already excludes the self-metrics, so the drop is
+    // parity, not load.
     // A `keep` action drops everything it does not list, so a series missing here does not merely
     // go undashboarded -- it does not exist (T0051). This host publishes the unix-exporter host
     // metrics INCLUDING the one-off timers' textfile series (spec 00071 -- but no

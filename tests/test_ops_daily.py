@@ -1871,6 +1871,10 @@ def test_the_live_runner_is_bounded_and_runs_from_the_repo_root(monkeypatch):
     assert list(seen["command"][-3:]) == [str(ops_daily.COMPARE_SCRIPT), "--day", "2026-10-02"]
 
 
+def test_the_comparisons_first_day_is_unset_or_a_plain_date():
+    assert ops_daily.COMPARISON_FROM is None or type(ops_daily.COMPARISON_FROM) is date
+
+
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
     """A sample array too short to index is an unreadable source, not an `IndexError` past the parse."""
     truncated = {"data": {"result": [{"metric": {}, "value": [0]}]}}
