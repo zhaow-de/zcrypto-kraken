@@ -1,6 +1,6 @@
-"""Guard: `infra/scripts/grafana-push.sh` pushes `infra/grafana/alerts.yaml` to Grafana Cloud's
-provisioning API, which rejects a malformed rule with a bare HTTP 400 whose body the script
-discards -- a failure only an attended push can reach, and one that names neither rule nor field."""
+"""Guard: `infra/scripts/grafana-push.sh` pushes `infra/grafana/alerts.yaml` to Grafana's provisioning API,
+which rejects a malformed rule with a bare HTTP 400 whose body the script discards -- a failure only an
+attended push can reach, and one that names neither rule nor field."""
 
 import json
 import re

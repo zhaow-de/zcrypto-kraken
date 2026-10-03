@@ -33,5 +33,4 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 ## Suggested next steps
 
 - The design and the owner's decisions are `docs/specs/00121-self-hosted-observability-design.md`; phase 1's plan is `docs/plans/00121-mon-node.md`, and each later phase takes its own once the phase before it has been read.
-- The owner reviewed the spec on 2026-10-01; its plan follows, reviewed by `zcrypto-plan-review` before the first task.
 - Build in the spec's four phases: the node taking a shadow push; dual-shipping, the primary last and after the box; the cutover of paging; the retirement of the Grafana Cloud leg and the keep-alive.

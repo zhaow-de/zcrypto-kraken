@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pushes the committed dashboards, notification templates and alert rules under infra/grafana/ to
-# the provisioned Grafana Cloud stack (spec 00049, Role B). Idempotent: each dashboard overwrites by
+# the Grafana stack GRAFANA_URL names (spec 00049, Role B). Idempotent: each dashboard overwrites by
 # its own uid, each alert rule upserts by its own stable uid.
 #
 # Run it from a checkout that carries origin/develop's tip with infra/grafana/ clean: it pushes the
