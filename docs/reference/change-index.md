@@ -363,3 +363,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #645 | 2026-10-01 | docs(engine): the cache's live proof; T0187 and T0183 resolve on it | — | 00120 | T0183, T0187 |
 | #648 | 2026-10-01 | feat(engine): iter-173 — rung 2's entry: ruling, plan helper, procedure | iter-173 | — | — |
 | #652 | 2026-10-03 | feat(infra): 00121 — the observability node zcrypto-mon, shadow push | — | 00121 | T0217 |
+| #653 | 2026-10-03 | fix(mon): a lax session cookie, so a Slack alert link opens its target | — | 00121 | — |
