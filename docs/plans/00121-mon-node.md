@@ -21,7 +21,7 @@
 - The two datasource uids and the alert folder uid are Grafana Cloud's, `grafanacloud-prom`, `grafanacloud-logs` and `bfrxdfoybx98gb`, file-provisioned; dashboards, rules, contact points, the policy and the template are pushed, never file-provisioned (spec D8).
 - Both stores keep 90 days; Prometheus's size cap is `16GB` and its out-of-order window 8 h (spec D10, D11).
 - A store on the node is restarted with Grafana stopped around it, by the role's handlers and by the runbook's hand procedure; `prometheus` is on the node's unattended-upgrades blacklist (spec D17).
-- `grafana_auth.py`'s default stack stays `cloud`, and `grafana-push.sh` leaves the `zcrypto-mon` group out unless its caller passes `GRAFANA_SKIP_RULE_GROUPS` otherwise, and refuses a push addressed to Grafana Cloud that does not skip it: a rule of that group is never pushed to Grafana Cloud (spec D18).
+- `grafana_auth.py`'s default stack stays `cloud`, and `grafana-push.sh` leaves the `zcrypto-mon` group out of a push addressed to Grafana Cloud unless its caller passes `GRAFANA_SKIP_RULE_GROUPS` otherwise, sends it to the node with nothing passed, and refuses a push addressed to Grafana Cloud that does not skip it: a rule of that group is never pushed to Grafana Cloud (spec D18).
 - Nothing here changes a fleet host's config, a Grafana Cloud rule, receiver or vault value, and nothing converges `zcrypto`; no existing vault value is repointed (the spec's invariants).
 - No executor step reaches a host, a venue, Grafana Cloud, the node's Grafana, Slack, the Linode Cloud Manager or DNS; every such step is an operator step, marked attended, with `W$` the workstation and `H$` the host.
 - `infra/ansible/scripts/converge.sh` is never wrapped in `timeout`.
