@@ -412,6 +412,14 @@ PUBLISHED = [
         "cache",
         {"cache_image_digest": DIGEST, "cache_alloy_digest": DIGEST, "pins_override": "a first pin, recorded after this run"},
     ),
+    (["--limit", "zcrypto-mon"], "zcrypto-mon", "", {}),
+    (["--limit", "zcrypto-mon", "--tags", "mon"], "zcrypto-mon", "mon", {}),
+    (
+        ["--limit", "zcrypto-mon", "--tags", "mon", "-e", "mon_grafana_token_rotate=true"],
+        "zcrypto-mon",
+        "mon",
+        {"mon_grafana_token_rotate": "true"},
+    ),
 ]
 
 
@@ -487,6 +495,13 @@ OUTSIDE = [
     (["--extra-vars", "converge_primary=true"], "the long extra-vars spelling", "outside the grammar"),
     (["--limit"], "a flag with no value", "--limit with no value"),
     (["--limit", "cache_host"], "the cache group, whose nodes converge one per run", "unknown host"),
+    (["--limit", "mon_host"], "the observability group where its one host belongs", "unknown host"),
+    (["--limit", "zcrypto-mon", "--tags", "grafana"], "a component of the node, which is no tag", "unknown tag"),
+    (
+        ["--limit", "zcrypto-mon", "-e", "mon_grafana_token=x"],
+        "a token as an operand, which the row would record",
+        "not in this script's key set",
+    ),
 ]
 
 

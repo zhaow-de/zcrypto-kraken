@@ -2721,6 +2721,687 @@
           }
         ]
       }
+    },
+    {
+      "id": 900,
+      "type": "row",
+      "title": "Observability node",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 111
+      }
+    },
+    {
+      "id": 901,
+      "type": "timeseries",
+      "title": "Monitor — its own Alloy shipping",
+      "description": "Is the observability node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. On Grafana Cloud this row is empty, zero or Cloud's own fleet, never the node: read it on the node's Grafana. A dark Alloy here blinds this row and nothing else: the fleet's panels read the fleet's own shippers.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 112
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host=\"zcrypto-mon\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "scrape targets the node's Alloy reports"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 902,
+      "type": "timeseries",
+      "title": "Monitor — root filesystem free",
+      "description": "How much of the node's one disk is left? Prometheus's blocks, Loki's chunks, Grafana's database and the journal share it. The alert pages below the green line at 15% free, held for thirty minutes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 112
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_filesystem_avail_bytes{host=\"zcrypto-mon\", mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"zcrypto-mon\", mountpoint=\"/\"}",
+          "refId": "A",
+          "legendFormat": "free"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.15
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 903,
+      "type": "timeseries",
+      "title": "Monitor — reboot pending",
+      "description": "Does the node need its reboot by hand? It installs patches and does not reboot itself, so a flag at 1 stays until someone reboots it, and the alert pages once the flag has been up for fifteen minutes. A flat zero is the healthy state.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 112
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "node_reboot_required{host=\"zcrypto-mon\"}",
+          "refId": "A",
+          "legendFormat": "reboot pending"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineInterpolation": "stepAfter",
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 904,
+      "type": "timeseries",
+      "title": "Monitor — stores up and ready",
+      "description": "Are both stores serving? The first line is how many of Prometheus and Loki are up and ready, and the alert pages when it falls below the green line at 2 for three minutes; the other lines show which store's scrape failed. A Grafana that cannot reach Prometheus cannot draw this panel at all, which is itself the answer.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 112
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "(count((up{host=\"zcrypto-mon\", job=\"prometheus\"} == 1) or ((up{host=\"zcrypto-mon\", job=\"loki\"} == 1) and on(host) (loki_ring_members{host=\"zcrypto-mon\", name=\"ingester\", state=\"ACTIVE\"} == 1))) or on() vector(0)) and on() (up{host=\"zcrypto-mon\", job=\"integrations/unix\"} == 1)",
+          "refId": "A",
+          "legendFormat": "stores up and ready"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "up{host=\"zcrypto-mon\", job=~\"prometheus|loki\"}",
+          "refId": "B",
+          "legendFormat": "{{job}} scrape up"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineInterpolation": "stepAfter",
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 905,
+      "type": "timeseries",
+      "title": "Monitor — Grafana operations failed on a locked database",
+      "description": "Is Grafana's embedded database keeping up? Each point is the number of operations Grafana gave up on with `database is locked` in the fifteen minutes before it, its ordinary retries left out; the alert pages on the first one. One while a push runs is usually Grafana's own cleanup or state-save job giving up behind the push; a steady run with no push is the sign the database has outgrown SQLite.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 120
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "expr": "sum(count_over_time({host=\"zcrypto-mon\", container=\"grafana-server\"} |= \"database is locked\" != \"sleeping then retrying\" [15m])) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "failed operations in the last 15 minutes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 906,
+      "type": "timeseries",
+      "title": "Monitor — fleet series arriving",
+      "description": "Is anything from the fleet reaching the node? The first line counts the fleet's scrape-health series, 0 when none arrives, and the alert pages when it falls below the green line at 1 for five minutes: every host absent at once is the node's own edge or certificate, not the fleet. The second line is how many fleet hosts are shipping.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 120
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(up{host!=\"zcrypto-mon\"}) or on() vector(0)",
+          "refId": "A",
+          "legendFormat": "fleet scrape-health series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "count(count by (host) (up{host!=\"zcrypto-mon\"}))",
+          "refId": "B",
+          "legendFormat": "fleet hosts shipping"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 907,
+      "type": "timeseries",
+      "title": "Monitor — Prometheus head series",
+      "description": "How many series is Prometheus holding in memory? The fleet ships to this node unfiltered, so this count is the budget: the alert pages above the red line at 40,000, held for three hours. A step up that stays is a new exporter or a label that grew a value per request; a bump that clears within three hours is a shipper restart.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 120
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "prometheus_tsdb_head_series{host=\"zcrypto-mon\"}",
+          "refId": "A",
+          "legendFormat": "series in the head"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 40000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 908,
+      "type": "timeseries",
+      "title": "Monitor — blocks deleted, by size and by age",
+      "description": "Is Prometheus keeping its full ninety days? Blocks deleted by age are the retention period at work and are healthy. A block deleted by the size cap means the cap, not the period, now decides what is kept: the alert pages on the first one in six hours.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 120
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(prometheus_tsdb_size_retentions_total{host=\"zcrypto-mon\"}[6h])",
+          "refId": "A",
+          "legendFormat": "deleted by the size cap, last 6 h"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(prometheus_tsdb_time_retentions_total{host=\"zcrypto-mon\"}[6h])",
+          "refId": "B",
+          "legendFormat": "deleted by age, last 6 h"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.thresholdsStyle",
+                "value": {
+                  "mode": "line"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 909,
+      "type": "timeseries",
+      "title": "Monitor — samples and log lines a shipper lost",
+      "description": "Is each shipper delivering what it collects? One line per host: the samples a destination refused for good plus the log entries that host's Alloy gave up on, in the six hours before each point, read from the counts each Alloy keeps of its own losses. The alert pages on the first one, held for fifteen minutes; a flat zero is the healthy state. A host with no line here publishes no such count, or delivers no metrics at all, which is its Alloy-dark alert's.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 128
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "sum by (host) (increase(prometheus_remote_storage_samples_failed_total{job=\"integrations/self\"}[6h]) or sum by (instance) (increase(loki_write_dropped_entries_total{job=\"integrations/self\"}[6h])) * on (instance) group_left (host) count by (instance, host) (up{job=\"integrations/self\"}))",
+          "refId": "A",
+          "legendFormat": "{{host}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
     }
   ],
   "refresh": "1m",

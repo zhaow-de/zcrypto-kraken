@@ -908,6 +908,7 @@ def test_the_round_three_escapes_are_refused(cmd):
         ("sudo docker inspect grafana-alloy --format '{{.State.Status}} {{.RestartCount}} {{.State.OOMKilled}}'", "ops"),
         ("sudo docker exec zcrypto-engine zcrypto engine exec-status", "zcrypto"),
         ("uv run python infra/scripts/grafana-query.py 'up{job=\"capture_app\"}'", "ops"),
+        ("uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host=\"zcrypto-mon\"})'", "ops"),
         ("sudo docker logs --since 5h zcrypto-engine | grep 'not scored'", "zcrypto"),
     ],
 )
@@ -916,6 +917,15 @@ def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
     `--format` body or grep pattern holding spaces (so a stage must be tokenised quote-aware),
     `docker exec` fronting a genuine read, and PromQL full of braces and quotes."""
     assert ops_daily.classify_action(cmd, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+def test_the_query_tools_stack_flag_takes_a_name_and_nothing_else():
+    for value in ("https://example.invalid", "mon;id", "../mon"):
+        step = f"uv run python infra/scripts/grafana-query.py --stack {value} 'up'"
+        assert ops_daily.classify_action(step, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, value
+    assert ops_daily.classify_action("uv run python infra/scripts/grafana-query.py --stack", host="ops", resolve=_identity) is (
+        ops_daily.Tier.PREPARED
+    )
 
 
 def test_a_peeled_docker_exec_payload_is_re_examined_never_trusted():
@@ -1702,6 +1712,51 @@ def test_a_bad_since_suffix_is_a_usage_error_not_a_traceback():
     assert ops_daily.main(["report", "--since", "abc"]) == 2
 
 
+def _a_quiet_pass(monkeypatch) -> dict:
+    """Every reader stubbed to an empty read that records the stack URL it would have built its request from."""
+    seen: dict = {"vault": [], "urls": []}
+    monkeypatch.setattr(ops_daily, "GRAFANA_URL", ops_daily.GRAFANA_URL)  # main rebinds it; this puts it back
+    monkeypatch.setattr(
+        ops_daily.grafana_auth, "vault_var", lambda name, vault_file: seen["vault"].append((name, vault_file)) or "tok"
+    )
+
+    def reading(empty):
+        return lambda *a, **k: seen["urls"].append(ops_daily.GRAFANA_URL) or empty
+
+    monkeypatch.setattr(ops_daily, "read_alerts", reading(ops_daily.AlertsRead()))
+    monkeypatch.setattr(ops_daily, "read_logs", reading(ops_daily.LogsRead()))
+    monkeypatch.setattr(ops_daily, "read_deadmen", reading(ops_daily.DeadmenRead(via_prometheus=0.0)))
+    monkeypatch.setattr(ops_daily, "read_verdict", reading([]))
+    monkeypatch.setattr(ops_daily, "read_reminders", reading(ops_daily.RemindersRead()))
+    monkeypatch.setattr(ops_daily, "read_deploys", lambda *a, **k: [])
+    monkeypatch.setattr(ops_daily, "ssh_read", _host_answering(StampEpoch=str(int(datetime.now(timezone.utc).timestamp()))))
+    monkeypatch.setattr(ops_daily, "soak_run", _soak_answering(_a_current_soak_payload()))
+    return seen
+
+
+def test_the_pass_reads_grafana_cloud_when_no_stack_is_named(monkeypatch, capsys):
+    seen = _a_quiet_pass(monkeypatch)
+    assert ops_daily.main(["report"]) == 0
+    assert seen["vault"] == [("grafana_sa_token", ops_daily.grafana_auth.VAULT_FILE)]
+    assert set(seen["urls"]) == {"https://zcrypto2026.grafana.net"} and len(seen["urls"]) == 5
+
+
+def test_the_pass_reads_the_named_stack_at_its_own_url_with_its_own_token(monkeypatch, capsys):
+    seen = _a_quiet_pass(monkeypatch)
+    assert ops_daily.main(["report", "--stack", "mon", "--since", "24h"]) == 0
+    mon = ops_daily.grafana_auth.STACKS["mon"]
+    assert seen["vault"] == [(mon.token_var, mon.vault_file)]
+    assert set(seen["urls"]) == {"https://zcrypto-mon.zhaow.me"} and len(seen["urls"]) == 5
+
+
+@pytest.mark.parametrize("argv", [["report", "--stack", "prod"], ["report", "--stack"]], ids=["unknown", "no value"])
+def test_a_stack_the_pass_cannot_resolve_is_a_usage_error_before_any_read(monkeypatch, capsys, argv):
+    seen = _a_quiet_pass(monkeypatch)
+    assert ops_daily.main(argv) == 2
+    assert seen["vault"] == [] and seen["urls"] == []
+    assert "--stack takes one of cloud, mon" in capsys.readouterr().out
+
+
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
     """A sample array too short to index is an unreadable source, not an `IndexError` past the parse."""
     truncated = {"data": {"result": [{"metric": {}, "value": [0]}]}}
@@ -1968,6 +2023,66 @@ def test_the_real_register_yields_a_refdata_reminder():
     """The committed `REGISTER` default is what this exercises: it omits `register=` deliberately, so
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
+    assert read.unreadable is None, read.unreadable
+    # The committed deploy log decides whether the observability node's patch pass is a third.
+    assert {r.name for r in read.reminders} - {"mon patch pass"} == {"refdata sweep", "healable re-derivation"}
+
+
+def _converge(ts: str, *, limit="zcrypto-mon", tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
+    return {"ts": ts, "limit": limit, "tags": tags, "skip_tags": skip_tags, "rc": rc, "playbook": playbook}
+
+
+def _deploy_log(tmp_path, *rows):
+    log = tmp_path / "deploy-log.jsonl"
+    log.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    return log
+
+
+_MON_LOG = (
+    _converge("2026-10-06T09:00:00Z"),  # the node's first converge
+    _converge("2026-11-03T10:00:00Z"),  # a patch pass's re-converge
+    _converge("2026-11-20T10:00:00Z", tags="mon"),  # a token re-mint or a replaced secret, which is no pass
+    _converge("2026-11-21T10:00:00Z", rc=2),  # a full converge that failed
+    _converge("2026-11-22T10:00:00Z", limit="zcrypto-ops"),
+    _converge("2026-11-23T10:00:00Z", playbook="bootstrap.yml"),
+    _converge("2026-11-24T10:00:00Z", skip_tags="engine"),  # a converge that skipped a tag, which is no full one
+)
+
+
+@pytest.mark.parametrize(
+    "now,status,owed",
+    [
+        (datetime(2026, 11, 28, 3, 0, tzinfo=timezone.utc), "due in 5 days", False),
+        (datetime(2026, 12, 3, 3, 0, tzinfo=timezone.utc), "due in 0 days", True),
+        (datetime(2026, 12, 9, 3, 0, tzinfo=timezone.utc), "OVERDUE by 6 days", True),
+    ],
+)
+def test_the_mon_patch_pass_is_due_a_month_after_the_nodes_last_full_converge(tmp_path, now, status, owed):
+    read = ops_daily.read_reminders(
+        "tok",
+        now=now,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(tmp_path, *_MON_LOG),
+    )
+    patch = _reminder(read, "mon patch pass")
+    assert patch.status.startswith(status) and "2026-11-03" in patch.status, patch.status
+    assert patch.owed is owed
+    assert patch.runbook == "infra/runbooks/mon.md#mon-patch-pass"
+    assert read.unreadable is None
+
+
+@pytest.mark.parametrize("rows", [(), _MON_LOG[2:]], ids=["an empty log", "no full converge of the node"])
+def test_a_deploy_log_with_no_full_converge_of_the_node_owes_no_patch_pass(tmp_path, rows):
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(tmp_path, *rows),
+    )
     assert read.unreadable is None, read.unreadable
     assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
 
@@ -2632,7 +2747,7 @@ def test_the_runner_is_keyword_only_and_carries_no_live_default():
 
 def test_the_upgrade_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
     """The reader is wired into the report `main` prints: a check nothing appends reports nothing."""
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
@@ -2872,7 +2987,7 @@ def test_the_shim_exits_with_what_main_returns(tmp_path):
 
 def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
     """The cgroup row reaches the report `main` prints -- nothing else in this file drives that wiring."""
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
@@ -2889,7 +3004,7 @@ def test_the_cgroup_check_reaches_the_verdict_the_pass_prints(monkeypatch, capsy
 def test_an_uncapped_bridge_moves_the_pass_to_attention(monkeypatch, capsys):
     """The wiring proved in the direction that matters: an uncapped cgroup must reach `exit_code`,
     not merely be appended somewhere the verdict never reads."""
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
@@ -3084,7 +3199,7 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
-    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
+    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"}
     assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
@@ -3110,15 +3225,21 @@ def _published_ssh_stanzas(repo: Path) -> dict[str, dict[str, str]]:
     return stanzas
 
 
-def test_every_published_ssh_destination_has_a_stanza_and_the_cache_nodes_match_the_inventory():
+def test_every_published_ssh_destination_has_a_stanza_and_the_linode_nodes_match_the_inventory():
     repo = Path(__file__).resolve().parents[1]
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", (repo / "docs/reference/fleet.md").read_text(), re.M))
     stanzas = _published_ssh_stanzas(repo)
     for fleet_host, destination in rows.items():
         assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
     ansible = repo / "infra/ansible"
-    group = yaml.safe_load((ansible / "group_vars/cache_host/vars.yml").read_text())
-    for node in ("zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"):
+    groups = {
+        "zcrypto-valkey1": "cache_host",
+        "zcrypto-valkey2": "cache_host",
+        "zcrypto-valkey3": "cache_host",
+        "zcrypto-mon": "mon_host",
+    }
+    for node, group_name in groups.items():
+        group = yaml.safe_load((ansible / f"group_vars/{group_name}/vars.yml").read_text())
         stanza = stanzas[rows[node]]
         host_vars = yaml.safe_load((ansible / f"host_vars/{node}/vars.yml").read_text())
         assert stanza["HostName"] == host_vars["ansible_host"], (node, stanza)
@@ -3173,6 +3294,30 @@ def test_on_a_cache_node_a_restart_that_is_not_alloy_is_the_operators(step, host
 
 def test_the_cache_allowlist_leaves_a_daemon_restart_on_ops_autonomous():
     assert ops_daily.classify_action("sudo systemctl restart docker", host="ops", resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize("host", ["zcrypto-mon", "mon"])
+def test_the_observability_node_is_a_telemetry_host_under_either_of_its_names(host):
+    step = "sudo systemctl restart alloy"
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f"ssh mon {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize(
+    ("step", "host"),
+    [
+        ("sudo systemctl restart prometheus", "zcrypto-mon"),
+        ("sudo systemctl restart loki", "zcrypto-mon"),
+        ("sudo systemctl restart loki.service", "zcrypto-mon"),
+        ("sudo systemctl stop grafana-server", "zcrypto-mon"),
+        ("sudo systemctl start grafana-server", "zcrypto-mon"),
+        ("sudo systemctl restart caddy", "zcrypto-mon"),
+        ("ssh mon sudo systemctl restart prometheus", None),
+        ("sudo systemctl restart alloy prometheus", "zcrypto-mon"),
+    ],
+)
+def test_on_the_observability_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------

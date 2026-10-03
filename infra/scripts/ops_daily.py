@@ -99,6 +99,13 @@ _UID_HOST = {
     "zcrypto-alloy-dark-cache-1": "zcrypto-valkey1",
     "zcrypto-alloy-dark-cache-2": "zcrypto-valkey2",
     "zcrypto-alloy-dark-cache-3": "zcrypto-valkey3",
+    "zcrypto-alloy-dark-mon": "zcrypto-mon",
+    "zcrypto-mon-disk-low": "zcrypto-mon",
+    "zcrypto-mon-reboot-pending": "zcrypto-mon",
+    "zcrypto-mon-store-down": "zcrypto-mon",
+    "zcrypto-mon-sqlite-locked": "zcrypto-mon",
+    "zcrypto-mon-series-high": "zcrypto-mon",
+    "zcrypto-mon-retention-by-size": "zcrypto-mon",
 }
 
 
@@ -324,6 +331,23 @@ def _a_month_after(d: date) -> date:
 HEALABLE_COUNTER = "zcrypto_reconcile_healable_gap_seconds_total"
 REFDATA_RUNBOOK = "infra/runbooks/reference-data.md#refdata-sweep-due"
 HEALABLE_RUNBOOK = "infra/runbooks/ops.md#healable-threshold-rederivation-due"
+MON_PATCH_RUNBOOK = "infra/runbooks/mon.md#mon-patch-pass"
+MON_NODE = "zcrypto-mon"
+
+
+def last_full_converge(log: Path, host: str) -> date | None:
+    if not log.exists():
+        return None
+    found = None
+    for line in log.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        whole = row.get("playbook") == "site.yml" and not row.get("tags") and not row.get("skip_tags")
+        if whole and row.get("limit") == host and row.get("rc") == 0:
+            found = date.fromisoformat(row["ts"][:10])
+    return found
 
 
 @dataclass(frozen=True)
@@ -341,12 +365,19 @@ class RemindersRead:
 
 
 def read_reminders(
-    token: str, *, now: datetime, window: timedelta, opener=urllib.request.urlopen, register: Path = REGISTER
+    token: str,
+    *,
+    now: datetime,
+    window: timedelta,
+    opener=urllib.request.urlopen,
+    register: Path = REGISTER,
+    deploy_log: Path = DEPLOY_LOG,
 ) -> RemindersRead:
     """Due-ness computed from state the pass can read, so a Slack reminder that never arrives costs
     nothing (spec 00107 D1). Each reminder comes from the source that actually knows: the sweep from
-    the register's last re-confirmation row plus the monthly cadence, the healable re-derivation from
-    whether its counter moved in the window.
+    the register's last re-confirmation row plus the monthly cadence, the observability node's patch
+    pass from its last full converge in the deploy log plus the same cadence, the healable
+    re-derivation from whether its counter moved in the window.
 
     An owed reminder reports and never blocks; a source that could not be read is `unreadable`, like
     every other read here.
@@ -369,6 +400,18 @@ def read_reminders(
             read.reminders.append(
                 Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
             )
+
+    try:
+        patched = last_full_converge(deploy_log, MON_NODE)
+    except _UNREACHABLE as exc:
+        note(f"the deploy log could not be read: {exc}")
+    else:
+        # No full converge on record is a node that is not built: nothing is owed on it.
+        if patched is not None:
+            days = (_a_month_after(patched) - now.date()).days
+            status = f"due in {days} days" if days >= 0 else f"OVERDUE by {-days} days"
+            last_pass = f"{status} (last full converge {patched.isoformat()})"
+            read.reminders.append(Reminder("mon patch pass", last_pass, owed=days <= 0, runbook=MON_PATCH_RUNBOOK))
 
     hours = max(1, int(window.total_seconds() // 3600))
     try:
@@ -624,9 +667,16 @@ REBOOT_PACKAGES = "/var/run/reboot-required.pkgs"
 UPGRADE_CHECK = f"unattended upgrades on {UPGRADE_HOST}"
 
 # The ops host has three names -- the `host` label its rules carry, the fleet name its check rows
-# print and the ssh destination -- and `zcrypto-red` and each cache node two; `zaccess` has no
-# bare-name destination.
-_SSH_ALIASES = {"ops": "hp", "zcrypto-red": "red", "zcrypto-valkey1": "db1", "zcrypto-valkey2": "db2", "zcrypto-valkey3": "db3"}
+# print and the ssh destination -- and every other host in the map two; `zaccess` has no bare-name
+# destination.
+_SSH_ALIASES = {
+    "ops": "hp",
+    "zcrypto-red": "red",
+    "zcrypto-valkey1": "db1",
+    "zcrypto-valkey2": "db2",
+    "zcrypto-valkey3": "db3",
+    "zcrypto-mon": "mon",
+}
 _HOST_LABELS = {
     "hp": "ops",
     "zcrypto-ops": "ops",
@@ -634,6 +684,7 @@ _HOST_LABELS = {
     "db1": "zcrypto-valkey1",
     "db2": "zcrypto-valkey2",
     "db3": "zcrypto-valkey3",
+    "mon": "zcrypto-mon",
 }
 
 
@@ -1160,19 +1211,31 @@ def main(argv: list[str]) -> int:
         print(tier.value)
         return 0 if tier is Tier.AUTONOMOUS else 3
     if not argv or argv[0] != "report":
-        print('usage: ops-daily.py report [--since 24h] [--journal-entry]\n       ops-daily.py classify --host <host> "<command>"')
+        print(
+            "usage: ops-daily.py report [--since 24h] [--journal-entry] [--stack cloud|mon]\n"
+            '       ops-daily.py classify --host <host> "<command>"'
+        )
         return 2
     try:
         window = _parse_since(argv[argv.index("--since") + 1]) if "--since" in argv else timedelta(hours=24)
     except (KeyError, ValueError, IndexError) as exc:
         print(f"--since takes a count and h or d, like 24h or 3d: {exc}")
         return 2
+    # One stack per pass: the three endpoint builders read `GRAFANA_URL` when called, so the name is rebound here.
+    global GRAFANA_URL
+    try:
+        named = argv[argv.index("--stack") + 1] if "--stack" in argv else grafana_auth.DEFAULT_STACK
+        stack = grafana_auth.STACKS[named]
+    except KeyError, IndexError:
+        print(f"--stack takes one of {', '.join(sorted(grafana_auth.STACKS))}")
+        return 2
+    GRAFANA_URL = stack.url
     now = datetime.now(timezone.utc)
     # The vault is a SOURCE like any other. A locked GPG agent raises `CalledProcessError`, which is
     # a `SubprocessError` and NOT an `OSError`, so `_UNREACHABLE` does not cover it -- and uncaught
     # it exits 1, the attention code, for a credential the pass could not read.
     try:
-        token = grafana_auth.vault_var("grafana_sa_token")
+        token = grafana_auth.vault_var(stack.token_var, stack.vault_file)
     except Exception as exc:
         # The catch is deliberately broad -- `vault_var` fails across unrelated exception hierarchies
         # and a narrow tuple would be guaranteed incomplete -- so keep the traceback for the case
@@ -1425,7 +1488,7 @@ _FIRST_STAGE_SHAPES = (
     _Shape(("hostname",)),
     # The repo's own read-only instruments. Their operands are PromQL and paths, so the class is a
     # literal: the scanner has already refused every metacharacter that was active where it stood.
-    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
+    _Shape(("grafana-query.py",), {"--since": _SINCE, "--step": _NAME, "--stack": _NAME}, arity=(1, 6), classes=(_QUOTED,)),
     _Shape(("continuity.py",), {"--root": _PATH, "--since": _SINCE, "--until": _SINCE}, arity=(0, 3), classes=(_PATH,)),
     _Shape(("ops-postverify.sh",), {"--since": _SINCE}, arity=(0, 3), classes=(_QUOTED,)),
     _Shape(("id",), arity=(0, 1), classes=(_NAME,)),
@@ -1503,11 +1566,15 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
+_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"})
 # A cache node's Docker daemon carries Valkey and Sentinel, so any other restart there can be a failover: the one
 # object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
 _CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
 _CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
+# The observability node carries the evaluator, its two stores and the ingest edge, each restarted in an order its
+# runbook gives: the one unit the pass may take is the node's own Alloy.
+_MON_HOSTS = frozenset({"zcrypto-mon"})
+_MON_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1831,5 +1898,7 @@ def _classify_one(command: str, host: str | None, *, resolve, text: str | None =
         if not any(obj in lowered for obj in _PROTECTED_OBJECTS):
             operands = _matches(_TELEMETRY_SHAPES, tokens, first_stage=True, host=alias, resolve=resolve)
             if host_label(lands_on) in _CACHE_HOSTS and not (operands and _CACHE_AUTONOMOUS_OBJECTS.issuperset(operands)):
+                operands = None
+            if host_label(lands_on) in _MON_HOSTS and not (operands and _MON_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED

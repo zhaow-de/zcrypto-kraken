@@ -11,14 +11,47 @@ from __future__ import annotations
 
 import configparser
 import subprocess
+import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ANSIBLE_DIR = Path(__file__).resolve().parents[1] / "ansible"
 VAULT_FILE = "group_vars/all/vault.yml"
 
-# Deliberately baked in rather than re-guessed: a wrong datasource uid is accepted happily and still
-# reports health=ok, so a guess fails silently.
-GRAFANA_URL = "https://zcrypto2026.grafana.net"
+
+class Stack(NamedTuple):
+    url: str
+    token_var: str
+    vault_file: str
+    missing: str
+
+
+# Baked in rather than re-guessed: a wrong datasource uid is accepted happily and still reports
+# health=ok, so a guess fails silently. Two stacks until the Grafana Cloud leg retires; `mon`'s token
+# is minted by the `mon` role into its `mon_token_cache`, outside the tree.
+STACKS = {
+    "cloud": Stack(
+        "https://zcrypto2026.grafana.net",
+        "grafana_sa_token",
+        VAULT_FILE,
+        f"it is tracked: git checkout -- infra/ansible/{VAULT_FILE}",
+    ),
+    "mon": Stack(
+        "https://zcrypto-mon.zhaow.me",
+        "mon_grafana_tools_token",
+        str(Path.home() / ".config/zcrypto/grafana-mon.vault.yml"),
+        "the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)",
+    ),
+}
+# The stack a tool reads when none is named: the one that pages.
+DEFAULT_STACK = "cloud"
+GRAFANA_URL = STACKS[DEFAULT_STACK].url
+
+
+def stack(name: str = DEFAULT_STACK) -> Stack:
+    if name not in STACKS:
+        raise SystemExit(f"unknown stack {name!r}: one of {', '.join(sorted(STACKS))}")
+    return STACKS[name]
 
 
 def vault_password_file() -> Path:
@@ -63,3 +96,17 @@ def vault_var(name: str, vault_file: str = VAULT_FILE) -> str:
     """
     loader, _ = _load_ansible_vault()
     return str(loader.load_from_file(str(ANSIBLE_DIR / vault_file))[name])
+
+
+def token(name: str = DEFAULT_STACK) -> str:
+    """The stack's service-account token. A missing vault file exits 1 in one line, not a traceback:
+    on a fresh controller the `mon` cache's absence is the normal state.
+    """
+    from ansible.errors import AnsibleFileNotFound
+
+    s = stack(name)
+    try:
+        return vault_var(s.token_var, s.vault_file)
+    except AnsibleFileNotFound:
+        print(f"no token for stack {name!r}: {ANSIBLE_DIR / s.vault_file} is missing; {s.missing}", file=sys.stderr)
+        raise SystemExit(1) from None

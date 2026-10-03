@@ -1599,16 +1599,18 @@ def test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe():
     assert refusal < task_index(tasks, "zcrypto-deploy sudo user")
 
 
-def test_the_cache_nodes_bootstrap_under_the_capture_plays_guards():
-    """A cache node is a public VPS like a capture host, so it takes this play's sshd drop-in and, with it, the
-    re-bootstrap refusal, unnarrowed; the primary refusal stays keyed on `engine_host`, which no cache node joins."""
+@pytest.mark.parametrize("group", ["cache_host", "mon_host"])
+def test_the_other_public_nodes_bootstrap_under_the_capture_plays_guards(group):
+    """A cache node and the observability node are public VPSes like a capture host, so each takes this play's sshd
+    drop-in and, with it, the re-bootstrap refusal, unnarrowed; the primary refusal stays keyed on `engine_host`, which
+    neither joins."""
     plays = load_tasks(BOOTSTRAP)
     play = next(p for p in plays if p["hosts"].split(":")[0] == "capture_host")
-    assert play["hosts"].split(":") == ["capture_host", "cache_host"]
+    assert play["hosts"].split(":") == ["capture_host", "cache_host", "mon_host"]
     assert "when" not in find_task(play["tasks"], REBOOTSTRAP)
     primary = find_task(play["tasks"], PRIMARY_REFUSAL)
     assert when_conditions(primary) == ["inventory_hostname in groups['engine_host'] | default([])"]
-    assert [p["hosts"] for p in plays if "cache_host" in p["hosts"].split(":")] == [play["hosts"]]
+    assert [p["hosts"] for p in plays if group in p["hosts"].split(":")] == [play["hosts"]]
 
 
 # --- the ops role's new-timer check-mode guard ------------------------------------------------
@@ -3060,8 +3062,10 @@ def test_every_register_a_preview_guard_reads_is_set_in_its_own_role(role):
         for task, gates in iter_tasks(load_tasks(path) or []):
             if task.get("register"):
                 registered.add(task["register"])
-            for gate in gates:
-                if "ansible_check_mode" in gate:
-                    read.update(re.findall(r"\b([a-z_][a-z0-9_]*) is changed", gate))
+            # A fact whose value names check mode is a preview guard too: the gates read it by the fact's name.
+            facts = (str(value) for value in (task.get("ansible.builtin.set_fact") or {}).values())
+            for guard in (*gates, *facts):
+                if "ansible_check_mode" in guard:
+                    read.update(re.findall(r"\b([a-z_][a-z0-9_]*) is changed", guard))
     assert read, role
     assert read <= registered, (role, sorted(read - registered))

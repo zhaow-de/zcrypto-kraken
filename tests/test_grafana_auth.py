@@ -1,5 +1,3 @@
-"""TDD for `infra/scripts/grafana_auth.py` -- the shared vaulted-credential resolver."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -7,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "infra" / "scripts" / "grafana_auth.py"
 _spec = importlib.util.spec_from_file_location("grafana_auth", _SCRIPT)
@@ -116,3 +115,89 @@ def test_vault_var_reads_the_file_it_is_given(monkeypatch):
     got = ga.vault_var("engine_healthcheck_url", vault_file="group_vars/engine_host/vault.yml")
     assert got == "https://example.invalid/abc"
     assert seen["path"].endswith("group_vars/engine_host/vault.yml")
+
+
+# --- the stack table: one tree feeds two Grafanas until the Grafana Cloud leg retires --------------
+MON_DEFAULTS = Path(__file__).resolve().parents[1] / "infra/ansible/roles/mon/defaults/main.yml"
+
+
+def test_the_table_holds_the_two_stacks_and_reads_cloud_when_none_is_named():
+    assert set(ga.STACKS) == {"cloud", "mon"}
+    assert ga.DEFAULT_STACK == "cloud", "the default moves at the cutover, with the push script's own"
+    assert ga.stack() is ga.STACKS["cloud"] and ga.GRAFANA_URL == ga.STACKS["cloud"].url
+    cloud = ga.STACKS["cloud"]
+    assert (cloud.url, cloud.token_var, cloud.vault_file) == ("https://zcrypto2026.grafana.net", "grafana_sa_token", ga.VAULT_FILE)
+
+
+def test_the_mon_stack_is_the_role_s_public_name_and_the_cache_the_role_writes():
+    defaults = yaml.safe_load(MON_DEFAULTS.read_text())
+    mon = ga.STACKS["mon"]
+    assert mon.url == f"https://{defaults['mon_hostname']}"
+    assert mon.token_var == defaults["mon_token_var"]
+    assert defaults["mon_token_cache"] == "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/zcrypto/grafana-mon.vault.yml"
+    assert mon.vault_file == str(Path.home() / ".config/zcrypto/grafana-mon.vault.yml")
+    assert Path(mon.vault_file).is_absolute() and not Path(mon.vault_file).is_relative_to(ga.ANSIBLE_DIR.parents[1])
+
+
+def test_an_unknown_stack_is_refused_by_name():
+    with pytest.raises(SystemExit) as refused:
+        ga.stack("grafana-cloud")
+    assert str(refused.value) == "unknown stack 'grafana-cloud': one of cloud, mon"
+
+
+def test_a_stack_s_token_is_read_from_its_own_file(monkeypatch):
+    seen = {}
+
+    class FakeLoader:
+        def set_vault_secrets(self, secrets): ...
+
+        def load_from_file(self, path):
+            seen["path"] = path
+            return {"mon_grafana_tools_token": TOKEN}
+
+    monkeypatch.setattr(ga, "_load_ansible_vault", lambda: (FakeLoader(), object()))
+    mon = ga.stack("mon")
+    assert ga.vault_var(mon.token_var, mon.vault_file) == TOKEN
+    assert seen["path"] == mon.vault_file, "an absolute vault file is read where it is, never under infra/ansible"
+
+
+def test_token_reads_the_named_stacks_token_var_from_its_own_file(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ga, "vault_var", lambda name, vault_file: seen.append((name, vault_file)) or TOKEN)
+    assert ga.token("mon") == TOKEN and ga.token() == TOKEN
+    assert seen == [(ga.STACKS["mon"].token_var, ga.STACKS["mon"].vault_file), ("grafana_sa_token", ga.VAULT_FILE)]
+
+
+@pytest.mark.parametrize(
+    ("name", "remedy"),
+    [
+        ("mon", "the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)"),
+        ("cloud", "it is tracked: git checkout -- infra/ansible/group_vars/all/vault.yml"),
+    ],
+)
+def test_token_over_a_missing_vault_file_is_one_stderr_line_with_the_stacks_own_remedy_then_exit_1(
+    monkeypatch, capsys, tmp_path, name, remedy
+):
+    import ansible.parsing.vault as v
+
+    monkeypatch.setattr(ga, "vault_password", lambda: b"pw")
+    monkeypatch.setattr(ga, "_CONTEXT_READY", False)
+    monkeypatch.setattr(v.VaultSecretsContext, "initialize", classmethod(lambda cls, ctx: None))
+    missing = tmp_path / "not-there" / Path(ga.STACKS[name].vault_file).name
+    monkeypatch.setitem(ga.STACKS, name, ga.STACKS[name]._replace(vault_file=str(missing)))
+
+    with pytest.raises(SystemExit) as refused:
+        ga.token(name)
+    out = capsys.readouterr()
+
+    assert refused.value.code == 1
+    assert out.out == "" and out.err == f"no token for stack {name!r}: {missing} is missing; {remedy}\n"
+
+
+def test_token_keeps_the_traceback_of_a_vault_failure_that_is_not_a_missing_file(monkeypatch):
+    def refused(name, vault_file):
+        raise RuntimeError("no vault secrets were found that could decrypt")
+
+    monkeypatch.setattr(ga, "vault_var", refused)
+    with pytest.raises(RuntimeError, match="could decrypt"):
+        ga.token("mon")

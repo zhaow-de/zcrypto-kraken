@@ -1,0 +1,14 @@
+# bootstrap.yml's first play connects as root on 22 at play scope, since a new node has no
+# zcrypto-deploy yet; every converge after it connects as below.
+ansible_user: zcrypto-deploy
+ansible_port: 10022
+# ssh_hardening AllowUsers: no zcrypto-data here, since no NAS pull channel reaches this node.
+hardening_ssh_allow_users: zcrypto-deploy root
+# The fleet default force-enables ip_forward for Docker hosts; this node runs no container, so the
+# hardening role's own default of 0 stands and only the two kernel keys are set.
+hardening_extra_sysctl:
+  kernel.dmesg_restrict: 1
+  kernel.yama.ptrace_scope: 1
+# The one public port beyond sshd: Caddy's 443, where the UI, the API and both ingest paths answer.
+# 80 stays shut. Open a public port in the Linode Cloud Firewall by hand too.
+firewall_extra_tcp_ports: [443]

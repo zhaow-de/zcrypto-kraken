@@ -1,0 +1,261 @@
+---
+# The tools' token: one Editor service account holding exactly one token, cached vault-encrypted on the
+# controller.
+- name: wait for grafana to answer
+  ansible.builtin.uri:
+    url: "{{ mon_grafana_api }}/api/health"
+  register: mon_grafana_health
+  until: mon_grafana_health.status | default(0) == 200
+  retries: 30
+  delay: 2
+
+- name: look for the token cache on the controller
+  ansible.builtin.stat:
+    path: "{{ mon_token_cache }}"
+  register: mon_token_cache_stat
+  delegate_to: localhost
+  become: false
+
+# An undecryptable cache fails the shape check, not the read: a vaulted value is decrypted where first used.
+- name: take the cached token, an unreadable cache for an absent one
+  block:
+    - name: read the token cache
+      ansible.builtin.include_vars:
+        file: "{{ mon_token_cache }}"
+        name: mon_token_cached
+      when: mon_token_cache_stat.stat.exists
+      failed_when: false
+      no_log: true
+
+    - name: keep the cached token only when it has a token's shape
+      ansible.builtin.set_fact:
+        mon_token_candidate: >-
+          {{ (mon_token_cached | default({}))[mon_token_var] | default('') | string
+             if ((mon_token_cached | default({}))[mon_token_var] | default('') | string) is match(mon_token_pattern)
+             else '' }}
+      no_log: true
+
+  rescue:
+    - name: keep no token from a cache that cannot be decrypted
+      ansible.builtin.set_fact:
+        mon_token_candidate: ""
+      no_log: true
+
+- name: ask grafana whose token the cached one is
+  ansible.builtin.uri:
+    url: "{{ mon_grafana_api }}/api/user"
+    headers:
+      Authorization: "Bearer {{ mon_token_candidate }}"
+    status_code: [200, 401, 403]
+  register: mon_token_probe
+  when: mon_token_candidate | length > 0
+  no_log: true
+
+- name: sign in on loopback with the vaulted admin password
+  ansible.builtin.uri:
+    url: "{{ mon_grafana_api }}/login"
+    method: POST
+    body_format: json
+    body:
+      user: "{{ mon_grafana_admin_user }}"
+      password: "{{ mon_grafana_admin_password }}"
+    status_code: [200, 401]
+  register: mon_login
+  no_log: true
+
+# A 401 is first read as a password that drifted from the vault. The unit hands Grafana its data path on the
+# command line, so the CLI is handed the same one, or it reports success against a new database elsewhere.
+- name: reset the admin password from the vault
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - grafana
+      - --
+      - /usr/share/grafana/bin/grafana
+      - cli
+      - --homepath
+      - /usr/share/grafana
+      - --config
+      - /etc/grafana/grafana.ini
+      - --configOverrides
+      - cfg:default.paths.data=/var/lib/grafana
+      - admin
+      - reset-admin-password
+      - --password-from-stdin
+    stdin: "{{ mon_grafana_admin_password }}"
+    stdin_add_newline: false
+  when: mon_login.status == 401
+  changed_when: true
+  no_log: true
+
+- name: sign in again after the reset
+  ansible.builtin.uri:
+    url: "{{ mon_grafana_api }}/login"
+    method: POST
+    body_format: json
+    body:
+      user: "{{ mon_grafana_admin_user }}"
+      password: "{{ mon_grafana_admin_password }}"
+    status_code: [200, 401]
+  register: mon_login_again
+  when: mon_login.status == 401
+  no_log: true
+
+# Never retried: each attempt counts toward the lockout it would be waiting out.
+- name: refuse to go on when the vaulted password is still refused
+  ansible.builtin.assert:
+    that: mon_login.status == 200 or mon_login_again.status == 200
+    fail_msg: >-
+      Grafana refused the vaulted admin sign-in twice, the second time after resetting the password from the
+      vault. Either that is its login lockout: a run of failed sign-ins under the admin's name locks the
+      account for about five minutes, and a mistyped password in the UI counts. Wait five minutes without
+      signing in, then converge again. Or mon_grafana_admin_user is not the name this database was created
+      with: Grafana reads the name only then, so the vault carries the first one for as long as the database
+      lives.
+
+- name: act on the service account under the admin session, and end the session whatever happens
+  vars:
+    mon_session: "{{ (mon_login_again if mon_login.status == 401 else mon_login).cookies_string }}"
+  block:
+    - name: find the tools' service account by name
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/api/serviceaccounts/search?perpage=1000&query={{ mon_service_account | urlencode }}"
+        headers:
+          Cookie: "{{ mon_session }}"
+      register: mon_sa_search
+      no_log: true
+
+    - name: create the tools' service account, an Editor
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/api/serviceaccounts"
+        method: POST
+        headers:
+          Cookie: "{{ mon_session }}"
+        body_format: json
+        body:
+          name: "{{ mon_service_account }}"
+          role: Editor
+          isDisabled: false
+        status_code: [201]
+      register: mon_sa_created
+      changed_when: true
+      when: mon_sa_search.json.serviceAccounts | selectattr('name', 'equalto', mon_service_account) | list | length == 0
+      no_log: true
+
+    - name: note the service account as grafana holds it
+      ansible.builtin.set_fact:
+        mon_sa: >-
+          {{ mon_sa_created.json if mon_sa_created is not skipped
+             else (mon_sa_search.json.serviceAccounts | selectattr('name', 'equalto', mon_service_account) | first) }}
+
+    - name: return a drifted service account to an enabled Editor
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/api/serviceaccounts/{{ mon_sa.id }}"
+        method: PATCH
+        headers:
+          Cookie: "{{ mon_session }}"
+        body_format: json
+        body:
+          role: Editor
+          isDisabled: false
+      changed_when: true
+      when: mon_sa.role != 'Editor' or mon_sa.isDisabled
+      no_log: true
+
+    - name: list the service account's tokens
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/api/serviceaccounts/{{ mon_sa.id }}/tokens"
+        headers:
+          Cookie: "{{ mon_session }}"
+      register: mon_sa_tokens
+      no_log: true
+
+    - name: decide whether a token is minted
+      ansible.builtin.set_fact:
+        mon_token_mint: >-
+          {{ (mon_grafana_token_rotate | default(false) | bool)
+             or mon_token_candidate | length == 0
+             or mon_token_probe.status | default(0) != 200
+             or mon_token_probe.json.login | default('') != mon_sa.login
+             or mon_sa_tokens.json | length != 1 }}
+      no_log: true
+
+    - name: mint the tools' token
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/api/serviceaccounts/{{ mon_sa.id }}/tokens"
+        method: POST
+        headers:
+          Cookie: "{{ mon_session }}"
+        body_format: json
+        body:
+          name: "{{ mon_service_account }}-{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+      register: mon_token_minted
+      changed_when: true
+      when: mon_token_mint
+      no_log: true
+
+    - name: refuse a minted token of another shape before it is written
+      ansible.builtin.assert:
+        that: mon_token_minted.json.key | default('') is match(mon_token_pattern)
+        fail_msg: >-
+          Grafana returned a token that is not the shape the tools and this role expect; nothing was written
+          to the cache. Read the release notes of the installed Grafana for a changed token format.
+        quiet: true
+      when: mon_token_mint
+      no_log: true
+
+    - name: the cache's directory on the controller
+      ansible.builtin.file:
+        path: "{{ mon_token_cache | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      when: mon_token_mint
+
+    # No newline added: a newline-tailed cache fails the shape check, so every converge re-mints while the tools read it.
+    - name: encrypt the minted token under the repo's vault password
+      ansible.builtin.command:
+        argv: [ansible-vault, encrypt_string, --stdin-name, "{{ mon_token_var }}"]
+        chdir: "{{ playbook_dir }}"
+        stdin: "{{ mon_token_minted.json.key }}"
+        stdin_add_newline: false
+      register: mon_token_encrypted
+      changed_when: false
+      delegate_to: localhost
+      become: false
+      when: mon_token_mint
+      no_log: true
+
+    - name: write the token cache on the controller
+      ansible.builtin.copy:
+        content: "{{ mon_token_encrypted.stdout }}\n"
+        dest: "{{ mon_token_cache }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      when: mon_token_mint
+      no_log: true
+
+    - name: delete every token the mint superseded
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/api/serviceaccounts/{{ mon_sa.id }}/tokens/{{ item.id }}"
+        method: DELETE
+        headers:
+          Cookie: "{{ mon_session }}"
+      changed_when: true
+      loop: "{{ mon_sa_tokens.json if mon_token_mint else [] }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+  always:
+    - name: end the admin session
+      ansible.builtin.uri:
+        url: "{{ mon_grafana_api }}/logout"
+        headers:
+          Cookie: "{{ mon_session }}"
+        follow_redirects: none
+        status_code: [200, 302]
+      no_log: true

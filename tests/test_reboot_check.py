@@ -218,11 +218,11 @@ def test_the_timer_actually_repeats():
     assert any(l.strip() == "Unit=zcrypto-reboot-check.service" for l in timer.splitlines())
 
 
-# --- the cache and ops roles' copies ------------------------------------------------------------
-# The cache nodes and ops publish the same flag from a copy of this role's script, timer and unit, so the fleet's
+# --- the cache, ops and mon roles' copies -------------------------------------------------------
+# The cache nodes, ops and the observability node publish the same flag from a copy of this role's script, timer and unit, so the fleet's
 # reboot-pending series covers them. The copies' comments are their own, naming the role that installs them; what a
 # shell or systemd reads must be this role's, the unit's one variable renamed.
-COPY_ROLES = {"cache": "cache_textfile_dir", "ops": "ops_textfile_dir"}
+COPY_ROLES = {"cache": "cache_textfile_dir", "ops": "ops_textfile_dir", "mon": "mon_textfile_dir"}
 CACHE_ROLE_DIR = REPO / "infra/ansible/roles/cache"
 REBOOT_CHECK_FILES = (
     "files/zcrypto-reboot-check.sh",
@@ -284,6 +284,20 @@ def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
     alloy = (CACHE_ROLE_DIR / "files/config.alloy").read_text()
     directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
     assert directory == f"/host/root{host_dir}", f"unit writes {host_dir}, collector reads {directory}"
+
+
+def test_the_mon_unit_writes_into_the_directory_the_mon_alloy_scrapes():
+    """The node's Alloy is the apt package, not a container: it reads the host's own path, with no /host/root in front."""
+    mon = REPO / "infra/ansible/roles/mon"
+    unit = (mon / "templates/zcrypto-reboot-check.service.j2").read_text()
+    unit = unit.replace("{{ mon_textfile_dir }}", _resolved_default("mon", "mon_textfile_dir"))
+    host_dir = str(Path(next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]).parent)
+    alloy = (mon / "files/config.alloy").read_text()
+    set_collectors = next(line for line in alloy.splitlines() if line.strip().startswith("set_collectors"))
+    # config-selector-ok: the needle carries both quotes, so "textfiles" cannot satisfy it
+    assert '"textfile"' in set_collectors, f"the textfile collector is not enabled: {set_collectors.strip()}"
+    directory = next(line for line in alloy.splitlines() if line.strip().startswith("directory")).split('"')[1]
+    assert directory == host_dir, f"unit writes {host_dir}, collector reads {directory}"
 
 
 def test_the_ops_unit_writes_where_the_ops_alloy_mounts_its_textfile_directory():

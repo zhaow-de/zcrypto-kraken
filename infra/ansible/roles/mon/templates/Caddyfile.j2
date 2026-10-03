@@ -1,0 +1,38 @@
+# Rendered by the `mon` role at /etc/caddy/Caddyfile — edit infra/ansible/roles/mon/templates/Caddyfile.j2.
+# tests/test_infra_mon_role.py holds the four routes below.
+{
+	email {{ mon_acme_email }}
+	auto_https disable_redirects
+}
+
+{{ mon_hostname }} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+	handle /api/v1/write {
+		basic_auth {
+			{{ mon_ingest_fleet_user }} {{ mon_ingest_fleet_password_hash }}
+		}
+		reverse_proxy 127.0.0.1:{{ mon_prometheus_port }}
+	}
+
+	handle /loki/api/v1/push {
+		basic_auth {
+			{{ mon_ingest_fleet_user }} {{ mon_ingest_fleet_password_hash }}
+			{{ mon_ingest_logship_user }} {{ mon_ingest_logship_password_hash }}
+		}
+		reverse_proxy 127.0.0.1:{{ mon_loki_port }}
+	}
+
+	@served_without_a_login path /metrics /metrics/* /swagger*
+	handle @served_without_a_login {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:{{ mon_grafana_port }}
+	}
+}

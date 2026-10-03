@@ -19,24 +19,26 @@ SD="$(cd "$(dirname "$0")" && pwd)"
 # until then passing it refuses loudly instead of converging while ansible ignores it.
 # The four the deploy log records, plus `zaccess`: `infra/runbooks/zaccess.md` publishes its only
 # converge, `--limit zaccess --tags access`; plus the three cache nodes, whose rollout (spec 00118
-# D14) converges one node per run, so `cache_host` is not a host here.
-HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3"
+# D14) converges one node per run, so `cache_host` is not a host here; plus the observability node
+# (spec 00121).
+HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valkey2 zcrypto-valkey3 zcrypto-mon"
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
 # spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
-# node or the engine host, and `cache` on a node.
-TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link"
+# node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role.
+TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link mon"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
 # `daemon_json_ack` and `ops_panel_timer_hold` (the rollout skill), `ops_reconcile_mint` (the ops
 # host_vars), `docker_apt_distribution` and `access_ops_agentboard_live` (their role defaults); plus
 # spec 00118's three: the cache role's two digests and its deliberate config re-render (D9); spec
-# 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back.
+# 00120's two: the engine host's cache proxy digest, and the cache table's switch, the way back;
+# spec 00121's one: the observability node's deliberate re-mint of its tools' Grafana token (D7).
 EVKEYS="capture_image_digest capture_alloy_digest engine_image_digest converge_primary \
 ops_image_digest ops_alloy_digest ops_panel_timer_hold ops_grafana_watchdog_probe_url \
 ops_reconcile_mint liquidations_decision nas_apply_compose daemon_json_ack \
 docker_apt_distribution access_ops_agentboard_live cache_image_digest cache_alloy_digest \
-cache_config_reset cache_proxy_image_digest engine_cache_enabled"
+cache_config_reset cache_proxy_image_digest engine_cache_enabled mon_grafana_token_rotate"
 # A reason is prose, and `k=v` truncates it at the first space, so these four travel as JSON alone.
 OVERRIDES="canary_override pins_override engine_window_override arming_override"
 OWNKEY="zcrypto_window_record"

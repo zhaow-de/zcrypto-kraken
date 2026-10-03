@@ -1,0 +1,14 @@
+# Rendered by the `mon` role at /etc/grafana/provisioning/dashboards/zcrypto.yml — edit
+# infra/ansible/roles/mon/templates/folder-anchor.yml.j2.
+# This provider reads an empty directory: it exists to create the folder under the uid the push names. The
+# dashboards and rules themselves are pushed, never file-provisioned, since a provisioned one cannot be
+# edited through the API the push uses.
+apiVersion: 1
+providers:
+  - name: zcrypto-folder-anchor
+    type: file
+    folder: {{ mon_folder_title }}
+    folderUid: {{ mon_folder_uid }}
+    disableDeletion: true
+    options:
+      path: {{ mon_folder_anchor_dir }}

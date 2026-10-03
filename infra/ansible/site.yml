@@ -301,3 +301,29 @@
       tags: [cache-link]
     - role: cache
       tags: [cache]
+
+# spec 00121.
+- name: converge the observability node — Grafana, its stores and the ingest edge
+  hosts: mon_host
+  become: true
+  pre_tasks:
+    - name: note — the observability node's charter
+      ansible.builtin.debug:
+        msg: >-
+          The fleet's metrics, logs and alert evaluation on one node, with no containers: no trade
+          key and no capture data. Its configuration is this play and one push of the rules and
+          dashboards, so a lost node is rebuilt from the repository. Run bootstrap.yml first.
+      tags: [always]
+  roles:
+    - role: base
+      tags: [base]
+    - role: hardening
+      tags: [hardening]
+    - role: firewall
+      tags: [firewall]
+    - role: fail2ban
+      tags: [fail2ban]
+    - role: chrony
+      tags: [chrony]
+    - role: mon
+      tags: [mon]

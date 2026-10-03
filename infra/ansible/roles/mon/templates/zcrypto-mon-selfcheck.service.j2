@@ -1,0 +1,20 @@
+# Rendered by the `mon` Ansible role at /etc/systemd/system/zcrypto-mon-selfcheck.service; edit
+# infra/ansible/roles/mon/templates/zcrypto-mon-selfcheck.service.j2 and re-converge.
+[Unit]
+Description=Ping the observability node's dead-man while rules evaluate, fleet samples arrive and Loki is ready
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=MON_SELFCHECK_GRAFANA=http://127.0.0.1:{{ mon_grafana_port }}
+Environment=MON_SELFCHECK_PROMETHEUS=http://127.0.0.1:{{ mon_prometheus_port }}
+Environment=MON_SELFCHECK_LOKI=http://127.0.0.1:{{ mon_loki_port }}
+# The ping URL, MON_SELFCHECK_HEALTHCHECK_URL, in a root-only file systemd reads before it drops privileges.
+EnvironmentFile=/etc/default/zcrypto-mon-selfcheck
+ExecStart=/usr/bin/python3 /usr/local/sbin/zcrypto-mon-selfcheck
+DynamicUser=true
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

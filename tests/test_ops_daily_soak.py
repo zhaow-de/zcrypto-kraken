@@ -518,7 +518,7 @@ def test_a_soak_check_that_wrote_no_payload_raises_its_last_line(tmp_path, monke
 
 
 def test_the_soak_row_reaches_the_verdict_the_pass_prints(monkeypatch, capsys):
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))
@@ -563,7 +563,7 @@ def test_a_report_that_forgets_its_soak_stub_meets_the_refusal(tmp_path, monkeyp
     every other reader stubbed and the runner left alone, the refusal surfaces through `main` itself. The
     journal is pointed at an empty directory, so a refusal that went missing meets no mount either."""
     monkeypatch.setattr(ops_daily, "SOAK_JOURNAL", tmp_path)
-    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name: "tok")
+    monkeypatch.setattr(ops_daily.grafana_auth, "vault_var", lambda name, vault_file: "tok")
     monkeypatch.setattr(ops_daily, "read_alerts", lambda *a, **k: ops_daily.AlertsRead())
     monkeypatch.setattr(ops_daily, "read_logs", lambda *a, **k: ops_daily.LogsRead())
     monkeypatch.setattr(ops_daily, "read_deadmen", lambda *a, **k: ops_daily.DeadmenRead(via_prometheus=0.0))

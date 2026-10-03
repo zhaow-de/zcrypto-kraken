@@ -1,0 +1,141 @@
+// Grafana Alloy config for the observability node (zcrypto-mon). Installed by the `mon` role with
+// `ansible.builtin.copy` at /etc/alloy/config.alloy, so edit this file, never the host's copy.
+//
+// Native Alloy, the apt package under systemd: it reads the host's real /proc, /sys and journal, and
+// writes to the node's own Prometheus and Loki on loopback, with no credential and no filter: a fleet
+// host that ships to the node goes through Caddy with a credential, and this one is on the node.
+//
+// EDITING NOTE -- test suites pull assignments out of this file by PREFIX (`line.strip().startswith(<key>)`).
+// Keep every config key the first non-space token on exactly one line.
+
+// ---- Host metrics -------------------------------------------------------------------------------
+// The textfile directory is where the role's reboot check writes reboot.prom, the pending-reboot flag.
+prometheus.exporter.unix "host" {
+  set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  textfile {
+    directory = "/var/lib/zcrypto-node-textfile"
+  }
+}
+
+prometheus.exporter.self "alloy" {}
+
+// No `job_name` here: exporter targets carry their own `job` label (integrations/unix, integrations/self).
+prometheus.scrape "host" {
+  targets         = array.concat(prometheus.exporter.unix.host.targets, prometheus.exporter.self.alloy.targets)
+  forward_to      = [prometheus.remote_write.mon.receiver]
+  scrape_interval = "60s"
+}
+
+// ---- The node's own services --------------------------------------------------------------------
+// Grafana, Prometheus and Loki each serve /metrics on loopback. The node's rules select them by these
+// job names.
+prometheus.scrape "grafana" {
+  targets         = [{"__address__" = "127.0.0.1:3000"}]
+  job_name        = "grafana"
+  forward_to      = [prometheus.remote_write.mon.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.scrape "prometheus" {
+  targets         = [{"__address__" = "127.0.0.1:9090"}]
+  job_name        = "prometheus"
+  forward_to      = [prometheus.remote_write.mon.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.scrape "loki" {
+  targets         = [{"__address__" = "127.0.0.1:3100"}]
+  job_name        = "loki"
+  forward_to      = [prometheus.remote_write.mon.receiver]
+  scrape_interval = "60s"
+}
+
+// ---- remote_write -------------------------------------------------------------------------------
+prometheus.remote_write "mon" {
+  external_labels = {
+    host = "zcrypto-mon",
+  }
+
+  endpoint {
+    url = "http://127.0.0.1:9090/api/v1/write"
+  }
+}
+
+// ---- Logs: the node's units ---------------------------------------------------------------------
+loki.relabel "journal_units" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(grafana-server|prometheus|loki|caddy|alloy|zcrypto-mon-selfcheck|zcrypto-reboot-check)\\.service"
+    action        = "keep"
+  }
+
+  // Unit name minus ".service" -> `container`, the label every fleet log selector keys on.
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    regex         = "(.+)\\.service"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+
+  rule {
+    target_label = "host"
+    replacement  = "zcrypto-mon"
+  }
+}
+
+loki.source.journal "mon_units" {
+  relabel_rules = loki.relabel.journal_units.rules
+  forward_to    = [loki.process.parse.receiver]
+  // Unset, an outage longer than 7h skips the journal between the cursor and now-7h for good.
+  max_age       = "48h"
+}
+
+loki.process "parse" {
+  forward_to = [loki.write.mon.receiver]
+
+  // Grafana, Prometheus, Loki and Alloy log logfmt with a `level` key. A line of another shape renders
+  // an empty level, which the labels stage drops, so it ships with no `level` label.
+  stage.match {
+    selector = "{container=~\"grafana-server|prometheus|loki|alloy\"}"
+
+    stage.logfmt {
+      mapping = { "level" = "" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+  }
+
+  // Caddy logs JSON with a `level` key.
+  stage.match {
+    selector = "{container=\"caddy\"}"
+
+    stage.json {
+      expressions = { level = "level" }
+    }
+
+    stage.template {
+      source   = "level"
+      template = "{{ if eq .Value \"warn\" }}WARNING{{ else if eq .Value \"fatal\" }}CRITICAL{{ else }}{{ ToUpper .Value }}{{ end }}"
+    }
+
+    stage.labels {
+      values = { level = "level" }
+    }
+  }
+}
+
+loki.write "mon" {
+  endpoint {
+    url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}

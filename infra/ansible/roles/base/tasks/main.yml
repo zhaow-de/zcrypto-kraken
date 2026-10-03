@@ -1,7 +1,8 @@
-# Fleet policy, pinned in config (spec 00050, spec 00051, spec 00118): no two hosts in the capture,
-# ops and cache fleet may share an unattended-upgrades slot, because a same-night kernel reboot would
-# take several down at once: a book gap with no surviving witness is permanent, and two cache nodes
-# down leave one Sentinel, below its quorum of two. The slots come from `hostvars`, which resolves
+# Fleet policy, pinned in config (spec 00050, spec 00051, spec 00118, spec 00121): no two hosts in
+# the capture, ops, cache and observability fleet may share an unattended-upgrades slot, because a
+# same-night kernel reboot would take several down at once: a book gap with no surviving witness is
+# permanent, two cache nodes down leave one Sentinel, below its quorum of two, and the observability
+# node down leaves the other reboot unwatched. The slots come from `hostvars`, which resolves
 # inventory, group and host vars but NOT role defaults, so a host relying on this role's default
 # reads `UNDECLARED` and is checked explicitly rather than skipped -- and reading inventory rather
 # than a set_fact is what makes the check survive `--limit`, exactly when a single-host converge
@@ -18,7 +19,7 @@
       bar boundary — measure from the archive).
     success_msg: "fleet maintenance windows are distinct: {{ base_fleet_reboot_times }}"
   vars:
-    base_fleet_hosts: "{{ (groups['capture_host'] | default([])) + (groups['ops_host'] | default([])) + (groups['cache_host'] | default([])) }}"
+    base_fleet_hosts: "{{ (groups['capture_host'] | default([])) + (groups['ops_host'] | default([])) + (groups['cache_host'] | default([])) + (groups['mon_host'] | default([])) }}"
     base_fleet_reboot_times: >-
       {{ base_fleet_hosts | map('extract', hostvars)
          | map(attribute='base_unattended_upgrades_reboot_time', default='UNDECLARED') | list }}
@@ -55,7 +56,7 @@
     cache_valid_time: 3600
   register: base_unattended_upgrades_install
 
-- name: configure unattended-upgrades — security pocket, auto-reboot, mail on failure only
+- name: configure unattended-upgrades — security pocket, the host's blacklist, auto-reboot, mail on failure only
   ansible.builtin.template:
     src: 50unattended-upgrades.j2
     dest: /etc/apt/apt.conf.d/50unattended-upgrades

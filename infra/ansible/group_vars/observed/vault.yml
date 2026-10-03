@@ -1,13 +1,9 @@
 # group_vars/observed — SECRETS shared by every host that ships telemetry.
 #
 # The `observed` group (inventory/hosts.yml) is every host that runs Alloy. The telemetry
-# endpoints + credentials below are NOT host-specific, so
-# scoping them to a group states exactly who may read them — the same reasoning that now keeps the
-# live trade key in group_vars/engine_host/ rather than capture_host (T0061, resolved 2026-07-17:
-# until that move the capture-only zcrypto-red RESOLVED the live trading credential, and only the
-# engine play's targeting confined its rendering to zcrypto — membership is the boundary now). The
-# ops node is deliberately in THIS group and NOT in engine_host: it ships telemetry, and it must
-# never hold the trade key (spec 00051 D10).
+# endpoints + credentials below are NOT host-specific, so scoping them to a group states exactly who
+# may read them. The ops node is deliberately in THIS group and NOT in engine_host: it ships
+# telemetry, and it must never hold the trade key (spec 00051 D10).
 #
 # Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable so anyone can see
 # what this group needs, while every value stays `!vault`-encrypted at rest. Read/write mechanics:
@@ -115,3 +111,27 @@ logship_loki_token: !vault |
           36373262356533346136323162626666656136383831326165333234323263616465666332383238
           65363235353337373832386134393163393032343634316530353832373833303635623165656439
           6531
+
+# The observability node's two ingest users (spec 00121): `fleet` is every Alloy's, on both ingest paths;
+# `logship` is the applications' own log push, on the Loki path alone, so it can be revoked without
+# blinding fleet telemetry. Caddy on the node holds their bcrypt hashes, host_vars/zcrypto-mon/vault.yml's
+# `mon_ingest_<user>_password_hash`: a password and its hash are replaced together (infra/runbooks/mon.md's
+# mon-secrets).
+mon_ingest_fleet_password: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          66363965333235623963313134303061383763656438623336316632653364373639633562613666
+          3039353363383166393665306431303166613362333934620a653339333136396339333663626438
+          31316532646661313233336365663532376665336163366431653330323065613835383834323934
+          6637343837663162380a373538633936393461353535343537653135653366623536643361613934
+          65363561316337333437343832623836343963633631353664316436356630626631343930316437
+          39663032623262643935646232643766333739386332633938643134633239386431643131313466
+          346630303665646636623561303964346635
+mon_ingest_logship_password: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          30653964373661303037623837303130653537343166643061313437666334636164383435323335
+          6164363530353630663762623331636136346533646161380a393564656163383562643165346135
+          61346364346263386463376464393364336334376431666433336434316239383434666535383736
+          3235353039636230330a666233623438303061396439623536636237386136356563623837386362
+          64383831373261393831666361343032346466333939376161633739656464653930616566393831
+          61393636653531616330346537306437396261366333336563643935396436396465326436383030
+          393636663639653732663832303539646332

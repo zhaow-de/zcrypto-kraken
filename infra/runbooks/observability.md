@@ -21,7 +21,7 @@ A **critical** Grafana alert, one of four — `Fleet · Alloy dark — NAS` / `�
 
 Severity is identical on all four deliberately — the responder's first moves are the same on every host. `noDataState` and `execErrState` are both `Alerting`, so a Grafana-side failure to evaluate this rule also pages rather than reading green.
 
-(The fifth sibling, `zcrypto-alloy-dark-zaccess`, covers the bridgehead, whose Alloy is a native apt install with a different procedure — it has its own section at `zaccess.md#zaccess-bridgehead-dark`. The three cache nodes' siblings, `zcrypto-alloy-dark-cache-1` to `-3`, have theirs at `cache.md#zcrypto-alloy-dark-cache-1`, since their set is watched from the other two nodes while one is dark.)
+(The fifth sibling, `zcrypto-alloy-dark-zaccess`, covers the bridgehead, whose Alloy is a native apt install with a different procedure — it has its own section at `zaccess.md#zaccess-bridgehead-dark`. The three cache nodes' siblings, `zcrypto-alloy-dark-cache-1` to `-3`, have theirs at `cache.md#zcrypto-alloy-dark-cache-1`, since their set is watched from the other two nodes while one is dark. The observability node's own sibling, `zcrypto-alloy-dark-mon`, is evaluated on that node and nowhere else, and has its section at `mon.md#zcrypto-alloy-dark-mon`.)
 
 ### What it means
 
