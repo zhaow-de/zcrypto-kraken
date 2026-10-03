@@ -1,5 +1,5 @@
 ---
-status: open
+status: partial
 ripe_when: "2026-10-05"
 ---
 
@@ -30,7 +30,11 @@ The assessment of 2026-10-01 is `docs/research/92.self-hosted-observability-asse
 - **Size**: a new host and role, dual-shipping in every Alloy config, a cutover and a retirement — large, with many attended converges.
 - **Not verified by the assessment**: the Prometheus engine version Grafana Cloud runs, which decides whether range selectors read identically on both stacks; the memory Prometheus and Loki need at this scale; the unlicensed Enterprise build's licence text.
 
+## Done so far
+
+- Phase 1, the node taking a shadow push: spec `docs/specs/00121-self-hosted-observability-design.md` and plan `docs/plans/00121-mon-node.md`, merged as PR #652 and rolled out 2026-10-03; the node `zcrypto-mon` (`docs/reference/fleet.md`) carries every rule at `https://zcrypto-mon.zhaow.me`, paging the shadow channel, and its acceptance's two findings were fixed as PRs #653 and #654.
+
 ## Suggested next steps
 
-- The design and the owner's decisions are `docs/specs/00121-self-hosted-observability-design.md`; phase 1's plan is `docs/plans/00121-mon-node.md`, and each later phase takes its own once the phase before it has been read.
-- Build in the spec's four phases: the node taking a shadow push; dual-shipping, the primary last and after the box; the cutover of paging; the retirement of the Grafana Cloud leg and the keep-alive.
+- Phase 2, dual-shipping, the primary last and after the box: its plan skeleton is `docs/plans/00121-dual-shipping.md` on branch `docs/t0217-phase-2-plan`. Two items the rollout left are its to carry: `zcrypto-mon-selfcheck.py`'s "no scheduler tick" naming the absent series; `grafana-push.sh`'s `ORPHAN` line for a rule of a skipped group.
+- Phase 3, the cutover of paging, and phase 4, the retirement of the Grafana Cloud leg and the keep-alive: each takes its own plan once the phase before it has been read.
