@@ -11,10 +11,14 @@ disable-model-invocation: false
 ## 1. Read
 
 ```bash
-uv run python infra/scripts/ops-daily.py report --since 24h
+uv run python infra/scripts/ops-daily.py report --since 24h --compare; echo "report exit $?"
 ```
 
+Run it in the background — the harness's `run_in_background`, which hands the output back when the command exits, not a watcher loop — and read the output whole then: `--compare` adds the comparison's run, ten minutes and more as the hosts ship (`infra/runbooks/mon.md#mon-compare`), bounded at 2700 s inside the report, while a foreground call is cut at 600 s. Its last line, `report exit <n>`, is the report's exit code.
+
 Run it from a checkout at `develop`'s tip, never from the `ops-journal` worktree — its scripts are `develop`'s only at the month-change re-cut; the journal entry is written in the `ops-journal` worktree, the report is not. Exit **0** all-clear · **1** attention · **2** a source could not be read. **Exit 2 is the first finding**, and the report names which source: a source that cannot be reached is a finding about that source, never a gap to pass over. `(no series)` is a FAIL, never a zero.
+
+The `## Comparison` section is the preceding UTC day's comparison of the rules' queries on both stacks, `mon-compare`, which the `--compare` run prints from the first day `COMPARISON_FROM` in `infra/scripts/ops_daily.py` names and while `grafana_auth.py`'s stack table holds both stacks; before that day, and after the retirement, the run prints no section. It moves no exit code, so its one line is read on its own. `compare: <nodes> nodes × 24 instants, 0 differences` is a clean day. `<n> differences` is a finding for the cutover pull request, each difference line fixed or explained there, never a remediation on the fleet. `compare: failed: …` is not a clean day: the stack it names is read as a source that could not be read, a finding about that stack as an exit 2's is, and the bound's line, `the comparison ran past its 2700 s bound`, which names none, is a run too slow to finish, which the next pass tries again. The cutover is gated by seven consecutive daily lines reading `0 differences`, read from the journal (step 7), and two things restart the seven: a rebuild of the node, after which they count again from the first day whose 00:00 UTC is at least 50 h after the rebuilt node's converge, the days before it uncounted whatever they read; and a day the pass did not run, which carries no line and is a gap, the seven counting again from the next pass. A `grafana-compare.py --day` run outside a pass counts for no day.
 
 ## 2. Follow the runbook, per alert that fired
 
@@ -89,7 +93,7 @@ The report's `## Dead-men` section prints one `- description:` line per **defect
 
 ## 7. Write the journal entry
 
-Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in. An action left prepared, or a finding the pass could not clear, is recorded in the entry AND routed where work lives — a decision to a `T<NNNN>` through `topic-ops`, a doing handed to `zcrypto-marco` for the memo queue — and the entry names where it went; the journal is not a backlog. Commit.
+Append to `docs/reference/ops-journal/<YYYY-MM>.md` on the standing `ops-journal` branch, in the shape its README fixes: `## <YYYY-MM-DD> — <all-clear | attention | incident>`, then the paragraph `ops-daily.py report --journal-entry` prints, with the actions taken and their tier written in, and beside it the `## Comparison` line from step 1's report on a day that printed one — the `--journal-entry` run does not compare — since the cutover's seven days are read from the journal. An action left prepared, or a finding the pass could not clear, is recorded in the entry AND routed where work lives — a decision to a `T<NNNN>` through `topic-ops`, a doing handed to `zcrypto-marco` for the memo queue — and the entry names where it went; the journal is not a backlog. Commit.
 
 At a month change: open the finished month's PR, merge it on CI green, delete the branch, and re-cut `ops-journal` from `develop`. No review and no word while the PR carries journal files alone — a month of all-clear entries has nothing a second reader could check, and a gate there is a place the routine stalls; `merge-pr`'s gate holds the exemption to exactly that, so a PR that also carries a script or a role fix takes the read like any other.
 
@@ -112,3 +116,4 @@ A scheduled message fires once. Schedule tomorrow's trigger before finishing, th
 | "Nothing fired, so there is nothing to write" | The all-clear entry is the product. A missing entry reads as a day nobody looked. |
 | "I will restart Alloy on the capture host, it is only telemetry" | The capture pair's Alloy goes through `zcrypto-bump-alloy`, attended. |
 | "No nightly file, so there is nothing to report" | An absent or stale `latest.json` is the FAIL row: the timer did not fire, and the data-gated family ran nowhere that night. |
+| "`<n> differences`, so something on the fleet is wrong — fix it" | A difference is a finding for the cutover pull request, and nothing on the fleet changes for it (`mon-compare` step 4). |
