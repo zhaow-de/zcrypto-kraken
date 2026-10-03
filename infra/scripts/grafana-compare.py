@@ -8,12 +8,13 @@ exists on the node alone, rows whose `host` is the node, and the rules that read
 reach the node only at the cutover. The last line is one summary whatever the outcome:
   `compare: <nodes> nodes × 24 instants, <n> differences`, exit 0 at none and 1 otherwise, one line per difference above it;
   `compare: failed: <what failed>`, exit 2, naming the stack where a stack failed -- never a match, never a skip.
-The requests go one at a time, so a run adds one query at a time to either stack's query path; measured at 440 to
-630 s for 102 nodes on 2026-10-03. The tokens are only ever request headers: never printed, never written, never in argv.
+The requests go one at a time, so a run adds one query at a time to either stack's query path. The tokens are only
+ever request headers: never printed, never written, never in argv.
 """
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import json
 import math
@@ -123,7 +124,7 @@ def query(stack: str, url: str, token: str, node: Node, instant: int) -> dict[tu
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 -- the stack table's https urls
             result = json.load(response)["data"]["result"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
         raise Failed(f"{stack} {node.uid} {node.ref_id} at {instant}: {exc}") from exc
     return _rows(stack, node, instant, result)
 

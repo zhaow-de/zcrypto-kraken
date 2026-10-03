@@ -3,6 +3,7 @@ instants it sends, the three exclusions by name, and the walk over the real rule
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import io
 import json
@@ -188,8 +189,15 @@ def test_an_empty_result_matches_an_empty_result_alone(monkeypatch, tmp_path, ca
 @pytest.mark.parametrize("stack", ["cloud", "mon"])
 @pytest.mark.parametrize(
     "fault",
-    [_refusal(503), _refusal(401), OSError("connection reset"), b"<html>bad gateway</html>", b'{"status": "success", "data": {}}'],
-    ids=["a 5xx", "a 4xx", "unreachable", "a malformed body", "a body without a result"],
+    [
+        _refusal(503),
+        _refusal(401),
+        OSError("connection reset"),
+        http.client.IncompleteRead(b""),
+        b"<html>bad gateway</html>",
+        b'{"status": "success", "data": {}}',
+    ],
+    ids=["a 5xx", "a 4xx", "unreachable", "a truncated body", "a malformed body", "a body without a result"],
 )
 def test_a_stack_that_cannot_answer_ends_the_run_naming_it_never_as_a_match(monkeypatch, tmp_path, capsys, stack, fault):
     _alerts(monkeypatch, tmp_path, _rule("r-up", "up"))
