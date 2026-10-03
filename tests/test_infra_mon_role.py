@@ -108,7 +108,7 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
     assert copy["dest"] == "/etc/grafana/{{ item.file }}"
 
 
-# --- the Caddyfile: one public name, two authenticated ingest paths, two refusals --------------------------------
+# --- the Caddyfile: one public name, two authenticated ingest paths, two refusals, one pre-resolve answer --------------------------------
 def _blocks(lines: list[str]) -> list[tuple[str, list]]:
     """A Caddyfile body as (line, children) pairs: a line ending in `{` opens a block its `}` closes."""
     out: list[tuple[str, list]] = []
@@ -168,16 +168,35 @@ def test_the_loki_push_takes_both_ingest_users_and_reaches_loki():
 
 def test_the_two_paths_grafana_serves_without_a_login_answer_404_at_the_edge():
     site = _site()
-    matchers = {line: None for line in site if line.startswith("@")}
-    assert list(matchers) == ["@served_without_a_login path /metrics /metrics/* /swagger*"], list(matchers)
+    matchers = [line for line in site if line.startswith("@")]
+    assert matchers == [
+        "@served_without_a_login path /metrics /metrics/* /swagger*",
+        "@a_page_link_pre_resolved_without_a_login",
+    ], matchers
     assert site["handle @served_without_a_login"] == [("respond 404", [])]
+
+
+def test_a_cookieless_head_on_a_page_is_answered_at_the_edge_and_one_on_the_api_is_not():
+    site = _site()
+    assert site["@a_page_link_pre_resolved_without_a_login"] == [
+        ("method HEAD", []),
+        ("not path /api/*", []),
+        ("not header_regexp Cookie grafana_session=", []),
+    ]
+    assert site["handle @a_page_link_pre_resolved_without_a_login"] == [("respond 200", [])]
 
 
 def test_everything_else_goes_to_grafana_with_no_credential_added():
     site = _site()
     assert site["handle"] == [("reverse_proxy 127.0.0.1:3000", [])]
     handles = [line for line in site if line.startswith("handle")]
-    assert handles == ["handle /api/v1/write", "handle /loki/api/v1/push", "handle @served_without_a_login", "handle"], handles
+    assert handles == [
+        "handle /api/v1/write",
+        "handle /loki/api/v1/push",
+        "handle @served_without_a_login",
+        "handle @a_page_link_pre_resolved_without_a_login",
+        "handle",
+    ], handles
 
 
 def test_the_edge_listens_on_443_alone_and_takes_its_certificate_there():
@@ -189,7 +208,8 @@ def test_the_edge_listens_on_443_alone_and_takes_its_certificate_there():
 
 def test_the_caddyfile_is_validated_before_it_replaces_the_live_one_and_never_shown():
     task = find_task(
-        load_tasks(TASKS), "Caddyfile — the two ingest paths behind basic auth, two refusals, everything else to grafana"
+        load_tasks(TASKS),
+        "Caddyfile — the two ingest paths behind basic auth, two refusals, the pre-resolve answer, everything else to grafana",
     )
     template = task["ansible.builtin.template"]
     assert template["validate"] == "caddy validate --adapter caddyfile --config %s"
