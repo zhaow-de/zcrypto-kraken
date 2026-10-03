@@ -4,9 +4,6 @@
 # database, the role resets the admin password from it, and the two hashes are the bcrypt hashes of the
 # ingest passwords in group_vars/observed/vault.yml, which the fleet's shippers present. Replacing one:
 # infra/runbooks/mon.md's mon-secrets.
-#
-# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
-# password, so both silently print every value below in cleartext.
 
 mon_grafana_admin_user: !vault |
           $ANSIBLE_VAULT;1.1;AES256

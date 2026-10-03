@@ -1,7 +1,6 @@
-# group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY. Read the next paragraph before editing:
-# ten of these DO render onto managed hosts, so this is not a workstation-only file.
+# group_vars/all — PROJECT-LEVEL SECRETS, MIXED CUSTODY.
 #
-# MIXED CUSTODY — do not read this file as workstation-only. Ten of the sixteen values ARE
+# MIXED CUSTODY — do not read this file as workstation-only. Ten values ARE
 # rendered onto managed hosts through inventory. Seven are WireGuard secrets, three of them the zaccess tunnel's:
 # `zaccess_wg_bridgehead_private_key` and `zaccess_wg_preshared_key` by `roles/access`,
 # `zaccess_wg_ops_private_key` and the same preshared key by `roles/access_ops`, both templating
@@ -17,7 +16,7 @@
 # `zcrypto` by `roles/engine` (engine.env and haproxy.cfg) and read by `roles/cache` on the three nodes;
 # rotating either is `infra/runbooks/cache.md`'s `cache-password-rotation`.
 #
-# The other six never reach a host. Four are read from the WORKSTATION BY FILE PATH:
+# The rest never reach a host. Four are read from the WORKSTATION BY FILE PATH:
 # `grafana_sa_token` by `infra/scripts/grafana-query.py` and `infra/scripts/ops_daily.py`,
 # `healthchecks_readonly_api_key` by `ops_daily.py`'s direct dead-man read (all three through
 # `grafana_auth.vault_var`, whose default IS this file), and `zaccess_client_p12_b64` +
@@ -31,17 +30,8 @@
 # `all` is the honest scope because it is the only group that includes `workstation` AND covers the
 # access hosts.
 #
-# Moved here from group_vars/capture_host/ (spec 00054, 2026-07-16, owner's call): neither is
-# capture-specific (that clause is about `grafana_sa_token` and `slack_webhook_url`, the two the move
-# brought here), and parking a project-level tooling secret in a host group misstates who owns
-# it. The ciphertext is UNCHANGED — same vault password, so the blocks moved verbatim and were
-# never decrypted.
-#
 # Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable, every value stays
 # `!vault`-encrypted at rest. Read/write mechanics: see group_vars/capture_host/vault.yml's header.
-#
-# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
-# password, so both silently print every value below in cleartext.
 
 grafana_sa_token: !vault |
           $ANSIBLE_VAULT;1.1;AES256
@@ -303,10 +293,7 @@ cache_sentinel_requirepass: !vault |
           62353039316433663039633734333761303833326236386230333661366364386536616630643932
           663666343165666564363632333365613266
 
-# The shadow Slack channel's incoming-webhook URL (spec 00121), minted and vaulted by the owner. The
-# observability node's two contact points are minted with it: it reaches grafana-push.sh through the
-# environment as GRAFANA_SLACK_WEBHOOK_URL, as slack_webhook_url does (infra/runbooks/mon.md's mon-push),
-# and nothing in production reads it from this file. Treat as a credential.
+# The shadow Slack channel's incoming-webhook URL (spec 00121), for the observability node's two contact points. Treat as a credential.
 slack_shadow_webhook_url: !vault |
           $ANSIBLE_VAULT;1.1;AES256
           65663465336165393434316338633638323730393239633665303531653637323665336164303335

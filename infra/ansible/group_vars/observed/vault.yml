@@ -1,13 +1,9 @@
 # group_vars/observed — SECRETS shared by every host that ships telemetry.
 #
 # The `observed` group (inventory/hosts.yml) is every host that runs Alloy. The telemetry
-# endpoints + credentials below are NOT host-specific, so
-# scoping them to a group states exactly who may read them — the same reasoning that now keeps the
-# live trade key in group_vars/engine_host/ rather than capture_host (T0061, resolved 2026-07-17:
-# until that move the capture-only zcrypto-red RESOLVED the live trading credential, and only the
-# engine play's targeting confined its rendering to zcrypto — membership is the boundary now). The
-# ops node is deliberately in THIS group and NOT in engine_host: it ships telemetry, and it must
-# never hold the trade key (spec 00051 D10).
+# endpoints + credentials below are NOT host-specific, so scoping them to a group states exactly who
+# may read them. The ops node is deliberately in THIS group and NOT in engine_host: it ships
+# telemetry, and it must never hold the trade key (spec 00051 D10).
 #
 # Per-VALUE vault encryption (not whole-file): the variable NAMES stay readable so anyone can see
 # what this group needs, while every value stays `!vault`-encrypted at rest. Read/write mechanics:
