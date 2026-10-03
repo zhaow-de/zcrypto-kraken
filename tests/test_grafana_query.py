@@ -1,5 +1,3 @@
-"""`infra/scripts/grafana-query.py` — the vaulted Cloud read-back the rollout gate needs."""
-
 from __future__ import annotations
 
 import importlib.util

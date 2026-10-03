@@ -23,7 +23,6 @@ class Stack(NamedTuple):
     url: str
     token_var: str
     vault_file: str
-    # What `token` tells the operator when `vault_file` is not there: the remedy is the stack's own.
     missing: str
 
 
@@ -35,7 +34,7 @@ STACKS = {
         "https://zcrypto2026.grafana.net",
         "grafana_sa_token",
         VAULT_FILE,
-        f"the tracked vault file infra/ansible/{VAULT_FILE} is missing from the checkout",
+        f"it is tracked: git checkout -- infra/ansible/{VAULT_FILE}",
     ),
     "mon": Stack(
         "https://zcrypto-mon.zhaow.me",
@@ -100,10 +99,8 @@ def vault_var(name: str, vault_file: str = VAULT_FILE) -> str:
 
 
 def token(name: str = DEFAULT_STACK) -> str:
-    """The stack's service-account token, for every tool and runbook line that reads one. A vault
-    file that is not there is one stderr line naming the stack, the path and that stack's remedy,
-    then exit 1 -- the `mon` cache lives outside the tree, so on a fresh controller its absence is
-    the normal state; any other vault failure keeps its traceback, as a real bug should.
+    """The stack's service-account token. A missing vault file exits 1 in one line, not a traceback:
+    on a fresh controller the `mon` cache's absence is the normal state.
     """
     from ansible.errors import AnsibleFileNotFound
 

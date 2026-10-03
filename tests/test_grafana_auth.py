@@ -1,5 +1,3 @@
-"""TDD for `infra/scripts/grafana_auth.py` -- the shared vaulted-credential resolver."""
-
 from __future__ import annotations
 
 import importlib.util
@@ -174,7 +172,7 @@ def test_token_reads_the_named_stacks_token_var_from_its_own_file(monkeypatch):
     ("name", "remedy"),
     [
         ("mon", "the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)"),
-        ("cloud", "the tracked vault file infra/ansible/group_vars/all/vault.yml is missing from the checkout"),
+        ("cloud", "it is tracked: git checkout -- infra/ansible/group_vars/all/vault.yml"),
     ],
 )
 def test_token_over_a_missing_vault_file_is_one_stderr_line_with_the_stacks_own_remedy_then_exit_1(

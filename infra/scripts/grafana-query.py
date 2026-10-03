@@ -25,11 +25,7 @@ _auth_spec = importlib.util.spec_from_file_location("grafana_auth", _AUTH)
 grafana_auth = importlib.util.module_from_spec(_auth_spec)
 _auth_spec.loader.exec_module(grafana_auth)
 
-# Re-exported so this module's own callers and tests keep one import site.
-ANSIBLE_DIR = grafana_auth.ANSIBLE_DIR
 GRAFANA_URL = grafana_auth.GRAFANA_URL
-vault_password_file = grafana_auth.vault_password_file
-vault_password = grafana_auth.vault_password
 vault_var = grafana_auth.vault_var
 
 PROM_DS_UID = "grafanacloud-prom"
