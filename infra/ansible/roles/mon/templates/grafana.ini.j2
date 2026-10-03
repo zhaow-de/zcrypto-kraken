@@ -14,8 +14,7 @@ admin_user = $__file{/etc/grafana/admin_user}
 admin_password = $__file{/etc/grafana/admin_password}
 secret_key = $__file{/etc/grafana/secret_key}
 cookie_secure = true
-# `lax`, not `strict`: a link opened from Slack arrives without a `strict` cookie and Grafana's login
-# redirect sends a live session home, the target dropped. Cross-site POSTs and subresources go without it under either.
+# `lax`, Grafana's default: cross-site POSTs and subresources go without the cookie under `strict` and `lax` alike.
 cookie_samesite = lax
 disable_brute_force_login_protection = false
 
