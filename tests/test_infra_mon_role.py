@@ -558,3 +558,20 @@ def test_the_alloy_config_is_validated_and_alloy_restarted_on_a_change():
     assert copy["ansible.builtin.copy"]["validate"] == "alloy validate %s" and copy["notify"] == "restart alloy"
     (handler,) = [h for h in yaml.safe_load(HANDLERS.read_text()) if h["name"] == "restart alloy"]
     assert handler["ansible.builtin.systemd_service"] == {"name": "alloy", "state": "restarted"}
+
+
+# --- the fleet's ingest names: the node's public name, its two authenticated paths and its fleet user -------------
+OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
+
+
+def test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated_paths_and_its_fleet_user():
+    observed = yaml.safe_load(OBSERVED_VARS.read_text())
+    assert observed == {
+        "mon_ingest_prom_url": f"https://{DEFAULTS['mon_hostname']}/api/v1/write",
+        "mon_ingest_loki_url": f"https://{DEFAULTS['mon_hostname']}/loki/api/v1/push",
+        "mon_ingest_fleet_user": DEFAULTS["mon_ingest_fleet_user"],
+    }, observed
+    site = _site()
+    for url in (observed["mon_ingest_prom_url"], observed["mon_ingest_loki_url"]):
+        path = url.removeprefix(f"https://{DEFAULTS['mon_hostname']}")
+        assert observed["mon_ingest_fleet_user"] in _users(site[f"handle {path}"]), path

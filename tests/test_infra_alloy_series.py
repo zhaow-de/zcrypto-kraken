@@ -304,9 +304,10 @@ ACCESS_APP_SERIES = [
     "zaccess_tls_not_after_seconds",
 ]
 
-# Native Alloy (D11, apt package, no docker) -- no `prometheus.exporter.self "alloy"` component in
-# this config, so unlike NAS/OPS/CAPTURE this host does NOT admit PROCESS_FAMILIES: nothing here
-# publishes them.
+# Native Alloy (D11, apt package, no docker). Its `prometheus.exporter.self "alloy"` publishes
+# PROCESS_FAMILIES, which reach the node unfiltered; the Cloud keep regex admits `up` of that scrape
+# and none of them, unchanged until the Cloud leg retires, so unlike NAS/OPS/CAPTURE they are not
+# required here.
 ACCESS_REQUIRED = [
     "up",
     "node_load1",
@@ -448,8 +449,9 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
         (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES]),
         # Capture/engine run on the capture hosts, not the poller.
         (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
-        # No app daemon runs on the bridgehead, and (D11) no `exporter.self "alloy"` component
-        # either -- none of the app/logship/process families exist there.
+        # No app daemon runs on the bridgehead, so none of the app/logship families exist there; its
+        # `exporter.self "alloy"` publishes the process families, which the Cloud keep regex still
+        # does not admit (they reach the node unfiltered).
         (
             ACCESS_ALLOY,
             [
@@ -775,3 +777,83 @@ def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_n
     assert selector and selector.group(1) == '{container=\\"alloy\\"} |= \\"ERR unknown command \'LATENCY\'\\"', drops[0]
     assert re.search(r'^\s*drop_counter_reason\s*=\s*"\w+"$', drops[0], re.M), drops[0]
     assert not re.search(r"^\s*stage\.", drops[0], re.M), drops[0]
+
+
+# --- the node's leg: a second endpoint beside the Cloud one, and the names each reads ---------------
+ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
+
+
+def _endpoint_blocks(path: Path) -> list[str]:
+    component = re.search(r'\nprometheus\.remote_write "grafana" \{(.*?)\n\}\n', path.read_text(), re.S).group(1)
+    return re.findall(r"\n  endpoint \{(.*?)\n  \}", component, re.S)
+
+
+@pytest.mark.parametrize("path", [ACCESS_ALLOY], ids=["access"])
+def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
+    cloud, mon = _endpoint_blocks(path)
+    assert cloud.count("write_relabel_config") == 2 and "MON_" not in cloud
+    assert all(f'sys.env("GRAFANA_PROM_{n}")' in cloud for n in ("URL", "USERNAME", "PASSWORD"))
+    assert "write_relabel_config" not in mon and "GRAFANA_" not in mon and 'name = "mon"' in mon
+    assert all(f'sys.env("MON_PROM_{n}")' in mon for n in ("URL", "USERNAME", "PASSWORD"))
+
+
+@pytest.mark.parametrize(
+    "path", [NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["nas", "ops", "capture", "access", "cache"]
+)
+def test_alloys_own_targets_are_concatenated_into_the_scrape_that_feeds_the_remote_write(path):
+    text = path.read_text()
+    assert 'prometheus.exporter.self "alloy" {}' in text, f"{path}: no prometheus.exporter.self component"
+    scrapes = re.findall(r'\nprometheus\.scrape "[a-z_]+" \{(.*?)\n\}', text, re.S)
+    carrying = [
+        s
+        for s in scrapes
+        if "targets         = array.concat(prometheus.exporter.unix.host.targets, prometheus.exporter.self.alloy.targets)" in s
+    ]
+    assert len(carrying) == 1, f"{path}: {len(carrying)} scrapes concatenate the self targets onto the host's"
+    assert "forward_to      = [prometheus.remote_write.grafana.receiver]" in carrying[0]
+
+
+# The six Cloud lines of every secrets template, as they stand; a template's `MON_*` lines are the fence its
+# task lands. Held by literal, so a Cloud name repointed at the node, or a node name bound to another group
+# var, fails here before it is a converge.
+_GRAFANA_LINES = [
+    "GRAFANA_PROM_URL={{ grafana_prom_url }}",
+    "GRAFANA_PROM_USERNAME={{ grafana_prom_user }}",
+    "GRAFANA_PROM_PASSWORD={{ grafana_prom_token }}",
+    "GRAFANA_LOKI_URL={{ grafana_loki_url }}",
+    "GRAFANA_LOKI_USERNAME={{ grafana_loki_user }}",
+    "GRAFANA_LOKI_PASSWORD={{ grafana_loki_token }}",
+]
+_MON_PROM_LINES = [
+    "MON_PROM_URL={{ mon_ingest_prom_url }}",
+    "MON_PROM_USERNAME={{ mon_ingest_fleet_user }}",
+    "MON_PROM_PASSWORD={{ mon_ingest_fleet_password }}",
+]
+
+
+@pytest.mark.parametrize(("template", "mon_lines"), [(ACCESS_SECRETS, _MON_PROM_LINES)], ids=["access"])
+def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
+    lines = template.read_text().splitlines()
+    assert [line for line in lines if line.startswith("GRAFANA_")] == _GRAFANA_LINES
+    assert [line for line in lines if line.startswith("MON_")] == mon_lines
+
+
+# A name the config reads that the template lacks is an empty string at runtime: the endpoint fails with
+# nothing in the tree to say why. The access template also renders the unit's own two knobs and the three
+# Loki names its config, which ships no logs, does not read.
+@pytest.mark.parametrize(
+    ("config", "template", "unread"),
+    [
+        (
+            ACCESS_ALLOY,
+            ACCESS_SECRETS,
+            {"CONFIG_FILE", "CUSTOM_ARGS", "GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"},
+        )
+    ],
+    ids=["access"],
+)
+def test_each_secrets_template_renders_the_names_its_config_reads(config, template, unread):
+    read = set(re.findall(r'sys\.env\("([A-Z_]+)"\)', config.read_text()))
+    rendered = set(re.findall(r"^([A-Z_]+)=", template.read_text(), re.M))
+    assert read <= rendered, f"{config.name} reads {sorted(read - rendered)}, which {template.name} does not render"
+    assert rendered - read == unread, f"{template.name} renders {sorted(rendered - read)} that {config.name} does not read"
