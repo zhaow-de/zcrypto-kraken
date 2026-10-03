@@ -161,3 +161,45 @@ def test_a_stack_s_token_is_read_from_its_own_file(monkeypatch):
     mon = ga.stack("mon")
     assert ga.vault_var(mon.token_var, mon.vault_file) == TOKEN
     assert seen["path"] == mon.vault_file, "an absolute vault file is read where it is, never under infra/ansible"
+
+
+def test_token_reads_the_named_stacks_token_var_from_its_own_file(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ga, "vault_var", lambda name, vault_file: seen.append((name, vault_file)) or TOKEN)
+    assert ga.token("mon") == TOKEN and ga.token() == TOKEN
+    assert seen == [(ga.STACKS["mon"].token_var, ga.STACKS["mon"].vault_file), ("grafana_sa_token", ga.VAULT_FILE)]
+
+
+@pytest.mark.parametrize(
+    ("name", "remedy"),
+    [
+        ("mon", "the node's converge writes it (infra/runbooks/mon.md, mon-token-rotate)"),
+        ("cloud", "the tracked vault file infra/ansible/group_vars/all/vault.yml is missing from the checkout"),
+    ],
+)
+def test_token_over_a_missing_vault_file_is_one_stderr_line_with_the_stacks_own_remedy_then_exit_1(
+    monkeypatch, capsys, tmp_path, name, remedy
+):
+    import ansible.parsing.vault as v
+
+    monkeypatch.setattr(ga, "vault_password", lambda: b"pw")
+    monkeypatch.setattr(ga, "_CONTEXT_READY", False)
+    monkeypatch.setattr(v.VaultSecretsContext, "initialize", classmethod(lambda cls, ctx: None))
+    missing = tmp_path / "not-there" / Path(ga.STACKS[name].vault_file).name
+    monkeypatch.setitem(ga.STACKS, name, ga.STACKS[name]._replace(vault_file=str(missing)))
+
+    with pytest.raises(SystemExit) as refused:
+        ga.token(name)
+    out = capsys.readouterr()
+
+    assert refused.value.code == 1
+    assert out.out == "" and out.err == f"no token for stack {name!r}: {missing} is missing; {remedy}\n"
+
+
+def test_token_keeps_the_traceback_of_a_vault_failure_that_is_not_a_missing_file(monkeypatch):
+    def refused(name, vault_file):
+        raise RuntimeError("no vault secrets were found that could decrypt")
+
+    monkeypatch.setattr(ga, "vault_var", refused)
+    with pytest.raises(RuntimeError, match="could decrypt"):
+        ga.token("mon")
