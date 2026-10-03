@@ -1,6 +1,6 @@
 # Monitor runbooks — the observability node
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, compare the two stacks' answers, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, compare the two stacks' answers, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the node itself is down or being rebuilt and you opened `mon-dark` deliberately, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 Everything here is one Linode VPS, `zcrypto-mon` (the workstation's ssh alias `mon`; `Monitor` in Slack and on the Fleet health board), reached by people and tools as `https://zcrypto-mon.zhaow.me`. It runs no containers: Grafana (`grafana-server`), Prometheus, Loki, Caddy and Alloy are apt packages under systemd. Caddy is the one public listener, on 443: it passes `/api/v1/write` to Prometheus and `/loki/api/v1/push` to Loki behind basic auth, answers 404 for `/metrics`, for what lies under it and for `/swagger`, and passes everything else to Grafana, whose own login and tokens guard it. Grafana, Prometheus, Loki and Alloy listen on loopback: `127.0.0.1:3000`, `:9090`, `:3100` and `:12345`. The node's own Alloy ships the node's metrics and journals to its own stores under `host="zcrypto-mon"`. A timer, `zcrypto-mon-selfcheck`, reads every five minutes whether Grafana's rule scheduler is ticking, a fleet sample is fresh and Loki is ready, and its journal line says what it read.
 
@@ -75,6 +75,37 @@ Nothing fired. The daily pass's report printed a `## Comparison` section whose l
 ### Retire when
 
 `infra/scripts/grafana_auth.py`'s `STACKS` holds one stack, so there is nothing to compare.
+
+______________________________________________________________________
+
+<a name="mon-dark"></a>
+
+## mon-dark — PROCEDURE: while the node is down or being rebuilt
+
+### What you are seeing
+
+The node is unreachable, powered off or being rebuilt: `https://zcrypto-mon.zhaow.me/api/health` does not answer, `infra/scripts/grafana-query.py --stack mon` and `infra/scripts/ops-daily.py report --stack mon` fail naming it, and the shadow channel is silent. No rule on the node can page this, since a rule cannot page the death of the node it runs on. What tells you is the node's healthchecks.io check, `zcrypto-mon`, which goes down on staleness at its `timeout` 600 s + `grace` 600 s = 20 min from its last ping, through healthchecks.io's own Slack integration; and, about seven minutes behind it, Grafana Cloud's `zcrypto-hcio-watchdog` in the main channel, which counts every down check: the ops Alloy's 60 s scrape of healthchecks.io, then `for: 5m`, then the group interval. Re-quote the two check settings from healthchecks.io; they are settings on a third party's dashboard, and this file does not change when one does. Until the check is minted, with the self-check's last journal line ending `no ping URL is set`, nothing pages the node's death, and a `--stack mon` read failing is the first notice.
+
+The self-check pings while three things hold, Grafana's rule scheduler ticking, a fleet sample under five minutes old and Loki answering ready, so the check can be down with the node answering: one of the three failed, and the self-check's journal line names which.
+
+### What it means
+
+The fleet is still watched: Grafana Cloud's rules page the main channel throughout. What is gone is the node's own evaluation, so the rules the node alone carries, the `zcrypto-mon` group, are not evaluated, and the node's history for those minutes. Per plane, from the shippers' side: metrics scraped while the node is down are held in each shipper's WAL, up to eight hours, and replayed when it returns; log lines bound for the node are retried about ten times, some seven minutes, then dropped and counted, and `zcrypto-mon-shipper-loss` below follows for each host that ships logs to it, once the node takes that host's metrics again. A store outage with the node up drops the alert history of its minutes, `zcrypto-mon-store-down` below: a transition in that time is in no history read afterwards, although its message was sent. A rebuild starts the stores empty, since the node's history is on its one disk, and the comparison's seven consecutive clean days (`mon-compare` above) are counted from the first full day after it.
+
+The two figures the drills measured: a thirty-minute power-off lost `[[ROLLOUT: R3's W2 reading — the log lines a 30-minute outage lost]]` (`drills-telemetry.md#drill-w2`), and a rebuild from nothing leaves the node's rules unevaluated for `[[ROLLOUT: R3's W3 reading — the time from the rebuild to the first evaluated rule]]`, from the loss to the first evaluated rule (`drills-telemetry.md#drill-w3`).
+
+### What to do
+
+1. **Confirm it is the node and not your route**: `curl -fsS -m 20 -o /dev/null -w '%{http_code}\n' https://zcrypto-mon.zhaow.me/api/health` from the workstation and from ops (`ssh hp`), then the Linode's state on its page in the Cloud Manager, running or offline, and its LISH console, which answers while the host does.
+2. **Read the dead-man domain without the node**: `uv run python infra/scripts/ops-daily.py report --since 24h` reads healthchecks.io through its API with `healthchecks_readonly_api_key`, and Grafana Cloud for the rest; it is the pass's Cloud form, and runs with the node gone.
+3. **A node that answers ssh**: `ssh mon 'sudo journalctl -u zcrypto-mon-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -3'`. `rules=FAIL` is Grafana: `systemctl is-active grafana-server` on the node, and `mon-store-restart` step 3's failed-start branch. `fleet=FAIL` is the edge: `zcrypto-mon-ingest-dark` below, from its step 1. `loki=FAIL` is the store: `zcrypto-mon-store-down` below. Three `ok` with the check down is the ping's own route, the URL rendered into `/etc/default/zcrypto-mon-selfcheck`, which a converge of the `mon` role re-renders from the vault.
+4. **A node that does not answer**: in the Cloud Manager, a Linode reading offline is powered on from its page; one reading running and answering nothing on ssh or in LISH is rebooted from its page. A node whose disk is gone is rebuilt by `drills-telemetry.md#drill-w3`'s *Induce*, which is the rebuild procedure: the firewall rule, the rebuild, the bootstrap, one converge, one push.
+5. **Change nothing on the fleet for it.** The fleet's reads through Grafana Cloud still run, `grafana-query.py` with no `--stack`; what is gone is the node's half of each by-value confirm, so a fleet converge waits for the node, whose per-host proof reads it.
+6. **On return**: `zcrypto-mon-reboot-pending` step 2's five `active` reads; the rules endpoint's unhealthy list `[]`, `mon-patch-pass` step 5's `intervals=[60] unhealthy=[]` line; the self-check's next line `-> pinged`, and the check up on healthchecks.io; `mon-store-restart` step 5, the silences re-read. The day's journal entry carries the minutes, which hold no alert history and, for each host that ships logs, lines nothing recovers (`zcrypto-mon-shipper-loss` step 4). After a rebuild the day's comparison is not a clean one, and the seven days are counted from the next.
+
+### Retire when
+
+`zcrypto-mon-selfcheck.timer` is absent from `infra/ansible/roles/mon/files/`, at which point nothing pages the node's death and this page has no first fact to open on.
 
 ______________________________________________________________________
 
