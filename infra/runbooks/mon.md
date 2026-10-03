@@ -28,7 +28,7 @@ Nothing fired. The rule file, a dashboard or the notification template changed, 
 
    ```bash
    GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= GRAFANA_SLACK_WEBHOOK_URL= \
-     GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; s = g.stack("mon"); print(g.vault_var(s.token_var, s.vault_file))')" \
+     GRAFANA_SA_TOKEN="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; print(g.token("mon"))')" \
      PATH="$PWD/.venv/bin:$PATH" ./infra/scripts/grafana-push.sh
    ```
 
@@ -173,7 +173,7 @@ Unattended upgrades install Debian's security patches alone. Grafana, Loki, Allo
    for n in 1 2 3 4 5 6; do curl -sS -o /dev/null -w '%{http_code} ' -H 'Content-Type: application/json' -d '{"user":"admin","password":"probe"}' https://zcrypto-mon.zhaow.me/login; done; echo
    uv run python -c 'import json, sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; node = "host_vars/zcrypto-mon/vault.yml"; print(json.dumps({"user": vault_var("mon_grafana_admin_user", node), "password": vault_var("mon_grafana_admin_password", node)}))' | curl -sS -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d @- https://zcrypto-mon.zhaow.me/login
    curl -sS https://zcrypto-mon.zhaow.me/api/health
-   mon_get() { uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; s = g.stack("mon"); print("Authorization: Bearer " + g.vault_var(s.token_var, s.vault_file))' | curl -fsS -H @- "https://zcrypto-mon.zhaow.me$1"; }
+   mon_get() { uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); import grafana_auth as g; print("Authorization: Bearer " + g.token("mon"))' | curl -fsS -H @- "https://zcrypto-mon.zhaow.me$1"; }
    mon_get /api/prometheus/grafana/api/v1/rules | jq -r '[.data.groups[] | {interval, bad: [.rules[] | select(.health != "ok") | .name]}] | "intervals=\(map(.interval) | unique) unhealthy=\(map(.bad) | add)"'
    mon_get /api/v1/provisioning/policies | jq -c '{receiver, group_by, routes: (.routes // [] | length)}'
    mon_get /api/v1/provisioning/mute-timings | jq -c .
