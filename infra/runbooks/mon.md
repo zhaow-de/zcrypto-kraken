@@ -1,6 +1,6 @@
 # Monitor runbooks — the observability node
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, compare the two stacks' answers, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 Everything here is one Linode VPS, `zcrypto-mon` (the workstation's ssh alias `mon`; `Monitor` in Slack and on the Fleet health board), reached by people and tools as `https://zcrypto-mon.zhaow.me`. It runs no containers: Grafana (`grafana-server`), Prometheus, Loki, Caddy and Alloy are apt packages under systemd. Caddy is the one public listener, on 443: it passes `/api/v1/write` to Prometheus and `/loki/api/v1/push` to Loki behind basic auth, answers 404 for `/metrics`, for what lies under it and for `/swagger`, and passes everything else to Grafana, whose own login and tokens guard it. Grafana, Prometheus, Loki and Alloy listen on loopback: `127.0.0.1:3000`, `:9090`, `:3100` and `:12345`. The node's own Alloy ships the node's metrics and journals to its own stores under `host="zcrypto-mon"`. A timer, `zcrypto-mon-selfcheck`, reads every five minutes whether Grafana's rule scheduler is ticking, a fleet sample is fresh and Loki is ready, and its journal line says what it read.
 
@@ -41,6 +41,40 @@ Nothing fired. The rule file, a dashboard or the notification template changed, 
 ### Retire when
 
 `infra/scripts/grafana-push.sh` no longer reads `GRAFANA_SKIP_RULE_GROUPS`, so one stack is left and the push needs no stack named.
+
+______________________________________________________________________
+
+<a name="mon-compare"></a>
+
+## mon-compare — PROCEDURE: comparing the rules' queries on both stacks
+
+### What you are seeing
+
+Nothing fired. The daily pass's report printed a `## Comparison` section whose line counts differences or reads `compare: failed`, or a day's comparison is to be run by hand.
+
+### What it means
+
+`infra/scripts/grafana-compare.py` sends each query node of `infra/grafana/alerts.yaml` to both stacks' datasource proxies as an instant query at the same 24 instants, the top of each UTC hour of one day, and compares the two answers by value: a label set present on one stack and not the other, a value off by more than a relative 1e-6, and an empty result against rows are each a difference, and an empty result on both is a match. Three things are outside it by name, the script's three constants: the rules of the node's own group, `zcrypto-mon`; rows whose `host` is `zcrypto-mon`; and the seven rules that read a direct-shipped log stream, which reaches the node at the cutover and not before. A stack that refuses, times out or answers a malformed body ends the run as a failure naming it, not as a match. The requests go one at a time to either stack, one query at a time on the live pager's query path: a run took 440 to 630 s for 102 nodes, read on 2026-10-03 with no fleet host on the node yet, and the node's half grows as the hosts ship. The daily pass runs it for the preceding day from the first day the tree names, `COMPARISON_FROM` in `infra/scripts/ops_daily.py`, and its journal entry carries the line; the cutover is gated by seven consecutive daily lines reading `0 differences`, or whose differences the cutover pull request explains.
+
+### What to do
+
+1. **Run it**, from the repo root, for the day whose hour tops are compared; with no `--day` it is the preceding UTC day, and a day that has not ended is refused:
+
+   ```bash
+   uv run python infra/scripts/grafana-compare.py --day 2026-11-20
+   ```
+
+   It prints one line per difference, `<rule uid> <refId> <instant> <what differs>`, then its summary as the last line, whatever happened. A run outside a pass counts for no day of the seven.
+
+2. **Read the last line.** `compare: <nodes> nodes × 24 instants, 0 differences`, exit 0, is a clean day. `<n> differences`, exit 1: each line above it is a finding for the cutover pull request, fixed or explained there, and not a fault to remediate on the fleet. `compare: failed: <stack> …`, exit 2, is that stack refusing, timing out or answering a malformed body at the node and instant named, and the day is not a clean one: the node's store is `zcrypto-mon-store-down` below, and a Grafana Cloud refusal is its own status page. `compare: failed:` naming no stack is the script's refusal before its first query — a `--day` that has not ended, a stack table without both stacks, a rule-file node with no route — and reads as its text says; under the pass, `the comparison ran past its 2700 s bound` is a run too slow to finish, which the next day's pass tries again.
+
+3. **Read a difference** at the instant it names. `only on <stack> {labels}` is a series one stack holds and the other lacks: a host not yet shipping to the node, a series Grafana Cloud's keep-list drops at the shipper (the `write_relabel_config` keep block of that role's `config.alloy`), or a label one leg rewrites. `value cloud=<a> mon=<b>` is a sample one stack lacks at the instant, or the two engines reading a range differently. `empty on <stack>, <n> rows on <other>` is a query one stack has no data for. For a Prometheus node, re-read both stacks at the instant with the `@` modifier, the epoch from `date -u -d 2026-11-20T03:00Z +%s`: `uv run python infra/scripts/grafana-query.py '<expr> @ <epoch>'`, and the same with `--stack mon`. A Loki node has no `@`: re-read its expression on both stacks with `--loki`, whose window has moved on since the instant, and read the stream's presence on the node by `count_over_time` over the day.
+
+4. **Record it.** Under the pass, the `## Comparison` line goes into the day's journal entry with the pass's paragraph, where the cutover's seven days are read from; a difference goes into the cutover pull request with its explanation, and nothing on the fleet is changed for it.
+
+### Retire when
+
+`infra/scripts/grafana_auth.py`'s `STACKS` holds one stack, so there is nothing to compare.
 
 ______________________________________________________________________
 
