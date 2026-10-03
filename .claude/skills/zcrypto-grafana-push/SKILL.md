@@ -19,7 +19,7 @@ GRAFANA_SLACK_WEBHOOK_URL= \
 
 A routine push passes `GRAFANA_SLACK_WEBHOOK_URL` empty: the receivers are live, and a shell that exported the node's shadow webhook then leaves Grafana Cloud's receivers where they point.
 
-In the dual period — while `infra/scripts/grafana_auth.py`'s `STACKS` holds both stacks — a push is two, from the one checkout that passed Step 2, in the same sitting: the Grafana Cloud push above, whose first line reads `skip-groups=zcrypto-mon`, the script's default for a push addressed to Grafana Cloud and the one it refuses a Cloud push without; then the node's, `infra/runbooks/mon.md#mon-push` step 1, which names the node in `GRAFANA_URL`, passes `GRAFANA_SKIP_RULE_GROUPS` empty so the `zcrypto-mon` group is sent, and takes the `mon` stack's token through `grafana_auth.py`, its first line reading `stack=https://zcrypto-mon.zhaow.me` and `skip-groups=<none>`. Step 3 reads each stack by its own series. A push that reached one stack and not the other leaves the two apart: the other push follows from the same checkout, or the closeout's record says it is owed.
+In the dual period — while `infra/scripts/grafana_auth.py`'s `STACKS` holds both stacks — a push is two, from the one checkout that passed Step 2, in the same sitting: the Grafana Cloud push above, whose first line reads `skip-groups=zcrypto-mon`, then the node's, `infra/runbooks/mon.md#mon-push` step 1. A push that reached one stack and not the other is followed by the other from the same checkout.
 
 ## Step 1 — the preflight over the series the rules read
 
@@ -40,7 +40,7 @@ The script pushes the working tree it runs from, whole, and its prune deletes th
 
 ## Step 4 — the prune
 
-`GRAFANA_PRUNE=1` turns the script's orphan report into deletions, scoped to our folder, from a `develop` checkout that passes Step 2's freshness test and its open-PR hold; a superseded rule is pruned only in `.claude/rules/fleet-deploys.md`'s order. In the dual period the prune runs per stack, on that stack's invocation from Step 0: on Grafana Cloud a live rule of the `zcrypto-mon` group reads `ORPHAN (live, of skipped group zcrypto-mon)` and is deleted, since the group is the node's alone; on the node `mon-push` step 1's empty `GRAFANA_SKIP_RULE_GROUPS` keeps the group in the push, so the prune does not take it.
+`GRAFANA_PRUNE=1` turns the script's orphan report into deletions, scoped to our folder, from a `develop` checkout that passes Step 2's freshness test and its open-PR hold; a superseded rule is pruned only in `.claude/rules/fleet-deploys.md`'s order. In the dual period the prune runs on each stack's own invocation from Step 0, and Grafana Cloud's `ORPHAN (live, of skipped group zcrypto-mon)` rules are deleted with the rest: the group is the node's alone.
 
 ## Closeout
 
