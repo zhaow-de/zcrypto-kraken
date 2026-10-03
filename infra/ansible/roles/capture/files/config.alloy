@@ -146,16 +146,10 @@ prometheus.remote_write "grafana" {
 
     // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
     // the series this stack wants; the keep alone already excludes the self-metrics, so the drop is
-    // parity, not load.
-    // A `keep` action drops everything it does not list, so a series missing here does not merely
-    // go undashboarded -- it does not exist (T0051). This host publishes the unix-exporter host
-    // metrics INCLUDING the one-off timers' textfile series (spec 00071 -- but no
-    // ops_*/reconcile/trade-backfill families,
-    // those are the ops node's), PLUS -- since 00069 T6 -- the capture app series, the engine app
-    // series (primary only; see the `engine_app` scrape's own comment), the logship-handler series
-    // the two daemons share with every other daemon on the fleet, and the six ProcessCollector
-    // families (both the app endpoints' own and, per the `exporter.self "alloy"` comment above,
-    // Alloy's own self-scrape too).
+    // parity, not load. A `keep` action drops everything it does not list, so a series missing here
+    // does not merely go undashboarded -- it does not exist (T0051); CAPTURE_REQUIRED in
+    // tests/test_infra_alloy_series.py names the series it must admit. The six ProcessCollector
+    // families come from the app endpoints and from Alloy's own self-scrape alike.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"

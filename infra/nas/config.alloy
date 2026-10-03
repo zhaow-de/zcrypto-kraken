@@ -79,14 +79,11 @@ prometheus.remote_write "grafana" {
       password = sys.env("GRAFANA_PROM_PASSWORD")
     }
 
-    // Series minimization is a design principle, not an afterthought (00043): drop Alloy's own
-    // `go_*`/`alloy_*` self-metrics, then keep-only the host/container/gate/process series this
-    // stack actually wants; the keep alone already excludes the self-metrics, so the drop is
-    // parity, not load. Target:
-    // comfortably under 1k active series. This list is provisional -- confirm the actual
-    // active-series count at the NAS deploy shakedown and trim/extend here. The six ProcessCollector
-    // families (00069 T7) are Alloy's own -- no daemon runs on the NAS, so there is no app or
-    // logship series to admit here, unlike the capture/ops hosts.
+    // Series minimization (00043): drop Alloy's own `go_*`/`alloy_*` self-metrics, then keep-only
+    // the host/textfile/process series this stack wants, under 1k active; the keep alone already
+    // excludes the self-metrics, so the drop is parity, not load. The six ProcessCollector families
+    // (00069 T7) are Alloy's own -- no daemon runs on the NAS, so there is no app or logship series
+    // to admit here.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"

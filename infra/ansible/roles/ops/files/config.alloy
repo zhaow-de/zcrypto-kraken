@@ -14,16 +14,11 @@
 // rendered the same way by the `nas` role from the same vault group (group_vars/observed) since
 // T0056; no hand-placed copy exists anywhere.
 //
-// Plain `copy:`, not `template:` (review finding 2) -- this file is 100% static: every value below
-// (the keep-regex, the textfile path, the host label) is a literal, identical on every converge,
-// so there is nothing for Jinja2 to substitute. A `template:` here would also have forced the
-// whole body into a `{% raw %}` wrapper, since Alloy's own pipeline stages further down use Go
-// template `{{ }}` syntax (loki.process's stage.template blocks, e.g. `{{ ToUpper .Value }}`) that
-// Jinja2 would otherwise try to evaluate and fail on (`ToUpper .Value` is not valid Jinja) -- and a
-// full-body raw wrap would silently emit a future `{{ ops_something }}` as a literal string instead
-// of failing loudly. If per-host parameterisation is ever genuinely needed, switch this task back
-// to `template:` then, and scope `{% raw %}` narrowly to only the `stage.template` blocks that
-// actually contain Go syntax -- not the whole file.
+// Plain `copy:`, not `template:` -- every value below is a literal, so there is nothing for Jinja2
+// to substitute, and Alloy's `stage.template` blocks further down use Go template `{{ }}` syntax
+// that Jinja2 would fail on; a full-body `{% raw %}` wrap would silently emit a future
+// `{{ ops_something }}` as a literal string. If per-host parameterisation is ever needed, switch
+// this task to `template:` then, and scope `{% raw %}` to the `stage.template` blocks alone.
 
 // ---- Host metrics -------------------------------------------------------------------------
 // The three alternate-path RO mounts (alloy-compose.yaml.j2: /proc->/host/proc, /sys->/host/sys,
@@ -176,15 +171,9 @@ prometheus.remote_write "grafana" {
     // the host + textfile + app series this stack actually wants; the keep alone already excludes
     // the self-metrics, so the drop is parity, not load. T0051 (spec 00054): a `keep` action drops
     // everything it does not list, so a series missing here does not merely go undashboarded -- it
-    // does not exist. The reconcile/trade-backfill families (zcrypto_reconcile_.*/zcrypto_trade_backfill_.*)
-    // DO publish here since 00054's cutover -- this paragraph used to frame them as "Task 6's
-    // future"; that move landed: the overlay writer moved to this host at spec 00054 D2, and the
-    // NAS's stale copy of those families was deleted at the 2026-07-16 cutover. OPS_REQUIRED in
-    // tests/test_infra_alloy_series.py pins both families as required-published, not merely
-    // admitted. The liquidations poller's own series, the logship-handler series it shares with
-    // every other daemon on the fleet, and the six ProcessCollector families (both the poller's own
-    // and, per the `exporter.self "alloy"` comment above, Alloy's own self-scrape too) arrive with
-    // 00069 T6.
+    // does not exist. OPS_REQUIRED in tests/test_infra_alloy_series.py names the series it must
+    // admit, the reconcile/trade-backfill families among them. The six ProcessCollector families
+    // are both the poller's own and Alloy's own self-scrape.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "go_.*|alloy_.*"
