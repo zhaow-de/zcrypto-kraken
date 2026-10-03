@@ -3,9 +3,8 @@
     uv run python infra/scripts/grafana-compare.py [--day YYYY-MM-DD]
 Each query node of infra/grafana/alerts.yaml is sent as an instant query, `time=<epoch seconds>`, to each stack's
 datasource proxy at the top of each UTC hour of the day named, the preceding UTC day by default; the rule's own
-range selector supplies the window. Three things are outside the comparison, each by name: the rule group that
-exists on the node alone, rows whose `host` is the node, and the rules that read a direct-shipped log stream, which
-reach the node only at the cutover. The last line is one summary whatever the outcome:
+range selector supplies the window. The node's own rule group and `host` exist on the node alone, so both are
+outside the comparison by name. The last line is one summary whatever the outcome:
   `compare: <nodes> nodes × 24 instants, <n> differences`, exit 0 at none and 1 otherwise, one line per difference above it;
   `compare: failed: <what failed>`, exit 2, naming the stack where a stack failed -- never a match, never a skip.
 The requests go one at a time, so a run adds one query at a time to either stack's query path. The tokens are only

@@ -7,19 +7,15 @@
 // (tests/test_infra_alloy_series.py records the lesson from the ops config; a converge proved it
 // there, no syntax check could).
 //
-// NATIVE Alloy (apt package, D11), NOT the container variant every other host in this fleet runs
-// (roles/ops/files/config.alloy, roles/capture/files/config.alloy, infra/nas/config.alloy) --
-// two structural consequences, called out where they land below:
+// NATIVE Alloy (apt package, D11), NOT the container variant the capture, ops, NAS and cache
+// hosts run -- two structural consequences, called out where they land below:
 //   1. No /host/proc, /host/sys, /host/root rootfs remapping in the unix exporter: this process
 //      reads the host's REAL /proc, /sys, / directly, so procfs_path/sysfs_path/rootfs_path are
 //      simply omitted (they exist only to compensate for a container's own separate mount
 //      namespace, which does not apply here).
 //   2. Credentials arrive via /etc/default/alloy (the deb package's systemd unit reads it as
-//      EnvironmentFile=), rendered by alloy-env.j2: the Cloud endpoint's three GRAFANA_PROM_* from
-//      the same group_vars/observed vault vars roles/ops/templates/alloy-secrets.env.j2 renders,
-//      the node's three MON_PROM_* from group_vars/observed/vars.yml and the vault's
-//      mon_ingest_fleet_password -- read here via the same `sys.env(...)` idiom every other host's
-//      config uses.
+//      EnvironmentFile=), rendered by alloy-env.j2 -- read here via the same `sys.env(...)` idiom
+//      every other host's config uses.
 //
 // Metrics only: this host ships no logs pipeline. It runs no journal-worthy daemons of its own
 // (no `--ship-logs` app, no docker containers), so there is nothing here mirroring the
@@ -38,10 +34,8 @@ prometheus.exporter.unix "host" {
   }
 }
 
-// Alloy's own counters: what each endpoint below failed to deliver, which the node's shipper-loss
-// rule reads, and the six process_* families. All of it reaches the node unfiltered; of it the Cloud
-// leg keeps `up{job="integrations/self"}` alone -- the drop rule eats the `go_*`/`alloy_*` internals
-// and the keep rule admits none of the rest.
+// Alloy's own counters, among them what each endpoint below failed to deliver, which the node's
+// shipper-loss rule reads.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
@@ -68,12 +62,10 @@ prometheus.remote_write "grafana" {
     }
 
     // Series minimization (00043), the same two-stage shape as every other host: drop Alloy's own
-    // `go_*`/`alloy_*` self-metrics first -- NOT a no-op: `prometheus.exporter.self "alloy"` above
-    // feeds the `host` scrape, and this rule is what keeps its internals out of the Cloud push.
-    // Then keep-only the host + textfile series this stack actually wants. The node's endpoint
-    // below carries neither rule and takes the scrape whole. T0051: a `keep` action drops
-    // everything it does not list, so a series missing here
-    // does not merely go undashboarded -- it does not exist. `node_textfile_mtime_seconds` and
+    // `go_*`/`alloy_*` self-metrics, then keep-only the host + textfile series this stack actually
+    // wants; the keep alone already excludes the self-metrics, so the drop is parity, not load.
+    // T0051: a `keep` action drops everything it does not list, so a series missing here does not
+    // merely go undashboarded -- it does not exist. `node_textfile_mtime_seconds` and
     // `node_textfile_scrape_error` are the did-the-timer-RUN discriminators (the ops
     // green-when-blind lesson, 2026-07-28): without them a dead probe timer serves its last gauges
     // forever and the tunnel-stale/cert alerts can never fire.

@@ -1016,8 +1016,8 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
 # stack, so the constant is never unset again.
 COMPARISON_FROM: date | None = None
 COMPARE_SCRIPT = Path(__file__).resolve().parent / "grafana-compare.py"
-# Over four times the slowest run measured on 2026-10-03 (440 to 630 s), so Grafana Cloud's query path can slow that far
-# before a run is cut; the daily-ops skill runs the report in the background for the same reason.
+# Four times a run's length and more, so Grafana Cloud's query path can slow that far before a run is cut; the
+# daily-ops skill runs the report in the background for the same reason.
 COMPARE_TIMEOUT_SECONDS = 2700
 _COMPARE_SUMMARY = re.compile(r"^compare: (\d+ nodes × \d+ instants, \d+ differences|failed: .+)$")
 
@@ -1030,11 +1030,6 @@ def compare_run(day: date) -> str:
 
 
 def read_comparison(*, now: datetime, runner) -> str:
-    """The `## Comparison` line: the comparison's own last line for the preceding UTC day, or `compare: failed: …` when
-    the runner raised, met its bound, or ended on something that is not the comparison's summary.
-
-    Keyword-only `runner`, no default: an injection default is a live call site, not a seam.
-    """
     try:
         lines = runner(now.date() - timedelta(days=1)).strip().splitlines()
     except subprocess.TimeoutExpired:
@@ -1048,7 +1043,6 @@ def read_comparison(*, now: datetime, runner) -> str:
 
 
 def comparison_due(now: datetime) -> bool:
-    """From `COMPARISON_FROM`, while the stack table carries both stacks."""
     return COMPARISON_FROM is not None and now.date() >= COMPARISON_FROM and len(grafana_auth.STACKS) == 2
 
 
@@ -1081,7 +1075,6 @@ class Report:
     verdict: list[Check]
     deploys: list[dict]
     reminders: RemindersRead
-    # The comparison's last line, or None on a run that did not compare: the section prints nothing in its place.
     comparison: str | None = None
 
     @property

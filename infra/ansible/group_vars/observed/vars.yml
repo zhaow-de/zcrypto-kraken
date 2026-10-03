@@ -1,7 +1,6 @@
-# The node's ingest, read by every Alloy's second leg (the `MON_*` lines of the roles' secrets templates): the
-# public name and the two paths roles/mon/templates/Caddyfile.j2 authenticates, and the user it admits on both.
-# The password is `mon_ingest_fleet_password` in vault.yml beside this file. tests/test_infra_mon_role.py holds
-# the three to the mon role's defaults and the Caddyfile's routes.
+# The node's ingest for the fleet's Alloys: the public name and the two paths roles/mon/templates/Caddyfile.j2
+# authenticates, and the user it admits on both. The password is `mon_ingest_fleet_password` in vault.yml
+# beside this file.
 mon_ingest_prom_url: https://zcrypto-mon.zhaow.me/api/v1/write
 mon_ingest_loki_url: https://zcrypto-mon.zhaow.me/loki/api/v1/push
 mon_ingest_fleet_user: fleet

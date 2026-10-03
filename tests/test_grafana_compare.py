@@ -1,6 +1,3 @@
-"""`infra/scripts/grafana-compare.py` against two canned stacks behind `urlopen`: the comparison's verdicts, the
-instants it sends, the three exclusions by name, and the walk over the real rule file."""
-
 from __future__ import annotations
 
 import http.client
@@ -130,7 +127,6 @@ def _alerts(monkeypatch, tmp_path, *rules) -> Path:
 
 
 def _by_stack(answers: dict):
-    """`answer` from a per-stack mapping, optionally per path: `{"cloud": rows, "mon": rows}`."""
     return lambda stack, path, expr, time: answers[stack]
 
 
@@ -210,10 +206,7 @@ def test_a_stack_that_cannot_answer_ends_the_run_naming_it_never_as_a_match(monk
     assert len(stacks.requests) <= 2, "the run ends at the stack's first failed answer"
 
 
-def test_the_three_exclusions_are_by_name_so_a_prefix_or_a_prefixed_name_still_counts(monkeypatch, tmp_path, capsys):
-    """Rows for `zcrypto`, which the excluded name extends, `zcrypto-red` and `zcrypto-mon2`, which extends it, differ
-    and count; a `zcrypto-mon` row differs and does not. A rule of the node's group and a direct-shipped rule are not
-    sent at all."""
+def test_the_three_exclusions_are_by_name_so_a_prefix_a_prefixed_name_and_a_hostless_row_still_count(monkeypatch, tmp_path, capsys):
     _alerts(
         monkeypatch,
         tmp_path,
@@ -223,15 +216,15 @@ def test_the_three_exclusions_are_by_name_so_a_prefix_or_a_prefixed_name_still_c
     )
 
     def answer(stack, path, expr, time):
-        rows = [_row(1, host=h) for h in ("zcrypto", "zcrypto-red", "zcrypto-mon2", "zcrypto-mon")]
-        return rows if stack == "cloud" else [_row(2, host=r["metric"]["host"]) for r in rows]
+        rows = [_row(1, host=h) for h in ("zcrypto", "zcrypto-red", "zcrypto-mon2", "zcrypto-mon")] + [_row(1)]
+        return rows if stack == "cloud" else [_row(2, **r["metric"]) for r in rows]
 
     stacks = _Stacks(monkeypatch, answer)
     rc, out = _run(capsys)
     assert rc == 1
-    assert out[-1] == "compare: 1 nodes × 24 instants, 72 differences"
-    hosts = Counter(re.search(r'host="([^"]+)"', line).group(1) for line in out[:-1])
-    assert hosts == {"zcrypto": 24, "zcrypto-red": 24, "zcrypto-mon2": 24}, hosts
+    assert out[-1] == "compare: 1 nodes × 24 instants, 96 differences"
+    hosts = Counter(m.group(1) if (m := re.search(r'host="([^"]+)"', line)) else "" for line in out[:-1])
+    assert hosts == {"zcrypto": 24, "zcrypto-red": 24, "zcrypto-mon2": 24, "": 24}, hosts
     assert {r.expr for r in stacks.requests} == {"up"}
 
 

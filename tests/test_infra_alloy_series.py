@@ -304,10 +304,6 @@ ACCESS_APP_SERIES = [
     "zaccess_tls_not_after_seconds",
 ]
 
-# Native Alloy (D11, apt package, no docker). Its `prometheus.exporter.self "alloy"` publishes
-# PROCESS_FAMILIES, which reach the node unfiltered; the Cloud keep regex admits `up` of that scrape
-# and none of them, unchanged until the Cloud leg retires, so unlike NAS/OPS/CAPTURE they are not
-# required here.
 ACCESS_REQUIRED = [
     "up",
     "node_load1",
@@ -449,9 +445,7 @@ def test_drop_regex_does_not_shadow_the_keep_list(path, required):
         (OPS_ALLOY, [*CAPTURE_APP_SERIES, *ENGINE_APP_SERIES, *CACHE_PROXY_SERIES]),
         # Capture/engine run on the capture hosts, not the poller.
         (CAPTURE_ALLOY, LIQUIDATIONS_APP_SERIES),
-        # No app daemon runs on the bridgehead, so none of the app/logship families exist there; its
-        # `exporter.self "alloy"` publishes the process families, which the Cloud keep regex still
-        # does not admit (they reach the node unfiltered).
+        # No app daemon runs on the bridgehead; its Alloy's process families go to the node alone.
         (
             ACCESS_ALLOY,
             [
@@ -813,9 +807,8 @@ def test_alloys_own_targets_are_concatenated_into_the_scrape_that_feeds_the_remo
     assert "forward_to      = [prometheus.remote_write.grafana.receiver]" in carrying[0]
 
 
-# The six Cloud lines of every secrets template, as they stand; a template's `MON_*` lines are the fence its
-# task lands. Held by literal, so a Cloud name repointed at the node, or a node name bound to another group
-# var, fails here before it is a converge.
+# Held by literal, so a Cloud name repointed at the node, or a node name bound to another group var,
+# fails here before it is a converge.
 _GRAFANA_LINES = [
     "GRAFANA_PROM_URL={{ grafana_prom_url }}",
     "GRAFANA_PROM_USERNAME={{ grafana_prom_user }}",
@@ -839,8 +832,7 @@ def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
 
 
 # A name the config reads that the template lacks is an empty string at runtime: the endpoint fails with
-# nothing in the tree to say why. The access template also renders the unit's own two knobs and the three
-# Loki names its config, which ships no logs, does not read.
+# nothing in the tree to say why.
 @pytest.mark.parametrize(
     ("config", "template", "unread"),
     [

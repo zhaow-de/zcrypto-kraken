@@ -211,8 +211,7 @@ echo "grafana-push: pushing alert rules"
 # One-time YAML -> JSON conversion (the file is YAML only for its inline comments); everything
 # after this is plain JSON handled by jq, substituting the ${GRAFANA_*_UID} placeholder tokens
 # from this script's own environment (the provisioning API has no template substitution of its
-# own). `kept` is what this push sends; `skipped` maps each left-out rule's uid to its group, which
-# the orphan report below reads so that a skipped rule found live is named as such.
+# own).
 rules_split=$(python3 -c '
 import json, os, sys, yaml
 skipped = os.environ["GRAFANA_SKIP_RULE_GROUPS"]

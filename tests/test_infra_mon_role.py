@@ -560,7 +560,7 @@ def test_the_alloy_config_is_validated_and_alloy_restarted_on_a_change():
     assert handler["ansible.builtin.systemd_service"] == {"name": "alloy", "state": "restarted"}
 
 
-# --- the fleet's ingest names: the node's public name, its two authenticated paths and its fleet user -------------
+# --- the fleet's ingest names ---
 OBSERVED_VARS = ANSIBLE / "group_vars/observed/vars.yml"
 
 
