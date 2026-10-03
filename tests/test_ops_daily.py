@@ -920,7 +920,6 @@ def test_the_wrappers_and_quoting_the_runbooks_really_use(cmd, host):
 
 
 def test_the_query_tools_stack_flag_takes_a_name_and_nothing_else():
-    """The value is a stack's name: one that carries a shell's or a URL's characters is no name, and is refused."""
     for value in ("https://example.invalid", "mon;id", "../mon"):
         step = f"uv run python infra/scripts/grafana-query.py --stack {value} 'up'"
         assert ops_daily.classify_action(step, host="ops", resolve=_identity) is ops_daily.Tier.PREPARED, value
@@ -3318,8 +3317,6 @@ def test_the_observability_node_is_a_telemetry_host_under_either_of_its_names(ho
     ],
 )
 def test_on_the_observability_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
-    """A store restarted under a running Grafana puts every rule that reads it in error, and a stopped Grafana or edge
-    stops evaluation or ingest: each stays the operator's, in the order the node's runbook gives."""
     assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
 
 
