@@ -2112,9 +2112,7 @@ def test_the_node_clock_stale_rule_pages_after_six_missed_runs():
 
 # --- the pending-reboot family: the hosts that never reboot themselves ---------------------------
 # The capture pair and ops run `Automatic-Reboot "false"` and publish the reboot-check flag; a host left out of a
-# matcher reboots by hand with nothing paging. The observability node reboots by hand too and stays out of this set:
-# the family is pushed to Grafana Cloud, which holds no series of the node, so its flag pages through its own group's
-# `zcrypto-mon-reboot-pending`, held at the end of this file.
+# matcher reboots by hand with nothing paging.
 _REBOOT_HOSTS = frozenset({"zcrypto", "zcrypto-red", "ops"})
 _REBOOT_FAMILY = (
     "zcrypto-capture-reboot-pending",
@@ -2202,7 +2200,6 @@ def test_the_mon_group_is_its_rules_each_with_its_own_section_and_panel():
 
 
 def test_the_push_keeps_the_mon_group_off_grafana_cloud_by_default():
-    """Grafana Cloud holds no series of the node, so the group's two dead-men would page there for good."""
     (skipped,) = re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-([^}]*)\}"$', PUSH.read_text(), re.M)
     assert skipped.split() == [_MON_GROUP]
     dead_men = sorted(r["uid"] for r in _mon_rules() if r["noDataState"] == "Alerting")
@@ -2215,8 +2212,7 @@ def _admits_the_node(op: str, value: str) -> bool:
 
 
 def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
-    """A rule outside the group whose `host` matcher admitted the node would be pushed to Grafana Cloud, where the node
-    has no series. A rule outside the group with no `host` matcher is not held here."""
+    """A rule outside the group with no `host` matcher is not held here."""
     for rule in _rules():
         matchers = [
             (op, value)
@@ -2235,8 +2231,6 @@ def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
 
 
 def test_ingest_dark_pages_ahead_of_every_per_host_alloy_dark_rule():
-    """Every fleet host absent at once is the node's edge, and the page that says so has to arrive before the per-host
-    pages and the exposure page that the same fault produces."""
     ingest = _rule("zcrypto-mon-ingest-dark")
     assert _prom_exprs(ingest) == ['count(up{host!="zcrypto-mon"}) or on() vector(0)']
     assert _evaluator(ingest) == {"type": "lt", "params": [1]}
@@ -2271,7 +2265,6 @@ def test_the_two_budget_fences_read_what_prometheus_reports_about_itself():
 def test_the_database_lock_rule_is_a_burst_rule_over_grafanas_own_journal():
     rule = _rule("zcrypto-mon-sqlite-locked")
     (query,) = [q for q in rule["data"] if q["datasourceUid"] == "${GRAFANA_LOKI_DS_UID}"]
-    # The retry line carries the same text at info, at every start: without the second filter the rule fires on it.
     assert query["model"]["expr"] == (
         'sum(count_over_time({host="zcrypto-mon", container="grafana-server"} |= "database is locked"'
         ' != "sleeping then retrying" [15m])) or on() vector(0)'
@@ -2292,7 +2285,6 @@ def test_the_node_reboot_rule_keeps_the_capture_rules_bar_and_duration():
 
 def test_the_shipper_loss_rule_reads_alloys_two_loss_counters_and_keeps_the_logship_rules_window_and_wait():
     ours, theirs = _rule("zcrypto-mon-shipper-loss"), _rule("zcrypto-logship-lines-dropped")
-    # The log counter's own `host` is its destination's, so that arm takes the shipper's `host` from `up`, on `instance`.
     assert _prom_exprs(ours) == [
         'sum by (host) (increase(prometheus_remote_storage_samples_failed_total{job="integrations/self"}[6h])'
         ' or sum by (instance) (increase(loki_write_dropped_entries_total{job="integrations/self"}[6h]))'

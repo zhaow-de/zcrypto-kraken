@@ -5640,7 +5640,7 @@ rules:
   # Pushed to the node alone: grafana-push.sh leaves this group out of a push that names no stack
   # (GRAFANA_SKIP_RULE_GROUPS), since Grafana Cloud holds no `host="zcrypto-mon"` series and the two
   # dead-men here would page there for good. A rule cannot page the death of the node it runs on:
-  # that is the node's healthchecks.io self-check, not a rule of this group.
+  # only the self-check's healthchecks.io ping can, once its URL is set.
   - uid: zcrypto-alloy-dark-mon
     title: "Fleet · Alloy dark — Monitor"
     ruleGroup: zcrypto-mon
@@ -5694,8 +5694,7 @@ rules:
         relativeTimeRange: {from: 600, to: 0}
         datasourceUid: "${GRAFANA_PROM_DS_UID}"
         model:
-          # The threshold and the duration are zaccess-disk-high's. On this node's 80 GB the bar leaves
-          # 12 GB, more than both stores are expected to hold between them.
+          # The threshold and the duration are zaccess-disk-high's.
           expr: >-
             node_filesystem_avail_bytes{host="zcrypto-mon", mountpoint="/"} / node_filesystem_size_bytes{host="zcrypto-mon", mountpoint="/"}
           instant: true

@@ -19,17 +19,14 @@ VAULT_FILE = "group_vars/all/vault.yml"
 
 
 class Stack(NamedTuple):
-    """One Grafana the tools address: where it answers, and the vault variable and file holding its token."""
-
     url: str
     token_var: str
     vault_file: str
 
 
-# Baked in rather than re-guessed: a wrong URL or datasource uid is accepted happily and still reports
-# health=ok, so a guess fails silently. Two stacks until the Grafana Cloud leg retires. `mon`'s token is
-# minted by the `mon` role into a vault-encrypted cache outside the tree, the role's `mon_token_cache` and
-# `mon_token_var`; `vault_var` reads an absolute file where it is.
+# Baked in rather than re-guessed: a wrong datasource uid is accepted happily and still reports
+# health=ok, so a guess fails silently. Two stacks until the Grafana Cloud leg retires; `mon`'s token
+# is minted by the `mon` role into its `mon_token_cache`, outside the tree.
 STACKS = {
     "cloud": Stack("https://zcrypto2026.grafana.net", "grafana_sa_token", VAULT_FILE),
     "mon": Stack(

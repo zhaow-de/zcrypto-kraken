@@ -2739,7 +2739,7 @@
       "id": 901,
       "type": "timeseries",
       "title": "Monitor — its own Alloy shipping",
-      "description": "Is the observability node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages when this falls below the green line at 1 and stays there for ten minutes. This row is drawn from series the node alone holds, so on any other Grafana the whole row is empty. A dark Alloy here blinds this row and nothing else: the fleet's panels read the fleet's own shippers.",
+      "description": "Is the observability node's own Alloy shipping? The count of scrape targets it reports, 0 when it reports none: the alert pages below the green line at 1, held for ten minutes. On Grafana Cloud this row is empty, zero or Cloud's own fleet, never the node: read it on the node's Grafana. A dark Alloy here blinds this row and nothing else: the fleet's panels read the fleet's own shippers.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

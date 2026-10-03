@@ -132,8 +132,6 @@ def test_the_table_holds_the_two_stacks_and_reads_cloud_when_none_is_named():
 
 
 def test_the_mon_stack_is_the_role_s_public_name_and_the_cache_the_role_writes():
-    """The role mints the token into a file outside the tree; a tool reading another file or another variable finds
-    nothing, or yesterday's token."""
     defaults = yaml.safe_load(MON_DEFAULTS.read_text())
     mon = ga.STACKS["mon"]
     assert mon.url == f"https://{defaults['mon_hostname']}"

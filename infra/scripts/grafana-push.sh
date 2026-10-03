@@ -22,12 +22,8 @@
 # installing PyYAML into the system python, where a second copy drifts unseen.
 #
 # Two stacks take this push until the Grafana Cloud leg retires. With no GRAFANA_URL it goes to Grafana
-# Cloud and leaves out the observability node's own rule group, which has no data there. The node's push
-# names the node, its own token, no skipped group and, unless it mints or moves the node's contact points,
-# an empty webhook, so that one exported for the other stack is not sent to this one:
-#   GRAFANA_URL=https://zcrypto-mon.zhaow.me GRAFANA_SKIP_RULE_GROUPS= GRAFANA_SLACK_WEBHOOK_URL= \
-#     GRAFANA_SA_TOKEN=<the node's token> ...
-# with the token read by `grafana_auth.py`'s `stack("mon")`.
+# Cloud and leaves out the observability node's own rule group, which has no data there; the node's push
+# is `infra/runbooks/mon.md#mon-push`.
 #
 # Rules go one per call through Grafana's Alerting Provisioning HTTP API; the `apiVersion: 1` /
 # `groups:` file-provisioning shape is not accepted here and is not available on Grafana Cloud SaaS.
@@ -59,8 +55,7 @@ export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-zcrypto-mon}"
 echo "grafana-push: stack=$GRAFANA_URL prom=$GRAFANA_PROM_DS_UID loki=$GRAFANA_LOKI_DS_UID folder=$GRAFANA_ALERT_FOLDER_UID skip-groups=${GRAFANA_SKIP_RULE_GROUPS:-<none>}" >&2
 # Grafana Cloud never takes the observability node's group: it has no data there, and a rule of it that fires
 # on no data would page the main channel. The default above skips the group only while the variable is unset,
-# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call. The
-# host part alone is matched, lowercased and without its port: a `:443` or an upper-cased host is the same stack.
+# so a push addressed to Grafana Cloud whose list does not name the group is refused here, before any call.
 push_host="${GRAFANA_URL#*://}"; push_host="${push_host%%/*}"; push_host="${push_host%%:*}"; push_host="${push_host,,}"
 case "${push_host}" in
   *.grafana.net)
