@@ -108,7 +108,7 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
     assert copy["dest"] == "/etc/grafana/{{ item.file }}"
 
 
-# --- the Caddyfile: one public name and the routes it answers ---------------------------------------------------------------------------------
+# --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
 def _blocks(lines: list[str]) -> list[tuple[str, list]]:
     """A Caddyfile body as (line, children) pairs: a line ending in `{` opens a block its `}` closes."""
     out: list[tuple[str, list]] = []
