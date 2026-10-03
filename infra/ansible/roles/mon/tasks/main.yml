@@ -217,7 +217,7 @@
 # ---- Caddy: the one public listener ----------------------------------------------------------------
 # Validated by the installed binary before it replaces the live file, so a Caddyfile this Caddy cannot
 # parse fails the converge and the edge keeps serving the old one. It carries the ingest users' hashes.
-- name: Caddyfile — the two ingest paths behind basic auth, two refusals, everything else to grafana
+- name: Caddyfile — the one public listener's routes
   ansible.builtin.template:
     src: Caddyfile.j2
     dest: /etc/caddy/Caddyfile
