@@ -36,7 +36,7 @@ Nothing fired. The rule file, a dashboard or the notification template changed, 
 
 2. **A push that mints or moves the node's two contact points** — the first push after a rebuild, or a change of channel — carries the webhook: it is step 1's line with the empty `GRAFANA_SLACK_WEBHOOK_URL=` replaced by `GRAFANA_SLACK_WEBHOOK_URL="$(uv run python -c 'import sys; sys.path.insert(0, "infra/scripts"); from grafana_auth import vault_var; print(vault_var("slack_shadow_webhook_url"))')"`. The node pages the shadow channel, so the value is `slack_shadow_webhook_url`.
 
-3. **Confirm by value.** `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-mon"})'` reads 5, and the `Alerts` section of `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` names no rule as unhealthy.
+3. **Confirm by value.** `uv run python infra/scripts/grafana-query.py --stack mon 'count(up{host="zcrypto-mon"})'` reads 5, and `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` prints no `Rules not evaluating` section.
 
 ### Retire when
 
@@ -133,7 +133,7 @@ Grafana evaluates each rule every minute against the two stores, and a rule whos
 1. **Stop Grafana**, on the node: `sudo systemctl stop grafana-server`. Rule evaluation stops here; say so in the channel the node pages if the stop will be long.
 2. **Restart the store**: `sudo systemctl restart prometheus`, or `sudo systemctl restart loki`.
 3. **Start Grafana**: `sudo systemctl start grafana-server`. The command returns once both stores answered ready and Grafana started; `curl -fsS http://127.0.0.1:9090/-/ready` and `curl -fsS http://127.0.0.1:3100/ready` are the two reads it waits on. A start that fails — `Job for grafana-server.service failed because the control process exited with error code`, and `systemctl status grafana-server` naming an `ExecStartPre=/usr/bin/curl` process with `code=exited` — is a store that did not answer ready within its wait: Grafana stays stopped and evaluates nothing until the store is ready. Read which and why by `zcrypto-mon-store-down` steps 1 and 2 below, and once the store answers ready run `sudo systemctl start grafana-server` again; the packaged unit's `Restart=on-failure` retries it meanwhile.
-4. **Confirm by value**, from the workstation: the `Alerts` section of `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` names no rule as unhealthy.
+4. **Confirm by value**, from the workstation: `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` prints no `Rules not evaluating` section.
 5. **After a Grafana that was killed or lost power**, re-read the silences in the node's UI, under Alerting, and set again the ones that are gone.
 
 ### Retire when
@@ -256,7 +256,7 @@ The node installs Debian's security patches by itself and does not reboot itself
 
 1. **Reboot in the slot**, on the node: `sudo systemctl reboot`.
 2. **Confirm it came back**, from the workstation: `ssh mon uptime -s`, then `ssh mon systemctl is-active grafana-server prometheus loki` and `ssh mon systemctl is-active caddy alloy` read `active` five times between them.
-3. **Confirm by value:** `uv run python infra/scripts/grafana-query.py --stack mon 'node_reboot_required{host="zcrypto-mon"}'` reads 0 within twenty minutes, and the `Alerts` section of `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` names no rule as unhealthy.
+3. **Confirm by value:** `uv run python infra/scripts/grafana-query.py --stack mon 'node_reboot_required{host="zcrypto-mon"}'` reads 0 within twenty minutes, and `uv run python infra/scripts/ops-daily.py report --stack mon --since 1h` prints no `Rules not evaluating` section.
 
 ### Retire when
 
