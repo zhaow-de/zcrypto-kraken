@@ -138,7 +138,7 @@ def _site() -> dict[str, list]:
     assert set(caddyfile) == {"", DEFAULTS["mon_hostname"]}, f"one global block and one site: {sorted(caddyfile)}"
     site = caddyfile[DEFAULTS["mon_hostname"]]
     lines = [line for line, _ in site]
-    assert len(lines) == len(set(lines)), "a repeated handle or matcher: Caddy routes by the first, this dict by the last"
+    assert len(lines) == len(set(lines)), "a repeated line: Caddy routes a handle by the first, this dict by the last"
     return dict(site)
 
 
