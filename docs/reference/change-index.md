@@ -369,3 +369,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #656 | 2026-10-04 | feat(infra): 00121 — bridgehead dual-ships, comparison script, drills | — | 00121 | T0217 |
 | #657 | 2026-10-04 | feat(infra): 00121 — ops dual-ships, the node pings its own dead-man | — | 00121 | T0217 |
 | #658 | 2026-10-04 | feat(infra): 00121 — the cache nodes dual-ship to the node | — | 00121 | T0217 |
+| #659 | 2026-10-04 | fix(infra): the node lets unattended upgrades restart Prometheus | — | 00121 | T0217 |
