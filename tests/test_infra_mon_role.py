@@ -29,6 +29,7 @@ SECRETS = {
     "mon_grafana_secret_key": "B" * 48,
     "mon_ingest_fleet_password_hash": "$2b$10$" + "f" * 53,
     "mon_ingest_logship_password_hash": "$2b$10$" + "l" * 53,
+    "selfcheck_healthcheck_url": "https://hc-ping.com/" + "0" * 8 + "-0000-4000-8000-" + "0" * 12,
 }
 
 
@@ -459,9 +460,13 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
             {"mon_ingest_logship_password_hash": SECRETS["mon_ingest_logship_password_hash"] + "\n"},
             "mon_ingest_logship_password_hash",
         ),
+        ({"selfcheck_healthcheck_url": None}, "selfcheck_healthcheck_url"),
+        ({"selfcheck_healthcheck_url": "https://hc-ping.invalid/abc"}, "selfcheck_healthcheck_url"),
+        ({"selfcheck_healthcheck_url": "https://hc-ping.com/"}, "selfcheck_healthcheck_url"),
+        ({"selfcheck_healthcheck_url": SECRETS["selfcheck_healthcheck_url"] + "\n"}, "selfcheck_healthcheck_url"),
     ],
     ids=[
-        "all five",
+        "all six",
         "a name a stranger tries",
         "a long name a stranger tries",
         "one missing",
@@ -469,6 +474,10 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
         "not letters and digits",
         "a password where a hash belongs",
         "a trailing newline",
+        "the ping URL missing",
+        "a ping URL off healthchecks.io",
+        "a ping URL naming no check",
+        "a ping URL with a trailing newline",
     ],
 )
 def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):

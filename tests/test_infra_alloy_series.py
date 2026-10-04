@@ -377,6 +377,36 @@ CACHE_REQUIRED = [
 ]
 
 
+def _live_alloy_text(path: Path) -> str:
+    """The config with its `//` line comments and `/* */` blocks blanked, line count kept, so a commented
+    copy of a live line is not read; a `//` inside a quoted string (a URL) is part of the string and stays."""
+    text, out, i, n = path.read_text(), [], 0, len(path.read_text())
+    while i < n:
+        if text[i] == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            end = n if j < 0 else j + 2
+            out.append("\n" * text.count("\n", i, end))
+            i = end
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def _live_j2_text(path: Path) -> str:
+    """The template with its `{# … #}` comments blanked, multi-line ones included, line count kept."""
+    return re.sub(r"\{#.*?#\}", lambda m: "\n" * m.group(0).count("\n"), path.read_text(), flags=re.S)
+
+
 _LIVE_REGEX_LINE = re.compile(r'^\s*regex\s*=\s*"(.*)"\s*$', re.M)
 _LIVE_SEPARATOR_LINE = re.compile(r'^\s*separator\s*=\s*";"\s*$', re.M)
 _LIVE_JOURNAL_SOURCE_LABELS_LINE = re.compile(
@@ -698,18 +728,24 @@ def test_the_capture_config_scrapes_the_cache_proxy_and_labels_its_journal_lines
     """The proxy's scrape on the engine's loopback port under its own job, and its journal lines
     labelled `cache-proxy` by a match that runs before the nautilus block, which would otherwise
     relabel every line of the unit as the engine's."""
-    text = CAPTURE_ALLOY.read_text()
-    scrape = re.search(r'prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.DOTALL)
+    text = _live_alloy_text(CAPTURE_ALLOY)
+    scrape = re.search(r'^prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.M | re.DOTALL)
     assert scrape, "no cache_proxy scrape block"
-    assert '"127.0.0.1:9104"' in scrape.group(1)
+    assert re.search(r'^\s*targets\s*=\s*\[\{"__address__"\s*=\s*"127\.0\.0\.1:9104"\}\]\s*$', scrape.group(1), re.M), (
+        f"no live targets line on 127.0.0.1:9104 in the cache_proxy scrape block: {scrape.group(1)!r}"
+    )
     assert re.search(r'^\s*job_name\s*=\s*"cache_proxy"\s*$', scrape.group(1), re.M), (
         f'no live `job_name = "cache_proxy"` line in the cache_proxy scrape block: {scrape.group(1)!r}'
     )
-    proxy, engine = text.index('pipeline_name = "cache_proxy"'), text.index('pipeline_name = "engine_nautilus"')
-    assert proxy < engine, "the proxy's match must run before the engine's, which relabels the whole unit"
-    block = text[proxy:engine]
-    assert 'container = "cache-proxy"' in block and "zcrypto-cache-proxy" in block
-    assert "NOTICE|WARNING|ALERT|INFO" in block
+    proxy = re.search(r'^\s*pipeline_name\s*=\s*"cache_proxy"\s*$', text, re.M)
+    engine = re.search(r'^\s*pipeline_name\s*=\s*"engine_nautilus"\s*$', text, re.M)
+    assert proxy and engine, f"a live pipeline_name line is missing: proxy={proxy}, engine={engine}"
+    assert proxy.start() < engine.start(), "the proxy's match must run before the engine's, which relabels the whole unit"
+    block = text[proxy.start() : engine.start()]
+    assert re.search(r'^\s*values\s*=\s*\{\s*container\s*=\s*"cache-proxy"\s*\}\s*$', block, re.M), block
+    assert re.search(r'^\s*expression\s*=\s*".*zcrypto-cache-proxy.*"\s*$', block, re.M), block
+    for key in ("selector", "expression"):
+        assert re.search(rf'^\s*{key}\s*=\s*".*NOTICE\|WARNING\|ALERT\|INFO.*"\s*$', block, re.M), (key, block)
 
 
 def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
@@ -724,11 +760,11 @@ def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
 
 
 def _env_names_read(config: Path) -> set[str]:
-    return set(re.findall(r'sys\.env\("([A-Z_]+)"\)', config.read_text()))
+    return set(re.findall(r'sys\.env\("([A-Z_]+)"\)', _live_alloy_text(config)))
 
 
 def _env_names_rendered(template: Path) -> set[str]:
-    return set(re.findall(r"^([A-Z_]+)=", template.read_text(), re.M))
+    return set(re.findall(r"^([A-Z_]+)=", _live_j2_text(template), re.M))
 
 
 def test_the_cache_secrets_template_renders_every_name_the_config_reads():
@@ -852,7 +888,7 @@ _MON_LOKI_LINES = [
     ids=["access", "ops"],
 )
 def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
-    lines = template.read_text().splitlines()
+    lines = _live_j2_text(template).splitlines()
     assert [line for line in lines if line.startswith("GRAFANA_")] == _GRAFANA_LINES
     assert [line for line in lines if line.startswith("MON_")] == mon_lines
 
