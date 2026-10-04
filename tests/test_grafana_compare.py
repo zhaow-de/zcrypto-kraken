@@ -221,8 +221,6 @@ def test_a_stack_that_cannot_answer_ends_the_run_naming_it_never_as_a_match(monk
 
 
 def test_the_three_exclusions_are_by_name_so_a_prefix_a_prefixed_name_and_a_hostless_row_still_count(monkeypatch, tmp_path, capsys):
-    """Each exclusion's exact name is beside a name it prefixes: the group `zcrypto-mon` and `zcrypto-mon2`, the listed
-    uid `zcrypto-engine-error-logs` and `zcrypto-engine-error-logs-2`, the host `zcrypto-mon` and `zcrypto-mon2`."""
     _alerts(
         monkeypatch,
         tmp_path,
@@ -302,7 +300,6 @@ def test_a_failure_whose_text_spans_lines_still_ends_the_run_on_one_summary_line
 def test_a_failure_the_script_did_not_name_ends_the_run_on_the_summary_line_with_its_traceback_on_stderr(
     monkeypatch, tmp_path, capsys
 ):
-    """`compare_run` in ops_daily keeps stdout alone, so the section reads the type and text; a manual run reads the stack."""
     _alerts(monkeypatch, tmp_path, {"uid": "r-bare", "title": "r-bare", "ruleGroup": "zcrypto-x"})
     stacks = _Stacks(monkeypatch)
     rc = gc.main(["--day", DAY])
@@ -361,12 +358,10 @@ def _rules() -> list[dict]:
 
 
 def _selects_a_direct_shipper(expr: str) -> bool:
-    """A `container` matcher, equality or regex, one of whose alternatives is a direct shipper's whole name."""
     return any(name in _DIRECT_SHIPPERS for m in _CONTAINER_MATCHER.finditer(expr) for name in m.group(1).split("|"))
 
 
 def _listing() -> list[str]:
-    """The measured basis's listing, as the spec prints it: a Loki node selecting a direct shipper's stream."""
     return [
         r["uid"]
         for r in _rules()

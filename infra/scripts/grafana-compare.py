@@ -6,9 +6,7 @@ datasource proxy at the top of each UTC hour of the day named, the preceding UTC
 range selector supplies the window. The node's own rule group and `host` exist on the node alone, so both are
 outside the comparison by name. The last line is one summary whatever the outcome:
   `compare: <nodes> nodes × 24 instants, <n> differences`, exit 0 at none and 1 otherwise, one line per difference above it;
-  `compare: failed: <what failed>`, exit 2, its text folded onto the one line, naming the stack where a stack failed --
-  never a match, never a skip; a failure the script did not name ends the same way as `<ExceptionType>: <text>`, its
-  traceback on stderr, which the daily pass discards.
+  `compare: failed: <what failed>`, exit 2, naming the stack where a stack failed -- never a match, never a skip.
 The requests go one at a time, so a run adds one query at a time to either stack's query path. The tokens are only
 ever request headers: never printed, never written, never in argv.
 """
