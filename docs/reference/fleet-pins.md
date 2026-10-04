@@ -20,10 +20,10 @@ Reading rules:
 | cache-proxy | zcrypto | `76928c0d6b39` — HAProxy 3.4.5, upstream `haproxy` | 2026-09-30 18:22:02 | first pin |
 | alloy | zcrypto | `b8ec653c4423` — v1.19.2 | 2026-09-26 13:28:09 | `491b0578c049` — v1.18.0 |
 | alloy | zcrypto-red | `b8ec653c4423` — v1.19.2 | 2026-09-26 09:54:50 | `491b0578c049` — v1.18.0 |
-| alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-09-22 15:55:36 | `491b0578c049` — v1.18.0 |
+| alloy | zcrypto-ops | `b8ec653c4423` — v1.19.2 | 2026-10-04 13:38:42 | `491b0578c049` — v1.18.0 |
 | alloy | nas | `b8ec653c4423` — v1.19.2, upstream `grafana/alloy`, no `-compat` variant | 2026-09-30 19:17:42 | `491b0578c049` — v1.18.0 |
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
-| alloy | zcrypto-valkey1 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:35:40 | first pin |
+| alloy | zcrypto-valkey1 | `b8ec653c4423` — v1.19.2 | 2026-10-04 20:45:20 | first pin |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
 | alloy | zcrypto-valkey2 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:39:05 | first pin |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
