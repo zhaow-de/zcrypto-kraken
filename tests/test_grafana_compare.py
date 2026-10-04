@@ -33,7 +33,7 @@ LOKI = "${GRAFANA_LOKI_DS_UID}"
 PROM_PATH = "api/v1/query"
 LOKI_PATH = "loki/api/v1/query"
 # The measured basis's listing of the rules that select a direct shipper's stream: the uids written here, and the
-# listing's own selectors below, never the script's constant.
+# listing's own shippers below, never the script's constant.
 DIRECT_SHIPPED = (
     "zcrypto-engine-error-logs",
     "zcrypto-engine-log-dead",
@@ -43,7 +43,8 @@ DIRECT_SHIPPED = (
     "zcrypto-capture-log-dead-primary",
     "zcrypto-capture-log-dead-secondary",
 )
-_DIRECT_SELECTORS = ('container="engine"', 'container="capture"', "liquidations")
+_DIRECT_SHIPPERS = ("engine", "capture", "liquidations")
+_CONTAINER_MATCHER = re.compile(r'container\s*=~?\s*"([^"]*)"')
 
 
 class Request(NamedTuple):
@@ -192,8 +193,21 @@ def test_an_empty_result_matches_an_empty_result_alone(monkeypatch, tmp_path, ca
         http.client.IncompleteRead(b""),
         b"<html>bad gateway</html>",
         b'{"status": "success", "data": {}}',
+        b'{"status": "success", "data": {"resultType": "matrix", "result": [{"metric": {"host": "ops"}, "values": [[1790726400, "1"]]}]}}',
+        b'{"status": "success", "data": {"resultType": "scalar", "result": [1790726400, "1"]}}',
+        b'{"status": "success", "data": {"resultType": "streams", "result": [{"stream": {"host": "ops"}, "values": [["1790726400000000000", "x"]]}]}}',
     ],
-    ids=["a 5xx", "a 4xx", "unreachable", "a truncated body", "a malformed body", "a body without a result"],
+    ids=[
+        "a 5xx",
+        "a 4xx",
+        "unreachable",
+        "a truncated body",
+        "a malformed body",
+        "a body without a result",
+        "a matrix result",
+        "a scalar result",
+        "a Loki stream result",
+    ],
 )
 def test_a_stack_that_cannot_answer_ends_the_run_naming_it_never_as_a_match(monkeypatch, tmp_path, capsys, stack, fault):
     _alerts(monkeypatch, tmp_path, _rule("r-up", "up"))
@@ -207,12 +221,16 @@ def test_a_stack_that_cannot_answer_ends_the_run_naming_it_never_as_a_match(monk
 
 
 def test_the_three_exclusions_are_by_name_so_a_prefix_a_prefixed_name_and_a_hostless_row_still_count(monkeypatch, tmp_path, capsys):
+    """Each exclusion's exact name is beside a name it prefixes: the group `zcrypto-mon` and `zcrypto-mon2`, the listed
+    uid `zcrypto-engine-error-logs` and `zcrypto-engine-error-logs-2`, the host `zcrypto-mon` and `zcrypto-mon2`."""
     _alerts(
         monkeypatch,
         tmp_path,
         _rule("r-up", "up"),
         _rule("zcrypto-mon-disk-low", "node_filesystem_avail_bytes", group="zcrypto-mon"),
+        _rule("zcrypto-mon2-disk-low", "node_load1", group="zcrypto-mon2"),
         _rule("zcrypto-engine-error-logs", 'count_over_time({container="engine"} [5m])', loki=True),
+        _rule("zcrypto-engine-error-logs-2", 'count_over_time({container="engine"} [10m])', loki=True),
     )
 
     def answer(stack, path, expr, time):
@@ -222,10 +240,77 @@ def test_the_three_exclusions_are_by_name_so_a_prefix_a_prefixed_name_and_a_host
     stacks = _Stacks(monkeypatch, answer)
     rc, out = _run(capsys)
     assert rc == 1
-    assert out[-1] == "compare: 1 nodes × 24 instants, 96 differences"
+    assert out[-1] == "compare: 3 nodes × 24 instants, 288 differences"
+    uids = Counter(line.split(" ")[0] for line in out[:-1])
+    assert uids == {"r-up": 96, "zcrypto-mon2-disk-low": 96, "zcrypto-engine-error-logs-2": 96}, uids
     hosts = Counter(m.group(1) if (m := re.search(r'host="([^"]+)"', line)) else "" for line in out[:-1])
-    assert hosts == {"zcrypto": 24, "zcrypto-red": 24, "zcrypto-mon2": 24, "": 24}, hosts
-    assert {r.expr for r in stacks.requests} == {"up"}
+    assert hosts == {"zcrypto": 72, "zcrypto-red": 72, "zcrypto-mon2": 72, "": 72}, hosts
+    assert {r.expr for r in stacks.requests} == {"up", "node_load1", 'count_over_time({container="engine"} [10m])'}
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [_rule("zcrypto-mon-disk-low", "node_filesystem_avail_bytes", group="zcrypto-mon")],
+        [_rule("zcrypto-engine-error-logs", 'count_over_time({container="engine"} [5m])', loki=True)],
+        [{"uid": "r-math", "title": "r-math", "ruleGroup": "zcrypto-x", "data": [_rule("r-math", "up")["data"][1]]}],
+        [],
+    ],
+    ids=["the excluded group alone", "a listed rule alone", "expression nodes alone", "no rule"],
+)
+def test_a_walk_that_would_send_no_query_node_is_a_failure_never_a_clean_summary_over_nothing(monkeypatch, tmp_path, capsys, rules):
+    _alerts(monkeypatch, tmp_path, *rules)
+    stacks = _Stacks(monkeypatch)
+    rc, out = _run(capsys)
+    assert rc == 2
+    assert out == ["compare: failed: the walk would send no query node"], out
+    assert stacks.requests == []
+
+
+@pytest.mark.parametrize(
+    "ds_uid", ["${GRAFANA_TEMPO_DS_UID}", "grafanacloud-prom", None], ids=["another placeholder", "a uid", "absent"]
+)
+def test_a_node_whose_datasource_is_neither_placeholder_is_a_failure_naming_the_rule_and_the_node(
+    monkeypatch, tmp_path, capsys, ds_uid
+):
+    rule = _rule("r-up", "up")
+    rule["data"][0]["datasourceUid"] = ds_uid
+    _alerts(monkeypatch, tmp_path, _rule("r-first", "up"), rule)
+    stacks = _Stacks(monkeypatch)
+    rc, out = _run(capsys)
+    assert rc == 2
+    assert out == [f"compare: failed: rule r-up node A carries datasourceUid {ds_uid!r}, neither placeholder"], out
+    assert stacks.requests == []
+
+
+def test_a_failure_whose_text_spans_lines_still_ends_the_run_on_one_summary_line(monkeypatch, tmp_path, capsys):
+    _alerts(monkeypatch, tmp_path, _rule("r-up", "up"))
+    stacks = _Stacks(monkeypatch)
+
+    def refuse(name, vault_file):
+        raise RuntimeError("Attempting to decrypt but no vault secrets found\nThe error appears to be in 'vault.yml': line 3")
+
+    monkeypatch.setattr(gc.grafana_auth, "vault_var", refuse)
+    rc, out = _run(capsys)
+    assert rc == 2
+    assert len(out) == 1 and re.fullmatch(r"compare: failed: .+", out[0]), out
+    assert out[0].startswith("compare: failed: cloud token could not be read: RuntimeError: ")
+    assert "no vault secrets found The error appears to be in 'vault.yml': line 3" in out[0]
+    assert stacks.requests == []
+
+
+def test_a_failure_the_script_did_not_name_ends_the_run_on_the_summary_line_with_its_traceback_on_stderr(
+    monkeypatch, tmp_path, capsys
+):
+    """`compare_run` in ops_daily keeps stdout alone, so the section reads the type and text; a manual run reads the stack."""
+    _alerts(monkeypatch, tmp_path, {"uid": "r-bare", "title": "r-bare", "ruleGroup": "zcrypto-x"})
+    stacks = _Stacks(monkeypatch)
+    rc = gc.main(["--day", DAY])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert captured.out.splitlines() == ["compare: failed: KeyError: 'data'"], captured.out
+    assert "Traceback (most recent call last)" in captured.err and "KeyError: 'data'" in captured.err
+    assert stacks.requests == []
 
 
 def test_every_request_to_either_stack_carries_one_of_the_days_24_hour_tops_in_epoch_seconds(monkeypatch, tmp_path, capsys):
@@ -275,14 +360,46 @@ def _rules() -> list[dict]:
     return yaml.safe_load(_ALERTS.read_text(encoding="utf-8"))["rules"]
 
 
+def _selects_a_direct_shipper(expr: str) -> bool:
+    """A `container` matcher, equality or regex, one of whose alternatives is a direct shipper's whole name."""
+    return any(name in _DIRECT_SHIPPERS for m in _CONTAINER_MATCHER.finditer(expr) for name in m.group(1).split("|"))
+
+
 def _listing() -> list[str]:
     """The measured basis's listing, as the spec prints it: a Loki node selecting a direct shipper's stream."""
     return [
         r["uid"]
         for r in _rules()
         for d in r["data"]
-        if "LOKI" in str(d.get("datasourceUid")) and any(s in d["model"]["expr"] for s in _DIRECT_SELECTORS)
+        if "LOKI" in str(d.get("datasourceUid")) and _selects_a_direct_shipper(d["model"]["expr"])
     ]
+
+
+@pytest.mark.parametrize(
+    ("expr", "selects"),
+    [
+        ('count_over_time({host="zcrypto", container="engine", level=~".+"} [6h])', True),
+        ('count_over_time({container=~"engine|capture"} [6h])', True),
+        ('count_over_time({host="ops", container=~"capture"} [6h])', True),
+        ('count_over_time({host="ops", container=~"alloy|liquidations|zcrypto-.*"} [15m])', True),
+        ('count_over_time({host="zcrypto", container="engine-nautilus"} [15m])', False),
+        ('count_over_time({host="ops", container=~"zcrypto-.*"} [26h])', False),
+        ('count_over_time({host="ops", container="alloy"} [6h])', False),
+        ('count_over_time({host="engine"} [6h])', False),
+    ],
+    ids=[
+        "equality",
+        "a regex of two shippers",
+        "a regex of one",
+        "a regex among others",
+        "a prefixed name",
+        "a pattern",
+        "another container",
+        "no container matcher",
+    ],
+)
+def test_the_listing_reads_a_container_matcher_of_either_form_for_a_direct_shippers_whole_name(expr, selects):
+    assert _selects_a_direct_shipper(expr) is selects
 
 
 def test_the_direct_shipped_rules_are_the_measured_basis_listing_and_the_other_two_exclusions_are_one_name_each():

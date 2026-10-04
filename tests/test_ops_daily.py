@@ -1761,13 +1761,14 @@ def test_a_stack_the_pass_cannot_resolve_is_a_usage_error_before_any_read(monkey
 
 _SUMMARY = "compare: 102 nodes × 24 instants, 0 differences"
 _A_DIFFERENCE = 'zcrypto-ops-disk-low A 2026-10-02T03:00Z only on mon {host="ops"}'
-_TODAY = datetime.now(timezone.utc).date()
 
 
-def _comparing(monkeypatch, *, since=_TODAY, stacks=None, output=f"{_A_DIFFERENCE}\n{_SUMMARY}\n") -> dict:
-    """A quiet pass whose comparison runner records the day it was handed and answers `output`."""
+def _comparing(monkeypatch, *, since=timedelta(0), stacks=None, output=f"{_A_DIFFERENCE}\n{_SUMMARY}\n") -> dict:
+    """A quiet pass whose comparison runner records the day it was handed and answers `output`; `since` is an offset
+    from today, read at the call so a session that crosses 00:00 UTC still holds, or None for the constant unset."""
     seen = _a_quiet_pass(monkeypatch)
-    monkeypatch.setattr(ops_daily, "COMPARISON_FROM", since)
+    seen["today"] = datetime.now(timezone.utc).date()
+    monkeypatch.setattr(ops_daily, "COMPARISON_FROM", None if since is None else seen["today"] + since)
     if stacks is not None:
         monkeypatch.setattr(ops_daily.grafana_auth, "STACKS", stacks)
     seen["days"] = []
@@ -1778,11 +1779,11 @@ def _comparing(monkeypatch, *, since=_TODAY, stacks=None, output=f"{_A_DIFFERENC
 @pytest.mark.parametrize(
     ("argv", "since", "stacks"),
     [
-        (["report"], _TODAY, None),
-        (["report", "--compare"], _TODAY + timedelta(days=1), None),
+        (["report"], timedelta(0), None),
+        (["report", "--compare"], timedelta(days=1), None),
         (["report", "--compare"], None, None),
-        (["report", "--compare"], _TODAY, {"cloud": ops_daily.grafana_auth.STACKS["cloud"]}),
-        (["report", "--compare", "--journal-entry"], _TODAY, None),
+        (["report", "--compare"], timedelta(0), {"cloud": ops_daily.grafana_auth.STACKS["cloud"]}),
+        (["report", "--compare", "--journal-entry"], timedelta(0), None),
     ],
     ids=["without the flag", "the day before", "the constant unset", "one stack in the table", "the journal-entry run"],
 )
@@ -1799,7 +1800,7 @@ def test_the_comparison_section_carries_the_runners_last_line_for_the_preceding_
     out = capsys.readouterr().out
     assert f"\n## Comparison\n{_SUMMARY}\n" in out, out
     assert _A_DIFFERENCE not in out
-    assert seen["days"] == [_TODAY - timedelta(days=1)]
+    assert seen["days"] == [seen["today"] - timedelta(days=1)]
 
 
 def test_the_comparison_moves_no_exit_code(monkeypatch, capsys):

@@ -6,7 +6,9 @@ datasource proxy at the top of each UTC hour of the day named, the preceding UTC
 range selector supplies the window. The node's own rule group and `host` exist on the node alone, so both are
 outside the comparison by name. The last line is one summary whatever the outcome:
   `compare: <nodes> nodes × 24 instants, <n> differences`, exit 0 at none and 1 otherwise, one line per difference above it;
-  `compare: failed: <what failed>`, exit 2, naming the stack where a stack failed -- never a match, never a skip.
+  `compare: failed: <what failed>`, exit 2, its text folded onto the one line, naming the stack where a stack failed --
+  never a match, never a skip; a failure the script did not name ends the same way as `<ExceptionType>: <text>`, its
+  traceback on stderr, which the daily pass discards.
 The requests go one at a time, so a run adds one query at a time to either stack's query path. The tokens are only
 ever request headers: never printed, never written, never in argv.
 """
@@ -18,6 +20,7 @@ import importlib.util
 import json
 import math
 import sys
+import traceback
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -191,12 +194,19 @@ def compare(day: date) -> tuple[int, int]:
     return len(nodes), found
 
 
+def _failed(text: str) -> int:
+    print(f"compare: failed: {' '.join(text.split())}")
+    return 2
+
+
 def main(argv: list[str]) -> int:
     try:
         nodes, found = compare(_day(argv))
     except Failed as exc:
-        print(f"compare: failed: {exc}")
-        return 2
+        return _failed(str(exc))
+    except Exception as exc:  # noqa: BLE001 -- the last line is the summary whatever failed; the traceback keeps the cause on stderr
+        traceback.print_exc()
+        return _failed(f"{type(exc).__name__}: {exc}")
     print(f"compare: {nodes} nodes × {INSTANTS_PER_DAY} instants, {found} differences")
     return 1 if found else 0
 
