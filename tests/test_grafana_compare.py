@@ -44,7 +44,7 @@ DIRECT_SHIPPED = (
     "zcrypto-capture-log-dead-secondary",
 )
 _DIRECT_SHIPPERS = ("engine", "capture", "liquidations")
-_CONTAINER_MATCHER = re.compile(r'container\s*=~?\s*"([^"]*)"')
+_CONTAINER_MATCHER = re.compile(r'container\s*(=~?)\s*(?:"([^"]*)"|`([^`]*)`)')
 
 
 class Request(NamedTuple):
@@ -196,6 +196,9 @@ def test_an_empty_result_matches_an_empty_result_alone(monkeypatch, tmp_path, ca
         b'{"status": "success", "data": {"resultType": "matrix", "result": [{"metric": {"host": "ops"}, "values": [[1790726400, "1"]]}]}}',
         b'{"status": "success", "data": {"resultType": "scalar", "result": [1790726400, "1"]}}',
         b'{"status": "success", "data": {"resultType": "streams", "result": [{"stream": {"host": "ops"}, "values": [["1790726400000000000", "x"]]}]}}',
+        b'{"status": "success", "data": {"resultType": "matrix", "result": []}}',
+        b'{"status": "success", "data": {"resultType": "streams", "result": []}}',
+        b'{"status": "success", "data": {"result": []}}',
     ],
     ids=[
         "a 5xx",
@@ -207,6 +210,9 @@ def test_an_empty_result_matches_an_empty_result_alone(monkeypatch, tmp_path, ca
         "a matrix result",
         "a scalar result",
         "a Loki stream result",
+        "a matrix result of no series",
+        "a Loki stream result of no series",
+        "a result of no type",
     ],
 )
 def test_a_stack_that_cannot_answer_ends_the_run_naming_it_never_as_a_match(monkeypatch, tmp_path, capsys, stack, fault):
@@ -227,8 +233,10 @@ def test_the_three_exclusions_are_by_name_so_a_prefix_a_prefixed_name_and_a_host
         _rule("r-up", "up"),
         _rule("zcrypto-mon-disk-low", "node_filesystem_avail_bytes", group="zcrypto-mon"),
         _rule("zcrypto-mon2-disk-low", "node_load1", group="zcrypto-mon2"),
+        _rule("zcrypto-disk-low", "node_memory_MemFree_bytes", group="zcrypto"),
         _rule("zcrypto-engine-error-logs", 'count_over_time({container="engine"} [5m])', loki=True),
         _rule("zcrypto-engine-error-logs-2", 'count_over_time({container="engine"} [10m])', loki=True),
+        _rule("zcrypto-engine-error", 'count_over_time({container="engine"} [15m])', loki=True),
     )
 
     def answer(stack, path, expr, time):
@@ -238,12 +246,24 @@ def test_the_three_exclusions_are_by_name_so_a_prefix_a_prefixed_name_and_a_host
     stacks = _Stacks(monkeypatch, answer)
     rc, out = _run(capsys)
     assert rc == 1
-    assert out[-1] == "compare: 3 nodes × 24 instants, 288 differences"
+    assert out[-1] == "compare: 5 nodes × 24 instants, 480 differences"
     uids = Counter(line.split(" ")[0] for line in out[:-1])
-    assert uids == {"r-up": 96, "zcrypto-mon2-disk-low": 96, "zcrypto-engine-error-logs-2": 96}, uids
+    assert uids == {
+        "r-up": 96,
+        "zcrypto-mon2-disk-low": 96,
+        "zcrypto-disk-low": 96,
+        "zcrypto-engine-error-logs-2": 96,
+        "zcrypto-engine-error": 96,
+    }, uids
     hosts = Counter(m.group(1) if (m := re.search(r'host="([^"]+)"', line)) else "" for line in out[:-1])
-    assert hosts == {"zcrypto": 72, "zcrypto-red": 72, "zcrypto-mon2": 72, "": 72}, hosts
-    assert {r.expr for r in stacks.requests} == {"up", "node_load1", 'count_over_time({container="engine"} [10m])'}
+    assert hosts == {"zcrypto": 120, "zcrypto-red": 120, "zcrypto-mon2": 120, "": 120}, hosts
+    assert {r.expr for r in stacks.requests} == {
+        "up",
+        "node_load1",
+        "node_memory_MemFree_bytes",
+        'count_over_time({container="engine"} [10m])',
+        'count_over_time({container="engine"} [15m])',
+    }
 
 
 @pytest.mark.parametrize(
@@ -358,7 +378,15 @@ def _rules() -> list[dict]:
 
 
 def _selects_a_direct_shipper(expr: str) -> bool:
-    return any(name in _DIRECT_SHIPPERS for m in _CONTAINER_MATCHER.finditer(expr) for name in m.group(1).split("|"))
+    """`=` selects a shipper by its whole name; `=~` by a regex Loki anchors at both ends, so a pattern that matches
+    a shipper's whole name selects it, however it is written."""
+    for m in _CONTAINER_MATCHER.finditer(expr):
+        operator, value = m.group(1), m.group(2) if m.group(2) is not None else m.group(3)
+        if operator == "=" and value in _DIRECT_SHIPPERS:
+            return True
+        if operator == "=~" and any(re.fullmatch(value, name) for name in _DIRECT_SHIPPERS):
+            return True
+    return False
 
 
 def _listing() -> list[str]:
@@ -377,7 +405,13 @@ def _listing() -> list[str]:
         ('count_over_time({container=~"engine|capture"} [6h])', True),
         ('count_over_time({host="ops", container=~"capture"} [6h])', True),
         ('count_over_time({host="ops", container=~"alloy|liquidations|zcrypto-.*"} [15m])', True),
+        ('count_over_time({host="zcrypto", container=~"engine.*"} [6h])', True),
+        ('count_over_time({host="zcrypto", container=~"(engine|capture)"} [6h])', True),
+        ('count_over_time({host="zcrypto", container=~`engine|capture`} [6h])', True),
+        ('count_over_time({host="zcrypto", container=`engine`} [6h])', True),
         ('count_over_time({host="zcrypto", container="engine-nautilus"} [15m])', False),
+        ('count_over_time({host="zcrypto", container="engine.*"} [15m])', False),
+        ('count_over_time({host="zcrypto", container=~"engin"} [15m])', False),
         ('count_over_time({host="ops", container=~"zcrypto-.*"} [26h])', False),
         ('count_over_time({host="ops", container="alloy"} [6h])', False),
         ('count_over_time({host="engine"} [6h])', False),
@@ -387,7 +421,13 @@ def _listing() -> list[str]:
         "a regex of two shippers",
         "a regex of one",
         "a regex among others",
+        "a pattern of a shipper",
+        "a grouped alternation",
+        "a backtick-quoted regex",
+        "a backtick-quoted name",
         "a prefixed name",
+        "a pattern under equality",
+        "a regex of a prefix",
         "a pattern",
         "another container",
         "no container matcher",

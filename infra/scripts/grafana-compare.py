@@ -103,7 +103,7 @@ def instants(day: date) -> list[int]:
 
 
 def _rows(stack: str, node: Node, instant: int, result) -> dict[tuple[tuple[str, str], ...], float]:
-    """Each series by its whole label set, the node's rows dropped; a shape that is not an instant vector fails the stack."""
+    """Each series by its whole label set, the node's rows dropped; a series that is not an instant-vector row fails the stack."""
     try:
         rows = {}
         for series in result:
@@ -123,9 +123,12 @@ def query(stack: str, url: str, token: str, node: Node, instant: int) -> dict[tu
     request = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310 -- the stack table's https urls
-            result = json.load(response)["data"]["result"]
-    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
+            data = json.load(response)["data"]
+            kind, result = data.get("resultType"), data["result"]
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise Failed(f"{stack} {node.uid} {node.ref_id} at {instant}: {exc}") from exc
+    if kind != "vector":
+        raise Failed(f"{stack} {node.uid} {node.ref_id} at {instant}: a {kind!r} result, not an instant vector")
     return _rows(stack, node, instant, result)
 
 
