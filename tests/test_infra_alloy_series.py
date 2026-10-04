@@ -600,8 +600,6 @@ _JOURNAL_NOT_SHIPPED = {
 
 
 def _journal_keep_block(config: Path) -> str:
-    """The whole `keep` rule, not just its regex: the separator and the source_labels decide what value the regex
-    is matched against, and either one changing makes the rule match nothing."""
     for block in re.findall(r"^\s*rule \{(.*?)\n  \}", config.read_text(), re.M | re.S):
         if re.search(r'^\s*source_labels\s*=.*"__journal__systemd_unit"', block, re.M) and re.search(
             r'^\s*action\s*=\s*"keep"\s*$', block, re.M
@@ -615,7 +613,7 @@ def _ops_journal_keep_block() -> str:
 
 
 def _ops_journal_keep_regex() -> str:
-    """The `keep` rule that reads `__journal__systemd_unit`, as written in the file."""
+    """The journal `keep` rule's regex, as written in the file."""
     return _live_regex(_ops_journal_keep_block(), f"{OPS_ALLOY}: journal keep rule")
 
 
@@ -664,13 +662,7 @@ def test_a_unit_listed_as_unshipped_is_not_in_the_keep_regex():
 
 @pytest.mark.parametrize("config", [OPS_ALLOY, CAPTURE_ALLOY], ids=["ops", "capture"])
 def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container(config):
-    """Only the alternation was read, so the rest of the production rule could break green -- including the arm
-    that admits Alloy's own journald-driver stream. `zcrypto-ops-log-pipeline-dead` pages on that stream's
-    silence after 6 h, so the loss is not invisible -- but a test that fails at once beats a dead-man that
-    fires a quarter of a day later, on a fleet whose other rules read the series it carries.
-
-    Both hosts, because the capture pair's rule is the ops rule's twin field for field and was read by nothing:
-    the two mutations below killed on ops and survived there."""
+    """Both hosts: the capture pair's rule is the ops rule's twin field for field."""
     rule = _journal_keep_block(config)
     regex = _live_regex(rule, f"{config}: journal keep rule")
     assert _LIVE_SEPARATOR_LINE.search(rule), (
@@ -709,7 +701,10 @@ def test_the_capture_config_scrapes_the_cache_proxy_and_labels_its_journal_lines
     text = CAPTURE_ALLOY.read_text()
     scrape = re.search(r'prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.DOTALL)
     assert scrape, "no cache_proxy scrape block"
-    assert '"127.0.0.1:9104"' in scrape.group(1) and 'job_name        = "cache_proxy"' in scrape.group(1)
+    assert '"127.0.0.1:9104"' in scrape.group(1)
+    assert re.search(r'^\s*job_name\s*=\s*"cache_proxy"\s*$', scrape.group(1), re.M), (
+        f'no live `job_name = "cache_proxy"` line in the cache_proxy scrape block: {scrape.group(1)!r}'
+    )
     proxy, engine = text.index('pipeline_name = "cache_proxy"'), text.index('pipeline_name = "engine_nautilus"')
     assert proxy < engine, "the proxy's match must run before the engine's, which relabels the whole unit"
     block = text[proxy:engine]
