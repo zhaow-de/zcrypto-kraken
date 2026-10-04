@@ -482,8 +482,8 @@
         mode: "0644"
       notify: reload alloy
 
-    # no_log with diff false: without both, a converge prints the Grafana Cloud credentials and the two
-    # cache passwords. Owned by the Alloy user so it can read a 0600 file.
+    # no_log with diff false: without both, a converge prints every credential the file holds.
+    # Owned by the Alloy user so it can read a 0600 file.
     - name: render the alloy secrets env file
       ansible.builtin.template:
         src: alloy-secrets.env.j2

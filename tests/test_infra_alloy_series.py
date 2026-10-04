@@ -1,5 +1,5 @@
 """Guard: a `keep` relabel drops every series it does not list (T0051), so a series missing from
-the keep-regex does not go undashboarded -- it does not exist."""
+the keep-regex does not exist in Grafana Cloud."""
 
 import re
 from pathlib import Path
@@ -798,11 +798,11 @@ def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_n
 
 # --- the node's leg: a second endpoint beside the Cloud one, and the names each reads ---------------
 def _endpoint_blocks(path: Path) -> list[str]:
-    component = re.search(r'\nprometheus\.remote_write "grafana" \{(.*?)\n\}\n', path.read_text(), re.S).group(1)
+    component = re.search(r'\nprometheus\.remote_write "grafana" \{(.*?)\n\}\n', _live_alloy_text(path), re.S).group(1)
     return re.findall(r"\n  endpoint \{(.*?)\n  \}", component, re.S)
 
 
-@pytest.mark.parametrize("path", [ACCESS_ALLOY, OPS_ALLOY], ids=["access", "ops"])
+@pytest.mark.parametrize("path", [ACCESS_ALLOY, OPS_ALLOY, CACHE_ALLOY], ids=["access", "ops", "cache"])
 def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
     cloud, mon = _endpoint_blocks(path)
     assert len(re.findall(r"^\s*write_relabel_config\s*\{\s*$", cloud, re.M)) == 2 and "MON_" not in cloud
@@ -856,8 +856,12 @@ _MON_LOKI_LINES = [
 
 @pytest.mark.parametrize(
     ("template", "mon_lines"),
-    [(ACCESS_SECRETS, _MON_PROM_LINES), (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES)],
-    ids=["access", "ops"],
+    [
+        (ACCESS_SECRETS, _MON_PROM_LINES),
+        (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
+        (CACHE_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES),
+    ],
+    ids=["access", "ops", "cache"],
 )
 def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
     lines = _live_j2_text(template).splitlines()
@@ -887,7 +891,7 @@ def test_each_secrets_template_renders_the_names_its_config_reads(config, templa
 
 # --- the node's log leg: a second loki.write fed by the parse stage, beside the Cloud one ----------------
 def _loki_write_block(path: Path, name: str) -> str:
-    block = re.search(rf'\nloki\.write "{name}" \{{(.*?)\n\}}\n', path.read_text() + "\n", re.S)
+    block = re.search(rf'\nloki\.write "{name}" \{{(.*?)\n\}}\n', _live_alloy_text(path) + "\n", re.S)
     assert block, f'{path}: no loki.write "{name}" component'
     return block.group(1)
 
@@ -898,9 +902,9 @@ def _one_endpoint_reading(block: str, names: tuple[str, str, str]) -> None:
         assert re.search(rf'^\s*{key}\s*=\s*sys\.env\("{name}"\)\s*$', block, re.M), (name, block)
 
 
-@pytest.mark.parametrize("path", [OPS_ALLOY], ids=["ops"])
+@pytest.mark.parametrize("path", [OPS_ALLOY, CACHE_ALLOY], ids=["ops", "cache"])
 def test_the_parse_stage_feeds_both_loki_writes_and_each_reads_its_own_names(path):
-    parse = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', path.read_text(), re.M | re.S)
+    parse = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', _live_alloy_text(path), re.M | re.S)
     assert parse, f'{path}: no loki.process "parse"'
     forward = re.search(r"^  forward_to\s*=\s*\[(.*?)\]\s*$", parse.group(1), re.M)
     assert forward and forward.group(1) == "loki.write.grafana.receiver, loki.write.mon.receiver", parse.group(1)
@@ -913,7 +917,7 @@ def test_the_parse_stage_feeds_both_loki_writes_and_each_reads_its_own_names(pat
 
 # --- the unix exporter's netdev exclusion: the container and bridge devices stay at the source ----------
 def _unix_exporter_block(path: Path) -> str:
-    block = re.search(r'\nprometheus\.exporter\.unix "host" \{(.*?)\n\}\n', path.read_text(), re.S)
+    block = re.search(r'\nprometheus\.exporter\.unix "host" \{(.*?)\n\}\n', _live_alloy_text(path), re.S)
     assert block, f'{path}: no prometheus.exporter.unix "host" component'
     return block.group(1)
 
