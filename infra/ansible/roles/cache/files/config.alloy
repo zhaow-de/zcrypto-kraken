@@ -5,8 +5,8 @@
 // host` is the node's own name, so this one static file labels all three nodes. Credentials arrive as
 // environment variables from alloy-secrets.env (0600, rendered by the role), read with `sys.env(...)`.
 //
-// EDITING NOTE -- test suites pull assignments out of this file by PREFIX (`line.strip().startswith(<key>)`).
-// Keep every config key the first non-space token on exactly one line.
+// EDITING NOTE -- tests read each assignment in this file as a whole line (`^\s*<key>\s*=`):
+// keep every config key the first non-space token on exactly one line.
 
 // ---- Host metrics -------------------------------------------------------------------------------
 // The textfile directory is where the cache_link role's mesh probe (zcache-probe) writes zcache.prom,
@@ -100,8 +100,8 @@ prometheus.remote_write "grafana" {
       password = sys.env("GRAFANA_PROM_PASSWORD")
     }
 
-    // Alloy's own internals first, then keep-only: a series the keep regex does not list does not
-    // exist in Grafana Cloud; tests/test_infra_alloy_series.py holds it to CACHE_REQUIRED exactly.
+    // A series the keep regex does not list does not exist in Grafana Cloud;
+    // tests/test_infra_alloy_series.py holds it to CACHE_REQUIRED exactly.
     write_relabel_config {
       source_labels = ["__name__"]
       regex         = "alloy_.*"
@@ -115,7 +115,7 @@ prometheus.remote_write "grafana" {
     }
   }
 
-  // The node's leg, unfiltered: its own queue, so a dead endpoint does not hold the other.
+  // Unfiltered, on its own queue: a dead endpoint does not hold the other.
   endpoint {
     name = "mon"
     url  = sys.env("MON_PROM_URL")
@@ -239,8 +239,8 @@ loki.write "grafana" {
   }
 }
 
-// The node's leg is its own component, fed by the parse stage beside the Cloud one: a second
-// endpoint inside loki.write "grafana" would be fed in succession and could stall it.
+// Its own component: a second endpoint inside loki.write "grafana" would be fed in succession
+// and could stall it.
 loki.write "mon" {
   endpoint {
     url = sys.env("MON_LOKI_URL")

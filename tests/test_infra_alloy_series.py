@@ -1,5 +1,5 @@
 """Guard: a `keep` relabel drops every series it does not list (T0051), so a series missing from
-the keep-regex does not go undashboarded -- it does not exist."""
+the keep-regex does not exist in Grafana Cloud."""
 
 import re
 from pathlib import Path
