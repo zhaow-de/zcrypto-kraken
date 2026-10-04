@@ -213,7 +213,7 @@ grep 'Failed to apply Alertmanager config\|Applying new configuration' <paths.lo
 - Whether D14's proof collapses the two tree states: read on the workstation on 2026-10-03, before phase 2's plan; it collapses them, one tree state per role (D14).
 - The series the self-check reads as "rule evaluation is fresh": read off Grafana 13.2.3's `/metrics` in phase 1's first task.
 - The thresholds and `for` of the node's nine rules beyond the two D16 states: phase 1's plan, each verified by value at the first push.
-- Whether `prometheus` leaves the unattended-upgrades blacklist: the store-restart drill, W1, run 2026-10-04, read the bare restart under a running Grafana silent; it leaves, the host's blacklist empty (D17).
+- Whether `prometheus` leaves the unattended-upgrades blacklist: the store-restart drill, W1, read on 2026-10-04; it leaves (D17).
 - Whether the Cloud push URL and Loki hostname, held as label values on the node for 90 days after retirement, are left to age out or dropped at the node's endpoint: the owner's word of 2026-10-03, they age out with the node's retention, no relabel at the endpoint (D12); they are not credentials.
 - Whether the bridgehead's Alloy gains `prometheus.exporter.self` with its second endpoint, so that `zcrypto-mon-shipper-loss` reads it as it reads the seven hosts whose Alloy scrapes itself: phase 2's plan answers yes, the self exporter landing with the second endpoint (D16).
 - Whether a restore from Linode Backups returns a usable store: tried at the first real loss, the rebuild being the proven path.
