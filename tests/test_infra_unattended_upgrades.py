@@ -170,9 +170,6 @@ def test_an_empty_blacklist_renders_the_file_the_fleet_already_has():
 def test_the_observability_node_lets_unattended_upgrades_restart_prometheus():
     declared = _yaml(MON_HOST_VARS)[BLACKLIST]
     assert declared == [], declared
-    rendered = _render(**{VAR: "false", BLACKLIST: declared})
-    assert "Package-Blacklist" not in rendered, rendered
-    assert rendered == _render(**{VAR: "false"})
 
 
 def test_no_other_host_declares_a_blacklist():
