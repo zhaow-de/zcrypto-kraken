@@ -1757,6 +1757,125 @@ def test_a_stack_the_pass_cannot_resolve_is_a_usage_error_before_any_read(monkey
     assert "--stack takes one of cloud, mon" in capsys.readouterr().out
 
 
+# --- the comparison: a `report --compare` run from COMPARISON_FROM, while the table carries both stacks ---------------
+
+_SUMMARY = "compare: 102 nodes × 24 instants, 0 differences"
+_A_DIFFERENCE = 'zcrypto-ops-disk-low A 2026-10-02T03:00Z only on mon {host="ops"}'
+
+
+def _comparing(monkeypatch, *, since=timedelta(0), stacks=None, output=f"{_A_DIFFERENCE}\n{_SUMMARY}\n") -> dict:
+    """A quiet pass whose comparison runner records the day it was handed and answers `output`; `since` is an offset
+    from today, read at the call so a session that crosses 00:00 UTC still holds, or None for the constant unset."""
+    seen = _a_quiet_pass(monkeypatch)
+    seen["today"] = datetime.now(timezone.utc).date()
+    monkeypatch.setattr(ops_daily, "COMPARISON_FROM", None if since is None else seen["today"] + since)
+    if stacks is not None:
+        monkeypatch.setattr(ops_daily.grafana_auth, "STACKS", stacks)
+    seen["days"] = []
+    monkeypatch.setattr(ops_daily, "compare_run", lambda day: seen["days"].append(day) or output)
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("argv", "since", "stacks"),
+    [
+        (["report"], timedelta(0), None),
+        (["report", "--compare"], timedelta(days=1), None),
+        (["report", "--compare"], None, None),
+        (["report", "--compare"], timedelta(0), {"cloud": ops_daily.grafana_auth.STACKS["cloud"]}),
+        (["report", "--compare", "--journal-entry"], timedelta(0), None),
+    ],
+    ids=["without the flag", "the day before", "the constant unset", "one stack in the table", "the journal-entry run"],
+)
+def test_the_comparison_section_is_absent_and_the_runner_not_called(monkeypatch, capsys, argv, since, stacks):
+    seen = _comparing(monkeypatch, since=since, stacks=stacks)
+    assert ops_daily.main(argv) == 0
+    assert "Comparison" not in capsys.readouterr().out
+    assert seen["days"] == []
+
+
+def test_the_comparison_section_carries_the_runners_last_line_for_the_preceding_day(monkeypatch, capsys):
+    seen = _comparing(monkeypatch)
+    assert ops_daily.main(["report", "--compare"]) == 0
+    out = capsys.readouterr().out
+    assert f"\n## Comparison\n{_SUMMARY}\n" in out, out
+    assert _A_DIFFERENCE not in out
+    assert seen["days"] == [seen["today"] - timedelta(days=1)]
+
+
+def test_the_comparison_moves_no_exit_code(monkeypatch, capsys):
+    _comparing(monkeypatch, output="compare: 102 nodes × 24 instants, 3 differences\n")
+    assert ops_daily.main(["report", "--compare"]) == 0
+    assert "\n## Comparison\ncompare: 102 nodes × 24 instants, 3 differences\n" in capsys.readouterr().out
+
+
+def test_a_runner_that_raises_prints_the_failure_line_never_a_traceback():
+    def boom(day):
+        raise RuntimeError("uv could not start")
+
+    assert ops_daily.read_comparison(now=NOW, runner=boom) == "compare: failed: RuntimeError: uv could not start"
+
+
+@pytest.mark.parametrize(
+    "output", ["", "Traceback (most recent call last):\n  boom\n", "compare: 1 nodes\n", f"{_SUMMARY}\nwarning: x\n"]
+)
+def test_a_runner_whose_last_line_is_not_the_summary_prints_the_failure_line(output):
+    line = ops_daily.read_comparison(now=NOW, runner=lambda day: output)
+    assert line.startswith("compare: failed: ") and _SUMMARY not in line, line
+
+
+def test_a_runner_that_meets_its_bound_prints_the_bounds_line_naming_no_stack():
+    def slow(day):
+        raise subprocess.TimeoutExpired(cmd="grafana-compare.py", timeout=ops_daily.COMPARE_TIMEOUT_SECONDS)
+
+    assert ops_daily.read_comparison(now=NOW, runner=slow) == "compare: failed: the comparison ran past its 2700 s bound"
+    assert ops_daily.COMPARE_TIMEOUT_SECONDS == 2700
+
+
+def test_the_runner_hands_the_script_the_preceding_day_and_keeps_its_summary_line():
+    for output in (f"{_SUMMARY}\n", "compare: failed: mon r-up A at 1790726400: HTTP Error 503\n"):
+        assert ops_daily.read_comparison(now=NOW, runner=lambda day: output) == output.strip()
+    days = []
+    ops_daily.read_comparison(now=NOW, runner=lambda day: days.append(day) or f"{_SUMMARY}\n")
+    assert days == [NOW.date() - timedelta(days=1)]
+
+
+def test_the_comparison_runner_is_keyword_only_and_carries_no_live_default():
+    runner = inspect.signature(ops_daily.read_comparison).parameters["runner"]
+    assert runner.kind is inspect.Parameter.KEYWORD_ONLY and runner.default is inspect.Parameter.empty
+    with pytest.raises(TypeError):
+        ops_daily.read_comparison(now=NOW)
+
+
+def test_the_live_runner_returns_the_scripts_stdout_whatever_its_exit_code(monkeypatch, tmp_path):
+    stub = tmp_path / "grafana-compare.py"
+    stub.write_text(
+        'import sys\nprint("args", *sys.argv[1:])\nprint("compare: 102 nodes × 24 instants, 3 differences")\nsys.exit(1)\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ops_daily, "COMPARE_SCRIPT", stub)
+    out = ops_daily.compare_run(date(2026, 10, 2))
+    assert out.splitlines() == ["args --day 2026-10-02", "compare: 102 nodes × 24 instants, 3 differences"]
+
+
+def test_the_live_runner_is_bounded_and_runs_from_the_repo_root(monkeypatch):
+    seen = {}
+
+    def run(command, **kwargs):
+        seen["command"], seen["kwargs"] = command, kwargs
+        return subprocess.CompletedProcess(command, 2, stdout="compare: failed: x\n", stderr="")
+
+    monkeypatch.setattr(ops_daily.subprocess, "run", run)
+    assert ops_daily.compare_run(date(2026, 10, 2)) == "compare: failed: x\n"
+    assert seen["kwargs"]["timeout"] == 2700 and seen["kwargs"]["cwd"] == ops_daily.REPO_ROOT
+    assert seen["kwargs"].get("check", False) is False
+    assert list(seen["command"][-3:]) == [str(ops_daily.COMPARE_SCRIPT), "--day", "2026-10-02"]
+
+
+def test_the_comparisons_first_day_is_unset_or_a_plain_date():
+    assert ops_daily.COMPARISON_FROM is None or type(ops_daily.COMPARISON_FROM) is date
+
+
 def test_a_truncated_sample_array_is_an_unreadable_source_too():
     """A sample array too short to index is an unreadable source, not an `IndexError` past the parse."""
     truncated = {"data": {"result": [{"metric": {}, "value": [0]}]}}

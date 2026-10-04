@@ -366,3 +366,4 @@ One row per merged pull request whose BRANCH NAME spells a key, and one per pull
 | #653 | 2026-10-03 | fix(mon): a lax session cookie, so a Slack alert link opens its target | — | 00121 | — |
 | #654 | 2026-10-03 | fix(mon): the edge answers a pre-resolving HEAD; Slack links open | — | 00121 | — |
 | #655 | 2026-10-03 | chore(fleet): the observability node rolled out; T0217 partial | — | 00121 | T0217 |
+| #656 | 2026-10-04 | feat(infra): 00121 — bridgehead dual-ships, comparison script, drills | — | 00121 | T0217 |

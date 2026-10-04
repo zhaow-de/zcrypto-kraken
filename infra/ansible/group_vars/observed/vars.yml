@@ -1,0 +1,6 @@
+# The node's ingest for the fleet's Alloys: the public name and the two paths roles/mon/templates/Caddyfile.j2
+# authenticates, and the user it admits on both. The password is `mon_ingest_fleet_password` in vault.yml
+# beside this file.
+mon_ingest_prom_url: https://zcrypto-mon.zhaow.me/api/v1/write
+mon_ingest_loki_url: https://zcrypto-mon.zhaow.me/loki/api/v1/push
+mon_ingest_fleet_user: fleet

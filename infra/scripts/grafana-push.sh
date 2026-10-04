@@ -212,15 +212,17 @@ echo "grafana-push: pushing alert rules"
 # after this is plain JSON handled by jq, substituting the ${GRAFANA_*_UID} placeholder tokens
 # from this script's own environment (the provisioning API has no template substitution of its
 # own).
-rules_json=$(python3 -c '
+rules_split=$(python3 -c '
 import json, os, sys, yaml
 skipped = os.environ["GRAFANA_SKIP_RULE_GROUPS"]
 rules = yaml.safe_load(open(sys.argv[1]))["rules"]
 kept = [r for r in rules if r.get("ruleGroup") not in skipped.split()]
 if len(kept) != len(rules):
     print(f"grafana-push: skipping {len(rules) - len(kept)} rule(s) of group(s): {skipped}", file=sys.stderr)
-print(json.dumps(kept))
+print(json.dumps({"kept": kept, "skipped": {r["uid"]: r["ruleGroup"] for r in rules if r.get("ruleGroup") in skipped.split()}}))
 ' "${root}/infra/grafana/alerts.yaml")
+rules_json=$(jq -c '.kept' <<<"${rules_split}")
+skipped_json=$(jq -c '.skipped' <<<"${rules_split}")
 
 rule_uids=$(jq -r '.[].uid' <<<"${rules_json}")
 
@@ -289,7 +291,12 @@ else
       gcurl -fsS -X DELETE "${GRAFANA_URL}/api/v1/provisioning/alert-rules/${uid}" >/dev/null
       echo "grafana-push: DELETED orphaned rule ${uid}" >&2
     else
-      echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
+      skipped_group=$(jq -r --arg uid "${uid}" '.[$uid] // empty' <<<"${skipped_json}")
+      if [ -n "${skipped_group}" ]; then
+        echo "grafana-push: ORPHAN (live, of skipped group ${skipped_group}): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
+      else
+        echo "grafana-push: ORPHAN (live but not in alerts.yaml): ${uid}  — re-run with GRAFANA_PRUNE=1 under .claude/skills/zcrypto-grafana-push/SKILL.md's Step 4 to delete" >&2
+      fi
     fi
   done <<<"${orphans}"
 fi

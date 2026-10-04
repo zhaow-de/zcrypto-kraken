@@ -2,7 +2,7 @@
 
 You are here because **an alert fired in Slack**. Find the section whose anchor matches the alert `uid`. Each section is written to be actioned without opening any other document.
 
-These four rules are one routine — memory watched continuously across the fleet, regardless of converges. They cover both capture daemons, the engine, the ops liquidations poller, and Alloy on the containerised hosts; the bridgehead's Alloy runs as an apt package with no memory cap and ships no `process_*` series, so it is outside all four.
+These four rules are one routine — memory watched continuously across the fleet, regardless of converges. They cover both capture daemons, the engine, the ops liquidations poller, and Alloy on the containerised hosts; the bridgehead's Alloy runs as an apt package with no memory cap, and none of the four rules names its host, so it is outside all four.
 
 `README.md` beside this file states what belongs in a runbook at all; an alert or a guard names a section by file and anchor, and a procedure is found by its file and heading.
 

@@ -1,6 +1,6 @@
 # Monitor runbooks — the observability node
 
-You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
+You are here because **an alert fired in Slack** — find the section whose anchor matches the alert `uid` — or because you mean to push to the node, compare the two stacks' answers, replace one of its secrets, re-mint the tools' token or restart one of its stores, or because the node itself is down or being rebuilt and you opened `mon-dark` deliberately, or because the daily pass's reminders name the monthly patch pass: the procedures and the reminder's section at the top, found by heading. Each section is written to be actioned without opening any other document.
 
 Everything here is one Linode VPS, `zcrypto-mon` (the workstation's ssh alias `mon`; `Monitor` in Slack and on the Fleet health board), reached by people and tools as `https://zcrypto-mon.zhaow.me`. It runs no containers: Grafana (`grafana-server`), Prometheus, Loki, Caddy and Alloy are apt packages under systemd. Caddy is the one public listener, on 443: it passes `/api/v1/write` to Prometheus and `/loki/api/v1/push` to Loki behind basic auth, answers 404 for `/metrics`, for what lies under it and for `/swagger`, and passes everything else to Grafana, whose own login and tokens guard it. Grafana, Prometheus, Loki and Alloy listen on loopback: `127.0.0.1:3000`, `:9090`, `:3100` and `:12345`. The node's own Alloy ships the node's metrics and journals to its own stores under `host="zcrypto-mon"`. A timer, `zcrypto-mon-selfcheck`, reads every five minutes whether Grafana's rule scheduler is ticking, a fleet sample is fresh and Loki is ready, and its journal line says what it read.
 
@@ -41,6 +41,69 @@ Nothing fired. The rule file, a dashboard or the notification template changed, 
 ### Retire when
 
 `infra/scripts/grafana-push.sh` no longer reads `GRAFANA_SKIP_RULE_GROUPS`, so one stack is left and the push needs no stack named.
+
+______________________________________________________________________
+
+<a name="mon-compare"></a>
+
+## mon-compare — PROCEDURE: comparing the rules' queries on both stacks
+
+### What you are seeing
+
+Nothing fired. The daily pass's report printed a `## Comparison` section whose line counts differences or reads `compare: failed`, or a day's comparison is to be run by hand.
+
+### What it means
+
+`infra/scripts/grafana-compare.py` sends each query node of `infra/grafana/alerts.yaml` to both stacks' datasource proxies as an instant query at the same 24 instants, the top of each UTC hour of one day, and compares the two answers by value: a label set present on one stack and not the other, a value off by more than a relative 1e-6, and an empty result against rows are each a difference, and an empty result on both is a match. Three things are outside it by name, the script's three constants: the rules of the node's own group, `zcrypto-mon`; rows whose `host` is `zcrypto-mon`; and the seven rules that read a direct-shipped log stream, which reaches the node at the cutover and not before. The requests go one at a time to either stack, on the live pager's query path, so a run takes ten minutes or so, longer as the hosts ship to the node. The daily pass runs it for the preceding day from the first day the tree names, `COMPARISON_FROM` in `infra/scripts/ops_daily.py`, and its journal entry carries the line; the cutover is gated by seven consecutive daily lines reading `0 differences`, or whose differences the cutover pull request explains.
+
+### What to do
+
+1. **Run it**, from the repo root, for the day whose hour tops are compared; with no `--day` it is the preceding UTC day, and a day that has not ended is refused:
+
+   ```bash
+   uv run python infra/scripts/grafana-compare.py --day 2026-11-20
+   ```
+
+   It prints one line per difference, `<rule uid> <refId> <instant> <what differs>`, then its summary as the last line, whatever happened. A run outside a pass counts for no day of the seven.
+
+2. **Read the last line.** `compare: <nodes> nodes × 24 instants, 0 differences`, exit 0, is a clean day. `<n> differences`, exit 1: each line above it is a finding for the cutover pull request, fixed or explained there, and not a fault to remediate on the fleet. `compare: failed: <stack> <rule uid> <refId> at <epoch>: …`, exit 2, is that stack refusing, timing out or answering a malformed body at that node and instant, and the day is not a clean one: the node's store is `zcrypto-mon-store-down` below, and a Grafana Cloud refusal is its own status page. Another `compare: failed:` line, the script's refusal before its first query or, under the pass, a run past its 2700 s bound or not ending on its summary, reads as its text says, and that day is not a clean one either.
+
+3. **Read a difference** at the instant it names. `only on <stack> {labels}` is a series one stack holds and the other lacks: a host not yet shipping to the node, a series Grafana Cloud's keep-list drops at the shipper (the `write_relabel_config` keep block of that role's `config.alloy`), or a label one leg rewrites. `value cloud=<a> mon=<b>` is a sample one stack lacks at the instant, or the two engines reading a range differently. `empty on <stack>, <n> rows on <other>` is a query one stack has no data for. A Prometheus node is re-read on both stacks, `--stack mon` the second, with `@ <epoch>` (`date -u -d 2026-11-20T03:00Z +%s`) after each selector and range selector and `time()` written as `<epoch>`: `uv run python infra/scripts/grafana-query.py 'delta(zcrypto_gate_streak_days[6h] @ <epoch>)'`. A Loki node has no `@`: re-read its expression on both stacks with `--loki`, whose window has moved on since the instant, and read the stream's presence on the node by `count_over_time` over the day.
+
+4. **Record it.** Under the pass, the `## Comparison` line goes into the day's journal entry with the pass's paragraph, where the cutover's seven days are read from.
+
+### Retire when
+
+`infra/scripts/grafana_auth.py`'s `STACKS` holds one stack, so there is nothing to compare.
+
+______________________________________________________________________
+
+<a name="mon-dark"></a>
+
+## mon-dark — PROCEDURE: while the node is down or being rebuilt
+
+### What you are seeing
+
+The node is unreachable, powered off or being rebuilt: `https://zcrypto-mon.zhaow.me/api/health` does not answer, `infra/scripts/grafana-query.py --stack mon` and `infra/scripts/ops-daily.py report --stack mon` fail naming it, and the shadow channel is silent. No rule on the node can page this, since a rule cannot page the death of the node it runs on. What tells you is the node's healthchecks.io check, `zcrypto-mon`, which goes down on staleness at its `timeout` 600 s + `grace` 600 s = 20 min from its last ping, through healthchecks.io's own Slack integration; and, about seven minutes behind it, Grafana Cloud's `zcrypto-hcio-watchdog` in the main channel, which counts every down check: the ops Alloy's 60 s scrape of healthchecks.io, then `for: 5m`, then the group interval. Re-quote the two check settings from healthchecks.io; they are settings on a third party's dashboard, and this file does not change when one does. Until the check is minted, with the self-check's last journal line ending `no ping URL is set`, nothing pages the node's death, and a `--stack mon` read failing is the first notice.
+
+### What it means
+
+The fleet is still watched: Grafana Cloud's rules page the main channel throughout. What is gone is the node's own evaluation, so the rules the node alone carries, the `zcrypto-mon` group, are not evaluated, and the node's history for those minutes. Per plane, from the shippers' side: metrics scraped while the node is down are held in each shipper's WAL, up to eight hours, and replayed when it returns; log lines bound for the node are retried about ten times, some seven minutes, then dropped and counted, and `zcrypto-mon-shipper-loss` below follows for each host that ships logs to it, once the node takes that host's metrics again. A store outage with the node up drops the alert history of its minutes, `zcrypto-mon-store-down` below: a transition in that time is in no history read afterwards, although its message was sent. A rebuild starts the stores empty, since the node's history is on its one disk, and the comparison's seven consecutive days (`mon-compare` above) count again from the first day whose 00:00 UTC is at least 50 h after the rebuilt node's converge.
+
+The two figures the drills measured: a thirty-minute power-off lost `[[ROLLOUT: R3's W2 reading — the log lines a 30-minute outage lost]]` (`drills-telemetry.md#drill-w2`), and a rebuild from nothing leaves the node's rules unevaluated for `[[ROLLOUT: R3's W3 reading — the time from the rebuild to the first evaluated rule]]`, from the loss to the first evaluated rule (`drills-telemetry.md#drill-w3`).
+
+### What to do
+
+1. **Confirm it is the node and not your route**: `curl -fsS -m 20 -o /dev/null -w '%{http_code}\n' https://zcrypto-mon.zhaow.me/api/health` from the workstation and from ops (`ssh hp`), then the Linode's state on its page in the Cloud Manager, running or offline, and its LISH console, which answers while the host does.
+2. **Read the dead-man domain without the node**: `uv run python infra/scripts/ops-daily.py report --since 24h` reads healthchecks.io through its API with `healthchecks_readonly_api_key`, and Grafana Cloud for the rest; it is the pass's Cloud form, and runs with the node gone.
+3. **A node that answers ssh**: `ssh mon 'sudo journalctl -u zcrypto-mon-selfcheck --no-pager -o cat | grep -E "^selfcheck:" | tail -3'`. `rules=FAIL` is Grafana: `systemctl is-active grafana-server` on the node, and `mon-store-restart` step 3's failed-start branch. `fleet=FAIL` is the edge: `zcrypto-mon-ingest-dark` below, from its step 1. `loki=FAIL` is the store: `zcrypto-mon-store-down` below. Three `ok` with the check down is the ping's own route, the URL rendered into `/etc/default/zcrypto-mon-selfcheck`, which a converge of the `mon` role re-renders from the vault.
+4. **A node that does not answer**: in the Cloud Manager, a Linode reading offline is powered on from its page; one reading running and answering nothing on ssh or in LISH is rebooted from its page. A node whose disk is gone is rebuilt by `drills-telemetry.md#drill-w3`'s *Induce*, which is the rebuild procedure: the firewall rule, the rebuild, the bootstrap, one converge, one push.
+5. **Change nothing on the fleet for it.** The fleet's reads through Grafana Cloud still run, `grafana-query.py` with no `--stack`; what is gone is the node's half of each by-value confirm, so a fleet converge waits for the node, whose per-host proof reads it.
+6. **On return**: `zcrypto-mon-reboot-pending` step 2's five `active` reads; the rules endpoint's unhealthy list `[]`, `mon-patch-pass` step 5's `intervals=[60] unhealthy=[]` line; the self-check's next line `-> pinged`, and the check up on healthchecks.io; `mon-store-restart` step 5, the silences re-read. The day's journal entry carries the minutes, which hold no alert history and, for each host that ships logs, lines nothing recovers (`zcrypto-mon-shipper-loss` step 4).
+
+### Retire when
+
+`zcrypto-mon-selfcheck.timer` is absent from `infra/ansible/roles/mon/files/`, at which point nothing pages the node's death and this page has no first fact to open on.
 
 ______________________________________________________________________
 
@@ -398,7 +461,7 @@ A **warning** Grafana alert from the node, `Monitor · a shipper lost samples or
 
 ### What it means
 
-Each Alloy counts what it failed to deliver and ships the counts with its other metrics. A sample is counted once a destination answered it with an error Alloy does not retry, as a rejected credential is; samples a destination is not taking for the moment stay on the shipper for up to eight hours, are retried, and are not counted. A log entry is counted once Alloy gave up on its batch: at once on a rejected credential, and after about ten retries, some seven minutes, when the destination is down or erroring. Log lines have no such store on the shipper, so a counted one is gone, and the rules that read that host's logs then reason over an incomplete stream: their silence no longer means healthy. After a reboot of the node, or a stop of its Loki longer than those minutes, this alert follows for each host that was shipping logs to it, and clears six hours after the last lost line. The applications' own log push is not Alloy's and has its own alert, `zcrypto-logship-lines-dropped`. This alert does not see a host that delivers no metrics at all, since the counts travel with them: that is the host's Alloy-dark alert. It does not see the bridgehead, whose Alloy publishes no counts of its own. It does not see samples a shipper held for a destination longer than eight hours, or held across its own restart: those are dropped without being counted. And it reads an increase, so a loss that fell wholly before a count's first sample reached the node is not in it.
+Each Alloy counts what it failed to deliver and ships the counts with its other metrics. A sample is counted once a destination answered it with an error Alloy does not retry, as a rejected credential is; samples a destination is not taking for the moment stay on the shipper for up to eight hours, are retried, and are not counted. A log entry is counted once Alloy gave up on its batch: at once on a rejected credential, and after about ten retries, some seven minutes, when the destination is down or erroring. Log lines have no such store on the shipper, so a counted one is gone, and the rules that read that host's logs then reason over an incomplete stream: their silence no longer means healthy. After a reboot of the node, or a stop of its Loki longer than those minutes, this alert follows for each host that was shipping logs to it, and clears six hours after the last lost line. The applications' own log push is not Alloy's and has its own alert, `zcrypto-logship-lines-dropped`. This alert does not see a host that delivers no metrics at all, since the counts travel with them: that is the host's Alloy-dark alert. It does not see samples a shipper held for a destination longer than eight hours, or held across its own restart: those are dropped without being counted. And it reads an increase, so a loss that fell wholly before a count's first sample reached the node is not in it.
 
 ### What to do
 

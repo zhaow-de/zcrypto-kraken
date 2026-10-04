@@ -324,13 +324,23 @@ def test_a_skipped_groups_rule_found_live_is_an_orphan_and_a_prune_deletes_it(st
     stack.respond(
         "GET",
         "api/v1/provisioning/alert-rules",
-        [{"uid": "r1", "folderUID": "fold-x"}, {"uid": "r2", "folderUID": "fold-x"}, {"uid": "r3", "folderUID": "fold-x"}],
+        [
+            {"uid": "r1", "folderUID": "fold-x"},
+            {"uid": "r2", "folderUID": "fold-x"},
+            {"uid": "r3", "folderUID": "fold-x"},
+            {"uid": "old", "folderUID": "fold-x"},
+        ],
     )
     done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon")
-    assert re.findall(r"ORPHAN \(live but not in alerts\.yaml\): (\S+)", done.stderr) == ["r3"]
+    assert re.findall(r"ORPHAN \(live, of skipped group (\S+)\): (\S+)", done.stderr) == [("zcrypto-mon", "r3")]
+    assert re.findall(r"ORPHAN \(live but not in alerts\.yaml\): (\S+)", done.stderr) == ["old"]
     done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon", GRAFANA_PRUNE="1")
     assert done.returncode == 0, done.stderr
-    assert [p for m, p, _ in stack.recorded() if m == "DELETE"] == ["api/v1/provisioning/alert-rules/r3"]
+    assert [p for m, p, _ in stack.recorded() if m == "DELETE"] == [
+        "api/v1/provisioning/alert-rules/r3",
+        "api/v1/provisioning/alert-rules/old",
+    ]
+    assert re.findall(r"DELETED orphaned rule (\S+)", done.stderr) == ["r3", "old"]
 
 
 def test_the_nodes_push_passes_the_variable_empty_and_sends_its_own_group(stack_with_a_mon_rule):
