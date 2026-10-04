@@ -9,7 +9,7 @@
     that: mon_secret_faults | length == 0
     fail_msg: >-
       {{ mon_secret_faults | join(', ') }} in host_vars/zcrypto-mon/vault.yml: missing, or not the shape
-      its generator writes. Re-generate it with infra/runbooks/mon.md's mon-secrets procedure.
+      its source writes (no trailing newline): infra/runbooks/mon.md's mon-secrets procedure.
   vars:
     mon_secret_faults: >-
       {{ ([['mon_grafana_admin_password', mon_grafana_admin_password | default('')],

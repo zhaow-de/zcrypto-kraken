@@ -149,6 +149,8 @@ The role reads from that file `mon_grafana_admin_user`, the admin login's name, 
 
 5. **The admin's name** (`mon_grafana_admin_user`) is restored and not regenerated on a running node: Grafana keeps the name its database was created with and refuses another as it refuses a wrong password. `git log -p -- infra/ansible/host_vars/zcrypto-mon/vault.yml` holds the entry to put back. A new name fits a node rebuilt with an empty database, from `infra/ansible`: `printf 'u%s' "$(openssl rand -hex 8)" | uv run ansible-vault encrypt_string --stdin-name mon_grafana_admin_user`.
 
+6. **The node's ping URL** (`selfcheck_healthcheck_url`), from `infra/ansible`, with the URL read from the terminal so that it is typed on no command line, printed nowhere and written in clear nowhere: `read -rs url`, paste the URL from the check's page (`mon-dark` above) and press Enter, then `printf %s "$url" | uv run ansible-vault encrypt_string --stdin-name selfcheck_healthcheck_url` and `unset url`. `printf %s` writes the value without a trailing newline, which the role's first task refuses; replace the key's block in `host_vars/zcrypto-mon/vault.yml` with the entry it prints.
+
 ### Retire when
 
 `infra/ansible/roles/mon/tasks/main.yml` no longer opens with the task `refuse a missing or misshapen secret, naming the key and never the value`.

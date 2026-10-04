@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.alloy_text import live_alloy_text as _live_alloy_text
+from tests.alloy_text import live_j2_text as _live_j2_text
+
 REPO = Path(__file__).resolve().parents[1]
 NAS_ALLOY = REPO / "infra/nas/config.alloy"
 # NOTE: files/, not templates/ — this config is installed with `ansible.builtin.copy`, which
@@ -377,36 +380,6 @@ CACHE_REQUIRED = [
 ]
 
 
-def _live_alloy_text(path: Path) -> str:
-    """The config with its `//` line comments and `/* */` blocks blanked, line count kept, so a commented
-    copy of a live line is not read; a `//` inside a quoted string (a URL) is part of the string and stays."""
-    text, out, i, n = path.read_text(), [], 0, len(path.read_text())
-    while i < n:
-        if text[i] == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            out.append(text[i : j + 1])
-            i = j + 1
-        elif text.startswith("//", i):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-        elif text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            end = n if j < 0 else j + 2
-            out.append("\n" * text.count("\n", i, end))
-            i = end
-        else:
-            out.append(text[i])
-            i += 1
-    return "".join(out)
-
-
-def _live_j2_text(path: Path) -> str:
-    """The template with its `{# … #}` comments blanked, multi-line ones included, line count kept."""
-    return re.sub(r"\{#.*?#\}", lambda m: "\n" * m.group(0).count("\n"), path.read_text(), flags=re.S)
-
-
 _LIVE_REGEX_LINE = re.compile(r'^\s*regex\s*=\s*"(.*)"\s*$', re.M)
 _LIVE_SEPARATOR_LINE = re.compile(r'^\s*separator\s*=\s*";"\s*$', re.M)
 _LIVE_JOURNAL_SOURCE_LABELS_LINE = re.compile(
@@ -725,9 +698,6 @@ def test_the_journal_keep_regex_names_no_unit_the_role_does_not_install():
 
 # --- the cache nodes' config ---------------------------------------------------------------------
 def test_the_capture_config_scrapes_the_cache_proxy_and_labels_its_journal_lines_before_the_engines_block():
-    """The proxy's scrape on the engine's loopback port under its own job, and its journal lines
-    labelled `cache-proxy` by a match that runs before the nautilus block, which would otherwise
-    relabel every line of the unit as the engine's."""
     text = _live_alloy_text(CAPTURE_ALLOY)
     scrape = re.search(r'^prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.M | re.DOTALL)
     assert scrape, "no cache_proxy scrape block"
@@ -778,13 +748,15 @@ def test_the_cache_secrets_template_renders_every_name_the_config_reads():
 def test_the_redis_exporters_ship_under_the_jobs_the_rules_select():
     """Both exporters' targets carry the same built-in `job`, which wins over a scrape's `job_name`; the
     relabel is what makes `job="valkey"` and `job="sentinel"` exist at all."""
-    cache_config = CACHE_ALLOY.read_text()
-    targets = [line.split("=", 1)[1].strip() for line in cache_config.splitlines() if line.strip().startswith("targets ")]
+    text = _live_alloy_text(CACHE_ALLOY)
+    targets = re.findall(r"^\s*targets\s*=\s*(\S.*?)\s*$", text, re.M)
     for job in ("valkey", "sentinel"):
-        relabel = re.search(rf'discovery\.relabel "{job}" \{{(.*?)\n\}}', cache_config, re.S)
-        assert relabel, f"no discovery.relabel for {job}"
-        assert f"targets = prometheus.exporter.redis.{job}.targets" in relabel.group(1)
-        assert 'target_label = "job"' in relabel.group(1) and f'replacement  = "{job}"' in relabel.group(1)
+        relabel = re.search(rf'^discovery\.relabel "{job}" \{{(.*?)\n\}}', text, re.M | re.S)
+        assert relabel, f"no live discovery.relabel for {job}"
+        rules = relabel.group(1)
+        assert re.search(rf"^\s*targets\s*=\s*prometheus\.exporter\.redis\.{job}\.targets\s*$", rules, re.M), rules
+        assert re.search(r'^\s*target_label\s*=\s*"job"\s*$', rules, re.M), rules
+        assert re.search(rf'^\s*replacement\s*=\s*"{job}"\s*$', rules, re.M), f"no live replacement line for {job}: {rules!r}"
         assert f"discovery.relabel.{job}.output" in targets, f"the {job} scrape does not read its relabelled targets"
 
 
@@ -802,7 +774,7 @@ def test_the_cache_textfile_collector_reads_where_the_mesh_probe_writes():
     """The mesh probe of `roles/cache_link` writes zcache.prom into `cache_link_textfile_dir` and the cache role's
     reboot check writes reboot.prom into `cache_textfile_dir`; the node's Alloy reads that one directory through its
     `/:/host/root:ro` mount, so each path differs from the collector's by that prefix alone."""
-    directory = re.search(r'textfile \{\s*directory = "([^"]+)"', CACHE_ALLOY.read_text())
+    directory = re.search(r'textfile \{\s*directory = "([^"]+)"', _live_alloy_text(CACHE_ALLOY))
     assert directory, "no textfile directory in the cache config"
     for role, var in (("cache_link", "cache_link_textfile_dir"), ("cache", "cache_textfile_dir")):
         written = re.search(rf"^{var}: (\S+)$", (REPO / f"infra/ansible/roles/{role}/defaults/main.yml").read_text(), re.M)
