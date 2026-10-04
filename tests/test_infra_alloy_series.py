@@ -9,8 +9,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 NAS_ALLOY = REPO / "infra/nas/config.alloy"
 # NOTE: files/, not templates/ — this config is installed with `ansible.builtin.copy`, which
-# only ever searches a role's files/ dir. It lived in templates/ briefly and the copy task
-# could not find it; the real converge caught that, no syntax check could.
+# only ever searches a role's files/ dir.
 OPS_ALLOY = REPO / "infra/ansible/roles/ops/files/config.alloy"
 CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
@@ -786,9 +785,16 @@ def _endpoint_blocks(path: Path) -> list[str]:
 def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
     cloud, mon = _endpoint_blocks(path)
     assert cloud.count("write_relabel_config") == 2 and "MON_" not in cloud
-    assert all(f'sys.env("GRAFANA_PROM_{n}")' in cloud for n in ("URL", "USERNAME", "PASSWORD"))
-    assert "write_relabel_config" not in mon and "GRAFANA_" not in mon and 'name = "mon"' in mon
-    assert all(f'sys.env("MON_PROM_{n}")' in mon for n in ("URL", "USERNAME", "PASSWORD"))
+    assert all(
+        re.search(rf'^\s*(url|username|password)\s*=\s*sys\.env\("GRAFANA_PROM_{n}"\)\s*$', cloud, re.M)
+        for n in ("URL", "USERNAME", "PASSWORD")
+    )
+    assert "write_relabel_config" not in mon and "GRAFANA_" not in mon
+    assert re.search(r'^\s*name\s*=\s*"mon"\s*$', mon, re.M)
+    assert all(
+        re.search(rf'^\s*(url|username|password)\s*=\s*sys\.env\("MON_PROM_{n}"\)\s*$', mon, re.M)
+        for n in ("URL", "USERNAME", "PASSWORD")
+    )
 
 
 @pytest.mark.parametrize(
