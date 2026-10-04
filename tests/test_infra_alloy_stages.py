@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.alloy_text import live_alloy_text
 from tests.skip_gates import no_binary
 
 REPO = Path(__file__).resolve().parents[1]
@@ -116,7 +117,7 @@ def _assigned(block: str, key: str) -> str | None:
 
 def _engine_blocks() -> tuple[str, str]:
     """The nautilus stage and its sibling drop, in the order the pipeline runs them."""
-    blocks = _blocks(_parse_body(CAPTURE_ALLOY.read_text()), "stage.match")
+    blocks = _blocks(_parse_body(live_alloy_text(CAPTURE_ALLOY)), "stage.match")
     stages = [b for b in blocks if _assigned(b, "pipeline_name") == "engine_nautilus"]
     drops = [b for b in blocks if _assigned(b, "action") == "drop" and "engine-nautilus" in (_assigned(b, "selector") or "")]
     assert len(stages) == 1 and len(drops) == 1, f"expected the nautilus stage and its drop, found {len(stages)} and {len(drops)}"
@@ -175,10 +176,12 @@ def test_the_engine_stage_labels_the_survivors_as_their_own_container():
 def test_the_journal_keep_rule_admits_the_engine_unit():
     rule = next(
         b
-        for b in re.findall(r"rule \{(.*?)\n  \}", CAPTURE_ALLOY.read_text(), re.S)
+        for b in re.findall(r"^\s*rule \{(.*?)\n  \}", live_alloy_text(CAPTURE_ALLOY), re.M | re.S)
         if "__journal__systemd_unit" in b and '"keep"' in b
     )
-    regex = _alloy_string(re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1))
+    live = re.search(r'^\s*regex\s*=\s*"(.*?)"\s*$', rule, re.M)
+    assert live, f"no live regex line in the journal keep rule: {rule!r}"
+    regex = _alloy_string(live.group(1))
     assert re.fullmatch(regex, "zcrypto-engine.service;"), "the engine unit's journal is not admitted, so the stage reads nothing"
     assert not re.fullmatch(regex, "zcrypto-capture.service;"), "the capture unit would double-ingest the daemon's own records"
 

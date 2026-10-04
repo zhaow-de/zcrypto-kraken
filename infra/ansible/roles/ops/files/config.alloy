@@ -1,18 +1,15 @@
 // Grafana Alloy config for the ops node's telemetry stack (spec 00054 D1/D7). Installed by the
-// `ops` Ansible role via `ansible.builtin.copy` at ops_alloy_dir/config.alloy -- do not hand-edit
-// on the host, it is overwritten on the next converge. Edit
+// `ops` Ansible role via `ansible.builtin.copy` at ops_alloy_dir/conf/config.alloy -- do not
+// hand-edit on the host, it is overwritten on the next converge. Edit
 // infra/ansible/roles/ops/files/config.alloy instead -- files/, NOT templates/: `copy:` only ever
 // searches a role's files/ dir, so an edit made to a templates/ copy silently never deploys
-// (tests/test_infra_alloy_series.py records the lesson; a converge proved it, no syntax check
-// could). Structurally this mirrors infra/ansible/roles/capture/files/config.alloy (spec 00068 D6)
-// and infra/nas/config.alloy (spec 00049 Role B) -- same unix exporter / textfile / scrape /
-// remote_write / journal-logs pipeline, the docker-socket path retired fleet-wide -- with two
-// deliberate divergences, each called out in the comments below. Grafana Cloud credentials are NOT
-// in this file: they arrive as environment variables from a rendered, 0600, never-committed
-// secrets file (alloy-secrets.env.j2, see infra/ops/README.md), read here via the `sys.env(...)`
-// stdlib function -- the NAS's Alloy reads the same six names from its own alloy-secrets.env,
-// rendered the same way by the `nas` role from the same vault group (group_vars/observed) since
-// T0056; no hand-placed copy exists anywhere.
+// (tests/test_infra_alloy_series.py reads this files/ path). Structurally this mirrors
+// infra/ansible/roles/capture/files/config.alloy (spec 00068 D6) and infra/nas/config.alloy (spec
+// 00049 Role B) -- same unix exporter / textfile / scrape / remote_write / journal-logs pipeline --
+// with two deliberate divergences, each called out in the comments below. Grafana Cloud's and the
+// node's credentials are NOT in this file: they arrive as environment variables from a rendered,
+// 0600, never-committed secrets file (alloy-secrets.env.j2, see infra/ops/README.md), read here via
+// the `sys.env(...)` stdlib function; no hand-placed copy exists anywhere.
 //
 // Plain `copy:`, not `template:` -- every value below is a literal, so there is nothing for Jinja2
 // to substitute, and Alloy's `stage.template` blocks further down use Go template `{{ }}` syntax
@@ -52,6 +49,12 @@
 // Grafana Cloud through this same journal mount instead.)
 prometheus.exporter.unix "host" {
   set_collectors = ["cpu", "loadavg", "meminfo", "filesystem", "netdev", "textfile"]
+
+  // Docker's per-container veth and bridge devices stay at the source, on both legs: no rule reads
+  // them, and the network panels would plot each one.
+  netdev {
+    device_exclude = "^(veth|br-)"
+  }
 
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
@@ -197,6 +200,17 @@ prometheus.remote_write "grafana" {
       action        = "keep"
     }
   }
+
+  // The node's leg, unfiltered: its own queue, so a dead endpoint does not hold the other.
+  endpoint {
+    name = "mon"
+    url  = sys.env("MON_PROM_URL")
+
+    basic_auth {
+      username = sys.env("MON_PROM_USERNAME")
+      password = sys.env("MON_PROM_PASSWORD")
+    }
+  }
 }
 
 // ---- Logs: the host journal -- the zcrypto systemd jobs AND Alloy's own container -------------
@@ -299,7 +313,7 @@ loki.source.journal "zcrypto_units" {
 // timestamped log line (the zcrypto-*.service units the keep rule above admits), and Alloy's own
 // logfmt output.
 loki.process "parse" {
-  forward_to = [loki.write.grafana.receiver]
+  forward_to = [loki.write.grafana.receiver, loki.write.mon.receiver]
 
   // Our Python services: `2026-07-14 13:18:27,562 INFO zcrypto.archive.command [command.py:75] - msg`
   // Scoped by container, so a container with a different format can never be mangled by this regex.
@@ -380,6 +394,19 @@ loki.write "grafana" {
     basic_auth {
       username = sys.env("GRAFANA_LOKI_USERNAME")
       password = sys.env("GRAFANA_LOKI_PASSWORD")
+    }
+  }
+}
+
+// The node's leg is its own component, fed by the parse stage beside the Cloud one: a second
+// endpoint inside loki.write "grafana" would be fed in succession and could stall it.
+loki.write "mon" {
+  endpoint {
+    url = sys.env("MON_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("MON_LOKI_USERNAME")
+      password = sys.env("MON_LOKI_PASSWORD")
     }
   }
 }

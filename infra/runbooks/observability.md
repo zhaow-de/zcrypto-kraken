@@ -325,7 +325,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 
 **Value 999**: the ops Alloy's scrape of healthchecks.io failed — ops Alloy down (then `zcrypto-alloy-dark-ops` is firing too), the read-only metrics key revoked or rotated, or healthchecks.io unreachable from the ops node. No check is known to be down, and **none is known to be up either**: every dead-man is unobserved from Grafana's side until this clears. healthchecks.io's own notifications still work, so the domain is degraded, not gone.
 
-**The dead-man map.** Ten checks exist, and `tests/fixtures/healthchecks_descriptions.json` records each one by name and tags — a snapshot fetched through the read-only key, so a rename does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it. Its `description` field is healthchecks.io's own text and is not authoritative here: `zcrypto-archive-pull`'s says the ping is withheld on a gate skip, which the row below corrects.
+**The dead-man map.** `tests/fixtures/healthchecks_descriptions.json` records each check by name and tags — a snapshot fetched through the read-only key, so a rename does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it; where a check's healthchecks.io `description` and its row disagree, the row holds.
 
 | node tag | application tag | what pings it | ping is withheld when | section owning the daemon |
 | -- | -- | -- | -- | -- |
@@ -339,6 +339,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 | `ops` | `verified-replay` | the verified-replay unit | the run did not reach its clean-exit ping | `ops-node.md#zcrypto-ops-verified-replay-stale` |
 | `ops` | `liquidations` | the poller (`LIQUIDATIONS_HEALTHCHECK_URL`) | not cycling, watermark breached, or a sweep left an hour unwritten | `observability.md#zcrypto-ops-poller-log-dead` |
 | `ops` | `grafana-watchdog` | the ops timer probing Grafana every 5 min; pings on success, `/fail` on probe failure; 600 s timeout / 600 s grace | Grafana is unreachable from ops, **or** the pinger itself died (then it pages by staleness) | this section |
+| `mon` | `selfcheck` (check `zcrypto-mon`) | the observability node's self-check timer, every 5 min; pings when the node's rules were evaluated within 60 s, a fleet host has a fresh sample on the node, and Loki is ready; 600 s timeout / 600 s grace | rule evaluation stale, no fleet sample fresh, Loki not ready — **or** the node is dead (then it pages by staleness) | `mon.md#mon-dark` |
 
 **There is no dead-man check for the NAS archive-pull loop.** Nothing in the repo pings one — the NAS's only hc.io check is the gate one above. That pull loop's liveness is Grafana-only, through `nas.md#zcrypto-nas-archive-pull-stalled`, so a Grafana outage leaves it unwatched. Treat that as a known asymmetry, not as a check you have failed to find.
 

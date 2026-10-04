@@ -1,7 +1,3 @@
-"""The observability node's self-check, `zcrypto-mon-selfcheck.py`, driven with a canned opener: it pings the node's
-dead-man only while the scheduler ticks, a fleet sample is fresh and Loki is ready, and a failing check sends
-nothing -- the missing ping is the page."""
-
 from __future__ import annotations
 
 import configparser
@@ -99,7 +95,11 @@ def test_a_node_doing_its_job_pings_and_says_what_it_read(capsys):
     ("fault", "said"),
     [
         ({"metrics": _metrics(tick_age=61.0)}, "rules=FAIL (the scheduler's last tick is 61 s old)"),
-        ({"metrics": _metrics(tick_age=None)}, "rules=FAIL (Grafana's /metrics carries no scheduler tick)"),
+        (
+            {"metrics": _metrics(tick_age=None)},
+            "rules=FAIL (Grafana's /metrics carries no grafana_alerting_ticker_last_consumed_tick_timestamp_seconds)",
+        ),
+        ({"metrics": _metrics(scheduled=None)}, "rules=FAIL (Grafana's /metrics carries no grafana_alerting_schedule_alert_rules)"),
         ({"metrics": _metrics(scheduled=0)}, "rules=FAIL (no rule is scheduled)"),
         ({"fleet": None}, "fleet=FAIL (no fleet host has a sample in the last five minutes)"),
         ({"fleet": 0}, "fleet=FAIL (no fleet host has a sample in the last five minutes)"),
@@ -115,6 +115,7 @@ def test_a_node_doing_its_job_pings_and_says_what_it_read(capsys):
     ids=[
         "tick stale",
         "no tick",
+        "no scheduled count",
         "no rules",
         "no fleet series",
         "zero fleet hosts",

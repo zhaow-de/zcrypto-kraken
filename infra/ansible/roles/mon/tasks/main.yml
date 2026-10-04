@@ -9,7 +9,7 @@
     that: mon_secret_faults | length == 0
     fail_msg: >-
       {{ mon_secret_faults | join(', ') }} in host_vars/zcrypto-mon/vault.yml: missing, or not the shape
-      its generator writes. Re-generate it with infra/runbooks/mon.md's mon-secrets procedure.
+      its source writes (no trailing newline): infra/runbooks/mon.md's mon-secrets procedure.
   vars:
     mon_secret_faults: >-
       {{ ([['mon_grafana_admin_password', mon_grafana_admin_password | default('')],
@@ -19,7 +19,9 @@
             | rejectattr('1', 'match', 'u[0-9a-f]{16}\Z') | map('first') | list)
          + ([['mon_ingest_fleet_password_hash', mon_ingest_fleet_password_hash | default('')],
              ['mon_ingest_logship_password_hash', mon_ingest_logship_password_hash | default('')]]
-            | rejectattr('1', 'match', '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z') | map('first') | list) }}
+            | rejectattr('1', 'match', '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z') | map('first') | list)
+         + ([['selfcheck_healthcheck_url', selfcheck_healthcheck_url | default('')]]
+            | rejectattr('1', 'match', 'https://hc-ping\.com/\S+\Z') | map('first') | list) }}
 
 # ---- Packages and their sources ------------------------------------------------------------------
 - name: add the Grafana apt repository (grafana, loki, alloy)

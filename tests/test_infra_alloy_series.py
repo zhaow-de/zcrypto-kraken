@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.alloy_text import live_alloy_text as _live_alloy_text
+from tests.alloy_text import live_j2_text as _live_j2_text
+
 REPO = Path(__file__).resolve().parents[1]
 NAS_ALLOY = REPO / "infra/nas/config.alloy"
 # NOTE: files/, not templates/ — this config is installed with `ansible.builtin.copy`, which
@@ -15,6 +18,8 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 CACHE_ALLOY = REPO / "infra/ansible/roles/cache/files/config.alloy"
 CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
+OPS_SECRETS = REPO / "infra/ansible/roles/ops/templates/alloy-secrets.env.j2"
+ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
 
 # Named constants only so the retired-pair exclusion test below can reference them.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
@@ -375,28 +380,38 @@ CACHE_REQUIRED = [
 ]
 
 
+_LIVE_REGEX_LINE = re.compile(r'^\s*regex\s*=\s*"(.*)"\s*$', re.M)
+_LIVE_SEPARATOR_LINE = re.compile(r'^\s*separator\s*=\s*";"\s*$', re.M)
+_LIVE_JOURNAL_SOURCE_LABELS_LINE = re.compile(
+    r'^\s*source_labels\s*=\s*\["__journal__systemd_unit", "__journal_container_name"\]\s*$', re.M
+)
+
+
+def _live_regex(block: str, where: str) -> str:
+    """The block's first `regex = "..."` line matched whole, so a `//` copy of a broader one above it is not read."""
+    m = _LIVE_REGEX_LINE.search(block)
+    assert m, f"{where}: no live regex line"
+    return m.group(1)
+
+
 def _keep_regex(path: Path) -> re.Pattern:
     """Extract the `keep` write_relabel_config's regex from an Alloy config."""
-    text = path.read_text()
-    blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL)
-    keeps = [b for b in blocks if "action" in b and '"keep"' in b]
+    text = _live_alloy_text(path)
+    blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
+    keeps = [b for b in blocks if re.search(r'^\s*action\s*=\s*"keep"\s*$', b, re.M)]
     assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
-    m = re.search(r'regex\s*=\s*"([^"]+)"', keeps[0])
-    assert m, f"{path}: keep block has no regex"
     # Prometheus relabel regexes are fully anchored.
-    return re.compile(r"\A(?:" + m.group(1) + r")\Z")
+    return re.compile(r"\A(?:" + _live_regex(keeps[0], f"{path}: keep block") + r")\Z")
 
 
 def _drop_regex(path: Path) -> re.Pattern:
     """Extract the `drop` write_relabel_config's regex from an Alloy config."""
-    text = path.read_text()
-    blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL)
-    drops = [b for b in blocks if "action" in b and '"drop"' in b]
+    text = _live_alloy_text(path)
+    blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
+    drops = [b for b in blocks if re.search(r'^\s*action\s*=\s*"drop"\s*$', b, re.M)]
     assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
-    m = re.search(r'regex\s*=\s*"([^"]+)"', drops[0])
-    assert m, f"{path}: drop block has no regex"
     # Prometheus relabel regexes are fully anchored.
-    return re.compile(r"\A(?:" + m.group(1) + r")\Z")
+    return re.compile(r"\A(?:" + _live_regex(drops[0], f"{path}: drop block") + r")\Z")
 
 
 @pytest.mark.parametrize(
@@ -483,11 +498,11 @@ def test_keep_regex_excludes_the_retired_sd_pair(path):
 )
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     text = path.read_text()
-    drop_at = text.find('"drop"')
-    keep_at = text.find('"keep"')
-    assert drop_at != -1, f"{path}: no drop block"
-    assert keep_at != -1, f"{path}: no keep block"
-    assert drop_at < keep_at, f"{path}: the drop block must come before the keep block"
+    drop = re.search(r'^\s*action\s*=\s*"drop"\s*$', text, re.M)
+    keep = re.search(r'^\s*action\s*=\s*"keep"\s*$', text, re.M)
+    assert drop, f"{path}: no drop block"
+    assert keep, f"{path}: no keep block"
+    assert drop.start() < keep.start(), f"{path}: the drop block must come before the keep block"
 
 
 # ---------------------------------------------------------------------------
@@ -588,10 +603,10 @@ _JOURNAL_NOT_SHIPPED = {
 
 
 def _journal_keep_block(config: Path) -> str:
-    """The whole `keep` rule, not just its regex: the separator and the source_labels decide what value the regex
-    is matched against, and either one changing makes the rule match nothing."""
-    for block in re.findall(r"rule \{(.*?)\n  \}", config.read_text(), re.S):
-        if "__journal__systemd_unit" in block and 'action        = "keep"' in block:
+    for block in re.findall(r"^\s*rule \{(.*?)\n  \}", config.read_text(), re.M | re.S):
+        if re.search(r'^\s*source_labels\s*=.*"__journal__systemd_unit"', block, re.M) and re.search(
+            r'^\s*action\s*=\s*"keep"\s*$', block, re.M
+        ):
             return block
     raise AssertionError(f"no journal keep rule found in {config}")
 
@@ -601,8 +616,8 @@ def _ops_journal_keep_block() -> str:
 
 
 def _ops_journal_keep_regex() -> str:
-    """The `keep` rule that reads `__journal__systemd_unit`, as written in the file."""
-    return re.search(r'regex\s*=\s*"(.*?)"\n', _ops_journal_keep_block()).group(1)
+    """The journal `keep` rule's regex, as written in the file."""
+    return _live_regex(_ops_journal_keep_block(), f"{OPS_ALLOY}: journal keep rule")
 
 
 def _journal_units_kept() -> set[str]:
@@ -650,20 +665,14 @@ def test_a_unit_listed_as_unshipped_is_not_in_the_keep_regex():
 
 @pytest.mark.parametrize("config", [OPS_ALLOY, CAPTURE_ALLOY], ids=["ops", "capture"])
 def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container(config):
-    """Only the alternation was read, so the rest of the production rule could break green -- including the arm
-    that admits Alloy's own journald-driver stream. `zcrypto-ops-log-pipeline-dead` pages on that stream's
-    silence after 6 h, so the loss is not invisible -- but a test that fails at once beats a dead-man that
-    fires a quarter of a day later, on a fleet whose other rules read the series it carries.
-
-    Both hosts, because the capture pair's rule is the ops rule's twin field for field and was read by nothing:
-    the two mutations below killed on ops and survived there."""
+    """Both hosts: the capture pair's rule is the ops rule's twin field for field."""
     rule = _journal_keep_block(config)
-    regex = re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1)
-    assert 'separator     = ";"' in rule, (
+    regex = _live_regex(rule, f"{config}: journal keep rule")
+    assert _LIVE_SEPARATOR_LINE.search(rule), (
         f"the keep rule's separator is no longer `;`, so the `unit;container` values it matches are not the ones "
         f"the regex is written for and the rule matches nothing: {rule!r}"
     )
-    assert '["__journal__systemd_unit", "__journal_container_name"]' in rule, (
+    assert _LIVE_JOURNAL_SOURCE_LABELS_LINE.search(rule), (
         f"the keep rule's source_labels changed, so the two halves of the joined value swap and the regex's unit "
         f"arm no longer lines up with the unit: {rule!r}"
     )
@@ -689,18 +698,24 @@ def test_the_journal_keep_regex_names_no_unit_the_role_does_not_install():
 
 # --- the cache nodes' config ---------------------------------------------------------------------
 def test_the_capture_config_scrapes_the_cache_proxy_and_labels_its_journal_lines_before_the_engines_block():
-    """The proxy's scrape on the engine's loopback port under its own job, and its journal lines
-    labelled `cache-proxy` by a match that runs before the nautilus block, which would otherwise
-    relabel every line of the unit as the engine's."""
-    text = CAPTURE_ALLOY.read_text()
-    scrape = re.search(r'prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.DOTALL)
+    text = _live_alloy_text(CAPTURE_ALLOY)
+    scrape = re.search(r'^prometheus\.scrape "cache_proxy" \{(.*?)\n\}', text, re.M | re.DOTALL)
     assert scrape, "no cache_proxy scrape block"
-    assert '"127.0.0.1:9104"' in scrape.group(1) and 'job_name        = "cache_proxy"' in scrape.group(1)
-    proxy, engine = text.index('pipeline_name = "cache_proxy"'), text.index('pipeline_name = "engine_nautilus"')
-    assert proxy < engine, "the proxy's match must run before the engine's, which relabels the whole unit"
-    block = text[proxy:engine]
-    assert 'container = "cache-proxy"' in block and "zcrypto-cache-proxy" in block
-    assert "NOTICE|WARNING|ALERT|INFO" in block
+    assert re.search(r'^\s*targets\s*=\s*\[\{"__address__"\s*=\s*"127\.0\.0\.1:9104"\}\]\s*$', scrape.group(1), re.M), (
+        f"no live targets line on 127.0.0.1:9104 in the cache_proxy scrape block: {scrape.group(1)!r}"
+    )
+    assert re.search(r'^\s*job_name\s*=\s*"cache_proxy"\s*$', scrape.group(1), re.M), (
+        f'no live `job_name = "cache_proxy"` line in the cache_proxy scrape block: {scrape.group(1)!r}'
+    )
+    proxy = re.search(r'^\s*pipeline_name\s*=\s*"cache_proxy"\s*$', text, re.M)
+    engine = re.search(r'^\s*pipeline_name\s*=\s*"engine_nautilus"\s*$', text, re.M)
+    assert proxy and engine, f"a live pipeline_name line is missing: proxy={proxy}, engine={engine}"
+    assert proxy.start() < engine.start(), "the proxy's match must run before the engine's, which relabels the whole unit"
+    block = text[proxy.start() : engine.start()]
+    assert re.search(r'^\s*values\s*=\s*\{\s*container\s*=\s*"cache-proxy"\s*\}\s*$', block, re.M), block
+    assert re.search(r'^\s*expression\s*=\s*".*zcrypto-cache-proxy.*"\s*$', block, re.M), block
+    for key in ("selector", "expression"):
+        assert re.search(rf'^\s*{key}\s*=\s*".*NOTICE\|WARNING\|ALERT\|INFO.*"\s*$', block, re.M), (key, block)
 
 
 def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
@@ -714,11 +729,18 @@ def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
     )
 
 
+def _env_names_read(config: Path) -> set[str]:
+    return set(re.findall(r'sys\.env\("([A-Z_]+)"\)', _live_alloy_text(config)))
+
+
+def _env_names_rendered(template: Path) -> set[str]:
+    return set(re.findall(r"^([A-Z_]+)=", _live_j2_text(template), re.M))
+
+
 def test_the_cache_secrets_template_renders_every_name_the_config_reads():
     """A name the config reads that the env file lacks is an empty string at runtime: remote_write or the
     exporter's AUTH fails with nothing in the tree to say why."""
-    read = set(re.findall(r'sys\.env\("([A-Z_]+)"\)', CACHE_ALLOY.read_text()))
-    rendered = set(re.findall(r"^([A-Z_]+)=", CACHE_SECRETS.read_text(), re.M))
+    read, rendered = _env_names_read(CACHE_ALLOY), _env_names_rendered(CACHE_SECRETS)
     assert {"CACHE_EXPORTER_PASSWORD", "CACHE_SENTINEL_REQUIREPASS"} <= read, f"the config reads {sorted(read)}"
     assert read == rendered, f"config reads {sorted(read - rendered)} unrendered; template renders {sorted(rendered - read)} unread"
 
@@ -726,13 +748,15 @@ def test_the_cache_secrets_template_renders_every_name_the_config_reads():
 def test_the_redis_exporters_ship_under_the_jobs_the_rules_select():
     """Both exporters' targets carry the same built-in `job`, which wins over a scrape's `job_name`; the
     relabel is what makes `job="valkey"` and `job="sentinel"` exist at all."""
-    cache_config = CACHE_ALLOY.read_text()
-    targets = [line.split("=", 1)[1].strip() for line in cache_config.splitlines() if line.strip().startswith("targets ")]
+    text = _live_alloy_text(CACHE_ALLOY)
+    targets = re.findall(r"^\s*targets\s*=\s*(\S.*?)\s*$", text, re.M)
     for job in ("valkey", "sentinel"):
-        relabel = re.search(rf'discovery\.relabel "{job}" \{{(.*?)\n\}}', cache_config, re.S)
-        assert relabel, f"no discovery.relabel for {job}"
-        assert f"targets = prometheus.exporter.redis.{job}.targets" in relabel.group(1)
-        assert 'target_label = "job"' in relabel.group(1) and f'replacement  = "{job}"' in relabel.group(1)
+        relabel = re.search(rf'^discovery\.relabel "{job}" \{{(.*?)\n\}}', text, re.M | re.S)
+        assert relabel, f"no live discovery.relabel for {job}"
+        rules = relabel.group(1)
+        assert re.search(rf"^\s*targets\s*=\s*prometheus\.exporter\.redis\.{job}\.targets\s*$", rules, re.M), rules
+        assert re.search(r'^\s*target_label\s*=\s*"job"\s*$', rules, re.M), rules
+        assert re.search(rf'^\s*replacement\s*=\s*"{job}"\s*$', rules, re.M), f"no live replacement line for {job}: {rules!r}"
         assert f"discovery.relabel.{job}.output" in targets, f"the {job} scrape does not read its relabelled targets"
 
 
@@ -741,8 +765,8 @@ def test_the_cache_journal_keep_rule_keys_the_containers_by_name():
     arm cannot select them, and keying the unit that runs the compose project too would ship each line
     twice."""
     rule = _journal_keep_block(CACHE_ALLOY)
-    regex = re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1)
-    assert 'separator     = ";"' in rule and '["__journal__systemd_unit", "__journal_container_name"]' in rule
+    regex = _live_regex(rule, f"{CACHE_ALLOY}: journal keep rule")
+    assert _LIVE_SEPARATOR_LINE.search(rule) and _LIVE_JOURNAL_SOURCE_LABELS_LINE.search(rule)
     assert regex == "zcache-probe\\\\.service;.*|.*;(zcrypto-valkey|zcrypto-sentinel|grafana-alloy)", regex
 
 
@@ -750,7 +774,7 @@ def test_the_cache_textfile_collector_reads_where_the_mesh_probe_writes():
     """The mesh probe of `roles/cache_link` writes zcache.prom into `cache_link_textfile_dir` and the cache role's
     reboot check writes reboot.prom into `cache_textfile_dir`; the node's Alloy reads that one directory through its
     `/:/host/root:ro` mount, so each path differs from the collector's by that prefix alone."""
-    directory = re.search(r'textfile \{\s*directory = "([^"]+)"', CACHE_ALLOY.read_text())
+    directory = re.search(r'textfile \{\s*directory = "([^"]+)"', _live_alloy_text(CACHE_ALLOY))
     assert directory, "no textfile directory in the cache config"
     for role, var in (("cache_link", "cache_link_textfile_dir"), ("cache", "cache_textfile_dir")):
         written = re.search(rf"^{var}: (\S+)$", (REPO / f"infra/ansible/roles/{role}/defaults/main.yml").read_text(), re.M)
@@ -773,15 +797,12 @@ def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_n
 
 
 # --- the node's leg: a second endpoint beside the Cloud one, and the names each reads ---------------
-ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
-
-
 def _endpoint_blocks(path: Path) -> list[str]:
     component = re.search(r'\nprometheus\.remote_write "grafana" \{(.*?)\n\}\n', path.read_text(), re.S).group(1)
     return re.findall(r"\n  endpoint \{(.*?)\n  \}", component, re.S)
 
 
-@pytest.mark.parametrize("path", [ACCESS_ALLOY], ids=["access"])
+@pytest.mark.parametrize("path", [ACCESS_ALLOY, OPS_ALLOY], ids=["access", "ops"])
 def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
     cloud, mon = _endpoint_blocks(path)
     assert len(re.findall(r"^\s*write_relabel_config\s*\{\s*$", cloud, re.M)) == 2 and "MON_" not in cloud
@@ -826,11 +847,20 @@ _MON_PROM_LINES = [
     "MON_PROM_USERNAME={{ mon_ingest_fleet_user }}",
     "MON_PROM_PASSWORD={{ mon_ingest_fleet_password }}",
 ]
+_MON_LOKI_LINES = [
+    "MON_LOKI_URL={{ mon_ingest_loki_url }}",
+    "MON_LOKI_USERNAME={{ mon_ingest_fleet_user }}",
+    "MON_LOKI_PASSWORD={{ mon_ingest_fleet_password }}",
+]
 
 
-@pytest.mark.parametrize(("template", "mon_lines"), [(ACCESS_SECRETS, _MON_PROM_LINES)], ids=["access"])
+@pytest.mark.parametrize(
+    ("template", "mon_lines"),
+    [(ACCESS_SECRETS, _MON_PROM_LINES), (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES)],
+    ids=["access", "ops"],
+)
 def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
-    lines = template.read_text().splitlines()
+    lines = _live_j2_text(template).splitlines()
     assert [line for line in lines if line.startswith("GRAFANA_")] == _GRAFANA_LINES
     assert [line for line in lines if line.startswith("MON_")] == mon_lines
 
@@ -844,12 +874,63 @@ def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
             ACCESS_ALLOY,
             ACCESS_SECRETS,
             {"CONFIG_FILE", "CUSTOM_ARGS", "GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"},
-        )
+        ),
+        (OPS_ALLOY, OPS_SECRETS, set()),
     ],
-    ids=["access"],
+    ids=["access", "ops"],
 )
 def test_each_secrets_template_renders_the_names_its_config_reads(config, template, unread):
-    read = set(re.findall(r'sys\.env\("([A-Z_]+)"\)', config.read_text()))
-    rendered = set(re.findall(r"^([A-Z_]+)=", template.read_text(), re.M))
+    read, rendered = _env_names_read(config), _env_names_rendered(template)
     assert read <= rendered, f"{config.name} reads {sorted(read - rendered)}, which {template.name} does not render"
     assert rendered - read == unread, f"{template.name} renders {sorted(rendered - read)} that {config.name} does not read"
+
+
+# --- the node's log leg: a second loki.write fed by the parse stage, beside the Cloud one ----------------
+def _loki_write_block(path: Path, name: str) -> str:
+    block = re.search(rf'\nloki\.write "{name}" \{{(.*?)\n\}}\n', path.read_text() + "\n", re.S)
+    assert block, f'{path}: no loki.write "{name}" component'
+    return block.group(1)
+
+
+def _one_endpoint_reading(block: str, names: tuple[str, str, str]) -> None:
+    assert len(re.findall(r"^\s*endpoint\s*\{\s*$", block, re.M)) == 1, block
+    for key, name in zip(("url", "username", "password"), names, strict=True):
+        assert re.search(rf'^\s*{key}\s*=\s*sys\.env\("{name}"\)\s*$', block, re.M), (name, block)
+
+
+@pytest.mark.parametrize("path", [OPS_ALLOY], ids=["ops"])
+def test_the_parse_stage_feeds_both_loki_writes_and_each_reads_its_own_names(path):
+    parse = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', path.read_text(), re.M | re.S)
+    assert parse, f'{path}: no loki.process "parse"'
+    forward = re.search(r"^  forward_to\s*=\s*\[(.*?)\]\s*$", parse.group(1), re.M)
+    assert forward and forward.group(1) == "loki.write.grafana.receiver, loki.write.mon.receiver", parse.group(1)
+    grafana, mon = _loki_write_block(path, "grafana"), _loki_write_block(path, "mon")
+    _one_endpoint_reading(grafana, ("GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"))
+    assert "MON_" not in grafana
+    _one_endpoint_reading(mon, ("MON_LOKI_URL", "MON_LOKI_USERNAME", "MON_LOKI_PASSWORD"))
+    assert "GRAFANA_" not in mon
+
+
+# --- the unix exporter's netdev exclusion: the container and bridge devices stay at the source ----------
+def _unix_exporter_block(path: Path) -> str:
+    block = re.search(r'\nprometheus\.exporter\.unix "host" \{(.*?)\n\}\n', path.read_text(), re.S)
+    assert block, f'{path}: no prometheus.exporter.unix "host" component'
+    return block.group(1)
+
+
+_NETDEV_EXCLUSION = r'^\s*device_exclude\s*=\s*"\^\(veth\|br-\)"\s*$'
+
+
+@pytest.mark.parametrize("path", [OPS_ALLOY], ids=["ops"])
+def test_the_unix_exporter_excludes_the_container_and_bridge_devices(path):
+    netdev = re.search(r"^\s*netdev\s*\{\s*$(.*?)^\s*\}\s*$", _unix_exporter_block(path), re.M | re.S)
+    assert netdev, f"{path}: the unix exporter has no netdev block"
+    assert re.search(_NETDEV_EXCLUSION, netdev.group(1), re.M), netdev.group(1)
+
+
+@pytest.mark.parametrize("path", [CAPTURE_ALLOY, NAS_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["capture", "nas", "access", "cache"])
+def test_the_unix_exporter_has_no_netdev_block_where_none_is_prescribed(path):
+    assert not re.search(r"^\s*netdev\s*\{", _unix_exporter_block(path), re.M), (
+        f"{path}: the unix exporter gained a netdev block; a config that takes the exclusion moves to the "
+        f"excluding side of these two tests"
+    )
