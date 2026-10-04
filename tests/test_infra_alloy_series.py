@@ -378,8 +378,8 @@ CACHE_REQUIRED = [
 def _keep_regex(path: Path) -> re.Pattern:
     """Extract the `keep` write_relabel_config's regex from an Alloy config."""
     text = path.read_text()
-    blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL)
-    keeps = [b for b in blocks if "action" in b and '"keep"' in b]
+    blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
+    keeps = [b for b in blocks if re.search(r'^\s*action\s*=\s*"keep"\s*$', b, re.M)]
     assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
     m = re.search(r'regex\s*=\s*"([^"]+)"', keeps[0])
     assert m, f"{path}: keep block has no regex"
@@ -390,8 +390,8 @@ def _keep_regex(path: Path) -> re.Pattern:
 def _drop_regex(path: Path) -> re.Pattern:
     """Extract the `drop` write_relabel_config's regex from an Alloy config."""
     text = path.read_text()
-    blocks = re.findall(r"write_relabel_config\s*\{(.*?)\}", text, re.DOTALL)
-    drops = [b for b in blocks if "action" in b and '"drop"' in b]
+    blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
+    drops = [b for b in blocks if re.search(r'^\s*action\s*=\s*"drop"\s*$', b, re.M)]
     assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
     m = re.search(r'regex\s*=\s*"([^"]+)"', drops[0])
     assert m, f"{path}: drop block has no regex"
@@ -483,11 +483,11 @@ def test_keep_regex_excludes_the_retired_sd_pair(path):
 )
 def test_alloy_self_metrics_are_dropped_before_the_keep(path):
     text = path.read_text()
-    drop_at = text.find('"drop"')
-    keep_at = text.find('"keep"')
-    assert drop_at != -1, f"{path}: no drop block"
-    assert keep_at != -1, f"{path}: no keep block"
-    assert drop_at < keep_at, f"{path}: the drop block must come before the keep block"
+    drop = re.search(r'^\s*action\s*=\s*"drop"\s*$', text, re.M)
+    keep = re.search(r'^\s*action\s*=\s*"keep"\s*$', text, re.M)
+    assert drop, f"{path}: no drop block"
+    assert keep, f"{path}: no keep block"
+    assert drop.start() < keep.start(), f"{path}: the drop block must come before the keep block"
 
 
 # ---------------------------------------------------------------------------
@@ -590,8 +590,8 @@ _JOURNAL_NOT_SHIPPED = {
 def _journal_keep_block(config: Path) -> str:
     """The whole `keep` rule, not just its regex: the separator and the source_labels decide what value the regex
     is matched against, and either one changing makes the rule match nothing."""
-    for block in re.findall(r"rule \{(.*?)\n  \}", config.read_text(), re.S):
-        if "__journal__systemd_unit" in block and 'action        = "keep"' in block:
+    for block in re.findall(r"^\s*rule \{(.*?)\n  \}", config.read_text(), re.M | re.S):
+        if "__journal__systemd_unit" in block and re.search(r'^\s*action\s*=\s*"keep"\s*$', block, re.M):
             return block
     raise AssertionError(f"no journal keep rule found in {config}")
 
