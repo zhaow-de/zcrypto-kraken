@@ -396,7 +396,7 @@ def _live_regex(block: str, where: str) -> str:
 
 def _keep_regex(path: Path) -> re.Pattern:
     """Extract the `keep` write_relabel_config's regex from an Alloy config."""
-    text = path.read_text()
+    text = _live_alloy_text(path)
     blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
     keeps = [b for b in blocks if re.search(r'^\s*action\s*=\s*"keep"\s*$', b, re.M)]
     assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
@@ -406,7 +406,7 @@ def _keep_regex(path: Path) -> re.Pattern:
 
 def _drop_regex(path: Path) -> re.Pattern:
     """Extract the `drop` write_relabel_config's regex from an Alloy config."""
-    text = path.read_text()
+    text = _live_alloy_text(path)
     blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
     drops = [b for b in blocks if re.search(r'^\s*action\s*=\s*"drop"\s*$', b, re.M)]
     assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
