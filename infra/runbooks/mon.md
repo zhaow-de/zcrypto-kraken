@@ -217,7 +217,7 @@ The daily pass's reminders read `OWED mon patch pass`: a month has gone by since
 
 ### What it means
 
-Unattended upgrades install Debian's security patches alone. Grafana, Loki, Alloy and Caddy come from their vendors' repositories, which that origin does not cover, and `prometheus` is on the node's unattended-upgrades blacklist because its package restarts the daemon on upgrade. All five are upgraded here, by hand, once a month. The reminder counts the month from the node's last full converge in `docs/reference/deploy-log.jsonl`, the one that names no tag, which step 4 runs; the procedures on this page converge under `--tags mon` and leave the count where it is. The log does not say why a converge was run, so an un-tagged converge of the node made for another reason restarts the month too: such a run is followed by this pass, in the same sitting. Grafana's login is public, so an advisory that needs no authentication is patched the day it is read, outside the monthly pass, by steps 2, 3 and 5.
+Unattended upgrades install Debian's security patches alone, `prometheus` among them since drill W1 read four bare restarts of it under a running Grafana silent. Grafana, Loki, Alloy and Caddy come from their vendors' repositories, which that origin does not cover, and the four are upgraded here, by hand, once a month; step 3's line keeps `prometheus` so that a patch unattended upgrades has not yet taken installs under the same stopped Grafana. The reminder counts the month from the node's last full converge in `docs/reference/deploy-log.jsonl`, the one that names no tag, which step 4 runs; the procedures on this page converge under `--tags mon` and leave the count where it is. The log does not say why a converge was run, so an un-tagged converge of the node made for another reason restarts the month too: such a run is followed by this pass, in the same sitting. Grafana's login is public, so an advisory that needs no authentication is patched the day it is read, outside the monthly pass, by steps 2, 3 and 5.
 
 ### What to do
 
@@ -251,7 +251,7 @@ Unattended upgrades install Debian's security patches alone. Grafana, Loki, Allo
 
 ### Retire when
 
-`infra/ansible/host_vars/zcrypto-mon/vars.yml` no longer sets `base_unattended_upgrades_package_blacklist`, and the base role's unattended-upgrades origins cover the vendors' repositories.
+The base role's unattended-upgrades origins cover the vendors' repositories.
 
 ______________________________________________________________________
 

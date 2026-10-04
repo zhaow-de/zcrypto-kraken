@@ -8,9 +8,10 @@ base_unattended_upgrades_reboot_time: "06:25"
 # A reboot blanks rule evaluation for its duration. Patches install; the reboot is a human act, and
 # the node's pending-reboot rule fires until it is taken.
 base_unattended_upgrades_automatic_reboot: "false"
-# Debian's package restarts the daemon on upgrade, and a store restarted under a running Grafana
-# puts every rule that reads it in error. Upgraded in the monthly hand pass instead.
-base_unattended_upgrades_package_blacklist: ["prometheus$"]
+# Empty since drill W1 (2026-10-04): four bare Prometheus restarts under a running Grafana, each under 400 ms and one
+# spanning an evaluation second, wrote no state transition and paged nothing, so the package may restart the daemon on
+# upgrade.
+base_unattended_upgrades_package_blacklist: []
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-mon_ed25519.pub') }}"
 # The self-check's healthchecks.io ping URL, vaulted beside this file; the `mon` role renders it into the unit's
 # environment file.
