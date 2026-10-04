@@ -42,7 +42,7 @@ def rules_fresh(base: str, *, opener, now: float) -> tuple[bool, str]:
     text = _get(f"{base}/metrics", opener)
     tick, scheduled = _sample(text, TICK), _sample(text, SCHEDULED)
     if tick is None or scheduled is None:
-        return False, "Grafana's /metrics carries no scheduler tick"
+        return False, f"Grafana's /metrics carries no {TICK if tick is None else SCHEDULED}"
     age = now - tick
     if scheduled < 1:
         return False, "no rule is scheduled"

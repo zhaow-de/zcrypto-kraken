@@ -15,6 +15,8 @@ CAPTURE_ALLOY = REPO / "infra/ansible/roles/capture/files/config.alloy"
 ACCESS_ALLOY = REPO / "infra/ansible/roles/access/files/config.alloy"
 CACHE_ALLOY = REPO / "infra/ansible/roles/cache/files/config.alloy"
 CACHE_SECRETS = REPO / "infra/ansible/roles/cache/templates/alloy-secrets.env.j2"
+OPS_SECRETS = REPO / "infra/ansible/roles/ops/templates/alloy-secrets.env.j2"
+ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
 
 # Named constants only so the retired-pair exclusion test below can reference them.
 _SD_SERIES = "prometheus_sd_refresh_duration_seconds_count"
@@ -714,11 +716,18 @@ def test_the_cache_keep_regex_admits_exactly_the_cache_required_list():
     )
 
 
+def _env_names_read(config: Path) -> set[str]:
+    return set(re.findall(r'sys\.env\("([A-Z_]+)"\)', config.read_text()))
+
+
+def _env_names_rendered(template: Path) -> set[str]:
+    return set(re.findall(r"^([A-Z_]+)=", template.read_text(), re.M))
+
+
 def test_the_cache_secrets_template_renders_every_name_the_config_reads():
     """A name the config reads that the env file lacks is an empty string at runtime: remote_write or the
     exporter's AUTH fails with nothing in the tree to say why."""
-    read = set(re.findall(r'sys\.env\("([A-Z_]+)"\)', CACHE_ALLOY.read_text()))
-    rendered = set(re.findall(r"^([A-Z_]+)=", CACHE_SECRETS.read_text(), re.M))
+    read, rendered = _env_names_read(CACHE_ALLOY), _env_names_rendered(CACHE_SECRETS)
     assert {"CACHE_EXPORTER_PASSWORD", "CACHE_SENTINEL_REQUIREPASS"} <= read, f"the config reads {sorted(read)}"
     assert read == rendered, f"config reads {sorted(read - rendered)} unrendered; template renders {sorted(rendered - read)} unread"
 
@@ -773,15 +782,12 @@ def test_the_cache_log_pipeline_drops_the_sentinel_exporters_latency_error_and_n
 
 
 # --- the node's leg: a second endpoint beside the Cloud one, and the names each reads ---------------
-ACCESS_SECRETS = REPO / "infra/ansible/roles/access/templates/alloy-env.j2"
-
-
 def _endpoint_blocks(path: Path) -> list[str]:
     component = re.search(r'\nprometheus\.remote_write "grafana" \{(.*?)\n\}\n', path.read_text(), re.S).group(1)
     return re.findall(r"\n  endpoint \{(.*?)\n  \}", component, re.S)
 
 
-@pytest.mark.parametrize("path", [ACCESS_ALLOY], ids=["access"])
+@pytest.mark.parametrize("path", [ACCESS_ALLOY, OPS_ALLOY], ids=["access", "ops"])
 def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
     cloud, mon = _endpoint_blocks(path)
     assert len(re.findall(r"^\s*write_relabel_config\s*\{\s*$", cloud, re.M)) == 2 and "MON_" not in cloud
@@ -826,9 +832,18 @@ _MON_PROM_LINES = [
     "MON_PROM_USERNAME={{ mon_ingest_fleet_user }}",
     "MON_PROM_PASSWORD={{ mon_ingest_fleet_password }}",
 ]
+_MON_LOKI_LINES = [
+    "MON_LOKI_URL={{ mon_ingest_loki_url }}",
+    "MON_LOKI_USERNAME={{ mon_ingest_fleet_user }}",
+    "MON_LOKI_PASSWORD={{ mon_ingest_fleet_password }}",
+]
 
 
-@pytest.mark.parametrize(("template", "mon_lines"), [(ACCESS_SECRETS, _MON_PROM_LINES)], ids=["access"])
+@pytest.mark.parametrize(
+    ("template", "mon_lines"),
+    [(ACCESS_SECRETS, _MON_PROM_LINES), (OPS_SECRETS, _MON_PROM_LINES + _MON_LOKI_LINES)],
+    ids=["access", "ops"],
+)
 def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
     lines = template.read_text().splitlines()
     assert [line for line in lines if line.startswith("GRAFANA_")] == _GRAFANA_LINES
@@ -844,12 +859,63 @@ def test_the_secrets_lines_are_held_by_literal(template, mon_lines):
             ACCESS_ALLOY,
             ACCESS_SECRETS,
             {"CONFIG_FILE", "CUSTOM_ARGS", "GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"},
-        )
+        ),
+        (OPS_ALLOY, OPS_SECRETS, set()),
     ],
-    ids=["access"],
+    ids=["access", "ops"],
 )
 def test_each_secrets_template_renders_the_names_its_config_reads(config, template, unread):
-    read = set(re.findall(r'sys\.env\("([A-Z_]+)"\)', config.read_text()))
-    rendered = set(re.findall(r"^([A-Z_]+)=", template.read_text(), re.M))
+    read, rendered = _env_names_read(config), _env_names_rendered(template)
     assert read <= rendered, f"{config.name} reads {sorted(read - rendered)}, which {template.name} does not render"
     assert rendered - read == unread, f"{template.name} renders {sorted(rendered - read)} that {config.name} does not read"
+
+
+# --- the node's log leg: a second loki.write fed by the parse stage, beside the Cloud one ----------------
+def _loki_write_block(path: Path, name: str) -> str:
+    block = re.search(rf'\nloki\.write "{name}" \{{(.*?)\n\}}\n', path.read_text() + "\n", re.S)
+    assert block, f'{path}: no loki.write "{name}" component'
+    return block.group(1)
+
+
+def _one_endpoint_reading(block: str, names: tuple[str, str, str]) -> None:
+    assert len(re.findall(r"^\s*endpoint\s*\{\s*$", block, re.M)) == 1, block
+    for key, name in zip(("url", "username", "password"), names, strict=True):
+        assert re.search(rf'^\s*{key}\s*=\s*sys\.env\("{name}"\)\s*$', block, re.M), (name, block)
+
+
+@pytest.mark.parametrize("path", [OPS_ALLOY], ids=["ops"])
+def test_the_parse_stage_feeds_both_loki_writes_and_each_reads_its_own_names(path):
+    parse = re.search(r'^loki\.process "parse" \{\n(.*?)\n\}', path.read_text(), re.M | re.S)
+    assert parse, f'{path}: no loki.process "parse"'
+    forward = re.search(r"^  forward_to\s*=\s*\[(.*?)\]\s*$", parse.group(1), re.M)
+    assert forward and forward.group(1) == "loki.write.grafana.receiver, loki.write.mon.receiver", parse.group(1)
+    grafana, mon = _loki_write_block(path, "grafana"), _loki_write_block(path, "mon")
+    _one_endpoint_reading(grafana, ("GRAFANA_LOKI_URL", "GRAFANA_LOKI_USERNAME", "GRAFANA_LOKI_PASSWORD"))
+    assert "MON_" not in grafana
+    _one_endpoint_reading(mon, ("MON_LOKI_URL", "MON_LOKI_USERNAME", "MON_LOKI_PASSWORD"))
+    assert "GRAFANA_" not in mon
+
+
+# --- the unix exporter's netdev exclusion: the container and bridge devices stay at the source ----------
+def _unix_exporter_block(path: Path) -> str:
+    block = re.search(r'\nprometheus\.exporter\.unix "host" \{(.*?)\n\}\n', path.read_text(), re.S)
+    assert block, f'{path}: no prometheus.exporter.unix "host" component'
+    return block.group(1)
+
+
+_NETDEV_EXCLUSION = r'^\s*device_exclude\s*=\s*"\^\(veth\|br-\)"\s*$'
+
+
+@pytest.mark.parametrize("path", [OPS_ALLOY], ids=["ops"])
+def test_the_unix_exporter_excludes_the_container_and_bridge_devices(path):
+    netdev = re.search(r"^\s*netdev\s*\{\s*$(.*?)^\s*\}\s*$", _unix_exporter_block(path), re.M | re.S)
+    assert netdev, f"{path}: the unix exporter has no netdev block"
+    assert re.search(_NETDEV_EXCLUSION, netdev.group(1), re.M), netdev.group(1)
+
+
+@pytest.mark.parametrize("path", [CAPTURE_ALLOY, NAS_ALLOY, ACCESS_ALLOY, CACHE_ALLOY], ids=["capture", "nas", "access", "cache"])
+def test_the_unix_exporter_has_no_netdev_block_where_none_is_prescribed(path):
+    assert not re.search(r"^\s*netdev\s*\{", _unix_exporter_block(path), re.M), (
+        f"{path}: the unix exporter gained a netdev block; a config that takes the exclusion moves to the "
+        f"excluding side of these two tests"
+    )

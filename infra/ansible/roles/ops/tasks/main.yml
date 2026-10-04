@@ -860,7 +860,7 @@
         mode: "0644"
       notify: reload alloy
 
-    # Renders straight from the vault (group_vars/observed/vault.yml). no_log + diff: false:
+    # Renders from group_vars/observed/: vault.yml, and vars.yml for the node's URLs and user. no_log + diff: false:
     # without both, a converge prints the Grafana Cloud credentials to the terminal and to any log
     # capturing the run's output (the established pattern -- see docs/plans/00043 -- applied
     # wherever this role renders a secret, e.g. the liquidations compose file above). Owned by

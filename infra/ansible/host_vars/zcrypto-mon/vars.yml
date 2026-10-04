@@ -12,3 +12,6 @@ base_unattended_upgrades_automatic_reboot: "false"
 # puts every rule that reads it in error. Upgraded in the monthly hand pass instead.
 base_unattended_upgrades_package_blacklist: ["prometheus$"]
 deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-mon_ed25519.pub') }}"
+# The self-check's healthchecks.io ping URL, vaulted beside this file; the `mon` role renders it into the unit's
+# environment file.
+mon_selfcheck_healthcheck_url: "{{ selfcheck_healthcheck_url }}"
