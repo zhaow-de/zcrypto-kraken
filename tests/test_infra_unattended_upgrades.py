@@ -167,6 +167,14 @@ def test_an_empty_blacklist_renders_the_file_the_fleet_already_has():
     assert _yaml(BASE_DEFAULTS)[BLACKLIST] == []
 
 
+def test_a_non_empty_blacklist_renders_each_entry_quoted_on_its_own_line():
+    lines = _render(**{VAR: "true", BLACKLIST: ["example$", "other-example$"]}).splitlines()
+    start = lines.index("Unattended-Upgrade::Package-Blacklist {")
+    assert lines[start - 1] == ""
+    assert lines[start + 1 : start + 4] == ['        "example$";', '        "other-example$";', "};"]
+    assert "Package-Blacklist" not in _render(**{VAR: "true"})
+
+
 def test_the_observability_node_lets_unattended_upgrades_restart_prometheus():
     declared = _yaml(MON_HOST_VARS)[BLACKLIST]
     assert declared == [], declared
