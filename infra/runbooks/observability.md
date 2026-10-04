@@ -325,7 +325,7 @@ Panel 103 on the `zcrypto-fleet` board shows the same number, and `hc_check_up` 
 
 **Value 999**: the ops Alloy's scrape of healthchecks.io failed — ops Alloy down (then `zcrypto-alloy-dark-ops` is firing too), the read-only metrics key revoked or rotated, or healthchecks.io unreachable from the ops node. No check is known to be down, and **none is known to be up either**: every dead-man is unobserved from Grafana's side until this clears. healthchecks.io's own notifications still work, so the domain is degraded, not gone.
 
-**The dead-man map.** Eleven checks exist, and `tests/fixtures/healthchecks_descriptions.json` records each one by name and tags — a snapshot fetched through the read-only key, so a rename does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it. Its `description` field is healthchecks.io's own text and is not authoritative here: `zcrypto-archive-pull`'s says the ping is withheld on a gate skip, which the row below corrects.
+**The dead-man map.** Eleven checks exist, and `tests/fixtures/healthchecks_descriptions.json` records each one by name and tags — a snapshot fetched through the read-only key, so a rename does not reach it until it is re-fetched. Use the tags to identify a row, then the runbook column for the daemon that owns it. Its `description` field is healthchecks.io's own text and is not authoritative here: where it and a row disagree, the row holds.
 
 | node tag | application tag | what pings it | ping is withheld when | section owning the daemon |
 | -- | -- | -- | -- | -- |
