@@ -1011,6 +1011,41 @@ def read_soak_verdict(*, now: datetime, runner) -> Check:
         return Check(SOAK_CHECK, SOAK_EXPR, ok=False, value=f"unreadable: {exc}")
 
 
+# The first day the markdown report compares the two stacks: None until the last fleet host has 50 h of data on the
+# node, when the rollout's records pull request sets it; retirement ends the comparison by leaving the stack table one
+# stack, so the constant is never unset again.
+COMPARISON_FROM: date | None = None
+COMPARE_SCRIPT = Path(__file__).resolve().parent / "grafana-compare.py"
+# Four times a run's length and more, so Grafana Cloud's query path can slow that far before a run is cut; the
+# daily-ops skill runs the report in the background for the same reason.
+COMPARE_TIMEOUT_SECONDS = 2700
+_COMPARE_SUMMARY = re.compile(r"^compare: (\d+ nodes × \d+ instants, \d+ differences|failed: .+)$")
+
+
+def compare_run(day: date) -> str:
+    """The live runner: the comparison's stdout whatever its exit code, since it ends on its summary line at 0, 1 and 2."""
+    command = (sys.executable, str(COMPARE_SCRIPT), "--day", day.isoformat())
+    done = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=COMPARE_TIMEOUT_SECONDS)
+    return done.stdout
+
+
+def read_comparison(*, now: datetime, runner) -> str:
+    try:
+        lines = runner(now.date() - timedelta(days=1)).strip().splitlines()
+    except subprocess.TimeoutExpired:
+        return f"compare: failed: the comparison ran past its {COMPARE_TIMEOUT_SECONDS} s bound"
+    except Exception as exc:  # noqa: BLE001 -- the section reports the failure; the pass goes on
+        return f"compare: failed: {type(exc).__name__}: {exc}"
+    last = lines[-1] if lines else ""
+    if _COMPARE_SUMMARY.match(last):
+        return last
+    return f"compare: failed: the comparison's last line is not its summary: {last!r}"
+
+
+def comparison_due(now: datetime) -> bool:
+    return COMPARISON_FROM is not None and now.date() >= COMPARISON_FROM and len(grafana_auth.STACKS) == 2
+
+
 def read_deploys(window: timedelta, *, now: datetime, path: Path | None = None) -> list[dict]:
     log = path or DEPLOY_LOG
     if not log.exists():
@@ -1040,6 +1075,7 @@ class Report:
     verdict: list[Check]
     deploys: list[dict]
     reminders: RemindersRead
+    comparison: str | None = None
 
     @property
     def unreadable(self) -> list[str]:
@@ -1144,6 +1180,9 @@ class Report:
         out += ["", "## Deploys in window"] + (
             [f"- {d.get('ts')} {d.get('playbook')} --limit {d.get('limit')}" for d in self.deploys] or ["- none"]
         )
+        # The line, not a verdict: a difference is a finding for the cutover pull request, and `exit_code` never reads it.
+        if self.comparison is not None:
+            out += ["", "## Comparison", self.comparison]
         return "\n".join(out)
 
     def journal_paragraph(self) -> str:
@@ -1186,9 +1225,17 @@ class Report:
         )
 
 
-def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, window=timedelta(hours=24)) -> Report:
+def build_report(*, alerts, logs, deadmen, verdict, deploys, reminders, now, window=timedelta(hours=24), comparison=None) -> Report:
     return Report(
-        now=now, window=window, alerts=alerts, logs=logs, deadmen=deadmen, verdict=verdict, deploys=deploys, reminders=reminders
+        now=now,
+        window=window,
+        alerts=alerts,
+        logs=logs,
+        deadmen=deadmen,
+        verdict=verdict,
+        deploys=deploys,
+        reminders=reminders,
+        comparison=comparison,
     )
 
 
@@ -1212,7 +1259,7 @@ def main(argv: list[str]) -> int:
         return 0 if tier is Tier.AUTONOMOUS else 3
     if not argv or argv[0] != "report":
         print(
-            "usage: ops-daily.py report [--since 24h] [--journal-entry] [--stack cloud|mon]\n"
+            "usage: ops-daily.py report [--since 24h] [--journal-entry] [--stack cloud|mon] [--compare]\n"
             '       ops-daily.py classify --host <host> "<command>"'
         )
         return 2
@@ -1249,6 +1296,9 @@ def main(argv: list[str]) -> int:
     verdict.append(read_unattended_upgrades(now=now, runner=ssh_read))
     verdict.append(read_agentboard_cgroup(runner=ssh_read))
     verdict.append(read_soak_verdict(now=now, runner=soak_run))
+    # The markdown run alone compares, and once a pass: the daily-ops skill's step 1 passes the flag, the runbooks' confirm
+    # reads and the `--journal-entry` run do not.
+    compares = "--compare" in argv and "--journal-entry" not in argv and comparison_due(now)
     report = build_report(
         alerts=read_alerts(token, now=now, window=window),
         logs=read_logs(token, window=window),
@@ -1258,6 +1308,7 @@ def main(argv: list[str]) -> int:
         reminders=read_reminders(token, now=now, window=window),
         now=now,
         window=window,
+        comparison=read_comparison(now=now, runner=compare_run) if compares else None,
     )
     print(report.journal_paragraph() if "--journal-entry" in argv else report.markdown())
     return report.exit_code

@@ -118,11 +118,13 @@ docker inspect grafana-alloy --format 'img={{.Config.Image}} restarts={{.Restart
 # img == grafana/alloy@<the new digest>, restarts == 0   (.Config.Image, not .Image — see Step 0)
 ```
 
-Shipping health — **only readable on the host** (`127.0.0.1:12345`; none of these counters is admitted to Cloud):
+Shipping health — **read on the host** (`127.0.0.1:12345`; Grafana Cloud admits none of these counters):
 
 ```bash
 curl -s http://127.0.0.1:12345/metrics | grep -E \
   '^prometheus_remote_storage_samples_(failed_total|pending|total)|^loki_write_(sent|dropped)_entries_total'
+# Per destination the host ships to: the sample counters by `remote_name` (`mon` is the node's
+# endpoint), the entry counters by `host`, the destination's host and port. On EACH destination:
 # failed_total 0, pending 0, samples_total CLIMBING on a second read; sent_entries >= 1, dropped 0
 # Leave >60 s between reads and >60 s after the recreate: the scrape interval is 60 s, so a fresh
 # container legitimately reports samples_total=0 until its first scrape lands. `pending` briefly
