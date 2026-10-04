@@ -1,7 +1,3 @@
-"""The observability node's self-check, `zcrypto-mon-selfcheck.py`, driven with a canned opener: it pings the node's
-dead-man only while the scheduler ticks, a fleet sample is fresh and Loki is ready, and a failing check sends
-nothing -- the missing ping is the page."""
-
 from __future__ import annotations
 
 import configparser

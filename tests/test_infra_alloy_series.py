@@ -377,16 +377,28 @@ CACHE_REQUIRED = [
 ]
 
 
+_LIVE_REGEX_LINE = re.compile(r'^\s*regex\s*=\s*"(.*)"\s*$', re.M)
+_LIVE_SEPARATOR_LINE = re.compile(r'^\s*separator\s*=\s*";"\s*$', re.M)
+_LIVE_JOURNAL_SOURCE_LABELS_LINE = re.compile(
+    r'^\s*source_labels\s*=\s*\["__journal__systemd_unit", "__journal_container_name"\]\s*$', re.M
+)
+
+
+def _live_regex(block: str, where: str) -> str:
+    """The block's first `regex = "..."` line matched whole, so a `//` copy of a broader one above it is not read."""
+    m = _LIVE_REGEX_LINE.search(block)
+    assert m, f"{where}: no live regex line"
+    return m.group(1)
+
+
 def _keep_regex(path: Path) -> re.Pattern:
     """Extract the `keep` write_relabel_config's regex from an Alloy config."""
     text = path.read_text()
     blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
     keeps = [b for b in blocks if re.search(r'^\s*action\s*=\s*"keep"\s*$', b, re.M)]
     assert len(keeps) == 1, f"{path}: expected exactly one keep block, found {len(keeps)}"
-    m = re.search(r'regex\s*=\s*"([^"]+)"', keeps[0])
-    assert m, f"{path}: keep block has no regex"
     # Prometheus relabel regexes are fully anchored.
-    return re.compile(r"\A(?:" + m.group(1) + r")\Z")
+    return re.compile(r"\A(?:" + _live_regex(keeps[0], f"{path}: keep block") + r")\Z")
 
 
 def _drop_regex(path: Path) -> re.Pattern:
@@ -395,10 +407,8 @@ def _drop_regex(path: Path) -> re.Pattern:
     blocks = re.findall(r"^\s*write_relabel_config\s*\{(.*?)\}", text, re.M | re.DOTALL)
     drops = [b for b in blocks if re.search(r'^\s*action\s*=\s*"drop"\s*$', b, re.M)]
     assert len(drops) == 1, f"{path}: expected exactly one drop block, found {len(drops)}"
-    m = re.search(r'regex\s*=\s*"([^"]+)"', drops[0])
-    assert m, f"{path}: drop block has no regex"
     # Prometheus relabel regexes are fully anchored.
-    return re.compile(r"\A(?:" + m.group(1) + r")\Z")
+    return re.compile(r"\A(?:" + _live_regex(drops[0], f"{path}: drop block") + r")\Z")
 
 
 @pytest.mark.parametrize(
@@ -593,7 +603,9 @@ def _journal_keep_block(config: Path) -> str:
     """The whole `keep` rule, not just its regex: the separator and the source_labels decide what value the regex
     is matched against, and either one changing makes the rule match nothing."""
     for block in re.findall(r"^\s*rule \{(.*?)\n  \}", config.read_text(), re.M | re.S):
-        if "__journal__systemd_unit" in block and re.search(r'^\s*action\s*=\s*"keep"\s*$', block, re.M):
+        if re.search(r'^\s*source_labels\s*=.*"__journal__systemd_unit"', block, re.M) and re.search(
+            r'^\s*action\s*=\s*"keep"\s*$', block, re.M
+        ):
             return block
     raise AssertionError(f"no journal keep rule found in {config}")
 
@@ -604,7 +616,7 @@ def _ops_journal_keep_block() -> str:
 
 def _ops_journal_keep_regex() -> str:
     """The `keep` rule that reads `__journal__systemd_unit`, as written in the file."""
-    return re.search(r'regex\s*=\s*"(.*?)"\n', _ops_journal_keep_block()).group(1)
+    return _live_regex(_ops_journal_keep_block(), f"{OPS_ALLOY}: journal keep rule")
 
 
 def _journal_units_kept() -> set[str]:
@@ -660,12 +672,12 @@ def test_the_keep_rule_admits_alloys_own_stream_and_joins_on_unit_and_container(
     Both hosts, because the capture pair's rule is the ops rule's twin field for field and was read by nothing:
     the two mutations below killed on ops and survived there."""
     rule = _journal_keep_block(config)
-    regex = re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1)
-    assert 'separator     = ";"' in rule, (
+    regex = _live_regex(rule, f"{config}: journal keep rule")
+    assert _LIVE_SEPARATOR_LINE.search(rule), (
         f"the keep rule's separator is no longer `;`, so the `unit;container` values it matches are not the ones "
         f"the regex is written for and the rule matches nothing: {rule!r}"
     )
-    assert '["__journal__systemd_unit", "__journal_container_name"]' in rule, (
+    assert _LIVE_JOURNAL_SOURCE_LABELS_LINE.search(rule), (
         f"the keep rule's source_labels changed, so the two halves of the joined value swap and the regex's unit "
         f"arm no longer lines up with the unit: {rule!r}"
     )
@@ -750,8 +762,8 @@ def test_the_cache_journal_keep_rule_keys_the_containers_by_name():
     arm cannot select them, and keying the unit that runs the compose project too would ship each line
     twice."""
     rule = _journal_keep_block(CACHE_ALLOY)
-    regex = re.search(r'regex\s*=\s*"(.*?)"\n', rule).group(1)
-    assert 'separator     = ";"' in rule and '["__journal__systemd_unit", "__journal_container_name"]' in rule
+    regex = _live_regex(rule, f"{CACHE_ALLOY}: journal keep rule")
+    assert _LIVE_SEPARATOR_LINE.search(rule) and _LIVE_JOURNAL_SOURCE_LABELS_LINE.search(rule)
     assert regex == "zcache-probe\\\\.service;.*|.*;(zcrypto-valkey|zcrypto-sentinel|grafana-alloy)", regex
 
 
