@@ -796,15 +796,14 @@ def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its
 )
 def test_alloys_own_targets_are_concatenated_into_the_scrape_that_feeds_the_remote_write(path):
     text = path.read_text()
-    assert 'prometheus.exporter.self "alloy" {}' in text, f"{path}: no prometheus.exporter.self component"
+    assert re.search(r'^prometheus\.exporter\.self "alloy" \{\}$', text, re.M), f"{path}: no prometheus.exporter.self component"
     scrapes = re.findall(r'\nprometheus\.scrape "[a-z_]+" \{(.*?)\n\}', text, re.S)
-    carrying = [
-        s
-        for s in scrapes
-        if "targets         = array.concat(prometheus.exporter.unix.host.targets, prometheus.exporter.self.alloy.targets)" in s
-    ]
+    concat = (
+        r"^\s*targets\s*=\s*array\.concat\(prometheus\.exporter\.unix\.host\.targets, prometheus\.exporter\.self\.alloy\.targets\)$"
+    )
+    carrying = [s for s in scrapes if re.search(concat, s, re.M)]
     assert len(carrying) == 1, f"{path}: {len(carrying)} scrapes concatenate the self targets onto the host's"
-    assert "forward_to      = [prometheus.remote_write.grafana.receiver]" in carrying[0]
+    assert re.search(r"^\s*forward_to\s*=\s*\[prometheus\.remote_write\.grafana\.receiver\]$", carrying[0], re.M), carrying[0]
 
 
 # Held by literal, so a Cloud name repointed at the node, or a node name bound to another group var,
