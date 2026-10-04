@@ -784,16 +784,15 @@ def _endpoint_blocks(path: Path) -> list[str]:
 @pytest.mark.parametrize("path", [ACCESS_ALLOY], ids=["access"])
 def test_the_nodes_endpoint_carries_no_relabel_block_and_the_cloud_one_keeps_its_pair(path):
     cloud, mon = _endpoint_blocks(path)
-    assert cloud.count("write_relabel_config") == 2 and "MON_" not in cloud
+    assert len(re.findall(r"^\s*write_relabel_config\s*\{\s*$", cloud, re.M)) == 2 and "MON_" not in cloud
     assert all(
-        re.search(rf'^\s*(url|username|password)\s*=\s*sys\.env\("GRAFANA_PROM_{n}"\)\s*$', cloud, re.M)
+        re.search(rf'^\s*{n.lower()}\s*=\s*sys\.env\("GRAFANA_PROM_{n}"\)\s*$', cloud, re.M)
         for n in ("URL", "USERNAME", "PASSWORD")
     )
     assert "write_relabel_config" not in mon and "GRAFANA_" not in mon
     assert re.search(r'^\s*name\s*=\s*"mon"\s*$', mon, re.M)
     assert all(
-        re.search(rf'^\s*(url|username|password)\s*=\s*sys\.env\("MON_PROM_{n}"\)\s*$', mon, re.M)
-        for n in ("URL", "USERNAME", "PASSWORD")
+        re.search(rf'^\s*{n.lower()}\s*=\s*sys\.env\("MON_PROM_{n}"\)\s*$', mon, re.M) for n in ("URL", "USERNAME", "PASSWORD")
     )
 
 
