@@ -5,8 +5,8 @@
 // host` is the node's own name, so this one static file labels all three nodes. Credentials arrive as
 // environment variables from alloy-secrets.env (0600, rendered by the role), read with `sys.env(...)`.
 //
-// EDITING NOTE -- tests select assignments in this file by their leading key: keep every config
-// key the first non-space token on exactly one line.
+// EDITING NOTE -- tests read assignments out of this file: keep every config key the first
+// non-space token on exactly one line.
 
 // ---- Host metrics -------------------------------------------------------------------------------
 // The textfile directory is where the cache_link role's mesh probe (zcache-probe) writes zcache.prom,
