@@ -25,8 +25,9 @@ HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valke
 # The five converged, plus `chrony`: `infra/runbooks/capture.md` prescribes re-converging that role
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
 # spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
-# node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role.
-TAGNAMES="base hardening firewall fail2ban chrony docker capture engine ops nas access cache cache-link mon"
+# node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role; plus
+# `capture-alloy`, the capture role's Alloy part alone: the Alloy bump's and a config.alloy change's form there.
+TAGNAMES="base hardening firewall fail2ban chrony docker capture capture-alloy engine ops nas access cache cache-link mon"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
 # `daemon_json_ack` and `ops_panel_timer_hold` (the rollout skill), `ops_reconcile_mint` (the ops

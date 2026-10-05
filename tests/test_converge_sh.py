@@ -332,6 +332,35 @@ PUBLISHED = [
         {"capture_alloy_digest": DIGEST},
     ),
     (
+        ["--limit", "zcrypto-red", "--tags", "capture-alloy", "-e", f"capture_alloy_digest={DIGEST}"],
+        "zcrypto-red",
+        "capture-alloy",
+        {"capture_alloy_digest": DIGEST},
+    ),
+    (
+        ["--limit", "zcrypto", "--tags", "capture-alloy", "-e", "converge_primary=true", "-e", f"capture_alloy_digest={DIGEST}"],
+        "zcrypto",
+        "capture-alloy",
+        {"converge_primary": "true", "capture_alloy_digest": DIGEST},
+    ),
+    (
+        [
+            "--limit",
+            "zcrypto",
+            "--tags",
+            "capture-alloy,engine",
+            "-e",
+            "converge_primary=true",
+            "-e",
+            f"engine_image_digest={DIGEST}",
+            "-e",
+            f"capture_alloy_digest={DIGEST}",
+        ],
+        "zcrypto",
+        "capture-alloy,engine",
+        {"converge_primary": "true", "engine_image_digest": DIGEST, "capture_alloy_digest": DIGEST},
+    ),
+    (
         [
             "--limit",
             "zcrypto-ops",
