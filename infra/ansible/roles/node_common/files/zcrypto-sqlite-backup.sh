@@ -27,6 +27,12 @@ dest=$4
 keep_days=$5
 out=$6
 
+# One run of a backup at a time, through flock(1) whatever the SQLite version: the file a run finds already staged is
+# then never one another run is still writing. A second run fails here, touching nothing.
+lock="$(dirname -- "$out")/zcrypto-sqlite-backup-$name.lock"
+exec {lock_fd}>>"$lock" || fail "cannot open $lock"
+flock -n "$lock_fd" || fail "another run of the $name backup holds $lock"
+
 # A command prefix the database and the staging directory are read through, empty where the host holds them itself.
 read -r -a runner <<<"${SQLITE_BACKUP_RUNNER:-}"
 copy=${SQLITE_BACKUP_COPY:-cp }
@@ -34,6 +40,21 @@ copy=${SQLITE_BACKUP_COPY:-cp }
 now=$(date -u +%s)
 staged="$staging/$name-$(date -u -d "@$now" +%Y-%m-%dT%H%M%SZ).sqlite"
 cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
+
+# A run stopped part-way leaves no file of its own under a backup's name. systemd signals the unit's whole control
+# group, so a child dies with the script at the signal's default: a Python handler runs only between bytecodes, so it
+# would wait out SQLite's VACUUM before removing what this trap removes at once. A runner's staged file is out of the
+# host's reach; it is never copied, and the prune removes it past the keep-days.
+stopped() {
+  rm -f -- "$dest/${staged##*/}" || true
+  if [ ${#runner[@]} -eq 0 ]; then
+    rm -f -- "$staged" "$staged-journal" || true
+  fi
+  log ERROR "stopped by $1 before the backup completed; this run's files are removed"
+  exit "$2"
+}
+trap 'stopped SIGTERM 143' TERM
+trap 'stopped SIGINT 130' INT
 
 # Both paths are arguments, never SQL text: VACUUM INTO takes its file as a bound parameter. The staging directory
 # is made by the same process, so the runner's uid owns it and the file. mode=ro, since a connect to a path that names
@@ -85,12 +106,15 @@ else
 fi
 # A copy that fails part-way leaves its file under a backup's name, which the destination's readers would keep.
 "${copy_command[@]}" "$dest/" || {
-  rm -f -- "$dest/${staged##*/}"
+  rm -f -- "$dest/${staged##*/}" || true
   fail "copying $staged into $dest failed"
 }
 
 "${runner[@]}" python3 -c "$prune" "$staging" "$name" "$cutoff" || fail "pruning $staging failed"
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"
+
+# The run's files are complete: a stop from here leaves them, and the gauge as it was.
+trap - TERM INT
 
 # Atomic publish, as the reboot check's: the collector globs the directory, and mktemp as a sibling makes the mv a
 # same-filesystem rename.

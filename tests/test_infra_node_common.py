@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -299,6 +300,47 @@ PARTIAL_COPY = """#!/usr/bin/env bash
 head -c 100 -- "$1" >"$2${1##*/}"
 exit 1
 """
+# A copy that writes its file's first bytes into the destination, says so, and holds until released or stopped.
+SLOW_COPY = """#!/usr/bin/env bash
+head -c 100 -- "$1" >"$2${1##*/}"
+: >"$SLOW_STARTED"
+until [ -e "$SLOW_RELEASE" ]; do sleep 0.05; done
+exec cp -- "$@"
+"""
+# A copy that fails leaving a directory under the file's name, which `rm -f` cannot remove.
+STUCK_COPY = """#!/usr/bin/env bash
+mkdir -- "$2${1##*/}"
+exit 1
+"""
+# sqlite3 shims, found ahead of the standard library on PYTHONPATH: a VACUUM that fails with its file and its journal on
+# disk, and one that holds there until it is stopped.
+JOURNAL_SHIM = """def connect(*args, **kwargs):
+    return Source()
+
+
+class Source:
+    def execute(self, sql, parameters):
+        (staged,) = parameters
+        for path in (staged, staged + "-journal"):
+            open(path, "wb").close()
+        raise OSError("the shim's VACUUM failed with its journal on disk")
+"""
+SLOW_SHIM = """import os, time
+
+
+def connect(*args, **kwargs):
+    return Source()
+
+
+class Source:
+    def execute(self, sql, parameters):
+        (staged,) = parameters
+        for path in (staged, staged + "-journal"):
+            open(path, "wb").close()
+        open(os.environ["SLOW_STARTED"], "wb").close()
+        while True:
+            time.sleep(0.05)
+"""
 
 
 @dataclass(frozen=True)
@@ -336,13 +378,50 @@ def _argv(node: Node, *, db=None, staging=None, keep_days="14") -> list[str]:
     return ["probe", str(db or node.db), str(staging or node.staging), str(node.dest), keep_days, str(node.prom)]
 
 
-def _run(node: Node, argv: list[str], *, runner="", copy="", env=None, now=None) -> subprocess.CompletedProcess[str]:
+def _environment(node: Node, *, runner="", copy="", env=None, now=None) -> dict[str, str]:
     path = f"{node.bin}{os.pathsep}{os.environ['PATH']}"
     environment = os.environ | {"PATH": path, "SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy} | (env or {})
     if now is not None:
         _stub(node, "date", DATE_STUB.replace("REAL_DATE", shutil.which("date")))
         environment["DATE_STUB_NOW"] = str(now)
+    return environment
+
+
+def _run(node: Node, argv: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    environment = _environment(node, **kwargs)
     return subprocess.run(["bash", str(BACKUP_SCRIPT), *argv], capture_output=True, text=True, env=environment, check=False)
+
+
+@pytest.fixture
+def background():
+    runs: list[subprocess.Popen[str]] = []
+    yield runs
+    for run in runs:
+        if run.poll() is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.wait()
+
+
+def _start(node: Node, background: list, **kwargs) -> subprocess.Popen[str]:
+    # A session of its own, so a signal reaches the script and its children together, as a unit's stop does.
+    run = subprocess.Popen(
+        ["bash", str(BACKUP_SCRIPT), *_argv(node)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=_environment(node, **kwargs),
+        start_new_session=True,
+    )
+    background.append(run)
+    return run
+
+
+def _wait_for(path: Path, run: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 30
+    while not path.exists():
+        assert run.poll() is None, run.communicate()
+        assert time.monotonic() < deadline, f"{path} never appeared"
+        time.sleep(0.02)
 
 
 def _backup(node: Node, *, db=None, staging=None, keep_days="14", **kwargs) -> subprocess.CompletedProcess[str]:
@@ -359,6 +438,13 @@ def _stub(node: Node, name: str, text: str) -> None:
     stub = node.bin / name
     stub.write_text(text)
     stub.chmod(0o755)
+
+
+def _shim(node: Node, name: str, text: str) -> Path:
+    shim = node.bin.parent / name
+    shim.mkdir()
+    (shim / "sqlite3.py").write_text(text)
+    return shim
 
 
 def _today() -> date:
@@ -447,7 +533,7 @@ def test_the_gauge_is_renamed_into_place_and_leaves_no_temporary(node):
     first = node.prom.stat().st_ino
     assert _backup(node).returncode == 0
     assert node.prom.stat().st_ino != first, "the gauge was rewritten in place, so the collector can read half a file"
-    assert [p.name for p in node.prom.parent.iterdir()] == [node.prom.name]
+    assert sorted(p.name for p in node.prom.parent.iterdir()) == [node.prom.name, "zcrypto-sqlite-backup-probe.lock"]
 
 
 def test_the_gauge_is_readable_by_the_non_root_collector(node):
@@ -500,6 +586,72 @@ def test_a_vacuum_that_fails_part_way_leaves_no_file_under_a_backups_name(node):
     assert "database disk image is malformed" in result.stderr, result.stderr
     assert list(node.staging.iterdir()) == []
     assert node.prom.read_text() == PREVIOUS
+
+
+def test_a_vacuum_that_fails_with_its_journal_on_disk_leaves_neither(node):
+    shim = _shim(node, "journal-shim", JOURNAL_SHIM)
+    result = _backup(node, runner=f"env PYTHONPATH={shim}")
+    assert result.returncode == 1, result.stderr
+    assert "the shim's VACUUM failed with its journal on disk" in result.stderr, result.stderr
+    assert list(node.staging.iterdir()) == []
+
+
+def test_a_copy_whose_file_cannot_be_removed_still_fails_at_error(node):
+    _stub(node, "stuck-cp", STUCK_COPY)
+    result = _backup(node, copy="stuck-cp ")
+    assert result.returncode == 1, result.stderr
+    assert any(ERROR_LINE.match(line) and "copying " in line for line in result.stderr.splitlines()), result.stderr
+
+
+def test_a_run_while_another_holds_the_lock_fails_and_touches_nothing(node, background):
+    _stub(node, "slow-cp", SLOW_COPY)
+    started, release = node.bin / "started", node.bin / "release"
+    today = _today()
+    first = _start(
+        node,
+        background,
+        copy="slow-cp ",
+        env={"SLOW_STARTED": str(started), "SLOW_RELEASE": str(release)},
+        now=_noon(today),
+    )
+    _wait_for(started, first)
+    second = _backup(node, now=_noon(today) + 1)
+    release.touch()
+    _, first_stderr = first.communicate(timeout=30)
+    assert first.returncode == 0, first_stderr
+    assert second.returncode == 1, second.stderr
+    assert any(ERROR_LINE.match(line) and " holds " in line for line in second.stderr.splitlines()), second.stderr
+    expected = [f"probe-{today:%Y-%m-%d}T120000Z.sqlite"]
+    assert [p.name for p in _written_by_the_run(node.staging)] == [p.name for p in node.dest.iterdir()] == expected
+    assert _content(node.dest / expected[0]) == _content(node.db)
+
+
+def _stopped_part_way(node: Node, run: subprocess.Popen[str], started: Path) -> None:
+    _wait_for(started, run)
+    os.killpg(run.pid, signal.SIGTERM)
+    _, stderr = run.communicate(timeout=30)
+    assert run.returncode == 143, stderr
+    assert any(ERROR_LINE.match(line) and "stopped by SIGTERM" in line for line in stderr.splitlines()), stderr
+    for directory in (node.staging, node.dest):
+        left = sorted(p.name for p in directory.iterdir()) if directory.exists() else []
+        assert not [name for name in left if STAMPED.fullmatch(name) or name.endswith("-journal")], (directory, left)
+    assert node.prom.read_text() == PREVIOUS
+
+
+def test_a_run_stopped_during_a_slow_copy_leaves_no_file_under_a_backups_name(node, background):
+    _stub(node, "slow-cp", SLOW_COPY)
+    started = node.bin / "started"
+    node.prom.write_text(PREVIOUS)
+    env = {"SLOW_STARTED": str(started), "SLOW_RELEASE": str(node.bin / "never")}
+    _stopped_part_way(node, _start(node, background, copy="slow-cp ", env=env), started)
+
+
+def test_a_run_stopped_during_a_slow_vacuum_leaves_no_file_under_a_backups_name(node, background):
+    shim = _shim(node, "slow-shim", SLOW_SHIM)
+    started = node.bin / "started"
+    node.prom.write_text(PREVIOUS)
+    env = {"SLOW_STARTED": str(started), "PYTHONPATH": str(shim)}
+    _stopped_part_way(node, _start(node, background, env=env), started)
 
 
 def test_a_file_already_under_the_runs_name_fails_the_run_and_stays(node):
