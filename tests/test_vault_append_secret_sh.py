@@ -136,6 +136,17 @@ def test_an_inherited_shell_option_is_turned_off_before_the_value_is_read(tmp_pa
     assert (done.returncode, done.stdout, done.stderr) == (0, f"{_KEY}: appended\n", stderr)
 
 
+def test_an_inherited_export_of_the_script_s_variables_is_dropped(tmp_path):
+    vault = _vault(tmp_path, _BEFORE)
+    value = _value()
+    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, extra={"value": "inherited", "block": "inherited"})
+    environment = _stub_env(tmp_path)
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr, environment=environment)
+    assert leaked == []
+    assert (done.returncode, done.stdout, done.stderr) == (0, f"{_KEY}: appended\n", "")
+    assert [line for line in environment.splitlines() if line.startswith(("value=", "block="))] == []
+
+
 def test_the_value_is_held_to_the_shape_exactly_as_typed(tmp_path):
     vault = _vault(tmp_path, _BEFORE)
     value = f" {_value()} "
@@ -209,10 +220,7 @@ def test_a_key_the_file_carries_is_refused_without_replace_and_its_block_replace
 )
 def test_replace_is_refused_over_a_key_carried_twice_and_over_a_file_encrypted_whole(tmp_path, text):
     vault = _vault(tmp_path, text)
-    value = _value()
-    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, "--replace")
-    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
-    assert leaked == []
+    done = _run(tmp_path, None, str(vault), _KEY, _SHAPE, "--replace")
     assert done.returncode == 2 and done.stdout == ""
     assert len(done.stderr.splitlines()) == 1 and str(vault) in done.stderr
     assert not (tmp_path / "uv-record").exists()
@@ -222,7 +230,7 @@ def test_replace_is_refused_over_a_key_carried_twice_and_over_a_file_encrypted_w
 def test_a_file_encrypted_whole_is_refused_for_an_append(tmp_path):
     text = "$ANSIBLE_VAULT;1.1;AES256\n6162636465666768\n"
     vault = _vault(tmp_path, text)
-    done = _run(tmp_path, _value(), str(vault), _KEY, _SHAPE)
+    done = _run(tmp_path, None, str(vault), _KEY, _SHAPE)
     assert done.returncode == 2 and done.stdout == ""
     assert len(done.stderr.splitlines()) == 1 and str(vault) in done.stderr
     assert not (tmp_path / "uv-record").exists()

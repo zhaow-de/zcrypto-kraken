@@ -16,10 +16,11 @@
 # A failed encryption exits with its own rc and writes nothing. --replace swaps the key's line and the indented lines
 # under it for the new block and leaves every other line of the file as it was; the file keeps its mode.
 # Prints `<key>: appended` or `<key>: replaced` and nothing else.
-# An inherited xtrace or allexport (`bash -x`, an exported SHELLOPTS) would print the value or export it to the
-# encryptor's environment.
+# An inherited xtrace or allexport (`bash -x`, an exported SHELLOPTS), or an inherited export of `value` or `block`,
+# which an assignment keeps, would print the value or put it in every child's environment.
 set +xa
 set -euo pipefail
+unset value block
 
 value=""; tmp=""
 cleanup() {
