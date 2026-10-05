@@ -403,17 +403,35 @@ def _cloud_url_forms() -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize("skipped", ["", "other"], ids=["no group skipped", "another group skipped"])
+@pytest.mark.parametrize(
+    ("skipped", "missing"),
+    [
+        ("", "zcrypto-mon"),
+        ("other", "zcrypto-mon"),
+        ("zcrypto-mon", "zcrypto-hc"),
+        ("zcrypto-hc", "zcrypto-mon"),
+        ("other zcrypto-mon", "zcrypto-hc"),
+    ],
+    ids=[
+        "no group skipped",
+        "another group skipped",
+        "the observability node's group alone",
+        "the dead-man node's group alone",
+        "another group and the observability node's",
+    ],
+)
 @pytest.mark.parametrize("url", _cloud_url_forms().values(), ids=_cloud_url_forms().keys())
-def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, url, skipped):
+def test_a_push_addressed_to_grafana_cloud_refuses_to_send_the_nodes_group(stack_with_a_mon_rule, url, skipped, missing):
     done = stack_with_a_mon_rule.run(GRAFANA_URL=url, GRAFANA_SKIP_RULE_GROUPS=skipped)
     assert done.returncode != 0
     assert stack_with_a_mon_rule.recorded() == [], "the refusal comes before the first call"
-    assert "refusing to push to Grafana Cloud without skipping the zcrypto-mon rule group" in done.stderr
+    assert f"refusing to push to Grafana Cloud without skipping the {missing} rule group" in done.stderr
 
 
 @pytest.mark.parametrize(
-    "env", [{}, {"GRAFANA_SKIP_RULE_GROUPS": "other zcrypto-mon"}], ids=["the default", "a list naming the group"]
+    "env",
+    [{}, {"GRAFANA_SKIP_RULE_GROUPS": "zcrypto-hc other zcrypto-mon"}],
+    ids=["the default", "a list naming both groups"],
 )
 def test_a_push_addressed_to_grafana_cloud_that_skips_the_nodes_group_runs(stack_with_a_mon_rule, env):
     done = stack_with_a_mon_rule.run(GRAFANA_URL=_cloud_url(), **env)
@@ -436,7 +454,7 @@ def test_every_spelling_of_the_cloud_host_reads_the_default_that_skips_the_nodes
 
 def test_the_committed_default_skips_the_observability_nodes_group_on_grafana_cloud_and_no_group_elsewhere():
     text = _SCRIPT.read_text()
-    assert re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', text, re.M) == ["zcrypto-mon"]
+    assert re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', text, re.M) == ["zcrypto-mon zcrypto-hc"]
     assert re.findall(r'^  \*\) skip_default="([^"]*)" ;;$', text, re.M) == [""]
     assert re.findall(r'^export GRAFANA_SKIP_RULE_GROUPS="\$\{GRAFANA_SKIP_RULE_GROUPS-\$\{skip_default\}\}"$', text, re.M) == [
         'export GRAFANA_SKIP_RULE_GROUPS="${GRAFANA_SKIP_RULE_GROUPS-${skip_default}}"'
