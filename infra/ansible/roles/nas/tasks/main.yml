@@ -61,6 +61,7 @@
     owner: root
     group: root
     mode: "0755"
+  tags: [alloy]
 
 - name: deploy the alloy pipeline config
   ansible.builtin.copy:
@@ -70,6 +71,7 @@
     group: root
     mode: "0644"
   register: nas_deploy_alloy_config
+  tags: [alloy]
 
 # Same pre-`conf/` leftover the capture and ops roles remove: a config.alloy one directory above the
 # deployed one, mounted by nothing. Inert, but it answers a wrong-path guess with plausible data
@@ -78,6 +80,7 @@
   ansible.builtin.file:
     path: "{{ nas_stack_dir }}/config.alloy"
     state: absent
+  tags: [alloy]
 
 # A value --hash-scope would reject stops all five verified pulls -- refuse it here, before it
 # reaches a running container (spec 00102).
@@ -115,6 +118,7 @@
   no_log: true
   diff: false
   register: nas_deploy_alloy_secrets
+  tags: [alloy]
 
 # The hot/ hub push channel (spec 00056 D2/D4): the ONE write path into custody. The workstation
 # pushes over rsync-over-ssh, jailed by a vendored rrsync forced command pinned to hot/ -- never
@@ -198,9 +202,10 @@
 # sequence could never apply -- the flagged second run finds every file unchanged and nothing re-
 # notifies. And even a flagged converge would miss entrypoint-only changes, because `compose up -d`
 # recreates on a service-config-hash change and a bind-mounted file's CONTENT is not in that hash.
-# So the flag itself is the trigger: these tasks ALWAYS run under it, applying everything currently
-# rendered rather than what changed. Restarting an already-current container costs a few seconds on
-# best-effort loops.
+# So the flag itself is the trigger: under it these tasks run on every converge that selects the
+# whole role, applying everything currently rendered rather than what changed. Restarting an
+# already-current container costs a few seconds on best-effort loops. `--tags alloy` selects none of
+# them; its own apply is the block at the end.
 - name: apply — converge the containers onto the rendered files
   ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose up -d
   when: nas_apply_compose | default(false) | bool
@@ -223,3 +228,58 @@
   ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose restart alloy
   when: nas_apply_compose | default(false) | bool
   changed_when: true
+
+# `--tags alloy`, the fleet's Alloy-only converge: the tasks carrying the tag land Alloy's config and
+# secrets file, and this block reports and applies them. archive-pull's files -- the entrypoint,
+# compose.yaml, the .env -- are never rendered under it, and archive-pull is never restarted or
+# recreated; tests/test_nas_alloy_tag.py holds the set. A run that also selects the whole role applies
+# through the tasks above, so this block stands down there rather than recreate Alloy twice.
+- name: the Alloy-only form — report, then recreate Alloy alone under the apply flag
+  when: >-
+    'alloy' in ansible_run_tags and 'nas' not in ansible_run_tags
+    and 'all' not in ansible_run_tags and 'tagged' not in ansible_run_tags
+  tags: [alloy]
+  block:
+    - name: report which Alloy files this converge changed
+      ansible.builtin.debug:
+        msg: >-
+          Alloy files changed this run:
+          {{ nas_changed_alloy_files if nas_changed_alloy_files else '(none)' }}{{ ' — applying: Alloy alone is recreated'
+          if nas_apply_compose | default(false) | bool
+          else ' — render-only (nothing recreated); apply with -e nas_apply_compose=true, which recreates Alloy alone' }}
+      vars:
+        nas_changed_alloy_files: >-
+          {{ {'config.alloy': nas_deploy_alloy_config,
+              'alloy-secrets.env': nas_deploy_alloy_secrets}
+             | dict2items | selectattr('value.changed') | map(attribute='key') | list }}
+
+    # The recreate reads ALLOY_IMAGE from the stack .env, which this form does not render, so a pin
+    # changed in vars.yml since the last whole converge would recreate Alloy on the old one while the
+    # deploy-log row's committed_pins names the new one. A fixed whole-line match, quiet: the file
+    # also holds the vaulted gate URL.
+    - name: read whether the stack .env names the committed Alloy pin
+      ansible.builtin.command:
+        argv: [grep, -qxF, "ALLOY_IMAGE={{ nas_alloy_image }}", "{{ nas_stack_dir }}/.env"]
+      register: nas_env_alloy_pin
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: nas_apply_compose | default(false) | bool
+
+    - name: refuse to recreate Alloy from a stack .env that names another Alloy pin
+      ansible.builtin.assert:
+        that: nas_env_alloy_pin.rc == 0
+        fail_msg: >-
+          The stack .env does not name ALLOY_IMAGE={{ nas_alloy_image }}, and --tags alloy does not
+          render that file, which carries the puller's pin and sources too. Land the pin with a
+          render-only --tags nas converge (no apply flag), then re-run this one.
+      when: nas_apply_compose | default(false) | bool
+
+    # Service-scoped and forced: the secrets arrive through env_file, a restart keeps the environment
+    # a container was created with, and whether a changed env file alone makes `up -d` recreate is
+    # unproven on the NAS's Compose v2.20.1. --no-deps keeps a dependency added to compose.yaml later
+    # from being started or recreated beside it.
+    - name: apply — recreate alloy alone (its secrets env and config, nothing of the puller)
+      ansible.builtin.shell: cd {{ nas_stack_dir }} && {{ nas_docker }} compose up -d --no-deps --force-recreate alloy
+      when: nas_apply_compose | default(false) | bool
+      changed_when: true
