@@ -5,23 +5,19 @@
 
 # First, so a missing or misshapen vault value fails here by name and not inside a no_log task.
 - name: refuse a missing or misshapen secret, naming the key and never the value
-  ansible.builtin.assert:
-    that: mon_secret_faults | length == 0
-    fail_msg: >-
-      {{ mon_secret_faults | join(', ') }} in host_vars/zcrypto-mon/vault.yml: missing, or not the shape
-      its source writes (no trailing newline): infra/runbooks/mon.md's mon-secrets procedure.
+  ansible.builtin.include_role:
+    name: node_common
+    tasks_from: secrets-preflight
   vars:
-    mon_secret_faults: >-
-      {{ ([['mon_grafana_admin_password', mon_grafana_admin_password | default('')],
-           ['mon_grafana_secret_key', mon_grafana_secret_key | default('')]]
-          | rejectattr('1', 'match', '[A-Za-z0-9]{32,}\Z') | map('first') | list)
-         + ([['mon_grafana_admin_user', mon_grafana_admin_user | default('')]]
-            | rejectattr('1', 'match', 'u[0-9a-f]{16}\Z') | map('first') | list)
-         + ([['mon_ingest_fleet_password_hash', mon_ingest_fleet_password_hash | default('')],
-             ['mon_ingest_logship_password_hash', mon_ingest_logship_password_hash | default('')]]
-            | rejectattr('1', 'match', '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z') | map('first') | list)
-         + ([['selfcheck_healthcheck_url', selfcheck_healthcheck_url | default('')]]
-            | rejectattr('1', 'match', 'https://hc-ping\.com/\S+\Z') | map('first') | list) }}
+    node_common_secrets_preflight:
+      - {key: mon_grafana_admin_password, shape: '[A-Za-z0-9]{32,}\Z'}
+      - {key: mon_grafana_secret_key, shape: '[A-Za-z0-9]{32,}\Z'}
+      - {key: mon_grafana_admin_user, shape: 'u[0-9a-f]{16}\Z'}
+      - {key: mon_ingest_fleet_password_hash, shape: '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z'}
+      - {key: mon_ingest_logship_password_hash, shape: '\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}\Z'}
+      - {key: selfcheck_healthcheck_url, shape: 'https://hc-ping\.com/\S+\Z'}
+    node_common_secrets_preflight_file: host_vars/zcrypto-mon/vault.yml
+    node_common_secrets_preflight_runbook: infra/runbooks/mon.md's mon-secrets procedure
 
 # ---- Packages and their sources ------------------------------------------------------------------
 - name: add the Grafana apt repository (grafana, loki, alloy)

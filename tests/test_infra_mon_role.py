@@ -22,6 +22,8 @@ TASKS = ROLE / "tasks/main.yml"
 HANDLERS = ROLE / "handlers/main.yml"
 EDGE = ANSIBLE / "roles/edge"
 EDGE_INCLUDE = "the edge in front of Grafana on loopback and the two ingest paths"
+NODE_COMMON = ANSIBLE / "roles/node_common"
+PREFLIGHT_NAME = "refuse a missing or misshapen secret, naming the key and never the value"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 # Shaped like what the generator writes; none is a credential.
@@ -447,9 +449,17 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
     ],
 )
 def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
-    task = load_tasks(TASKS)[0]
-    assert task["name"] == "refuse a missing or misshapen secret, naming the key and never the value"
-    role_render.assert_preflight(task, SECRETS, override, refused)
+    include = load_tasks(TASKS)[0]
+    assert include["name"] == PREFLIGHT_NAME
+    assert include["ansible.builtin.include_role"] == {"name": "node_common", "tasks_from": "secrets-preflight"}
+    assert set(include["vars"]) == {
+        "node_common_secrets_preflight",
+        "node_common_secrets_preflight_file",
+        "node_common_secrets_preflight_runbook",
+    }
+    (task,) = load_tasks(NODE_COMMON / "tasks/secrets-preflight.yml")
+    assert task["name"] == PREFLIGHT_NAME
+    role_render.assert_preflight(task, SECRETS, override, refused, include["vars"])
 
 
 def test_the_play_runs_the_role_under_its_own_tag_with_no_container_runtime():
