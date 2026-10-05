@@ -17,7 +17,7 @@ fail() {
 
 usage="usage: zcrypto-sqlite-backup <name> <database> <staging-dir> <dest-dir> <keep-days> <output.prom>"
 [ $# -eq 6 ] && [[ $1 =~ ^[A-Za-z0-9_-]+$ && -n $2 && -n $3 && -n $4 && $5 =~ ^[0-9]+$ && -n $6 ]] || {
-  echo "$usage" >&2
+  log ERROR "$usage"
   exit 2
 }
 name=$1
@@ -37,16 +37,25 @@ cutoff=$(date -u -d "@$((now - 10#$keep_days * 86400))" +%Y-%m-%d)
 
 # Both paths are arguments, never SQL text: VACUUM INTO takes its file as a bound parameter. The staging directory
 # is made by the same process, so the runner's uid owns it and the file. mode=ro, since a connect to a path that names
-# no file creates an empty database there.
+# no file creates an empty database there. A VACUUM that fails part-way leaves its file under a backup's name, so the
+# file and its journal go before the error is raised; a file already there is one this run did not write, and stays.
 vacuum=$(
   cat <<'PY'
-import os, sqlite3, sys, urllib.parse
+import contextlib, os, sqlite3, sys, urllib.parse
 
 db, staged = sys.argv[1:]
 os.makedirs(os.path.dirname(staged), exist_ok=True)
-source = sqlite3.connect("file:" + urllib.parse.quote(db) + "?mode=ro", uri=True)
-source.execute("VACUUM INTO ?", (staged,))
-source.close()
+if os.path.lexists(staged):
+    sys.exit(f"{staged} already exists")
+try:
+    source = sqlite3.connect("file:" + urllib.parse.quote(db) + "?mode=ro", uri=True)
+    source.execute("VACUUM INTO ?", (staged,))
+    source.close()
+except BaseException:
+    for leftover in (staged, staged + "-journal"):
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(leftover)
+    raise
 PY
 )
 # By the date in the name, which a copy keeps and its mtime need not.
@@ -74,7 +83,11 @@ if [[ $copy == *[[:space:]] ]]; then
 else
   copy_command[-1]+=$staged
 fi
-"${copy_command[@]}" "$dest/" || fail "copying $staged into $dest failed"
+# A copy that fails part-way leaves its file under a backup's name, which the destination's readers would keep.
+"${copy_command[@]}" "$dest/" || {
+  rm -f -- "$dest/${staged##*/}"
+  fail "copying $staged into $dest failed"
+}
 
 "${runner[@]}" python3 -c "$prune" "$staging" "$name" "$cutoff" || fail "pruning $staging failed"
 python3 -c "$prune" "$dest" "$name" "$cutoff" || fail "pruning $dest failed"

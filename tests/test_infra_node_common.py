@@ -5,13 +5,14 @@ import json
 import os
 import re
 import shlex
+import shutil
 import sqlite3
 import stat
 import subprocess
 import time
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -284,6 +285,20 @@ if argv[3:4] == ["cp"] and len(argv) == 6 and argv[4].startswith("web:"):
     sys.exit(0)
 sys.exit(f"docker stub: unexpected call: {argv}")
 """
+# Answers the script's one clock read, `date -u +%s`, with DATE_STUB_NOW, so a test sets the run's time; every other
+# call reaches the real date.
+DATE_STUB = """#!/usr/bin/env bash
+if [ "$*" = "-u +%s" ]; then
+  echo "$DATE_STUB_NOW"
+else
+  exec REAL_DATE "$@"
+fi
+"""
+# A copy that dies part-way: its first bytes land in the destination under the file's own name, then it fails.
+PARTIAL_COPY = """#!/usr/bin/env bash
+head -c 100 -- "$1" >"$2${1##*/}"
+exit 1
+"""
 
 
 @dataclass(frozen=True)
@@ -321,9 +336,12 @@ def _argv(node: Node, *, db=None, staging=None, keep_days="14") -> list[str]:
     return ["probe", str(db or node.db), str(staging or node.staging), str(node.dest), keep_days, str(node.prom)]
 
 
-def _run(node: Node, argv: list[str], *, runner="", copy="", env=None) -> subprocess.CompletedProcess[str]:
+def _run(node: Node, argv: list[str], *, runner="", copy="", env=None, now=None) -> subprocess.CompletedProcess[str]:
     path = f"{node.bin}{os.pathsep}{os.environ['PATH']}"
     environment = os.environ | {"PATH": path, "SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy} | (env or {})
+    if now is not None:
+        _stub(node, "date", DATE_STUB.replace("REAL_DATE", shutil.which("date")))
+        environment["DATE_STUB_NOW"] = str(now)
     return subprocess.run(["bash", str(BACKUP_SCRIPT), *argv], capture_output=True, text=True, env=environment, check=False)
 
 
@@ -337,19 +355,30 @@ def _content(path: Path) -> list[str]:
         return list(connection.iterdump())
 
 
-def _named(days: int, name: str = "probe") -> str:
-    return f"{name}-{datetime.now(UTC).date() - timedelta(days=days):%Y-%m-%d}T024700Z.sqlite"
+def _stub(node: Node, name: str, text: str) -> None:
+    stub = node.bin / name
+    stub.write_text(text)
+    stub.chmod(0o755)
 
 
-def _written_today(directory: Path) -> list[Path]:
-    today = f"{datetime.now(UTC).date():%Y-%m-%d}"
-    return sorted(p for p in directory.iterdir() if (m := STAMPED.fullmatch(p.name)) and m.group(1) == today)
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _noon(today: date) -> int:
+    return int(datetime(today.year, today.month, today.day, 12, tzinfo=UTC).timestamp())
+
+
+def _named(today: date, days: int, name: str = "probe") -> str:
+    return f"{name}-{today - timedelta(days=days):%Y-%m-%d}T024700Z.sqlite"
+
+
+def _written_by_the_run(directory: Path, seeded=frozenset()) -> list[Path]:
+    return sorted(p for p in directory.iterdir() if STAMPED.fullmatch(p.name) and p.name not in seeded)
 
 
 def _through_docker(node: Node) -> list[list[str]]:
-    stub = node.bin / "docker"
-    stub.write_text(DOCKER_STUB)
-    stub.chmod(0o755)
+    _stub(node, "docker", DOCKER_STUB)
     env = {
         "DOCKER_STUB_LOG": str(node.bin / "docker.log"),
         "DOCKER_STUB_INSIDE": INSIDE,
@@ -376,7 +405,7 @@ def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_070
     result = _backup(node)
     assert result.returncode == 0, result.stderr
     (staged,) = node.staging.iterdir()
-    assert _written_today(node.staging) == [staged], staged.name
+    assert _written_by_the_run(node.staging) == [staged], staged.name
     assert [p.name for p in node.dest.iterdir()] == [staged.name]
     assert _content(staged) == _content(node.db) == _content(node.dest / staged.name)
     assert len(_content(staged)) > 12, "the rows the live connection left in the -wal are missing"
@@ -385,18 +414,22 @@ def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_070
 
 
 def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_directories(node):
+    today = _today()
+    seeded = {_named(today, 15), _named(today, 14), _named(today, 13), _named(today, 15, name="other")}
     old = time.time() - 30 * 86400
     for directory in (node.staging, node.dest):
         directory.mkdir(parents=True)
-        for name in (_named(15), _named(14), _named(13), _named(15, name="other")):
+        for name in seeded:
             (directory / name).write_bytes(b"")
         # An mtime past the keep-days on a file whose name is inside them.
-        os.utime(directory / _named(13), (old, old))
-    result = _backup(node)
+        os.utime(directory / _named(today, 13), (old, old))
+    # The run's clock is the seeded names' date, so the boundary file stays fourteen days old across midnight UTC.
+    result = _backup(node, now=_noon(today))
     assert result.returncode == 0, result.stderr
     for directory in (node.staging, node.dest):
-        left = {p.name for p in directory.iterdir()} - {p.name for p in _written_today(directory)}
-        assert left == {_named(14), _named(13), _named(15, name="other")}, directory
+        assert [p.name for p in _written_by_the_run(directory, seeded)] == [f"probe-{today:%Y-%m-%d}T120000Z.sqlite"]
+        left = {p.name for p in directory.iterdir()} & seeded
+        assert left == {_named(today, 14), _named(today, 13), _named(today, 15, name="other")}, directory
 
 
 def test_the_gauge_carries_the_backups_time_under_its_name(node):
@@ -430,13 +463,14 @@ def test_a_runner_that_fails_leaves_the_gauge_and_exits_non_zero(node):
     assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
 
 
-def test_a_copy_that_fails_after_a_clean_vacuum_leaves_the_gauge_and_exits_non_zero(node):
+def test_a_copy_that_fails_part_way_after_a_clean_vacuum_leaves_the_gauge_and_no_file_in_the_destination(node):
+    _stub(node, "partial-cp", PARTIAL_COPY)
     node.prom.write_text(PREVIOUS)
-    result = _backup(node, copy="false ")
+    result = _backup(node, copy="partial-cp ")
     assert result.returncode != 0
-    (staged,) = _written_today(node.staging)
+    (staged,) = _written_by_the_run(node.staging)
     assert _content(staged) == _content(node.db)
-    assert not node.dest.exists() or not list(node.dest.iterdir())
+    assert list(node.dest.iterdir()) == []
     assert node.prom.read_text() == PREVIOUS
     assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
 
@@ -450,13 +484,41 @@ def test_a_database_path_naming_no_file_fails_and_creates_none(node):
     assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
 
 
+def test_a_vacuum_that_fails_part_way_leaves_no_file_under_a_backups_name(node):
+    broken = node.db.parent / "broken.sqlite"
+    with closing(sqlite3.connect(broken)) as connection:
+        connection.execute("CREATE TABLE pages (body TEXT)")
+        connection.executemany("INSERT INTO pages VALUES (?)", [("x" * 200,) for _ in range(400)])
+        connection.commit()
+    # A page past the schema overwritten, so the VACUUM fails on reading it after it has created its file.
+    with broken.open("r+b") as handle:
+        handle.seek(4 * 4096)
+        handle.write(b"\xff" * 4096)
+    node.prom.write_text(PREVIOUS)
+    result = _backup(node, db=broken)
+    assert result.returncode != 0
+    assert "database disk image is malformed" in result.stderr, result.stderr
+    assert list(node.staging.iterdir()) == []
+    assert node.prom.read_text() == PREVIOUS
+
+
+def test_a_file_already_under_the_runs_name_fails_the_run_and_stays(node):
+    today = _today()
+    node.staging.mkdir()
+    earlier = node.staging / f"probe-{today:%Y-%m-%d}T120000Z.sqlite"
+    earlier.write_bytes(b"a backup this run did not write")
+    result = _backup(node, now=_noon(today))
+    assert result.returncode != 0
+    assert earlier.read_bytes() == b"a backup this run did not write"
+
+
 def test_two_runs_on_one_date_write_two_files(node):
-    assert _backup(node).returncode == 0
-    time.sleep(1.05 - time.time() % 1)
-    result = _backup(node)
-    assert result.returncode == 0, result.stderr
-    staged = [p.name for p in _written_today(node.staging)]
-    assert len(staged) == 2
+    noon = _noon(_today())
+    for now in (noon, noon + 1):
+        result = _backup(node, now=now)
+        assert result.returncode == 0, result.stderr
+    staged = [p.name for p in _written_by_the_run(node.staging)]
+    assert len(staged) == 2 and len({STAMPED.fullmatch(name).group(1) for name in staged}) == 1, staged
     assert sorted(p.name for p in node.dest.iterdir()) == staged
 
 
@@ -464,13 +526,13 @@ def test_a_staging_path_carrying_a_quote_is_backed_up_as_any_other(node):
     staging = node.db.parent / "o'clock"
     result = _backup(node, staging=staging)
     assert result.returncode == 0, result.stderr
-    (staged,) = _written_today(staging)
+    (staged,) = _written_by_the_run(staging)
     assert _content(staged) == _content(node.db) == _content(node.dest / staged.name)
 
 
 def test_the_runner_runs_the_vacuum_with_both_paths_as_arguments_and_neither_in_its_program(node):
     calls = _through_docker(node)
-    (staged,) = _written_today(node.staging)
+    (staged,) = _written_by_the_run(node.staging)
     ((interpreter, flag, program, *paths),) = [args for args in _execs(calls) if f"{INSIDE}/probe.sqlite" in args]
     assert (interpreter, flag, paths) == ("python3", "-c", [f"{INSIDE}/probe.sqlite", f"{INSIDE}/backups/{staged.name}"])
     assert INSIDE not in program
@@ -478,18 +540,20 @@ def test_the_runner_runs_the_vacuum_with_both_paths_as_arguments_and_neither_in_
 
 
 def test_the_staging_prune_runs_through_the_runner(node):
+    # A day either side of the boundary, so a run across midnight UTC prunes and keeps the same two.
+    today = _today()
     node.staging.mkdir()
     for days in (15, 13):
-        (node.staging / _named(days)).write_bytes(b"")
+        (node.staging / _named(today, days)).write_bytes(b"")
     calls = _through_docker(node)
-    assert not (node.staging / _named(15)).exists()
-    assert (node.staging / _named(13)).exists()
+    assert not (node.staging / _named(today, 15)).exists()
+    assert (node.staging / _named(today, 13)).exists()
     assert len([args for args in _execs(calls) if f"{INSIDE}/backups" in args]) == 1, calls
 
 
 def test_the_copy_prefix_takes_the_staged_path_on_its_last_word(node):
     calls = _through_docker(node)
-    (staged,) = _written_today(node.staging)
+    (staged,) = _written_by_the_run(node.staging)
     (copy,) = [call for call in calls if call[3:4] == ["cp"]]
     assert copy[3:] == ["cp", f"web:{INSIDE}/backups/{staged.name}", f"{node.dest}/"]
     assert _content(node.dest / staged.name) == _content(node.db)
@@ -517,7 +581,8 @@ def test_the_copy_prefix_takes_the_staged_path_on_its_last_word(node):
 def test_a_malformed_invocation_is_refused_before_anything_is_written(node, malform):
     result = _run(node, malform(_argv(node)))
     assert result.returncode == 2, result.stderr
-    assert result.stderr.startswith("usage: ")
+    (line,) = result.stderr.splitlines()
+    assert ERROR_LINE.match(line) and "- usage: zcrypto-sqlite-backup <name> " in line, line
     assert not node.staging.exists() and not node.dest.exists() and not node.prom.exists()
 
 
