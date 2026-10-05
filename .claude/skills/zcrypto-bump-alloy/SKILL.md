@@ -93,19 +93,17 @@ Then `db2` (`zcrypto-valkey2`) and `db3` (`zcrypto-valkey3`) the same way, in th
 
 ### capture secondary, then primary
 
-Pass the **currently-running capture digest** — read it with `ssh red 'sudo docker inspect zcrypto-capture --format {{.Config.Image}}'` and take the `sha256:…` part after the `@` (`.Config.Image`, never `.Image`) — so the capture-compose render stays `changed=false` and its `restart capture service` handler never fires. Passing any other value restarts unbackfillable capture — that is the whole trap.
+`--tags capture-alloy` runs the capture role's Alloy part alone — the stale-config removal, the config drift check, and the Alloy block's user, directories, config, secrets file and compose file — and nothing of the capture daemon: no capture compose render, no `restart capture service` handler, no capture digest to pass. The role refuses the tag without `capture_alloy_digest`, and `tests/test_capture_alloy_tag.py` holds what the tag selects.
 
 ```bash
 # secondary
-./scripts/converge.sh site.yml --limit zcrypto-red \
-  -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
+./scripts/converge.sh site.yml --limit zcrypto-red --tags capture-alloy \
+  -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh red 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'   # role renders only — never starts
 
-# primary — converge_primary is required; --skip-tags engine satisfies site.yml's un-tagged-run refusal.
-# Never answer that refusal with -e engine_image_digest: it restarts the LIVE trade engine.
-# It skips cache_link too: a changed zcache0.conf lands at a `--tags cache-link` converge inside the engine's gap.
-./scripts/converge.sh site.yml --limit zcrypto --skip-tags engine -e converge_primary=true \
-  -e capture_image_digest=sha256:<running-capture> -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
+# primary — the tag satisfies site.yml's un-tagged-run refusal; converge_primary is still required.
+./scripts/converge.sh site.yml --limit zcrypto --tags capture-alloy -e converge_primary=true \
+  -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh zcrypto 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'
 ```
 
