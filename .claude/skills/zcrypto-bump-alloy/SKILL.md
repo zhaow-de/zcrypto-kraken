@@ -93,16 +93,16 @@ Then `db2` (`zcrypto-valkey2`) and `db3` (`zcrypto-valkey3`) the same way, in th
 
 ### capture secondary, then primary
 
-`--tags capture-alloy` runs the capture role's Alloy part alone — the stale-config removal, the config drift check, and the Alloy block's user, directories, config, secrets file and compose file — and nothing of the capture daemon: no capture compose render, no `restart capture service` handler, no capture digest to pass. The role refuses the tag without `capture_alloy_digest`, and `tests/test_capture_alloy_tag.py` holds what the tag selects.
+`--tags alloy`, the tag every role's Alloy tasks are to share, runs the capture role's Alloy part alone — the stale-config removal, the config drift check, and the Alloy block's user, directories, config, secrets file and compose file — and nothing of the capture daemon: no capture compose render, no `restart capture service` handler, no capture digest to pass. The role refuses the tag without `capture_alloy_digest`, and `tests/test_capture_alloy_tag.py` holds what the tag selects. Only the capture role carries it so far: on ops and the cache nodes `--tags alloy` selects nothing and exits 0, so their legs above keep their own forms.
 
 ```bash
 # secondary
-./scripts/converge.sh site.yml --limit zcrypto-red --tags capture-alloy \
+./scripts/converge.sh site.yml --limit zcrypto-red --tags alloy \
   -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh red 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'   # role renders only — never starts
 
 # primary — the tag satisfies site.yml's un-tagged-run refusal; converge_primary is still required.
-./scripts/converge.sh site.yml --limit zcrypto --tags capture-alloy -e converge_primary=true \
+./scripts/converge.sh site.yml --limit zcrypto --tags alloy -e converge_primary=true \
   -e capture_alloy_digest=sha256:<new>   # previews, then typed confirm
 ssh zcrypto 'cd /etc/zcrypto-capture/alloy && sudo docker compose up -d'
 ```
