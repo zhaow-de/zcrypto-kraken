@@ -7,7 +7,8 @@
 # Usage: vault-append-secret.sh <vault-file> <key> <shape-regex> [--replace]
 # Refuses, rc 2, before the value is read: another usage, an empty shape, a key that is not a variable name, a file
 # that does not exist, a key the file already carries unless --replace, and --replace for a key the file lacks.
-# Refuses, rc 2, after the read: no value, and a value off the shape, naming the key and the shape, never the value.
+# Refuses, rc 2, after the read: an empty value, whatever the shape admits, and a value off the shape, naming the key
+# and the shape, never the value.
 # A failed encryption exits with its own rc and writes nothing. --replace swaps the key's line and the indented lines
 # under it for the new block and leaves every other line of the file as it was; the file keeps its mode.
 # Prints `<key>: appended` or `<key>: replaced` and nothing else.
@@ -38,8 +39,10 @@ carried=$(KEY="$key:" awk 'index($0, ENVIRON["KEY"]) == 1 { n++ } END { print n 
 if [[ $replace -eq 0 && $carried -gt 0 ]]; then refuse "$file already carries $key; --replace replaces its block"; fi
 if [[ $replace -eq 1 && $carried -eq 0 ]]; then refuse "$file carries no $key to replace"; fi
 
-read -rs -p "$key (not echoed): " value < "${VAULT_APPEND_SECRET_TTY:-/dev/tty}" || [[ -n $value ]] || refuse "no value was read for $key"
-if [[ -t 0 ]]; then printf '\n' >&2; fi < "${VAULT_APPEND_SECRET_TTY:-/dev/tty}"
+read -rs -p "$key (not echoed): " value < "${VAULT_APPEND_SECRET_TTY:-/dev/tty}" || true
+# The read has already reported a terminal that cannot be opened.
+if [ -t 0 ] 2>/dev/null < "${VAULT_APPEND_SECRET_TTY:-/dev/tty}"; then printf '\n' >&2; fi
+[[ -n $value ]] || refuse "no value was read for $key"
 [[ $value =~ ^($shape)$ ]] || refuse "the value for $key does not match the shape '$shape'; nothing was written"
 block=$(printf %s "$value" | uv run ansible-vault encrypt_string --stdin-name "$key")
 

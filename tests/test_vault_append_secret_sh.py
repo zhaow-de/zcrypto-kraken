@@ -120,17 +120,28 @@ def test_an_inherited_xtrace_is_turned_off_before_the_value_is_read(tmp_path):
 
 @pytest.mark.parametrize(
     "off_shape",
-    [lambda v: v[:-1], lambda v: v + "x", lambda v: "x" + v, lambda v: "hcr_" + v[4:], lambda v: ""],
-    ids=["short", "trailing-extra", "leading-extra", "other-prefix", "empty"],
+    [lambda v: v[:-1], lambda v: v + "x", lambda v: "x" + v, lambda v: "hcr_" + v[4:]],
+    ids=["short", "trailing-extra", "leading-extra", "other-prefix"],
 )
 def test_a_value_off_the_shape_is_refused_before_the_encryption_runs(tmp_path, off_shape):
     vault = _vault(tmp_path, _BEFORE)
     value = off_shape(_value())
     done = _run(tmp_path, value, str(vault), _KEY, _SHAPE)
-    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr) if value else []
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
     assert leaked == []
     assert done.returncode == 2 and done.stdout == ""
     assert _KEY in done.stderr and _SHAPE in done.stderr
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_text(encoding="utf-8") == _BEFORE
+
+
+@pytest.mark.parametrize(("typed", "stderr_lines"), [("", 1), (None, 2)], ids=["empty-line", "no-terminal"])
+def test_an_empty_value_is_refused_under_a_shape_that_admits_it(tmp_path, typed, stderr_lines):
+    vault = _vault(tmp_path, _BEFORE)
+    done = _run(tmp_path, typed, str(vault), _KEY, "[a-z]*")
+    assert done.returncode == 2 and done.stdout == ""
+    lines = done.stderr.splitlines()
+    assert len(lines) == stderr_lines and _KEY in lines[-1]
     assert not (tmp_path / "uv-record").exists()
     assert vault.read_text(encoding="utf-8") == _BEFORE
 
