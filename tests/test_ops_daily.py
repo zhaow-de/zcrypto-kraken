@@ -2217,6 +2217,46 @@ def test_a_host_with_no_full_converge_on_record_owes_no_patch_pass(tmp_path, hos
     assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"} | {_PATCH_PASS_NAMES[o] for o in others}
 
 
+def test_a_hosts_malformed_row_leaves_the_next_hosts_patch_pass_read(tmp_path, monkeypatch):
+    first = ops_daily.PATCH_PASSES[0][0]
+    monkeypatch.setattr(ops_daily, "PATCH_PASSES", (*ops_daily.PATCH_PASSES, ("zcrypto-red", "infra/runbooks/capture.md")))
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(
+            tmp_path, _converge("not-a-date", limit=first), _converge("2026-08-20T10:00:00Z", limit="zcrypto-red")
+        ),
+    )
+    assert read.unreadable and read.unreadable.count("the deploy log could not be read") == 1, read.unreadable
+    assert _reminder(read, "red patch pass").status.startswith("due in 22 days")
+    assert f"{ops_daily.ssh_alias(first)} patch pass" not in {r.name for r in read.reminders}
+
+
+def test_a_deploy_log_that_cannot_be_opened_is_noted_once_however_many_hosts_read_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(ops_daily, "PATCH_PASSES", (*ops_daily.PATCH_PASSES, ("zcrypto-red", "infra/runbooks/capture.md")))
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=tmp_path,
+    )
+    assert read.unreadable and read.unreadable.count("the deploy log could not be read") == 1, read.unreadable
+    assert not [r for r in read.reminders if r.name.endswith("patch pass")]
+
+
+@pytest.mark.parametrize(("host", "runbook"), ops_daily.PATCH_PASSES, ids=_PATCH_PASS_HOSTS)
+def test_each_patch_pass_is_named_as_its_runbook_section_reads(host, runbook):
+    path, anchor = runbook.split("#")
+    _, section = (Path(__file__).resolve().parents[1] / path).read_text().split(f'<a name="{anchor}"></a>')
+    section = section.split('\n<a name="')[0]
+    assert f"`OWED {_PATCH_PASS_NAMES[host]}`" in section, f"{runbook} does not read the reminder's name"
+
+
 def test_every_runbook_citation_the_instrument_itself_prints_resolves():
     """Every `infra/runbooks/<file>#<anchor>` the instrument prints reaches a paged operator verbatim,
     and a rename of a cited section -- spec 00107 D6 rewrote both -- would leave this module's copy

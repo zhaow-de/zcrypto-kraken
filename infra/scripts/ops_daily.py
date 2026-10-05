@@ -401,12 +401,17 @@ def read_reminders(
                 Reminder("refdata sweep", f"{status} (last sweep {last.isoformat()})", owed=days <= 0, runbook=REFDATA_RUNBOOK)
             )
 
+    log_failures = set()
     for host, runbook in PATCH_PASSES:
         try:
             patched = last_full_converge(deploy_log, host)
         except _UNREACHABLE as exc:
-            note(f"the deploy log could not be read: {exc}")
-            break
+            # A malformed row fails its own host's read alone; a log that cannot be opened fails each host's alike, noted once.
+            failure = f"the deploy log could not be read: {exc}"
+            if failure not in log_failures:
+                log_failures.add(failure)
+                note(failure)
+            continue
         # No full converge on record is a node that is not built: nothing is owed on it.
         if patched is not None:
             days = (_a_month_after(patched) - now.date()).days
