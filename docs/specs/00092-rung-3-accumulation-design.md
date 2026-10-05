@@ -1,0 +1,370 @@
+# 00092 — rung-3 accumulation: the engine submits `target − actually held` from the 4-hourly cycle record, continuously armed, against the venue's own holdings
+
+The fifth of [[T0018]]'s five-spec sequence (`00088` the envelope, `00089` venue truth, `00090` the rung-1 order path, `00091` the tracking-error report and trip, this one the full loop), at the serial the sequence reserved for it; the serial is below the tree's highest (`00121`) on purpose. Real money, about EUR 1,000: the engine itself drafts and submits each cycle's rebalance where rung 2 has the owner hand-place the helper's plans. Written on 2026-10-05, rung 2's entry day, while the box runs: every decision that needs no rung-2 data is settled here, and every one that does carries a named slot the box's exit report fills (`## The slots rung 2's box fills`).
+
+## Problem
+
+Rung 2 runs the accumulation loop by hand. Once a day the owner copies the 12Z `cycle-<HH>.json` and `venue-<HH>.json` to the workstation, exports Kraken's balances and positions, runs `zcrypto engine draft-plan` (`cli/engine/draftplan.py`), reads its decision table, copies the plan to the host, validates it with `probe-plan --check`, places the arm file, renames the plan into `exec/probe-plan.json`, reads the ledger until every intent is terminal, drafts the next plan from fresh exports, and removes the arm file by 15:05Z (`infra/runbooks/engine-procedures.md`, `engine-rung-2-box`). Its first day did exactly that: three plans of three intents, nine legs bought between 13:36Z and 14:01Z, ten maker fills, fees 0.62 EUR, EUR 154.79 spent against the 12Z record's targets at EUR 720 per unit of weight, nine decision rows `carried` because a delta sat under the venue's floors (`data/rung2/decisions.jsonl`, `days.md`). The loop's inputs and outputs are therefore known shapes: a cycle record's `final_targets` and `closes`, Kraken's own holdings, a decision table of placed, queued, carried and on-target legs, and plans of `execute` intents that the executor's maker-first machine runs one intent at a time.
+
+What rung 2 does not exercise is the owner's cost taken at `[iter-173]`: cycle-driven submission, continuous arming, the alert set for an engine armed all day, the account-wide watchdog, the drawdown trips, [[T0120]]'s polling intervals, and the same-symbol trip false-fire [[T0018]] names. Each is a decision of this spec. Three facts about the tree bound every one of them, measured in `## The measured basis`: the executor already runs a plan from an in-memory `self._plan` once `_pickup` has journaled it, so the loop needs no second machine; the boundary alert already calls `executor.on_boundary(boundary)` after the cycle journals, so the loop needs no second timer; and on the pinned nautilus build (`2.0.0rc6.dev20260921`) a restart restores a held spot lot beside an equal `EXTERNAL` short, so the engine's own `held` reads 0 on a lot Kraken holds — which is why master plan §12's rung-3 precondition waits on a pin carrying the fix of upstream #5181, and why this spec takes `held` from the venue's own read and never from the Cache.
+
+## Decisions
+
+### D1 — The trigger is the boundary alert after the cycle journals, the draft is `draftplan`'s table run inside the executor, and the plan runs through the machinery `_pickup` already feeds
+
+RECOMMENDED. `ShadowStrategy._on_cycle_alert` calls `self._executor.on_boundary(boundary)` in its `finally`, after `on_alert_logic` has run the cycle and journaled it (`cli/engine/node.py`, the `_on_cycle_alert` method); `on_boundary` today records the series birth and evaluates the tracking trip and nothing else. It gains a third act, after those two: the cycle plan. It reads `cycle-<HH>.json` for `boundary` through `from_json` and `validate_record` (the `_cycle_records_through` pattern in `cli/engine/executor.py`) — a `failed-cycle-<HH>.json` sidecar or no record means no plan this boundary (D3) — takes the venue's own book read (D2), drafts the ten EUR legs through `draftplan.decide_leg`, `trim_buys_to_cash` and `assemble_plans` with the rung-3 parameters of D3 and D4, builds the plan document with `draftplan.plan_document` under `plan_id = r3-<YYYYMMDD>-<HH>`, and hands it to a new `_accept_plan(plan, cycle_ts, now)` that is `_pickup` from its `parse_plan` line on with the file path removed: the kill backstop, the reconciliation refusal, the venue-truth read, the in-flight wait for an opening intent under the cache, `plan_refusals` (TTL, dedup over `ledgered_plan_ids`, the notional cap, the margin floor), `_mixed_inventory_refusals`, the plan entry journaled through `_journal_plan`, and `self._plan` set. `_pickup` itself keeps its file path for the drills' plans and is refactored to call `_accept_plan`; a file plan is picked up only while no plan runs, as today, so a drill plan dropped during a cycle plan waits in its file, inside its own 60-minute TTL.
+
+The venue's book read runs on `read_venue_orders`' nonce terms: nothing of this process in flight (`_nothing_in_flight`). At a boundary that holds by construction — D3 ends every intent before the next boundary — and where it does not (an intent the startup pass or a trip left PENDING_CANCEL, a drill plan still resting), the draft waits on the tick, `_pickup`'s `waits for a tick with nothing in flight` shape, until the submission window's close (D3), after which the boundary drafts nothing and its record says so.
+
+Rejected: a second drafter inside the engine, a decision table written for the loop beside the one rung 2 measured — two tables are two things to be wrong, and the box's four weeks of decision rows are evidence for exactly one of them. Rejected: the 5-second tick polling the journal for a new cycle record — the alert chain already hands `on_boundary` the boundary after the write, and a poll races the cycle's own `record_path.write_text`. Rejected: drafting from the venue record's `positions` or the cycle record's `held` — both are `venue_state_from_cache`'s instrument-scoped net of the Cache (`cli/engine/venuestate.py`), which reads 0 on a lot held through a restart on this pin (the `spot-proof` entry of `docs/reference/drill-log.md`) and is the engine's belief at best on any pin. Rejected: a plan file written by the engine into `exec/` for its own pickup — a file the engine both writes and consumes is a race with the operator's drill file under one name and buys nothing the in-memory hand-off does not.
+
+### D2 — `held` is the venue's own read, taken at the boundary; the engine's Cache net is the cross-check and never the input; a hand act moves `held` by construction
+
+RECOMMENDED. `held` per leg is what `read_venue_holdings` in `cli/engine/executor.py` answers — each traded coin's spot balance total under its EUR pair plus each margin position signed by its side, on a bare `KrakenSpotHttpClient` of the executor's own, three private calls — extended by one field, the account's free EUR from the same `request_account_state` answer, as `read_venue_book`. That is [[T0119]]'s `actually held` and `[iter-173]`'s "what Kraken itself reports held", the figure rung 2's helper drafts from (the `kraken_held` column of its table, from `kraken extended-balance`). The delta is `target_eur − held_qty × close`, the close being the cycle record's journaled `closes[base]` (D3), a buy drafted as a `notional_eur` opening intent and a sell as a `qty` closing intent, the two shapes `cli/engine/probeplan.py` admits.
+
+The cross-check: beside the venue's figure the record (D14's `accum-<HH>.json`) carries the Cache's instrument-scoped net (`_cache_net`), and a difference above the leg's lot step logs the WARNING `_settle_positions_from_venue` already logs — `the venue holds <q> <symbol> where the Cache reads <q>` — with the moment `the boundary read`. Nothing is drafted from the Cache's figure and nothing stops on the difference: on the pinned build the difference is the restore offset on every lot held through a restart, and on a fixed pin it is a hand act or a fill this engine never saw, each of which the venue's figure already carries. The loop does not read the engine's `_venue_correction` either: the boundary read settles the position gauge the way the startup and re-read passes do (`_settle_positions_from_venue("the boundary read")`), so the gauge, the record and the draft read one figure.
+
+A hand act on a basket coin — a trade on Kraken's page, a reward credit, a conversion — is held by the next boundary's read and drafted against: an over-target coin is sold down, an under-target one bought up. The loop needs no stop for correctness, and takes none (D6 names what stops it). The act is still a finding: the weekly ledger reconciliation (`00091` D8) names its row as unmatched, the record's Cache-vs-venue column names the leg, and the owner reads both. [[T0216]]'s question — how long the gauge lags such an act — is D12's.
+
+Rejected: `target − previously journaled intent` — the shadow path's `orders.jsonl` delta, [[T0119]]'s defect: every unplaced delta is dropped for good. Rejected: `target − Cache net`, through `venue_state_from_cache` or `positions_open` — 0 on a held lot on this pin, and on any pin the Cache keeps a position a hand close removed (`00119` D28's phantom class). Rejected: `target − the venue record's balances` — the Cache's stored account, which a restart adds to and never drops from (`[iter-173]`'s stale-balance finding; `engine-clear-stored-account`).
+
+### D3 — One plan per boundary; sells first, then buys by size; one intent at a time under the 15-minute box and the bounded IOC; an intent may start until B+3h30 and what has not started carries; a failed or late cycle drafts nothing
+
+RECOMMENDED. The plan's intents are ordered as `assemble_plans` orders them — sells before buys, each side by EUR size descending — and run sequentially through the existing machine: `_TIME_BOX` 15 minutes, `_MAX_REPRICES` 5, `_MAX_IOC_ATTEMPTS` 3 at the opposite touch, `_ACK_WAIT` 30 s (`cli/engine/executor.py`, the constants block). The plan is not split into plans of three as rung 2's `MAX_INTENTS` splits it — that cap exists for a hand-placed file's drop window, and the loop drops nothing — so one `r3-<YYYYMMDD>-<HH>` plan carries every placeable leg.
+
+The submission window: an intent may start from the cycle's completion until `B + 3h30m`; `_pump` refuses to start an intent past that mark with the reason `the submission window closed`, journaled on the intent as `carried`, and the leg is drafted again at the next boundary. The arithmetic: the latest start at B+3h30m, the box at 15 min, then at most three IOC attempts each bounded by `_ACK_WAIT` 30 s, ends every order of this process by about B+3h47m, before the next boundary's alert at B+4h+90 s (`settle_delay_secs` 90) — so no funded order rests while `run_cycle` can hold the event loop for its 25-minute refresh reserve, which is what `00090` D13's 60-minute rule protects. Capacity: from a cycle's completion (about B+2 min; `cycle-12.json` of 2026-10-05 completed at 12:01:43Z) to B+3h30m is 208 minutes, fourteen 15-minute boxes against ten legs, and rung 2's first day placed nine legs in 25 minutes of wall clock across three plans, every intent filling inside its box.
+
+A boundary with no `cycle-<HH>.json` — a sidecar, a raise in `run_cycle`, a missed boundary — drafts nothing: `on_boundary` writes `accum-<HH>.json` with `status: no-cycle` and the book carries to the next boundary, where `target − held` absorbs the gap. A late record, `completed_at` past B+30 min, still drafts while the window is open: the record's targets are the model's for that boundary whatever the Stage-6a streak says of its timing.
+
+The decision's prices: the delta and the floors are sized at the cycle record's `closes` — the forming row's close per model base, the price at the boundary and about two minutes old at the draft — and the order is priced at the live touch by the machine as today (`_first_submission`: `target_qty = notional_eur / price`). A buy's EUR notional is price-free; a sell's `qty` is `held − target_eur / close`, floored to the lot step.
+
+Rejected: a longer box (30 min) — every one of rung 2's day-1 intents filled inside 15, and a longer rest holds a post-only order against a touch that has moved. Rejected: a shorter box (5 min) — more time-box crossings through the IOC, taker fees on a book whose maker share is the cost basis [[T0214]] prices. Rejected: parallel intents — the machine holds one `_active`, and concurrency is a rewrite of the state machine on the live path for a window that fits the book sequentially. Rejected: the public ticker's mid for the decision price, rung 2's — a tenth public read per boundary for a price the cycle already journaled, and a per-leg quote subscription at every boundary is the standing subscription `00101` D1 keeps the data socket free of.
+
+### D4 — Skip-or-carry: carry, rung 2's `[iter-173]` policy verbatim with the box's measured floors; a leg with an open ledger row is carried until the venue has answered that row
+
+RECOMMENDED. A buy under `max(1.05 × ordermin × close, EUR 0.50)` carries (`BUY_ORDERMIN_HEADROOM`, `MIN_BUY_EUR` in `cli/engine/draftplan.py`); a sell under `ordermin` carries; a sell that would leave less than `ordermin` sells the whole leg; buys beyond free EUR less the cash reserve trim from the smallest and carry (`trim_buys_to_cash`); a negative target reads as 0 (D5); the two `/BTC` legs are structurally 0 and never drafted. Day 1 of the box ran the table on nine legs: 27 rows, 9 `placed`, 9 `queued` behind a plan and then placed, 9 `carried` — six sells of 1.1e-07 to 5.3e-04 units under their `ordermin` after the fills landed a touch inside the mid, and three buys of 0.01 to 0.03 EUR under their floor. The policy is rung 3's accumulation done by hand, and it holds unchanged. The cash reserve rises from EUR 5 to EUR 10: it covers the fees of the plan it bounds, and a full-book rebalance at EUR 1,000 and 40 bps per side costs about EUR 4.
+
+Two rules the loop adds to the table, both from the executor's own records. First, an intent that ended `unfilled`, `partial`, `refused`, `rejected`, `ambiguous` or `revoked` is not re-placed in the same cycle — rung 2's `never re-placed the same day`, the ledger carrying the outcome where the helper's decision log did — and the next boundary's delta absorbs it. Second, a leg whose exec ledger holds a row in `_OPEN_ORDER_STATES` inside the two-day window (`open_submitted_rows`) is carried with the reason `an order of this symbol may still rest at the venue`: a resting buy's EUR is on hold at Kraken and out of free EUR, so a second buy cannot double-spend, but a resting sell's coin is in the balance's total, so a second sell would sell it twice; the re-read pass or a startup inside the window settles the row, and the leg drafts again once no open row names it.
+
+Rejected: skip — `[iter-173]`'s option 2, the book drifting from the model by every dropped delta with nothing to bring it back. Rejected: a floor at `ordermin` with no headroom — a quantity at exactly the floor can fall under it after the lot-step floor, the venue's own rejection. Rejected: re-placing a failed intent inside the cycle — the IOC ladder is the retry, and a second ladder on a leg that spent the first is the shape `00119` D3's `unfilled` now means. Rejected: drafting the sell of a leg whose row is open against the balance less the resting quantity — the balance read carries no per-order hold for coins (`hold_trade` is the extended balance's, which the bare client's account state does not surface), so the row is the only witness.
+
+### D5 — Rung 3 opens long-only on spot: a negative target reads 0, the band is re-derived for the floored book, and shorts enter later as a class-C change under §12's promotion rules
+
+RECOMMENDED. `CrossfreqSystemConfig.short_cap` is 0.10 and `apply_position_caps` admits a negative weight (`cli/portfolio/crossfreq_system.py`), so record 47's book can carry a short leg; the 2026-10-05 12Z record carries none. A short at this engine is a margin position opened with `params={"leverage": 2}` and closed reduce-only, the path rung 1 proved on one leg each way — and a margin position open forbids every engine restart on this pin unless `00120` D17's test admits it, which needs the cache's live proof that has not run (drill A2 `blocked` in `docs/reference/drill-log.md`). A loop that may be restarted by a converge, a reboot or the supervisor cannot hold a book it is forbidden to restart under. So rung 3 enters with `decide_leg`'s `max(weight, 0.0)`, the rule rung 2 runs today, and a leg whose target turns negative is sold to 0 and held flat.
+
+The cost, stated: the realized book is not record 47's book on the cycles the record shorts, and the go/no-go band is conditional on the realized composition (master plan §12), so the band is re-derived on the floored book — `accum-replay` gains `--floor-shorts`, the replay's `target` clamped at 0 per leg, and the p95 it quotes at NAV 1,000 is the edge rung 3's first three weeks are read against. How often record 47 shorts is unmeasured here (slot S7); the floored book is a state the deployable can be in (§12's composition disclosure), declared before the evidence as a promotion class is.
+
+Shorts enter as a class-C change — changed execution semantics: sides, order types — under §12's sleeve-promotion rules, with their own spec, once (a) a pin lifts the restart rule for a cache-restored position (`00120` D17's proof read clean, or upstream #5065 in the pin's history, which merged upstream on 2026-10-02 as `48361a40b`), (b) rung 1's margin evidence is extended by one short held across an engine restart, and (c) the mixed-inventory refusal (`_mixed_inventory_refusals`, `00120` D12) has its flip rule written: a leg crossing from long spot to short margin sells the spot lot whole in one cycle and opens the short in a later one, never both in one plan.
+
+Rejected: shorts from entry — a book the operating rule forbids restarting under, on a pin whose cache proof is unrun, with `default_leverage` unset and no flip rule written. Rejected: shorts as a plan-shape exclusion left silent — a negative target floored without the band re-derived is the stale band §12 warns is too wide.
+
+### D6 — Continuous arming: the arm file is placed once at entry and stays; `exec_armed = true` is a reviewed host variable the converge keeps; the restart hold stays human-cleared and runs the loop reduce-only; what disarms is the kill file, the hold, the venue leaving online, the drawdown trip and the owner's hand
+
+RECOMMENDED. Both keys stay up for the rung. The template `infra/ansible/roles/engine/templates/zcrypto.toml.j2` renders `exec_armed = {{ engine_exec_armed | lower }}` from a role default `engine_exec_armed: false`, and the arm PR at rung 3's entry commits `engine_exec_armed: true` in `host_vars/zcrypto/vars.yml` — a reviewed line in git that every later engine converge renders unchanged, so a rollout inside the rung does not disarm it. The arm file `exec/armed` is placed by the owner at entry (arm step 6 of the probe-window procedure) and removed only to pause. Arming is still two keys, both in the owner's hands, and disarming is still one file.
+
+The restart hold keeps `00088` D6's clearing: a human removes it, nothing in code does, and this spec narrows nothing there. Under the hold the loop runs at `reduce_only`: `_level_permits` already admits a close and refuses an open at that level, so the boundary's sells run and its buys are journaled `refused` with `restart_hold` and carried; D11's rule pages when a boundary passes without `full`. The owner clears the hold after the boot's reads (the rung-2 restart step's items 3 to 7, which the rung-3 procedure carries).
+
+What disarms or holds the loop, each already a gate input or a trip: the kill file (any trip of D8, D9's watchdog never trips it, the owner's hand, the red button), the restart hold, `venue_not_online` from the gate's `SystemStatus` read (a Kraken maintenance window refuses every intent while it lasts, and the loop carries), `nautilus_unverified` after an unverified bump, and the owner removing the arm file. The six reasons are the gate's whole enumeration (`cli/engine/execgate.py`, six `reasons.append` sites).
+
+Rejected: the tree rendering `false` with the host armed, rung 2's `[iter-173]` arming — an unplanned converge disarms the loop mid-week and re-arming costs an arm PR and a converge, which at the rollout cadence of a multi-week rung is a recurring cost, and the fail-safe it bought is the restart hold's already: every restart runs the loop reduce-only until a human reads the boot. Rejected: clearing the hold on reconciliation agreement — `00088` D6 forbids removing the human act; a further precondition on the clear is admissible and not taken here, since the clear is one `rm` after reads the procedure already demands. Rejected: a converge-time `-e` override for `exec_armed` — the template's own rule, arming is a reviewed diff.
+
+### D7 — The account-wide stale-WS watchdog: an endpoint down past 30 seconds revokes the active intent, refuses every new one, cancels what the Cache holds open, and the freeze lifts only after the re-read pass has run on the return
+
+RECOMMENDED. `00090` D6's per-intent quote silence (30 s without a tick on the subscribed instrument while an order rests) is the data socket's watchdog while an order rests and nothing else: the execution socket, `kraken-spot-user-streams`, carries the fills, and its drop is invisible to a quote stream that keeps ticking. `00119` D17 built the socket-state stream — `ShadowStrategy.subscribe_socket_state()` in `on_start`, `on_socket_state` forwarding each `DISCONNECTED` and `CONNECTED` into the executor's `_sockets_down` set. The watchdog keys on that set and on the tick: an endpoint in `_sockets_down` for longer than `_SOCKET_DOWN_GRACE` (30 s) sets `_frozen`; on that tick `_poll` revokes the active intent with the reason `socket_down` (the `_revoke` path: cancel, no fallback), `_cancel_resting(None)` sends a cancel for every order the Cache holds open, and `_start_intent` refuses every intent with `socket_down` while `_frozen` stands. The freeze lifts when `_reread_pass` completes with its reads answered — the pass a return already arms, which re-reads every row a minted terminal closed, re-cancels by txid what still rests (`00119` D19), and settles the holdings — so the loop resumes on the venue's own account of the cut and not on its own guess.
+
+The grace is the measured blip: the execution socket drops about hourly on this wheel and reports back within three seconds (`[[T0018]]`'s rollout readings of 2026-09-30, `socket kraken-spot-user-streams is down` at 19:24:36Z and 22:07:34Z, each `back and none is down` inside three seconds), and a watchdog without a grace would cancel a resting maker order every hour. The cancel-all is best effort by F2's measurement — a cancel sent into a cut does not reach the venue, and the engine mints the terminal — which is why the lift waits for the re-read pass and not for `CONNECTED` alone.
+
+Rejected: tripping the kill switch on a cut — a cut is infrastructure, not divergence, and a latch a human must clear would end the loop on every outage longer than the grace. Rejected: no account-wide watchdog, the per-intent halt alone — with the user-streams socket down a resting order fills unheard, the time-box then cancels a filled order, and the intent ends `ambiguous` after the fact where the watchdog ends it before the fill. Rejected: keying on an endpoint's name — `00119` D17's reasoning, the execution socket's `CONNECTED` string was unmeasured when that decision was taken and the set is what the executor holds.
+
+### D8 — The drawdown kill switch: equity marked at the cycle's closes at every boundary; a fall of 15 % from the series' high-water mark latches the kill file; a UTC-day loss of 3 % refuses opens for the rest of that day; both re-derived from the journal, the series dated by one write-once file the owner re-mints
+
+RECOMMENDED. At each boundary, after D2's book read, the loop computes `equity_eur = free EUR + Σ held_qty[base] × closes[base]` over the ten model bases — the cycle record's own closes, the mark the tracking report uses — and writes it into `accum-<HH>.json` beside the holdings. The high-water mark is the maximum `equity_eur` over every `accum-*.json` since the series' start; the drawdown is `1 − equity / hwm`; the day's loss is `1 − equity / equity_at_the_day's_00Z_record` (the first record of the UTC day, or the previous day's last where 00Z is missing). Two trips, §10's hard floor and its daily rule: drawdown ≥ 15 % calls `_trip_kill` with the figures (the kill file, latching, human-cleared, resting orders cancelled, the plan halted, `zcrypto-engine-exec-kill-tripped` paging); day loss ≥ 3 % sets a process-local `_day_loss_hold` for that UTC date, under which `_start_intent` refuses opening intents with `daily loss hold` and closes still run — re-derived at every boundary, so a restart re-derives it too.
+
+The series' start is `exec/equity-series-start`, a write-once file carrying the UTC day the series began, written by the loop at the first boundary it computes an equity for and read only to bound the HWM scan; a deposit or a withdrawal inside the rung is the owner's act, taken with the loop paused, and the owner re-mints the file by hand afterwards (`FIRST_FILL_FILE`'s shape: written once, never edited to change a verdict, re-minted only after a post-mortem). The 60-day journal retention bounds the HWM to a trailing window of that length; §10's "trailing maxDD from HWM" is read as that window, and the bound is stated rather than hidden. After a 15 % trip the owner's post-mortem ends with the kill file removed and the series re-minted; without the re-mint the next boundary trips again on the same drawdown, by design.
+
+The ladder's middle rungs (−7.5 % risk ×0.5, −11 % ×0.25) are not implemented in the executor: the governor inside the model's `final_targets` is a returns overlay already scaling the book, and a second scaling in the engine would govern twice. The engine's two trips are the backstops the model cannot see — the account's own equity. Dust and non-basket coins (BNB, EURC) are outside the mark; a reward credit on a basket coin is inside it.
+
+Rejected: Kraken's `TradeBalance` equity — the spot-proof read the margin summary's EUR at 1442.6394 against a wallet of about 1435.88 and inferred, not verified, that the lot counted as collateral; a number with unmeasured semantics is not a kill input. Rejected: the model's own drawdown — it reads the configured NAV and cannot see the account (`[iter-173]`'s pause question). Rejected: a hand read, rung 2's EUR 60 stop — not continuous, and rung 3 runs unattended for hours. Rejected: a durable drawdown checkpoint — `00091` D10's reasoning, a stale checkpoint is self-reinforcing and a crash between trip and write corrupts it; re-derivation from immutable records is idempotent.
+
+### D9 — The venue-divergence alert is owed here and authored: the engine's gate reads the venue not online while capture saw no non-online status
+
+RECOMMENDED. `zcrypto-engine-exec-venue-diverged`, warning, `for: 15m`, group `zcrypto-gate`: `zcrypto_exec_venue_ok{host="zcrypto"} == 0` while `increase(zcrypto_capture_venue_status_total{host="zcrypto", system!="online"}[15m])` reads 0 — the engine's own REST read of `SystemStatus` refusing while the capture daemon's WebSocket observation of the same venue saw no transition away from `online` in the window. That is the one state neither `zcrypto-capture-venue-not-online` (which reads the capture series alone) nor D11's disarmed rule (which fires after a whole boundary, for any reason) attributes: the engine's read path is broken while the venue trades, and the loop carries every intent with `venue_not_online` until someone looks. [[T0018]] deferred it to the moment "the engine cannot trade" carries continuous meaning; that moment is this spec's.
+
+Rejected: not authoring it, the disarmed-across-a-boundary rule covering it — that rule fires 4.5 hours in and names no cause; this one fires in 15 minutes and names the engine's side. Rejected: a rule on `zcrypto_exec_venue_ok == 0` alone — it double-pages every real maintenance window beside the capture rule.
+
+### D10 — [[T0120]]: `open_check_interval_secs` and `position_check_interval_secs` are stated explicitly as `None`, 0 polls a minute, with the arithmetic; `spot_positions_quote_currency` stays `"ZEUR"` and `default_leverage` stays unset
+
+RECOMMENDED. The loop's standing REST pattern, derived from the code paths above: the gate's public `SystemStatus` read once a minute idle (`_GATE_REFRESH` 60 s) and every 30 s while a plan runs (the snapshot bound); private calls, one boundary read of three per 4 hours (D2), and per intent at most one `AddOrder`, five reprices, three IOC attempts and one time-box cancel — 15 private calls per intent, at most ten intents per boundary, 150 per cycle over at least two and a half hours, under one a minute. [[T0053]]'s measured pacing floor is `_MIN_INTERVAL_SECONDS = 3.0` in `cli/trades/rest.py` — 1.5 s was refused with `EGeneral:Too many requests` on a live bulk run — twenty calls a minute sustained; the loop's worst minute is five per cent of it. A library poll at 60 s each would add two calls a minute, ten per cent of the floor, for a reconciler whose events reach the executor flagged `reconciliation=True`: `_on_order_event` and `_venue_terminal_state` read every flagged terminal as a mint and strand the intent `ambiguous` (`00119` D15 and its measured basis: the library's open-order check "arrives flagged as G's queries did"), and the library's own `request_order_status_reports` on the execution client would race the executor's bare-client reads for the nonce `read_venue_orders` documents. So both stay `None`, written into `_exec_engine_config` beside the five knobs it states, with `test_nautilus_interface_pin.py` holding both defaults, so a bump's flip of either is a decision. The go/no-go's "zero unreconciled order/position states" is read from the engine's own three reconciliations — the startup pass, the re-read pass, and D2's boundary read — each journaled: a `reconciled`, `withdrawn` or `ambiguous` event on a row, a Cache-vs-venue difference in `accum-<HH>.json`, a WARNING per leg.
+
+`spot_positions_quote_currency` keeps `"ZEUR"` (`_exec_client_config`, set at iter-119 against the measured 546-instrument histogram; unread under `spot_account_type=MARGIN`). `default_leverage` keeps `None`: D5's rung 3 is spot-only, and a short, when it enters, passes `leverage` per order as rung 1 did (the owner's ruling of 2026-08-02).
+
+Rejected: `open_check_interval_secs = 60` and `position_check_interval_secs = 120`, the numbers a share of the floor would admit (1.5 calls a minute, 7.5 % of twenty) — admissible by the budget and inadmissible by the executor's reading of the library's flagged events; a number that strands intents is not a reconciler. Slot S9 re-opens this if the box's exit report shows an unreconciled state the engine's own passes missed.
+
+### D11 — The armed-too-long rule is replaced by a disarmed-across-a-boundary rule, pruned after its replacement's first sample is verified by value
+
+RECOMMENDED. `zcrypto-engine-exec-armed-too-long` reads `min_over_time(zcrypto_exec_armed{host="zcrypto"}[6h])` and fires forever under D6. It is replaced by `zcrypto-engine-exec-disarmed-across-a-boundary`, warning, `for: 10m`, `noDataState: OK`: `(max_over_time(zcrypto_exec_gate_level{host="zcrypto"}[4h30m]) < 1.5) and on() (zcrypto_exec_kill_tripped{host="zcrypto"} == 0)` — the gate never read `full` across a whole boundary's span while no kill stands (the kill pages on its own rule). It covers the arm file gone, the hold left latched, `config_not_armed` after a rollout, the venue not online for a cycle, and an unverified bump, in one rule; the operator reads `exec-status` for which. The failure mode inverts with continuous arming: forgetting to arm was the probe window's, and an engine disarmed unnoticed — carrying every cycle while targets move — is the loop's, a week ahead of the tracking trip. The prune follows `fleet-deploys.md`'s order: converge, push, verify the new rule's first sample by value, prune the old uid with `GRAFANA_PRUNE=1`, confirm it 404s. The runbook section `engine.md#zcrypto-engine-exec-armed-too-long` is rewritten under the new uid.
+
+Rejected: silencing the old rule — the thing [[T0018]] forbade. Rejected: `armed while no cycle completed recently`, the shape `00088` D8 guessed — `zcrypto-engine-cycle-stale` pages that already, and arming is not the fault there.
+
+### D12 — [[T0216]]: a read on each unmatched external fill, not a shorter timer; the measured span is slot S4
+
+RECOMMENDED. `_on_external_event`'s unmatched branch — the hand act's own `OrderFilled` on `events.order.EXTERNAL`, counted `unmatched` and dropped — gains one call, `_arm_reread_after_mint()`, for an `OrderFilled` alone: the re-read pass runs on the next tick with nothing in flight, reads an empty population and settles the holdings, so the gauge takes the venue's figure within a tick of the act plus the pass's one read. A shorter standing timer while armed would be a fixed REST call added to D10's budget for a lag it only shortens to its interval; the event is the signal, and its rate is bounded by the owner's own hand. The arm is a counter reset to three tries, so twelve fills of a hand flatten coalesce into one pass. What the box measures (S4): from a hand act's Kraken trade time to the WARNING `the venue holds …` that moved the gauge, if the box has a hand act at all — rung 2 forbids one.
+
+Rejected: a 5-minute holdings read while armed — three private calls every five minutes for a hand act the loop forbids, on a budget already serving the loop. Rejected: nothing, the hourly socket blip's re-read — about an hour of lag at rung 3's stakes, [[T0216]]'s own concern.
+
+### D13 — The same-symbol late-fill false fire: foreign fills on the active intent's instrument since its start are netted into `expected`, a code change in `_reconcile_terminal`
+
+RECOMMENDED. `_reconcile_terminal` holds the Cache's strategy-scoped position to `own_position_before ± active.filled`, `own_position_before` read at intent start; a fill of an earlier intent's order on the same instrument landing after that read is in `actual` and not in `expected`, and a difference over one lot step latches the kill (`cli/engine/executor.py`, `_reconcile_terminal`; [[T0018]]'s `00092` bullet). The loop makes the shape constructible across cycles: a sell of cycle N whose cancel raced a fill, the row open, the fill landing while cycle N+1's intent on the same leg runs. The fix is on the page: `_ActiveIntent` gains `foreign_filled: float`, and `_on_detached_event` and `_trip_on_fill`'s detached crediting add a fill's signed quantity to it when the fill's `instrument_id` equals the active intent's and `_claims` is False, the sign read from the row's `intent["side"]`; `_reconcile_terminal` reads `expected = own_position_before + own_delta + foreign_filled`. The trip keeps its lot-step tolerance and its strategy scoping.
+
+Rejected: re-reading the position at the terminal in place of the intent-start baseline — `expected` would then be `actual` by construction, and the check compares nothing. Rejected: a plan-shape exclusion (one intent per symbol per cycle) — it does not exclude the cross-cycle shape, and the loop is exactly what widens the intent set [[T0018]] named the trigger.
+
+### D14 — The record and the families: `accum-<HH>.json` per boundary, three gauges and one state, admitted end to end; the plan entries keep schema 2
+
+RECOMMENDED. Each boundary writes `accum-<HH>.json` in the day directory (`cli/engine/accumledger.py`, the `venueledger` pattern: own prefix, own `ACCUM_SCHEMA_VERSION` 1, atomic write, a schema-aware validator): `cycle_ts`, `drafted_at`, `status` (`ok`, `no-cycle`, `window-closed`, `refused`), `nav`, `free_eur`, `equity_eur`, `hwm_eur`, `drawdown_bps`, `day_loss_bps`, `day_loss_hold`, `plan_id`, and per leg `symbol`, `weight`, `target_eur`, `close`, `held_qty`, `cache_net`, `delta_eur`, `outcome`, `side`, `qty`, `notional_eur`, `reason` — the helper's decision row, the gap series [[T0119]] asks for, per asset per cycle. The Stage-6a gate never sees it: every `_journal_artifacts` call in `cli/engine/command.py` names its glob (`cycle-*.json`, `failed-cycle-*.json`, `venue-*.json`, `exec-*.json`), and a test re-proves the prefix's immunity the way `exec-` and `venue-` were proven. The exec ledger's `_PLAN_ENTRY_KEYS` and `EXEC_SCHEMA_VERSION` 2 are untouched: the plan entry carries the plan document as today, and the decision table lives in its own artifact, so no readers-before-writer deploy is owed on the exec ledger.
+
+Families, under the `zcrypto_exec_*` prefix: `zcrypto_exec_gap_eur{symbol}` (the post-decision gap per model leg, ten series), `zcrypto_exec_equity_eur`, `zcrypto_exec_drawdown_bps`, `zcrypto_exec_watchdog_frozen` (0/1) — thirteen series, re-measured against the active-series budget in the change, admitted in `config.alloy`'s keep-regex and the keep-lists of `tests/test_infra_alloy_series.py` in the same change, each either watched by a rule or excused in `NOT_A_FAULT_SIGNAL` with its reason: the gap and the equity are readings the trip and the kill already act on, the drawdown's fault value latches the kill which pages, the watchdog's freeze lifts itself. The Engine board gains an accumulation row: gap per leg, equity against the HWM, the day's loss, the window's intents by outcome. `zcrypto_exec_armed`'s meaning changes — a standing 1 — and the tile's description says so.
+
+Rejected: the decision table inside the exec record's plan entry — `_PLAN_KEYS` refuses an unknown key in `parse_plan`, so it would be a schema-3 plan entry with an ordered deploy, for a table the tracking readers do not read. Rejected: no gap gauge, the journal alone — [[T0119]]'s third step, drift observable from Grafana, and the owner's daily read is the board.
+
+### D15 — The §12 precondition is a gate the plan's rollout reads, and rung 2's exit report is its other input
+
+RECOMMENDED. The plan's rollout opens with a gate of six reads, each a stop: (1) the nautilus pin's build carries the fix of upstream #5181 — `uv run pytest tests/test_cache_restart.py -k test_a_restored_spot_lot` reads red at its restore assertion, the one whose message opens `no longer books an EXTERNAL short equal to the lot beside the strategy's long`, and not only at its last three, which pin the stored account; and live, one spot lot held across an engine restart on that pin is restored at Kraken's quantity with no `EXTERNAL` line in the boot's `cache restore` lines (the master plan's two reads, 2026-10-01); (2) rung 2's exit report is recorded in `docs/research/14.phase6-decisions.md` with every slot below filled; (3) the deferred engine list of `[iter-173]` is deployed — the sell check reading Kraken's balances and not the stored account among it — since D4's sells are refused at `full` by a stale `b` otherwise; (4) §10's whole-book limits are wired (`apply_whole_book_limits` in `run_cycle`, `zcrypto_engine_limit_bound_total` live) and sleeve occupancy is observable (`zcrypto_engine_active_sleeves`) — both already true, re-read at the gate; (5) the venue-minimums snapshot is re-confirmed by the refdata sweep inside the week of entry; (6) the band is re-derived at NAV 1,000 on the floored book (D5) and `tracking_band_bps` is the number recorded from it, rendered by the template at entry — `engine-tracking-band`'s three preconditions, the first of which (42 journaled `full`) the first rung-3 week supplies.
+
+Entry is a Monday 00Z boundary, so the first scored ISO week is whole, and the first week is attended daily: the owner reads the board and the ledger each day as rung 2's procedure reads them, and the drills of D16 run inside it.
+
+### D16 — The operating surface: a rung-3 procedure replaces the daily window, the probe-window procedure stays for drills, and the drills take their rung-3 forms
+
+RECOMMENDED. `infra/runbooks/engine-procedures.md` gains `engine-rung-3 — PROCEDURE`: entry (the gate of D15, the arm PR, the arm file, the equity series' mint), the daily read (the newest `accum-<HH>.json` by value, the board's accumulation row, the ledger read over the day's six records, the Cache-vs-venue column), a restart (rung 2's step 5 reads, the hold cleared after them), a pause (the arm file removed, the resume on the owner's word), the weekly read (`tracking-report` with `--gate-from <the first ISO week under continuous arming>`, the ledger export reconciled), the hand act (no stop, the reconciliation's finding, the series re-mint after a deposit), the drawdown trip's reset (the post-mortem, the re-mint, the kill file removed last), and the go/no-go read `00091` D7 left owed to rung 3. `engine-probe-window` stays as the drills' surface; its `Retire when` is re-trued, since `PLAN_FILENAME` pickup survives for drill plans. `engine-rung-2-box` retires at the box's exit report.
+
+Drills, each an entry in `docs/reference/drill-log.md` in the first attended week: E in rung-3 form — the kill file placed while a cycle intent rests revokes it within a tick, the next boundary drafts and refuses every intent with `kill_switch`, the record reads `refused`; G in rung-3 form — a restart inside a gap with the book held: the boot's `cache restore` lines read every leg at Kraken's quantity with no `EXTERNAL` line (the pin's live read), the hold's reduce-only boundary runs its sells and refuses its buys, the owner clears the hold; F2 in rung-3 form — the container cut from its network while an intent rests: the watchdog's `socket_down` revoke inside 35 s, the freeze, the re-read pass's re-cancel on the return, the freeze lifting; D with the full book — the exposure page; B with a EUR 1,000 book — decision-to-flat; and the new drill H, the disarmed boundary — the arm file removed across one boundary: the record's intents `refused` with `arm_file_absent`, the legs carried, D11's rule paging at about 4h40m, the next boundary after the file's return placing the carried legs. The daily-loss hold and the 15 % trip are constructed in tests, not induced: no drill spends 3 % of the book.
+
+## Human gates
+
+- G1, funding: the master plan's D3(ii) second half — the EUR 1,000 sleeve is rung 2's deposit reused (`[iter-173]`, funding resolved by discussion), confirmed at Kraken's balance page on entry day; no deposit or withdrawal while armed, and one taken with the loop paused re-mints the equity series (D8).
+- G2, the arm PR: `engine_exec_armed: true` in `host_vars/zcrypto/vars.yml`, reviewed, converged inside a gap, the drills of D16 green before the arm file is placed.
+- G3, the arm file and the hold: the owner places `exec/armed` once and clears `exec/restart-hold` after each restart's reads.
+- G4, the long-only entry (D5) and the band's number (D15 item 6): the owner's rulings, recorded in the phase-6 decisions log before entry.
+- G5, the go/no-go: §12's human decision over three complete ISO weeks inside the band, zero unreconciled states, the drills passed.
+
+## The measured basis
+
+Every reading below was taken on 2026-10-05 in the worktree at `fa7a2ec1a` (`develop`'s tip, `git log -1 --format='%h %s'` → `fa7a2ec1a Merge pull request #658 …`, `git status --short | wc -l` → 0), from the workstation, with no fleet host, venue, Grafana Cloud or Slack reached; rung 2's records were read from the main checkout's gitignored `data/rung2/`, never written.
+
+- **The boundary alert already calls the executor after the cycle journals, and the executor already runs a plan from memory once journaled.** `cli/engine/node.py`: `_on_cycle_alert` runs `on_alert_logic` and in its `finally` calls `self._executor.on_boundary(boundary)`; `on_start` arms the 5-second tick and `subscribe_socket_state()`. `cli/engine/executor.py`: `_pickup` parses the file, applies the kill backstop, the reconciliation refusal, the venue-truth read, the in-flight wait, `plan_refusals`, the mixed-inventory refusals, journals the plan entry, deletes the file and sets `self._plan`; `_pump` and `_start_intent` run it from there.
+
+```
+grep -n 'self._executor.on_boundary(boundary)\|set_timer(_EXEC_TIMER_NAME\|self.subscribe_socket_state()' cli/engine/node.py
+grep -n 'def _pickup\|def _pump\|def _start_intent\|def on_boundary\|ledgered_plan_ids(self._journal_dir' cli/engine/executor.py
+```
+
+Output: node.py 323 (`set_timer`), 325 (`subscribe_socket_state`), 345 (`on_boundary`); executor.py 2235 (`_pickup`), 2325 (`ledgered_plan_ids`), 2396 (`_pump`), 2482 (`_start_intent`), 2867 (`on_boundary`).
+
+- **The venue's own holdings read exists, on a bare client, three private calls, totals per coin under the EUR pair.** `read_venue_holdings` at executor.py 587–627: `request_instruments`, `request_position_status_reports(... account_type=AccountType.MARGIN ...)`, `request_account_state(... account_type=AccountType.CASH)`, `held[symbol] += float(balance.total)`, snapped within `FLAT_TOLERANCE`.
+
+```
+grep -n 'def read_venue_holdings\|request_account_state\|balance.total\|def _nothing_in_flight' cli/engine/executor.py
+```
+
+Output: 587, 617, 626, 1482.
+
+- **The helper's table and constants, the loop reuses.** `cli/engine/draftplan.py`: `LEGS` nine EUR symbols (LINK/EUR absent), `EUR_PER_WEIGHT = 720.0`, `BUY_ORDERMIN_HEADROOM = 1.05`, `MIN_BUY_EUR = 0.50`, `CASH_RESERVE_EUR = 5.0`, `PLAN_CAP_EUR = 95.0`, `MAX_INTENTS = 3`, `INTENT_TIME_BOX` 15 min; `decide_leg` reads `max(weight, 0.0)`, `delta_eur = target − kraken_held × price`; `ruling_refusals` refuses any `leverage` key (`every intent is spot`).
+
+```
+grep -nE '^(LEGS|EUR_PER_WEIGHT|BUY_ORDERMIN_HEADROOM|MIN_BUY_EUR|CASH_RESERVE_EUR|PLAN_CAP_EUR|MAX_INTENTS|INTENT_TIME_BOX) ' cli/engine/draftplan.py
+grep -n 'max(weight, 0.0)\|every intent is spot' cli/engine/draftplan.py
+```
+
+Output: lines 24–31 carry the eight constants at the values above; 374 and 523 carry the two rules.
+
+- **The executor's envelope constants and the gate's six reasons.** `_TICK_SECONDS = 5.0`, `_QUOTE_SILENCE` 30 s, `_TIME_BOX` 15 min, `_ACK_WAIT` 30 s, `_MAX_REPRICES = 5`, `_MAX_IOC_ATTEMPTS = 3`, `_GATE_REFRESH` 60 s, `_REREAD_ATTEMPTS = 3`, `_VENUE_READ_TIMEOUT_SECONDS = 30.0`; the gate appends six reasons in declaration order — `kill_switch`, `config_not_armed`, `arm_file_absent`, `venue_not_online`, `nautilus_unverified`, `restart_hold` — and `_level_permits` admits a close at `reduce_only`.
+
+```
+grep -nE '^_(TICK_SECONDS|QUOTE_SILENCE|TIME_BOX|ACK_WAIT|MAX_REPRICES|MAX_IOC_ATTEMPTS|GATE_REFRESH|REREAD_ATTEMPTS|VENUE_READ_TIMEOUT_SECONDS) =' cli/engine/executor.py
+grep -c 'reasons.append' cli/engine/execgate.py
+```
+
+Output: nine constant lines at 75, 81, 82, 88, 89, 90, 187, 195, 201; `6`.
+
+- **The post-terminal reconciliation's baseline and the detached credit, the shape D13 fixes.** `_reconcile_terminal` computes `expected = active.own_position_before + (active.filled if buy else −active.filled)` and trips above one lot step; `_on_detached_event` credits `active.filled` only when `_claims(row, active)`.
+
+```
+grep -n 'expected = active.own_position_before\|if active is not None and self._claims(row, active):' cli/engine/executor.py
+```
+
+Output: 3316; 3273, 3982.
+
+- **The socket-state stream and the re-read pass, D7's and D12's substrate.** `on_socket_state` adds a `DISCONNECTED` endpoint to `_sockets_down` and a `CONNECTED` of one held down arms `_reread_tries = _REREAD_ATTEMPTS`; `_arm_reread_after_mint` arms when no socket is down; `_reread_pass` ends with `_settle_positions_from_venue("the re-read pass")`; `_on_external_event`'s unmatched branch counts and returns.
+
+```
+grep -n 'def on_socket_state\|def _arm_reread_after_mint\|def _reread_pass\|_settle_positions_from_venue("the re-read pass")\|_inc_external("unmatched")' cli/engine/executor.py
+```
+
+Output: 1206, 1252, 1495, 1583, 3675.
+
+- **The cycle record journals `closes`, `nav` and the Cache's `held`; the gate's globs are per prefix.** `cycle.py` writes `closes=model_closes`, `nav=config.shadow_nav_eur`, `held=_narrow_held(venue_state)`; `command.py`'s `_journal_artifacts` is called with `cycle-*.json`, `failed-cycle-*.json`, `venue-*.json` and `exec-*.json` and no wider glob.
+
+```
+grep -n 'closes=model_closes\|nav=config.shadow_nav_eur\|held=_narrow_held' cli/engine/cycle.py
+grep -n '_journal_artifacts(' cli/engine/command.py
+```
+
+Output: cycle.py 715, 723, 724; command.py 121 (the definition), 237, 273, 700, 707, 726, 761, 773, 1023, 1024, each naming one of the four globs.
+
+- **The exec ledger's fixed shapes.** `EXEC_SCHEMA_VERSION = 2`; `_ROW_KEYS`, `_PLAN_ENTRY_KEYS` (`plan_id, received_at, disposition, reasons, plan, intents`), `_OPEN_ORDER_STATES = {submitting, accepted, ambiguous}`; `probeplan.py`'s `_PLAN_KEYS = {plan_id, created_at, intents}` refuses an unknown key, `MODES` three, `PLAN_TTL` 60 min; `venueledger.py`'s `_PREFIX = "venue"`, `VENUE_SCHEMA_VERSION = 2`.
+
+```
+grep -n '^_ROW_STATES\|^_OPEN_ORDER_STATES\|^_PLAN_ENTRY_KEYS\|^EXEC_SCHEMA_VERSION' cli/engine/execledger.py
+grep -n '^_PLAN_KEYS\|^_INTENT_KEYS\|^MODES\|^PLAN_TTL' cli/engine/probeplan.py
+grep -n '^VENUE_SCHEMA_VERSION\|^_PREFIX = ' cli/engine/venueledger.py
+```
+
+Output: execledger.py 11, 24, 26, 30; probeplan.py 17, 21, 27, 28; venueledger.py 12, 88.
+
+- **The config keys and the rendered template.** `cli/config.py`: `shadow_nav_eur = 1000.0`, `exec_enabled`, `exec_armed = False`, `exec_max_plan_notional_eur = 100.0`, `settle_delay_secs = 90`, `tracking_band_bps: float | None = None`, each with a strict parse arm; `zcrypto.toml.j2` renders `exec_armed = false` as a literal, `exec_max_plan_notional_eur = {{ engine_exec_max_plan_notional_eur }}`, `shadow_nav_eur = {{ engine_shadow_nav_eur }}`, and no `tracking_band_bps`; `defaults/main.yml` carries `engine_shadow_nav_eur: 1000.0` and `engine_journal_retention_days: 60`; `host_vars/zcrypto/vars.yml` carries no `exec_armed` key.
+
+```
+grep -n 'shadow_nav_eur: float\|exec_armed: bool\|exec_max_plan_notional_eur: float\|tracking_band_bps: float' cli/config.py
+grep -n 'exec_armed = \|tracking_band' infra/ansible/roles/engine/templates/zcrypto.toml.j2
+grep -n 'engine_shadow_nav_eur\|engine_journal_retention_days' infra/ansible/roles/engine/defaults/main.yml
+grep -c 'exec_armed' infra/ansible/host_vars/zcrypto/vars.yml
+```
+
+Output: config.py 49, 54, 56, 61; template line 14 `exec_armed = false` and no `tracking_band` line; defaults 62 and 65; `0`.
+
+- **The alert rules this spec keeps, replaces and adds beside.** `zcrypto-engine-exec-armed-too-long`: `min_over_time(zcrypto_exec_armed{host="zcrypto"}[6h])`, `for: 15m`, `noDataState: OK`, warning, panel 52; `zcrypto-engine-exec-kill-tripped`: `zcrypto_exec_kill_tripped{host="zcrypto"}`, `for: 5m`, warning; `zcrypto-engine-exec-not-evaluated`: `time() - zcrypto_exec_last_evaluation_timestamp_seconds{host="zcrypto"}`, `for: 10m`, `noDataState: Alerting`; `zcrypto-engine-dark-with-exposure`: `max(abs(last_over_time(zcrypto_exec_position{host="zcrypto"}[24h]))) or on() vector(0)` against `min(up{job="engine_app",host="zcrypto"})`, `for: 10m`, critical; `zcrypto-engine-cycle-stale`: `time() - zcrypto_engine_cycle_completed_at_seconds{host="zcrypto"}`, `for: 5m`, `noDataState: Alerting`; `zcrypto-capture-venue-not-online`: `sum by (host, system) (zcrypto_capture_venue_status_total{host=~"zcrypto|zcrypto-red", system!="online"}) or on() vector(0)`, `for: 5m`, warning. The capture keep-regex admits fourteen `zcrypto_exec_*` names today.
+
+```
+grep -n 'uid: zcrypto-engine-exec\|uid: zcrypto-engine-dark\|uid: zcrypto-engine-cycle-stale\|uid: zcrypto-capture-venue-not-online' infra/grafana/alerts.yaml
+grep -o 'zcrypto_exec_[a-z_]*' infra/ansible/roles/capture/files/config.alloy | sort -u | wc -l
+```
+
+Output: uids at 358, 419, 740, 783, 823, 3872; `14`.
+
+- **The pin, the image and the precondition's test.** `pyproject.toml` pins `nautilus-trader===2.0.0rc6.dev20260921`; `fleet-pins.md`'s engine row reads `f102ca375382 — revision 7ab4fc1a`, 2026-09-30 18:22:02; `tests/test_cache_restart.py` carries `test_a_restored_spot_lot_is_offset_by_an_external_short_until_sold_and_restarted_and_the_account_keeps_its_coin` at line 842; `docs/reference/drill-log.md` carries `2026-09-26 — A2 — blocked` and `2026-10-01 — spot-proof — fail`; the adapter-verification page's `For the next pin` names #5065 merged upstream on 2026-10-02 as `48361a40b` and the restore offset as #5181.
+
+```
+grep -n 'nautilus-trader===' pyproject.toml
+grep -n '^| engine | zcrypto' docs/reference/fleet-pins.md
+grep -n 'def test_a_restored_spot_lot' tests/test_cache_restart.py
+grep -n '^## 2026-09-26 — A2\|^## 2026-10-01 — spot-proof' docs/reference/drill-log.md
+grep -c '48361a40b\|#5181' docs/reference/adapter-verification/2.0.0rc6.dev20260921.md
+```
+
+Output: pyproject 8; fleet-pins 19; test line 842; drill-log 95 and 111; `2`.
+
+- **The pacing floor and the wheel's two polling fields.** `cli/trades/rest.py` line 22: `_MIN_INTERVAL_SECONDS = 3.0  # 1.5s was DEMONSTRABLY refused (EGeneral:Too many requests)`; `LiveExecutionEngineConfig` on the pinned wheel carries `open_check_interval_secs: float | None = None` and `position_check_interval_secs: float | None = None` beside `open_check_lookback_mins`, `open_check_open_only`, `position_check_retries` and the three in-flight knobs the node states; `_exec_engine_config` in `node.py` states neither today.
+
+```
+grep -n '_MIN_INTERVAL_SECONDS = ' cli/trades/rest.py
+grep -n 'open_check_interval_secs\|position_check_interval_secs' .venv/lib/python3.14/site-packages/nautilus_trader/live/__init__.pyi
+grep -c 'open_check_interval_secs\|position_check_interval_secs' cli/engine/node.py
+```
+
+Output: rest.py 22; the pyi at 682 and 696 (properties), 737 and 744 (constructor); `0`.
+
+- **The model shorts by construction and did not on entry day.** `CrossfreqSystemConfig.long_cap = 0.20`, `short_cap = 0.10`, `apply_position_caps(..., short_cap=c.short_cap)`; `data/rung2/cycle-12.json` of 2026-10-05 carries twelve `final_targets`, gross 0.2313, none negative, `nav` 1000.0, `closes` for the ten bases.
+
+```
+grep -n 'long_cap: float\|short_cap: float' cli/portfolio/crossfreq_system.py
+python3 -c "import json;c=json.load(open('/home/zhaow/Projects/zcrypto-kraken/data/rung2/cycle-12.json'));print(round(sum(abs(x) for x in c['final_targets'].values()),4),[k for k,x in c['final_targets'].items() if x<0],c['nav'])"
+```
+
+Output: 92, 93; `0.2313 [] 1000.0`.
+
+- **Every leg's first buy at NAV 1,000 clears its floor on the 2026-10-05 12Z record** — target `weight × 1000` against `max(1.05 × ordermin × close, 0.50)` from `venue-12.json`'s constraints and `cycle-12.json`'s closes: ADA 20.01 vs 5.10, AVAX 14.14 vs 5.15, BTC 42.06 vs 4.04, DOGE 20.79 vs 4.51, DOT 14.16 vs 4.46, ETH 37.26 vs 2.55, LINK 17.09 vs 7.33, LTC 19.64 vs 6.64, SOL 25.99 vs 6.79, XRP 20.15 vs 2.35 — every leg `ok`, LINK included, which rung 2's EUR 720 excludes.
+
+```
+python3 - <<'PY'
+import json
+c=json.load(open('/home/zhaow/Projects/zcrypto-kraken/data/rung2/cycle-12.json')); v=json.load(open('/home/zhaow/Projects/zcrypto-kraken/data/rung2/venue-12.json'))
+for s,w in sorted(c['final_targets'].items()):
+    if s.endswith('/EUR'):
+        b=s.split('/')[0]; close=c['closes'][b]; om=v['state']['instruments'][s]['ordermin']
+        print(s, round(w*1000,2), round(max(1.05*om*close,0.5),2))
+PY
+```
+
+- **Rung 2's first day, the loop's inputs and outputs as they look.** `data/rung2/decisions.jsonl`: 27 rows, `placed` 9, `queued` 9, `carried` 9; the placed notional 154.17 EUR; the six carried sells and three carried buys named in D4. `days.md`: ten maker fills, fees 0.62 EUR, counters at 14:01Z `submitted 10, accepted 10, canceled 1, filled 9, refused 1`, Kraken EUR 1443.2957 → 1288.5093, the window about 30 minutes. `venue-12.json`: every position 0, balances `{'EUR': 1443.2957}`, the twelve legs' `ordermin` (BTC 5e-05, ETH 0.001, SOL 0.06, XRP 1.65, DOGE 50, LTC 0.1, ADA 20, AVAX 0.5, DOT 3.9, LINK 0.55), lot step 1e-08 on every leg. `balance.json` at 14:01Z lists zero rows for BNB, EURC and LINK beside the nine held coins and `XDG` for DOGE.
+
+```
+python3 -c "import json,collections;r=[json.loads(l) for l in open('/home/zhaow/Projects/zcrypto-kraken/data/rung2/decisions.jsonl') if l.strip()];print(len(r),collections.Counter(x['outcome'] for x in r),round(sum(x['notional_eur'] for x in r if x['outcome']=='placed'),2))"
+grep -c 'MAKER' /home/zhaow/Projects/zcrypto-kraken/data/rung2/days.md
+```
+
+Output: `27 Counter({'placed': 9, 'queued': 9, 'carried': 9}) 154.17`; `3`.
+
+- **The test baselines the plan's counts rest on.** `tests/test_engine_executor.py` 596 passed; `tests/test_engine_draftplan.py` 153 passed; `tests/test_engine_execgate.py` 44 passed.
+
+```
+uv run pytest tests/test_engine_executor.py -q -p no:cacheprovider
+uv run pytest tests/test_engine_draftplan.py -q -p no:cacheprovider
+uv run pytest tests/test_engine_execgate.py -q -p no:cacheprovider
+```
+
+- **The topics this spec delivers or touches are indexed and their triggers read as written.** `T0119` (ripe on this spec's creation), `T0120` (`partial`, ripe on the loop), `T0216` (ripe on rung 2's start, which the memo recorded on 2026-10-05) each appear in `docs/open-topics/README.md`; `T0053` is archived with the 3.0 s floor.
+
+```
+grep -c 'T0119\|T0120\|T0216' docs/open-topics/README.md
+ls docs/open-topics/archive/ | grep -c 'T0053'
+```
+
+Output: `3`; `1`.
+
+- **Not measured here, and where each is read.** How often record 47 targets a negative weight (S7, the box's 168 cycle records). The number of taker crossings and the time-to-fill per intent across the box (S2, S3). Kraken's private API counter and its decay — the tree records only [[T0053]]'s refused 1.5 s and admitted 3.0 s; the official figures were not fetched, since no network read was made. Whether the execution socket's `CONNECTED` arrives under its `DISCONNECTED`'s string on every drop (the 2026-09-30 readings say yes twice; F2's rung-3 form reads it again). The p95 drift floor at NAV 1,000 on the floored book (S9, `accum-replay --floor-shorts` over the box's cycles). What a bump past #5155 and #5181 carries beside the two fixes (S11, the pin's attended pass).
+
+## Open questions
+
+1. Does rung 3 enter long-only (D5), a negative target read as 0 and the band re-derived on the floored book, with shorts a later class-C change? Recommendation: yes — the operating rule forbids a restart under a margin position until the cache's live proof or a #5065 pin, and the loop must survive a restart; the composition is declared before the evidence.
+2. Does `exec_armed = true` become a reviewed host variable the converge keeps (D6), ending rung 2's tree-false arming? Recommendation: yes — the restart hold is the fail-safe a converge buys, and an arm PR per rollout is the cost of the alternative.
+3. Is the cash reserve EUR 10 and the plan cap `exec_max_plan_notional_eur = 1000.0` (one NAV, rendered explicitly)? Recommendation: yes — the reserve covers a full-book rebalance's fees twice over, and a plan larger than the NAV is a sizing defect free EUR would refuse anyway.
+4. Are the engine's drawdown trips the 15 % HWM kill and the 3 % daily hold alone (D8), the ladder's ×0.5 and ×0.25 left to the model's governor? Recommendation: yes — a second scaling in the engine governs twice; the trips are the backstops the model cannot see.
+5. Is a hand act on a basket coin a finding for the weekly reconciliation and not a stop (D2), where rung 2 pauses on one? Recommendation: yes — the venue read makes the formula self-correcting, and the loop cannot tell a hand act from a fill it missed; the owner's own act is the owner's.
+6. Is a deposit or withdrawal inside the rung forbidden while armed, and taken only with the loop paused and the equity series re-minted (D8)? Recommendation: yes — the trips read equity, and nothing in the account tells a withdrawal from a loss.
+7. Is entry a Monday 00Z boundary with the first week attended daily and D16's drills inside it? Recommendation: yes — the first scored ISO week is then whole, and the drills run while the book is small.
+8. Which rollout carries this spec: the one after the week of 2026-11-02's engine rollout, on the pin that passes D15's first read? Recommendation: yes, its own rollout after that pin's attended order-semantics pass; never the rollout that carries the bump.
+9. Does `zcrypto-engine-exec-disarmed-across-a-boundary` page at warning (D11), the owner's deliberate pause included, as the kill-tripped rule does? Recommendation: yes — a pause is silenced for its duration; forgetting is the failure.
+
+## The slots rung 2's box fills
+
+- S1 — the maker/taker share over at least 30 euro-denominated fills and the proposed `fee_per_side` ([[T0214]]): the cost basis record rung 3's band is quoted against; with no taker fill the taker term stays open into rung 3's first weeks, read from the loop's own IOC crossings.
+- S2 — per cycle, the count of placed, carried and queued legs and each placed intent's time from start to terminal: confirms D3's window and box, or moves the close.
+- S3 — the count of time-box crossings through the IOC and of `unfilled`, `partial`, `ambiguous` and `revoked` intents: whether the 15-minute box stands.
+- S4 — the span from a hand act's Kraken trade time to the WARNING that moved the gauge, if the box has one ([[T0216]]): D12's measure.
+- S5 — restarts inside the box, each with its cause, the stale-`b` refusals and whether the `XDG` account-load line appeared: the premises of D6's reduce-only run and of D15 item 3.
+- S6 — the equity path over the box, its maximum drawdown from entry and its worst UTC day at EUR 720 scale: a sanity read of D8's thresholds.
+- S7 — the count of the box's 168 boundary records whose `final_targets` carry a negative weight: D5's cost, stated.
+- S8 — the unmatched-external baseline for a boot carrying nine spot lots (the probe-window procedure's step 4): the version's record.
+- S9 — the tracking report over the box at NAV 1,000 and `accum-replay --floor-shorts`'s p95 over its cycles: `tracking_band_bps` and the band's edge; and whether any unreconciled state the engine's own passes missed appeared, which re-opens D10's number.
+- S10 — the weekly ledger reconciliation's unmatched rows and the `staking` credits on held legs: whether Auto Earn stays on in rung 3 and whether a `.F` code ever carries a held balance.
+- S11 — the nautilus build the week-of-2026-11-02 rollout pins, whether its history carries #5181's fix, and its attended pass's record: D15's first read.
+- S12 — the exit's closing restart on nine held legs: the `cache restore` lines and the `EXTERNAL` offsets, the last reading of the defect D15's live read replaces.
+
+## Verification
+
+- Every guard proven by the defect it names, through `infra/scripts/mutate-probe.sh`: deleting the window's close lets an intent start at B+3h45 (D3); deleting the open-row carry drafts a second sell of a leg whose row is `ambiguous` (D4); deleting the foreign-fill netting trips the kill on a constructed late fill of an earlier intent on the same instrument (D13); deleting the grace revokes a resting intent on a 3-second socket blip (D7); deleting the HWM scan's series bound trips on a drawdown older than the series (D8).
+- The draft is proven on rung 2's own day: the 2026-10-05 12Z pair and `balance.json` as fixtures, `nav` 1000, the ten legs placed with the notionals the floor arithmetic above gives, LINK among them; and the box's later days as they land, the loop's decision rows equal to the helper's at EUR 720 on the nine legs.
+- The in-process plan runs the executor's existing tests' shapes: `_accept_plan` refused by the dedup wall on a re-drafted boundary after a restart; a drill file waiting while a cycle plan runs; the `no-cycle` record on a sidecar; the window-closed carry.
+- The holdings read's new field and the book read are run on the real client against `tests/kraken_loopback.py`, as `read_venue_holdings` is.
+- The disarmed rule and the divergence rule are constructed in `tests/test_infra_alert_rules.py`'s replay: a disarmed boundary fires the first and not the second; a venue-side maintenance fires neither; an engine-side read failure fires the second inside 15 minutes.
+- The `accum-` prefix's gate immunity: a synthetic day seeded with `accum-*.json` scores byte-identically under the real `report` path with and without them.
+- Deploy verification by value: the first `accum-<HH>.json` on the host beside its `cycle-<HH>.json`; the first armed boundary's exec record reading `level: "full"`; `zcrypto_exec_gap_eur` ten series and `zcrypto_exec_equity_eur` a number in Cloud; the disarmed rule's first sample verified before the old uid is pruned and confirmed 404; D16's drills recorded.
+
+## What this does NOT do — bounded claims
+
+- It certifies execution, never edge: §12's gate scope, unchanged.
+- It does not clear the restart hold: every restart runs the loop reduce-only until a human reads the boot, and a hold left latched carries every buy for as long as it stands, which D11 pages after one boundary.
+- Its `held` is the venue's at the boundary and about two minutes old at the first order; a fill or a hand act inside a cycle's window moves nothing until the next boundary, the re-read pass or D12's event.
+- Its watchdog's cancel-all is a request that may not reach the venue inside a cut; the re-read pass's re-cancel on the return is the mechanism, and an order that filled during the cut is held and drafted against at the next boundary.
+- Its equity mark is the cycle's close over ten basket coins plus free EUR; dust, non-basket coins and the stored account's figures are outside it, and the HWM is a 60-day trailing one.
+- It runs long-only on spot; the record's shorts are floored to 0 and the band is re-derived for that book (D5).
+- The first armed week is attended by procedure, not by code: nothing in the loop knows it is the first week.
+
+## Out of scope
+
+- Shorts and the long-to-short flip rule: a class-C change under §12's promotion rules (D5).
+- Clearing the restart hold on reconciliation agreement: a narrowing `00088` D6 admits and this spec does not take (D6).
+- The library's discrepancy polls: off, with their arithmetic (D10); S9 re-opens the number.
+- Cancel-on-stop: [[T0018]]'s other build-sequence item, its own spec.
+- The nautilus bump itself and its attended pass: the week-of-2026-11-02 rollout's and the pin's record.
+- The T3 Blockpit fallback: [[T0215]].
+- The go/no-go decision: §12's, human, over three complete ISO weeks the rung-3 procedure reads.
