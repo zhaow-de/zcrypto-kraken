@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import configparser
-import io
 import json
 import re
-import types
-import urllib.error
 from pathlib import Path
 
 import pytest
@@ -13,16 +10,14 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
+from tests import selfcheck_driver
 from tests.test_infra_converge_guards import find_task, load_tasks, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/mon"
 SCRIPT = ROLE / "files/zcrypto-mon-selfcheck.py"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-# Compiled from its text, never imported by path: an import writes a bytecode cache beside the script, inside a
-# role's files/, and the cache names the checkout's own path, which tests/test_deploy_log_audit.py walks the role for.
-selfcheck = types.ModuleType("mon_selfcheck")
-exec(compile(SCRIPT.read_text(), str(SCRIPT), "exec"), selfcheck.__dict__)
+selfcheck = selfcheck_driver.load(SCRIPT)
 
 NOW = 1_790_000_000.0
 PING = "https://hc-ping.invalid/abc"
@@ -49,40 +44,20 @@ def _fleet(hosts: int | None) -> str:
     return json.dumps({"status": "success", "data": {"resultType": "vector", "result": result}})
 
 
-class _Response(io.BytesIO):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def _run(capsys, *, metrics=None, fleet=8, loki="ready\n", refused=None, env=ENV, broken=()):
+def _run(*, metrics=None, fleet=8, loki="ready\n", refused=None, env=ENV, broken=()):
     """`refused` is Loki's own not-ready answer: a 503 whose body is the reason."""
-    asked: list[str] = []
     bodies = {
         "http://127.0.0.1:3000/metrics": _metrics() if metrics is None else metrics,
         "http://127.0.0.1:9090/api/v1/query": _fleet(fleet),
         "http://127.0.0.1:3100/ready": loki,
         PING: "OK",
     }
-
-    def opener(request, timeout):
-        url = request.full_url
-        asked.append(url)
-        base = url.split("?")[0]
-        if base in broken:
-            raise urllib.error.URLError("connection refused")
-        if refused is not None and base == "http://127.0.0.1:3100/ready":
-            raise urllib.error.HTTPError(url, 503, "Service Unavailable", None, io.BytesIO(refused.encode()))
-        return _Response(bodies[base].encode())
-
-    rc = selfcheck.main(env, opener=opener, now=lambda: NOW)
-    return rc, asked, capsys.readouterr().out.strip()
+    refused = None if refused is None else ("http://127.0.0.1:3100/ready", refused)
+    return selfcheck_driver.run(selfcheck, env, bodies, broken=broken, refused=refused, now=NOW)
 
 
-def test_a_node_doing_its_job_pings_and_says_what_it_read(capsys):
-    rc, asked, out = _run(capsys)
+def test_a_node_doing_its_job_pings_and_says_what_it_read():
+    rc, asked, out = _run()
     assert rc == 0 and asked[-1] == PING
     assert out == (
         "selfcheck: rules=ok (114 rules scheduled, last tick 4 s ago) fleet=ok (8 fleet hosts shipping) loki=ok (ready) -> pinged"
@@ -126,32 +101,32 @@ def test_a_node_doing_its_job_pings_and_says_what_it_read(capsys):
         "loki down",
     ],
 )
-def test_one_failing_check_sends_no_ping_and_still_exits_clean(capsys, fault, said):
-    rc, asked, out = _run(capsys, **fault)
+def test_one_failing_check_sends_no_ping_and_still_exits_clean(fault, said):
+    rc, asked, out = _run(**fault)
     assert rc == 0, "a failing unit every five minutes would be the noise; the missing ping is the page"
     assert PING not in asked
     assert said in out and out.endswith("-> not pinging")
     assert len([url for url in asked if url != PING]) == 3, "one unreadable endpoint must not hide the other two readings"
 
 
-def test_the_tick_bar_is_one_minute(capsys):
+def test_the_tick_bar_is_one_minute():
     assert selfcheck.TICK_MAX_AGE_SECONDS == 60
-    assert _run(capsys, metrics=_metrics(tick_age=60.0))[1][-1] == PING
+    assert _run(metrics=_metrics(tick_age=60.0))[1][-1] == PING
 
 
-def test_with_no_ping_url_a_healthy_node_reads_everything_and_pings_nothing(capsys):
-    rc, asked, out = _run(capsys, env={**ENV, "MON_SELFCHECK_HEALTHCHECK_URL": ""})
+def test_with_no_ping_url_a_healthy_node_reads_everything_and_pings_nothing():
+    rc, asked, out = _run(env={**ENV, "MON_SELFCHECK_HEALTHCHECK_URL": ""})
     assert rc == 0 and len(asked) == 3 and out.endswith("-> healthy, and no ping URL is set")
 
 
-def test_a_ping_that_fails_is_reported_and_the_unit_still_exits_clean(capsys):
-    rc, asked, out = _run(capsys, broken=(PING,))
+def test_a_ping_that_fails_is_reported_and_the_unit_still_exits_clean():
+    rc, asked, out = _run(broken=(PING,))
     assert rc == 0 and asked[-1] == PING and out.endswith("-> ping failed: URLError")
 
 
-def test_the_ping_url_never_reaches_the_output(capsys):
+def test_the_ping_url_never_reaches_the_output():
     for kwargs in ({}, {"broken": (PING,)}, {"fleet": 0}):
-        assert PING not in _run(capsys, **kwargs)[2]
+        assert PING not in _run(**kwargs)[2]
 
 
 # --- the unit, its environment file and its timer ----------------------------------------------------------------

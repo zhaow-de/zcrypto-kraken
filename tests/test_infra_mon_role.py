@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
+from ansible.template import trust_as_template
 
+from tests import role_render
 from tests.test_infra_converge_guards import assert_that, find_task, iter_tasks, load_tasks, set_facts, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
@@ -33,18 +33,9 @@ SECRETS = {
 }
 
 
-def _variables(**extra) -> dict:
-    # A default that templates another variable is trusted, so it resolves the way the play resolves it; the one
-    # that looks up the controller's environment is left out, since no template here reads it.
-    defaults = {
-        k: trust_as_template(v) if isinstance(v, str) and "{{" in v else v for k, v in DEFAULTS.items() if k != "mon_token_cache"
-    }
-    return {**defaults, **SECRETS, **extra}
-
-
 def _render(name: str, **extra) -> str:
-    text = (ROLE / "templates" / name).read_text()
-    return Templar(loader=DataLoader(), variables=_variables(**extra)).template(trust_as_template(text))
+    # The default that looks up the controller's environment is left out, since no template here reads it.
+    return role_render.render(ROLE, name, SECRETS, exclude=("mon_token_cache",), **extra)
 
 
 def _ini() -> configparser.ConfigParser:
@@ -110,64 +101,24 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
-def _blocks(lines: list[str]) -> list[tuple[str, list]]:
-    """A Caddyfile body as (line, children) pairs: a line ending in `{` opens a block its `}` closes."""
-    out: list[tuple[str, list]] = []
-    stack = [out]
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line == "}":
-            stack.pop()
-        elif line.endswith("{"):
-            children: list = []
-            stack[-1].append((line[:-1].strip(), children))
-            stack.append(children)
-        else:
-            stack[-1].append((line, []))
-    assert len(stack) == 1, "unbalanced braces"
-    return out
-
-
 def _caddyfile() -> dict[str, list]:
-    return dict(_blocks(_render("Caddyfile.j2").splitlines()))
+    return dict(role_render.blocks(_render("Caddyfile.j2").splitlines()))
 
 
 def _site() -> dict[str, list]:
-    caddyfile = _caddyfile()
-    assert set(caddyfile) == {"", DEFAULTS["mon_hostname"]}, f"one global block and one site: {sorted(caddyfile)}"
-    site = caddyfile[DEFAULTS["mon_hostname"]]
-    lines = [line for line, _ in site]
-    assert len(lines) == len(set(lines)), "a repeated line: Caddy routes a handle by the first, this dict by the last"
-    return dict(site)
-
-
-def _users(handle: list) -> list[str]:
-    (auth,) = [children for line, children in handle if line == "basic_auth"]
-    for _user, children in auth:
-        assert children == []
-    users = [line.split() for line, _ in auth]
-    for user, hashed in users:
-        assert re.fullmatch(r"\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}", hashed), f"{user} carries something that is not a bcrypt hash"
-    return [user for user, _ in users]
-
-
-def _upstream(handle: list) -> str:
-    (proxy,) = [line for line, _ in handle if line.startswith("reverse_proxy ")]
-    return proxy.split()[1]
+    return role_render.site(_caddyfile(), DEFAULTS["mon_hostname"])
 
 
 def test_remote_write_takes_the_fleet_user_alone_and_reaches_prometheus():
     handle = _site()["handle /api/v1/write"]
-    assert _users(handle) == ["fleet"]
-    assert _upstream(handle) == "127.0.0.1:9090"
+    assert role_render.users(handle) == ["fleet"]
+    assert role_render.upstream(handle) == "127.0.0.1:9090"
 
 
 def test_the_loki_push_takes_both_ingest_users_and_reaches_loki():
     handle = _site()["handle /loki/api/v1/push"]
-    assert _users(handle) == ["fleet", "logship"]
-    assert _upstream(handle) == "127.0.0.1:3100"
+    assert role_render.users(handle) == ["fleet", "logship"]
+    assert role_render.upstream(handle) == "127.0.0.1:3100"
 
 
 def test_the_two_paths_grafana_serves_without_a_login_answer_404_at_the_edge():
@@ -483,16 +434,7 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
 def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
     task = load_tasks(TASKS)[0]
     assert task["name"] == "refuse a missing or misshapen secret, naming the key and never the value"
-    values = {k: v for k, v in {**SECRETS, **override}.items() if v is not None}
-    templar = Templar(loader=DataLoader(), variables=values)
-    faults = templar.template(trust_as_template(task["vars"]["mon_secret_faults"]))
-    assert faults == ([refused] if refused else [])
-    assert truthy(assert_that(task), {"mon_secret_faults": faults}) is (refused is None)
-    rendered = Templar(loader=DataLoader(), variables={"mon_secret_faults": faults}).template(
-        trust_as_template(task["ansible.builtin.assert"]["fail_msg"])
-    )
-    assert all(str(value) not in rendered for value in values.values()), "the refusal printed a value"
-    assert (refused or "") in rendered
+    role_render.assert_preflight(task, SECRETS, override, refused)
 
 
 def test_the_play_runs_the_role_under_its_own_tag_with_no_container_runtime():
@@ -514,7 +456,7 @@ ALLOY = ROLE / "files/config.alloy"
 
 def _alloy_blocks() -> dict[str, list]:
     lines = [line for line in ALLOY.read_text().splitlines() if not line.strip().startswith("//")]
-    return dict(_blocks(lines))
+    return dict(role_render.blocks(lines))
 
 
 def _assigned(block: list, key: str) -> str:
@@ -583,4 +525,4 @@ def test_the_fleets_ingest_names_are_the_nodes_public_name_its_two_authenticated
     site = _site()
     for url in (observed["mon_ingest_prom_url"], observed["mon_ingest_loki_url"]):
         path = url.removeprefix(f"https://{DEFAULTS['mon_hostname']}")
-        assert observed["mon_ingest_fleet_user"] in _users(site[f"handle {path}"]), path
+        assert observed["mon_ingest_fleet_user"] in role_render.users(site[f"handle {path}"]), path
