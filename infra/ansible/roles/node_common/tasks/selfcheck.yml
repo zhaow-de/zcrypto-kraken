@@ -16,15 +16,6 @@
     group: root
     mode: "0644"
 
-# The including role's own script, which a copy finds in that role's files/.
-- name: install the self-check script
-  ansible.builtin.copy:
-    src: "{{ node_common_selfcheck_script }}"
-    dest: "/usr/local/sbin/{{ node_common_selfcheck_name }}"
-    owner: root
-    group: root
-    mode: "0755"
-
 - name: render the self-check's ping URL, read by systemd alone
   ansible.builtin.template:
     src: selfcheck.env.j2
@@ -42,6 +33,23 @@
     owner: root
     group: root
     mode: "0644"
+
+# The script imports the module through the unit's PYTHONPATH, so systemd holds that unit before the script lands: a
+# converge stopped in between leaves an old script under a new unit, never the reverse, and on a fresh node the timer
+# starts only once its script exists. Ungated, since a converge stopped after the render finds the unit unchanged; a
+# bare reload reports no change, and a preview skips it.
+- name: reload systemd, so the unit puts the shared module on the script's path before the script lands
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# The including role's own script, which a copy finds in that role's files/.
+- name: install the self-check script
+  ansible.builtin.copy:
+    src: "{{ node_common_selfcheck_script }}"
+    dest: "/usr/local/sbin/{{ node_common_selfcheck_name }}"
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: render the self-check systemd timer
   ansible.builtin.template:

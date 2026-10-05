@@ -67,7 +67,7 @@ def main(env=os.environ, *, opener=urllib.request.urlopen, now=time.time) -> int
         ("fleet", lambda: fleet_fresh(env["MON_SELFCHECK_PROMETHEUS"], opener=opener)),
         ("loki", lambda: loki_ready(env["MON_SELFCHECK_LOKI"], opener=opener)),
     )
-    return zcrypto_selfcheck.run(checks, env, ping_var="MON_SELFCHECK_HEALTHCHECK_URL", opener=opener, now=now)
+    return zcrypto_selfcheck.run(checks, env, ping_var="MON_SELFCHECK_HEALTHCHECK_URL", opener=opener)
 
 
 if __name__ == "__main__":

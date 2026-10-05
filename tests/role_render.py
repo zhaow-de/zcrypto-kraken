@@ -13,8 +13,10 @@ from tests.test_infra_converge_guards import assert_that, truthy
 def variables(role_dir: Path, secrets: dict, exclude=(), **extra) -> dict:
     # A default that templates another variable is trusted, so it resolves the way the play resolves it.
     defaults = yaml.safe_load((role_dir / "defaults/main.yml").read_text())
-    trusted = {k: trust_as_template(v) if isinstance(v, str) and "{{" in v else v for k, v in defaults.items() if k not in exclude}
-    return {**trusted, **secrets, **extra}
+    templated = {
+        k: trust_as_template(v) if isinstance(v, str) and "{{" in v else v for k, v in defaults.items() if k not in exclude
+    }
+    return {**templated, **secrets, **extra}
 
 
 def trusted(value):
@@ -25,9 +27,14 @@ def trusted(value):
     return trust_as_template(value) if isinstance(value, str) else value
 
 
+def resolve(role_dir: Path, value, secrets: dict, exclude=(), **extra):
+    if not isinstance(value, str):
+        return value
+    return Templar(loader=DataLoader(), variables=variables(role_dir, secrets, exclude, **extra)).template(trust_as_template(value))
+
+
 def render(role_dir: Path, name: str, secrets: dict, exclude=(), **extra) -> str:
-    text = (role_dir / "templates" / name).read_text()
-    return Templar(loader=DataLoader(), variables=variables(role_dir, secrets, exclude, **extra)).template(trust_as_template(text))
+    return resolve(role_dir, (role_dir / "templates" / name).read_text(), secrets, exclude, **extra)
 
 
 def blocks(lines: list[str]) -> list[tuple[str, list]]:

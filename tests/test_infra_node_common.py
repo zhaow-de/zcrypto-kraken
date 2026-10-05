@@ -4,8 +4,6 @@ import configparser
 from pathlib import Path
 
 import pytest
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
 
 from tests import role_render
 from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, truthy, when_conditions
@@ -140,10 +138,7 @@ def _selfcheck_render(name: str) -> list[str]:
 
 
 def _selfcheck_resolved(value):
-    if not isinstance(value, str):
-        return value
-    variables = role_render.variables(ROLE, {}, **SELFCHECK)
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
+    return role_render.resolve(ROLE, value, {}, **SELFCHECK)
 
 
 def _selfcheck_service() -> dict[str, str]:
@@ -188,13 +183,36 @@ def test_the_selfcheck_installs_what_its_unit_runs_imports_and_reads_and_enables
     assert (env_args["mode"], env_task["no_log"], env_task["diff"]) == ("0600", True, False)
     (made,) = [index for index, (_, module, _) in enumerate(steps) if module == "ansible.builtin.file"]
     (copied,) = [index for index, (_, _, args) in enumerate(steps) if args.get("src") == "zcrypto_selfcheck.py"]
-    assert (steps[made][2]["path"], steps[copied][2]["dest"]) == (
+    # DynamicUser runs the script as a user that owns nothing, so the module and its directory are world-readable.
+    assert (steps[made][2]["path"], steps[made][2]["mode"], steps[copied][2]["dest"], steps[copied][2]["mode"]) == (
         "/usr/local/lib/zcrypto",
+        "0755",
         "/usr/local/lib/zcrypto/zcrypto_selfcheck.py",
+        "0644",
     )
     assert made < copied, "copy creates no parent directory"
     enabled = [args["name"] for _, module, args in steps if module == "ansible.builtin.systemd_service" and args.get("enabled")]
     assert enabled == ["probe-selfcheck.timer"], enabled
+
+
+def test_the_script_lands_only_after_systemd_holds_the_unit_that_puts_its_module_on_the_path():
+    # The script imports the module through the unit's PYTHONPATH: landed under a unit without it, every run fails and
+    # the node's dead-man check pages, so a converge stopped between the two must leave the old script, and a fresh
+    # node's timer must not start before its script exists.
+    steps = _selfcheck_steps()
+
+    def at(found) -> int:
+        (index,) = [index for index, (_, module, args) in enumerate(steps) if found(module, args)]
+        return index
+
+    copied = at(lambda _, args: args.get("src") == "zcrypto_selfcheck.py")
+    env_file = at(lambda _, args: args.get("src") == "selfcheck.env.j2")
+    unit = at(lambda _, args: args.get("src") == "selfcheck.service.j2")
+    reload = at(lambda module, args: module == "ansible.builtin.systemd_service" and args == {"daemon_reload": True})
+    script = at(lambda _, args: args.get("src") == SELFCHECK["node_common_selfcheck_script"])
+    enable = at(lambda module, args: module == "ansible.builtin.systemd_service" and bool(args.get("enabled")))
+    assert max(copied, env_file, unit) < reload < script < enable, [task["name"] for task, _, _ in steps]
+    assert "when" not in steps[reload][0], "a reload gated on the unit's change skips the one a stopped converge still owes"
 
 
 def test_the_selfcheck_env_file_holds_the_ping_url_alone():

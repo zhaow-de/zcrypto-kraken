@@ -7,8 +7,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
 
 from tests import role_render, selfcheck_driver
 from tests.test_infra_converge_guards import find_task, load_tasks, when_conditions
@@ -148,9 +146,8 @@ def _render(name: str, **extra) -> str:
     return role_render.render(NODE_COMMON, name, {}, **_scope(**extra))
 
 
-def _resolved(value: str) -> str:
-    variables = role_render.variables(NODE_COMMON, {}, **_scope())
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
+def _resolved(value):
+    return role_render.resolve(NODE_COMMON, value, {}, **_scope())
 
 
 def test_the_unit_and_its_environment_file_set_every_name_the_script_reads():
@@ -204,7 +201,7 @@ def test_the_timer_runs_every_five_minutes_and_is_what_the_role_enables():
     assert parser["Timer"]["Unit"] == "zcrypto-mon-selfcheck.service"
     tasks = load_tasks(SELFCHECK_TASKS)
     enable = find_task(tasks, "enable + start the self-check timer")
-    assert {k: _resolved(v) if isinstance(v, str) else v for k, v in enable["ansible.builtin.systemd_service"].items()} == {
+    assert {k: _resolved(v) for k, v in enable["ansible.builtin.systemd_service"].items()} == {
         "name": "zcrypto-mon-selfcheck.timer",
         "daemon_reload": True,
         "enabled": True,

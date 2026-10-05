@@ -25,7 +25,7 @@ def sample(text: str, name: str) -> float | None:
     return None
 
 
-def run(checks, env, *, ping_var: str, opener, now) -> int:
+def run(checks, env, *, ping_var: str, opener) -> int:
     healthy, parts = True, []
     for name, check in checks:
         try:
