@@ -29,5 +29,5 @@ The go/no-go gate's "zero unreconciled order/position states" almost certainly n
 
 ## Suggested next steps
 
-- **(autonomous — plan `00092` Task 13)** `_exec_engine_config` in `cli/engine/node.py` gains `open_check_interval_secs=None, position_check_interval_secs=None` beside the five knobs it states, its docstring carrying the why; `tests/test_engine_node.py` reads the function's source for both names and `tests/test_nautilus_interface_pin.py` holds the library's defaults at `None` for both, so a bump's flip of either is a decision; the probe sets one to `60.0`, the control removes the keyword.
+- **(autonomous — plan `00092` Task 13)** `_exec_engine_config` in `cli/engine/node.py` gains `open_check_interval_secs=None, position_check_interval_secs=None` beside the six knobs it states, its docstring carrying the why; `tests/test_engine_node.py` reads the function's source for both names and `tests/test_nautilus_interface_pin.py` holds the library's defaults at `None` for both, so a bump's flip of either is a decision; the probe sets one to `60.0`, the control removes the keyword.
 - **(measurement — rung 2's box, then rung 3's first weeks)** Slot S9 of spec `00092`: whether an unreconciled order or position state the engine's three passes missed appeared — one re-opens D10's number; none, and the topic closes with Task 13.
