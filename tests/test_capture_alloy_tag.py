@@ -144,11 +144,11 @@ def _every_tag(node) -> set[str]:
     return set()
 
 
-def test_no_other_role_and_no_play_carries_the_tag_yet():
+def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
     """The tag is shared by name, so another role joins it deliberately, with its own guards beside these: this list
     widens in that change."""
     carriers = [p for p in [*_role_yaml(), SITE, ANSIBLE / "bootstrap.yml"] if TAG in _every_tag(load_tasks(p))]
-    assert carriers == [CAPTURE], carriers
+    assert carriers == [CAPTURE, ROLES / "nas" / "tasks" / "main.yml"], carriers
 
 
 def _selected(tags: set[str]) -> bool:
