@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests import role_render
-from tests.test_infra_converge_guards import find_task, load_tasks, truthy, when_conditions
+from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/node_common"
@@ -70,10 +70,18 @@ def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
     role_render.assert_preflight(_preflight(), SECRETS, override, refused, INCLUDE)
 
 
-def test_the_default_list_refuses_nothing():
-    default = role_render.variables(ROLE, {})["node_common_secrets_preflight"]
-    assert default == []
-    role_render.assert_preflight(_preflight(), {}, {}, None, INCLUDE | {"node_common_secrets_preflight": default})
+def test_every_shape_an_including_role_passes_ends_in_backslash_z():
+    # `$` also matches before a trailing newline, and only some keys have a trailing-newline case to catch its loss.
+    includes = [
+        (path.parts[-3], task)
+        for path in sorted((REPO / "infra/ansible/roles").glob("*/tasks/*.yml"))
+        for task, _ in iter_tasks(load_tasks(path) or [])
+        if task.get("ansible.builtin.include_role") == {"name": "node_common", "tasks_from": "secrets-preflight"}
+    ]
+    assert includes, "found no preflight include: the walk is broken, not the tree clean"
+    for role, task in includes:
+        for entry in task["vars"]["node_common_secrets_preflight"]:
+            assert entry["shape"].endswith(r"\Z"), (role, entry["key"], entry["shape"])
 
 
 # --- reboot-check: the capture role's program, installed and timed as its copies are -----------------------------

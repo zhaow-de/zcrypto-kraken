@@ -238,17 +238,21 @@ def _program(path: Path) -> list[str]:
     return [line for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
-def _resolved(role: str, value: str) -> str:
+def _defaults(role: str) -> dict:
+    return yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
+
+
+def _resolved(defaults: dict, value: str) -> str:
     import re
 
-    defaults = yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
     while m := re.search(r"\{\{ (\w+) \}\}", value):
         value = value.replace(m.group(0), defaults[m.group(1)])
     return value
 
 
 def _resolved_default(role: str, var: str) -> str:
-    return _resolved(role, yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())[var])
+    defaults = _defaults(role)
+    return _resolved(defaults, defaults[var])
 
 
 @pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
@@ -316,7 +320,7 @@ def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
 
 def test_the_mon_unit_writes_into_the_directory_the_mon_alloy_scrapes():
     """The node's Alloy is the apt package, not a container: it reads the host's own path, with no /host/root in front."""
-    textfile_dir = _resolved("mon", _mon_reboot_check_include()["vars"]["node_common_reboot_check_textfile_dir"])
+    textfile_dir = _resolved(_defaults("mon"), _mon_reboot_check_include()["vars"]["node_common_reboot_check_textfile_dir"])
     unit = (NODE_COMMON / "templates/zcrypto-reboot-check.service.j2").read_text()
     unit = unit.replace("{{ node_common_reboot_check_textfile_dir }}", textfile_dir)
     host_dir = str(Path(next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]).parent)
