@@ -84,6 +84,28 @@ def test_an_alloy_tagged_row_is_evidence_on_its_limit_by_its_extra_var(tmp_path)
     assert _owed(tmp_path, [row], [pins_row]) == [("alloy", "zcrypto", "b8ec653c4423")]
 
 
+NAS_PINS = "| alloy | nas | `b8ec653c4423` | 2026-09-30 | `491b` |\n| archive-pull | nas | `d914dad91536` | 2026-09-30 | `c413` |\n"
+NAS_COMMITTED = {
+    "nas_alloy_image": "grafana/alloy@sha256:b8ec653c4423" + "0" * 52,
+    "nas_capture_image": "ghcr.io/zhaow-de/zcrypto-capture@sha256:d914dad91536" + "0" * 52,
+}
+
+
+@pytest.mark.parametrize(
+    ("tags", "applied", "owed"),
+    [
+        ("alloy", True, [("archive-pull", "nas", "d914dad91536")]),
+        ("alloy", False, [("alloy", "nas", "b8ec653c4423"), ("archive-pull", "nas", "d914dad91536")]),
+        ("nas,alloy", True, []),
+        ("nas", True, []),
+    ],
+)
+def test_an_applied_alloy_only_run_evidences_the_committed_alloy_pin_and_nothing_else(tmp_path, tags, applied, owed):
+    row = {"ts": "2026-10-05T00:00:00Z", "limit": "nas", "rc": 0, "tags": tags, "committed_pins": NAS_COMMITTED}
+    row["extra_vars"] = {"nas_apply_compose": "true"} if applied else {}
+    assert _owed(tmp_path, [row], [NAS_PINS]) == owed
+
+
 def test_an_interrupted_pass_does_not_count_as_converged(tmp_path):
     assert _owed(tmp_path, [_row(digest="ac6172b9ffb2", rc=99)], [PIN]) == [("engine", "zcrypto", "ac6172b9ffb2")]
 

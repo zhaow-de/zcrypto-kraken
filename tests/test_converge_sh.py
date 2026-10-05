@@ -301,6 +301,8 @@ PUBLISHED = [
     ),
     (["--limit=zcrypto-red", "-e", f"capture_image_digest={DIGEST}"], "zcrypto-red", "", {"capture_image_digest": DIGEST}),
     (["--limit", "nas", "--tags", "nas", "-e", "nas_apply_compose=true"], "nas", "nas", {"nas_apply_compose": "true"}),
+    (["--limit", "nas", "--tags", "alloy"], "nas", "alloy", {}),
+    (["--limit", "nas", "--tags", "alloy", "-e", "nas_apply_compose=true"], "nas", "alloy", {"nas_apply_compose": "true"}),
     (
         [
             "--limit",

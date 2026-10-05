@@ -26,8 +26,8 @@ HOSTS="zcrypto zcrypto-red zcrypto-ops nas zaccess zcrypto-valkey1 zcrypto-valke
 # as the repair for a stopped or hand-edited chrony on a capture host; plus the cache nodes' converges
 # spec 00118 names: a node's first under the six base roles, the mesh's `firewall,cache-link` on a
 # node or the engine host, and `cache` on a node; plus `mon`, the observability node's own role; plus
-# `alloy`, the Alloy tasks' tag every role is to share, which only the capture role carries so far:
-# the Alloy bump's and a config.alloy change's form on a capture host.
+# `alloy`, the Alloy tasks' tag every role is to share, which the capture role and the nas role carry so
+# far: the narrow form of the Alloy bump and of a config.alloy or secrets change on those hosts.
 TAGNAMES="base hardening firewall fail2ban chrony docker capture alloy engine ops nas access cache cache-link mon"
 # The keys converges have carried, minus `nas_capture_image_digest` -- no role reads it, so the one
 # row that passed it re-pinned nothing -- plus the ones a live page publishes as an `-e`:
