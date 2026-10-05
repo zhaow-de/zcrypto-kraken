@@ -25,9 +25,9 @@ Reading rules:
 | valkey + sentinel | zcrypto-valkey1 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:20:54 | first pin |
 | alloy | zcrypto-valkey1 | `b8ec653c4423` — v1.19.2 | 2026-10-04 20:45:20 | first pin |
 | valkey + sentinel | zcrypto-valkey2 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:24:03 | first pin |
-| alloy | zcrypto-valkey2 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:39:05 | first pin |
+| alloy | zcrypto-valkey2 | `b8ec653c4423` — v1.19.2 | 2026-10-05 20:49:38 | first pin |
 | valkey + sentinel | zcrypto-valkey3 | `418652cfb58e` — Valkey 9.1.2, upstream `valkey/valkey` | 2026-09-26 21:28:18 | first pin |
-| alloy | zcrypto-valkey3 | `b8ec653c4423` — v1.19.2 | 2026-09-26 22:41:11 | first pin |
+| alloy | zcrypto-valkey3 | `b8ec653c4423` — v1.19.2 | 2026-10-05 21:04:00 | first pin |
 | ops (timers + liquidations) | zcrypto-ops | `3f291f3cee57` — revision `77df6273` | 2026-09-24 20:04:48 | `7d4c6066d71e` |
 | archive-pull | nas | `d914dad91536` — revision `7ab4fc1a`, the `-compat` build | 2026-09-30 19:17:40 | `c4135ac75b72` |
 
