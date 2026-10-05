@@ -411,8 +411,7 @@ c_runbook_sections_without_a_retire_when() { uv run python infra/scripts/runbook
 # guard's contract set, so this entry is the number behind a gate rather than an instrument in front of one.
 c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | grep -vE '^infra/runbooks/(README\.md$|[^/]+/)' | xargs uv run python infra/scripts/guidance-guard.py --uncounted | wc -l; }  # top-level pages only, the set the guard judges
 
-# Every successful capture-touching row -- `capture` among its tags, or an un-tagged site.yml run; a word of the
-# list, since `capture-alloy` restarts nothing of the daemon -- becomes one
+# Every successful capture-touching row -- a capture tag, or an un-tagged site.yml run -- becomes one
 # restart event per capture host it limits to (the capture_host group is both), and the count is the
 # pairs of events on different hosts within an hour of each other; a group row pairs with itself.
 # The `capture_host` arm below is for the rows already written: `converge.sh` refuses a group limit
@@ -420,7 +419,7 @@ c_runbook_universals_without_a_count() { git ls-files 'infra/runbooks/*.md' | gr
 c_capture_hosts_converged_within_an_hour() {
   local since
   since="$(round_closed_at)" || return 2
-  jq -s --arg since "$since" '[.[] | select(.rc == 0 and ((.tags | split(",") | any(. == "capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600 and ($since == "" or .[$j].t >= ($since | fromdate)))] | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
+  jq -s --arg since "$since" '[.[] | select(.rc == 0 and ((.tags | test("capture")) or .tags == "") and (.limit == "zcrypto" or .limit == "zcrypto-red" or .limit == "capture_host")) | . as $r | (if .limit == "capture_host" then ["zcrypto", "zcrypto-red"] else [.limit] end)[] | {host: ., t: ($r.ts | fromdate)}] | sort_by(.t) | [range(0; length) as $i | range($i + 1; length) as $j | select(.[$i].host != .[$j].host and (.[$j].t - .[$i].t) <= 3600 and ($since == "" or .[$j].t >= ($since | fromdate)))] | length' "${COUNT_LIST_DEPLOY_LOG:-docs/reference/deploy-log.jsonl}"
 }
 
 c_converge_sh_wrapped_in_timeout() { git grep -nE 'timeout +[0-9]+[smh]? .*converge\.sh' -- ':!*.md' | wc -l; }

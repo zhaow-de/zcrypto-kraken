@@ -393,18 +393,19 @@
 # no unit, no `compose up`, no restart handler -- mirroring the ops role: the first start is an
 # attended step, not a converge side effect.
 
-# `--tags capture-alloy` runs the tasks from here to the end of the block and nothing of the capture
-# daemon; a task the Alloy part comes to need carries the tag too (tests/test_capture_alloy_tag.py
-# holds the set). Without the digest that run would skip the block and exit 0 having landed nothing.
-- name: fail fast if a capture-alloy run was not handed the Alloy digest
+# `alloy` is the tag every role's Alloy tasks share. Here `--tags alloy` runs the tasks from this one
+# to the end of the block and nothing of the capture daemon; a task the Alloy part comes to need
+# carries the tag too (tests/test_capture_alloy_tag.py holds the set). Without the digest that run
+# would skip the block and exit 0 having landed nothing.
+- name: fail fast if an alloy run was not handed the capture host's Alloy digest
   ansible.builtin.assert:
     that: capture_alloy_digest | default('') | length > 0
     fail_msg: >-
-      --tags capture-alloy lands the Alloy config, secrets file and compose file, all gated on
-      capture_alloy_digest — pass the digest the host runs, or the new one on a bump:
+      --tags alloy lands this capture host's Alloy config, secrets file and compose file, all gated
+      on capture_alloy_digest — pass the digest the host runs, or the new one on a bump:
       -e capture_alloy_digest=sha256:<...>
-  when: "'capture-alloy' in ansible_run_tags"
-  tags: [capture-alloy]
+  when: "'alloy' in ansible_run_tags"
+  tags: [alloy]
 
 # The pre-`conf/` layout left a config.alloy one directory ABOVE the deployed one. Nothing mounts
 # it, so it is inert but NOT harmless: a stale file at the path an operator would guess returns
@@ -415,7 +416,7 @@
   ansible.builtin.file:
     path: "{{ capture_alloy_dir }}/config.alloy"
     state: absent
-  tags: [capture-alloy]
+  tags: [alloy]
 
 # T0110: the gate above skips the config copy on any converge that omits the digest -- by design,
 # and the reason both capture hosts silently ran a month-old keep-regex while the repo was correct.
@@ -429,7 +430,7 @@
     checksum_algorithm: sha256
     get_checksum: true
   register: capture_deployed_alloy_config
-  tags: [capture-alloy]
+  tags: [alloy]
 
 # On the CONTROLLER, via stat rather than lookup+hash: the file lookup strips the trailing
 # newline, so hashing its result never equals the file's real sha256 and the assert below would
@@ -444,7 +445,7 @@
   delegate_to: localhost
   become: false
   changed_when: false
-  tags: [capture-alloy]
+  tags: [alloy]
 
 - name: assert the deployed alloy config matches the repo
   ansible.builtin.assert:
@@ -464,11 +465,11 @@
   when:
     - capture_alloy_digest is not defined
     - capture_deployed_alloy_config.stat.exists
-  tags: [capture-alloy]
+  tags: [alloy]
 
 - name: install the capture telemetry stack — Grafana Alloy (needs the pinned Alloy digest)
   when: capture_alloy_digest is defined
-  tags: [capture-alloy]
+  tags: [alloy]
   block:
     # Alloy mounts the host root read-only for free-disk metrics, so a key-owning user's ~/.ssh
     # would be readable straight through that mount with no escalation -- the protection the NAS

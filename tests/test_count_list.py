@@ -825,13 +825,13 @@ def test_a_capture_pair_straddling_the_round_close_is_counted_once_in_the_round_
 @pytest.mark.parametrize(
     ("primary", "secondary", "pairs"),
     [
-        ("capture-alloy", "capture-alloy", 0),
-        ("capture-alloy,engine", "capture", 0),
+        ("alloy", "alloy", 0),
+        ("alloy,engine", "capture", 0),
         ("capture,engine", "capture", 1),
         ("", "capture", 1),
     ],
 )
-def test_the_capture_pair_count_reads_the_capture_tag_as_a_word_of_the_list(tmp_path, primary, secondary, pairs):
+def test_the_capture_pair_count_books_no_restart_for_an_alloy_converge_on_a_capture_host(tmp_path, primary, secondary, pairs):
     git_dir = _history(tmp_path, closes_a_round=True)
     entry = "capture-hosts-converged-within-an-hour"
     rows = [

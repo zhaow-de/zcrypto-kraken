@@ -332,15 +332,15 @@ PUBLISHED = [
         {"capture_alloy_digest": DIGEST},
     ),
     (
-        ["--limit", "zcrypto-red", "--tags", "capture-alloy", "-e", f"capture_alloy_digest={DIGEST}"],
+        ["--limit", "zcrypto-red", "--tags", "alloy", "-e", f"capture_alloy_digest={DIGEST}"],
         "zcrypto-red",
-        "capture-alloy",
+        "alloy",
         {"capture_alloy_digest": DIGEST},
     ),
     (
-        ["--limit", "zcrypto", "--tags", "capture-alloy", "-e", "converge_primary=true", "-e", f"capture_alloy_digest={DIGEST}"],
+        ["--limit", "zcrypto", "--tags", "alloy", "-e", "converge_primary=true", "-e", f"capture_alloy_digest={DIGEST}"],
         "zcrypto",
-        "capture-alloy",
+        "alloy",
         {"converge_primary": "true", "capture_alloy_digest": DIGEST},
     ),
     (
@@ -348,7 +348,7 @@ PUBLISHED = [
             "--limit",
             "zcrypto",
             "--tags",
-            "capture-alloy,engine",
+            "alloy,engine",
             "-e",
             "converge_primary=true",
             "-e",
@@ -357,7 +357,7 @@ PUBLISHED = [
             f"capture_alloy_digest={DIGEST}",
         ],
         "zcrypto",
-        "capture-alloy,engine",
+        "alloy,engine",
         {"converge_primary": "true", "engine_image_digest": DIGEST, "capture_alloy_digest": DIGEST},
     ),
     (

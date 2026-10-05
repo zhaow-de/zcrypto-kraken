@@ -77,6 +77,13 @@ def test_a_committed_pin_on_a_run_that_skipped_the_nas_role_is_not(tmp_path):
     assert _owed(tmp_path, log, [PIN]) == [("engine", "zcrypto", "ac6172b9ffb2")]
 
 
+def test_an_alloy_tagged_row_is_evidence_on_its_limit_by_its_extra_var(tmp_path):
+    row = {"ts": "2026-10-05T00:00:00Z", "limit": "zcrypto-red", "rc": 0, "tags": "alloy"}
+    row["extra_vars"] = {"capture_alloy_digest": "sha256:b8ec653c4423" + "0" * 52}
+    pins_row = "| alloy | zcrypto-red, zcrypto | `b8ec653c4423` | 2026-10-05 | `4f6d` |\n"
+    assert _owed(tmp_path, [row], [pins_row]) == [("alloy", "zcrypto", "b8ec653c4423")]
+
+
 def test_an_interrupted_pass_does_not_count_as_converged(tmp_path):
     assert _owed(tmp_path, [_row(digest="ac6172b9ffb2", rc=99)], [PIN]) == [("engine", "zcrypto", "ac6172b9ffb2")]
 

@@ -1,6 +1,6 @@
-"""The capture role's `capture-alloy` tag: a converge that lands the Alloy part on a capture host and nothing of the capture
-daemon, read off the YAML the way Ansible selects by tag -- a block's tags reach its children, a role entry's reach every
-task of the role, and `always` runs whatever was asked."""
+"""The capture role's share of the fleet-wide `alloy` tag: a converge that lands the Alloy part on a capture host and nothing
+of the capture daemon, read off the YAML the way Ansible selects by tag -- a block's tags reach its children, a role entry's
+reach every task of the role, and `always` runs whatever was asked."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ import yaml
 
 from tests.test_infra_converge_guards import ANSIBLE, CAPTURE, assert_that, find_task, load_tasks, truthy, when_conditions
 
-TAG = "capture-alloy"
+TAG = "alloy"
 ROLES = ANSIBLE / "roles"
 CAPTURE_ROLE = ROLES / "capture"
 SITE = ANSIBLE / "site.yml"
-FAIL_FAST = "fail fast if a capture-alloy run was not handed the Alloy digest"
+FAIL_FAST = "fail fast if an alloy run was not handed the capture host's Alloy digest"
 
 ALLOY_PART = [
     FAIL_FAST,
@@ -37,7 +37,7 @@ ALLOY_PART = [
     "render the alloy compose file",
 ]
 
-# The pre_tasks a `--tags capture-alloy` run executes on the capture and engine plays: every one tagged `always`.
+# The pre_tasks a `--tags alloy` run executes on the capture and engine plays: every one tagged `always`.
 ALWAYS_PRE_TASKS = [
     ("capture_host", "refuse to converge the live primary unless explicitly asked"),
     ("capture_host", "refuse an un-tagged run on the live primary"),
@@ -95,7 +95,7 @@ def _read_text(task: dict, gates: tuple[str, ...]) -> str:
     return body + "\n".join(gates)
 
 
-def test_the_tag_selects_exactly_the_alloy_part():
+def test_the_capture_roles_tagged_tasks_are_exactly_its_alloy_part():
     tagged = _tagged()
     assert [task["name"] for task, _, _ in tagged] == ALLOY_PART
     assert {handler for task, _, _ in tagged for handler in _notify(task)} == {"reload alloy"}
@@ -144,7 +144,9 @@ def _every_tag(node) -> set[str]:
     return set()
 
 
-def test_no_other_role_and_no_play_carries_the_tag():
+def test_no_other_role_and_no_play_carries_the_tag_yet():
+    """The tag is shared by name, so another role joins it deliberately, with its own guards beside these: this list
+    widens in that change."""
     carriers = [p for p in [*_role_yaml(), SITE, ANSIBLE / "bootstrap.yml"] if TAG in _every_tag(load_tasks(p))]
     assert carriers == [CAPTURE], carriers
 
@@ -153,7 +155,7 @@ def _selected(tags: set[str]) -> bool:
     return "always" in tags or TAG in tags
 
 
-def test_a_capture_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():
+def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside_the_always_pre_tasks():
     """Ansible's selection over every play that reaches a capture host: an `always` task in any of their roles would
     run on the primary beside the Alloy part, and only the four pre_tasks below may."""
     pre_tasks, role_tasks = [], []
@@ -197,7 +199,7 @@ def test_the_narrow_run_still_takes_the_primarys_explicit_yes():
         (["capture", "engine"], None, False, False),
     ],
 )
-def test_a_capture_alloy_run_refuses_without_the_alloy_digest_and_no_other_run_meets_that_refusal(
+def test_an_alloy_run_refuses_without_the_capture_alloy_digest_and_no_other_run_meets_that_refusal(
     seq, run_tags, digest, engages, passes
 ):
     task = find_task(load_tasks(CAPTURE), FAIL_FAST)
