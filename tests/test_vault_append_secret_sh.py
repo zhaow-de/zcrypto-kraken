@@ -4,12 +4,15 @@ case runs the real `ansible-vault` under a scratch password."""
 
 from __future__ import annotations
 
+import fcntl
 import os
 import pty
 import secrets
 import select
 import shlex
+import signal
 import string
+import struct
 import subprocess
 import sys
 import termios
@@ -24,6 +27,7 @@ _KEY = "scratch_api_key"
 _SHAPE = "hcw_[A-Za-z0-9]{28}"
 _STUB_UV = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$UV_STUB_RECORD"
+env > "$UV_STUB_ENV"
 n=$(wc -c)
 printf '%s: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          stdin-bytes-%s\n' "${!#}" "${n//[^0-9]/}"
 """
@@ -67,6 +71,7 @@ def _env(tmp_path: Path, tty: Path, uv: str = _STUB_UV) -> dict[str, str]:
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "HOME": str(tmp_path),
         "UV_STUB_RECORD": str(tmp_path / "uv-record"),
+        "UV_STUB_ENV": str(tmp_path / "uv-env"),
         "VAULT_APPEND_SECRET_TTY": str(tty),
     }
 
@@ -96,12 +101,24 @@ def _vault(tmp_path: Path, text: str) -> Path:
     return vault
 
 
+def _stub_env(tmp_path: Path) -> str:
+    path = tmp_path / "uv-env"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
 def test_the_value_is_appended_as_one_block_with_no_newline_entered(tmp_path):
     vault = _vault(tmp_path, _BEFORE)
     value = _value()
     done = _run(tmp_path, value, str(vault), _KEY, _SHAPE)
     record = (tmp_path / "uv-record").read_text(encoding="utf-8")
-    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr, vault=vault.read_text(encoding="utf-8"), argv=record)
+    leaked = _leaks(
+        value,
+        stdout=done.stdout,
+        stderr=done.stderr,
+        vault=vault.read_text(encoding="utf-8"),
+        argv=record,
+        environment=_stub_env(tmp_path),
+    )
     assert leaked == []
     assert (done.returncode, done.stdout, done.stderr) == (0, f"{_KEY}: appended\n", "")
     assert record == f"run ansible-vault encrypt_string --stdin-name {_KEY}\n"
@@ -109,25 +126,36 @@ def test_the_value_is_appended_as_one_block_with_no_newline_entered(tmp_path):
     assert vault.stat().st_mode & 0o777 == 0o640
 
 
-def test_an_inherited_xtrace_is_turned_off_before_the_value_is_read(tmp_path):
+@pytest.mark.parametrize(("option", "stderr"), [("xtrace", "+ set +xa\n"), ("allexport", "")])
+def test_an_inherited_shell_option_is_turned_off_before_the_value_is_read(tmp_path, option, stderr):
     vault = _vault(tmp_path, _BEFORE)
     value = _value()
-    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, extra={"SHELLOPTS": "xtrace"})
-    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
+    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, extra={"SHELLOPTS": option})
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr, environment=_stub_env(tmp_path))
     assert leaked == []
-    assert (done.returncode, done.stdout, done.stderr) == (0, f"{_KEY}: appended\n", "+ set +x\n")
+    assert (done.returncode, done.stdout, done.stderr) == (0, f"{_KEY}: appended\n", stderr)
+
+
+def test_the_value_is_held_to_the_shape_exactly_as_typed(tmp_path):
+    vault = _vault(tmp_path, _BEFORE)
+    value = f" {_value()} "
+    done = _run(tmp_path, value, str(vault), _KEY, f" ?{_SHAPE} ?")
+    leaked = _leaks(value.strip(), stdout=done.stdout, stderr=done.stderr, vault=vault.read_text(encoding="utf-8"))
+    assert leaked == []
+    assert (done.returncode, done.stdout) == (0, f"{_KEY}: appended\n")
+    assert vault.read_text(encoding="utf-8") == _BEFORE + _block(_KEY, len(value))
 
 
 @pytest.mark.parametrize(
     "off_shape",
-    [lambda v: v[:-1], lambda v: v + "x", lambda v: "x" + v, lambda v: "hcr_" + v[4:]],
-    ids=["short", "trailing-extra", "leading-extra", "other-prefix"],
+    [lambda v: v[:-1], lambda v: v + "x", lambda v: "x" + v, lambda v: "hcr_" + v[4:], lambda v: f" {v} "],
+    ids=["short", "trailing-extra", "leading-extra", "other-prefix", "padded"],
 )
 def test_a_value_off_the_shape_is_refused_before_the_encryption_runs(tmp_path, off_shape):
     vault = _vault(tmp_path, _BEFORE)
     value = off_shape(_value())
     done = _run(tmp_path, value, str(vault), _KEY, _SHAPE)
-    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
+    leaked = _leaks(value.strip(), stdout=done.stdout, stderr=done.stderr)
     assert leaked == []
     assert done.returncode == 2 and done.stdout == ""
     assert _KEY in done.stderr and _SHAPE in done.stderr
@@ -142,6 +170,16 @@ def test_an_empty_value_is_refused_under_a_shape_that_admits_it(tmp_path, typed,
     assert done.returncode == 2 and done.stdout == ""
     lines = done.stderr.splitlines()
     assert len(lines) == stderr_lines and _KEY in lines[-1]
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_text(encoding="utf-8") == _BEFORE
+
+
+def test_a_shape_that_is_not_a_regex_is_refused_before_the_value_is_read(tmp_path):
+    vault = _vault(tmp_path, _BEFORE)
+    done = _run(tmp_path, None, str(vault), _KEY, "hcw_[")
+    assert done.returncode == 2 and done.stdout == ""
+    lines = done.stderr.splitlines()
+    assert len(lines) == 1 and "'hcw_['" in lines[0] and "regular expression" in lines[0]
     assert not (tmp_path / "uv-record").exists()
     assert vault.read_text(encoding="utf-8") == _BEFORE
 
@@ -164,6 +202,33 @@ def test_a_key_the_file_carries_is_refused_without_replace_and_its_block_replace
     assert vault.stat().st_mode & 0o777 == 0o640
 
 
+@pytest.mark.parametrize(
+    "text",
+    [_BEFORE + _block(_KEY, 5) + _block(_KEY, 6) + _AFTER, "$ANSIBLE_VAULT;1.1;AES256\n6162636465666768\n" + _block(_KEY, 5)],
+    ids=["carried-twice", "encrypted-whole"],
+)
+def test_replace_is_refused_over_a_key_carried_twice_and_over_a_file_encrypted_whole(tmp_path, text):
+    vault = _vault(tmp_path, text)
+    value = _value()
+    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, "--replace")
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
+    assert leaked == []
+    assert done.returncode == 2 and done.stdout == ""
+    assert len(done.stderr.splitlines()) == 1 and str(vault) in done.stderr
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_bytes() == text.encode()
+
+
+def test_a_file_encrypted_whole_is_refused_for_an_append(tmp_path):
+    text = "$ANSIBLE_VAULT;1.1;AES256\n6162636465666768\n"
+    vault = _vault(tmp_path, text)
+    done = _run(tmp_path, _value(), str(vault), _KEY, _SHAPE)
+    assert done.returncode == 2 and done.stdout == ""
+    assert len(done.stderr.splitlines()) == 1 and str(vault) in done.stderr
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_bytes() == text.encode()
+
+
 def test_replace_for_a_key_the_file_lacks_is_refused(tmp_path):
     vault = _vault(tmp_path, _BEFORE)
     done = _run(tmp_path, None, str(vault), _KEY, _SHAPE, "--replace")
@@ -182,7 +247,40 @@ def test_a_failed_encryption_writes_nothing_and_exits_with_its_rc(tmp_path):
     assert leaked == []
     assert (done.returncode, done.stdout, done.stderr) == (3, "", "the vault password was refused\n")
     assert vault.read_text(encoding="utf-8") == _BEFORE
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["bin", "typed", "vault.yml"]
+
+
+@pytest.mark.parametrize(
+    "answer", ["", "other_key: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          00\n"], ids=["empty", "other-key"]
+)
+def test_an_encryptor_output_that_is_not_the_key_s_block_is_refused_before_any_write(tmp_path, answer):
+    original = _BEFORE + _block(_KEY, 5) + "\n" + _AFTER
+    vault = _vault(tmp_path, original)
+    value = _value()
+    uv = f"#!/usr/bin/env bash\ncat > /dev/null\nprintf %s {shlex.quote(answer)}\n"
+    done = _run(tmp_path, value, str(vault), _KEY, _SHAPE, "--replace", uv=uv)
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
+    assert leaked == []
+    assert done.returncode == 2 and done.stdout == ""
+    assert len(done.stderr.splitlines()) == 1 and _KEY in done.stderr
+    assert vault.read_text(encoding="utf-8") == original
+
+
+def test_a_step_failing_after_the_temp_file_exists_leaves_no_temp_file(tmp_path):
+    vault = _vault(tmp_path, _BEFORE)
+    value = _value()
+    env = _env(tmp_path, tmp_path / "typed")
+    (tmp_path / "typed").write_text(value + "\n", encoding="utf-8")
+    (tmp_path / "bin" / "mv").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    (tmp_path / "bin" / "mv").chmod(0o755)
+    done = subprocess.run(
+        [str(_SCRIPT), str(vault), _KEY, _SHAPE], cwd=tmp_path, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True
+    )
+    leaked = _leaks(value, stdout=done.stdout, stderr=done.stderr)
+    assert leaked == []
+    assert done.returncode == 1 and done.stdout == ""
+    assert (tmp_path / "uv-record").exists()
+    assert sorted(p.name for p in tmp_path.glob(".vault-append-secret.*")) == []
+    assert vault.read_text(encoding="utf-8") == _BEFORE
 
 
 def test_a_missing_file_is_refused(tmp_path):
@@ -207,33 +305,47 @@ def test_a_usage_other_than_the_contract_is_refused(tmp_path, args):
     assert vault.read_text(encoding="utf-8") == _BEFORE
 
 
+def _echo_on(fd: int) -> bool:
+    return bool(termios.tcgetattr(fd)[3] & termios.ECHO)
+
+
+def _at_the_hidden_read(tmp_path: Path, vault: Path, slave: int) -> tuple[subprocess.Popen[str], bool]:
+    """The script started with the pty as its terminal, and whether its echo went off within the deadline."""
+    proc = subprocess.Popen(
+        [str(_SCRIPT), str(vault), _KEY, _SHAPE],
+        cwd=tmp_path,
+        env=_env(tmp_path, Path(os.ttyname(slave))),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + 5
+    while _echo_on(slave) and proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return proc, not _echo_on(slave)
+
+
+def _drain(master: int) -> bytes:
+    out = b""
+    while select.select([master], [], [], 0.2)[0]:
+        out += os.read(master, 4096)
+    return out
+
+
 def test_the_value_typed_at_a_terminal_is_not_echoed(tmp_path):
     vault = _vault(tmp_path, _BEFORE)
     value = _value()
     master, slave = pty.openpty()
     try:
-        echo_at_start = bool(termios.tcgetattr(slave)[3] & termios.ECHO)
-        proc = subprocess.Popen(
-            [str(_SCRIPT), str(vault), _KEY, _SHAPE],
-            cwd=tmp_path,
-            env=_env(tmp_path, Path(os.ttyname(slave))),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        deadline = time.monotonic() + 5
-        while termios.tcgetattr(slave)[3] & termios.ECHO and proc.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.01)
-        silenced = not termios.tcgetattr(slave)[3] & termios.ECHO
+        echo_at_start = _echo_on(slave)
+        proc, silenced = _at_the_hidden_read(tmp_path, vault, slave)
         if silenced:
             os.write(master, value.encode() + b"\n")
         else:
             proc.kill()
         out, err = proc.communicate(timeout=10)
-        terminal = b""
-        while select.select([master], [], [], 0.2)[0]:
-            terminal += os.read(master, 4096)
+        terminal = _drain(master)
     finally:
         os.close(master)
         os.close(slave)
@@ -244,6 +356,52 @@ def test_the_value_typed_at_a_terminal_is_not_echoed(tmp_path):
     assert echo_at_start and silenced
     assert (proc.returncode, out, err) == (0, f"{_KEY}: appended\n", f"{_KEY} (not echoed): \n")
     assert vault.read_text(encoding="utf-8") == _BEFORE + _block(_KEY, len(value))
+
+
+def test_a_paste_of_more_than_one_line_is_refused_and_leaves_nothing_queued_for_the_shell(tmp_path):
+    vault = _vault(tmp_path, _BEFORE)
+    value, rest = _value(), _value()
+    master, slave = pty.openpty()
+    try:
+        proc, silenced = _at_the_hidden_read(tmp_path, vault, slave)
+        if silenced:
+            os.write(master, f"{value}\n{rest}\n".encode())
+        else:
+            proc.kill()
+        out, err = proc.communicate(timeout=10)
+        terminal = _drain(master)
+        queued = struct.unpack("i", fcntl.ioctl(slave, termios.FIONREAD, b"\0\0\0\0"))[0]
+    finally:
+        os.close(master)
+        os.close(slave)
+    surfaces = {"stdout": out, "stderr": err, "terminal": terminal.decode(errors="replace")}
+    leaked = _leaks(value, **surfaces) + _leaks(rest, **surfaces)
+    assert leaked == []
+    assert silenced
+    assert proc.returncode == 2 and out == ""
+    assert err.startswith(f"{_KEY} (not echoed): \n") and len(err.splitlines()) == 2 and _KEY in err.splitlines()[-1]
+    assert queued == 0
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_text(encoding="utf-8") == _BEFORE
+
+
+@pytest.mark.parametrize("signum", [signal.SIGHUP, signal.SIGINT, signal.SIGTERM], ids=["HUP", "INT", "TERM"])
+def test_a_signal_at_the_hidden_read_exits_through_the_cleanup_and_restores_the_echo(tmp_path, signum):
+    vault = _vault(tmp_path, _BEFORE)
+    master, slave = pty.openpty()
+    try:
+        proc, silenced = _at_the_hidden_read(tmp_path, vault, slave)
+        proc.send_signal(signum)
+        proc.communicate(timeout=10)
+        echo_after = _echo_on(slave)
+    finally:
+        os.close(master)
+        os.close(slave)
+    assert silenced
+    assert proc.returncode == 128 + signum
+    assert echo_after
+    assert not (tmp_path / "uv-record").exists()
+    assert vault.read_text(encoding="utf-8") == _BEFORE
 
 
 def test_the_real_ansible_vault_round_trips_the_value_whole_through_append_and_replace(tmp_path):
