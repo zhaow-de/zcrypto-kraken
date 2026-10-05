@@ -521,6 +521,7 @@ NOT_A_PUBLISHED_METRIC = {
     "zcrypto_window_record",  # the extra-var converge.sh names the engine play's window record file by
     "zcrypto_owned",  # the logger-ownership marker in cli/logging/config.py, never exported
     "zcrypto_reconcile_",  # the f-string STEM, not a series -- the real names are listed above
+    "zcrypto_selfcheck",  # the shared self-check module's import name, in a node self-check script's import line
     # Named only in a cli/obs/metrics.py comment explaining why it is SUPPRESSED: prometheus_client
     # adds a `_created` series per Counter by default and `_use_created = False` disables them
     # process-wide.

@@ -10,14 +10,17 @@ import yaml
 from ansible.parsing.dataloader import DataLoader
 from ansible.template import Templar, trust_as_template
 
-from tests import selfcheck_driver
+from tests import role_render, selfcheck_driver
 from tests.test_infra_converge_guards import find_task, load_tasks, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/mon"
+NODE_COMMON = REPO / "infra/ansible/roles/node_common"
 SCRIPT = ROLE / "files/zcrypto-mon-selfcheck.py"
+SHARED = NODE_COMMON / "files/zcrypto_selfcheck.py"
+SELFCHECK_TASKS = NODE_COMMON / "tasks/selfcheck.yml"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
-selfcheck = selfcheck_driver.load(SCRIPT)
+selfcheck = selfcheck_driver.load(SCRIPT, SHARED)
 
 NOW = 1_790_000_000.0
 PING = "https://hc-ping.invalid/abc"
@@ -129,32 +132,51 @@ def test_the_ping_url_never_reaches_the_output():
         assert PING not in _run(**kwargs)[2]
 
 
-# --- the unit, its environment file and its timer ----------------------------------------------------------------
+# --- the unit, its environment file and its timer: node_common's, rendered through the role's include -------------
+def _scope(**extra) -> dict:
+    # The include's vars as the play resolves them: over the role's own defaults and node_common's.
+    (include,) = [
+        task
+        for task in load_tasks(ROLE / "tasks/main.yml")
+        if task.get("ansible.builtin.include_role") == {"name": "node_common", "tasks_from": "selfcheck"}
+    ]
+    node = role_render.variables(ROLE, {}, exclude=("mon_token_cache",))
+    return node | role_render.trusted(include["vars"]) | extra
+
+
 def _render(name: str, **extra) -> str:
-    variables = {k: v for k, v in DEFAULTS.items() if k != "mon_token_cache"} | extra
-    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template((ROLE / "templates" / name).read_text()))
+    return role_render.render(NODE_COMMON, name, {}, **_scope(**extra))
+
+
+def _resolved(value: str) -> str:
+    variables = role_render.variables(NODE_COMMON, {}, **_scope())
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
 
 
 def test_the_unit_and_its_environment_file_set_every_name_the_script_reads():
-    read = set(re.findall(r'env(?:\.get\(|\[)"(MON_SELFCHECK_[A-Z_]+)"', SCRIPT.read_text()))
-    unit = _render("zcrypto-mon-selfcheck.service.j2")
+    read = set(re.findall(r'(?:env(?:\.get\(|\[)|ping_var=)"(MON_SELFCHECK_[A-Z_]+)"', SCRIPT.read_text()))
+    unit = _render("selfcheck.service.j2")
     in_unit = dict(line.removeprefix("Environment=").split("=", 1) for line in unit.splitlines() if line.startswith("Environment="))
     assert in_unit == {
         "MON_SELFCHECK_GRAFANA": "http://127.0.0.1:3000",
         "MON_SELFCHECK_PROMETHEUS": "http://127.0.0.1:9090",
         "MON_SELFCHECK_LOKI": "http://127.0.0.1:3100",
+        "PYTHONPATH": "/usr/local/lib/zcrypto",
     }
-    env_file = _render("zcrypto-mon-selfcheck.env.j2", mon_selfcheck_healthcheck_url=PING)
+    env_file = _render("selfcheck.env.j2", mon_selfcheck_healthcheck_url=PING)
     in_file = dict(line.split("=", 1) for line in env_file.splitlines() if line and not line.startswith("#"))
     assert in_file == {"MON_SELFCHECK_HEALTHCHECK_URL": PING}
-    assert read == set(in_unit) | set(in_file), "a name the script reads that nothing sets is a KeyError on every run"
+    # Python reads PYTHONPATH to import the shared loop; the script never does.
+    assert read == (set(in_unit) - {"PYTHONPATH"}) | set(in_file), (
+        "a name the script reads that nothing sets is a KeyError on every run"
+    )
     assert DEFAULTS["mon_selfcheck_healthcheck_url"] == "", "the check is not minted at node-up, so the default pings nothing"
 
 
 def test_the_unit_runs_what_the_role_installs_as_no_standing_user_and_reads_the_url_from_a_root_only_file():
     parser = configparser.ConfigParser(interpolation=None, strict=False, delimiters=("=",))
     parser.optionxform = str
-    unit = _render("zcrypto-mon-selfcheck.service.j2")
+    unit = _render("selfcheck.service.j2")
     parser.read_string("\n".join(line for line in unit.splitlines() if not line.startswith("Environment=")))
     service = parser["Service"]
     assert service["ExecStart"] == "/usr/bin/python3 /usr/local/sbin/zcrypto-mon-selfcheck"
@@ -163,25 +185,30 @@ def test_the_unit_runs_what_the_role_installs_as_no_standing_user_and_reads_the_
         "true",
         "/etc/default/zcrypto-mon-selfcheck",
     )
-    tasks = load_tasks(ROLE / "tasks/main.yml")
+    tasks = load_tasks(SELFCHECK_TASKS)
     script = find_task(tasks, "install the self-check script")["ansible.builtin.copy"]
-    assert (script["src"], script["dest"]) == ("zcrypto-mon-selfcheck.py", "/usr/local/sbin/zcrypto-mon-selfcheck")
+    assert (_resolved(script["src"]), _resolved(script["dest"])) == (
+        "zcrypto-mon-selfcheck.py",
+        "/usr/local/sbin/zcrypto-mon-selfcheck",
+    )
     env = find_task(tasks, "render the self-check's ping URL, read by systemd alone")
-    assert env["ansible.builtin.template"]["dest"] == service["EnvironmentFile"]
+    assert _resolved(env["ansible.builtin.template"]["dest"]) == service["EnvironmentFile"]
     assert (env["ansible.builtin.template"]["mode"], env["no_log"], env["diff"]) == ("0600", True, False)
 
 
 def test_the_timer_runs_every_five_minutes_and_is_what_the_role_enables():
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.optionxform = str
-    parser.read_string((ROLE / "files/zcrypto-mon-selfcheck.timer").read_text())
+    parser.read_string(_render("selfcheck.timer.j2"))
     assert parser["Timer"]["OnCalendar"] == "*:0/5:23" and "Persistent" not in parser["Timer"]
     assert parser["Timer"]["Unit"] == "zcrypto-mon-selfcheck.service"
-    enable = find_task(load_tasks(ROLE / "tasks/main.yml"), "enable + start the self-check timer")
-    assert enable["ansible.builtin.systemd_service"] == {
+    tasks = load_tasks(SELFCHECK_TASKS)
+    enable = find_task(tasks, "enable + start the self-check timer")
+    assert {k: _resolved(v) if isinstance(v, str) else v for k, v in enable["ansible.builtin.systemd_service"].items()} == {
         "name": "zcrypto-mon-selfcheck.timer",
         "daemon_reload": True,
         "enabled": True,
         "state": "started",
     }
-    assert when_conditions(enable) == ["not (ansible_check_mode and mon_selfcheck_timer_install is changed)"]
+    install = find_task(tasks, "render the self-check systemd timer")
+    assert when_conditions(enable) == [f"not (ansible_check_mode and {install['register']} is changed)"]

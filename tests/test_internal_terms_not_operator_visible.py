@@ -272,6 +272,29 @@ def test_ansible_operator_messages_carry_no_internal_vocabulary(path, key, text)
     )
 
 
+def _included_descriptions() -> list[tuple[str, int, str]]:
+    """What an include passes for a `Description=` line a shared template renders, where the unit walk reads only
+    the template's `{{ … }}`."""
+    keys = {"node_common_selfcheck_description", "node_common_selfcheck_timer_description"}
+    out = []
+
+    def walk(node, rel):
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                if isinstance(key, yaml.ScalarNode) and key.value in keys and isinstance(value, yaml.ScalarNode):
+                    out.append((rel, key.start_mark.line + 1, f"Description={value.value}"))
+                walk(value, rel)
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                walk(item, rel)
+
+    for p in sorted((REPO / "infra/ansible/roles").glob("*/tasks/*.yml")):
+        for document in yaml.compose_all(p.read_text()):
+            walk(document, str(p.relative_to(REPO)))
+    assert out, "found no include's unit descriptions — the walk is broken, not the tree clean"
+    return out
+
+
 def _systemd_descriptions() -> list[tuple[str, int, str]]:
     out = [
         (str(p.relative_to(REPO)), i, line)
@@ -281,7 +304,7 @@ def _systemd_descriptions() -> list[tuple[str, int, str]]:
         if line.startswith("Description=")
     ]
     assert out, "found no systemd Description= lines — the glob is broken, not the tree clean"
-    return sorted(out)
+    return sorted(out + _included_descriptions())
 
 
 @pytest.mark.parametrize("unit,lineno,line", _systemd_descriptions(), ids=lambda v: v if isinstance(v, str) else "")

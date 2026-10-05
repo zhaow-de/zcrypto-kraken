@@ -17,6 +17,14 @@ def variables(role_dir: Path, secrets: dict, exclude=(), **extra) -> dict:
     return {**trusted, **secrets, **extra}
 
 
+def trusted(value):
+    if isinstance(value, dict):
+        return {k: trusted(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [trusted(v) for v in value]
+    return trust_as_template(value) if isinstance(value, str) else value
+
+
 def render(role_dir: Path, name: str, secrets: dict, exclude=(), **extra) -> str:
     text = (role_dir / "templates" / name).read_text()
     return Templar(loader=DataLoader(), variables=variables(role_dir, secrets, exclude, **extra)).template(trust_as_template(text))

@@ -105,20 +105,12 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
-def _trusted(value):
-    if isinstance(value, dict):
-        return {k: _trusted(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_trusted(v) for v in value]
-    return trust_as_template(value) if isinstance(value, str) else value
-
-
 def _caddyfile_text() -> str:
     # The include's vars as the play resolves them: over the role's own defaults, the vault, and the edge's defaults.
     include = find_task(load_tasks(TASKS), EDGE_INCLUDE)
     assert include["ansible.builtin.include_role"] == {"name": "edge"}, include
     node = role_render.variables(ROLE, {}, exclude=("mon_token_cache",))
-    return role_render.render(EDGE, "Caddyfile.j2", SECRETS, **node, **_trusted(include["vars"]))
+    return role_render.render(EDGE, "Caddyfile.j2", SECRETS, **node, **role_render.trusted(include["vars"]))
 
 
 def _caddyfile() -> dict[str, list]:

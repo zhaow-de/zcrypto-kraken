@@ -275,46 +275,21 @@
     node_common_reboot_check_textfile_dir: "{{ mon_textfile_dir }}"
     node_common_role_name: mon
 
-- name: install the self-check script
-  ansible.builtin.copy:
-    src: zcrypto-mon-selfcheck.py
-    dest: /usr/local/sbin/zcrypto-mon-selfcheck
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: render the self-check's ping URL, read by systemd alone
-  ansible.builtin.template:
-    src: zcrypto-mon-selfcheck.env.j2
-    dest: /etc/default/zcrypto-mon-selfcheck
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  diff: false
-
-- name: render the self-check systemd unit
-  ansible.builtin.template:
-    src: zcrypto-mon-selfcheck.service.j2
-    dest: /etc/systemd/system/zcrypto-mon-selfcheck.service
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: install the self-check systemd timer
-  ansible.builtin.copy:
-    src: zcrypto-mon-selfcheck.timer
-    dest: /etc/systemd/system/zcrypto-mon-selfcheck.timer
-    owner: root
-    group: root
-    mode: "0644"
-  register: mon_selfcheck_timer_install
-
-# A first-install preview never wrote the timer, so systemd cannot find it there.
-- name: enable + start the self-check timer
-  ansible.builtin.systemd_service:
-    name: zcrypto-mon-selfcheck.timer
-    daemon_reload: true
-    enabled: true
-    state: started
-  when: not (ansible_check_mode and mon_selfcheck_timer_install is changed)
+- name: ping the node's dead-man check while rules evaluate, fleet samples arrive and Loki is ready
+  ansible.builtin.include_role:
+    name: node_common
+    tasks_from: selfcheck
+  vars:
+    node_common_selfcheck_name: zcrypto-mon-selfcheck
+    node_common_selfcheck_script: zcrypto-mon-selfcheck.py
+    node_common_selfcheck_description: Ping the observability node's dead-man while rules evaluate, fleet samples arrive and Loki is ready
+    node_common_selfcheck_timer_description: Every-5-minutes self-check of the observability node
+    node_common_selfcheck_environment:
+      MON_SELFCHECK_GRAFANA: "http://127.0.0.1:{{ mon_grafana_port }}"
+      MON_SELFCHECK_PROMETHEUS: "http://127.0.0.1:{{ mon_prometheus_port }}"
+      MON_SELFCHECK_LOKI: "http://127.0.0.1:{{ mon_loki_port }}"
+    node_common_selfcheck_env_var: MON_SELFCHECK_HEALTHCHECK_URL
+    node_common_selfcheck_env_value: "{{ mon_selfcheck_healthcheck_url }}"
+    # Every five minutes, off the minute boundary.
+    node_common_selfcheck_on_calendar: "*:0/5:23"
+    node_common_role_name: mon

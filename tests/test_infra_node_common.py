@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import configparser
 from pathlib import Path
 
 import pytest
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 from tests import role_render
 from tests.test_infra_converge_guards import find_task, iter_tasks, load_tasks, truthy, when_conditions
@@ -24,6 +27,17 @@ INCLUDE = {
     "node_common_secrets_preflight_runbook": "infra/runbooks/probe.md's probe-secrets procedure",
 }
 REBOOT_CHECK = {"node_common_reboot_check_textfile_dir": "/var/lib/probe-textfile", "node_common_role_name": "probe"}
+SELFCHECK = {
+    "node_common_selfcheck_name": "probe-selfcheck",
+    "node_common_selfcheck_script": "probe-selfcheck.py",
+    "node_common_selfcheck_description": "Ping the probe's dead-man check while its web answers",
+    "node_common_selfcheck_timer_description": "Every-minute self-check of the probe",
+    "node_common_selfcheck_environment": {"PROBE_SELFCHECK_WEB": "http://127.0.0.1:8000", "PROBE_SELFCHECK_HOST": "probe.invalid"},
+    "node_common_selfcheck_env_var": "PROBE_SELFCHECK_HEALTHCHECK_URL",
+    "node_common_selfcheck_env_value": "https://hc-ping.invalid/probe",
+    "node_common_selfcheck_on_calendar": "*:0/1:07",
+    "node_common_role_name": "probe",
+}
 
 
 def _preflight() -> dict:
@@ -114,3 +128,86 @@ def test_a_first_install_preview_skips_the_timer_it_never_wrote(check, changed, 
     enable = find_task(_reboot_check(), "enable + start the reboot-check timer")
     variables = {"ansible_check_mode": check, install["register"]: {"changed": changed}}
     assert truthy(when_conditions(enable), variables) is runs
+
+
+# --- selfcheck: a node's script over the shared loop, its ping URL in a root-only file, its unit and its timer -----
+def _selfcheck() -> list[dict]:
+    return load_tasks(ROLE / "tasks/selfcheck.yml")
+
+
+def _selfcheck_render(name: str) -> list[str]:
+    return role_render.render(ROLE, name, {}, **SELFCHECK).splitlines()
+
+
+def _selfcheck_resolved(value):
+    if not isinstance(value, str):
+        return value
+    variables = role_render.variables(ROLE, {}, **SELFCHECK)
+    return Templar(loader=DataLoader(), variables=variables).template(trust_as_template(value))
+
+
+def _selfcheck_service() -> dict[str, str]:
+    unit = _selfcheck_render("selfcheck.service.j2")
+    return dict(line.split("=", 1) for line in unit if "=" in line and not line.startswith(("#", "Environment=")))
+
+
+def _selfcheck_steps() -> list[tuple[dict, str, dict]]:
+    # Each task, its one module, and that module's arguments resolved through the include's variables.
+    steps = []
+    for task in _selfcheck():
+        ((module, args),) = [(key, value) for key, value in task.items() if isinstance(value, dict)]
+        steps.append((task, module, {k: _selfcheck_resolved(v) for k, v in args.items()}))
+    return steps
+
+
+def test_the_selfcheck_unit_sets_the_includes_environment_and_the_shared_modules_path_and_hides_no_path():
+    unit = _selfcheck_render("selfcheck.service.j2")
+    environment = dict(line.removeprefix("Environment=").split("=", 1) for line in unit if line.startswith("Environment="))
+    assert environment == SELFCHECK["node_common_selfcheck_environment"] | {"PYTHONPATH": "/usr/local/lib/zcrypto"}
+    # The module is read under ProtectSystem=strict's read-only /usr, the premise the node's first run proves; a path
+    # hidden or remounted here is one that run did not prove.
+    assert not [line for line in unit if line.startswith(("InaccessiblePaths=", "ReadOnlyPaths="))], unit
+    service = _selfcheck_service()
+    assert (service["Description"], service["Type"], service["DynamicUser"], service["ProtectSystem"]) == (
+        SELFCHECK["node_common_selfcheck_description"],
+        "oneshot",
+        "true",
+        "strict",
+    )
+
+
+def test_the_selfcheck_installs_what_its_unit_runs_imports_and_reads_and_enables_the_timer_alone():
+    service = _selfcheck_service()
+    steps = _selfcheck_steps()
+    for _, module, args in steps:
+        if "src" in args and args["src"] != SELFCHECK["node_common_selfcheck_script"]:
+            assert (ROLE / ("templates" if module == "ansible.builtin.template" else "files") / args["src"]).is_file(), args
+    by_dest = {args["dest"]: (task, args) for task, _, args in steps if "dest" in args}
+    assert by_dest[service["ExecStart"].split()[1]][1]["src"] == SELFCHECK["node_common_selfcheck_script"]
+    env_task, env_args = by_dest[service["EnvironmentFile"]]
+    assert (env_args["mode"], env_task["no_log"], env_task["diff"]) == ("0600", True, False)
+    (made,) = [index for index, (_, module, _) in enumerate(steps) if module == "ansible.builtin.file"]
+    (copied,) = [index for index, (_, _, args) in enumerate(steps) if args.get("src") == "zcrypto_selfcheck.py"]
+    assert (steps[made][2]["path"], steps[copied][2]["dest"]) == (
+        "/usr/local/lib/zcrypto",
+        "/usr/local/lib/zcrypto/zcrypto_selfcheck.py",
+    )
+    assert made < copied, "copy creates no parent directory"
+    enabled = [args["name"] for _, module, args in steps if module == "ansible.builtin.systemd_service" and args.get("enabled")]
+    assert enabled == ["probe-selfcheck.timer"], enabled
+
+
+def test_the_selfcheck_env_file_holds_the_ping_url_alone():
+    env_file = _selfcheck_render("selfcheck.env.j2")
+    assert [line for line in env_file if line and not line.startswith("#")] == [
+        "PROBE_SELFCHECK_HEALTHCHECK_URL=https://hc-ping.invalid/probe"
+    ]
+
+
+def test_the_selfcheck_timer_runs_the_unit_on_the_includes_calendar_and_never_catches_up():
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    parser.read_string("\n".join(_selfcheck_render("selfcheck.timer.j2")))
+    assert parser["Unit"]["Description"] == SELFCHECK["node_common_selfcheck_timer_description"]
+    assert parser["Timer"]["OnCalendar"] == "*:0/1:07" and "Persistent" not in parser["Timer"]
+    assert parser["Timer"]["Unit"] == "probe-selfcheck.service"

@@ -12,3 +12,16 @@ node_common_secrets_preflight_runbook: "{{ undef(hint='the including role names 
 # rendered unit's header names.
 node_common_reboot_check_textfile_dir: "{{ undef(hint='the including role sets node_common_reboot_check_textfile_dir, the directory its textfile collector reads') }}"
 node_common_role_name: "{{ undef(hint='the including role names itself in node_common_role_name') }}"
+
+# selfcheck: the including role's script over the shared zcrypto_selfcheck loop, found in that role's files/ and
+# installed at /usr/local/sbin/<name>; its unit's and its timer's descriptions; the unit's Environment= lines as a
+# {name: value} map; the ping URL's name and value, which a root-only env file holds; and the timer's OnCalendar.
+# node_common_role_name names the including role in the rendered files' headers here too.
+node_common_selfcheck_name: "{{ undef(hint='the including role names the self-check in node_common_selfcheck_name, which names its script, env file, unit and timer') }}"
+node_common_selfcheck_script: "{{ undef(hint='the including role names its self-check script under its files/ in node_common_selfcheck_script') }}"
+node_common_selfcheck_description: "{{ undef(hint='the including role sets node_common_selfcheck_description, the unit Description=') }}"
+node_common_selfcheck_timer_description: "{{ undef(hint='the including role sets node_common_selfcheck_timer_description, the timer Description=') }}"
+node_common_selfcheck_environment: {}
+node_common_selfcheck_env_var: "{{ undef(hint='the including role names the ping URL variable its script reads in node_common_selfcheck_env_var') }}"
+node_common_selfcheck_env_value: "{{ undef(hint='the including role sets node_common_selfcheck_env_value, the ping URL, empty to ping nothing') }}"
+node_common_selfcheck_on_calendar: "{{ undef(hint='the including role sets node_common_selfcheck_on_calendar, the timer OnCalendar=') }}"
