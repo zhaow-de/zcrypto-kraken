@@ -1,5 +1,3 @@
-"""A node's self-check script driven without a network: compiled from its text, its opener a stub keyed by URL."""
-
 from __future__ import annotations
 
 import contextlib
@@ -13,8 +11,8 @@ from pathlib import Path
 SHARED = "zcrypto_selfcheck"
 
 
-# Compiled from its text, never imported by path: an import writes a bytecode cache beside the script, inside a
-# role's files/, and the cache names the checkout's own path, which tests/test_deploy_log_audit.py walks the role for.
+# Never imported by path: an import's bytecode cache lands in a role's files/ and names the checkout's own path,
+# which tests/test_deploy_log_audit.py walks the role for.
 def _exec(path: Path, module: types.ModuleType) -> types.ModuleType:
     exec(compile(path.read_text(), str(path), "exec"), module.__dict__)
     return module

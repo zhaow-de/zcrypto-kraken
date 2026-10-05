@@ -1,6 +1,3 @@
-"""A node role read without a host: its templates rendered through Ansible's own templar over the role's defaults,
-its Caddyfile parsed into blocks, and its secrets preflight driven over the including role's variables."""
-
 from __future__ import annotations
 
 import re
@@ -20,9 +17,9 @@ def variables(role_dir: Path, secrets: dict, exclude=(), **extra) -> dict:
     return {**trusted, **secrets, **extra}
 
 
-def render(role_dir: Path, name: str, secrets: dict, **extra) -> str:
+def render(role_dir: Path, name: str, secrets: dict, exclude=(), **extra) -> str:
     text = (role_dir / "templates" / name).read_text()
-    return Templar(loader=DataLoader(), variables=variables(role_dir, secrets, **extra)).template(trust_as_template(text))
+    return Templar(loader=DataLoader(), variables=variables(role_dir, secrets, exclude, **extra)).template(trust_as_template(text))
 
 
 def blocks(lines: list[str]) -> list[tuple[str, list]]:
@@ -69,15 +66,19 @@ def upstream(handle: list) -> str:
 
 
 def assert_preflight(task: dict, secrets: dict, override: dict, refused: str | None, include_vars: dict | None = None) -> None:
-    """`include_vars` are the including role's own variables, which the message names by design: the no-value check
-    reads `secrets` and `override` alone, and skips an empty value, which is a substring of every message."""
+    """`include_vars` are the including role's own variables, which the message names by design: the message must
+    render the same over them and the fault list alone, and the no-value check reads `secrets` and `override` alone,
+    skipping an empty value, which is a substring of every message."""
     ((name, expression),) = task["vars"].items()
     scope = {k: v for k, v in {**(include_vars or {}), **secrets, **override}.items() if v is not None}
     faults = Templar(loader=DataLoader(), variables=scope).template(trust_as_template(expression))
     assert faults == ([refused] if refused else [])
     scope[name] = faults
     assert truthy(assert_that(task), scope) is (refused is None)
-    rendered = Templar(loader=DataLoader(), variables=scope).template(trust_as_template(task["ansible.builtin.assert"]["fail_msg"]))
+    message = trust_as_template(task["ansible.builtin.assert"]["fail_msg"])
+    rendered = Templar(loader=DataLoader(), variables=scope).template(message)
+    alone = {k: v for k, v in (include_vars or {}).items() if v is not None} | {name: faults}
+    assert rendered == Templar(loader=DataLoader(), variables=alone).template(message), "the refusal depends on a secret"
     values = [str(value) for value in (*secrets.values(), *override.values()) if value is not None]
     assert all(value not in rendered for value in values if value), "the refusal printed a value"
     assert (refused or "") in rendered
