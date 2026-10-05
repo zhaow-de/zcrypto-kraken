@@ -519,11 +519,22 @@ def test_the_node_scrapes_its_host_itself_and_its_three_services():
             assert _assigned(block, "scrape_interval") == '"60s"', name
 
 
+def _included_timers() -> set[str]:
+    timers = set()
+    for task, _ in iter_tasks(load_tasks(TASKS)):
+        include = task.get("ansible.builtin.include_role", {})
+        if include == {"name": "node_common", "tasks_from": "reboot-check"}:
+            timers.add("zcrypto-reboot-check")
+        if include == {"name": "node_common", "tasks_from": "selfcheck"}:
+            timers.add(task["vars"]["node_common_selfcheck_name"])
+    return timers
+
+
 def test_the_journal_keep_rule_names_the_units_this_role_runs():
     relabel = _alloy_blocks()['loki.relabel "journal_units"']
     (keep,) = [rule for line, rule in relabel if line == "rule" and ('action        = "keep"', []) in rule]
     (pattern,) = re.findall(r'^"\((.*)\)\\\\\.service"$', _assigned(keep, "regex"))
-    timers = {p.name.removesuffix(".timer") for p in (ROLE / "files").glob("*.timer")}
+    timers = {p.name.removesuffix(".timer") for p in (ROLE / "files").glob("*.timer")} | _included_timers()
     assert set(pattern.split("|")) == {"grafana-server", "prometheus", "loki", "caddy", "alloy"} | timers
     assert ('replacement  = "zcrypto-mon"', []) in [entry for line, rule in relabel if line == "rule" for entry in rule]
 

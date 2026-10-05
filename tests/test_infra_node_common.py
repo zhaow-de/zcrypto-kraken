@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests import role_render
-from tests.test_infra_converge_guards import load_tasks
+from tests.test_infra_converge_guards import find_task, load_tasks, truthy, when_conditions
 
 REPO = Path(__file__).resolve().parents[1]
 ROLE = REPO / "infra/ansible/roles/node_common"
@@ -23,6 +23,7 @@ INCLUDE = {
     "node_common_secrets_preflight_file": "host_vars/probe/vault.yml",
     "node_common_secrets_preflight_runbook": "infra/runbooks/probe.md's probe-secrets procedure",
 }
+REBOOT_CHECK = {"node_common_reboot_check_textfile_dir": "/var/lib/probe-textfile", "node_common_role_name": "probe"}
 
 
 def _preflight() -> dict:
@@ -73,3 +74,35 @@ def test_the_default_list_refuses_nothing():
     default = role_render.variables(ROLE, {})["node_common_secrets_preflight"]
     assert default == []
     role_render.assert_preflight(_preflight(), {}, {}, None, INCLUDE | {"node_common_secrets_preflight": default})
+
+
+# --- reboot-check: the capture role's program, installed and timed as its copies are -----------------------------
+def _reboot_check() -> list[dict]:
+    return load_tasks(ROLE / "tasks/reboot-check.yml")
+
+
+def test_the_reboot_check_installs_what_its_unit_runs_and_enables_the_timer_alone():
+    unit = role_render.render(ROLE, "zcrypto-reboot-check.service.j2", {}, **REBOOT_CHECK).splitlines()
+    assert unit[0].startswith("# Rendered by the `probe` Ansible role at /etc/systemd/system/zcrypto-reboot-check.service;")
+    binary, flag, out = next(line for line in unit if line.startswith("ExecStart=")).removeprefix("ExecStart=").split()
+    assert (flag, out) == ("/run/reboot-required", "/var/lib/probe-textfile/reboot.prom")
+    assert [line for line in unit if line.startswith("ReadWritePaths=")] == ["ReadWritePaths=/var/lib/probe-textfile"]
+    modules = [(module, args) for task in _reboot_check() for module, args in task.items() if isinstance(args, dict)]
+    for module, args in modules:
+        if "src" in args:
+            assert (ROLE / ("templates" if module == "ansible.builtin.template" else "files") / args["src"]).is_file(), args
+    assert binary in {args.get("dest") for _, args in modules}, f"the unit runs {binary}, which the task file does not install"
+    enabled = [args["name"] for module, args in modules if module == "ansible.builtin.systemd_service" and args.get("enabled")]
+    assert enabled == ["zcrypto-reboot-check.timer"], enabled
+
+
+@pytest.mark.parametrize(
+    ("check", "changed", "runs"),
+    [(True, True, False), (True, False, True), (False, True, True)],
+    ids=["a first-install preview", "an established node's preview", "a real converge"],
+)
+def test_a_first_install_preview_skips_the_timer_it_never_wrote(check, changed, runs):
+    install = find_task(_reboot_check(), "install the reboot-check systemd timer")
+    enable = find_task(_reboot_check(), "enable + start the reboot-check timer")
+    variables = {"ansible_check_mode": check, install["register"]: {"changed": changed}}
+    assert truthy(when_conditions(enable), variables) is runs

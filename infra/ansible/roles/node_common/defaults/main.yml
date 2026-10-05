@@ -7,3 +7,8 @@
 node_common_secrets_preflight: []
 node_common_secrets_preflight_file: "{{ undef(hint='the including role names the file its secrets live in, in node_common_secrets_preflight_file') }}"
 node_common_secrets_preflight_runbook: "{{ undef(hint='the including role names the procedure that writes them, in node_common_secrets_preflight_runbook') }}"
+
+# reboot-check: the directory the node's Alloy textfile collector reads, and the including role's name, which the
+# rendered unit's header names.
+node_common_reboot_check_textfile_dir: "{{ undef(hint='the including role sets node_common_reboot_check_textfile_dir, the directory its textfile collector reads') }}"
+node_common_role_name: "{{ undef(hint='the including role names itself in node_common_role_name') }}"
