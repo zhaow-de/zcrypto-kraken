@@ -20,6 +20,8 @@ ANSIBLE = REPO / "infra/ansible"
 ROLE = ANSIBLE / "roles/mon"
 TASKS = ROLE / "tasks/main.yml"
 HANDLERS = ROLE / "handlers/main.yml"
+EDGE = ANSIBLE / "roles/edge"
+EDGE_INCLUDE = "the edge in front of Grafana on loopback and the two ingest paths"
 DEFAULTS = yaml.safe_load((ROLE / "defaults/main.yml").read_text())
 PUSH = REPO / "infra/scripts/grafana-push.sh"
 # Shaped like what the generator writes; none is a credential.
@@ -101,8 +103,24 @@ def test_the_ini_names_the_secret_files_and_carries_none_of_their_values():
 
 
 # --- the Caddyfile: one public name and the routes it answers ----------------------------------------------------
+def _trusted(value):
+    if isinstance(value, dict):
+        return {k: _trusted(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_trusted(v) for v in value]
+    return trust_as_template(value) if isinstance(value, str) else value
+
+
+def _caddyfile_text() -> str:
+    # The include's vars as the play resolves them: over the role's own defaults, the vault, and the edge's defaults.
+    include = find_task(load_tasks(TASKS), EDGE_INCLUDE)
+    assert include["ansible.builtin.include_role"] == {"name": "edge"}, include
+    node = role_render.variables(ROLE, {}, exclude=("mon_token_cache",))
+    return role_render.render(EDGE, "Caddyfile.j2", SECRETS, **node, **_trusted(include["vars"]))
+
+
 def _caddyfile() -> dict[str, list]:
-    return dict(role_render.blocks(_render("Caddyfile.j2").splitlines()))
+    return dict(role_render.blocks(_caddyfile_text().splitlines()))
 
 
 def _site() -> dict[str, list]:
@@ -159,11 +177,11 @@ def test_the_edge_listens_on_443_alone_and_takes_its_certificate_there():
     caddyfile = _caddyfile()
     assert ("auto_https disable_redirects", []) in caddyfile[""], "the redirect listener would bind port 80"
     assert dict(_site())["tls"] == [("issuer acme", [("disable_http_challenge", [])])]
-    assert not re.search(r"(?m)^\s*(http://|:80\b)", _render("Caddyfile.j2"))
+    assert not re.search(r"(?m)^\s*(http://|:80\b)", _caddyfile_text())
 
 
 def test_the_caddyfile_is_validated_before_it_replaces_the_live_one_and_never_shown():
-    task = find_task(load_tasks(TASKS), "Caddyfile — the one public listener's routes")
+    task = find_task(load_tasks(EDGE / "tasks/main.yml"), "Caddyfile — the one public listener's routes")
     template = task["ansible.builtin.template"]
     assert template["validate"] == "caddy validate --adapter caddyfile --config %s"
     assert (template["owner"], template["group"], template["mode"]) == ("root", "caddy", "0640")
@@ -335,7 +353,7 @@ def test_loki_is_installed_only_when_apts_candidate_is_grafanas(policy, admitted
 def test_no_package_is_forced_held_or_pinned_to_a_version():
     installs = [task["ansible.builtin.apt"] for task, _ in iter_tasks(load_tasks(TASKS)) if "ansible.builtin.apt" in task]
     names = sorted(name for task, _ in iter_tasks(load_tasks(TASKS)) for name in _apt_names(task))
-    assert names == ["alloy", "caddy", "curl", "grafana", "loki", "prometheus"], names
+    assert names == ["alloy", "curl", "grafana", "loki", "prometheus"], names
     for apt in installs:
         assert apt.get("state", "present") == "present" and "allow_downgrade" not in apt and "force" not in apt, apt
     assert all("=" not in name for name in names)
@@ -351,25 +369,21 @@ _CHANGED, _UNCHANGED, _SKIPPED = {"changed": True}, {"changed": False}, {"change
 
 # Each disjunct of the two facts has a case in which it alone is true.
 @pytest.mark.parametrize(
-    ("check", "grafana_repo", "caddy_repo", "debian", "grafana", "caddy", "expected"),
+    ("check", "grafana_repo", "debian", "grafana", "expected"),
     [
-        (True, _CHANGED, _CHANGED, _CHANGED, _SKIPPED, _SKIPPED, (True, True)),  # a fresh node's preview
-        (True, _CHANGED, _UNCHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # Grafana's repository alone still to write
-        (True, _UNCHANGED, _CHANGED, _UNCHANGED, _SKIPPED, _SKIPPED, (True, True)),  # Caddy's repository alone still to write
-        (True, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, _UNCHANGED, (False, True)),  # prometheus alone still to install
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, _UNCHANGED, (False, True)),  # a Grafana package alone
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, _CHANGED, (False, True)),  # caddy alone
-        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
-        (False, _CHANGED, _CHANGED, _CHANGED, _CHANGED, _CHANGED, (False, False)),  # the real first converge
+        (True, _CHANGED, _CHANGED, _SKIPPED, (True, True)),  # a fresh node's preview
+        (True, _CHANGED, _UNCHANGED, _SKIPPED, (True, True)),  # Grafana's repository alone still to write
+        (True, _UNCHANGED, _CHANGED, _UNCHANGED, (False, True)),  # prometheus alone still to install
+        (True, _UNCHANGED, _UNCHANGED, _CHANGED, (False, True)),  # a Grafana package alone
+        (True, _UNCHANGED, _UNCHANGED, _UNCHANGED, (False, False)),  # an established node's preview
+        (False, _CHANGED, _CHANGED, _CHANGED, (False, False)),  # the real first converge
     ],
 )
-def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(
-    check, grafana_repo, caddy_repo, debian, grafana, caddy, expected
-):
+def test_the_two_preview_facts_are_true_only_where_a_preview_has_no_package_to_find(check, grafana_repo, debian, grafana, expected):
     tasks = load_tasks(TASKS)
-    variables = {"ansible_check_mode": check, "mon_grafana_repo": grafana_repo, "mon_caddy_repo": caddy_repo}
+    variables = {"ansible_check_mode": check, "mon_grafana_repo": grafana_repo}
     first = set_facts(find_task(tasks, "note a preview that runs before the repositories exist"), variables)
-    variables |= first | {"mon_debian_install": debian, "mon_grafana_install": grafana, "mon_caddy_install": caddy}
+    variables |= first | {"mon_debian_install": debian, "mon_grafana_install": grafana}
     second = set_facts(find_task(tasks, "note a preview that runs before the packages are installed"), variables)
     assert (bool(first["mon_repos_previewed"]), bool(second["mon_units_previewed"])) == expected
 
@@ -387,8 +401,8 @@ def test_what_needs_a_repository_or_a_unit_skips_the_preview_that_has_neither():
         # Held whole: an inverted gate names the fact too, and it would skip every real converge.
         timer = len(gates) == 1 and re.fullmatch(r"not \(ansible_check_mode and mon_[a-z_]+_timer_install is changed\)", gates[0])
         assert gates == ("not mon_units_previewed",) or timer, (name, gates)
-    third_party = [gates for task, gates in tasks if _apt_names(task) & {"grafana", "loki", "alloy", "caddy"}]
-    assert len(third_party) == 2 and all(gates == ("not mon_repos_previewed",) for gates in third_party), third_party
+    third_party = [gates for task, gates in tasks if _apt_names(task) & {"grafana", "loki", "alloy"}]
+    assert len(third_party) == 1 and all(gates == ("not mon_repos_previewed",) for gates in third_party), third_party
     origin = find_task(load_tasks(TASKS), "refuse a loki candidate that does not come from apt.grafana.com")
     assert when_conditions(origin) == ["not mon_repos_previewed"]
     for handler in yaml.safe_load(HANDLERS.read_text()):

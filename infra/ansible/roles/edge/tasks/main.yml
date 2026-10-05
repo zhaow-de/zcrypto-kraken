@@ -1,0 +1,54 @@
+---
+# The Caddy edge (spec 00122 D15): Caddy from the cloudsmith repository, followed from apt, never forced or
+# held, and the node's one public listener. tests/test_infra_edge_role.py holds what it renders and gates.
+- name: add the Caddy apt repository
+  ansible.builtin.deb822_repository:
+    name: caddy
+    types: [deb]
+    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
+    suites: [any-version]
+    components: [main]
+    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    install_python_debian: true
+  register: edge_caddy_repo
+
+# A preview on a node that never had the repository cannot see caddy: apt fails on a name its cache does not
+# hold, and converge.sh stops on a failed preview. What needs the package or its unit skips exactly that case.
+- name: note a preview that runs before the Caddy repository exists
+  ansible.builtin.set_fact:
+    edge_repo_previewed: "{{ ansible_check_mode and edge_caddy_repo is changed }}"
+
+# The repository task refreshes no apt cache, so the install refreshes it.
+- name: caddy present — version FOLLOWED from apt, never forced or held
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    update_cache: true
+  register: edge_caddy_install
+  when: not edge_repo_previewed
+
+# A preview that would install caddy has no unit of it for systemd to find.
+- name: note a preview that runs before caddy is installed
+  ansible.builtin.set_fact:
+    edge_units_previewed: "{{ ansible_check_mode and (edge_repo_previewed or edge_caddy_install is changed) }}"
+
+# Validated by the installed binary before it replaces the live file, so a Caddyfile this Caddy cannot
+# parse fails the converge and the edge keeps serving the old one. It carries the basic-auth users' hashes.
+- name: Caddyfile — the one public listener's routes
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: caddy
+    mode: "0640"
+    validate: caddy validate --adapter caddyfile --config %s
+  no_log: true
+  diff: false
+  notify: reload caddy
+
+- name: caddy enabled + started
+  ansible.builtin.systemd_service:
+    name: caddy
+    enabled: true
+    state: started
+  when: not edge_units_previewed

@@ -35,23 +35,12 @@
     install_python_debian: true
   register: mon_grafana_repo
 
-- name: add the Caddy apt repository
-  ansible.builtin.deb822_repository:
-    name: caddy
-    types: [deb]
-    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
-    suites: [any-version]
-    components: [main]
-    signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-    install_python_debian: true
-  register: mon_caddy_repo
-
 # A preview on a node that never had the repositories cannot see their packages: apt fails on a name its
 # cache does not hold, and converge.sh stops on a failed preview. Every task below that needs an installed
 # package or its unit skips exactly that case, and every real converge runs it.
 - name: note a preview that runs before the repositories exist
   ansible.builtin.set_fact:
-    mon_repos_previewed: "{{ ansible_check_mode and (mon_grafana_repo is changed or mon_caddy_repo is changed) }}"
+    mon_repos_previewed: "{{ ansible_check_mode and mon_grafana_repo is changed }}"
 
 # Unconditional: a converge that added a repository and failed before this would otherwise never see it.
 - name: refresh the apt cache, so the candidates below are the repositories' own
@@ -91,19 +80,12 @@
   register: mon_grafana_install
   when: not mon_repos_previewed
 
-- name: caddy present — version FOLLOWED from apt, never forced or held
-  ansible.builtin.apt:
-    name: caddy
-    state: present
-  register: mon_caddy_install
-  when: not mon_repos_previewed
-
 # A preview that would install a package has no unit of it for systemd to find, the fail2ban role's case.
 - name: note a preview that runs before the packages are installed
   ansible.builtin.set_fact:
     mon_units_previewed: >-
       {{ ansible_check_mode and (mon_repos_previewed or mon_debian_install is changed
-         or mon_grafana_install is changed or mon_caddy_install is changed) }}
+         or mon_grafana_install is changed) }}
 
 # ---- Prometheus: the remote_write receiver --------------------------------------------------------
 - name: prometheus flags — loopback, the receiver, the retention
@@ -217,19 +199,21 @@
     - restart grafana
 
 # ---- Caddy: the one public listener ----------------------------------------------------------------
-# Validated by the installed binary before it replaces the live file, so a Caddyfile this Caddy cannot
-# parse fails the converge and the edge keeps serving the old one. It carries the ingest users' hashes.
-- name: Caddyfile — the one public listener's routes
-  ansible.builtin.template:
-    src: Caddyfile.j2
-    dest: /etc/caddy/Caddyfile
-    owner: root
-    group: caddy
-    mode: "0640"
-    validate: caddy validate --adapter caddyfile --config %s
-  no_log: true
-  diff: false
-  notify: reload caddy
+# Ahead of the flush below, so a changed Caddyfile's reload runs there and no later task's failure strands it.
+- name: the edge in front of Grafana on loopback and the two ingest paths
+  ansible.builtin.include_role:
+    name: edge
+  vars:
+    edge_role_name: mon
+    edge_hostname: "{{ mon_hostname }}"
+    edge_acme_email: "{{ mon_acme_email }}"
+    edge_basic_auth_routes:
+      - {path: /api/v1/write, port: "{{ mon_prometheus_port }}", users: [{name: "{{ mon_ingest_fleet_user }}", hash: "{{ mon_ingest_fleet_password_hash }}"}]}
+      - {path: /loki/api/v1/push, port: "{{ mon_loki_port }}", users: [{name: "{{ mon_ingest_fleet_user }}", hash: "{{ mon_ingest_fleet_password_hash }}"}, {name: "{{ mon_ingest_logship_user }}", hash: "{{ mon_ingest_logship_password_hash }}"}]}
+    edge_paths_404: [/metrics, /metrics/*, /swagger*]
+    edge_head_paths: [/d/*, /alerting/*]
+    edge_session_cookie: grafana_session
+    edge_upstream_port: "{{ mon_grafana_port }}"
 
 # ---- Services --------------------------------------------------------------------------------------
 - name: prometheus and loki enabled + started
@@ -251,13 +235,6 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: not mon_units_previewed
-
-- name: caddy enabled + started
-  ansible.builtin.systemd_service:
-    name: caddy
-    enabled: true
-    state: started
   when: not mon_units_previewed
 
 # ---- The tools' credential -------------------------------------------------------------------------
