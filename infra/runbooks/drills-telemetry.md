@@ -641,7 +641,7 @@ Entry `W2`, its *host* clause opening with `zcrypto-mon`: the power-off and powe
 
 ### Retire when
 
-The `zcrypto-mon` check is absent from the healthchecks.io checks listing, or `zcrypto-mon-selfcheck.timer` is absent from `infra/ansible/roles/mon/files/`.
+The `zcrypto-mon` check is absent from the healthchecks.io checks listing, or `infra/ansible/roles/mon/tasks/main.yml` no longer includes `node_common`'s `selfcheck` task file.
 
 <a name="drill-w3"></a>
 
