@@ -103,7 +103,7 @@ The two figures the drills measured: a thirty-minute power-off lost `[[ROLLOUT: 
 
 ### Retire when
 
-`zcrypto-mon-selfcheck.timer` is absent from `infra/ansible/roles/mon/files/`, at which point nothing pages the node's death and this page has no first fact to open on.
+`infra/ansible/roles/mon/tasks/main.yml` no longer includes `node_common`'s `selfcheck` task file, at which point nothing pages the node's death and this page has no first fact to open on.
 
 ______________________________________________________________________
 
