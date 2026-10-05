@@ -3,8 +3,8 @@
 // Container Manager -- no ansible/systemd rendering here, this file is committed and mounted
 // read-only as-is (infra/nas/compose.yaml). Grafana Cloud's and the node's credentials are NOT in
 // this file: they arrive as environment variables from the 0600, never-committed alloy-secrets.env
-// the `nas` role renders beside it (see infra/nas/README.md), read here via the `sys.env(...)`
-// stdlib function.
+// the `nas` role renders into the stack directory (see infra/nas/README.md), read here via the
+// `sys.env(...)` stdlib function.
 
 // ---- Host metrics -------------------------------------------------------------------------
 // The three alternate-path RO mounts (compose.yaml: /proc->/host/proc, /sys->/host/sys,
