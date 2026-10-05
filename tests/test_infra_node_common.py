@@ -1,6 +1,17 @@
 from __future__ import annotations
 
 import configparser
+import json
+import os
+import re
+import shlex
+import sqlite3
+import stat
+import subprocess
+import time
+from contextlib import closing
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -229,3 +240,377 @@ def test_the_selfcheck_timer_runs_the_unit_on_the_includes_calendar_and_never_ca
     assert parser["Unit"]["Description"] == SELFCHECK["node_common_selfcheck_timer_description"]
     assert parser["Timer"]["OnCalendar"] == "*:0/1:07" and "Persistent" not in parser["Timer"]
     assert parser["Timer"]["Unit"] == "probe-selfcheck.service"
+
+
+# --- sqlite-backup: a nightly VACUUM INTO through an optional runner, a copy out, a prune and a gauge --------------
+BACKUP_SCRIPT = ROLE / "files/zcrypto-sqlite-backup.sh"
+GAUGE = "zcrypto_sqlite_backup_last_success_timestamp_seconds"
+BACKUP = {
+    "node_common_role_name": "probe",
+    "node_common_sqlite_backup_name": "probe",
+    "node_common_sqlite_backup_db": "/data/probe.sqlite",
+    "node_common_sqlite_backup_staging": "/data/backups",
+    "node_common_sqlite_backup_dest": "/var/backups/probe",
+    "node_common_sqlite_backup_runner": "docker compose -f /opt/probe/compose.yaml exec -T web",
+    "node_common_sqlite_backup_copy": "docker compose -f /opt/probe/compose.yaml cp web:",
+    "node_common_sqlite_backup_textfile": "/var/lib/probe-textfile/sqlite-backup.prom",
+}
+STAMPED = re.compile(r"probe-(\d{4}-\d{2}-\d{2})T\d{6}Z\.sqlite")
+# The line shape the fleet's Python logging and shell scripts write, which an Alloy parse stage levels.
+ERROR_LINE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ERROR ")
+PREVIOUS = f'{GAUGE}{{db="probe"}} 1\n'
+# A root the host cannot hold, so what lies under it is reached through the docker stub's mapping alone.
+INSIDE = "/nonexistent-probe-volume"
+DOCKER_STUB = """#!/usr/bin/env python3
+import json, os, shutil, sys
+
+argv = sys.argv[1:]
+with open(os.environ["DOCKER_STUB_LOG"], "a") as log:
+    print(json.dumps(argv), file=log)
+inside, outside = os.environ["DOCKER_STUB_INSIDE"], os.environ["DOCKER_STUB_OUTSIDE"]
+
+
+def mapped(path):
+    return outside + path[len(inside) :] if path.startswith(inside + "/") else path
+
+
+if argv[:2] != ["compose", "-f"]:
+    sys.exit(f"docker stub: not a compose call: {argv}")
+if argv[3:6] == ["exec", "-T", "web"]:
+    command = [mapped(arg) for arg in argv[6:]]
+    os.execvp(command[0], command)
+if argv[3:4] == ["cp"] and len(argv) == 6 and argv[4].startswith("web:"):
+    shutil.copy(mapped(argv[4].removeprefix("web:")), argv[5])
+    sys.exit(0)
+sys.exit(f"docker stub: unexpected call: {argv}")
+"""
+
+
+@dataclass(frozen=True)
+class Node:
+    db: Path
+    staging: Path
+    dest: Path
+    prom: Path
+    bin: Path
+
+
+@pytest.fixture
+def node(tmp_path):
+    volume = tmp_path / "volume"
+    for directory in (volume, tmp_path / "textfile", tmp_path / "bin"):
+        directory.mkdir()
+    live = sqlite3.connect(volume / "probe.sqlite")
+    # Rows left in the -wal by a connection held open across the run, as the live service holds its own.
+    live.execute("PRAGMA journal_mode=WAL")
+    live.execute("PRAGMA wal_autocheckpoint=0")
+    live.execute("CREATE TABLE checks (name TEXT PRIMARY KEY, period INTEGER)")
+    live.executemany("INSERT INTO checks VALUES (?, ?)", [(f"check-{i}", 60 * i) for i in range(12)])
+    live.commit()
+    yield Node(
+        db=volume / "probe.sqlite",
+        staging=volume / "backups",
+        dest=tmp_path / "host/backups",
+        prom=tmp_path / "textfile/sqlite-backup.prom",
+        bin=tmp_path / "bin",
+    )
+    live.close()
+
+
+def _argv(node: Node, *, db=None, staging=None, keep_days="14") -> list[str]:
+    return ["probe", str(db or node.db), str(staging or node.staging), str(node.dest), keep_days, str(node.prom)]
+
+
+def _run(node: Node, argv: list[str], *, runner="", copy="", env=None) -> subprocess.CompletedProcess[str]:
+    path = f"{node.bin}{os.pathsep}{os.environ['PATH']}"
+    environment = os.environ | {"PATH": path, "SQLITE_BACKUP_RUNNER": runner, "SQLITE_BACKUP_COPY": copy} | (env or {})
+    return subprocess.run(["bash", str(BACKUP_SCRIPT), *argv], capture_output=True, text=True, env=environment, check=False)
+
+
+def _backup(node: Node, *, db=None, staging=None, keep_days="14", **kwargs) -> subprocess.CompletedProcess[str]:
+    return _run(node, _argv(node, db=db, staging=staging, keep_days=keep_days), **kwargs)
+
+
+def _content(path: Path) -> list[str]:
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",), path
+        return list(connection.iterdump())
+
+
+def _named(days: int, name: str = "probe") -> str:
+    return f"{name}-{datetime.now(UTC).date() - timedelta(days=days):%Y-%m-%d}T024700Z.sqlite"
+
+
+def _written_today(directory: Path) -> list[Path]:
+    today = f"{datetime.now(UTC).date():%Y-%m-%d}"
+    return sorted(p for p in directory.iterdir() if (m := STAMPED.fullmatch(p.name)) and m.group(1) == today)
+
+
+def _through_docker(node: Node) -> list[list[str]]:
+    stub = node.bin / "docker"
+    stub.write_text(DOCKER_STUB)
+    stub.chmod(0o755)
+    env = {
+        "DOCKER_STUB_LOG": str(node.bin / "docker.log"),
+        "DOCKER_STUB_INSIDE": INSIDE,
+        "DOCKER_STUB_OUTSIDE": str(node.db.parent),
+    }
+    result = _backup(
+        node,
+        db=f"{INSIDE}/probe.sqlite",
+        staging=f"{INSIDE}/backups",
+        runner=BACKUP["node_common_sqlite_backup_runner"],
+        copy=BACKUP["node_common_sqlite_backup_copy"],
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    return [json.loads(line) for line in (node.bin / "docker.log").read_text().splitlines()]
+
+
+def _execs(calls: list[list[str]]) -> list[list[str]]:
+    return [call[6:] for call in calls if call[3:6] == ["exec", "-T", "web"]]
+
+
+def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_0700_destination(node):
+    assert not node.staging.exists() and not node.dest.exists()
+    result = _backup(node)
+    assert result.returncode == 0, result.stderr
+    (staged,) = node.staging.iterdir()
+    assert _written_today(node.staging) == [staged], staged.name
+    assert [p.name for p in node.dest.iterdir()] == [staged.name]
+    assert _content(staged) == _content(node.db) == _content(node.dest / staged.name)
+    assert len(_content(staged)) > 12, "the rows the live connection left in the -wal are missing"
+    # The copies carry the database.
+    assert stat.S_IMODE(node.dest.stat().st_mode) == 0o700
+
+
+def test_the_prune_reads_the_date_in_the_name_and_keeps_the_keep_days_in_both_directories(node):
+    old = time.time() - 30 * 86400
+    for directory in (node.staging, node.dest):
+        directory.mkdir(parents=True)
+        for name in (_named(15), _named(14), _named(13), _named(15, name="other")):
+            (directory / name).write_bytes(b"")
+        # An mtime past the keep-days on a file whose name is inside them.
+        os.utime(directory / _named(13), (old, old))
+    result = _backup(node)
+    assert result.returncode == 0, result.stderr
+    for directory in (node.staging, node.dest):
+        left = {p.name for p in directory.iterdir()} - {p.name for p in _written_today(directory)}
+        assert left == {_named(14), _named(13), _named(15, name="other")}, directory
+
+
+def test_the_gauge_carries_the_backups_time_under_its_name(node):
+    before = int(time.time())
+    assert _backup(node).returncode == 0
+    lines = node.prom.read_text().splitlines()
+    assert f"# TYPE {GAUGE} gauge" in lines
+    ((series, value),) = [line.rsplit(" ", 1) for line in lines if not line.startswith("#")]
+    assert series == f'{GAUGE}{{db="probe"}}'
+    assert before <= int(value) <= time.time()
+
+
+def test_the_gauge_is_renamed_into_place_and_leaves_no_temporary(node):
+    node.prom.write_text(PREVIOUS)
+    first = node.prom.stat().st_ino
+    assert _backup(node).returncode == 0
+    assert node.prom.stat().st_ino != first, "the gauge was rewritten in place, so the collector can read half a file"
+    assert [p.name for p in node.prom.parent.iterdir()] == [node.prom.name]
+
+
+def test_the_gauge_is_readable_by_the_non_root_collector(node):
+    assert _backup(node).returncode == 0
+    assert stat.S_IMODE(node.prom.stat().st_mode) == 0o644
+
+
+def test_a_runner_that_fails_leaves_the_gauge_and_exits_non_zero(node):
+    node.prom.write_text(PREVIOUS)
+    result = _backup(node, runner="false")
+    assert result.returncode != 0
+    assert node.prom.read_text() == PREVIOUS
+    assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
+
+
+def test_a_copy_that_fails_after_a_clean_vacuum_leaves_the_gauge_and_exits_non_zero(node):
+    node.prom.write_text(PREVIOUS)
+    result = _backup(node, copy="false ")
+    assert result.returncode != 0
+    (staged,) = _written_today(node.staging)
+    assert _content(staged) == _content(node.db)
+    assert not node.dest.exists() or not list(node.dest.iterdir())
+    assert node.prom.read_text() == PREVIOUS
+    assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
+
+
+def test_a_database_path_naming_no_file_fails_and_creates_none(node):
+    missing = node.db.parent / "missing.sqlite"
+    result = _backup(node, db=missing)
+    assert result.returncode != 0
+    assert not missing.exists(), "the backup created an empty database where it looked for one"
+    assert not node.prom.exists()
+    assert any(ERROR_LINE.match(line) for line in result.stderr.splitlines()), result.stderr
+
+
+def test_two_runs_on_one_date_write_two_files(node):
+    assert _backup(node).returncode == 0
+    time.sleep(1.05 - time.time() % 1)
+    result = _backup(node)
+    assert result.returncode == 0, result.stderr
+    staged = [p.name for p in _written_today(node.staging)]
+    assert len(staged) == 2
+    assert sorted(p.name for p in node.dest.iterdir()) == staged
+
+
+def test_a_staging_path_carrying_a_quote_is_backed_up_as_any_other(node):
+    staging = node.db.parent / "o'clock"
+    result = _backup(node, staging=staging)
+    assert result.returncode == 0, result.stderr
+    (staged,) = _written_today(staging)
+    assert _content(staged) == _content(node.db) == _content(node.dest / staged.name)
+
+
+def test_the_runner_runs_the_vacuum_with_both_paths_as_arguments_and_neither_in_its_program(node):
+    calls = _through_docker(node)
+    (staged,) = _written_today(node.staging)
+    ((interpreter, flag, program, *paths),) = [args for args in _execs(calls) if f"{INSIDE}/probe.sqlite" in args]
+    assert (interpreter, flag, paths) == ("python3", "-c", [f"{INSIDE}/probe.sqlite", f"{INSIDE}/backups/{staged.name}"])
+    assert INSIDE not in program
+    assert _content(staged) == _content(node.db)
+
+
+def test_the_staging_prune_runs_through_the_runner(node):
+    node.staging.mkdir()
+    for days in (15, 13):
+        (node.staging / _named(days)).write_bytes(b"")
+    calls = _through_docker(node)
+    assert not (node.staging / _named(15)).exists()
+    assert (node.staging / _named(13)).exists()
+    assert len([args for args in _execs(calls) if f"{INSIDE}/backups" in args]) == 1, calls
+
+
+def test_the_copy_prefix_takes_the_staged_path_on_its_last_word(node):
+    calls = _through_docker(node)
+    (staged,) = _written_today(node.staging)
+    (copy,) = [call for call in calls if call[3:4] == ["cp"]]
+    assert copy[3:] == ["cp", f"web:{INSIDE}/backups/{staged.name}", f"{node.dest}/"]
+    assert _content(node.dest / staged.name) == _content(node.db)
+
+
+@pytest.mark.parametrize(
+    "malform",
+    [
+        lambda argv: argv[:5],
+        lambda argv: [*argv, "surplus"],
+        lambda argv: ["../probe", *argv[1:]],
+        lambda argv: [*argv[:2], "", *argv[3:]],
+        lambda argv: [*argv[:4], "fourteen", argv[5]],
+        lambda argv: [*argv[:4], "-1", argv[5]],
+    ],
+    ids=[
+        "an argument missing",
+        "one too many",
+        "a name that is not one word",
+        "an empty path",
+        "keep-days a word",
+        "keep-days negative",
+    ],
+)
+def test_a_malformed_invocation_is_refused_before_anything_is_written(node, malform):
+    result = _run(node, malform(_argv(node)))
+    assert result.returncode == 2, result.stderr
+    assert result.stderr.startswith("usage: ")
+    assert not node.staging.exists() and not node.dest.exists() and not node.prom.exists()
+
+
+def _backup_render(name: str) -> list[str]:
+    return role_render.render(ROLE, name, {}, **BACKUP).splitlines()
+
+
+def _unit_environment(unit: list[str]) -> dict[str, str]:
+    assignments = [shlex.split(line.removeprefix("Environment=")) for line in unit if line.startswith("Environment=")]
+    assert all(len(words) == 1 for words in assignments), f"an Environment= line not quoted whole splits at its spaces: {unit}"
+    return dict(words[0].split("=", 1) for words in assignments)
+
+
+def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_and_its_two_prefixes():
+    unit = _backup_render("sqlite-backup.service.j2")
+    assert unit[0].startswith("# Rendered by the `probe` Ansible role at /etc/systemd/system/zcrypto-sqlite-backup.service;")
+    (exec_start,) = [line.removeprefix("ExecStart=").split() for line in unit if line.startswith("ExecStart=")]
+    assert exec_start == [
+        "/usr/local/sbin/zcrypto-sqlite-backup",
+        "probe",
+        "/data/probe.sqlite",
+        "/data/backups",
+        "/var/backups/probe",
+        "14",
+        "/var/lib/probe-textfile/sqlite-backup.prom",
+    ]
+    assert _unit_environment(unit) == {
+        "SQLITE_BACKUP_RUNNER": BACKUP["node_common_sqlite_backup_runner"],
+        "SQLITE_BACKUP_COPY": BACKUP["node_common_sqlite_backup_copy"],
+    }
+    # The runner reaches the Docker socket, which DynamicUser= refuses, and the copy writes where ProtectSystem= forbids.
+    keys = {line.split("=", 1)[0] for line in unit if "=" in line and not line.startswith("#")}
+    assert not keys & {"User", "DynamicUser", "ProtectSystem"}, keys
+
+
+def test_the_backup_timer_runs_the_unit_nightly_on_the_default_calendar_and_never_catches_up():
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    parser.read_string("\n".join(_backup_render("sqlite-backup.timer.j2")))
+    assert parser["Timer"]["OnCalendar"] == "*-*-* 02:47:00" and "Persistent" not in parser["Timer"]
+    assert parser["Timer"]["Unit"] == "zcrypto-sqlite-backup.service"
+    assert parser["Install"]["WantedBy"] == "timers.target"
+
+
+def _backup_steps() -> list[tuple[dict, str, dict]]:
+    steps = []
+    for task in load_tasks(ROLE / "tasks/sqlite-backup.yml"):
+        ((module, args),) = [(key, value) for key, value in task.items() if isinstance(value, dict)]
+        steps.append((task, module, {k: role_render.resolve(ROLE, v, {}, **BACKUP) for k, v in args.items()}))
+    return steps
+
+
+def test_the_backup_installs_what_its_unit_runs_executable_and_enables_the_timer_alone():
+    unit = _backup_render("sqlite-backup.service.j2")
+    (binary,) = [line.removeprefix("ExecStart=").split()[0] for line in unit if line.startswith("ExecStart=")]
+    steps = _backup_steps()
+    for _, module, args in steps:
+        if "src" in args:
+            assert (ROLE / ("templates" if module == "ansible.builtin.template" else "files") / args["src"]).is_file(), args
+    by_dest = {args["dest"]: args for _, _, args in steps if "dest" in args}
+    assert (by_dest[binary]["src"], by_dest[binary]["mode"]) == ("zcrypto-sqlite-backup.sh", "0755")
+    assert by_dest["/etc/systemd/system/zcrypto-sqlite-backup.service"]["src"] == "sqlite-backup.service.j2"
+    assert by_dest["/etc/systemd/system/zcrypto-sqlite-backup.timer"]["src"] == "sqlite-backup.timer.j2"
+    enabled = [args["name"] for _, module, args in steps if module == "ansible.builtin.systemd_service" and args.get("enabled")]
+    assert enabled == ["zcrypto-sqlite-backup.timer"], enabled
+
+
+def test_the_backup_script_lands_only_after_systemd_holds_the_unit_that_passes_its_arguments():
+    # A converge stopped between the two must leave the old script under the new unit, and a fresh node's timer must
+    # not start before its script exists.
+    steps = _backup_steps()
+
+    def at(found) -> int:
+        (index,) = [index for index, (_, module, args) in enumerate(steps) if found(module, args)]
+        return index
+
+    unit = at(lambda _, args: args.get("src") == "sqlite-backup.service.j2")
+    reload = at(lambda module, args: module == "ansible.builtin.systemd_service" and args == {"daemon_reload": True})
+    script = at(lambda _, args: args.get("src") == "zcrypto-sqlite-backup.sh")
+    timer = at(lambda _, args: args.get("src") == "sqlite-backup.timer.j2")
+    enable = at(lambda module, args: module == "ansible.builtin.systemd_service" and bool(args.get("enabled")))
+    assert unit < reload < script < enable and timer < enable, [task["name"] for task, _, _ in steps]
+    assert "when" not in steps[reload][0], "a reload gated on the unit's change skips the one a stopped converge still owes"
+
+
+@pytest.mark.parametrize(
+    ("check", "changed", "runs"),
+    [(True, True, False), (True, False, True), (False, True, True)],
+    ids=["a first-install preview", "an established node's preview", "a real converge"],
+)
+def test_a_first_install_preview_skips_the_backup_timer_it_never_wrote(check, changed, runs):
+    steps = _backup_steps()
+    (install,) = [task for task, _, args in steps if args.get("src") == "sqlite-backup.timer.j2"]
+    (enable,) = [task for task, module, args in steps if module == "ansible.builtin.systemd_service" and args.get("enabled")]
+    variables = {"ansible_check_mode": check, install["register"]: {"changed": changed}}
+    assert truthy(when_conditions(enable), variables) is runs

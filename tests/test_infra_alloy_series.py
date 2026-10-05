@@ -528,6 +528,12 @@ NOT_A_PUBLISHED_METRIC = {
     "zcrypto_engine_orders_created",
 }
 
+# Published by a node that ships unfiltered to the observability node and never to Grafana Cloud, so no Cloud keep-regex
+# admits it. Each states its one publisher.
+PUBLISHED_TO_A_NODE_ALONE = {
+    "zcrypto_sqlite_backup_last_success_timestamp_seconds",  # node_common's backup script, on the dead-man node alone
+}
+
 
 # `[A-Za-z0-9_]`, not `[a-z0-9_]`: capitals are legal in a metric name (ACCESS_REQUIRED's
 # node_memory_MemAvailable_bytes), and against a `zcrypto_` name carrying one right after the prefix
@@ -581,14 +587,20 @@ def test_the_not_a_published_metric_list_has_not_gone_stale():
     assert not stale, f"excluded but no longer in the tree (rename? removal?): {sorted(stale)}"
 
 
+def test_the_published_to_a_node_alone_list_has_not_gone_stale():
+    stale = PUBLISHED_TO_A_NODE_ALONE - set(_tokens_in_tree())
+    assert not stale, f"admitted as published to a node alone but no longer in the tree (rename? removal?): {sorted(stale)}"
+
+
 @pytest.mark.parametrize("metric", PUBLISHED_METRIC_NAMES)
 def test_every_published_metric_is_admitted_by_some_hosts_keep_regex(metric):
     keeps = [_keep_regex(p) for p in (NAS_ALLOY, OPS_ALLOY, CAPTURE_ALLOY, ACCESS_ALLOY, CACHE_ALLOY)]
-    assert any(k.match(metric) for k in keeps), (
+    assert metric in PUBLISHED_TO_A_NODE_ALONE or any(k.match(metric) for k in keeps), (
         f"{metric} is published by this repo but matches no keep-regex on any host, so it is "
         f"dropped silently at remote_write and any rule watching it reads no data forever. Add it "
         f"to the keep-regex of the host that publishes it, or -- if it is not a metric -- to "
-        f"NOT_A_PUBLISHED_METRIC with the reason."
+        f"NOT_A_PUBLISHED_METRIC with the reason, or -- if its one publisher ships to the "
+        f"observability node alone -- to PUBLISHED_TO_A_NODE_ALONE with that publisher."
     )
 
 

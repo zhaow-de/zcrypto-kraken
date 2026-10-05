@@ -25,3 +25,21 @@ node_common_selfcheck_environment: {}
 node_common_selfcheck_env_var: "{{ undef(hint='the including role names the ping URL variable its script reads in node_common_selfcheck_env_var') }}"
 node_common_selfcheck_env_value: "{{ undef(hint='the including role sets node_common_selfcheck_env_value, the ping URL, empty to ping nothing') }}"
 node_common_selfcheck_on_calendar: "{{ undef(hint='the including role sets node_common_selfcheck_on_calendar, the timer OnCalendar=') }}"
+
+# sqlite-backup: a nightly VACUUM INTO of one SQLite database. The name names the files and the gauge's db label; the
+# database and the staging directory are paths as the runner sees them, the staging directory inside the database's
+# own tree, where the runner writes; the destination is the host directory the copies land in, both directories
+# pruned past the keep-days; the runner is the command prefix the database is read through, `docker compose -f
+# <compose> exec -T web` for a container, and the copy the prefix the staged path is appended to, `docker compose -f
+# <compose> cp web:`, both empty where the host holds the database itself; the textfile is the gauge's path in the
+# directory the node's textfile collector reads. node_common_role_name names the including role in the rendered
+# files' headers here too.
+node_common_sqlite_backup_name: "{{ undef(hint='the including role names the backup in node_common_sqlite_backup_name, which names its files and its gauge') }}"
+node_common_sqlite_backup_db: "{{ undef(hint='the including role sets node_common_sqlite_backup_db, the database path as the runner sees it') }}"
+node_common_sqlite_backup_staging: "{{ undef(hint='the including role sets node_common_sqlite_backup_staging, the staging directory as the runner sees it') }}"
+node_common_sqlite_backup_dest: "{{ undef(hint='the including role sets node_common_sqlite_backup_dest, the host directory the copies land in') }}"
+node_common_sqlite_backup_keep_days: 14
+node_common_sqlite_backup_runner: ""
+node_common_sqlite_backup_copy: ""
+node_common_sqlite_backup_on_calendar: "*-*-* 02:47:00"
+node_common_sqlite_backup_textfile: "{{ undef(hint='the including role sets node_common_sqlite_backup_textfile, the gauge path its textfile collector reads') }}"
