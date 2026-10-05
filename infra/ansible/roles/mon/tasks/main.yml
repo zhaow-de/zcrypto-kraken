@@ -199,7 +199,7 @@
     - restart grafana
 
 # ---- Caddy: the one public listener ----------------------------------------------------------------
-# Ahead of the flush below, so a changed Caddyfile's reload runs there and no later task's failure strands it.
+# Ahead of the flush below, so a changed Caddyfile's reload runs there and no task after the flush strands it by failing.
 - name: the edge in front of Grafana on loopback and the two ingest paths
   ansible.builtin.include_role:
     name: edge

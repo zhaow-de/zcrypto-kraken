@@ -277,6 +277,7 @@ def test_the_stores_are_running_their_rendered_configs_before_grafana_is_started
         "the two datasources, file-provisioned read-only under the uids the rule file names",
         "the folder the push writes into, anchored under its uid",
         "grafana-server drop-in — after its stores, waiting for both to be ready",
+        EDGE_INCLUDE,
     ]
     assert all(names.index(name) < flush for name in rendered_before)
 
