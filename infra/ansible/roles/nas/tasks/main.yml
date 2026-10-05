@@ -101,10 +101,10 @@
   diff: false
   register: nas_deploy_env
 
-# Grafana Cloud creds for the NAS's Alloy, rendered straight from group_vars/observed/vault.yml —
-# the NAS joined the `observed` group when it came under Ansible (T0056), so the hand-placed
-# out-of-band credentials file is dead. Same six GRAFANA_* names as the ops role's template; same
-# no_log/diff discipline.
+# Grafana Cloud's and the node's creds for the NAS's Alloy, rendered from group_vars/observed/:
+# vault.yml, and vars.yml for the node's URLs and user — the NAS joined the `observed` group when it
+# came under Ansible (T0056), so the hand-placed out-of-band credentials file is dead. no_log +
+# diff: false keep the values out of the converge's output.
 - name: render the alloy secrets env file
   ansible.builtin.template:
     src: alloy-secrets.env.j2

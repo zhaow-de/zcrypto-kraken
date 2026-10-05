@@ -125,10 +125,10 @@ services:
       # Go's GC otherwise overshoots a small `memory` cap under default behavior (00043).
       GOMEMLIMIT: 460MiB
     env_file:
-      # Grafana Cloud remote_write + Loki creds (GRAFANA_PROM_URL/USERNAME/PASSWORD,
-      # GRAFANA_LOKI_URL/USERNAME/PASSWORD) -- rendered by the nas role from
-      # group_vars/observed/vault.yml since T0056 (0600, never committed; rotate in the vault and
-      # re-converge, never hand-place). See infra/nas/README.md.
+      # Grafana Cloud's and the node's remote_write + Loki creds (the GRAFANA_* and MON_* names
+      # config.alloy reads) -- rendered by the nas role from group_vars/observed/ since T0056 (0600,
+      # never committed; rotate in the vault and re-converge, never hand-place). See
+      # infra/nas/README.md.
       - ./alloy-secrets.env
     command:
       - run
