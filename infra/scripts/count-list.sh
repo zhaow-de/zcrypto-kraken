@@ -355,7 +355,7 @@ c_drills_on_the_primary() {
   grep -E '^\*host\* `zcrypto`' "$log" | grep -vcE '^\*host\* `zcrypto`, the engine\b'
 }
 
-# `--skip-tags engine` is the Alloy bump's published primary form and names no tag, so it books an
+# `--skip-tags engine` is infra/README.md's published primary form and names no tag, so it books an
 # empty `tags` and its own `skip_tags` cell; counting it here would read a violation that never was.
 c_un_tagged_primary_runs() { jq -c 'select(.limit=="zcrypto" and .tags=="" and (.skip_tags // "")=="")' docs/reference/deploy-log.jsonl | wc -l; }
 

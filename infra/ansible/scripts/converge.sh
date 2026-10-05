@@ -259,7 +259,7 @@ rec = {
     "ts": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "playbook": playbook, "limit": limit, "tags": tags, "extra_vars": extra,
     # `skip_tags` is its own cell, not an empty `tags`: `un-tagged-primary-runs` reads both, and
-    # `--skip-tags engine` is the Alloy bump's published primary form, not the violation.
+    # `--skip-tags engine` is infra/README.md's published primary form, not the violation.
     "skip_tags": skip, "argv": argv_words, "committed_pins": committed,
     "revision": rev, "dirty": dirty == "true", "rc": int(rc),
 }

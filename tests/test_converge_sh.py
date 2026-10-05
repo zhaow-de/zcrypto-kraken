@@ -582,7 +582,7 @@ def test_an_unknown_key_is_refused_by_naming_the_whitelist_not_the_role(tmp_path
 
 
 def test_a_skip_tags_run_is_not_booked_as_an_un_tagged_one(tmp_path):
-    """`--skip-tags engine` is the Alloy bump's published primary form, and it is not un-tagged.
+    """`--skip-tags engine` is infra/README.md's published primary form, and it is not un-tagged.
 
     `count-list.sh un-tagged-primary-runs` counts the rule "never run site.yml un-tagged on the
     primary" over rows whose tags cell is empty; the skip goes in its own cell so that count stays
