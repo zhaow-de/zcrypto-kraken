@@ -1,0 +1,152 @@
+{
+  "code_version": "0.0.0+synthetic",
+  "concordance": {
+    "failures": [],
+    "ok": true
+  },
+  "cycle_ts": "2026-10-05T12:00:00+00:00",
+  "schema_version": 2,
+  "state": {
+    "balances": {
+      "EUR": 1500.0
+    },
+    "instruments": {
+      "ADA/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "ADA/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 20.0,
+        "symbol": "ADA/EUR",
+        "tick_size": 1e-06
+      },
+      "AVAX/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "AVAX/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.5,
+        "symbol": "AVAX/EUR",
+        "tick_size": 0.01
+      },
+      "BTC/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "BTC/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 5e-05,
+        "symbol": "BTC/EUR",
+        "tick_size": 0.1
+      },
+      "DOGE/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "DOGE/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 50.0,
+        "symbol": "DOGE/EUR",
+        "tick_size": 1e-07
+      },
+      "DOT/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "DOT/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 3.9,
+        "symbol": "DOT/EUR",
+        "tick_size": 0.0001
+      },
+      "ETH/BTC": {
+        "costmin": 2e-05,
+        "costmin_quote": "BTC",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "ETH/BTC.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.001,
+        "symbol": "ETH/BTC",
+        "tick_size": 1e-05
+      },
+      "ETH/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "ETH/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.001,
+        "symbol": "ETH/EUR",
+        "tick_size": 0.01
+      },
+      "LINK/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "LINK/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.55,
+        "symbol": "LINK/EUR",
+        "tick_size": 1e-05
+      },
+      "LTC/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "LTC/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.1,
+        "symbol": "LTC/EUR",
+        "tick_size": 0.01
+      },
+      "SOL/BTC": {
+        "costmin": 2e-05,
+        "costmin_quote": "BTC",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "SOL/BTC.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.06,
+        "symbol": "SOL/BTC",
+        "tick_size": 1e-07
+      },
+      "SOL/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "SOL/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 0.06,
+        "symbol": "SOL/EUR",
+        "tick_size": 0.01
+      },
+      "XRP/EUR": {
+        "costmin": 0.45,
+        "costmin_quote": "EUR",
+        "costmin_source": "snapshot-constant",
+        "instrument_id": "XRP/EUR.KRAKEN",
+        "lot_step": 1e-08,
+        "ordermin": 1.65,
+        "symbol": "XRP/EUR",
+        "tick_size": 1e-05
+      }
+    },
+    "positions": {
+      "ADA/EUR": 0.0,
+      "AVAX/EUR": 0.0,
+      "BTC/EUR": 0.0,
+      "DOGE/EUR": 0.0,
+      "DOT/EUR": 0.0,
+      "ETH/BTC": 0.0,
+      "ETH/EUR": 0.0,
+      "LINK/EUR": 0.0,
+      "LTC/EUR": 0.0,
+      "SOL/BTC": 0.0,
+      "SOL/EUR": 0.0,
+      "XRP/EUR": 0.0
+    },
+    "snapshot_at": "2026-10-05T12:01:40+00:00"
+  },
+  "status": "ok"
+}
