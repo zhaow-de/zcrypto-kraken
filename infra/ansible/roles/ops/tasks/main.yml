@@ -712,9 +712,9 @@
     owner: root
     group: root
 
-# `--tags alloy` runs the tasks from this one to the end of the file and nothing else of the role; a
-# task the Alloy part comes to read carries the tag too (tests/test_ops_alloy_tag.py holds the set).
-# Without the digest that run would skip the block and exit 0 having landed nothing.
+# `--tags alloy` runs the tasks from this one to the end of the Alloy block and nothing else of the
+# role; a task the Alloy part comes to read carries the tag too (tests/test_ops_alloy_tag.py holds
+# the set). Without the digest that run would skip the block and exit 0 having landed nothing.
 - name: fail fast if an alloy run was not handed the ops host's Alloy digest
   ansible.builtin.assert:
     that: ops_alloy_digest | default('') | length > 0
@@ -924,7 +924,7 @@
     # The fleet's digest reaches the container only through a recreate, and a changed env file reaches it
     # only through a forced one: Compose's recreate on an env file alone is version-dependent. This
     # directory sits inside the liquidations project's, whose compose file is the one Compose's upward
-    # search would find were the render above ever to stop writing this one.
+    # search would find were this directory ever without its own when the recreate runs.
     - name: bring the alloy container to the digest, recreated when its secrets file changed
       ansible.builtin.command:
         cmd: "docker compose up -d{{ ' --force-recreate' if ops_alloy_secrets is changed else '' }}"
