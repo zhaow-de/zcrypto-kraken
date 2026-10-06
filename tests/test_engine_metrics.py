@@ -1678,7 +1678,7 @@ def test_a_fee_the_caller_could_not_denominate_in_eur_counts_the_fill_but_not_th
 def test_external_events_counter_preregisters_both_dispositions():
     """`unmatched` is the disposition that carries the signal, and it is the one whose ZERO has to be
     a measured fact from the first scrape: a fill on an order this engine's ledger does not vouch for
-    is journaled nowhere, so this count is its only record. A series that springs into existence at
+    is journaled nowhere, so this count is the only count of it. A series that springs into existence at
     the first such event reads identically to a scrape gap right up to the moment it matters, and
     gives `rate()` no baseline to measure the step against. Both children therefore exist at 0 before
     anything happens, and an event moves EXACTLY one of them -- a helper that incremented both, or the

@@ -414,11 +414,11 @@ NOT_A_FAULT_SIGNAL = {
     "zcrypto_exec_resting_order_age_seconds",
     # The external-events counter is a forensic instrument: `matched` rising is a restart-adopted
     # order filling, and `unmatched` says an order event no entry in this engine's ledger vouches for
-    # arrived and reached no row, cancel or trip, a fill arming the re-read pass alone. NO rule,
-    # deliberately and not by omission: the candidate -- `unmatched` rising while `zcrypto_exec_armed`
-    # is 0 -- pages on the owner's own account activity, since a hand-placed order while the engine
-    # is disarmed is exactly an unmatched external event, and a rule on a forensic counter is a
-    # decision of its own. `zcrypto_exec_armed` itself is not the obstacle: it is published at every
+    # arrived and reached no row, cancel or trip, a fill arming the re-read pass alone while the engine
+    # is armed. NO rule, deliberately and not by omission: the candidate -- `unmatched` rising while
+    # `zcrypto_exec_armed` is 0 -- pages on the owner's own account activity, since a hand-placed order
+    # while the engine is disarmed is exactly an unmatched external event, and a rule on a forensic
+    # counter is a decision of its own. `zcrypto_exec_armed` itself is not the obstacle: it is published at every
     # gate evaluation, the executor's idle refresh once a minute included, so it follows an arm or a
     # disarm within that minute. The silent failure no rule could catch either way -- an adopted order
     # whose events fail to key into `_attached` -- is a by-value reading in T0018.
