@@ -389,9 +389,8 @@
     state: started
 
 # The capture host's telemetry stack (spec 00057, T0020), gated on the pinned Alloy digest so a
-# converge without one skips the whole block. This RENDERS the stack only and never starts Alloy --
-# no unit, no `compose up`, no restart handler -- mirroring the ops role: the first start is an
-# attended step, not a converge side effect.
+# converge without one skips the whole block. The block ends by bringing the Alloy container to that
+# digest (spec 00123 D6), in Alloy's own compose project, which holds nothing of the capture daemon's.
 
 # `alloy` is the tag every role's Alloy tasks share. Here `--tags alloy` runs the tasks from this one
 # to the end of the block and nothing of the capture daemon; a task the Alloy part comes to need
@@ -401,9 +400,9 @@
   ansible.builtin.assert:
     that: capture_alloy_digest | default('') | length > 0
     fail_msg: >-
-      --tags alloy lands this capture host's Alloy config, secrets file and compose file, all gated
-      on capture_alloy_digest — pass the digest the host runs, or the new one on a bump:
-      -e capture_alloy_digest=sha256:<...>
+      --tags alloy lands this capture host's Alloy config, secrets file and compose file and brings its
+      container to capture_alloy_digest, all gated on it — pass the digest committed for this host, its
+      hold file's while it is held, else the fleet file's: -e capture_alloy_digest={{ alloy_image_digest }}
   when: "'alloy' in ansible_run_tags"
   tags: [alloy]
 
@@ -453,10 +452,10 @@
     fail_msg: >-
       The Alloy config on this host does NOT match the repo. A converge that omits
       `capture_alloy_digest` skips the config copy and still exits 0, so the host can serve a stale
-      keep-regex indefinitely while every other check passes. Re-run this converge with
-      `-e capture_alloy_digest=<currently-running>`: that run copies the file and its handler reloads a
-      RUNNING Alloy, which is all this refusal needs -- if the container is down, its next start reads
-      the new file; no task here starts it. Runbook context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
+      keep-regex indefinitely while every other check passes. Converge this host with `--tags alloy
+      -e capture_alloy_digest={{ alloy_image_digest }}`, the digest committed for it: that run copies the
+      file and brings the container to the digest, and its handler reloads a running Alloy. Runbook
+      context: docs/open-topics/archive/T0109-alloy-config-changes-never-reach-the-capture-hosts.md
     success_msg: "deployed Alloy config matches the repo"
   # Only on a converge that CANNOT reconcile the drift. A run carrying the digest is about to copy
   # the file, so asserting first would fail the host, drop it from every later task and leave the
@@ -471,6 +470,23 @@
   when: capture_alloy_digest is defined
   tags: [alloy]
   block:
+    - name: refuse an Alloy digest that is not the one committed for this host, unless an alloy_override gives the reason
+      ansible.builtin.assert:
+        that: >-
+          capture_alloy_digest == alloy_image_digest
+          or (alloy_override | default('') | string | length > 8)
+        fail_msg: >-
+          capture_alloy_digest is {{ capture_alloy_digest }}, the digest committed for this host is
+          {{ alloy_image_digest }}: infra/ansible/host_vars/{{ inventory_hostname }}/alloy.yml's while the host
+          is held, else infra/ansible/group_vars/observed/alloy.yml's. A digest off it moves this host alone,
+          so it takes -e '{"alloy_override": "<why>"}' beside it, a reason longer than 8 characters.
+
+    # Reached only past the refusal above, so an operand off the committed digest here is an accepted override.
+    - name: the alloy_override's reason, on the record
+      ansible.builtin.debug:
+        msg: "alloy_override accepted: {{ alloy_override }}"
+      when: capture_alloy_digest != alloy_image_digest
+
     # Alloy mounts the host root read-only for free-disk metrics, so a key-owning user's ~/.ssh
     # would be readable straight through that mount with no escalation -- the protection the NAS
     # replicates with its own dedicated uid (T0030). These hosts hold no private key today, but
@@ -567,6 +583,7 @@
         owner: zcrypto-alloy
         group: zcrypto-alloy
         mode: "0600"
+      register: capture_alloy_secrets
       no_log: true
       diff: false
 
@@ -577,3 +594,28 @@
         owner: root
         group: root
         mode: "0644"
+
+    # The fleet's digest reaches the container only through a recreate, and a changed env file reaches it
+    # only through a forced one: Compose's recreate on an env file alone is version-dependent.
+    - name: bring the alloy container to the digest, recreated when its secrets file changed
+      ansible.builtin.command:
+        cmd: "docker compose up -d{{ ' --force-recreate' if capture_alloy_secrets is changed else '' }}"
+        chdir: "{{ capture_alloy_dir }}"
+      register: capture_alloy_up
+      changed_when: capture_alloy_up.stderr is search('Recreated|Created|Started')
+      when: not ansible_check_mode
+
+    - name: read which image the running alloy container was created from
+      ansible.builtin.command: docker inspect grafana-alloy --format '{{ "{{" }}.Config.Image{{ "}}" }}'
+      register: capture_alloy_running_image
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: refuse a converge whose alloy container does not run the digest it converged
+      ansible.builtin.assert:
+        that: capture_alloy_running_image.stdout == capture_alloy_image ~ '@' ~ capture_alloy_digest
+        fail_msg: >-
+          grafana-alloy runs {{ capture_alloy_running_image.stdout }}, not
+          {{ capture_alloy_image }}@{{ capture_alloy_digest }}: the recreate did not take. Read the container's
+          state and logs before anything else on this host.
+      when: not ansible_check_mode

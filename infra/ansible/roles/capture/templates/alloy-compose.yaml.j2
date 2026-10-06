@@ -10,9 +10,8 @@
 #
 # Modeled on infra/ansible/roles/ops/templates/alloy-compose.yaml.j2; see config.alloy for the
 # capture-specific pipeline (no textfile/gate scrape, host label from the runtime hostname).
-# Deliberately NOT started here -- the first Alloy start on a capture host is an attended step (plan
-# Tasks 5/7), same rationale as the capture daemon: this task's job is to make the render correct,
-# not to start anything as a converge side effect.
+# The role brings this project's container to the pinned digest after rendering it, with
+# `docker compose up -d` in this directory, forced when the secrets file changed.
 services:
   alloy:
     # Pin this to a digest at deploy time (plan Tasks 5/7) -- capture_alloy_digest has NO default

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ansible.playbook.task import Task
 
 from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, CAPTURE, assert_that, find_task, load_tasks, truthy, when_conditions
@@ -25,6 +26,8 @@ ALLOY_PART = [
     "read the deployed alloy config's checksum (drift check — never gated on the digest)",
     "read the repo's alloy config checksum (controller-side, same algorithm)",
     "assert the deployed alloy config matches the repo",
+    "refuse an Alloy digest that is not the one committed for this host, unless an alloy_override gives the reason",
+    "the alloy_override's reason, on the record",
     "create the zcrypto-alloy system user (nologin, non-key-owning, dedicated to Alloy)",
     "look up the zcrypto-alloy account",
     "derive the zcrypto-alloy uid/gid for the container user mapping",
@@ -36,6 +39,9 @@ ALLOY_PART = [
     "install the alloy pipeline config",
     "render the alloy secrets env file",
     "render the alloy compose file",
+    "bring the alloy container to the digest, recreated when its secrets file changed",
+    "read which image the running alloy container was created from",
+    "refuse a converge whose alloy container does not run the digest it converged",
 ]
 
 # The pre_tasks a `--tags alloy` run executes on the capture and engine plays: every one tagged `always`.
@@ -104,9 +110,49 @@ def test_every_name_a_tagged_task_reads_is_produced_by_an_earlier_tagged_task():
 CAPTURE_DAEMON_FILES = {"/opt/zcrypto-capture/compose.yaml", "/etc/systemd/system/zcrypto-capture.service"}
 CAPTURE_DAEMON_SOURCES = {"compose.yaml.j2", "zcrypto-capture.service"}
 
+# A task the Alloy part takes later joins these lists in that change: the lists, beside the four refusals, are what
+# refuse a shape no refusal names.
+FREE_MODULES = {f"ansible.builtin.{m}" for m in ("assert", "debug", "stat", "getent", "set_fact")}
+WRITERS = {f"ansible.builtin.{m}" for m in ("file", "copy", "template")}
+ALLOY_DIR = "{{ capture_alloy_dir }}"
+VERBATIM = [
+    (
+        "ansible.builtin.user",
+        {"name": "zcrypto-alloy", "system": True, "shell": "/usr/sbin/nologin", "create_home": False, "state": "present"},
+    ),
+    (
+        "ansible.builtin.command",
+        {"cmd": "docker compose up -d{{ ' --force-recreate' if capture_alloy_secrets is changed else '' }}", "chdir": ALLOY_DIR},
+    ),
+    ("ansible.builtin.command", """docker inspect grafana-alloy --format '{{ "{{" }}.Config.Image{{ "}}" }}'"""),
+]
+
+
+def _module_entry(task: dict) -> tuple[str, object] | None:
+    keys = [key for key in task if key not in Task.fattributes and not key.startswith("with_")]
+    return (keys[0], task[keys[0]]) if len(keys) == 1 else None
+
+
+def _on_alloy_paths(path) -> bool:
+    return isinstance(path, str) and (path == ALLOY_DIR or path.startswith(ALLOY_DIR + "/")) and ".." not in path.split("/")
+
+
+def _admitted(task: dict) -> bool:
+    entry = _module_entry(task)
+    if entry is None:
+        return False
+    module, value = entry
+    if module in FREE_MODULES:
+        return True
+    if module in WRITERS and isinstance(value, dict):
+        written = [value[key] for key in ("path", "dest", "name") if key in value]
+        return bool(written) and all(_on_alloy_paths(path) for path in written)
+    return entry in VERBATIM
+
 
 def test_no_tagged_task_reaches_the_capture_daemon():
     for task, _, gates in _tagged():
+        assert _admitted(task), task["name"]
         module, args = _module(task)
         assert "restart capture service" not in _notify(task), task["name"]
         assert args.get("dest") not in CAPTURE_DAEMON_FILES and args.get("src") not in CAPTURE_DAEMON_SOURCES, task["name"]
