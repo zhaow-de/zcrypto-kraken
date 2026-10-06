@@ -3459,6 +3459,8 @@ def test_a_cache_daemon_restart_is_never_the_passs_own(step):
         ("sudo docker restart 3f2a9c1b", "zcrypto-valkey1"),
         ("sudo systemctl restart tailscaled", "zcrypto-valkey1"),
         ("sudo docker restart valkey", "zcrypto-valkey1"),
+        ("sudo systemctl start zcrypto-clock-offset.timer", "zcrypto-valkey1"),
+        ("sudo systemctl restart docker.socket", "zcrypto-valkey1"),
     ],
 )
 def test_on_a_cache_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
@@ -3487,6 +3489,8 @@ def test_the_observability_node_is_a_telemetry_host_under_either_of_its_names(ho
         ("sudo systemctl restart caddy", "zcrypto-mon"),
         ("ssh mon sudo systemctl restart prometheus", None),
         ("sudo systemctl restart alloy prometheus", "zcrypto-mon"),
+        ("sudo systemctl start zcrypto-mon-selfcheck.timer", "zcrypto-mon"),
+        ("sudo systemctl restart systemd-journald.socket", "zcrypto-mon"),
     ],
 )
 def test_on_the_observability_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
@@ -3511,6 +3515,8 @@ def test_the_dead_man_node_is_a_telemetry_host_under_either_of_its_names(host):
         "sudo docker stop zcrypto-hc",
         "sudo systemctl restart caddy",
         "sudo systemctl start zcrypto-sqlite-backup.service",
+        "sudo systemctl start zcrypto-sqlite-backup.timer",
+        "sudo systemctl restart docker.socket",
     ],
 )
 def test_on_the_dead_man_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
@@ -3531,6 +3537,8 @@ def test_through_its_alias_a_stop_of_the_dead_man_service_is_the_operators():
         ("ssh access sudo systemctl restart alloy", None, ops_daily.Tier.AUTONOMOUS),
         ("sudo systemctl restart caddy", "zaccess", ops_daily.Tier.PREPARED),
         ("sudo systemctl restart alloy", "access", ops_daily.Tier.AUTONOMOUS),
+        ("sudo systemctl start zaccess-probe.timer", "zaccess", ops_daily.Tier.PREPARED),
+        ("sudo systemctl restart zaccess-ssh-proxy.socket", "access", ops_daily.Tier.PREPARED),
     ],
 )
 def test_on_the_bridgehead_only_alloys_restart_is_the_passs_own_under_either_of_its_names(step, host, tier):
