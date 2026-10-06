@@ -3404,6 +3404,7 @@ def test_every_published_ssh_destination_has_a_stanza_and_the_linode_nodes_match
         assert destination in stanzas, (fleet_host, destination, sorted(stanzas))
     ansible = repo / "infra/ansible"
     groups = {
+        "zaccess": "access_host",
         "zcrypto-valkey1": "cache_host",
         "zcrypto-valkey2": "cache_host",
         "zcrypto-valkey3": "cache_host",

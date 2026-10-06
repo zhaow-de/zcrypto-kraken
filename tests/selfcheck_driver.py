@@ -34,9 +34,9 @@ def load(script_path: Path, shared_path: Path | None = None) -> types.ModuleType
 
 
 # A hand run of an installed script, as `python -c HAND_RUN <script> <installed dir> <copy dir>`. The module's install
-# directory exists on the node alone, so the run seeds that path entry with a finder over a copy of the module. Nothing
-# else on the run's path holds the module, so the script's first import fails and its fallback's import is the one that
-# finds it.
+# directory exists on the node alone, so the run seeds that path entry with a finder over a copy of the module. The
+# caller strips PYTHONPATH and runs from a directory without the module, so the script's first import fails and its
+# fallback's import is the one that finds it.
 HAND_RUN = """
 import runpy, sys
 from importlib.machinery import FileFinder, SourceFileLoader
