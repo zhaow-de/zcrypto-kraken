@@ -1622,9 +1622,9 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-# The bridgehead, `zaccess`, is absent under every name it is reached by: it carries the ops tunnel and the mTLS edge, so
-# a restart, start or stop there is the owner's, its Alloy's included.
-_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"})
+_TELEMETRY_HOSTS = frozenset(
+    {"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
+)
 # A cache node's Docker daemon carries Valkey and Sentinel, so any other restart there can be a failover: the one
 # object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
 _CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
@@ -1633,6 +1633,9 @@ _CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
 # whole fleet: the one unit the pass may take on either is the node's own Alloy.
 _SERVICE_NODES = frozenset({"zcrypto-mon", "zcrypto-hc"})
 _SERVICE_NODE_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
+# The bridgehead carries the ops tunnel and the mTLS edge: the one unit the pass may take there is its own Alloy.
+_BRIDGEHEAD_HOSTS = frozenset({"zaccess"})
+_BRIDGEHEAD_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
 # the same host reach the same secrets through the filesystem, so they get the same treatment.
 # Scoped to the heads that print file CONTENT: `ls`, `stat`, `find` and `sha256sum` still answer
@@ -1958,5 +1961,7 @@ def _classify_one(command: str, host: str | None, *, resolve, text: str | None =
             if host_label(lands_on) in _CACHE_HOSTS and not (operands and _CACHE_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
             if host_label(lands_on) in _SERVICE_NODES and not (operands and _SERVICE_NODE_AUTONOMOUS_OBJECTS.issuperset(operands)):
+                operands = None
+            if host_label(lands_on) in _BRIDGEHEAD_HOSTS and not (operands and _BRIDGEHEAD_AUTONOMOUS_OBJECTS.issuperset(operands)):
                 operands = None
     return Tier.AUTONOMOUS if operands is not None else Tier.PREPARED
