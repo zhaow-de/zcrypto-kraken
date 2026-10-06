@@ -567,6 +567,10 @@ _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
 # belonging to no order this engine's ledger vouches for is counted and ignored, and this counter is
 # the only trace it leaves.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
+# The ten model EUR legs the gap is published for, restated from BASKET rather than imported from the executor, whose
+# module import would put nautilus-trader on `zcrypto --help`; tests/test_engine_metrics.py pins it to the executor's
+# `_SPOT_SYMBOL_BY_BASE`. A symbol outside it publishes nothing: the series budget counts these ten.
+_EXEC_GAP_SYMBOLS = tuple(symbol for symbol in BASKET if symbol.endswith("/EUR"))
 
 
 class _ExecutionMetrics:
@@ -607,12 +611,42 @@ class _ExecutionMetrics:
         # existed before the first boundary was scored could only publish 0 -- a code outside that
         # alphabet, read as a legitimate verdict rather than as "nothing has been scored yet".
         self.tracking_state: Gauge | None = None
+        # Eager on the ten legs, unlike the position's lazy children: the help text names the 0 a leg reads before the
+        # first draft.
+        self.gap_eur = Gauge(
+            "zcrypto_exec_gap_eur",
+            "The EUR gap per model leg, target minus held: the draft's delta at each boundary, and for a leg the boundary's "
+            "plan ran, that delta less the filled quantity valued at the cycle's close, from its intent's end. 0 until the "
+            "first boundary drafts.",
+            ["symbol"],
+            registry=registry,
+        )
+        # Registered on first use, as `tracking_state` is: a seeded 0 equity reads as a total loss beside any
+        # high-water mark, and a seeded 0 drawdown as a measured one.
+        self.equity_eur: Gauge | None = None
+        self.drawdown_bps: Gauge | None = None
+        self.watchdog_frozen = Gauge(
+            "zcrypto_exec_watchdog_frozen",
+            "Whether the stale-socket watchdog holds the loop frozen: 1 = a venue socket stayed down past its grace, so no "
+            "new intent starts until the sockets are back and the re-read pass has run; 0 = not frozen.",
+            registry=registry,
+        )
+        # Eager at 0, so a restarted engine publishes 0 ahead of its first boundary's write: without those samples, a
+        # series new to the not-drafted rule's `min_over_time` window would page ten minutes after one undrafted boundary.
+        self.boundary_not_drafted = Gauge(
+            "zcrypto_exec_boundary_not_drafted",
+            "Whether the newest boundary drafted nothing: 1 from the write of an accumulation record whose status is not "
+            "ok until the next ok record's; 0 otherwise, and at start.",
+            registry=registry,
+        )
         for outcome in _EXEC_ORDER_OUTCOMES:
             self.orders.labels(outcome=outcome)
         for liquidity in _EXEC_LIQUIDITY_SIDES:
             self.fills.labels(liquidity=liquidity)
         for disposition in _EXEC_EXTERNAL_DISPOSITIONS:
             self.external_events.labels(disposition=disposition)
+        for symbol in _EXEC_GAP_SYMBOLS:
+            self.gap_eur.labels(symbol=symbol)
 
     def inc_order(self, outcome: str) -> None:
         self.orders.labels(outcome=outcome).inc()
@@ -649,6 +683,35 @@ class _ExecutionMetrics:
                 registry=self._registry,
             )
         self.tracking_state.set(state)
+
+    def set_gap(self, symbol: str, eur: float) -> None:
+        if symbol in _EXEC_GAP_SYMBOLS:
+            self.gap_eur.labels(symbol=symbol).set(eur)
+
+    def set_equity(self, value: float) -> None:
+        if self.equity_eur is None:
+            self.equity_eur = Gauge(
+                "zcrypto_exec_equity_eur",
+                "The account's equity in EUR at each boundary: its EUR and the ten model coins it holds, spot and "
+                "earn-coded, marked at the cycle's closes.",
+                registry=self._registry,
+            )
+        self.equity_eur.set(value)
+
+    def set_drawdown(self, bps: float) -> None:
+        if self.drawdown_bps is None:
+            self.drawdown_bps = Gauge(
+                "zcrypto_exec_drawdown_bps",
+                "The fall of equity from its high-water mark, in basis points of the cycle's NAV, at each boundary.",
+                registry=self._registry,
+            )
+        self.drawdown_bps.set(bps)
+
+    def set_watchdog_frozen(self, flag: bool) -> None:
+        self.watchdog_frozen.set(1 if flag else 0)
+
+    def set_boundary_not_drafted(self, flag: bool) -> None:
+        self.boundary_not_drafted.set(1 if flag else 0)
 
 
 class _VenueGauges:

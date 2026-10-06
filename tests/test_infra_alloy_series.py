@@ -86,8 +86,9 @@ ENGINE_APP_SERIES = [
     "zcrypto_exec_venue_ok",
     "zcrypto_exec_last_evaluation_timestamp_seconds",
     "zcrypto_exec_restart_hold",
-    # The attended-window execution instruments (cli/engine/command.py's `_ExecutionMetrics`), plus
-    # the intent-side limit counter. None is alert-bearing by design, which is exactly why they are
+    # The execution instruments (cli/engine/command.py's `_ExecutionMetrics`), plus the intent-side
+    # limit counter. Bar the position, which zcrypto-engine-dark-with-exposure reads, and the two
+    # accumulation gauges named below, none is alert-bearing by design, which is exactly why they are
     # pinned HERE: nothing else would notice them being dropped from the keep-regex.
     "zcrypto_exec_orders_total",
     "zcrypto_exec_fills_total",
@@ -108,6 +109,15 @@ ENGINE_APP_SERIES = [
     # rule to notice, by design (tests/test_infra_alert_rules.py's NOT_A_FAULT_SIGNAL entry).
     "zcrypto_exec_tracking_state",
     "zcrypto_engine_limit_bound_total",
+    # The accumulation loop's families. Two are alert-bearing (zcrypto-engine-exec-watchdog-frozen,
+    # -exec-boundary-not-drafted), each `noDataState: OK`, so dropped from the keep-regex either rule
+    # reads quiet forever; the gap, the equity and the drawdown carry no rule and are pinned on the
+    # grounds above.
+    "zcrypto_exec_gap_eur",
+    "zcrypto_exec_equity_eur",
+    "zcrypto_exec_drawdown_bps",
+    "zcrypto_exec_watchdog_frozen",
+    "zcrypto_exec_boundary_not_drafted",
     # 00089: venue truth -- the executor's ratified basket vs what Kraken's own instrument set and
     # constraints actually report. Two are alert-bearing (zcrypto-venue-concordance-failed,
     # zcrypto-venue-snapshot-stale).

@@ -213,10 +213,8 @@ _metrics = None
 def set_executor_hooks(*, publish_verdict=None, metrics=None) -> None:
     """Install (or clear, with the defaults) the executor's telemetry hooks: `publish_verdict` is
     called `(verdict, evaluated_at=..., heartbeat=...)` after EVERY gate evaluation, `heartbeat`
-    False on the idle refresh alone, `metrics` is an object with
-    `inc_order(outcome)`, `inc_external(disposition)`, `inc_fill(liquidity, fee_eur)`,
-    `set_position(symbol, qty)` and `set_realized(value)` (`command._ExecutionMetrics`). Neither can
-    affect an order -- both are wrapped."""
+    False on the idle refresh alone, `metrics` is a `command._ExecutionMetrics` or an object with its
+    methods. Neither can affect an order -- both are wrapped."""
     global _publish_verdict, _metrics
     _publish_verdict = publish_verdict
     _metrics = metrics
@@ -263,6 +261,51 @@ def _set_tracking_state(state: int) -> None:
         return
     try:
         _metrics.set_tracking_state(state)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_gap(symbol: str, eur: float) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_gap(symbol, eur)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_equity(value: float) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_equity(value)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_drawdown(bps: float) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_drawdown(bps)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_frozen(flag: bool) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_watchdog_frozen(flag)
+    except Exception:
+        logger.exception("executor metrics hook raised -- continuing")
+
+
+def _set_boundary_not_drafted(flag: bool) -> None:
+    if _metrics is None:
+        return
+    try:
+        _metrics.set_boundary_not_drafted(flag)
     except Exception:
         logger.exception("executor metrics hook raised -- continuing")
 

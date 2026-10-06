@@ -1207,6 +1207,26 @@ class RecordingMetrics:
         self.external = []
         self.tracking = []
         self.resting_ages = []
+        self.gaps = []
+        self.equity = []
+        self.drawdowns = []
+        self.frozen = []
+        self.not_drafted = []
+
+    def set_gap(self, symbol, eur):
+        self.gaps.append((symbol, eur))
+
+    def set_equity(self, value):
+        self.equity.append(value)
+
+    def set_drawdown(self, bps):
+        self.drawdowns.append(bps)
+
+    def set_watchdog_frozen(self, flag):
+        self.frozen.append(flag)
+
+    def set_boundary_not_drafted(self, flag):
+        self.not_drafted.append(flag)
 
     def set_resting_age(self, mode, seconds):
         self.resting_ages.append((mode, seconds))

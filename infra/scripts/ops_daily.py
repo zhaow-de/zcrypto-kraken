@@ -73,6 +73,8 @@ _UID_HOST = {
     "zcrypto-engine-exec-armed-too-long": "zcrypto",
     "zcrypto-engine-exec-kill-tripped": "zcrypto",
     "zcrypto-engine-exec-not-evaluated": "zcrypto",
+    "zcrypto-engine-exec-watchdog-frozen": "zcrypto",
+    "zcrypto-engine-exec-boundary-not-drafted": "zcrypto",
     "zcrypto-engine-journal-prune-dead": "zcrypto",
     "zcrypto-cache-proxy-no-backend": "zcrypto",
     "zcrypto-cache-proxy-no-engine-session": "zcrypto",

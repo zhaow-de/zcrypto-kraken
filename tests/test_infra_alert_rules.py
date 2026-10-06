@@ -428,6 +428,13 @@ NOT_A_FAULT_SIGNAL = {
     # zcrypto-engine-exec-kill-tripped already pages on; `not scored` is a refusal to decide and
     # `disarmed` is the resting state of an engine never given a band.
     "zcrypto_exec_tracking_state",
+    # The accumulation loop's readings. NO rule on these three, deliberately: the gap per leg and the
+    # equity are readings the tracking trip and the drawdown kill already act on, and the drawdown's
+    # fault value latches the kill file, which zcrypto-engine-exec-kill-tripped pages on. The
+    # watchdog's freeze and the undrafted boundary beside them are watched, and are not listed here.
+    "zcrypto_exec_gap_eur",
+    "zcrypto_exec_equity_eur",
+    "zcrypto_exec_drawdown_bps",
     # A level-shift detail read on the board: the §10 whole-book limits binding is the limits doing
     # their job, not a fault. What would be a fault -- the book they shape going somewhere it should
     # not -- is the intent-side gauges' business, not this counter's.
@@ -2304,3 +2311,55 @@ def test_the_shipper_loss_rule_reads_alloys_two_loss_counters_and_keeps_the_logs
     assert "prometheus.exporter.self.alloy.targets" in scraped.split(", "), (
         "the node's Alloy no longer scrapes itself, so on the node this rule would read nothing"
     )
+
+
+# --- the accumulation loop's two rules -----------------------------------------------------------
+
+
+def test_a_freeze_past_fifteen_minutes_pages_and_the_hourly_three_second_blip_does_not():
+    rule = _rule("zcrypto-engine-exec-watchdog-frozen")
+    hold_for = _duration_seconds(rule["for"])
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+
+    def fires(samples):
+        run = 0
+        for t in range(0, 2 * 3600, 60):
+            if next((v for at, v in reversed(samples) if at <= t), 0) > 0.5:
+                run += 60
+                if run >= hold_for:
+                    return True
+            else:
+                run = 0
+        return False
+
+    assert fires([(0, 1), (16 * 60, 0)])
+    assert not fires([(0, 1), (3, 0)])
+    assert not fires([(0, 1), (14 * 60, 0)])
+
+
+def test_two_consecutive_undrafted_boundaries_page_and_one_followed_by_an_ok_boundary_does_not():
+    rule = _rule("zcrypto-engine-exec-boundary-not-drafted")
+    hold_for = _duration_seconds(rule["for"])
+    assert _evaluator(rule) == {"type": "gt", "params": [0.5]}
+    expr = rule["data"][0]["model"]["expr"]
+    window = sum(int(n) * {"h": 3600, "m": 60}[u] for n, u in re.findall(r"(\d+)([hm])", re.search(r"\[(\w+)\]", expr).group(1)))
+    h4 = 4 * 3600
+
+    def fire_minute(samples):
+        # a step series scraped each minute from the process's start, 0 before its first sample
+        def value_at(s):
+            return next((v for at, v in reversed(samples) if at <= s), 0)
+
+        run = 0
+        for t in range(0, 14 * 3600, 60):
+            lowest = min(value_at(s) for s in range(max(0, t - window + 60), t + 1, 60))
+            run = run + 60 if lowest > 0.5 else 0
+            if run >= hold_for:
+                return t
+        return None
+
+    # the last 0 sample sits a minute before the boundary's write
+    assert fire_minute([(0, 0), (3600, 1), (3600 + h4, 1)]) == 3600 + h4 + 38 * 60
+    assert fire_minute([(0, 0), (3600, 1), (3600 + h4, 0)]) is None
+    assert fire_minute([(0, 0)]) is None
+    assert rule["data"][0]["relativeTimeRange"]["from"] == window

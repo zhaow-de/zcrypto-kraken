@@ -1963,6 +1963,112 @@ def test_the_tracking_state_alphabet_never_publishes_zero_and_the_help_names_eve
     assert {int(code) for code in re.findall(r"(\d+) = ", documentation)} == emitted
 
 
+# --- the accumulation families -------------------------------------------------------------------
+
+
+def _exposed(registry: CollectorRegistry) -> dict:
+    return {
+        (sample.name, tuple(sorted(sample.labels.items()))): sample.value
+        for family in text_string_to_metric_families(generate_latest(registry).decode())
+        for sample in family.samples
+    }
+
+
+def test_the_gap_is_eager_at_zero_on_exactly_the_ten_legs_the_holdings_read_counts_under():
+    registry = CollectorRegistry()
+    command._ExecutionMetrics(registry)
+
+    gaps = {labels: value for (name, labels), value in _exposed(registry).items() if name == "zcrypto_exec_gap_eur"}
+    expected = {(("symbol", symbol),) for symbol in executor_module._SPOT_SYMBOL_BY_BASE.values()}
+    assert len(expected) == 10
+    assert gaps == dict.fromkeys(expected, 0.0)
+
+
+def test_the_freeze_and_the_undrafted_boundary_are_eager_at_zero_and_the_equity_and_drawdown_absent_until_set():
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+
+    before = _exposed(registry)
+    assert before[("zcrypto_exec_watchdog_frozen", ())] == 0.0
+    assert before[("zcrypto_exec_boundary_not_drafted", ())] == 0.0
+    assert {name for name, _ in before} & {"zcrypto_exec_equity_eur", "zcrypto_exec_drawdown_bps"} == set()
+
+    metrics.set_gap("BTC/EUR", -42.05)
+    metrics.set_equity(1012.5)
+    metrics.set_drawdown(37.5)
+    metrics.set_watchdog_frozen(True)
+    metrics.set_boundary_not_drafted(True)
+
+    after = _exposed(registry)
+    assert after[("zcrypto_exec_gap_eur", (("symbol", "BTC/EUR"),))] == -42.05
+    assert after[("zcrypto_exec_equity_eur", ())] == 1012.5
+    assert after[("zcrypto_exec_drawdown_bps", ())] == 37.5
+    assert after[("zcrypto_exec_watchdog_frozen", ())] == 1.0
+    assert after[("zcrypto_exec_boundary_not_drafted", ())] == 1.0
+
+    metrics.set_watchdog_frozen(False)
+    metrics.set_boundary_not_drafted(False)
+    assert registry.get_sample_value("zcrypto_exec_watchdog_frozen") == 0.0
+    assert registry.get_sample_value("zcrypto_exec_boundary_not_drafted") == 0.0
+
+
+def test_a_gap_for_a_symbol_outside_the_ten_raises_nothing_and_mints_no_series():
+    registry = CollectorRegistry()
+    metrics = command._ExecutionMetrics(registry)
+    before = _exposed(registry)
+
+    metrics.set_gap("ETH/BTC", 5.0)
+    metrics.set_gap("BNB/EUR", 5.0)
+
+    assert _exposed(registry) == before
+
+
+def test_the_accumulation_hooks_are_a_noop_without_metrics_and_reach_the_installed_families_with_them():
+    assert executor_module._metrics is None
+    executor_module._set_gap("BTC/EUR", 1.0)
+    executor_module._set_equity(1000.0)
+    executor_module._set_drawdown(10.0)
+    executor_module._set_frozen(True)
+    executor_module._set_boundary_not_drafted(True)
+
+    registry = CollectorRegistry()
+    executor_module.set_executor_hooks(metrics=command._ExecutionMetrics(registry))
+    executor_module._set_gap("SOL/EUR", -3.5)
+    executor_module._set_equity(990.0)
+    executor_module._set_drawdown(100.0)
+    executor_module._set_frozen(True)
+    executor_module._set_boundary_not_drafted(True)
+
+    assert registry.get_sample_value("zcrypto_exec_gap_eur", {"symbol": "SOL/EUR"}) == -3.5
+    assert registry.get_sample_value("zcrypto_exec_equity_eur") == 990.0
+    assert registry.get_sample_value("zcrypto_exec_drawdown_bps") == 100.0
+    assert registry.get_sample_value("zcrypto_exec_watchdog_frozen") == 1.0
+    assert registry.get_sample_value("zcrypto_exec_boundary_not_drafted") == 1.0
+
+
+def test_a_raising_accumulation_hook_is_logged_and_never_reaches_the_caller(caplog):
+    def _raise_on_call(*args, **kwargs):
+        raise RuntimeError("registry gone")
+
+    raising = types.SimpleNamespace(
+        set_gap=_raise_on_call,
+        set_equity=_raise_on_call,
+        set_drawdown=_raise_on_call,
+        set_watchdog_frozen=_raise_on_call,
+        set_boundary_not_drafted=_raise_on_call,
+    )
+    executor_module.set_executor_hooks(metrics=raising)
+    with _zcrypto_caplog_attached(caplog), caplog.at_level(logging.ERROR, logger="zcrypto"):
+        executor_module._set_gap("BTC/EUR", 1.0)
+        executor_module._set_equity(1000.0)
+        executor_module._set_drawdown(10.0)
+        executor_module._set_frozen(True)
+        executor_module._set_boundary_not_drafted(True)
+
+    # By identity: a session where the "zcrypto" logger still propagates hands caplog each record twice.
+    assert len({id(r) for r in caplog.records if r.getMessage() == "executor metrics hook raised -- continuing"}) == 5
+
+
 # --- this file's own stub node is a restatement of LiveNode / LiveNodeHandle ---------------------
 #
 # tests/test_engine_stub_fidelity.py names the guard below. The names `run()` READS off a node are

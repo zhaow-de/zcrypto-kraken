@@ -24,7 +24,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, outside an attended trading window. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
+        "content": "**Two kinds of numbers live on this board.** The Intent and Composition rows are the engine's *decisions* — target weights and intended orders, computed every cycle whether or not anything may trade. The Execution row is what actually *happened* at the venue — orders, fills, fees, positions, realized PnL — published by the execution path and reading flat zero, not absent, while the loop is disarmed. The Venue truth row is what the exchange said we could trade and held at each cycle. An intended order with no fill beside it is the normal shadow state, not a failure. A resting order is one execution number that can appear without any trading: the `rest-hold` mode places a real order at the venue on purpose and leaves it there for a drill to act on. Read the mode label before reading activity as trading."
       }
     },
     {
@@ -2531,6 +2531,329 @@
             ]
           }
         ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 80,
+      "type": "row",
+      "title": "Accumulation — the loop's gap, equity and window",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 97
+      }
+    },
+    {
+      "id": 81,
+      "type": "timeseries",
+      "title": "Gap per leg (EUR) — target minus held, after each intent's terminal",
+      "description": "The EUR still to trade on each model leg. At each 4-hourly boundary the draft sets it to the leg's target minus what Kraken holds, at the cycle's close; for a leg the boundary's plan ran, it then moves toward zero by what that leg's intent filled, valued at the same close, once the intent has ended. Above zero is EUR still to buy, below zero EUR still to sell. A leg that stays away from zero across boundaries is one the venue's minimums keep carrying, or one whose intents end unfilled: the boundary's accumulation record on the engine host names each leg's outcome and reason. Every leg reads 0 from an engine start until its first boundary drafts. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 98
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_gap_eur{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "{{symbol}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 82,
+      "type": "timeseries",
+      "title": "Equity (EUR) against its 60-day maximum",
+      "description": "The account's equity at each 4-hourly boundary: its EUR and the ten model coins it holds, spot and earn-coded, marked at the cycle's closes. The second line is this gauge's own maximum over the last 60 days, a reading of the series alone: re-minting the equity series after a deposit or a withdrawal does not reset it. The high-water mark the drawdown kill measures from is the accumulation record's `hwm_eur` on the engine host, which that re-mint does reset, so the two lines part after one. Absent from an engine start until its first boundary marks equity, because a seeded zero would read as a total loss. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 98
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_equity_eur{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "equity"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "max_over_time(zcrypto_exec_equity_eur{host=~\"$host\"}[60d])",
+          "refId": "B",
+          "legendFormat": "60-day maximum"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 83,
+      "type": "timeseries",
+      "title": "Drawdown from the high-water mark (bps of NAV)",
+      "description": "How far equity sits below its high-water mark at each 4-hourly boundary, in basis points of the cycle's NAV: the book's size, never the account's equity. At 1500, 15 % of the NAV, the engine latches the kill switch, which pages through the kill-switch alert rather than through a rule on this series. The daily loss hold, 300 basis points of the NAV lost inside one UTC day, has no series of its own: the accumulation record carries it. Absent from an engine start until its first boundary marks equity. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 104
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_drawdown_bps{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "drawdown (bps of NAV)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 84,
+      "type": "timeseries",
+      "title": "Watchdog frozen · boundary not drafted",
+      "description": "Two 0/1 readings, both 0 from an engine start. Watchdog frozen reads 1 while the stale-socket watchdog holds the loop: a venue socket stayed down past its grace, so the engine revoked its active intent, sent a cancel for each order it holds open and starts no intent until the sockets are back and its re-read pass has run. It pages after 15 minutes at 1. Boundary not drafted reads 1 from the write of a boundary's accumulation record whose status is not `ok` until the next `ok` record's, and pages once it has read 1 for 4h30m, which is two consecutive boundaries that drafted nothing, after a further 10 minutes. Runbooks: infra/runbooks/engine.md#zcrypto-engine-exec-watchdog-frozen and infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 104
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_watchdog_frozen{host=~\"$host\"}",
+          "refId": "A",
+          "legendFormat": "watchdog frozen"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "zcrypto_exec_boundary_not_drafted{host=~\"$host\"}",
+          "refId": "B",
+          "legendFormat": "boundary not drafted"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 85,
+      "type": "timeseries",
+      "title": "Intents by outcome over the last window",
+      "description": "How many of the engine's orders reached each outcome over the trailing four hours, one boundary's span, by the outcomes the orders panel above counts: an increase rather than a running total, so each boundary's plan reads as its own step. A span holding refusals alone is the gate or one of the engine's holds refusing; an empty span is a boundary that placed nothing, and the tile beside this one says whether it drafted at all. Published only by the trading engine on the capture primary.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 104
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "increase(zcrypto_exec_orders_total{host=~\"$host\"}[4h])",
+          "refId": "A",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
       },
       "options": {
         "legend": {

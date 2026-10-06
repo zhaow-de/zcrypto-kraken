@@ -114,7 +114,7 @@ A warning-severity Grafana alert (`Engine · the execution gate's heartbeat has 
 
 ### What it means
 
-This is the heartbeat for the execution envelope's boundary path, not a reading of any one input. The gate is evaluated at engine start, after every cycle in the boundary sink — roughly four-hourly, beside the exec record that sink writes first — on the executor's tick while a plan runs and when it trips the kill switch, and once a minute on its idle refresh; of the six gauges `_ExecGauges` publishes — the five gate readings plus this heartbeat, not the other eight `zcrypto_exec_*` families, which are the executor's own counters — the five readings are written at every one of those evaluations and the heartbeat at all but the idle refresh, and nowhere else. If the boundary sink's evaluation call is dropped by a regression — anywhere in the cycle path, however unrelated it looks — or its record write keeps failing, which the sink orders before the gauges so that a record never written starves the heartbeat, this heartbeat FREEZES at its last published value while the five readings keep moving on the refresh: the only other writers of the heartbeat are a kill trip and a plan in flight, whose intent-time gate reads reach the same publish hook — and a plan is built and picked up whether or not the engine is armed, since arming is an input to the gate (`armed_in_config`, the arm file) rather than a condition on the plan. Cycle telemetry (`zcrypto_engine_cycle_success`, `zcrypto_engine_cycle_completed_at_seconds`) can keep reading perfectly healthy through this, because nothing about the cycle itself needs to fail for the gate call inside it to be skipped or its record write to raise. Live readings beside a frozen heartbeat are indistinguishable on this dashboard from a healthy boundary — this alert is the only signal that can tell the difference.
+This is the heartbeat for the execution envelope's boundary path, not a reading of any one input. The gate is evaluated at engine start, after every cycle in the boundary sink — roughly four-hourly, beside the exec record that sink writes first — on the executor's tick while a plan runs and when it trips the kill switch, and once a minute on its idle refresh; of the six gauges `_ExecGauges` publishes — the five gate readings plus this heartbeat, not the other `zcrypto_exec_*` families, which are the executor's own instruments — the five readings are written at every one of those evaluations and the heartbeat at all but the idle refresh, and nowhere else. If the boundary sink's evaluation call is dropped by a regression — anywhere in the cycle path, however unrelated it looks — or its record write keeps failing, which the sink orders before the gauges so that a record never written starves the heartbeat, this heartbeat FREEZES at its last published value while the five readings keep moving on the refresh: the only other writers of the heartbeat are a kill trip and a plan in flight, whose intent-time gate reads reach the same publish hook — and a plan is built and picked up whether or not the engine is armed, since arming is an input to the gate (`armed_in_config`, the arm file) rather than a condition on the plan. Cycle telemetry (`zcrypto_engine_cycle_success`, `zcrypto_engine_cycle_completed_at_seconds`) can keep reading perfectly healthy through this, because nothing about the cycle itself needs to fail for the gate call inside it to be skipped or its record write to raise. Live readings beside a frozen heartbeat are indistinguishable on this dashboard from a healthy boundary — this alert is the only signal that can tell the difference.
 
 `noDataState` is `Alerting` here, deliberately unlike the two rules above: a gate that has NEVER published at all — a fresh converge that never ran, or an exporter that never started — is this rule's worst case, not a state it should stay quiet through. Every other gauge in that group already reads a safe default (0 / disarmed) before the first evaluation, so their own absence is comparatively low-stakes; this heartbeat is the one thing that must page on total silence too.
 
@@ -128,6 +128,68 @@ This is the heartbeat for the execution envelope's boundary path, not a reading 
 ### Retire when
 
 `zcrypto-engine-exec-not-evaluated` is absent from `infra/grafana/alerts.yaml`, or `zcrypto_exec_last_evaluation_timestamp_seconds` is no longer in the capture role's keep-list (`infra/ansible/roles/capture/files/config.alloy`) — either way the rule can no longer fire and this section describes nothing.
+
+______________________________________________________________________
+
+<a name="zcrypto-engine-exec-watchdog-frozen"></a>
+
+## zcrypto-engine-exec-watchdog-frozen — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · the execution watchdog has frozen the loop`): `zcrypto_exec_watchdog_frozen{host="zcrypto"}` has read 1 for fifteen minutes.
+
+### What it means
+
+The engine's stale-socket watchdog freezes the accumulation loop when a venue socket, the market-data one or the execution one that carries the fills, stays down past its grace. On the tick it freezes, the engine revokes its active intent with `socket_down`, sends a cancel for each order its Cache holds open, and refuses each new intent with `socket_down` while the freeze stands; its log carries a CRITICAL line at the freeze naming the endpoint and the grace. The grace sits past the execution socket's hourly reconnect, which reports back within seconds, so a freeze is a real cut. A cancel sent into a cut may not reach Kraken, and an intent whose cancel went unanswered ends `ambiguous`: that is why the freeze waits for Kraken's own account before it lifts.
+
+The freeze lifts by itself, with no restart and no deploy, on the tick at which no socket is down and the re-read pass that a socket's return arms has completed with its reads answered: the pass re-reads at Kraken the order rows the engine closed without Kraken's word, re-cancels what still rests, and settles the holdings. Fifteen minutes frozen is one of three shapes: the cut is still on; the sockets are back and the pass spent its three tries, logged CRITICAL and stopped, after which nothing in code lifts the freeze; or a stale entry, an endpoint whose return arrived under a different name than its drop, which the engine still counts as down while both sockets are up.
+
+The freeze is folded into the gate level the engine publishes, so the gate-level tile reads 0 beside it, and a boundary inside the freeze journals `socket_down` among its exec record's `reasons`. `zcrypto engine exec-status` is no read of it: it builds its own gate in a fresh process and shows the gate's six reasons alone, `socket_down` not among them, so it can read `full` through a freeze.
+
+### What to do
+
+1. **Read the freeze in the engine log**: the `Logs` panel on the `zcrypto-logs` board with the container filter at `engine`, or `sudo docker logs --since 2h zcrypto-engine` on the host. The CRITICAL line at the freeze names the endpoint and the grace; a later `socket <endpoint> is back` line says it returned, ending `and none is down` or naming in parentheses the endpoints still counted down. Read the freeze from `zcrypto_exec_watchdog_frozen` and this log, not from `zcrypto engine exec-status`, whose six reasons leave `socket_down` out.
+2. **If the cut is still on, let it run its course**: a `socket <endpoint> is down` line with no `socket <endpoint> is back` after it, while capture on the same host is short of Kraken's book too (`zcrypto_capture_seconds_since_last_book_message{host="zcrypto"}` climbing). The freeze lifts by itself once the sockets are back and the re-read pass has run, and the engine needs nothing from you meanwhile. A Kraken outage pages from the capture side as well ([`capture.md#zcrypto-capture-venue-not-online`](capture.md#zcrypto-capture-venue-not-online)); a cut of the host's own network is the host's to fix.
+3. **If the sockets are back and the freeze stands, restart the engine inside the inter-cycle gap.** Two shapes hold it there. The re-read pass's CRITICAL `the re-read pass could not read the ledger or the venue on 3 ticks …` says the pass spent its budget: cancel by hand on Kraken's open-orders page what that line names as possibly resting, then restart. A stale entry is a `socket <endpoint> is down` line with no `socket <endpoint> is back` after it while capture on the same host keeps receiving Kraken's book: restart. Take the restart inside the inter-cycle gap ([`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) step 4 says how to read where it opens) with no Kraken margin position open beyond those [the restart rule](engine-procedures.md#engine-restart-margin-position)'s test admits; the restarted process places reducing orders alone under its restart hold until you clear it.
+
+### Retire when
+
+`zcrypto-engine-exec-watchdog-frozen` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
+
+______________________________________________________________________
+
+<a name="zcrypto-engine-exec-boundary-not-drafted"></a>
+
+## zcrypto-engine-exec-boundary-not-drafted — ALERT
+
+### What you are seeing
+
+A warning-severity Grafana alert (`Engine · two consecutive boundaries drafted nothing`): `min_over_time(zcrypto_exec_boundary_not_drafted{host="zcrypto"}[4h30m])` has read above 0.5 for ten minutes, so the gauge read 1 at each scrape of the last four and a half hours.
+
+### What it means
+
+At each 4-hourly boundary the engine drafts that cycle's plan and writes one accumulation record, `accum-<HH>.json` in the journal's day directory beside `cycle-<HH>.json`, whose `status` says what the draft did. `zcrypto_exec_boundary_not_drafted` reads 1 from the write of a record whose status is not `ok` until the next `ok` record's write, and 0 from an engine start. The window clears of 0 samples about 4h30m after the first such write, so the rule fires about 4h40m after it, and then only when the boundary four hours later wrote a non-`ok` record too: two consecutive boundaries placed nothing. One lost boundary followed by an `ok` one stays quiet.
+
+The gate read `full` through both, armed with the venue online and no hold standing, so the rules on the gate's gauges stay quiet; this rule sees a draft that fails while the gate reads healthy. The four statuses it covers: `no-cycle`, the boundary's cycle record absent or failed, so there was nothing to draft from; `book-unread`, the read of Kraken's balances or of its instrument listing beside it failing on each of its three tries, or the draft refusing a basket coin's `held` because the coin sits under an earn or staking code; `window-closed`, the boundary's submission window, three and a half hours from the boundary, closing before the draft could run, since the draft waits for nothing to be in flight; `refused`, the draft's plan refused by the engine, or the draft raising.
+
+What repeats across boundaries while the gate reads `full`: a trade key whose private permission changed, or a nonce poisoned by a hand use of the key, answers each balance read with an error while the public status read keeps the gate at `full`; a Cache the engine cannot read fails the draft's read of the venue's constraints the same way; a basket coin held under an earn or staking code reads `book-unread` at each boundary until the coin moves, because the draft refuses its `held` while the equity mark counts it; a drill plan resting through the window holds the draft back until the window closes.
+
+### What to do
+
+1. **Read the two newest accumulation records on the engine host, by value**: `for f in $(ls /var/lib/zcrypto-engine/journal/*/accum-*.json | tail -2); do python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(sys.argv[1], d['status'], d['plan_id'])" "$f"; done`. Each `status` names which of `no-cycle`, `book-unread`, `window-closed` and `refused` that boundary wrote; `zcrypto_exec_boundary_not_drafted` on the Engine board's accumulation row shows when the 1 began.
+2. **Read the cause in the engine log around those two boundaries**, by status:
+   - `book-unread`: a WARNING per try carrying the error of the read that failed, the balance read's, where a permission or nonce error is the trade key's, or the instrument listing's; or the draft's refusal of an earn-coded coin, which names the coin and its code.
+   - `refused`: the plan entry's reasons in the boundary's `exec-<HH>.json`, or the WARNING naming the exception the draft raised.
+   - `window-closed`: what was in flight through the window, such as a drill plan, whose intents the exec records list.
+   - `no-cycle`: the cycle's own failure, which [`zcrypto-engine-cycle-failed`](#zcrypto-engine-cycle-failed) or [`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) pages on in its own right.
+3. **Apply the cause's own remedy, and let the next boundary draft.** A basket coin under an earn or staking code goes back to spot on Kraken, the act the refusal's text names, and the next boundary reads it as held; a key or nonce error is the key's to fix; a drill plan holding the window is ended with its drill; anything else is the error its WARNING names. The page clears once an `ok` record puts a 0 back in the window.
+4. **A restart is for a process that is itself wedged**, taken inside the inter-cycle gap ([`zcrypto-engine-cycle-stale`](#zcrypto-engine-cycle-stale) step 4 says how to read where it opens) with no Kraken margin position open beyond those [the restart rule](engine-procedures.md#engine-restart-margin-position)'s test admits: a failing key or an earn-coded coin answers a restarted process the same way.
+5. **One shape pages after a single undrafted boundary.** The scrape target is the same across restarts, so the samples an engine published before a restart stay in the window, and their 0s keep the rule quiet as before; but an engine whose series has no earlier sample in the window, at its first start with this gauge or after more than four and a half hours down, and whose first draft writes a non-`ok` record before its first scrape, holds no 0 sample at all, and the rule fires ten minutes on. Step 1 then shows one non-`ok` record after the start: act on its cause as above; the page clears at the next `ok` boundary.
+
+### Retire when
+
+`zcrypto-engine-exec-boundary-not-drafted` is absent from `infra/grafana/alerts.yaml` — i.e. the rule was deliberately removed.
 
 ______________________________________________________________________
 
