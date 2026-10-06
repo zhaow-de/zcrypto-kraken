@@ -219,10 +219,9 @@ def test_the_timer_actually_repeats():
 
 
 # --- the cache and ops roles' copies, and node_common's shared one --------------------------------
-# The cache nodes, ops and the observability node publish the same flag from a copy of this role's script, timer and unit, so the fleet's
-# reboot-pending series covers them; the observability node's copy is node_common's, which its role includes. The copies'
-# comments are their own, naming the role that installs them; what a shell or systemd reads must be this role's, the
-# unit's one variable renamed.
+# The cache nodes, ops and the observability node publish the same flag from a copy of this role's script, timer and unit,
+# so the fleet's reboot-pending series covers them. The copies' comments are their own, naming the role that installs them;
+# what a shell or systemd reads must be this role's, the unit's one variable renamed.
 COPY_ROLES = {"cache": "cache_textfile_dir", "ops": "ops_textfile_dir"}
 CACHE_ROLE_DIR = REPO / "infra/ansible/roles/cache"
 NODE_COMMON = REPO / "infra/ansible/roles/node_common"

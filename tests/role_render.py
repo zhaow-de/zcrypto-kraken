@@ -81,9 +81,7 @@ def upstream(handle: list) -> str:
 
 
 def assert_preflight(task: dict, secrets: dict, override: dict, refused: str | None, include_vars: dict | None = None) -> None:
-    """`include_vars` are the including role's own variables, which the message names by design: the message must
-    render the same over them and the fault list alone, and the no-value check reads `secrets` and `override` alone,
-    skipping an empty value, which is a substring of every message."""
+    """`include_vars` are the including role's variables, which the message names; an empty value is in every message."""
     ((name, expression),) = task["vars"].items()
     scope = {k: v for k, v in {**(include_vars or {}), **secrets, **override}.items() if v is not None}
     faults = Templar(loader=DataLoader(), variables=scope).template(trust_as_template(expression))

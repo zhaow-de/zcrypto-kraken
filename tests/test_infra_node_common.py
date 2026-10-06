@@ -96,7 +96,7 @@ def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
 
 
 def test_every_shape_an_including_role_passes_ends_in_backslash_z():
-    # `$` also matches before a trailing newline, and only some keys have a trailing-newline case to catch its loss.
+    # Only some keys have a trailing-newline case to catch a lost `\Z`.
     includes = [
         (path.parts[-3], task)
         for path in sorted((REPO / "infra/ansible/roles").glob("*/tasks/*.yml"))
@@ -160,7 +160,6 @@ def _selfcheck_service() -> dict[str, str]:
 
 
 def _selfcheck_steps() -> list[tuple[dict, str, dict]]:
-    # Each task, its one module, and that module's arguments resolved through the include's variables.
     steps = []
     for task in _selfcheck():
         ((module, args),) = [(key, value) for key, value in task.items() if isinstance(value, dict)]
@@ -209,9 +208,6 @@ def test_the_selfcheck_installs_what_its_unit_runs_imports_and_reads_and_enables
 
 
 def test_the_script_lands_only_after_systemd_holds_the_unit_that_puts_its_module_on_the_path():
-    # The script imports the module through the unit's PYTHONPATH: landed under a unit without it, every run fails and
-    # the node's dead-man check pages, so a converge stopped between the two must leave the old script, and a fresh
-    # node's timer must not start before its script exists.
     steps = _selfcheck_steps()
 
     def at(found) -> int:
@@ -295,12 +291,10 @@ else
   exec REAL_DATE "$@"
 fi
 """
-# A copy that dies part-way: its first bytes land in the destination under the file's own name, then it fails.
 PARTIAL_COPY = """#!/usr/bin/env bash
 head -c 100 -- "$1" >"$2${1##*/}"
 exit 1
 """
-# A copy that writes its file's first bytes into the destination, says so, and holds until released or stopped.
 SLOW_COPY = """#!/usr/bin/env bash
 head -c 100 -- "$1" >"$2${1##*/}"
 : >"$SLOW_STARTED"
@@ -495,7 +489,6 @@ def test_a_backup_is_a_valid_copy_of_the_source_staged_and_copied_into_a_new_070
     assert [p.name for p in node.dest.iterdir()] == [staged.name]
     assert _content(staged) == _content(node.db) == _content(node.dest / staged.name)
     assert len(_content(staged)) > 12, "the rows the live connection left in the -wal are missing"
-    # The copies carry the database.
     assert stat.S_IMODE(node.dest.stat().st_mode) == 0o700
 
 
@@ -765,7 +758,6 @@ def test_the_backup_unit_runs_the_script_as_root_over_the_includes_arguments_and
         "SQLITE_BACKUP_RUNNER": BACKUP["node_common_sqlite_backup_runner"],
         "SQLITE_BACKUP_COPY": BACKUP["node_common_sqlite_backup_copy"],
     }
-    # The runner reaches the Docker socket, which DynamicUser= refuses, and the copy writes where ProtectSystem= forbids.
     keys = {line.split("=", 1)[0] for line in unit if "=" in line and not line.startswith("#")}
     assert not keys & {"User", "DynamicUser", "ProtectSystem"}, keys
 
@@ -803,8 +795,6 @@ def test_the_backup_installs_what_its_unit_runs_executable_and_enables_the_timer
 
 
 def test_the_backup_script_lands_only_after_systemd_holds_the_unit_that_passes_its_arguments():
-    # A converge stopped between the two must leave the old script under the new unit, and a fresh node's timer must
-    # not start before its script exists.
     steps = _backup_steps()
 
     def at(found) -> int:

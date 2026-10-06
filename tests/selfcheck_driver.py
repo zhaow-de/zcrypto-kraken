@@ -11,8 +11,7 @@ from pathlib import Path
 SHARED = "zcrypto_selfcheck"
 
 
-# Never imported by path: an import's bytecode cache lands in a role's files/ and names the checkout's own path,
-# which tests/test_deploy_log_audit.py walks the role for.
+# Never imported by path: a bytecode cache in a role's files/ names the checkout, whose `kraken` test_deploy_log_audit.py flags.
 def _exec(path: Path, module: types.ModuleType) -> types.ModuleType:
     exec(compile(path.read_text(), str(path), "exec"), module.__dict__)
     return module
@@ -21,7 +20,7 @@ def _exec(path: Path, module: types.ModuleType) -> types.ModuleType:
 def load(script_path: Path, shared_path: Path | None = None) -> types.ModuleType:
     if shared_path is None:
         return _exec(script_path, types.ModuleType(script_path.stem.replace("-", "_")))
-    # Registered only while the script's own `import` runs, so a second script loaded later gets its own copy.
+    # Registered only while the script's own `import` runs, so no later import of the name binds this copy.
     before = sys.modules.get(SHARED)
     sys.modules[SHARED] = types.ModuleType(SHARED)
     try:
@@ -51,8 +50,7 @@ def run(
     refused: tuple[str, str] | None = None,
     now: float,
 ) -> tuple[int, list[str], str]:
-    """`bodies` and `broken` are keyed by the URL without its query; a body is the text, or a callable of the request
-    that returns it or raises; `refused` is `(url, body)`, answered with a 503 that carries the body."""
+    """`bodies`, `broken` and `refused[0]` are keyed by the URL without its query."""
     asked: list[str] = []
 
     def opener(request, timeout):

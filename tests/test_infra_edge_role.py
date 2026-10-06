@@ -17,7 +17,6 @@ HANDLERS = ROLE / "handlers/main.yml"
 HOSTNAME = "edge.example.test"
 HASH_A = "$2b$10$" + "a" * 53
 HASH_B = "$2b$10$" + "b" * 53
-# The four parameters without a default; the routes, the two path sets and the cookie stay the defaults'.
 REQUIRED = {"edge_role_name": "probe", "edge_hostname": HOSTNAME, "edge_acme_email": "ops@example.test", "edge_upstream_port": 8000}
 TWO_USERS = {"path": "/push", "port": 9000, "users": [{"name": "alice", "hash": HASH_A}, {"name": "bob", "hash": HASH_B}]}
 ONE_USER = {"path": "/write", "port": 9001, "users": [{"name": "alice", "hash": HASH_A}]}
