@@ -1633,7 +1633,7 @@ _CACHE_AUTONOMOUS_OBJECTS = frozenset({"grafana-alloy"})
 # whole fleet: the one unit the pass may take on either is the node's own Alloy.
 _SERVICE_NODES = frozenset({"zcrypto-mon", "zcrypto-hc"})
 _SERVICE_NODE_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
-# The bridgehead carries the ops tunnel and the mTLS edge: the one unit the pass may take there is its own Alloy.
+# The bridgehead carries the ops tunnel and the mTLS edge.
 _BRIDGEHEAD_HOSTS = frozenset({"zaccess"})
 _BRIDGEHEAD_AUTONOMOUS_OBJECTS = frozenset({"alloy", "alloy.service"})
 # The `docker inspect` guard exists because a READ can surface the trade key; `cat` and `grep` on
