@@ -1,11 +1,6 @@
 # host_vars/zcrypto-hc -- SECRETS for the dead-man node. Per-VALUE vault encryption: the variable NAMES stay
-# readable, every value stays `!vault`-encrypted at rest. The two generated values are made once, by script,
-# and stable across rebuilds: every API key's HMAC and every signed link depend on the secret key. The SES
-# SMTP pair is appended by infra/scripts/vault-append-secret.sh. Replacing one: infra/runbooks/hc.md's
-# hc-secrets.
-#
-# NEVER run `ansible-inventory --host/--list` from infra/ansible/: ansible.cfg supplies the vault
-# password, so both silently print every value below in cleartext.
+# readable, every value stays `!vault`-encrypted at rest. The secret key is never regenerated: every API key's
+# HMAC and every signed link depend on it. Replacing one: infra/runbooks/hc.md's hc-secrets.
 
 hc_secret_key: !vault |
           $ANSIBLE_VAULT;1.1;AES256

@@ -10,7 +10,6 @@
     node_common_role_name: hc
     node_common_secrets_preflight_file: host_vars/zcrypto-hc/vault.yml
     node_common_secrets_preflight_runbook: infra/runbooks/hc.md's hc-secrets procedure
-    # The two SES shapes are re-trued from the credential's own form when it is issued.
     node_common_secrets_preflight:
       - {key: hc_secret_key, shape: '[0-9a-f]{64}\Z'}
       - {key: hc_admin_password, shape: '[0-9a-f]{48}\Z'}
