@@ -33,16 +33,16 @@ The first pull request, from `docs/t0218-self-hosted-deadman`, carries the pair 
 - Task 7, the push's node-only groups and the daily pass's patch-pass table, with the `zcrypto-grafana-push` skill's default skip: 495551a3a, 0ae529df3, fd8cff1df, a732953b6, d5186872a, f900520f1.
 - Folds spanning several tasks: e77b0f642 and 76b5cc32e, the pre-review's comment rows over Tasks 1 to 5; 2e861a143, the fix range's prose over Tasks 4 and 5.
 
-After the first pull request merged as #663, R-X ran on the observability node; the second pull request, from `feat/t0218-dead-man-tasks-8-10`, carries P1, Tasks 8 to 10, P2 and P3.
+The second pull request is from `feat/t0218-dead-man-tasks-8-10`; the first merged as #663.
 
-- R-X, 2026-10-06: the owner's converge of the observability node onto the shared code from `develop` 414097c23, the real pass `ok=63 changed=11 failed=0` (the ten files the step names and the Caddy reload), the second pass `ok=62 changed=0 failed=0`, the three units active and the self-check's first line under the new unit at 10:05:29Z `rules=ok … fleet=ok … loki=ok -> pinged`, no traceback; its deploy-log rows 2a4c549e7.
+- R-X, 2026-10-06: the owner's converge of the observability node onto the shared code from `develop` 414097c23; its deploy-log rows 2a4c549e7.
 - P1, 2026-10-06: the owner's deploy keypair `deploy_zcrypto-hc_ed25519`, committed by 556a1a5bf.
 - Task 8, 2026-10-06, the node joins the fleet: 556a1a5bf.
 - Task 9, 2026-10-06, the `hc` role: 6fd834b1d.
 - Task 10, 2026-10-06, the clone's self-check: 684029416.
 - The final fix over Tasks 8 to 10, 2026-10-06: 32e65f036, 69d27943f, cdf501fc6; the owner's rider, the bridgehead reached as `ssh access`: 0a4314b16, 362a299f6.
 - P2, 2026-10-06, the two generated vault values: 16079f87b.
-- P3, 2026-10-06, the SES SMTP credential, vaulted, and its endpoint `email-smtp.eu-west-1.amazonaws.com`: 0fbd2df88.
+- P3, 2026-10-06, the SES SMTP credential, vaulted, and its endpoint: 0fbd2df88.
 
 ## Suggested next steps
 
