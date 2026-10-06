@@ -5967,6 +5967,47 @@ def test_a_settle_that_fails_on_the_returns_pass_spends_one_try_and_the_next_tic
     assert not ex._frozen and ex._reread_tries == 0
 
 
+def test_a_pass_completed_before_the_cut_lifts_nothing_until_both_endpoints_are_back_and_a_pass_after_the_return_completes(
+    tmp_path,
+):
+    holdings = _VenueHoldings({})
+    clock = _Clock()
+    ex = _executor(tmp_path, clock=clock, venue_holdings=holdings)
+    ex.on_timer(clock.now)  # the startup pass
+    _reconnect(ex)  # a blip before the cut: its return arms the pass
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)  # the pass completes, so both moments the lift reads are set before the cut
+    assert ex._sockets_emptied_at is not None and ex._reread_completed_at is not None
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=31)
+    ex.on_timer(clock.now)
+    assert ex._frozen
+    clock.now += timedelta(seconds=5)
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)  # the data socket's pass completes with the execution socket still down
+    assert ex._frozen
+    holdings._raises = RuntimeError("down")
+    clock.now += timedelta(seconds=5)
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)  # the last return's pass fails its holdings read: none has completed since that return
+    assert ex._frozen
+
+
+def test_a_repeated_drop_of_one_endpoint_keeps_the_grace_running_from_its_first_drop(tmp_path):
+    clock = _Clock()
+    ex = _executor(tmp_path, clock=clock)
+    ex.on_timer(clock.now)
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=20)
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))  # the same cut, reported again
+    clock.now += timedelta(seconds=11)
+    ex.on_timer(clock.now)  # 31 s after the first drop, 11 s after the second
+    assert ex._frozen
+
+
 # --- D7: the startup pass reconciles each row against venue truth (spec 00098) -------------------
 
 
