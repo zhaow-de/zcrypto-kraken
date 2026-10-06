@@ -1,6 +1,6 @@
 ---
-status: open
-ripe_when: the spec 00122 and plan 00122 pair is committed on this branch and reviewed by zcrypto-plan-review — check `ls docs/specs/00122-* docs/plans/00122-*` lists both and the branch's PR body names the review
+status: partial
+ripe_when: the pull request from `docs/t0218-self-hosted-deadman`, which carries the spec and plan pair and Tasks 1–7, is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/docs/t0218-self-hosted-deadman'` prints its merge commit
 ---
 
 # Self-hosting the dead-man service: a tailor-made healthchecks.io replacement
@@ -18,6 +18,25 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 - The surface and the command that reads each part of it are spec 00122's measured basis.
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
 
+## Done so far
+
+The first pull request, from `docs/t0218-self-hosted-deadman`, carries the pair and the plan's Tasks 1 to 7.
+
+- The spec `docs/specs/00122-self-hosted-dead-man-design.md` and the plan `docs/plans/00122-self-hosted-dead-man.md`: written in 47c48d4dd, reviewed by the `zcrypto-plan-review` loop from d06564503 to its exit at 47a1660e0; the branch's pre-review folded ca1d26578 and 37cf2c7ca into them.
+- Task 1, the shared test helpers `tests/role_render.py` and `tests/selfcheck_driver.py`: a7bba5992, 9d53cdb3e.
+- Task 2, the `edge` role, the `mon` role's Caddy block its include: 4f2f7f8ce, c70d4ad0d, 594723685.
+- Task 3, `node_common`'s secrets preflight and reboot check: abc569762, b20a8b220, ca38e262a, 3475010b0.
+- Task 4, `node_common`'s self-check pattern: 692b71d25, 54eae9578, 0df029c1c, 576659f0a, cce4987fc, 5f4252b7d, e667a2360.
+- Task 5, `node_common`'s SQLite backup timer and the Fleet health backup panel: 8c43c7146, 729e4a3ba, 3a2dfa855, a414defe5, 7e3c03bf0, 563e4da6c.
+- Task 6, `infra/scripts/vault-append-secret.sh`: d5d0463a4, 25f6da7ff, e4941358d, 5b9efc6d2.
+- Task 7, the push's node-only groups and the daily pass's patch-pass table, with the `zcrypto-grafana-push` skill's default skip: 495551a3a, 0ae529df3, fd8cff1df, a732953b6, d5186872a, f900520f1.
+- Folds spanning several tasks: e77b0f642 and 76b5cc32e, the pre-review's comment rows over Tasks 1 to 5; 2e861a143, the fix range's prose over Tasks 4 and 5.
+
 ## Suggested next steps
 
-- The task loop over plan 00122, then its attended cutover rollout.
+- R-X, the remainder's first step and the reason its trigger is the first pull request's merge, since it runs from merged `develop`: the unit sandbox's read on `zcrypto-mon`, then `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags mon`, its real pass changing only the files the extraction moved and a second run reading `changed=0 failed=0`, before Task 8's pull request opens.
+- The second pull request: P1 (the deploy keypair) before Task 8; Task 8 (the node joins the fleet), Task 9 (the `hc` role) and Task 10 (the clone's self-check), with P2's (the two generated vault values) and P3's (the SES SMTP credential) commits; after its merge R0 to R7, the node built and read, and P4 (the owner's first sign-in and the project).
+- The third pull request: P5 (the three keys and the uuid) before Task 12; Task 11 (`hc-provision.py`), Task 12 (the pingers' URL scheme), Task 13 (the readers), Task 14 (the node's rule group, its runbook page, its Fleet health row and the observability node's Grafana error-log rule), Task 16 (four skills take the service and its node) and Task 17 (the backup's off-host copy), P6 (the NAS's pull key) before Task 17; the gate re-reads the cutover's release before it opens, and R8's provisioning runs from its branch before it merges.
+- The cutover sitting after the third merge: the rest of R8, R9 (ops), R10 (the observability node), R11 (the NAS), R12 (the capture pair) and R13 (the checks' first clean read, again the next morning), the plan's Rollback for a host whose move misbehaves, then R-records-1.
+- The fourth pull request: Task 15 (the drills and the surfaces' sweep), opened once R13 reads clean and merged before R15.
+- After the box closes, 2026-11-01 or a week later: R14 (the engine's move at the box's deferred disarm converge, inside the inter-cycle gap), R15 (the three drills), R16 (retirement, after R14's first clean day and R15's three drill entries) and R-records-2.
