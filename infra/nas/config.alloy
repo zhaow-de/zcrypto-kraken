@@ -53,8 +53,8 @@ prometheus.exporter.unix "host" {
 // `process_virtual_memory_max_bytes`), so the six-name keep-list is a deliberate SUBSET FILTER on
 // Alloy's own self-scrape: all six Python names exist in client_golang too (no
 // admitted-but-unpublishable gap), and the extras it drops (e.g. `process_virtual_memory_max_bytes`)
-// are unwanted here. This target's surviving contribution is therefore its own `up` plus those six
-// process_* names, nothing more.
+// are unwanted in Grafana Cloud. On the Cloud leg this target's surviving contribution is its own
+// `up` plus those six process_* names; the node's leg ships it whole.
 prometheus.exporter.self "alloy" {}
 
 prometheus.scrape "host" {
