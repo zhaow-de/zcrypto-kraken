@@ -3974,15 +3974,16 @@ class ProbeExecutor:
             # `>=`, never `>`: a first fill landing exactly ON the Monday boundary -- what an
             # operator arming at a week boundary produces -- would otherwise leave the week
             # containing it fully scored, ramp and all, which is the one week D10 excludes by name.
-            # The week the series STARTED in is not comparable to a settled one whichever way it is
-            # read: its pre-fill cycles hold a book the engine had not bought yet, so counting them
-            # averages a full 10000 bps a cycle into the mean, while dropping them -- which is
-            # exactly what the span below does -- scores a fraction of a week under a whole week's
-            # name. A week entirely before the first fill is not measured at all, and takes the
-            # same exit.
+            # The week holding the series' first fill is not comparable to a settled one whichever
+            # way it is read: its cycles before the fill hold a book the engine had not yet traded
+            # toward its targets -- nothing, or the opening holdings -- so counting them mixes an
+            # untraded book into the mean, while dropping them -- which is exactly what the span
+            # below does -- scores a fraction of a week under a whole week's name. A week entirely
+            # before the first fill is not measured at all, and takes the same exit.
             self._refuse_tracking(
-                f"the realized series starts at {first_fill.isoformat()}, at or after {label} began "
-                "-- the week the series starts in is measurable on only the part that follows it"
+                f"the realized series born at {birth.isoformat()} made its first fill at {first_fill.isoformat()}, "
+                f"at or after {label} began -- the week the series' first fill falls in is measurable on only the "
+                "part that follows it"
             )
             return
 
