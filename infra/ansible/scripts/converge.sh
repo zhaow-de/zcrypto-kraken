@@ -149,7 +149,7 @@ if key == own:
     raise SystemExit(f"{own} is this script's own: it names the file the engine play records its window in")
 if key not in names:
     raise SystemExit(f"{key} is not an override name; they are: {' '.join(names)}")
-# What the reason SAYS is the roles' gate, not this script's: each of the five asserts
+# What the reason SAYS is the roles' gate, not this script's: each of the gates asserts
 # `| string | length > 8` and refuses a boolean word, and that refusal is the one an operator must
 # meet. Here it only has to parse and name an override, or the row cannot record it.
 PYCHK
