@@ -335,19 +335,24 @@ def test_a_skipped_groups_rule_found_live_is_an_orphan_and_a_prune_deletes_it(st
             {"uid": "r1", "folderUID": "fold-x"},
             {"uid": "r2", "folderUID": "fold-x"},
             {"uid": "r3", "folderUID": "fold-x"},
+            {"uid": "r4", "folderUID": "fold-x"},
             {"uid": "old", "folderUID": "fold-x"},
         ],
     )
-    done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon")
-    assert re.findall(r"ORPHAN \(live, of skipped group (\S+)\): (\S+)", done.stderr) == [("zcrypto-mon", "r3")]
+    done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon zcrypto-hc")
+    assert re.findall(r"ORPHAN \(live, of skipped group (\S+)\): (\S+)", done.stderr) == [
+        ("zcrypto-mon", "r3"),
+        ("zcrypto-hc", "r4"),
+    ]
     assert re.findall(r"ORPHAN \(live but not in alerts\.yaml\): (\S+)", done.stderr) == ["old"]
-    done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon", GRAFANA_PRUNE="1")
+    done = stack.run(GRAFANA_SKIP_RULE_GROUPS="zcrypto-mon zcrypto-hc", GRAFANA_PRUNE="1")
     assert done.returncode == 0, done.stderr
     assert [p for m, p, _ in stack.recorded() if m == "DELETE"] == [
         "api/v1/provisioning/alert-rules/r3",
+        "api/v1/provisioning/alert-rules/r4",
         "api/v1/provisioning/alert-rules/old",
     ]
-    assert re.findall(r"DELETED orphaned rule (\S+)", done.stderr) == ["r3", "old"]
+    assert re.findall(r"DELETED orphaned rule (\S+)", done.stderr) == ["r3", "r4", "old"]
 
 
 def test_the_nodes_push_passes_the_variable_empty_and_sends_its_own_group(stack_with_a_mon_rule):
@@ -355,7 +360,11 @@ def test_the_nodes_push_passes_the_variable_empty_and_sends_its_own_group(stack_
     assert done.returncode == 0, done.stderr
     assert ("POST", "api/v1/provisioning/alert-rules") in _rule_calls(stack_with_a_mon_rule, "r3")
     assert ("POST", "api/v1/provisioning/alert-rules") in _rule_calls(stack_with_a_mon_rule, "r4")
-    assert ("GET", "api/v1/provisioning/alert-rules/r3") in _rule_calls(stack_with_a_mon_rule, "r3")
+    for uid in ("r3", "r4"):
+        calls = _rule_calls(stack_with_a_mon_rule, uid)
+        assert calls.index(("GET", f"api/v1/provisioning/alert-rules/{uid}")) < calls.index(
+            ("POST", "api/v1/provisioning/alert-rules")
+        )
     assert "rule(s) of group(s)" not in done.stderr and "skip-groups=<none>" in done.stderr.splitlines()[0]
 
 
