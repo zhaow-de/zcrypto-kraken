@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the pull request from `docs/t0218-self-hosted-deadman` is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/docs/t0218-self-hosted-deadman'` prints its merge commit
+ripe_when: the pull request from `feat/t0218-dead-man-tasks-8-10` is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/feat/t0218-dead-man-tasks-8-10'` prints its merge commit
 ---
 
 # Self-hosting the dead-man service: a tailor-made healthchecks.io replacement
@@ -33,10 +33,20 @@ The first pull request, from `docs/t0218-self-hosted-deadman`, carries the pair 
 - Task 7, the push's node-only groups and the daily pass's patch-pass table, with the `zcrypto-grafana-push` skill's default skip: 495551a3a, 0ae529df3, fd8cff1df, a732953b6, d5186872a, f900520f1.
 - Folds spanning several tasks: e77b0f642 and 76b5cc32e, the pre-review's comment rows over Tasks 1 to 5; 2e861a143, the fix range's prose over Tasks 4 and 5.
 
+After the first pull request merged as #663, R-X ran on the observability node; the second pull request, from `feat/t0218-dead-man-tasks-8-10`, carries P1, Tasks 8 to 10, P2 and P3.
+
+- R-X, 2026-10-06: the owner's converge of the observability node onto the shared code from `develop` 414097c23, the real pass `ok=63 changed=11 failed=0` (the ten files the step names and the Caddy reload), the second pass `ok=62 changed=0 failed=0`, the three units active and the self-check's first line under the new unit at 10:05:29Z `rules=ok … fleet=ok … loki=ok -> pinged`, no traceback; its deploy-log rows 2a4c549e7.
+- P1, 2026-10-06: the owner's deploy keypair `deploy_zcrypto-hc_ed25519`, committed by 556a1a5bf.
+- Task 8, 2026-10-06, the node joins the fleet: 556a1a5bf.
+- Task 9, 2026-10-06, the `hc` role: 6fd834b1d.
+- Task 10, 2026-10-06, the clone's self-check: 684029416.
+- The final fix over Tasks 8 to 10, 2026-10-06: 32e65f036, 69d27943f, cdf501fc6; the owner's rider, the bridgehead reached as `ssh access`: 0a4314b16, 362a299f6.
+- P2, 2026-10-06, the two generated vault values: 16079f87b.
+- P3, 2026-10-06, the SES SMTP credential, vaulted, and its endpoint `email-smtp.eu-west-1.amazonaws.com`: 0fbd2df88.
+
 ## Suggested next steps
 
-- R-X, from merged `develop` before the second pull request opens: the plan's Rollout R-X, the observability node's converge onto the shared code.
-- The second pull request: P1 (the deploy keypair) before Task 8; Task 8 (the node joins the fleet), Task 9 (the `hc` role) and Task 10 (the clone's self-check), with P2's (the two generated vault values) and P3's (the SES SMTP credential) commits; after its merge R0 to R7, the node built and read, and P4 (the owner's first sign-in and the project).
+- After the second pull request merges: R0 to R7, the node built and read, and P4 (the owner's first sign-in and the project).
 - The third pull request: P5 (the three keys and the uuid) before Task 12; Task 11 (`hc-provision.py`), Task 12 (the pingers' URL scheme), Task 13 (the readers), Task 14 (the node's rule group, its runbook page, its Fleet health row and the observability node's Grafana error-log rule), Task 16 (four skills take the service and its node) and Task 17 (the backup's off-host copy), P6 (the NAS's pull key) before Task 17; the gate re-reads the cutover's release before it opens, and R8's provisioning runs from its branch before it merges.
 - The cutover sitting, after the third merge and spec 00123's Alloy wave: the rest of R8, R9 (ops), R10 (the observability node), R11 (the NAS), R12 (the capture pair), R13 (the checks' first clean read, again the next morning), the Rollback as needed, then R-records-1.
 - The fourth pull request: Task 15 (the drills and the surfaces' sweep), opened once R13 reads clean and merged before R15.
