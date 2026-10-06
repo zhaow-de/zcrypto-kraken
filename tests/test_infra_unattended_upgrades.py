@@ -1,7 +1,7 @@
 """The unattended-upgrades auto-reboot flip (spec 00071 D4, T0027).
 
-`Automatic-Reboot` is a variable so the two capture VPSes, the ops node and the observability node reboot by hand while
-the cache nodes and the bridgehead keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
+`Automatic-Reboot` is a variable so the two capture VPSes, the ops node, the observability node and the dead-man node
+reboot by hand while the cache nodes and the bridgehead keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
 `False`, emitting `Automatic-Reboot "False";`, which apt reads as not-true by accident rather than
 by intention.
 """
@@ -28,9 +28,10 @@ CACHE_GROUP_VARS = REPO / "infra/ansible/group_vars/cache_host/vars.yml"
 HOST_VARS = REPO / "infra/ansible/host_vars"
 OPS_HOST_VARS = HOST_VARS / "zcrypto-ops/vars.yml"
 MON_HOST_VARS = HOST_VARS / "zcrypto-mon/vars.yml"
+HC_HOST_VARS = HOST_VARS / "zcrypto-hc/vars.yml"
 CACHE_NODES = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"}
 # The groups whose hosts run the base role and so hold an unattended-upgrades slot; DSM owns the NAS's.
-SLOT_GROUPS = ("capture_host", "ops_host", "access_host", "cache_host", "mon_host")
+SLOT_GROUPS = ("capture_host", "ops_host", "access_host", "cache_host", "mon_host", "hc_host")
 BLACKLIST = "base_unattended_upgrades_package_blacklist"
 COUNT_LIST = REPO / "infra/scripts/count-list.sh"
 
@@ -86,8 +87,15 @@ def test_the_observability_node_reboots_by_hand():
     assert _yaml(MON_HOST_VARS)[VAR] == "false"
 
 
+def test_the_dead_man_node_reboots_by_hand():
+    assert _group_hosts("hc_host") == {"zcrypto-hc"}
+    assert _yaml(HC_HOST_VARS)[VAR] == "false"
+
+
 @pytest.mark.parametrize(
-    "path", [BASE_DEFAULTS, CAPTURE_GROUP_VARS, OPS_HOST_VARS, MON_HOST_VARS], ids=["defaults", "capture", "ops", "mon"]
+    "path",
+    [BASE_DEFAULTS, CAPTURE_GROUP_VARS, OPS_HOST_VARS, MON_HOST_VARS, HC_HOST_VARS],
+    ids=["defaults", "capture", "ops", "mon", "hc"],
 )
 def test_the_value_is_a_quoted_string_never_a_yaml_boolean(path):
     value = _yaml(path)[VAR]
@@ -138,7 +146,7 @@ def test_the_collision_assert_reads_the_cache_group():
     name = "assert the fleet's maintenance windows do not collide"
     task = next(t for t in yaml.safe_load(BASE_TASKS.read_text()) if t.get("name") == name)
     expr = task["vars"]["base_fleet_hosts"]
-    for group in ("capture_host", "ops_host", "cache_host", "mon_host"):
+    for group in ("capture_host", "ops_host", "cache_host", "mon_host", "hc_host"):
         assert f"groups['{group}']" in expr, f"{group} is not in the collision assert's host list: {expr}"
 
 
@@ -197,13 +205,19 @@ def _attended_hosts_with_automatic_reboot(tree: Path) -> int:
     return int(subprocess.run(["bash", "-c", script], cwd=tree, capture_output=True, text=True, check=True).stdout)
 
 
-def test_the_attended_hosts_count_walks_the_observability_node(tmp_path):
+@pytest.mark.parametrize("node", ["zcrypto-mon", "zcrypto-hc"])
+def test_the_attended_hosts_count_walks_the_observability_and_dead_man_nodes(tmp_path, node):
     """The counter's host list is hand-kept: a host missing from it can flip to an automatic reboot uncounted."""
-    for rel in ("group_vars/capture_host/vars.yml", "host_vars/zcrypto-ops/vars.yml", "host_vars/zcrypto-mon/vars.yml"):
+    for rel in (
+        "group_vars/capture_host/vars.yml",
+        "host_vars/zcrypto-ops/vars.yml",
+        "host_vars/zcrypto-mon/vars.yml",
+        "host_vars/zcrypto-hc/vars.yml",
+    ):
         copy = tmp_path / "infra/ansible" / rel
         copy.parent.mkdir(parents=True)
         copy.write_text((REPO / "infra/ansible" / rel).read_text())
     assert _attended_hosts_with_automatic_reboot(tmp_path) == 0
-    mon = tmp_path / "infra/ansible/host_vars/zcrypto-mon/vars.yml"
-    mon.write_text(mon.read_text().replace(f'{VAR}: "false"', f'{VAR}: "true"'))
+    flipped = tmp_path / f"infra/ansible/host_vars/{node}/vars.yml"
+    flipped.write_text(flipped.read_text().replace(f'{VAR}: "false"', f'{VAR}: "true"'))
     assert _attended_hosts_with_automatic_reboot(tmp_path) == 1

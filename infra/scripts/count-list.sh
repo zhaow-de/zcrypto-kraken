@@ -390,7 +390,7 @@ c_inspect_reads_of_dot_image() { git grep -nE '\{\{ ?(json )?\.Image ?\}\}' -- i
 # counts too, since the base role's default is not read here.
 c_attended_hosts_with_automatic_reboot() {
   local h f n=0
-  for h in zcrypto:capture_host zcrypto-red:capture_host zcrypto-ops:ops_host zcrypto-mon:mon_host; do
+  for h in zcrypto:capture_host zcrypto-red:capture_host zcrypto-ops:ops_host zcrypto-mon:mon_host zcrypto-hc:hc_host; do
     for f in "infra/ansible/host_vars/${h%%:*}/vars.yml" "infra/ansible/group_vars/${h#*:}/vars.yml"; do
       if grep -qE '^base_unattended_upgrades_automatic_reboot:' "$f" 2>/dev/null; then
         grep -qiE '^base_unattended_upgrades_automatic_reboot: *["'"'"']?(0|f|false|n|no|off)["'"'"']? *$' "$f" || n=$((n + 1))

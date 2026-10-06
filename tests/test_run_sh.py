@@ -22,6 +22,7 @@ HOSTS = (
     "zcrypto-valkey2",
     "zcrypto-valkey3",
     "zcrypto-mon",
+    "zcrypto-hc",
 )
 DEFAULT = [f"files/deploy_{h}_ed25519" for h in HOSTS]
 INVENTORY = SCRIPT.parent.parent / "inventory" / "hosts.yml"
@@ -168,7 +169,12 @@ def test_a_cache_node_limit_offers_its_key_first(tmp_path):
 
 def test_the_observability_node_limit_offers_its_key_first(tmp_path):
     added, _, _ = run(tmp_path, ["site.yml", "--limit", "zcrypto-mon", "--tags", "mon"])
-    assert added == ["files/deploy_zcrypto-mon_ed25519", *DEFAULT[:-1]]
+    assert added == ["files/deploy_zcrypto-mon_ed25519", *[k for k in DEFAULT if k != "files/deploy_zcrypto-mon_ed25519"]]
+
+
+def test_the_dead_man_node_limit_offers_its_key_first(tmp_path):
+    added, _, _ = run(tmp_path, ["site.yml", "--limit", "zcrypto-hc", "--tags", "hc"])
+    assert added == ["files/deploy_zcrypto-hc_ed25519", *DEFAULT[:-1]]
 
 
 def _inventory_hosts(node: dict) -> set[str]:

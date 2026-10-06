@@ -3369,7 +3369,7 @@ def test_the_ssh_aliases_are_the_fleet_tables_and_the_label_is_alloys():
     repo = Path(__file__).resolve().parents[1]
     table = (repo / "docs/reference/fleet.md").read_text()
     rows = dict(re.findall(r"^\| `([^`]+)` \| `ssh ([a-z0-9-]+)` \|", table, re.M))
-    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon"}
+    nodes = {"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
     assert set(rows) == {"zcrypto", "zcrypto-red", "zcrypto-ops", "nas"} | nodes, rows
     for fleet_host, destination in rows.items():
         assert ops_daily.ssh_alias(fleet_host) == destination, (fleet_host, destination)
@@ -3407,6 +3407,7 @@ def test_every_published_ssh_destination_has_a_stanza_and_the_linode_nodes_match
         "zcrypto-valkey2": "cache_host",
         "zcrypto-valkey3": "cache_host",
         "zcrypto-mon": "mon_host",
+        "zcrypto-hc": "hc_host",
     }
     for node, group_name in groups.items():
         group = yaml.safe_load((ansible / f"group_vars/{group_name}/vars.yml").read_text())
@@ -3488,6 +3489,35 @@ def test_the_observability_node_is_a_telemetry_host_under_either_of_its_names(ho
 )
 def test_on_the_observability_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
     assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+@pytest.mark.parametrize("host", ["zcrypto-hc", "hc"])
+def test_the_dead_man_node_is_a_telemetry_host_under_either_of_its_names(host):
+    step = "sudo systemctl restart alloy"
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+    assert ops_daily.classify_action(f"ssh hc {step}", host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
+@pytest.mark.parametrize("host", ["zcrypto-hc", "hc"])
+@pytest.mark.parametrize(
+    "step",
+    [
+        "sudo systemctl restart zcrypto-hc",
+        "sudo systemctl stop zcrypto-hc",
+        "sudo systemctl start zcrypto-hc",
+        "sudo docker restart zcrypto-hc",
+        "sudo docker stop zcrypto-hc",
+        "sudo systemctl restart caddy",
+        "sudo systemctl start zcrypto-sqlite-backup.service",
+    ],
+)
+def test_on_the_dead_man_node_a_restart_that_is_not_alloy_is_the_operators(step, host):
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+def test_through_its_alias_a_stop_of_the_dead_man_service_is_the_operators():
+    step = "ssh hc sudo systemctl stop zcrypto-hc.service"
+    assert ops_daily.classify_action(step, host=None, resolve=_identity) is ops_daily.Tier.PREPARED
 
 
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------

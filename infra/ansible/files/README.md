@@ -15,6 +15,7 @@ Public halves (`*.pub`) are the plaintext record of what is authorized where; a 
 | `deploy_zcrypto-valkey2_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey2`; the workstation's `db2` alias |
 | `deploy_zcrypto-valkey3_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-valkey3`; the workstation's `db3` alias |
 | `deploy_zcrypto-mon_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-mon`; the workstation's `mon` alias |
+| `deploy_zcrypto-hc_ed25519{,.pub}` | vaulted here (+ operator `~/.ssh`) | `run.sh`; `host_vars/zcrypto-hc`; the workstation's `hc` alias |
 | `zaccess_ca.crt`, `zaccess_ca.key.vault` | the `.key` vaulted here | the mTLS CA: `infra/scripts/zaccess-client-cert.sh` signs leaves; the access role installs the `.crt` at `/etc/caddy/` |
 | `sync_ed25519.pub` | NAS (`/volume1/docker/zcrypto-archive/keys/`) + vaulted here | engine-journal pull channel (`group_vars/capture_host`) |
 | `sync_capture_ed25519.pub` | NAS + vaulted here | primary capture pull channel |
