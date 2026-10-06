@@ -60,7 +60,7 @@ import cli.engine.execledger as execledger_module
 import cli.engine.executor as executor_module
 import cli.engine.venuestate as venuestate_module
 from cli.config import CacheSettings, EngineConfig
-from cli.engine.command import _ExecutionMetrics, _seed_exec_positions
+from cli.engine.command import _ExecGauges, _ExecutionMetrics, _make_exec_sink, _seed_exec_positions
 from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import ARM_FILE, KILL_FILE, RESTART_HOLD_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
@@ -6644,6 +6644,36 @@ def test_the_boundary_re_journals_the_folded_verdict_over_the_sinks_bare_one(tmp
     ex.on_boundary(_boundary(NOW))
     doc = read_exec_record(exec_record_path(ex._journal_dir, _boundary(NOW)))
     assert doc["level"] == "none" and "reconciliation_unread" in doc["reasons"]
+
+
+def test_the_boundary_re_journal_publishes_the_readings_and_leaves_the_heartbeat_a_failed_sink_write_froze(tmp_path, monkeypatch):
+    registry = CollectorRegistry()
+    gauges = _ExecGauges(registry)
+    gate = _gate(tmp_path)
+    sink = _make_exec_sink(gate, tmp_path / "journal", None, gauges, None)
+    earlier = NOW - timedelta(hours=4)
+    sink(SimpleNamespace(cycle_ts=earlier), earlier, 1.0)
+    set_executor_hooks(publish_verdict=gauges.update)
+    ex = _executor(tmp_path, gate=gate)
+
+    def _raise(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("cli.engine.command.write_exec_record", _raise)
+    with pytest.raises(OSError):
+        sink(SimpleNamespace(cycle_ts=_boundary(NOW)), NOW, 1.0)
+    _kill_file(tmp_path).touch()  # what the re-journal's publish must carry, so it is read by value
+    ex.on_boundary(_boundary(NOW))
+
+    assert registry.get_sample_value("zcrypto_exec_kill_tripped") == 1
+    assert registry.get_sample_value("zcrypto_exec_last_evaluation_timestamp_seconds") == earlier.timestamp()
+
+
+def test_a_day_loss_hold_on_a_level_already_none_leaves_it_none(tmp_path):
+    ex = _unreconciled_executor(tmp_path)
+    ex._day_loss_hold = True
+    verdict = ex._evaluate(NOW)
+    assert verdict.level == GateLevel.NONE and verdict.reasons[-2:] == ("reconciliation_unread", "daily_loss_hold")
 
 
 # --- a row no venue order matches is marked ambiguous ---------------------------------------------
