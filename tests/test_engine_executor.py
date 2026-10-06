@@ -4286,11 +4286,12 @@ def test_a_dust_fill_on_a_completed_adopted_row_is_journaled_without_recounting_
     assert "O-attached" in ex._attached
 
 
-def test_an_external_event_the_ledger_does_not_vouch_for_reaches_nothing_at_all(tmp_path):
+def test_an_external_event_the_ledger_does_not_vouch_for_reaches_no_trip_row_or_cancel(tmp_path):
     """The operator's hand settle, and the whole reason this subscription is safe to have: an event
     on the external topic naming an order no ledgered row vouches for is COUNTED and reaches no trip,
-    no row write anywhere, no cancel -- a fill arms the re-read pass alone. The unknown-order trip
-    stays scoped to this strategy's own topic, where every order arriving IS one this engine submitted."""
+    no row write anywhere, no cancel -- while the engine is armed, a fill arms the re-read pass alone.
+    The unknown-order trip stays scoped to this strategy's own topic, where every order arriving IS
+    one this engine submitted."""
     ex, client, earlier = _adopted_executor(tmp_path)
     metrics = RecordingMetrics()
     set_executor_hooks(metrics=metrics)
