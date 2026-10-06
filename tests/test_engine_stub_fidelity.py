@@ -171,9 +171,7 @@ TABLE: dict[str, dict[str, Standin]] = {
         # Answers REAL `OrderStatusReport`s; what it restates is this repo's reader, not the library.
         "_VenueOrders": Standin(OURS, "cli.engine.executor.read_venue_orders, the venue_orders ProbeExecutor is built with", ()),
         "_VenueCancel": Standin(OURS, "cli.engine.executor.cancel_venue_order, the venue_cancel ProbeExecutor is built with", ()),
-        "_VenueHoldings": Standin(
-            OURS, "cli.engine.executor.read_venue_holdings, the venue_holdings ProbeExecutor is built with", ()
-        ),
+        "_VenueHoldings": Standin(OURS, "cli.engine.executor.read_venue_book, the venue_holdings ProbeExecutor is built with", ()),
         # Answers REAL `FillReport`s; what it restates is this repo's reader, not the library.
         "_VenueFills": Standin(OURS, "cli.engine.executor.read_venue_fills, the venue_fills ProbeExecutor is built with", ()),
         "_VenuePositions": Standin(

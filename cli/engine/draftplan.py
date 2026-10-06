@@ -211,7 +211,7 @@ def _amount(value: object, what: str) -> float:
 
 def parse_balance_export(doc: object) -> BalanceExport:
     # flatten imports nautilus; at module level every `zcrypto engine --help` would pay for it.
-    from cli.engine.flatten import resolve_base
+    from cli.engine.flatten import earn_wallet_base, resolve_base
 
     if isinstance(doc, dict) and isinstance(doc.get("error"), str):
         raise DraftPlanError(f"the balance export is an error answer, not balances: {doc.get('message') or doc['error']}")
@@ -233,8 +233,7 @@ def parse_balance_export(doc: object) -> BalanceExport:
         hold = _amount(row.get("hold_trade", 0), f"{code} hold_trade")
         asset = resolve_base(code, _BASES | {"EUR"})
         if asset is None:
-            # Kraken's earn and staking codes: a suffix after a dot (`SOL.F`, `XBT.M`), a lock period (`DOT28.S`, `ETH2`).
-            wallet_base = resolve_base(re.sub(r"\d+$", "", code.split(".")[0]), _BASES)
+            wallet_base = earn_wallet_base(code, _BASES)
             if balance and wallet_base is not None:
                 raise DraftPlanError(
                     f"{code} holds {balance:.10g} {wallet_base} outside the spot wallet -- the leg would be drafted against "

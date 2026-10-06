@@ -584,21 +584,63 @@ def _bare_client(base_url: str | None):
     return KrakenSpotHttpClient(api_key=api_key, api_secret=api_secret, base_url=base_url)
 
 
-def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
-    """What the account holds under every `INSTRUMENT_IDS` symbol, from the venue's own two reads on a
-    client each call builds for itself (`_bare_client`): each margin position, signed by its side, under
-    its instrument, and each traded coin's spot balance -- its total, the part held against a resting
-    order included -- under the coin's EUR pair (`_SPOT_SYMBOL_BY_BASE`), so a base is counted once and
-    `ETH/BTC` carries its margin positions alone. The balances are read beside the positions because a
-    settled margin position is a spot lot the account holds until it is sold. A margin position on a
-    pair outside the basket, and a coin outside it, are not read: the gauge's children are the basket's.
-    A symbol within `FLAT_TOLERANCE` of zero reads 0.0, the seed's own snap. The listing is cached first
-    because the position read resolves its rows through it. Anything short of both answers inside
-    `_VENUE_READ_TIMEOUT_SECONDS` raises, and so does a position side that is not LONG, SHORT or FLAT.
-    An empty listing, through which no margin position resolves, and a positions answer of `None` raise
-    too, the two shapes `zcrypto engine flatten` refuses: neither is read as a flat margin book, which
-    an empty positions list from a venue that answered is."""
-    from cli.engine.flatten import QUOTE_CURRENCY, resolve_base
+@dataclass(frozen=True)
+class VenueBook:
+    """The venue's own book, as one `read_venue_book` answered it."""
+
+    held: dict[str, float]  # per INSTRUMENT_IDS symbol, read_venue_holdings' figure: spot plus signed margin
+    balances: dict[str, float]  # per basket base, the CASH read's spot totals alone: the sell check's figure
+    earn: dict[str, float]  # per basket base held under an earn or staking code, its total: the mark's, never held
+    eur_total: float  # the spot EUR row's total and EUR.M's, no other EUR row: the equity mark's figure
+    eur_free: float  # the spot EUR row's free, net of hold_trade: the cash budget's
+    read_at: datetime
+
+    def earn_refusal(self) -> str | None:
+        """Why the draft may not read `held`, or None while `earn` holds nothing: a basket coin under an
+        earn or staking code is outside the spot wallet, so a book short by it drafts a buy of coin the
+        account holds, at every boundary. It refuses what the loop can draft and sell against, never
+        what the account is worth, which the mark counts `earn` into. It names the first such base in
+        sorted order and no code: the adapter's spelling of the code (`BT.M`) is one Kraken never shows."""
+        if not self.earn:
+            return None
+        base = min(self.earn)
+        return (
+            f"{self.earn[base]:.10g} {base} is held outside the spot wallet under an earn or staking code -- the book would "
+            "read the leg short by it; move it back to spot"
+        )
+
+
+# EUR held under an earn code that `eur_total` counts, by the owner's ruling of 2026-10-06 (spec 00092
+# D2, D8): every other EUR row, `EUR.HOLD` among them, stays out of it until the owed read says
+# whether the spot row's `total` already carries its amount -- the pinned adapter reads `EUR.HOLD` as
+# a currency of its own beside the spot `EUR`.
+_MARKED_EUR_EARN_CODES = frozenset({"EUR.M"})
+
+
+def read_venue_book(*, base_url: str | None = None) -> VenueBook:
+    """The account's book from the venue's own two reads on a client each call builds for itself
+    (`_bare_client`). `held` is what the account holds under every `INSTRUMENT_IDS` symbol: each margin
+    position, signed by its side, under its instrument, and each traded coin's spot balance -- its
+    total, the part held against a resting order included -- under the coin's EUR pair
+    (`_SPOT_SYMBOL_BY_BASE`), so a base is counted once and `ETH/BTC` carries its margin positions
+    alone. The balances are read beside the positions because a settled margin position is a spot lot
+    the account holds until it is sold. A margin position on a pair outside the basket, and a coin
+    outside it, are not read: the gauge's children are the basket's. A symbol within `FLAT_TOLERANCE` of
+    zero reads 0.0, the seed's own snap.
+
+    Every CASH row is resolved through `wallet_base`. A basket coin's spot total lands in `balances`
+    too, apart from any margin position on its pair, 0.0 for a coin the account does not hold; its
+    earn- or staking-coded total lands in `earn` alone, never in `held` or `balances`
+    (`VenueBook.earn_refusal`). The spot EUR row's total and `EUR.M`'s land in `eur_total`
+    (`_MARKED_EUR_EARN_CODES`), and the spot row's free, net of what rests on the book, in `eur_free`;
+    an account holding no EUR reads 0.0 for both and is still a book.
+
+    The listing is cached first because the position read resolves its rows through it. Anything short
+    of both answers inside `_VENUE_READ_TIMEOUT_SECONDS` raises, and so does a position side that is
+    not LONG, SHORT or FLAT. An empty listing, through which no margin position resolves, and a
+    positions answer of `None` raise too, the two shapes `zcrypto engine flatten` refuses: neither is
+    read as a flat margin book, which an empty positions list from a venue that answered is."""
+    from cli.engine.flatten import QUOTE_CURRENCY, wallet_base
     from cli.engine.node import _ACCOUNT_ID
 
     client = _bare_client(base_url)
@@ -618,13 +660,44 @@ def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
         return list(positions), state
 
     positions, state = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    read_at = _utc_now()
     held = _margin_positions(positions)
-    bases = frozenset(_SPOT_SYMBOL_BY_BASE)
+    balances = dict.fromkeys(_SPOT_SYMBOL_BY_BASE, 0.0)
+    earn: dict[str, float] = {}
+    eur_total = eur_free = 0.0
+    bases = frozenset(_SPOT_SYMBOL_BY_BASE) | {"EUR"}
     for balance in state.balances:
-        symbol = _SPOT_SYMBOL_BY_BASE.get(resolve_base(balance.currency.code, bases))
-        if symbol is not None:
-            held[symbol] += float(balance.total)
-    return {symbol: 0.0 if abs(qty) <= FLAT_TOLERANCE else qty for symbol, qty in held.items()}
+        code = balance.currency.code
+        resolved = wallet_base(code, bases)
+        if resolved is None:
+            continue
+        base, earn_coded = resolved
+        total = float(balance.total)
+        if base == "EUR":
+            if not earn_coded:
+                eur_total += total
+                eur_free += float(balance.free)
+            elif code in _MARKED_EUR_EARN_CODES:
+                eur_total += total
+        elif earn_coded:
+            if total:
+                earn[base] = earn.get(base, 0.0) + total
+        else:
+            held[_SPOT_SYMBOL_BY_BASE[base]] += total
+            balances[base] += total
+    return VenueBook(
+        held={symbol: 0.0 if abs(qty) <= FLAT_TOLERANCE else qty for symbol, qty in held.items()},
+        balances=balances,
+        earn=earn,
+        eur_total=eur_total,
+        eur_free=eur_free,
+        read_at=read_at,
+    )
+
+
+def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
+    """`read_venue_book`'s `held`, on its terms."""
+    return read_venue_book(base_url=base_url).held
 
 
 def _margin_positions(reports) -> dict[str, float]:
@@ -877,7 +950,7 @@ class ProbeExecutor:
     `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
 
     `venue_orders` is `read_venue_orders`' signature, `venue_cancel` is `cancel_venue_order`'s and
-    `venue_holdings` is `read_venue_holdings`'. None, the engine's construction, reads the module's
+    `venue_holdings` is `read_venue_book`'. None, the engine's construction, reads the module's
     own at call time, so a test can replace it before any executor exists.
     """
 
@@ -922,6 +995,9 @@ class ProbeExecutor:
         # Cache never let go -- a hand close the state machine refused, or a settled lot the Cache
         # holds as a margin position.
         self._venue_correction: dict[str, float] = {}
+        # The newest book a settle's read answered (`_settle_positions_from_venue`), None until one
+        # does: a read that fails leaves the previous book standing, its `read_at` its age.
+        self._venue_book: VenueBook | None = None
         # The socket endpoints the client has reported down and not yet back, and the re-read pass's
         # tries left, set by an endpoint's return and by a mint with no endpoint down: the pass runs
         # on the next tick with nothing in flight, and a read that fails spends one try, or closes the
@@ -3724,32 +3800,39 @@ class ProbeExecutor:
         held = self._cache.positions_open(instrument_id=InstrumentId.from_str(INSTRUMENT_IDS[symbol]))
         return sum(float(p.signed_qty) for p in held)
 
-    def _settle_positions_from_venue(self, moment: str) -> None:
-        """The venue's own holdings settle the position gauge where the Cache disagrees: at the startup
-        pass, after its order read and before its cancels, and at the end of every re-read pass whose reads
-        answered -- on the two passes' nonce terms, nothing of this process sent or in flight -- the venue's
-        figure is published for every symbol the read answers, and its difference from the Cache's net is
-        kept for `_publish_fill`, so a fill between two passes moves the gauge from the venue's figure. What
-        the Cache never took, a hand margin open or a fill made while the engine was down, reads here; what
-        it never let go, a hand close it refused or a settled lot it holds as a margin position, reads here
-        too, the settled lot by the coin's spot balance. A read that fails logs WARNING and the gauge keeps
-        its reading until the next pass, the seed's fold at the first; a disagreement logs WARNING per
-        symbol, since it names a hand act or a fill this engine never saw. The read serves the gauge alone,
-        so with no metrics hook installed, the exporter off, nothing is read. Wrapped as `_publish_fill` is:
-        telemetry never alters what this engine does."""
-        if _metrics is None:
-            return
+    def _settle_positions_from_venue(self, moment: str) -> bool:
+        """The venue's own book, read and kept on `self._venue_book`, settles the position gauge where the
+        Cache disagrees (`_settle_from_book`): at the startup pass, after its order read and before its
+        cancels, and at the end of every re-read pass whose reads answered -- on the two passes' nonce
+        terms, nothing of this process sent or in flight. A read that fails logs WARNING and returns False,
+        the previous book and the gauge's reading standing until the next pass, the seed's fold at the
+        first; a read that answers returns True. The read is made with no metrics hook installed too, the
+        exporter off: the book it keeps is not the gauge's alone."""
         try:
-            held = (self._venue_holdings or read_venue_holdings)()
+            book = (self._venue_holdings or read_venue_book)()
         except Exception:
             logger.warning(
                 "the venue's holdings could not be read at %s -- the position gauge keeps its reading until the next pass",
                 moment,
                 exc_info=True,
             )
-            return
+            return False
+        self._venue_book = book
+        self._settle_from_book(book, moment)
+        return True
+
+    def _settle_from_book(self, book: VenueBook, moment: str) -> None:
+        """The settle's apply half over a book in hand: the venue's figure is published for every symbol
+        `book.held` answers, and its difference from the Cache's net is kept for `_publish_fill`, so a fill
+        between two passes moves the gauge from the venue's figure. What the Cache never took, a hand
+        margin open or a fill made while the engine was down, reads here; what it never let go, a hand
+        close it refused or a settled lot it holds as a margin position, reads here too, the settled lot by
+        the coin's spot balance. A disagreement logs WARNING per symbol, since it names a hand act or a
+        fill this engine never saw; the WARNING and the difference stand with no metrics hook installed,
+        and the publish alone waits on one. Wrapped as `_publish_fill` is: telemetry never alters what this
+        engine does."""
         try:
-            for symbol, venue_qty in sorted(held.items()):
+            for symbol, venue_qty in sorted(book.held.items()):
                 cache_qty = self._cache_net(symbol)
                 self._venue_correction[symbol] = venue_qty - cache_qty
                 if abs(venue_qty - cache_qty) > FLAT_TOLERANCE:
@@ -3760,6 +3843,9 @@ class ProbeExecutor:
                         cache_qty,
                         moment,
                     )
+            if _metrics is None:
+                return
+            for symbol, venue_qty in sorted(book.held.items()):
                 _metrics.set_position(symbol, venue_qty)
         except Exception:
             logger.exception("executor position settle raised -- continuing")

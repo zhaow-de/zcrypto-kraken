@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -474,6 +475,26 @@ def resolve_base(code: str, bases: frozenset[str]) -> str | None:
         if candidate and candidate in bases:
             return candidate
     return None
+
+
+def earn_wallet_base(code: str, bases: frozenset[str]) -> str | None:
+    """The base an earn or staking code holds, or None. Kraken's codes carry a suffix after a dot
+    (`SOL.F`, `XBT.M`) or a lock period (`DOT28.S`, `ETH2`), cut here before `resolve_base` reads the
+    rest. The plan-drafting helper's export refusal and the engine's book read both read it, so the
+    two cannot drift apart."""
+    return resolve_base(re.sub(r"\d+$", "", code.split(".")[0]), bases)
+
+
+def wallet_base(code: str, bases: frozenset[str]) -> tuple[str, bool] | None:
+    """`(base, False)` for a spot code `resolve_base` maps, `(base, True)` for an earn or staking code
+    `earn_wallet_base` maps, else None. The earn arm reads the code again with a leading `X` restored:
+    the pinned adapter's CASH read strips one from Kraken's code (`XBT.M` reads `BT.M`, `XDG.F` `DG.F`,
+    `XRP.F` `RP.F`), which the rule does not map as spelled."""
+    base = resolve_base(code, bases)
+    if base is not None:
+        return base, False
+    base = earn_wallet_base(code, bases) or earn_wallet_base("X" + code, bases)
+    return None if base is None else (base, True)
 
 
 def choose_pair(base: str, listing: dict[str, Any]) -> str | None:

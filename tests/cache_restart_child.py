@@ -96,6 +96,7 @@ node_module.read_system_status = _venue_online
 executor_module.read_venue_orders = partial(executor_module.read_venue_orders, base_url=CONFIG["base_url"])
 executor_module.cancel_venue_order = partial(executor_module.cancel_venue_order, base_url=CONFIG["base_url"])
 executor_module.read_venue_holdings = partial(executor_module.read_venue_holdings, base_url=CONFIG["base_url"])
+executor_module.read_venue_book = partial(executor_module.read_venue_book, base_url=CONFIG["base_url"])
 executor_module.read_venue_fills = partial(executor_module.read_venue_fills, base_url=CONFIG["base_url"])
 executor_module.read_venue_positions = partial(executor_module.read_venue_positions, base_url=CONFIG["base_url"])
 _production_bare_client = executor_module._bare_client
@@ -125,6 +126,7 @@ def _refuse_production_defaults() -> None:
             executor_module.read_venue_orders,
             executor_module.cancel_venue_order,
             executor_module.read_venue_holdings,
+            executor_module.read_venue_book,
             executor_module.read_venue_fills,
             executor_module.read_venue_positions,
         )

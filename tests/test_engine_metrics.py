@@ -70,6 +70,7 @@ def _no_production_venue_read(monkeypatch):
 
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
+    monkeypatch.setattr(executor_module, "read_venue_book", _refuse_holdings)
 
 
 def _base(asset: str) -> float:
@@ -1768,7 +1769,7 @@ def test_a_raising_ledger_writer_freezes_the_heartbeat_while_the_idle_refresh_mo
     reason the gap is monitored rather than merely documented: reverse the first and the ledger
     could fail silently for days behind a heartbeat that keeps ticking; drop the second and the
     refresh would tick it for the ledger."""
-    from test_engine_executor import StubClient
+    from test_engine_executor import StubClient, _VenueHoldings
 
     from cli.engine.execgate import KILL_FILE, exec_dir
     from cli.engine.executor import ProbeExecutor, set_executor_hooks
@@ -1784,7 +1785,9 @@ def test_a_raising_ledger_writer_freezes_the_heartbeat_while_the_idle_refresh_mo
     sink = command._make_exec_sink(gate, tmp_path / "journal", None, exec_gauges, None)
     clock = types.SimpleNamespace(now=t0)
     config = EngineConfig(journal_dir=tmp_path / "journal", store_dir=tmp_path / "store")
-    executor = ProbeExecutor(client=StubClient(), gate=gate, config=config, clock=lambda: clock.now)
+    executor = ProbeExecutor(
+        client=StubClient(), gate=gate, config=config, clock=lambda: clock.now, venue_holdings=_VenueHoldings()
+    )
     set_executor_hooks(publish_verdict=exec_gauges.update)
     try:
         sink(_sink_result(t0), t0, 1.0)  # one healthy cycle: the heartbeat is t0
@@ -1841,6 +1844,8 @@ def test_a_production_venue_read_is_refused_here_before_any_client_is_built(monk
         executor_module.read_venue_orders(NOW)
     with pytest.raises(pytest.fail.Exception, match="the production venue holdings read"):
         executor_module.read_venue_holdings()
+    with pytest.raises(pytest.fail.Exception, match="the production venue holdings read"):
+        executor_module.read_venue_book()
 
 
 # --- run(): the execution metrics, their seed, and the executor hooks ---------------------------

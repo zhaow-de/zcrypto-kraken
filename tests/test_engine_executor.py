@@ -659,8 +659,9 @@ def _no_production_venue_read(monkeypatch):
     trade credentials, and a developer's shell may hold them. A test that needs the venue's orders
     hands the executor its own reader, one that needs the re-cancel its own canceller, and `_executor`
     hands every case an empty holdings answer; reaching a default fails the test through every
-    `except Exception` on the way, because `pytest.fail` raises a BaseException. The cancel's and the
-    holdings read's wraps let a call with a `base_url` through, the loopback cases' own, since those
+    `except Exception` on the way, because `pytest.fail` raises a BaseException. The cancel's wrap and
+    the two holdings reads' -- `read_venue_book`, the seam's default, and `read_venue_holdings`, which
+    answers through it -- let a call with a `base_url` through, the loopback cases' own, since those
     reach the real client on purpose."""
 
     def _refuse(since, **kwargs):
@@ -680,6 +681,13 @@ def _no_production_venue_read(monkeypatch):
             pytest.fail("a test reached the production venue holdings read -- pass venue_holdings")
         return holdings(base_url=base_url)
 
+    book = executor_module.read_venue_book
+
+    def _refuse_book(*, base_url=None):
+        if base_url is None:
+            pytest.fail("a test reached the production venue book read -- pass venue_holdings")
+        return book(base_url=base_url)
+
     def _refuse_fills(since, **kwargs):
         pytest.fail(f"a test reached the production venue fills read (since {since.isoformat()}) -- pass venue_fills")
 
@@ -689,6 +697,7 @@ def _no_production_venue_read(monkeypatch):
     monkeypatch.setattr(executor_module, "read_venue_orders", _refuse)
     monkeypatch.setattr(executor_module, "cancel_venue_order", _refuse_cancel)
     monkeypatch.setattr(executor_module, "read_venue_holdings", _refuse_holdings)
+    monkeypatch.setattr(executor_module, "read_venue_book", _refuse_book)
     # `raising=False`: the two reads land with their source fence, and the cases fail on their own terms before it.
     monkeypatch.setattr(executor_module, "read_venue_fills", _refuse_fills, raising=False)
     monkeypatch.setattr(executor_module, "read_venue_positions", _refuse_positions, raising=False)
@@ -867,11 +876,16 @@ def _cancel_venue_order(*args, **kwargs):
 
 
 class _VenueHoldings:
-    """The executor's `venue_holdings` reader: answers `held`, which a test moves between two passes
-    as the account moves, or raises `raises` instead, and counts its calls."""
+    """The executor's `venue_holdings` reader: answers a book of `held`, which a test moves between two
+    passes as the account moves, and of the EUR and earn figures it is handed, or raises `raises`
+    instead, and counts its calls. A stub carries no margin, so its spot `balances` are its `held` per
+    base."""
 
-    def __init__(self, held=None, *, raises=None):
+    def __init__(self, held=None, *, raises=None, eur_total=0.0, eur_free=0.0, earn=None):
         self.held = {} if held is None else dict(held)
+        self.eur_total = eur_total
+        self.eur_free = eur_free
+        self.earn = {} if earn is None else dict(earn)
         self.calls = 0
         self._raises = raises
 
@@ -879,7 +893,14 @@ class _VenueHoldings:
         self.calls += 1
         if self._raises is not None:
             raise self._raises
-        return dict(self.held)
+        return executor_module.VenueBook(
+            held=dict(self.held),
+            balances={symbol.split("/")[0]: qty for symbol, qty in self.held.items() if symbol.endswith("/EUR")},
+            eur_total=self.eur_total,
+            eur_free=self.eur_free,
+            earn=dict(self.earn),
+            read_at=NOW,
+        )
 
 
 class _VenuePositions:
@@ -6808,7 +6829,7 @@ def test_cancel_venue_order_refuses_without_credentials_before_building_a_client
         _cancel_venue_order(_TXID, "BTC/EUR.KRAKEN", base_url="http://127.0.0.1:9")
 
 
-# --- read_venue_holdings against the loopback, and the settle it feeds at the two passes ------------
+# --- read_venue_book and read_venue_holdings against the loopback, and the settle they feed at the two passes
 
 
 def test_read_venue_holdings_answers_every_traded_symbol_with_its_margin_position_and_the_coins_spot_lot(_loopback_credentials):
@@ -6843,14 +6864,14 @@ def test_read_venue_holdings_reads_an_empty_positions_list_as_a_flat_margin_book
         venue.balances = {"XXBT": kraken_loopback.balance("0.0003000000"), "ZEUR": kraken_loopback.balance("100.0000")}
 
         def _holdings():
-            reads.append(_read_venue_holdings(base_url=venue.base_url))
+            reads.append(executor_module.read_venue_book(base_url=venue.base_url))
             return reads[-1]
 
         ex = _executor(tmp_path, venue_holdings=_holdings)
         ex.on_timer(NOW)
 
-    assert reads == [pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0003})]
-    assert metrics.positions == sorted(reads[0].items())
+    assert [book.held for book in reads] == [pytest.approx(dict.fromkeys(INSTRUMENT_IDS, 0.0) | {"BTC/EUR": 0.0003})]
+    assert metrics.positions == sorted(reads[0].held.items())
     assert venue.private_calls == ["TradeVolume", "OpenPositions", "BalanceEx"]
 
 
@@ -6906,6 +6927,40 @@ def test_read_venue_holdings_refuses_a_positions_answer_of_none_and_the_settle_p
             "the venue answered nothing for the margin positions -- it is never read as a flat margin book",
         )
     ]
+
+
+def test_read_venue_book_totals_the_spot_eur_row_and_eur_m_and_the_spot_free_beside_the_holdings(_loopback_credentials):
+    with kraken_loopback.serve() as venue:
+        venue.balances["ZEUR"] = {"balance": "1000.0000", "hold_trade": "150.0000"}
+        # EUR under an earn code: the mark's, never the budget's
+        venue.balances["EUR.M"] = {"balance": "100.0000", "hold_trade": "0.0000"}
+        # outside the mark until the owed read says what it holds
+        venue.balances["EUR.HOLD"] = {"balance": "5.0000", "hold_trade": "0.0000"}
+        venue.balances["XXBT"] = {"balance": "0.00100000", "hold_trade": "0.00000000"}
+        venue.positions["TPOSAA-BBBBB-CCCCC1"] = kraken_loopback.margin_position("XBTEUR", volume="0.00200000")
+        book = executor_module.read_venue_book(base_url=venue.base_url)
+        held = executor_module.read_venue_holdings(base_url=venue.base_url)
+    assert book.eur_total == 1100.0 and book.eur_free == 850.0
+    assert book.held["BTC/EUR"] == pytest.approx(0.003) and book.balances["BTC"] == 0.001  # the margin long in held alone
+    assert held == book.held
+
+
+@pytest.mark.parametrize(
+    ("earn", "spot", "base"),
+    [("SOL.F", "SOL", "SOL"), ("XBT.M", "XXBT", "BTC"), ("XDG.F", "XXDG", "DOGE"), ("XRP.F", "XXRP", "XRP")],
+)
+def test_read_venue_book_keeps_a_basket_coins_earn_coded_balance_apart_and_the_draft_refuses_its_held(
+    _loopback_credentials, earn, spot, base
+):
+    with kraken_loopback.serve() as venue:
+        venue.balances[spot] = {"balance": "0.5000000000", "hold_trade": "0.0000000000"}
+        venue.balances[earn] = {"balance": "2.0000000000", "hold_trade": "0.0000000000"}  # served by Kraken's own code
+        book = executor_module.read_venue_book(base_url=venue.base_url)
+        # the mark's figure, apart from held
+        assert book.earn == {base: 2.0} and book.held[f"{base}/EUR"] == 0.5 and book.balances[base] == 0.5
+        assert re.search(rf"2 {base} is held outside the spot wallet.*move it back to spot", book.earn_refusal() or "")
+        del venue.balances[earn]
+        assert executor_module.read_venue_book(base_url=venue.base_url).earn_refusal() is None
 
 
 def test_every_basket_base_has_a_euro_pair_that_carries_its_spot_balance():
@@ -7038,6 +7093,14 @@ def test_the_venues_holdings_failing_to_read_keeps_the_gauges_reading_and_logs_a
     assert [r.getMessage() for r in warnings if "holdings" in r.getMessage()] == [
         "the venue's holdings could not be read at the startup pass -- the position gauge keeps its reading until the next pass"
     ]
+
+
+def test_the_settle_keeps_the_book_it_read_and_reads_with_no_metrics_hook_installed(tmp_path):
+    set_executor_hooks()
+    holdings = _VenueHoldings({"BTC/EUR": 0.001}, eur_total=1000.0, eur_free=850.0)
+    ex = _executor(tmp_path, venue_holdings=holdings)
+    ex.on_timer(NOW)  # the startup pass's settle
+    assert holdings.calls == 1 and ex._venue_book.eur_free == 850.0 and ex._venue_book.held["BTC/EUR"] == 0.001
 
 
 # --- D11: the first automatic kill trips ----------------------------------------------------------
