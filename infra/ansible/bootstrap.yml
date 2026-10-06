@@ -1,4 +1,4 @@
-- name: Bootstrap the public VPSes — deploy user + SSH lockdown (keep 22 until converge proves 10022)
+- name: Bootstrap — deploy user + SSH lockdown (keep 22 until converge proves 10022)
   hosts: capture_host:cache_host:mon_host:hc_host
   gather_facts: false
   vars:
