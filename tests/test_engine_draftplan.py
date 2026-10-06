@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 import cli.engine.command as command
+import cli.engine.draftplan as draftplan
 from cli.__main__ import app
 from cli.engine.draftplan import (
     BOX_FIRST_DAY,
@@ -186,7 +187,18 @@ def _leg(result, symbol: str) -> LegDecision:
     return next(d for d in result.decisions if d.symbol == symbol)
 
 
-def _decide(symbol="SOL/EUR", *, weight=0.0, price=100.0, ordermin=0.06, lot_step=1e-08, held=0.0, venue_b=0.0, exiting=False):
+def _decide(
+    symbol="SOL/EUR",
+    *,
+    weight=0.0,
+    price=100.0,
+    ordermin=0.06,
+    lot_step=1e-08,
+    held=0.0,
+    venue_b=0.0,
+    exiting=False,
+    eur_per_weight=None,
+):
     return decide_leg(
         symbol,
         weight=weight,
@@ -196,6 +208,7 @@ def _decide(symbol="SOL/EUR", *, weight=0.0, price=100.0, ordermin=0.06, lot_ste
         engine_held=held,
         venue_b=venue_b,
         exiting=exiting,
+        **({} if eur_per_weight is None else {"eur_per_weight": eur_per_weight}),
     )
 
 
@@ -369,6 +382,15 @@ def test_a_negative_target_on_a_flat_leg_shorts_nothing():
     assert (leg.outcome, leg.side) == ("on-target", None)
 
 
+def test_decide_leg_prices_the_target_at_the_eur_per_weight_it_is_handed():
+    leg = _decide(weight=0.1, price=100.0, eur_per_weight=1000.0)
+    assert leg.target_eur == 100.0 and leg.outcome == "placed" and leg.notional_eur == 100.0
+
+
+def test_decide_leg_without_the_keyword_prices_at_the_hand_windows_constant():
+    assert _decide(weight=0.1, price=100.0).target_eur == 72.0
+
+
 # ---- cash, the cap and the split -----------------------------------------------------------------
 
 
@@ -452,6 +474,50 @@ def test_a_plan_closes_before_it_would_pass_95_eur():
 def test_an_intent_over_the_cap_on_its_own_is_refused():
     with pytest.raises(DraftPlanError, match="over the 95 EUR plan cap on its own"):
         assemble_plans([_placed("BTC/EUR", "buy", notional=95.01)])
+
+
+def test_trim_buys_to_cash_takes_the_reserve_it_is_handed_and_names_it_in_the_reason():
+    buys = [_placed("SOL/EUR", "buy", notional=30.0), _placed("ADA/EUR", "buy", notional=5.0)]
+    trimmed = trim_buys_to_cash(buys, 40.0, cash_reserve_eur=10.0)
+    assert [d.outcome for d in trimmed] == ["placed", "carried"]
+    assert "free EUR - 10" in trimmed[1].reason
+    assert trim_buys_to_cash(buys, 40.0)[0].notional_eur == 30.0 and trim_buys_to_cash(buys, 40.0)[1].notional_eur == 5.0
+
+
+def test_assemble_plans_with_no_cap_and_no_split_returns_one_plan_carrying_every_placed_leg():
+    legs = [
+        _placed("BTC/EUR", "buy", notional=160.0),
+        *[_placed(s, "buy", notional=20.0) for s in ("ETH/EUR", "SOL/EUR", "XRP/EUR")],
+    ]
+    plans = assemble_plans(legs, max_intents=None, plan_cap_eur=None)
+    assert len(plans) == 1 and [d.symbol for d in plans[0]] == ["BTC/EUR", "ETH/EUR", "SOL/EUR", "XRP/EUR"]
+    with pytest.raises(DraftPlanError):
+        assemble_plans(legs)
+    assert assemble_plans([], max_intents=None, plan_cap_eur=None) == []
+
+
+def test_trim_to_plan_cap_carries_sells_then_buys_from_the_smallest_until_the_plan_fits_the_cap():
+    legs = [
+        _placed("BTC/EUR", "sell", qty=0.004, price=100000.0),
+        _placed("ETH/EUR", "sell", qty=0.1, price=3000.0),
+        _placed("SOL/EUR", "buy", notional=250.0),
+        _placed("ADA/EUR", "buy", notional=200.0),
+        _placed("XRP/EUR", "buy", notional=50.0),
+    ]
+    trimmed = draftplan.trim_to_plan_cap(legs, 1000.0)  # sells 700, buys 500: XRP then ADA carry, SOL stays at 950
+    assert [(d.symbol, d.outcome) for d in trimmed] == [
+        ("BTC/EUR", "placed"),
+        ("ETH/EUR", "placed"),
+        ("SOL/EUR", "placed"),
+        ("ADA/EUR", "carried"),
+        ("XRP/EUR", "carried"),
+    ]
+    assert "over the plan cap 1000 EUR" in trimmed[3].reason and trimmed[3].notional_eur is None
+    assert draftplan.trim_to_plan_cap(legs, 2000.0) == legs
+    sells_over = draftplan.trim_to_plan_cap(
+        [_placed("BTC/EUR", "sell", qty=0.008, price=100000.0), _placed("ETH/EUR", "sell", qty=0.1, price=3000.0)], 1000.0
+    )
+    assert [(d.symbol, d.outcome) for d in sells_over] == [("BTC/EUR", "placed"), ("ETH/EUR", "carried")]
 
 
 # ---- the ruling's refusals on a plan -----------------------------------------------------------------
