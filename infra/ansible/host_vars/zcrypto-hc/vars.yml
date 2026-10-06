@@ -12,5 +12,6 @@ deploy_authorized_key: "{{ lookup('file', playbook_dir ~ '/files/deploy_zcrypto-
 # The superuser's mailbox, where the clone's sudo-mode codes land, and the sender verified in SES.
 hc_admin_email: zhaow.km@gmail.com
 hc_email_from: z-no-reply@zhaow.pro
+hc_email_host: email-smtp.eu-west-1.amazonaws.com
 # Empty until the clone holds the node's own check.
 hc_selfcheck_healthcheck_url: ""
