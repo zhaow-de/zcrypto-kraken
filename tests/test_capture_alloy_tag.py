@@ -126,6 +126,9 @@ VERBATIM = [
     ),
     ("ansible.builtin.command", """docker inspect grafana-alloy --format '{{ "{{" }}.Config.Image{{ "}}" }}'"""),
 ]
+# Two keywords reach the module past the module key the lists read: `args` merges into its arguments, and `environment`
+# into the command's process, where a COMPOSE_FILE retargets the recreate. No tagged task carries either.
+ARGUMENT_KEYWORDS = ("args", "environment")
 
 
 def _module_entry(task: dict) -> tuple[str, object] | None:
@@ -150,14 +153,43 @@ def _admitted(task: dict) -> bool:
     return entry in VERBATIM
 
 
+def _refusal(task: dict) -> str | None:
+    carried = [key for key in ARGUMENT_KEYWORDS if key in task]
+    if carried:
+        return f"{task['name']}: carries {' and '.join(carried)}"
+    return None if _admitted(task) else f"{task['name']}: not on the Alloy part's allowlist"
+
+
 def test_no_tagged_task_reaches_the_capture_daemon():
     for task, _, gates in _tagged():
-        assert _admitted(task), task["name"]
+        assert (refusal := _refusal(task)) is None, refusal
         module, args = _module(task)
         assert "restart capture service" not in _notify(task), task["name"]
         assert args.get("dest") not in CAPTURE_DAEMON_FILES and args.get("src") not in CAPTURE_DAEMON_SOURCES, task["name"]
         assert not module.endswith(("systemd", "systemd_service", "service")), task["name"]
         assert "capture_image_digest" not in _read_text(task, gates), task["name"]
+
+
+@pytest.mark.parametrize(
+    ("name", "keyword", "value"),
+    [
+        pytest.param(
+            "remove the pre-conf layout's stale alloy config",
+            "args",
+            {"dest": "/opt/zcrypto-capture/compose.yaml"},
+            id="args",
+        ),
+        pytest.param(
+            "bring the alloy container to the digest, recreated when its secrets file changed",
+            "environment",
+            {"COMPOSE_FILE": "/opt/zcrypto-capture/compose.yaml"},
+            id="environment",
+        ),
+    ],
+)
+def test_a_tagged_task_carrying_args_or_environment_is_refused_by_the_keyword(name, keyword, value):
+    refusal = _refusal({**find_task(load_tasks(CAPTURE), name), keyword: value})
+    assert refusal is not None and keyword in refusal and name in refusal, refusal
 
 
 def _role_yaml() -> list[Path]:

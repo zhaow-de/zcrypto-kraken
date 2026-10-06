@@ -1,6 +1,4 @@
-"""A container role's Alloy part brings the container to the digest committed for the host, each task read off the role's
-YAML and evaluated through Ansible's templar: the operand refusal and its echo, the recreate, the image read and its
-assert."""
+"""Each container role's Alloy tasks, read off its YAML and evaluated through Ansible's templar over constructed variables."""
 
 from __future__ import annotations
 
