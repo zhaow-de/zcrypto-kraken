@@ -17,6 +17,7 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 
 - The surface and the command that reads each part of it are spec 00122's measured basis.
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
+- Spec 00123 (one Alloy version across the fleet, T0219) puts requirements on this plan's Task 9 and the node's sitting: the node's Alloy is the fleet's one version (the fleet file's, never a release name), its dry start runs against that version, it takes a `fleet-pins.md` row, and its sitting runs after the Alloy wave closes, in that package's slot; a sitting run before that package merges meets none of them on this plan's side.
 
 ## Done so far
 
