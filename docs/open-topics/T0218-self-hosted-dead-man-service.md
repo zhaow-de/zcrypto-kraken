@@ -1,6 +1,6 @@
 ---
 status: partial
-ripe_when: the pull request from `docs/t0218-self-hosted-deadman`, which carries the spec and plan pair and Tasks 1–7, is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/docs/t0218-self-hosted-deadman'` prints its merge commit
+ripe_when: the pull request from `docs/t0218-self-hosted-deadman` is merged into `develop` — check `git fetch -q origin && git log origin/develop --first-parent --merges --oneline --grep='from zhaow-de/docs/t0218-self-hosted-deadman'` prints its merge commit
 ---
 
 # Self-hosting the dead-man service: a tailor-made healthchecks.io replacement
@@ -17,7 +17,7 @@ The dead-man checks are the fleet's last line: they page when a host, a daemon o
 
 - The surface and the command that reads each part of it are spec 00122's measured basis.
 - T0085 names the eleven ping URLs as in scope for the pre-go-live rotation and the two API keys' shapes; T0083 (archived) set the mutual watchdog between Grafana and healthchecks.io.
-- Spec 00123 (one Alloy version across the fleet, T0219) puts requirements on this plan's Task 9 and the node's sitting: the node's Alloy is the fleet's one version (the fleet file's, never a release name), its dry start runs against that version, it takes a `fleet-pins.md` row, and its sitting runs after the Alloy wave closes, in that package's slot; a sitting run before that package merges meets none of them on this plan's side.
+- Spec 00123 (one Alloy version across the fleet, T0219; on `feat/t0219-one-alloy-version` until it merges) asks of Task 9, under *What this asks of plans 00121 and 00122*: the node's Alloy installed at the fleet file's version, held and pinned, dry-started at that version, under the `alloy` tag, with a `fleet-pins.md` row.
 
 ## Done so far
 
@@ -35,9 +35,9 @@ The first pull request, from `docs/t0218-self-hosted-deadman`, carries the pair 
 
 ## Suggested next steps
 
-- R-X, the remainder's first step and the reason its trigger is the first pull request's merge, since it runs from merged `develop`: the unit sandbox's read on `zcrypto-mon`, then `infra/ansible/scripts/converge.sh site.yml --limit zcrypto-mon --tags mon`, its real pass changing only the files the extraction moved and a second run reading `changed=0 failed=0`, before Task 8's pull request opens.
+- R-X, from merged `develop` before the second pull request opens: the plan's Rollout R-X, the observability node's converge onto the shared code.
 - The second pull request: P1 (the deploy keypair) before Task 8; Task 8 (the node joins the fleet), Task 9 (the `hc` role) and Task 10 (the clone's self-check), with P2's (the two generated vault values) and P3's (the SES SMTP credential) commits; after its merge R0 to R7, the node built and read, and P4 (the owner's first sign-in and the project).
 - The third pull request: P5 (the three keys and the uuid) before Task 12; Task 11 (`hc-provision.py`), Task 12 (the pingers' URL scheme), Task 13 (the readers), Task 14 (the node's rule group, its runbook page, its Fleet health row and the observability node's Grafana error-log rule), Task 16 (four skills take the service and its node) and Task 17 (the backup's off-host copy), P6 (the NAS's pull key) before Task 17; the gate re-reads the cutover's release before it opens, and R8's provisioning runs from its branch before it merges.
-- The cutover sitting after the third merge: the rest of R8, R9 (ops), R10 (the observability node), R11 (the NAS), R12 (the capture pair) and R13 (the checks' first clean read, again the next morning), the plan's Rollback for a host whose move misbehaves, then R-records-1.
+- The cutover sitting, after the third merge and spec 00123's Alloy wave: the rest of R8, R9 (ops), R10 (the observability node), R11 (the NAS), R12 (the capture pair), R13 (the checks' first clean read, again the next morning), the Rollback as needed, then R-records-1.
 - The fourth pull request: Task 15 (the drills and the surfaces' sweep), opened once R13 reads clean and merged before R15.
 - After the box closes, 2026-11-01 or a week later: R14 (the engine's move at the box's deferred disarm converge, inside the inter-cycle gap), R15 (the three drills), R16 (retirement, after R14's first clean day and R15's three drill entries) and R-records-2.
