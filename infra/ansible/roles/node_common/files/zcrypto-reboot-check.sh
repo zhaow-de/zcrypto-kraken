@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installed by the `mon` role at /usr/local/sbin/zcrypto-reboot-check, a copy of the capture role's;
+# Installed by the `node_common` role at /usr/local/sbin/zcrypto-reboot-check, a copy of the capture role's;
 # tests/test_reboot_check.py drives the capture role's and holds this one's program equal to it.
 set -euo pipefail
 

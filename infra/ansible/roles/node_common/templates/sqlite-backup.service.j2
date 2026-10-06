@@ -1,0 +1,13 @@
+# Rendered by the `{{ node_common_role_name }}` Ansible role at /etc/systemd/system/zcrypto-sqlite-backup.service; edit
+# infra/ansible/roles/node_common/templates/sqlite-backup.service.j2 and re-converge.
+[Unit]
+Description=Back up the {{ node_common_sqlite_backup_name }} SQLite database by VACUUM INTO, copy it out and prune both places
+
+[Service]
+Type=oneshot
+# Root, with no User=, DynamicUser= or ProtectSystem= line, as the ops units that drive docker run: the runner reaches
+# the Docker socket, which DynamicUser= refuses, and the copy writes under the destination, which ProtectSystem=strict
+# makes read-only. Each line is quoted whole, since its value carries spaces.
+Environment="SQLITE_BACKUP_RUNNER={{ node_common_sqlite_backup_runner }}"
+Environment="SQLITE_BACKUP_COPY={{ node_common_sqlite_backup_copy }}"
+ExecStart=/usr/local/sbin/zcrypto-sqlite-backup {{ node_common_sqlite_backup_name }} {{ node_common_sqlite_backup_db }} {{ node_common_sqlite_backup_staging }} {{ node_common_sqlite_backup_dest }} {{ node_common_sqlite_backup_keep_days }} {{ node_common_sqlite_backup_textfile }}

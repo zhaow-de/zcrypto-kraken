@@ -1,0 +1,13 @@
+# Rendered by the `{{ node_common_role_name }}` Ansible role at /etc/systemd/system/zcrypto-sqlite-backup.timer; edit
+# infra/ansible/roles/node_common/templates/sqlite-backup.timer.j2 and re-converge.
+[Unit]
+Description=Nightly backup of the {{ node_common_sqlite_backup_name }} SQLite database
+
+[Timer]
+# No Persistent=: a run caught up at boot can start before the container its runner execs into; a missed night shows
+# as the gauge's age.
+OnCalendar={{ node_common_sqlite_backup_on_calendar }}
+Unit=zcrypto-sqlite-backup.service
+
+[Install]
+WantedBy=timers.target

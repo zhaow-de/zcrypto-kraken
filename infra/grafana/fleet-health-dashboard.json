@@ -3402,6 +3402,81 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 920,
+      "type": "row",
+      "title": "Dead-man node",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 136
+      }
+    },
+    {
+      "id": 925,
+      "type": "timeseries",
+      "title": "Dead-man node — age of the last backup",
+      "description": "How long since the dead-man node last backed up its database. It runs nightly, so a healthy line climbs to a day and drops; the red line is 26 hours, one night's run and two hours' grace. The node ships its metrics to the observability node alone, so this panel stays empty on Grafana Cloud; on the observability node's Grafana, no line means the node is not built yet, no backup has succeeded since it was built, or its telemetry is not arriving.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "grafanacloud-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 137
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "expr": "time() - max(zcrypto_sqlite_backup_last_success_timestamp_seconds{host=\"zcrypto-hc\"})",
+          "refId": "A",
+          "legendFormat": "since the last backup"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 93600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
     }
   ],
   "refresh": "1m",

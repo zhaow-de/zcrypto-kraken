@@ -2166,7 +2166,8 @@ def test_the_ops_inode_rule_pages_with_an_hour_left_on_tmp_at_the_fastest_fill_s
 
 
 # --- the observability node's own group: evaluated on the node alone -----------------------------
-_MON_GROUP = "zcrypto-mon"
+# The groups the push leaves off Grafana Cloud, each to the host its rules name.
+NODE_ONLY_GROUPS = {"zcrypto-mon": "zcrypto-mon", "zcrypto-hc": "zcrypto-hc"}
 _MON_RULES = {
     "zcrypto-alloy-dark-mon": ("critical", "901"),
     "zcrypto-mon-disk-low": ("warning", "902"),
@@ -2181,7 +2182,7 @@ _MON_RULES = {
 
 
 def _mon_rules() -> list[dict]:
-    return [r for r in _rules() if r["ruleGroup"] == _MON_GROUP]
+    return [r for r in _rules() if r["ruleGroup"] == "zcrypto-mon"]
 
 
 def _evaluator(rule: dict) -> dict:
@@ -2201,40 +2202,43 @@ def test_the_mon_group_is_its_rules_each_with_its_own_section_and_panel():
 
 def test_the_push_keeps_the_mon_group_off_grafana_cloud_by_default():
     (skipped,) = re.findall(r'^  \*\.grafana\.net\) skip_default="([^"]*)" ;;$', PUSH.read_text(), re.M)
-    assert skipped.split() == [_MON_GROUP]
+    assert sorted(skipped.split()) == sorted(NODE_ONLY_GROUPS)
     dead_men = sorted(r["uid"] for r in _mon_rules() if r["noDataState"] == "Alerting")
     assert dead_men == ["zcrypto-alloy-dark-mon", "zcrypto-mon-ingest-dark"], dead_men
 
 
-def _admits_the_node(op: str, value: str) -> bool:
-    matched = bool(re.fullmatch(value, "zcrypto-mon")) if "~" in op else value == "zcrypto-mon"
+def _admits(op: str, value: str, host: str) -> bool:
+    matched = bool(re.fullmatch(value, host)) if "~" in op else value == host
     return matched if op in ("=", "=~") else not matched
 
 
 def test_a_rule_reads_the_node_exactly_when_it_is_in_the_nodes_group():
-    """A rule outside the group with no `host` matcher is not held here."""
+    """A rule outside the groups with no `host` matcher is not held here, and a group with no rule yet passes."""
     for rule in _rules():
         matchers = [
             (op, value)
             for q in rule["data"]
             for op, value in re.findall(r'\bhost\s*(=~|!=|!~|=)\s*"([^"]*)"', str((q.get("model") or {}).get("expr", "")))
         ]
-        admits_the_node = [(op, value) for op, value in matchers if _admits_the_node(op, value)]
-        if rule["ruleGroup"] != _MON_GROUP:
-            assert not admits_the_node, f"{rule['uid']} is pushed to both stacks and its matcher {admits_the_node} admits the node"
-        elif rule["uid"] == "zcrypto-mon-ingest-dark":
+        if rule["uid"] == "zcrypto-mon-ingest-dark":
+            # It counts every shipper but the observability node, the dead-man node among them.
             assert matchers == [("!=", "zcrypto-mon")], matchers
-        elif rule["uid"] == "zcrypto-mon-shipper-loss":
+            continue
+        for group, host in NODE_ONLY_GROUPS.items():
+            admits = [(op, value) for op, value in matchers if _admits(op, value, host)]
+            if rule["ruleGroup"] != group:
+                assert not admits, f"{rule['uid']} is outside {group} and its matcher {admits} admits {host}"
+        if rule["uid"] == "zcrypto-mon-shipper-loss":
             assert matchers == [], f"it reads each shipper the node holds, and names none: {matchers}"
-        else:
-            assert matchers and set(matchers) == {("=", "zcrypto-mon")}, (rule["uid"], matchers)
+        elif rule["ruleGroup"] in NODE_ONLY_GROUPS:
+            assert matchers and set(matchers) == {("=", NODE_ONLY_GROUPS[rule["ruleGroup"]])}, (rule["uid"], matchers)
 
 
 def test_ingest_dark_pages_ahead_of_every_per_host_alloy_dark_rule():
     ingest = _rule("zcrypto-mon-ingest-dark")
     assert _prom_exprs(ingest) == ['count(up{host!="zcrypto-mon"}) or on() vector(0)']
     assert _evaluator(ingest) == {"type": "lt", "params": [1]}
-    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] != _MON_GROUP]
+    per_host = [r for r in _rules() if r["uid"].startswith("zcrypto-alloy-dark-") and r["ruleGroup"] not in NODE_ONLY_GROUPS]
     assert len(per_host) == 8, [r["uid"] for r in per_host]
     assert all(_duration_seconds(ingest["for"]) < _duration_seconds(r["for"]) for r in per_host)
     assert _duration_seconds(ingest["for"]) < _duration_seconds(_rule("zcrypto-engine-dark-with-exposure")["for"])

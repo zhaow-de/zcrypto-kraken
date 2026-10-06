@@ -218,12 +218,14 @@ def test_the_timer_actually_repeats():
     assert any(l.strip() == "Unit=zcrypto-reboot-check.service" for l in timer.splitlines())
 
 
-# --- the cache, ops and mon roles' copies -------------------------------------------------------
-# The cache nodes, ops and the observability node publish the same flag from a copy of this role's script, timer and unit, so the fleet's
-# reboot-pending series covers them. The copies' comments are their own, naming the role that installs them; what a
-# shell or systemd reads must be this role's, the unit's one variable renamed.
-COPY_ROLES = {"cache": "cache_textfile_dir", "ops": "ops_textfile_dir", "mon": "mon_textfile_dir"}
+# --- the cache and ops roles' copies, and node_common's shared one --------------------------------
+# The cache nodes, ops and the observability node publish the same flag from a copy of this role's script, timer and unit,
+# so the fleet's reboot-pending series covers them. The copies' comments are their own, naming the role that installs them;
+# what a shell or systemd reads must be this role's, the unit's one variable renamed.
+COPY_ROLES = {"cache": "cache_textfile_dir", "ops": "ops_textfile_dir"}
 CACHE_ROLE_DIR = REPO / "infra/ansible/roles/cache"
+NODE_COMMON = REPO / "infra/ansible/roles/node_common"
+MON_ROLE_DIR = REPO / "infra/ansible/roles/mon"
 REBOOT_CHECK_FILES = (
     "files/zcrypto-reboot-check.sh",
     "files/zcrypto-reboot-check.timer",
@@ -235,14 +237,21 @@ def _program(path: Path) -> list[str]:
     return [line for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")]
 
 
-def _resolved_default(role: str, var: str) -> str:
+def _defaults(role: str) -> dict:
+    return yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
+
+
+def _resolved(defaults: dict, value: str) -> str:
     import re
 
-    defaults = yaml.safe_load((REPO / "infra/ansible/roles" / role / "defaults/main.yml").read_text())
-    value = defaults[var]
     while m := re.search(r"\{\{ (\w+) \}\}", value):
         value = value.replace(m.group(0), defaults[m.group(1)])
     return value
+
+
+def _resolved_default(role: str, var: str) -> str:
+    defaults = _defaults(role)
+    return _resolved(defaults, defaults[var])
 
 
 @pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
@@ -250,6 +259,28 @@ def _resolved_default(role: str, var: str) -> str:
 def test_the_copied_reboot_check_is_the_capture_roles_program(role, var, relative):
     copy = [line.replace(var, "capture_textfile_dir") for line in _program(REPO / "infra/ansible/roles" / role / relative)]
     assert copy == _program(ROLE / relative), f"the {role} role's {relative} drifted from the capture role's"
+
+
+@pytest.mark.parametrize("relative", REBOOT_CHECK_FILES)
+def test_the_shared_reboot_check_is_the_capture_roles_program(relative):
+    shared = [
+        line.replace("node_common_reboot_check_textfile_dir", "capture_textfile_dir") for line in _program(NODE_COMMON / relative)
+    ]
+    assert shared == _program(ROLE / relative), f"node_common's {relative} drifted from the capture role's"
+
+
+def _mon_reboot_check_include() -> dict:
+    tasks = _flatten(yaml.safe_load((MON_ROLE_DIR / "tasks/main.yml").read_text()))
+    (include,) = [t for t in tasks if t.get("ansible.builtin.include_role", {}).get("tasks_from") == "reboot-check"]
+    return include
+
+
+def test_the_mon_role_includes_the_shared_reboot_check_with_its_two_variables():
+    include = _mon_reboot_check_include()
+    assert include["ansible.builtin.include_role"] == {"name": "node_common", "tasks_from": "reboot-check"}
+    assert include["vars"] == {"node_common_reboot_check_textfile_dir": "{{ mon_textfile_dir }}", "node_common_role_name": "mon"}
+    stray = [relative for relative in REBOOT_CHECK_FILES if (MON_ROLE_DIR / relative).exists()]
+    assert not stray, f"the mon role carries a reboot-check copy no test holds: {stray}"
 
 
 @pytest.mark.parametrize("role,var", COPY_ROLES.items(), ids=list(COPY_ROLES))
@@ -288,11 +319,11 @@ def test_the_cache_unit_writes_into_the_directory_the_cache_alloy_scrapes():
 
 def test_the_mon_unit_writes_into_the_directory_the_mon_alloy_scrapes():
     """The node's Alloy is the apt package, not a container: it reads the host's own path, with no /host/root in front."""
-    mon = REPO / "infra/ansible/roles/mon"
-    unit = (mon / "templates/zcrypto-reboot-check.service.j2").read_text()
-    unit = unit.replace("{{ mon_textfile_dir }}", _resolved_default("mon", "mon_textfile_dir"))
+    textfile_dir = _resolved(_defaults("mon"), _mon_reboot_check_include()["vars"]["node_common_reboot_check_textfile_dir"])
+    unit = (NODE_COMMON / "templates/zcrypto-reboot-check.service.j2").read_text()
+    unit = unit.replace("{{ node_common_reboot_check_textfile_dir }}", textfile_dir)
     host_dir = str(Path(next(line for line in unit.splitlines() if line.startswith("ExecStart=")).split()[-1]).parent)
-    alloy = (mon / "files/config.alloy").read_text()
+    alloy = (MON_ROLE_DIR / "files/config.alloy").read_text()
     set_collectors = next(line for line in alloy.splitlines() if line.strip().startswith("set_collectors"))
     # config-selector-ok: the needle carries both quotes, so "textfiles" cannot satisfy it
     assert '"textfile"' in set_collectors, f"the textfile collector is not enabled: {set_collectors.strip()}"

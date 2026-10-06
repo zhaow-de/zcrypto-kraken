@@ -1,0 +1,50 @@
+# Rendered by the `{{ edge_role_name }}` role at /etc/caddy/Caddyfile — edit infra/ansible/roles/edge/templates/Caddyfile.j2.
+# tests/test_infra_{{ edge_role_name }}_role.py holds the routes below.
+{
+	email {{ edge_acme_email }}
+	auto_https disable_redirects
+}
+
+{{ edge_hostname }} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+
+{% for route in edge_basic_auth_routes %}
+	handle {{ route.path }} {
+		basic_auth {
+{% for user in route.users %}
+			{{ user.name }} {{ user.hash }}
+{% endfor %}
+		}
+		reverse_proxy 127.0.0.1:{{ route.port }}
+	}
+
+{% endfor %}
+{% if edge_paths_404 %}
+	@served_without_a_login path {{ edge_paths_404 | join(' ') }}
+	handle @served_without_a_login {
+		respond 404
+	}
+
+{% endif %}
+{% if edge_head_paths %}
+	# Slack for macOS pre-resolves a page link with a cookieless HEAD and opens the browser where Grafana's
+	# redirect ends, /login?redirectTo=..., which sends a signed-in session home. No browser sends HEAD for
+	# a navigation, so answering it here lets the client open the link as written.
+	@a_page_link_pre_resolved_without_a_login {
+		method HEAD
+		path {{ edge_head_paths | join(' ') }}
+		not header_regexp Cookie {{ edge_session_cookie }}=
+	}
+	handle @a_page_link_pre_resolved_without_a_login {
+		respond 200
+	}
+
+{% endif %}
+	handle {
+		reverse_proxy 127.0.0.1:{{ edge_upstream_port }}
+	}
+}
