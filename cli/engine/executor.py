@@ -3417,7 +3417,8 @@ class ProbeExecutor:
         equity and this mark's, the day's base is `_day_base`'s, and the drawdown and the day's loss are each taken in
         bps of the record's NAV. The day-loss hold is re-derived with this boundary's loss in it. A drawdown of
         `_DRAWDOWN_KILL_BPS` latches the kill switch here, ahead of the table, so the plan the draft still assembles
-        meets the backstop.
+        meets the backstop; under a kill file already latched it is logged at WARNING with the figures, and the file
+        keeps its first reason.
 
         A record whose closes lack a base, or that carries no NAV, marks nothing: the figures read None, at WARNING,
         and neither trip is evaluated -- an unpriced coin is not a total loss. A series start or a draft record that
@@ -3446,12 +3447,16 @@ class ProbeExecutor:
         self._day_loss_hold = day_loss_bps >= _DAY_LOSS_HOLD_BPS or _day_loss_held(r for r in records if _record_ts(r) >= day)
         _set_equity(equity)
         _set_drawdown(drawdown_bps)
-        # A kill file already latched keeps its first reason, as the tracking trip's does.
-        if drawdown_bps >= _DRAWDOWN_KILL_BPS and not (exec_dir(self._state_dir) / KILL_FILE).exists():
-            self._trip_kill(
+        if drawdown_bps >= _DRAWDOWN_KILL_BPS:
+            figures = (
                 f"equity {equity:.2f} EUR is {hwm - equity:.2f} EUR under the series' high-water mark of {hwm:.2f} EUR, "
                 f"{drawdown_bps:.0f} bps of the {nav:.0f} EUR NAV"
             )
+            # A kill file already latched keeps its first reason, as the tracking trip's does.
+            if (exec_dir(self._state_dir) / KILL_FILE).exists():
+                logger.warning("%s -- the kill switch is already latched and keeps its first reason", figures)
+            else:
+                self._trip_kill(figures)
         return {
             "equity_eur": equity,
             "hwm_eur": hwm,

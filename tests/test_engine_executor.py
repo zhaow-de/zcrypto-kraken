@@ -11784,3 +11784,86 @@ def test_the_dates_00z_mark_is_the_days_base_ahead_of_the_previous_dates_last(tm
     ex.on_timer(clock.now)
     record = _accum(tmp_path, dawn)
     assert record["day_loss_bps"] == 200.0 and record["day_loss_hold"] is False
+
+
+def test_a_day_loss_hold_whose_records_will_not_read_holds_opens_and_lets_closes_run(tmp_path):
+    """The date's 08Z draft record will not validate: the 12Z boundary's derivation fails at WARNING and holds -- its
+    exec record `reduce_only` with `daily_loss_hold` -- and a plan of an open and a close refuses the open with the
+    reason and starts the close. The probe fails the derivation open and the boundary reads `full`."""
+    boundary = _boundary(NOW)
+    _start_series(tmp_path, boundary.replace(hour=0))
+    broken = accum_record_path(tmp_path / "journal", boundary - timedelta(hours=4))
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text(json.dumps({"schema_version": ACCUM_SCHEMA_VERSION}))
+    client = StubClient()
+    ex = _executor(tmp_path, client=client, venue_holdings=_VenueHoldings({"BTC/EUR": 0.001}))
+    with _executor_errors(logging.WARNING) as records:
+        ex.on_boundary(boundary)
+    exec_12 = _record(tmp_path, boundary)
+    assert exec_12["level"] == GateLevel.REDUCE_ONLY and "daily_loss_hold" in exec_12["reasons"]
+    assert "the date's draft records could not be read -- the daily loss hold refuses opens until they can be" in [
+        r.getMessage() for r in records
+    ]
+
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(), _SPOT_CLOSE]))
+    ex.on_timer(NOW)
+
+    opened = _intent_entry(tmp_path, 0)
+    assert opened["outcome"] == "refused" and "daily_loss_hold" in opened["reasons"], opened
+    assert _intent_outcome(tmp_path, 1) == "pending" and client.subscribed == ["BTC/EUR.KRAKEN"]
+
+
+def test_an_unreadable_series_start_refuses_the_draft_and_is_never_minted_over(tmp_path):
+    """`equity-series-start` reading `not-a-date` under a 15 % drawdown against the series' record: the mark raises on
+    each of the draft's three tries, the record reads `refused` with no figure, the file is byte-identical and nothing
+    trips. The probe reads the record as absent, mints the boundary over it -- hiding the drawdown -- and the draft
+    runs."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=850.0,
+        eur_free=850.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0],
+    )
+    _series_start_path(tmp_path).write_text("not-a-date\n")
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(logging.WARNING) as records:
+        _ticks(ex, clock, 3)
+    record = _accum(tmp_path)
+    assert record["status"] == "refused" and record["legs"] == [] and record["equity_eur"] is None
+    assert _series_start_path(tmp_path).read_text() == "not-a-date\n" and not _kill_file(tmp_path).exists()
+    assert sum("is not an ISO 8601 instant" in r.getMessage() for r in records) == 3
+
+
+def test_a_drawdown_under_a_latched_kill_file_keeps_its_first_reason_and_trips_again_once_it_is_cleared(
+    tmp_path, kill_trip_expected
+):
+    """A kill file an earlier trip latched and a 15 % drawdown: the mark leaves the file's text as it was and logs the
+    figures at WARNING; the file cleared and the series not re-minted, the next boundary's mark trips again with the
+    figures. The probe drops the latch check and the first mark rewrites the reason."""
+    ex, client, clock = _boundary_executor(
+        tmp_path,
+        record_path=RUNG2 / "cycle-12.json",
+        holdings={},
+        eur_total=850.0,
+        eur_free=850.0,
+        now=_RUNG2_12Z + timedelta(minutes=2),
+        series=[1000.0],
+    )
+    first = "2026-10-05T09:13:00+00:00 the reason an earlier trip wrote\n"
+    _kill_file(tmp_path).write_text(first)
+    figures = "equity 850.00 EUR is 150.00 EUR under the series' high-water mark of 1000.00 EUR, 1500 bps of the 1000 EUR NAV"
+    ex.on_boundary(_RUNG2_12Z)
+    with _executor_errors(logging.WARNING) as records:
+        ex.on_timer(clock.now)
+    assert _kill_file(tmp_path).read_text() == first and _accum(tmp_path)["drawdown_bps"] == 1500.0
+    assert f"{figures} -- the kill switch is already latched and keeps its first reason" in [r.getMessage() for r in records]
+
+    _kill_file(tmp_path).unlink()
+    later = _RUNG2_12Z + timedelta(hours=4)
+    _boundary_drafts(ex, clock, later, _rung2_record(tmp_path, cycle_ts=later))
+    kill = _kill_file(tmp_path)
+    assert kill.exists() and kill.read_text().split(" ", 1)[1] == f"{figures}\n"
+    assert _accum(tmp_path, later)["status"] == "refused"
