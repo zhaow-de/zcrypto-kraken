@@ -272,10 +272,10 @@ def test_ansible_operator_messages_carry_no_internal_vocabulary(path, key, text)
     )
 
 
-def _included_descriptions() -> list[tuple[str, int, str]]:
+def _included_descriptions(base: Path = REPO) -> list[tuple[str, int, str]]:
     """What an include passes for a `Description=` line a shared template renders, where the unit walk reads only
     the template's `{{ … }}`."""
-    keys = {"node_common_selfcheck_description", "node_common_selfcheck_timer_description"}
+    keys = {name for line in _shared_description_lines() for name in re.findall(r"\{\{\s*(\w+)\s*\}\}", line)}
     out = []
 
     def walk(node, rel):
@@ -288,11 +288,36 @@ def _included_descriptions() -> list[tuple[str, int, str]]:
             for item in node.value:
                 walk(item, rel)
 
-    for p in sorted((REPO / "infra/ansible/roles").glob("*/tasks/*.yml")):
+    for p in sorted((base / "infra/ansible/roles").glob("*/tasks/*.yml")):
         for document in yaml.compose_all(p.read_text()):
-            walk(document, str(p.relative_to(REPO)))
+            walk(document, str(p.relative_to(base)))
     assert out, "found no include's unit descriptions — the walk is broken, not the tree clean"
     return out
+
+
+def _shared_description_lines() -> list[str]:
+    lines = [
+        line
+        for p in (REPO / "infra/ansible/roles/node_common/templates").glob("*.j2")
+        for line in p.read_text().splitlines()
+        if line.startswith("Description=")
+    ]
+    assert lines, "found no shared template's Description= line — the glob is broken, not the tree clean"
+    return lines
+
+
+def test_a_value_an_include_passes_into_a_shared_units_description_is_walked(tmp_path):
+    tasks = tmp_path / "infra/ansible/roles/probe/tasks"
+    tasks.mkdir(parents=True)
+    (tasks / "main.yml").write_text(
+        "- name: the self-check\n"
+        "  ansible.builtin.include_role: {name: node_common, tasks_from: selfcheck}\n"
+        "  vars: {node_common_selfcheck_description: Check the node, node_common_selfcheck_timer_description: Run it}\n"
+        "- name: the backup\n"
+        "  ansible.builtin.include_role: {name: node_common, tasks_from: sqlite-backup}\n"
+        "  vars: {node_common_sqlite_backup_name: T0218}\n"
+    )
+    assert [hit for _, _, line in _included_descriptions(tmp_path) for hit in _leaks(line)] == ["T0218"]
 
 
 def _systemd_descriptions() -> list[tuple[str, int, str]]:
