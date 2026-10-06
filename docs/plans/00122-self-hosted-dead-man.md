@@ -686,10 +686,10 @@ print("hc_secret_key 64 hex characters:", bool(re.fullmatch(r"[0-9a-f]{64}", vau
 print("hc_admin_password 48 hex characters:", bool(re.fullmatch(r"[0-9a-f]{48}", vault_var("hc_admin_password", node))))
 PY
 )
-git status --porcelain
+git status --porcelain -- ':!docs/reference/deploy-log.jsonl'
 ```
 
-Expected: two lines, each ending `True`; the status names the new file and nothing else. Commit `chore(hc): the dead-man node's two generated vault values`, with the trailer.
+Expected: two `True` lines and the new file alone. Commit `chore(hc): the dead-man node's two generated vault values`, with the trailer.
 
 **P3. The SES SMTP credential and its endpoint.** In AWS SES, where the sender `z-no-reply@zhaow.pro` is verified already (spec Open question 4), the owner creates an SMTP credential and reads its region's SMTP endpoint, [[ROLLOUT: the SES region's SMTP endpoint, `email-smtp.<region>.amazonaws.com`]], added plain to `host_vars/zcrypto-hc/vars.yml` as `hc_email_host`; then `(cd infra/ansible && ../scripts/vault-append-secret.sh host_vars/zcrypto-hc/vault.yml hc_email_host_user '[A-Z0-9]{16,}')` and the same for `hc_email_host_password` with `[A-Za-z0-9+/=]{40,}`; a credential of another shape re-trues the two shapes in the `hc` role's preflight and here in one commit before it is vaulted. Commit `chore(hc): the SES SMTP credential, vaulted, and its endpoint`, with the trailer.
 
