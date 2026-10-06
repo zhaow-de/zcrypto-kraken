@@ -149,8 +149,8 @@ def test_the_copied_var_files_alone_red_nothing(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("group", ["mon_host", "hc_host"])
 def test_an_edge_node_opens_443_and_nothing_else(group):
-    """One public name on one port: 80 stays shut, so the edge's certificate is issued over 443 alone, and the ports
-    behind the edge, the observability node's stores and Grafana and the dead-man node's container, are never opened."""
+    """One public name on one port: 80 stays shut, so the edge's certificate is issued over 443 alone, and no port
+    behind the edge is ever opened."""
     declared = yaml.safe_load((ANSIBLE / f"group_vars/{group}/vars.yml").read_text())
     assert declared["firewall_extra_tcp_ports"] == [443], declared
     out = _render({**BASE, "firewall_extra_tcp_ports": declared["firewall_extra_tcp_ports"]})

@@ -1,9 +1,6 @@
 """The Alloy log stages, read from the configs' own expressions and driven over the line shapes the
-journals carry: the primary's engine-unit stage keeps nautilus's [WARN]/[ERROR] lines alone, under a
-label no paging rule selects; the dead-man node's container stage writes over the ping path's key and
-lifts each JSON record's level; and the timestamp stages keep a journal's time on a miss. Where an
-`alloy` binary is on PATH, the engine and container stages also run through Alloy itself over the same
-samples."""
+journals carry. Where an `alloy` binary is on PATH, the engine and container stages also run through Alloy itself over
+the same samples."""
 
 from __future__ import annotations
 

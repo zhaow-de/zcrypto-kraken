@@ -1,7 +1,7 @@
 """The unattended-upgrades auto-reboot flip (spec 00071 D4, T0027).
 
-`Automatic-Reboot` is a variable so the two capture VPSes, the ops node, the observability node and the dead-man node
-reboot by hand while the cache nodes and the bridgehead keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
+`Automatic-Reboot` is a variable so the attended hosts reboot by hand while the cache nodes and the bridgehead
+keep the role default and reboot themselves. The value must be a quoted string: a bare YAML `false` renders through Jinja as Python's
 `False`, emitting `Automatic-Reboot "False";`, which apt reads as not-true by accident rather than
 by intention.
 """

@@ -35,7 +35,6 @@ def _refused(code: int):
     return answer
 
 
-# Django refuses a request whose Host is outside the clone's ALLOWED_HOSTS with a 400.
 def _status(body: str = "OK"):
     def answer(request):
         return body if request.get_header("Host") == HOST else _refused(400)(request)

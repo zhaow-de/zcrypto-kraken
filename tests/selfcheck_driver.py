@@ -33,10 +33,7 @@ def load(script_path: Path, shared_path: Path | None = None) -> types.ModuleType
             sys.modules[SHARED] = before
 
 
-# A hand run of an installed script, as `python -c HAND_RUN <script> <installed dir> <copy dir>`. The module's install
-# directory exists on the node alone, so the run seeds that path entry with a finder over a copy of the module. The
-# caller strips PYTHONPATH and runs from a directory without the module, so the script's first import fails and its
-# fallback's import is the one that finds it.
+# The caller strips PYTHONPATH and runs from a directory without the module, so only the seeded install path finds it.
 HAND_RUN = """
 import runpy, sys
 from importlib.machinery import FileFinder, SourceFileLoader
@@ -63,8 +60,7 @@ def run(
     refused: tuple[str, str] | None = None,
     now: float | None = None,
 ) -> tuple[int, list[str], str]:
-    """`bodies`, `broken` and `refused[0]` are keyed by the URL without its query; `now` reaches `main` only when given,
-    since only a script whose probe reads a clock takes one."""
+    """`bodies`, `broken` and `refused[0]` are keyed by the URL without its query."""
     asked: list[str] = []
 
     def opener(request, timeout):

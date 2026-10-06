@@ -1601,9 +1601,8 @@ def test_rebootstrap_guard_follows_the_primary_refusal_and_its_probe():
 
 @pytest.mark.parametrize("group", ["cache_host", "mon_host", "hc_host"])
 def test_the_other_public_nodes_bootstrap_under_the_capture_plays_guards(group):
-    """A cache node, the observability node and the dead-man node are public VPSes like a capture host, so each takes
-    this play's sshd drop-in and, with it, the re-bootstrap refusal, unnarrowed; the primary refusal stays keyed on
-    `engine_host`, which none joins."""
+    """Each is a public VPS like a capture host, so it takes this play's sshd drop-in and, with it, the re-bootstrap
+    refusal, unnarrowed; the primary refusal stays keyed on `engine_host`, which none joins."""
     plays = load_tasks(BOOTSTRAP)
     play = next(p for p in plays if p["hosts"].split(":")[0] == "capture_host")
     assert play["hosts"].split(":") == ["capture_host", "cache_host", "mon_host", "hc_host"]
