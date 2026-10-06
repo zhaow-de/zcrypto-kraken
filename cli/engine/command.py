@@ -556,7 +556,17 @@ class _ExecGauges:
 # call sites by tests/test_engine_metrics.py. `ambiguous` must never be folded into `refused`:
 # "refused" asserts that no order exists, and after a submission whose venue outcome was never
 # established that claim is unavailable.
-_EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "canceled", "filled", "refused", "ambiguous")
+_EXEC_ORDER_OUTCOMES = (
+    "submitted",
+    "accepted",
+    "rejected",
+    "venue_canceled",
+    "canceled",
+    "filled",
+    "refused",
+    "ambiguous",
+    "carried",
+)
 # Every name the venue's own `LiquiditySide` can produce, lower-cased -- pinned against the real enum
 # by tests/test_engine_metrics.py rather than derived here, since importing nautilus-trader at module
 # level would put ~1 s on `zcrypto --help`. `no_liquidity_side` is deliberate and pre-registered: a

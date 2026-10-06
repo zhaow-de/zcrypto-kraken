@@ -24,9 +24,10 @@ the day the records are actually filed under.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -44,7 +45,23 @@ from nautilus_trader.model import (
 )
 
 from cli.config import EngineConfig
-from cli.engine.errors import EngineError
+from cli.engine.accumledger import (
+    ACCUM_SCHEMA_VERSION,
+    accum_record_path,
+    read_accum_record,
+    validate_accum_record,
+    write_accum_record,
+)
+from cli.engine.draftplan import (
+    Constraints,
+    LegDecision,
+    assemble_plans,
+    decide_leg,
+    plan_document,
+    trim_buys_to_cash,
+    trim_to_plan_cap,
+)
+from cli.engine.errors import EngineError, EngineJournalError
 from cli.engine.execgate import KILL_FILE, ExecutionGate, GateLevel, GateVerdict, exec_dir
 from cli.engine.execledger import (
     _OPEN_ORDER_STATES,
@@ -52,11 +69,13 @@ from cli.engine.execledger import (
     append_plan_entry,
     append_submitted_row,
     closed_submitted_rows,
+    exec_record_path,
     exec_records_through,
     ledgered_intent_keys,
     ledgered_plan_ids,
     open_submitted_rows,
     pending_plan_intents,
+    read_exec_record,
     update_plan_intent,
     update_submitted_row,
     write_exec_record,
@@ -89,6 +108,13 @@ _ACK_WAIT = timedelta(seconds=30)
 _MAX_REPRICES = 5
 _MAX_IOC_ATTEMPTS = 3
 _REST_CANCEL_OFFSET = 0.05
+# How long after its boundary an intent of the cycle plan may still start (`_start_intent`); one that has not started by
+# then carries to the next boundary. The latest start, its `_TIME_BOX` and three IOC attempts each bounded by `_ACK_WAIT`
+# end every order by about B+3h47, before the next boundary's cycle can hold the event loop.
+_SUBMISSION_WINDOW = timedelta(hours=3, minutes=30)
+# What the cycle plan's buys leave of the sleeve's free cash, for the fees of the plan it bounds; the rung-2 helper's
+# `CASH_RESERVE_EUR` is its own.
+_LOOP_CASH_RESERVE_EUR = 10.0
 # How long a socket endpoint may stay reported down before the watchdog freezes the loop
 # (`_watch_sockets`): the execution socket drops about hourly on this wheel and reports back within
 # three seconds, and a freeze on that blip would cancel a resting maker order every hour.
@@ -750,6 +776,13 @@ def read_venue_holdings(*, base_url: str | None = None) -> dict[str, float]:
     return read_venue_book(base_url=base_url).held
 
 
+def _book_coin_eur(book: VenueBook, closes: dict[str, float]) -> float:
+    """The book's basket coin at `closes` over the ten EUR legs, each base's `held` under its EUR pair plus what it holds
+    under an earn code: the cycle plan's cash budget reads it, and so does the equity mark. A base `closes` lacks raises
+    KeyError."""
+    return sum((book.held[symbol] + book.earn.get(base, 0.0)) * closes[base] for base, symbol in _SPOT_SYMBOL_BY_BASE.items())
+
+
 def _margin_positions(reports) -> dict[str, float]:
     held = dict.fromkeys(INSTRUMENT_IDS, 0.0)
     for report in reports:
@@ -785,6 +818,27 @@ def read_venue_positions(*, base_url: str | None = None) -> dict[str, float]:
         return list(positions)
 
     return _margin_positions(asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS)))
+
+
+def read_instrument_statuses(*, base_url: str | None = None) -> dict[str, str]:
+    """Each `INSTRUMENT_IDS` symbol's status as the venue lists it, on a client of its own (`_bare_client`): the name of
+    the `MarketStatusAction` the client reads Kraken's per-pair `status` as -- `TRADING` for `online`, `HALT` for
+    `cancel_only`, `PAUSE` for `post_only`, `limit_only` and `reduce_only` -- and `absent` for a symbol the answer does
+    not name. The client asks two public listings, the currency pairs and the tokenized ones, and sends no private
+    call. A Kraken error answer, a status word the client cannot parse and anything short of an answer inside
+    `_VENUE_READ_TIMEOUT_SECONDS` raise."""
+    client = _bare_client(base_url)
+
+    async def _read():
+        return await client.request_instrument_statuses()
+
+    answer = asyncio.run(asyncio.wait_for(_read(), timeout=_VENUE_READ_TIMEOUT_SECONDS))
+    statuses = dict.fromkeys(INSTRUMENT_IDS, "absent")
+    for instrument_id, action in (answer or {}).items():
+        symbol = _SYMBOL_BY_INSTRUMENT_ID.get(str(instrument_id))
+        if symbol is not None:
+            statuses[symbol] = action.name
+    return statuses
 
 
 def _cycle_records_through(journal_dir: Path, until: datetime) -> dict[datetime, CycleRecord]:
@@ -854,6 +908,36 @@ def _stage(record: CycleRecord) -> CycleStages:
         # against (T0150). None for records written before the key existed.
         nav=record.nav,
     )
+
+
+@dataclass
+class _PendingDraft:
+    """A boundary's cycle plan armed and not yet drafted: its validated record, the tries its book read has left, and the
+    moment past which it drafts nothing."""
+
+    boundary: datetime
+    record: CycleRecord
+    tries: int
+    window_close: datetime
+
+
+def _accum_leg(leg: LegDecision) -> dict:
+    """One leg of the boundary's draft record: the decision's fields, the Cache's net it was decided beside as
+    `cache_net`."""
+    return {
+        "symbol": leg.symbol,
+        "weight": leg.weight,
+        "target_eur": leg.target_eur,
+        "close": leg.price,
+        "held_qty": leg.kraken_held,
+        "cache_net": leg.engine_held,
+        "delta_eur": leg.delta_eur,
+        "outcome": leg.outcome,
+        "side": leg.side,
+        "qty": leg.qty,
+        "notional_eur": leg.notional_eur,
+        "reason": leg.reason,
+    }
 
 
 @dataclass(frozen=True)
@@ -988,9 +1072,10 @@ class ProbeExecutor:
     `.order_factory.limit(...)`, `.submit_order(order, params=...)`, `.cancel_order(client_order_id)`,
     `.subscribe_quotes(id)`, `.unsubscribe_quotes(id)`.
 
-    `venue_orders` is `read_venue_orders`' signature, `venue_cancel` is `cancel_venue_order`'s and
-    `venue_holdings` is `read_venue_book`'. None, the engine's construction, reads the module's
-    own at call time, so a test can replace it before any executor exists.
+    `venue_orders` is `read_venue_orders`' signature, `venue_cancel` is `cancel_venue_order`'s,
+    `venue_holdings` is `read_venue_book`' and `instrument_statuses` is `read_instrument_statuses`'.
+    None, the engine's construction, reads the module's own at call time, so a test can replace it
+    before any executor exists.
     """
 
     def __init__(
@@ -1005,6 +1090,7 @@ class ProbeExecutor:
         venue_holdings=None,
         venue_fills=None,
         venue_positions=None,
+        instrument_statuses=None,
     ) -> None:
         self._client = client
         # The Cache and the strategy id, taken here, inside `on_start`, where the strategy is not
@@ -1024,6 +1110,7 @@ class ProbeExecutor:
         self._venue_holdings = venue_holdings
         self._venue_fills = venue_fills
         self._venue_positions = venue_positions
+        self._instrument_statuses = instrument_statuses
         # The pass's trade-history read (`_trades_cover`), reset at each pass by `_reset_fills_read`.
         self._venue_fills_read: dict[str, float] | None = None
         self._venue_fills_failed = False
@@ -1074,7 +1161,15 @@ class ProbeExecutor:
         self._state_dir = Path(config.journal_dir).parent
         self._plan = None
         self._plan_cycle_ts: datetime | None = None
+        # The running plan's submission window, None for a drill plan: `_start_intent` carries an intent past its close.
         self._plan_window_close: datetime | None = None
+        # The boundary's cycle plan armed and not yet drafted (`_arm_cycle_draft`), and whether the first tick after the
+        # startup pass has looked for one a previous process armed and never recorded (`_rearm_cycle_draft`).
+        self._pending_draft: _PendingDraft | None = None
+        self._draft_rearm_checked = False
+        # The newest draft's (delta_eur, close) per leg, which an intent of its plan re-reads at its terminal
+        # (`_set_cycle_gap`).
+        self._cycle_legs: dict[str, tuple[float, float]] = {}
         self._index = 0
         self._active: _ActiveIntent | None = None
         # intent index -> the EUR notional a `qty` intent only acquired at sizing time. Kept for the
@@ -1313,7 +1408,12 @@ class ProbeExecutor:
                 self._lift_freeze()
             # No plan before the startup pass has run: until it has, no row is reconciled against the
             # venue, and the pass's one venue read must reach the venue before any order of this
-            # process does (`read_venue_orders` says why).
+            # process does (`read_venue_orders` says why). The boundary's draft goes ahead of the
+            # pickup, so a drill file waits while the cycle plan it hands over runs.
+            if self._adopted and not self._draft_rearm_checked:
+                self._rearm_cycle_draft(now)
+            if self._adopted and self._pending_draft is not None and self._plan is None:
+                self._draft_cycle_plan(now)
             if self._plan is None and self._adopted:
                 self._pickup(now)
             self._pump(now)
@@ -2609,6 +2709,8 @@ class ProbeExecutor:
             return "refused"
         self._plan = plan
         self._plan_cycle_ts = cycle_ts
+        if path is not None:
+            self._plan_window_close = None
         self._index = 0
         self._resolved_notional = {}
         return "accepted"
@@ -2745,6 +2847,18 @@ class ProbeExecutor:
         plan = self._plan
         index = self._index
         intent = plan.intents[index]
+
+        if self._plan_window_close is not None and now > self._plan_window_close:
+            logger.info(
+                "intent %d of plan %s carries to the next boundary -- the submission window closed at %s",
+                index,
+                plan.plan_id,
+                self._plan_window_close.isoformat(),
+            )
+            self._journal_intent(index, "carried", ("the submission window closed",))
+            _inc_order("carried")
+            self._index += 1
+            return
 
         # The per-intent belt behind the plan-level wall: a submitted row for this key means the
         # order already exists, whatever this process remembers.
@@ -3135,14 +3249,18 @@ class ProbeExecutor:
         and wrote no record gets one. Its publish leaves the heartbeat to the sink, so a failing sink
         write still starves the staleness rule.
 
-        THE call site, and the whole reason this is not on the timer: every `_evaluate` on the tick
-        path sits behind an operator-written plan file, so a trip hooked there could only fire while
-        a plan was running -- never in the stopped-placing state it exists to catch. The alert chain
-        reads neither the plan file nor the venue, and it fires whether or not anything is trading.
+        Its second act scores the most recently closed week (`_evaluate_tracking`), and this is THE
+        call site of that trip: the alert chain fires once per boundary, after the cycle has
+        journaled, whether or not anything is trading -- the stopped-placing state the trip exists to
+        catch included -- and it reads neither the plan file nor the venue.
 
-        Wrapped whole, and the wrapping is not defensive habit: the caller invokes this from a
-        `finally`, so a raise here would either reach the alert chain or REPLACE an in-flight
-        exception from the cycle with one from a measurement.
+        Its third act arms the boundary's cycle plan (`_arm_cycle_draft`), which the tick drafts: the
+        draft's book read waits for a tick with nothing in flight, and the alert holds the event loop.
+
+        Wrapped, and the wrapping is not defensive habit: the caller invokes this from a `finally`,
+        so a raise here would either reach the alert chain or REPLACE an in-flight exception from the
+        cycle with one from a measurement. The third act is wrapped on its own and runs whatever the
+        first two raised: a scoring defect never stops the boundary's plan.
         """
         try:
             now = self._now()
@@ -3157,6 +3275,338 @@ class ProbeExecutor:
             # this one carries a traceback under it. The metrics hook is itself exception-guarded.
             logger.exception("the most recently closed week is not scored: the evaluation itself raised")
             _set_tracking_state(_TRACKING_UNSCORED)
+        self._arm_cycle_draft(boundary)
+
+    # --- the cycle plan ------------------------------------------------------------------------
+
+    def _read_cycle_record(self, boundary: datetime) -> CycleRecord | None:
+        """The boundary's cycle record, validated, or None when the boundary has none to draft from: no
+        `cycle-<HH>.json`, or a failed cycle's `failed-cycle-<HH>.json` sidecar beside it. A record that will not
+        validate, or that names another cycle than its path's, raises."""
+        day = self._journal_dir / f"{boundary:%Y-%m-%d}"
+        path = day / f"cycle-{boundary:%H}.json"
+        if (day / f"failed-cycle-{boundary:%H}.json").exists() or not path.exists():
+            return None
+        record = from_json(path.read_text())
+        require_comparable_cycle_ts(record)
+        validate_record(record)
+        if record.cycle_ts != boundary:
+            raise EngineJournalError(f"{path} names the cycle {record.cycle_ts.isoformat()}, not {boundary.isoformat()}")
+        return record
+
+    def _arm_cycle_draft(self, boundary: datetime) -> None:
+        """Arm the boundary's cycle plan, drafted on the tick (`_draft_cycle_plan`), or write the boundary's draft record
+        `no-cycle` when it has no cycle record to draft from -- none, a sidecar beside it, or one that will not
+        validate -- and arm nothing. A draft still pending from an earlier boundary is closed `window-closed` first.
+        Once a boundary is armed in this process the first tick's re-arm (`_rearm_cycle_draft`) has nothing to look
+        for. Wrapped whole: it runs from the boundary alert's `finally` and from the tick."""
+        self._draft_rearm_checked = True
+        try:
+            boundary = _aware_utc(boundary)
+            now = self._now()
+            if self._pending_draft is not None:
+                logger.warning(
+                    "the boundary %s drafted nothing before the boundary %s was armed -- its plan is not drafted",
+                    self._pending_draft.boundary.isoformat(),
+                    boundary.isoformat(),
+                )
+                self._finish_draft(now, "window-closed")
+            try:
+                record = self._read_cycle_record(boundary)
+            except Exception:
+                logger.warning(
+                    "the cycle record for %s will not validate -- the boundary drafts nothing", boundary.isoformat(), exc_info=True
+                )
+                record = None
+            if record is None:
+                logger.warning(
+                    "the boundary %s has no cycle record to draft from -- it drafts nothing, and the next boundary's draft "
+                    "absorbs the gap",
+                    boundary.isoformat(),
+                )
+                self._write_draft_record(boundary, now, "no-cycle", {}, (), None)
+                return
+            self._pending_draft = _PendingDraft(
+                boundary=boundary, record=record, tries=_REREAD_ATTEMPTS, window_close=boundary + _SUBMISSION_WINDOW
+            )
+        except Exception:
+            logger.exception("the boundary's cycle plan could not be armed -- it drafts nothing")
+
+    def _rearm_cycle_draft(self, now: datetime) -> None:
+        """The first tick after the startup pass, once: a boundary inside its submission window whose cycle record
+        exists and whose draft record is absent or names no plan is armed again -- its alert fired in a previous
+        process. A record that names a plan says the boundary drafted, and is left as it stands; a plan journaled with
+        no record written meets the dedup wall when it is drafted again."""
+        self._draft_rearm_checked = True
+        if self._pending_draft is not None:
+            return
+        boundary = _boundary(now)
+        try:
+            if boundary + _SUBMISSION_WINDOW < now:
+                return
+            if not (self._journal_dir / f"{boundary:%Y-%m-%d}" / f"cycle-{boundary:%H}.json").exists():
+                return
+            path = accum_record_path(self._journal_dir, boundary)
+            if path.exists() and read_accum_record(path).get("plan_id") is not None:
+                return
+        except Exception:
+            logger.warning(
+                "the boundary %s's draft record could not be read at start -- its plan is not drafted again",
+                boundary.isoformat(),
+                exc_info=True,
+            )
+            return
+        self._arm_cycle_draft(boundary)
+
+    def _mark_equity(self, book: VenueBook, record: CycleRecord, now: datetime) -> dict:
+        """The equity mark's figures for the boundary's draft record: none marked yet, and the day-loss hold as it
+        stands."""
+        return {
+            "equity_eur": None,
+            "hwm_eur": None,
+            "drawdown_bps": None,
+            "day_loss_bps": None,
+            "day_loss_hold": self._day_loss_hold,
+        }
+
+    def _draft_cycle_plan(self, now: datetime) -> None:
+        """Draft the armed boundary's plan, `target - held` over the ten EUR legs, and hand it to the pickup's walls
+        (`_accept_plan`) -- on the tick after the startup pass, with no plan running and nothing of this process in
+        flight, the venue book read's nonce terms. Past the submission window it drafts nothing.
+
+        `held` is the venue's own book, read here with the per-instrument statuses and the venue truth; a read that
+        raises spends one of `_REREAD_ATTEMPTS` tries, and so does a book holding a basket coin under an earn code,
+        which the draft refuses as `held` (`VenueBook.earn_refusal`); past the tries the boundary's record reads
+        `book-unread`. The book settles the position gauge (`_settle_from_book`) and is the sell check's newest.
+
+        The table is the rung-2 helper's (`decide_leg`), at the record's targets, closes and NAV; a leg with an open
+        ledger row is carried, since its order may still rest at the venue, and so is one whose instrument the venue
+        does not list `TRADING`. The buys are trimmed to the sleeve's free cash -- the NAV less the book's coin at the
+        closes, never more than the account's free EUR -- less `_LOOP_CASH_RESERVE_EUR`, then the plan to the cap it is
+        judged by, so the walls never refuse it whole for its size. Any other raise on the way spends a try too, and
+        past them the record reads `refused`, as it does when the table lacks a leg or the walls refuse the plan; a
+        plan the walls leave waiting is drafted again on a later tick."""
+        draft = self._pending_draft
+        if now > draft.window_close:
+            logger.warning(
+                "the boundary %s drafted nothing before its submission window closed at %s",
+                draft.boundary.isoformat(),
+                draft.window_close.isoformat(),
+            )
+            self._finish_draft(now, "window-closed")
+            return
+        if not self._nothing_in_flight():
+            return
+        record = draft.record
+        figures: dict = {"nav": record.nav}
+        try:
+            try:
+                book = (self._venue_holdings or read_venue_book)()
+                statuses = (self._instrument_statuses or read_instrument_statuses)()
+                state = venue_state_from_cache(self._cache, clock=self._now)
+            except Exception as exc:
+                self._spend_draft_try(
+                    now, f"the venue's book could not be read -- {type(exc).__name__}: {exc}", "book-unread", figures, exc
+                )
+                return
+            self._venue_book = book
+            self._settle_from_book(book, "the boundary read")
+            figures = {**figures, "eur_total": book.eur_total, "eur_free": book.eur_free, **self._mark_equity(book, record, now)}
+            refusal = book.earn_refusal()
+            if refusal is not None:
+                self._spend_draft_try(now, refusal, "book-unread", figures)
+                return
+            decisions = self._draft_table(draft, book, statuses, state, now)
+            if decisions is None:
+                self._finish_draft(now, "refused", figures)
+                return
+            free = min(book.eur_free, record.nav - _book_coin_eur(book, record.closes))
+            decisions = trim_buys_to_cash(decisions, free, cash_reserve_eur=_LOOP_CASH_RESERVE_EUR)
+            decisions = trim_to_plan_cap(decisions, self._config.exec_max_plan_notional_eur)
+            plans = assemble_plans(decisions, max_intents=None, plan_cap_eur=None)
+            if not plans:
+                self._finish_draft(now, "ok", figures, decisions, None)
+                return
+            plan = parse_plan(json.dumps(plan_document(f"r3-{draft.boundary:%Y%m%d}-{draft.boundary:%H}", now, plans[0])))
+            self._plan_window_close = draft.window_close
+            outcome = self._accept_plan(plan, cycle_ts=draft.boundary, now=now)
+        except Exception as exc:
+            self._spend_draft_try(now, f"the plan could not be drafted -- {type(exc).__name__}: {exc}", "refused", figures, exc)
+            return
+        if outcome == "waiting":
+            return
+        if outcome == "accepted":
+            self._finish_draft(now, "ok", figures, decisions, plan.plan_id)
+            return
+        reason = self._refused_plan_reason(draft.boundary, plan.plan_id, now)
+        carried = reason if reason is not None else "the plan was refused and not run"
+        decisions = [
+            replace(d, outcome="carried", qty=None, notional_eur=None, reason=carried) if d.outcome == "placed" else d
+            for d in decisions
+        ]
+        self._finish_draft(now, "refused", figures, decisions, plan.plan_id if reason is not None else None)
+
+    def _draft_table(self, draft: _PendingDraft, book: VenueBook, statuses: dict, state, now: datetime) -> list | None:
+        """The ten EUR legs' decisions, in symbol order, or None -- at WARNING -- when the record or the venue truth
+        lacks one of them: a half-drafted book is the drift the loop exists to close."""
+        record = draft.record
+        symbols = sorted(_SPOT_SYMBOL_BY_BASE.values())
+        for symbol in symbols:
+            base = symbol.split("/")[0]
+            missing = (
+                "the cycle record's NAV"
+                if record.nav is None
+                else f"the cycle record's targets for {symbol}"
+                if symbol not in record.final_targets
+                else f"the cycle record's closes for {base}"
+                if record.closes is None or base not in record.closes
+                else f"the venue truth for {symbol}"
+                if symbol not in state.instruments
+                else None
+            )
+            if missing is not None:
+                logger.warning("the boundary %s drafts nothing: %s is absent", draft.boundary.isoformat(), missing)
+                return None
+        resting = {row["intent"]["symbol"] for _, row in open_submitted_rows(self._journal_dir, now)}
+        decisions = []
+        for symbol in symbols:
+            base = symbol.split("/")[0]
+            pair = state.instruments[symbol]
+            leg = decide_leg(
+                symbol,
+                weight=record.final_targets[symbol],
+                price=record.closes[base],
+                constraints=Constraints(ordermin=pair.ordermin, lot_step=pair.lot_step),
+                kraken_held=book.held[symbol],
+                engine_held=self._cache_net(symbol),
+                venue_b=0.0,
+                eur_per_weight=record.nav,
+            )
+            if leg.outcome == "placed" and symbol in resting:
+                leg = replace(
+                    leg,
+                    outcome="carried",
+                    qty=None,
+                    notional_eur=None,
+                    reason="an order of this symbol may still rest at the venue",
+                )
+            status = statuses.get(symbol, "absent")
+            if leg.outcome == "placed" and status != "TRADING":
+                logger.warning("the venue lists %s %s, not TRADING -- the leg carries to the next boundary", symbol, status)
+                leg = replace(
+                    leg,
+                    outcome="carried",
+                    side=None,
+                    qty=None,
+                    notional_eur=None,
+                    reason=f"the venue lists the instrument {status}, not TRADING",
+                )
+            decisions.append(leg)
+        return decisions
+
+    def _spend_draft_try(self, now: datetime, why: str, status: str, figures: dict, exc: BaseException | None = None) -> None:
+        """One of the draft's tries spent at WARNING, and past the last the boundary's record written `status`."""
+        draft = self._pending_draft
+        draft.tries -= 1
+        if draft.tries:
+            logger.warning(
+                "the boundary %s's plan is not drafted on this tick -- %s; asking again next tick",
+                draft.boundary.isoformat(),
+                why,
+                exc_info=exc,
+            )
+            return
+        logger.warning(
+            "the boundary %s drafts nothing -- %s, on %d ticks", draft.boundary.isoformat(), why, _REREAD_ATTEMPTS, exc_info=exc
+        )
+        self._finish_draft(now, status, figures)
+
+    def _refused_plan_reason(self, boundary: datetime, plan_id: str, now: datetime) -> str | None:
+        """The reasons of the entry `_accept_plan` journaled on this tick for the plan it refused, or None when it
+        journaled none -- the journal write failed -- or the exec record cannot be read back."""
+        try:
+            doc = read_exec_record(exec_record_path(self._journal_dir, boundary))
+            entry = next(
+                (e for e in reversed(doc.get("plans", [])) if e["plan_id"] == plan_id and e["received_at"] == now.isoformat()),
+                None,
+            )
+        except Exception:
+            logger.exception("the refused plan %s's entry could not be read back -- its legs carry without its reasons", plan_id)
+            return None
+        return None if entry is None else "; ".join(entry["reasons"])
+
+    def _finish_draft(
+        self, now: datetime, status: str, figures: dict | None = None, decisions=(), plan_id: str | None = None
+    ) -> None:
+        """A terminal of the boundary's draft: the gap gauge at each leg's `delta_eur` and the legs an intent of its plan
+        re-reads at its terminal, the boundary's draft record, the boundary's exec record re-journaled at the level the
+        boundary ends at -- the merge keeps its plan entries -- and the draft cleared. Each part is wrapped: telemetry
+        and records never drop a plan the walls accepted."""
+        draft, self._pending_draft = self._pending_draft, None
+        try:
+            if decisions:
+                self._cycle_legs = {d.symbol: (d.delta_eur, d.price) for d in decisions}
+                for d in decisions:
+                    _set_gap(d.symbol, d.delta_eur)
+        except Exception:
+            logger.exception("executor gap publish raised -- continuing")
+        self._write_draft_record(
+            draft.boundary, now, status, figures if figures is not None else {"nav": draft.record.nav}, decisions, plan_id
+        )
+        try:
+            verdict = self._evaluate(now, heartbeat=False)
+            write_exec_record(self._journal_dir, draft.boundary, verdict, evaluated_at=now)
+        except Exception:
+            logger.exception(
+                "the boundary %s's exec record could not be journaled again after its draft", draft.boundary.isoformat()
+            )
+
+    def _write_draft_record(
+        self, boundary: datetime, now: datetime, status: str, figures: dict, decisions, plan_id: str | None
+    ) -> None:
+        """The boundary's `accum-<HH>.json`, and the not-drafted gauge at 1 for any status but `ok`. Wrapped: a record
+        that cannot be written logs, and the draft goes on."""
+        _set_boundary_not_drafted(status != "ok")
+        try:
+            write_accum_record(
+                self._journal_dir,
+                boundary,
+                {
+                    "schema_version": ACCUM_SCHEMA_VERSION,
+                    "cycle_ts": boundary.isoformat(),
+                    "drafted_at": now.isoformat(),
+                    "status": status,
+                    "nav": figures.get("nav"),
+                    "eur_total": figures.get("eur_total"),
+                    "eur_free": figures.get("eur_free"),
+                    "equity_eur": figures.get("equity_eur"),
+                    "hwm_eur": figures.get("hwm_eur"),
+                    "drawdown_bps": figures.get("drawdown_bps"),
+                    "day_loss_bps": figures.get("day_loss_bps"),
+                    "day_loss_hold": bool(figures.get("day_loss_hold", self._day_loss_hold)),
+                    "plan_id": plan_id,
+                    "legs": [_accum_leg(d) for d in decisions],
+                },
+            )
+        except Exception:
+            logger.exception("the boundary %s's draft record (%s) could not be written", boundary.isoformat(), status)
+
+    def _set_cycle_gap(self, index: int, filled_qty: float) -> None:
+        """At an intent's terminal, an intent of the cycle plan re-sets its leg on the gap gauge to the draft's delta less
+        what it filled at the record's close, signed by side, so an intent that filled nothing reads its whole delta and
+        a filled one about 0. Telemetry: wrapped."""
+        if self._plan_window_close is None:
+            return
+        try:
+            intent = self._plan.intents[index]
+            leg = self._cycle_legs.get(intent.symbol)
+            if leg is None:
+                return
+            delta_eur, close = leg
+            filled_eur = filled_qty * close
+            _set_gap(intent.symbol, delta_eur - filled_eur if intent.side == "buy" else delta_eur + filled_eur)
+        except Exception:
+            logger.exception("executor gap publish raised -- continuing")
 
     def _record_series_birth(self) -> None:
         """Write the first-fill birth record, once, at the first boundary that can WITNESS the
@@ -3245,11 +3695,14 @@ class ProbeExecutor:
         its ORDER was filed under, so a fill can land in an already-scored boundary days later,
         which a checkpoint loses permanently and a re-derivation folds in at the next boundary.
 
-        Eligibility is each boundary's JOURNALED level, never live config: `restart_hold` is written
-        unconditionally at every engine start and cleared only by hand, so a week spent under it
-        reads as fully armed while the engine never traded -- `held` frozen, targets moving, and the
-        kill file latched on a perfectly healthy engine. The journaled level is the one field that
-        reduces arm file, kill file, restart hold, config and venue status together.
+        Eligibility is each boundary's JOURNALED level and its draft record, never live config:
+        `restart_hold` is written unconditionally at every engine start and cleared only by hand, so a
+        week spent under it reads as fully armed while the engine never traded -- `held` frozen,
+        targets moving, and the kill file latched on a perfectly healthy engine. The journaled level is
+        the one field that reduces arm file, kill file, restart hold, config and venue status
+        together; the draft record (`accum-<HH>.json`) says whether the loop drafted at a boundary the
+        gate left at `full`, and one that drafted nothing holds its week back as a level below `full`
+        does.
 
         Every other exit is a refusal, never a guess: a week short of its full boundary count, a
         week whose first fill falls inside it, a week the journal cannot price, and a span whose
@@ -3276,6 +3729,16 @@ class ProbeExecutor:
             # reason to take the engine's telemetry down with a traceback every four hours.
             self._refuse_tracking(str(exc))
 
+    def _undrafted(self, boundary: datetime) -> bool:
+        """Whether the boundary's draft record says it drafted nothing. No record holds nothing back: a boundary before
+        the draft existed, or one whose process ended before writing it. A record that will not validate raises."""
+        path = accum_record_path(self._journal_dir, boundary)
+        if not path.exists():
+            return False
+        doc = read_accum_record(path)
+        validate_accum_record(doc)
+        return doc["status"] != "ok"
+
     def _score_closed_week(self, boundary: datetime, band: float) -> None:
         week_end = (boundary - timedelta(days=boundary.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = week_end - timedelta(days=7)
@@ -3295,11 +3758,11 @@ class ProbeExecutor:
                 "a week the engine did not live through is not comparable to one it did"
             )
             return
-        held_back = [b for b in week if exec_docs[b]["level"] != GateLevel.FULL]
+        held_back = [b for b in week if exec_docs[b]["level"] != GateLevel.FULL or self._undrafted(b)]
         if held_back:
             self._refuse_tracking(
                 f"{label} spent {len(held_back)} of its {_WEEK_BOUNDARIES} boundaries below the full "
-                f"level (first at {held_back[0].isoformat()}) -- the engine was not free to trade it"
+                f"level or undrafted (first at {held_back[0].isoformat()}) -- the engine was not free to trade it"
             )
             return
 
@@ -4382,6 +4845,8 @@ class ProbeExecutor:
         self._index += 1
 
     def _journal_intent(self, index: int, outcome: str, reasons, filled_qty: float = 0.0) -> bool:
+        """Every terminal of an intent passes through here, so it is where a cycle-plan intent re-sets its gap."""
+        self._set_cycle_gap(index, filled_qty)
         try:
             update_plan_intent(
                 self._journal_dir,
