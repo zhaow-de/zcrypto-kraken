@@ -564,8 +564,8 @@ _EXEC_ORDER_OUTCOMES = ("submitted", "accepted", "rejected", "venue_canceled", "
 _EXEC_LIQUIDITY_SIDES = ("maker", "taker", "no_liquidity_side")
 # Every disposition `cli/engine/executor.py`'s `_inc_external` can emit, pinned against that module's
 # own call sites by tests/test_engine_metrics.py. `unmatched` is the load-bearing one: an order event
-# belonging to no order this engine's ledger vouches for reaches no row, cancel or trip -- a fill arms
-# the executor's re-read pass alone -- and this counter is the only count of it.
+# belonging to no order this engine's ledger vouches for reaches no row, cancel or trip -- a fill, while
+# the engine is armed, arms the executor's re-read pass alone -- and this counter is the only count of it.
 _EXEC_EXTERNAL_DISPOSITIONS = ("matched", "unmatched")
 # The ten model EUR legs the gap is published for, restated from BASKET rather than imported from the executor, whose
 # module import would put nautilus-trader on `zcrypto --help`; tests/test_engine_metrics.py pins it to the executor's
@@ -602,10 +602,11 @@ class _ExecutionMetrics:
             "Order events arriving on the external strategy topic, by disposition: matched means the "
             "event belonged to a restart-adopted order this engine's ledger vouches for; unmatched "
             "means it belonged to no such order -- the account owner's own hand settle, activity "
-            "nobody sanctioned, or a fill on an order the startup pass could not see. An unmatched "
-            "fill makes the engine re-read the venue's holdings at its next tick with no order of its "
-            "own in flight and its sockets up, so the position gauge takes the venue's figure; any "
-            "other unmatched event is counted and logged, nothing more.",
+            "nobody sanctioned, or a fill on an order the startup pass could not see. While the "
+            "engine is armed, an unmatched fill makes it re-read the venue's holdings at its first "
+            "tick with no intent of its own working, once its connection to the venue is back if one "
+            "dropped, so the position gauge takes the venue's figure; any other unmatched event, and "
+            "a fill while the engine is disarmed, is counted and logged, nothing more.",
             ["disposition"],
             registry=registry,
         )
