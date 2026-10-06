@@ -2,7 +2,7 @@
   "id": null,
   "uid": "zcrypto-engine",
   "title": "Engine",
-  "description": "What the trading engine is doing. Cycle liveness and outcome, the intent it emitted, the book composition behind that intent, and the journal retention the next cycle's deltas depend on. Every number here is INTENDED state — what the engine decided, never what the market did; realized state lives in the engine journal on the capture primary.",
+  "description": "What the trading engine is doing. The Cycle health and Journal retention rows are the engine's own liveness and bookkeeping. The Intent and Composition rows are INTENDED state — what the engine decided, never what the market did. The Execution safety envelope row is what the engine may submit, and the Execution, Venue truth and Accumulation rows are the venue side: what the executor did there, what the exchange said, and the loop's gap, equity and drawdown read against Kraken's own holdings. The engine journal on the capture primary is the record behind all of them.",
   "tags": [],
   "schemaVersion": 39,
   "version": 0,
@@ -2548,6 +2548,8 @@
       "id": 80,
       "type": "row",
       "title": "Accumulation — the loop's gap, equity and window",
+      "collapsed": false,
+      "panels": [],
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -2616,8 +2618,8 @@
     {
       "id": 82,
       "type": "timeseries",
-      "title": "Equity (EUR) against its 60-day maximum",
-      "description": "The account's equity at each 4-hourly boundary: its EUR and the ten model coins it holds, spot and earn-coded, marked at the cycle's closes. The second line is this gauge's own maximum over the last 60 days, a reading of the series alone: re-minting the equity series after a deposit or a withdrawal does not reset it. The high-water mark the drawdown kill measures from is the accumulation record's `hwm_eur` on the engine host, which that re-mint does reset, so the two lines part after one. Absent from an engine start until its first boundary marks equity, because a seeded zero would read as a total loss. Published only by the trading engine on the capture primary.",
+      "title": "Equity (EUR) against its maximum over the 14 days the metrics store keeps",
+      "description": "The account's equity at each 4-hourly boundary: its EUR and the ten model coins it holds, spot and earn-coded, marked at the cycle's closes. The second line is this gauge's own maximum over the last 14 days, about as far back as the metrics store keeps it: a reading of this series alone, which re-minting the equity series after a deposit or a withdrawal does not reset. The series' true high-water mark, the one the drawdown kill measures from, is the accumulation record's `hwm_eur` on the engine host, never a window of this store, so the second line shows that mark only while it was set inside the last 14 days and no re-mint has moved it since. Absent from an engine start until its first boundary marks equity, because a seeded zero would read as a total loss. Published only by the trading engine on the capture primary.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -2643,9 +2645,9 @@
             "type": "prometheus",
             "uid": "grafanacloud-prom"
           },
-          "expr": "max_over_time(zcrypto_exec_equity_eur{host=~\"$host\"}[60d])",
+          "expr": "max_over_time(zcrypto_exec_equity_eur{host=~\"$host\"}[14d])",
           "refId": "B",
-          "legendFormat": "60-day maximum"
+          "legendFormat": "14-day maximum"
         }
       ],
       "fieldConfig": {

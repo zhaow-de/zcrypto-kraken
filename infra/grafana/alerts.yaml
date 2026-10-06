@@ -916,10 +916,11 @@ rules:
     folderUID: "${GRAFANA_ALERT_FOLDER_UID}"
     orgId: 1
     # min_over_time over the 0/1 gauge: the window clears of 0 samples about 4h30m after the first
-    # undrafted boundary's write, so the rule fires about 4h40m after it only when the boundary 4h
-    # later wrote a non-`ok` record too; an `ok` record there puts a 0 back in the window, and a
-    # restarted engine publishes 0 until its first boundary's write. A book read failing at every
-    # boundary leaves the gate at `full`, so no rule on the gate's gauges sees what this one does.
+    # undrafted boundary's write, so the rule fires about 4h40m after it only when no `ok` record came
+    # in between: the boundary 4h later wrote a non-`ok` record too, or none at all. An `ok` record puts
+    # a 0 back in the window, and so does a restarted engine, which publishes 0 until its first
+    # boundary's write whatever the cause. A book read failing at every boundary leaves the gate at
+    # `full`, so no rule on the gate's gauges sees what this one does.
     condition: C
     data:
       - refId: A
@@ -946,7 +947,7 @@ rules:
     execErrState: Alerting
     for: 10m
     annotations:
-      summary: "Two consecutive 4-hourly boundaries wrote an accumulation record whose status is not `ok` while the execution gate stayed `full`, so the engine placed nothing at either: no cycle record to draft from, the book read failing at every try or a basket coin held under an earn or staking code, the submission window closing before the draft could run, or the plan refused. Read the newest accumulation record on the engine host for its status, and the engine log for the cause. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted"
+      summary: "Two consecutive 4-hourly boundaries passed with no accumulation record reading `ok`, the second writing a non-`ok` record too or none at all, while the execution gate stayed `full`, so the engine placed nothing at either: no cycle record to draft from, the book read failing at every try or a basket coin held under an earn or staking code, the submission window closing before the draft could run, or the plan refused. Read the two newest accumulation records on the engine host for their status, and the engine log for the cause. Runbook: infra/runbooks/engine.md#zcrypto-engine-exec-boundary-not-drafted"
       __dashboardUid__: "zcrypto-engine"
       __panelId__: "84"
     labels:
