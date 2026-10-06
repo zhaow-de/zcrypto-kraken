@@ -95,6 +95,13 @@ def test_a_missing_or_misshapen_secret_is_refused_by_its_key(override, refused):
     role_render.assert_preflight(_preflight(), SECRETS, override, refused, INCLUDE)
 
 
+def test_a_refusal_printing_part_of_a_secret_through_a_default_fails_the_driver():
+    task = _preflight()
+    task["ansible.builtin.assert"]["fail_msg"] += " {{ (probe_password | default(''))[:6] }}"
+    with pytest.raises(AssertionError, match="the refusal depends on a secret"):
+        role_render.assert_preflight(task, SECRETS, {"probe_ping_url": None}, "probe_ping_url", INCLUDE)
+
+
 def test_every_shape_an_including_role_passes_ends_in_backslash_z():
     # Only some keys have a trailing-newline case to catch a lost `\Z`.
     includes = [
