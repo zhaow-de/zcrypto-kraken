@@ -447,6 +447,9 @@ def test_a_push_addressed_to_grafana_cloud_that_skips_the_nodes_group_runs(stack
     assert done.returncode == 0, done.stderr
     assert _rule_calls(stack_with_a_mon_rule, "r3") == [] and _rule_calls(stack_with_a_mon_rule, "r4") == []
     assert _rule_calls(stack_with_a_mon_rule, "r1") != []
+    groups = env.get("GRAFANA_SKIP_RULE_GROUPS", "zcrypto-mon zcrypto-hc")
+    assert f"grafana-push: skipping 2 rule(s) of group(s): {groups}" in done.stderr
+    assert done.stderr.splitlines()[0].endswith(f" skip-groups={groups}")
 
 
 # The stub curl keys its answers on the path after the host, so a URL that carries its own slash is not one it can run whole.
