@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, CAPTURE, assert_that, find_task, load_tasks, truthy, when_conditions
 
 TAG = "alloy"
@@ -46,28 +47,8 @@ ALWAYS_PRE_TASKS = [
 ]
 
 
-def _tags(node: dict) -> set[str]:
-    raw = node.get("tags") or []
-    items = [raw] if isinstance(raw, str) else raw
-    return {tag.strip() for item in items for tag in str(item).split(",") if tag.strip()}
-
-
-def _walk(tasks: list[dict], tags: frozenset[str] = frozenset(), gates: tuple[str, ...] = ()) -> list[tuple[dict, set, tuple]]:
-    # `iter_tasks`' walk with the tags beside the gates: a block hands both to its children.
-    out = []
-    for task in tasks or []:
-        own, conds = tags | _tags(task), gates + tuple(str(c) for c in when_conditions(task))
-        children = [task[k] for k in ("block", "rescue", "always") if k in task]
-        if children:
-            for child in children:
-                out.extend(_walk(child, frozenset(own), conds))
-        else:
-            out.append((task, own, conds))
-    return out
-
-
 def _tagged() -> list[tuple[dict, set, tuple]]:
-    return [leaf for leaf in _walk(load_tasks(CAPTURE)) if TAG in leaf[1]]
+    return [leaf for leaf in alloy_version.walk(load_tasks(CAPTURE)) if TAG in leaf[1]]
 
 
 def _notify(task: dict) -> list[str]:
@@ -105,7 +86,7 @@ def test_every_name_a_tagged_task_reads_is_produced_by_an_earlier_tagged_task():
     """A register, `set_fact` or getent fact read in a gate, an argument or a rendered template: the narrow run skips
     every untagged producer, so a read of one fails that run on an undefined variable or, behind `is defined`, skips its
     task silently."""
-    leaves = _walk(load_tasks(CAPTURE))
+    leaves = alloy_version.walk(load_tasks(CAPTURE))
     handlers = load_tasks(CAPTURE_ROLE / "handlers" / "main.yml")
     every = set().union(*(_produced(task) for task, _, _ in leaves), *(_produced(handler) for handler in handlers))
     tagged = [(task, gates) for task, tags, gates in leaves if TAG in tags]
@@ -141,7 +122,7 @@ def _every_tag(node) -> set[str]:
     if isinstance(node, list):
         return set().union(set(), *(_every_tag(item) for item in node))
     if isinstance(node, dict):
-        return _tags(node).union(*(_every_tag(value) for value in node.values()))
+        return alloy_version.tags_of(node).union(*(_every_tag(value) for value in node.values()))
     return set()
 
 
@@ -163,13 +144,15 @@ def test_an_alloy_run_on_the_capture_and_engine_plays_runs_the_alloy_part_beside
     for play in load_tasks(SITE):
         if play["hosts"] not in ("capture_host", "engine_host"):
             continue
-        play_tags = _tags(play)
+        play_tags = alloy_version.tags_of(play)
         pre_tasks += [
-            (play["hosts"], t["name"]) for t, tags, _ in _walk(play.get("pre_tasks"), frozenset(play_tags)) if _selected(tags)
+            (play["hosts"], t["name"])
+            for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), frozenset(play_tags))
+            if _selected(tags)
         ]
         for entry in play["roles"]:
-            inherited = frozenset(play_tags | _tags(entry))
-            for task, tags, _ in _walk(load_tasks(ROLES / entry["role"] / "tasks" / "main.yml"), inherited):
+            inherited = frozenset(play_tags | alloy_version.tags_of(entry))
+            for task, tags, _ in alloy_version.walk(load_tasks(ROLES / entry["role"] / "tasks" / "main.yml"), inherited):
                 if _selected(tags):
                     role_tasks.append((entry["role"], task["name"]))
     assert pre_tasks == ALWAYS_PRE_TASKS

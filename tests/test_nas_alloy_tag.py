@@ -9,6 +9,7 @@ import re
 import pytest
 import yaml
 
+from tests.test_alloy_version import alloy_version
 from tests.test_infra_converge_guards import ANSIBLE, NAS, assert_that, find_task, load_tasks, truthy, when_conditions
 from tests.test_pins_converged import pins
 
@@ -65,27 +66,8 @@ WRITERS = ("copy", "template", "file", "lineinfile", "blockinfile", "replace")
 SCOPED_COMPOSE = "compose up -d --no-deps --force-recreate alloy"
 
 
-def _tags(node: dict) -> set[str]:
-    raw = node.get("tags") or []
-    items = [raw] if isinstance(raw, str) else raw
-    return {tag.strip() for item in items for tag in str(item).split(",") if tag.strip()}
-
-
-def _walk(tasks: list[dict], tags: frozenset[str] = frozenset(), gates: tuple[str, ...] = ()) -> list[tuple[dict, set, tuple]]:
-    out = []
-    for task in tasks or []:
-        own, conds = tags | _tags(task), gates + tuple(str(c) for c in when_conditions(task))
-        children = [task[k] for k in ("block", "rescue", "always") if k in task]
-        if children:
-            for child in children:
-                out.extend(_walk(child, frozenset(own), conds))
-        else:
-            out.append((task, own, conds))
-    return out
-
-
 def _leaves() -> list[tuple[dict, set, tuple]]:
-    return _walk(load_tasks(NAS), frozenset({"nas"}))
+    return alloy_version.walk(load_tasks(NAS), frozenset({"nas"}))
 
 
 def _selected(tags: set[str], run_tags: list[str]) -> bool:
@@ -171,7 +153,7 @@ def test_a_whole_converge_runs_the_tasks_it_ran_before_the_tag_and_never_the_all
     tasks = load_tasks(NAS)
     for name, command in WHOLE_APPLY.items():
         task = find_task(tasks, name)
-        assert (task["ansible.builtin.shell"], when_conditions(task), _tags(task)) == (command, [APPLY_FLAG], set())
+        assert (task["ansible.builtin.shell"], when_conditions(task), alloy_version.tags_of(task)) == (command, [APPLY_FLAG], set())
 
 
 @pytest.mark.parametrize(("apply", "tail"), [(False, []), (True, NARROW_APPLY_PATH)])
@@ -194,7 +176,7 @@ def test_an_alloy_run_renders_alloys_files_reports_and_recreates_alloy_alone_und
 )
 def test_the_alloy_only_block_engages_on_a_run_that_selects_alloy_without_the_whole_role(seq, run_tags, narrow):
     block = next(task for task in load_tasks(NAS) if "block" in task)
-    assert _tags(block) == {TAG}
+    assert alloy_version.tags_of(block) == {TAG}
     assert truthy(when_conditions(block), {"ansible_run_tags": seq(run_tags)}) is narrow
 
 
@@ -222,12 +204,14 @@ def test_an_alloy_run_on_the_nas_runs_the_alloy_part_beside_the_always_tasks_and
     would run beside the Alloy part."""
     pre_tasks, role_tasks = [], []
     for play in _plays_reaching("nas"):
-        play_tags = frozenset(_tags(play))
-        pre_tasks += [t["name"] for t, tags, _ in _walk(play.get("pre_tasks"), play_tags) if _selected(tags, [TAG])]
+        play_tags = frozenset(alloy_version.tags_of(play))
+        pre_tasks += [t["name"] for t, tags, _ in alloy_version.walk(play.get("pre_tasks"), play_tags) if _selected(tags, [TAG])]
         for entry in play["roles"]:
             role = load_tasks(ANSIBLE / "roles" / entry["role"] / "tasks" / "main.yml")
             role_tasks += [
-                (entry["role"], t["name"]) for t, tags, _ in _walk(role, play_tags | _tags(entry)) if _selected(tags, [TAG])
+                (entry["role"], t["name"])
+                for t, tags, _ in alloy_version.walk(role, play_tags | alloy_version.tags_of(entry))
+                if _selected(tags, [TAG])
             ]
     assert pre_tasks == ["note — the NAS play's charter"]
     assert role_tasks == [("nas", name) for name in ALWAYS + ALLOY_PART]
