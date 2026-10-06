@@ -5175,7 +5175,7 @@ def test_each_socket_reported_down_arms_the_pass_on_its_own_return_and_the_conne
         clock.now += timedelta(seconds=5)
         ex.on_timer(clock.now)
         assert len(venue.calls) == 1  # the first return arms it, the second endpoint still down
-        assert (ex._reread_tries, ex._sockets_down) == (0, {"a-second-endpoint"})
+        assert (ex._reread_tries, set(ex._sockets_down)) == (0, {"a-second-endpoint"})
         ex.on_socket_state(_socket(SocketState.CONNECTED, "a-second-endpoint"))
         assert ex._reread_tries == executor_module._REREAD_ATTEMPTS  # armed again
         clock.now += timedelta(seconds=5)
@@ -5405,7 +5405,7 @@ def test_a_socket_drop_after_another_sockets_return_leaves_that_returns_arm_and_
     ex, client, clock = _minted_after_a_cut(tmp_path, venue_orders=venue, venue_cancel=_VenueCancel())
     _reconnect(ex)  # the data socket down and back: the return arms the pass
     ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
-    assert (ex._reread_tries, ex._sockets_down) == (executor_module._REREAD_ATTEMPTS, {"kraken-spot-user-streams"})
+    assert (ex._reread_tries, set(ex._sockets_down)) == (executor_module._REREAD_ATTEMPTS, {"kraken-spot-user-streams"})
 
     clock.now += timedelta(seconds=5)
     ex.on_timer(clock.now)
@@ -5413,7 +5413,7 @@ def test_a_socket_drop_after_another_sockets_return_leaves_that_returns_arm_and_
     assert len(venue.calls) == 1 and _record(tmp_path)["submitted"][0]["state"] == "canceled"
     ex.on_socket_state(_socket(SocketState.CONNECTED, "another-string"))  # a return under another string arms nothing
     ex._arm_reread_after_mint()  # and the entry it left holds a mint's arm off
-    assert (ex._reread_tries, ex._sockets_down) == (0, {"kraken-spot-user-streams"})
+    assert (ex._reread_tries, set(ex._sockets_down)) == (0, {"kraken-spot-user-streams"})
 
 
 @pytest.mark.parametrize(
@@ -5567,8 +5567,10 @@ def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_th
     down, the quote silence sends the one cancel into it, and the engine mints the terminal. The
     arming endpoint's own drop cleared its arm, so nothing is read into the cut -- an arm every drop
     but its own left standing would read into it and page the CRITICAL over an order the return
-    then settles -- and the return arms the pass, which settles the row. The drops here lead
-    the mint; the case below takes F2's order, the mint ahead of the first drop."""
+    then settles -- and the return arms the pass, which settles the row. Past the grace the watchdog
+    freezes, its one CRITICAL the only line at ERROR or above, and its sweep finds nothing open: the
+    real Cache lists the minted order closed. The return's pass lifts the freeze on its own tick. The
+    drops here lead the mint; the case below takes F2's order, the mint ahead of the first drop."""
     venue = _VenueOrders(_report(_TXID, OrderStatus.ACCEPTED))
     cancel = _VenueCancel()
     ex, client, clock = _resting_executor(
@@ -5590,12 +5592,22 @@ def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_th
     assert [str(cid) for cid in client.canceled] == ["O-1"]
     minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
     order.apply(minted)
+    client.cache._open_orders.remove(order)
+    client.cache._closed_orders.append(order)
     ex.on_order_event(minted)
     with _executor_errors(level=logging.WARNING) as records:
-        for _ in range(3):
+        clock.now += timedelta(seconds=5)
+        ex.on_timer(clock.now)  # 31 s after both drops: the freeze
+        assert ex._frozen
+        for _ in range(2):
             clock.now += timedelta(seconds=5)
             ex.on_timer(clock.now)
-    assert venue.calls == [] and [r for r in records if r.levelno >= logging.ERROR] == []
+    assert venue.calls == [] and [str(cid) for cid in client.canceled] == ["O-1"]
+    assert [r.getMessage() for r in records if r.levelno >= logging.ERROR] == [
+        "the execution watchdog froze the loop -- socket kraken-spot-data-streams, kraken-spot-user-streams down past "
+        "the 30s grace: the active intent is revoked with socket_down, each order the Cache holds open is cancelled, "
+        "and every new intent is refused until the sockets are back and the re-read pass has settled"
+    ]
 
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
     ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
@@ -5603,7 +5615,7 @@ def test_a_returns_arm_pending_behind_a_live_intent_is_cleared_by_the_cut_and_th
     ex.on_timer(clock.now)
 
     assert len(venue.calls) == 1 and cancel.calls == [(_TXID, "BTC/EUR.KRAKEN")]
-    assert _record(tmp_path)["submitted"][0]["state"] == "canceled"
+    assert _record(tmp_path)["submitted"][0]["state"] == "canceled" and not ex._frozen
 
 
 def test_a_returns_arm_pending_behind_a_live_intent_that_the_other_endpoints_drop_left_standing_is_closed_by_its_first_failed_read_into_the_cut(
@@ -5819,6 +5831,139 @@ def test_the_external_handler_logs_and_continues_when_the_ledger_write_raises(tm
     assert records[0].exc_info is not None  # logger.exception, so the traceback is in the record
     assert metrics.external == ["matched"]
     assert not _kill_file(tmp_path).exists()
+
+
+# --- the stale-socket watchdog: the grace, the freeze, the lift ----------------------------------------
+
+
+def _frozen_executor(tmp_path, *, venue_orders=None, venue_cancel=None, venue_holdings=None):
+    """The cut carried to the mint: a rest-hold order accepted under `_TXID` and held in the Cache, both
+    endpoints reported down, ticks with quotes past the grace so the freeze's cancel is the one, then
+    the terminal the engine mints for itself, which gives the re-read pass a row to read. The minted
+    order moves to the Cache's closed list, as the real Cache lists a canceled order where the stub's
+    lists are static, so a later sweep finds nothing open."""
+    ex, client, clock = _resting_executor(
+        tmp_path,
+        intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)],
+        venue_orders=venue_orders if venue_orders is not None else _VenueOrders(_report(_TXID, OrderStatus.CANCELED)),
+        venue_cancel=venue_cancel if venue_cancel is not None else _VenueCancel(),
+        venue_holdings=venue_holdings,
+    )
+    order = _resting_limit_order("O-1", venue_order_id=_TXID)
+    _hold_in_cache(client, order)
+    ex.on_order_event(_event(OrderAccepted, client_order_id="O-1", venue_order_id=VenueOrderId(_TXID)))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    _advance_with_quotes(ex, client, clock, minutes=1)
+    minted = _event(OrderCanceled, client_order_id="O-1", reconciliation=True)
+    order.apply(minted)
+    client.cache._open_orders.remove(order)
+    client.cache._closed_orders.append(order)
+    ex.on_order_event(minted)
+    assert _record(tmp_path)["submitted"][0]["state"] == "ambiguous"  # the mint landed: the pass has a row to read
+    return ex, client, clock
+
+
+def test_a_three_second_blip_revokes_nothing_and_a_partial_cut_past_the_grace_revokes_the_resting_intent_on_its_ack(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=3)
+    ex.on_timer(clock.now)  # a tick inside the blip, so a grace shorter than the blip would freeze here
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    _advance_with_quotes(ex, client, clock, minutes=1)
+    assert client.canceled == [] and not ex._frozen
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))  # the execution socket stays up
+    _advance_with_quotes(ex, client, clock, minutes=1)  # a tick every 10 s, past the 30 s grace
+    assert ex._frozen and client.canceled == [client.last_order_id]
+    ex.on_order_event(_canceled(client.last_order_id))  # the ack the execution socket carries
+    assert _intent_outcome(tmp_path) == "revoked" and "socket_down" in _intent_entry(tmp_path, 0)["reasons"]
+
+
+def test_a_cut_of_both_endpoints_past_the_grace_sends_the_cancel_and_the_row_ends_ambiguous_on_the_minted_terminal(tmp_path):
+    ex, client, clock = _frozen_executor(tmp_path)  # both endpoints down, the freeze's one cancel out, the terminal minted
+    assert ex._frozen and [str(cid) for cid in client.canceled] == ["O-1"]
+    assert _intent_outcome(tmp_path) == "ambiguous" and ex._plan is None
+    assert "was reconciled, not received" in _intent_entry(tmp_path, 0)["reasons"][0]
+
+
+def test_the_freezes_sweep_cancels_the_active_order_and_every_other_open_order_once(tmp_path):
+    ex, client, clock = _resting_executor(tmp_path, intents=[_intent(mode="rest-hold", offset_pct=5.0, hold_minutes=45)])
+    _hold_in_cache(client, _resting_limit_order("O-1", venue_order_id=_TXID))  # the active's own order, as the library holds it
+    _hold_in_cache(client, _resting_limit_order("O-other"))
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-data-streams"))
+    _advance_with_quotes(ex, client, clock, minutes=1)
+    assert ex._frozen and sorted(str(cid) for cid in client.canceled) == ["O-1", "O-other"]
+
+
+def test_a_freeze_with_no_intent_live_refuses_the_next_plans_every_intent_with_socket_down(tmp_path):
+    clock = _Clock()
+    ex = _executor(tmp_path, clock=clock)
+    ex.on_timer(clock.now)  # the startup pass
+    ex.on_socket_state(_socket(SocketState.DISCONNECTED, "kraken-spot-user-streams"))
+    clock.now += timedelta(seconds=31)
+    ex.on_timer(clock.now)
+    assert ex._frozen
+    _drop_plan(tmp_path, _plan_dict(intents=[_intent(), _intent(symbol="ETH/EUR", notional_eur=20.0)]))
+    clock.now += timedelta(seconds=5)
+    ex.on_timer(clock.now)
+    intents = [_intent_entry(tmp_path, index) for index in (0, 1)]
+    assert [entry["outcome"] for entry in intents] == ["refused", "refused"]
+    assert all("socket_down" in entry["reasons"] for entry in intents)
+
+
+def test_the_freeze_lifts_only_once_the_set_is_empty_and_a_completed_pass_has_settled(tmp_path):
+    holdings = _VenueHoldings({})
+    ex, client, clock = _frozen_executor(tmp_path, venue_holdings=holdings)  # helper: the cut above, frozen
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    assert ex._frozen  # one endpoint still down
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    assert ex._frozen  # the set is empty but no pass has run
+    with _executor_errors(level=logging.INFO) as records:
+        ex.on_timer(clock.now)  # the pass runs with nothing in flight and settles
+        ex.on_timer(clock.now + timedelta(seconds=5))  # the lift's condition still holds: nothing lifts twice
+    assert not ex._frozen and holdings.calls >= 2
+    assert sum("freeze lifted" in r.getMessage() for r in records) == 1
+
+
+def test_the_freeze_and_its_lift_publish_the_watchdog_gauge(tmp_path):
+    metrics = RecordingMetrics()
+    set_executor_hooks(metrics=metrics)
+    ex, client, clock = _frozen_executor(tmp_path)
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    ex.on_timer(clock.now)
+    assert metrics.frozen == [True, False]
+
+
+def test_a_stale_entry_holds_the_freeze_and_the_published_level_at_none(tmp_path):
+    ex, client, clock = _frozen_executor(tmp_path)
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    # the execution socket's return under another string
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams-2"))
+    _advance_ticks(ex, minutes=20)
+    verdict = ex._evaluate(clock.now)
+    assert ex._frozen and verdict.level == GateLevel.NONE and "socket_down" in verdict.reasons
+
+
+def test_a_pass_whose_budget_is_spent_leaves_the_freeze_standing(tmp_path):
+    ex, client, clock = _frozen_executor(tmp_path, venue_orders=_VenueOrders(raises=RuntimeError("down")))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    _advance_ticks(ex, minutes=1)
+    assert ex._frozen and ex._reread_tries == 0
+
+
+def test_a_settle_that_fails_on_the_returns_pass_spends_one_try_and_the_next_ticks_pass_lifts_the_freeze(tmp_path):
+    holdings = _VenueHoldings({})
+    ex, client, clock = _frozen_executor(tmp_path, venue_holdings=holdings)
+    holdings._raises = RuntimeError("down")  # the startup's settle answered; the return's fails
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-data-streams"))
+    ex.on_socket_state(_socket(SocketState.CONNECTED, "kraken-spot-user-streams"))
+    ex.on_timer(clock.now)  # the pass's reads answer, its settle fails: one try spent, the freeze stands
+    assert ex._frozen and ex._reread_tries == 2
+    holdings._raises = None
+    ex.on_timer(clock.now + timedelta(seconds=5))
+    assert not ex._frozen and ex._reread_tries == 0
 
 
 # --- D7: the startup pass reconciles each row against venue truth (spec 00098) -------------------

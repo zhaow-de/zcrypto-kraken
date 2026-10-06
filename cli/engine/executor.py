@@ -89,6 +89,10 @@ _ACK_WAIT = timedelta(seconds=30)
 _MAX_REPRICES = 5
 _MAX_IOC_ATTEMPTS = 3
 _REST_CANCEL_OFFSET = 0.05
+# How long a socket endpoint may stay reported down before the watchdog freezes the loop
+# (`_watch_sockets`): the execution socket drops about hourly on this wheel and reports back within
+# three seconds, and a freeze on that blip would cancel a resting maker order every hour.
+_SOCKET_DOWN_GRACE = timedelta(seconds=30)
 # The overfill trips compare a SUM of per-fill floats against a single sized float, so an exactly
 # complete order routinely lands an ulp over what it asked for. One ulp is not an overfill. Nothing
 # tradeable hides under this either -- the smallest quantity any leg can express is its lot step,
@@ -1033,15 +1037,20 @@ class ProbeExecutor:
         # The newest book a settle's read answered (`_settle_positions_from_venue`), None until one
         # does: a read that fails leaves the previous book standing, its `read_at` its age.
         self._venue_book: VenueBook | None = None
-        # The socket endpoints the client has reported down and not yet back, and the re-read pass's
-        # tries left, set by an endpoint's return and by a mint with no endpoint down: the pass runs
-        # on the next tick with nothing in flight, and a read that fails spends one try, or closes the
-        # arm while an endpoint is held down (`_reread_pass`). A `DISCONNECTED` clears a mint's arm,
-        # and a return's the pass has not run on when it is the drop of the endpoint whose return set
-        # it, `_reread_armed_by` (`on_socket_state`).
-        self._sockets_down: set[str] = set()
+        # The socket endpoints the client has reported down and not yet back, each with the moment its
+        # first `DISCONNECTED` arrived, which the watchdog's grace reads (`_watch_sockets`); and the
+        # re-read pass's tries left, set by an endpoint's return and by a mint with no endpoint down:
+        # the pass runs on the next tick with nothing in flight, and a read or a settle that fails
+        # spends one try, or a read closes the arm while an endpoint is held down (`_reread_pass`). A
+        # `DISCONNECTED` clears a mint's arm, and a return's the pass has not run on when it is the drop
+        # of the endpoint whose return set it, `_reread_armed_by` (`on_socket_state`).
+        self._sockets_down: dict[str, datetime] = {}
         self._reread_tries = 0
         self._reread_armed_by: str | None = None
+        # The two moments the watchdog's freeze lifts on (`_lift_freeze`): when a return last emptied
+        # `_sockets_down`, and when a re-read pass last completed with its reads and its settle answered.
+        self._sockets_emptied_at: datetime | None = None
+        self._reread_completed_at: datetime | None = None
         # The rows the re-read pass repaired from the venue's report in this process, whose later
         # fills `_fill_credit` caps at what the Cache's order holds beyond the row.
         self._rows_the_pass_repaired: set[str] = set()
@@ -1056,8 +1065,8 @@ class ProbeExecutor:
         # be read at construction (`_read_restored`), and never cleared: every plan is refused with it for
         # the life of this process, and a restart is the retry.
         self._reconciliation_refusal: str | None = None
-        # The other two holds `_fold_holds` publishes into the gate's level: `socket_down` while
-        # `_frozen` stands, `daily_loss_hold` while `_day_loss_hold` does.
+        # The other two holds `_fold_holds` publishes into the gate's level: `socket_down` while the
+        # watchdog's `_frozen` stands (`_watch_sockets`), `daily_loss_hold` while `_day_loss_hold` does.
         self._frozen = False
         self._day_loss_hold = False
         self._journal_dir = Path(config.journal_dir)
@@ -1293,11 +1302,14 @@ class ProbeExecutor:
             now = _aware_utc(now)
             if not self._adopted:
                 self._adopt_resting_orders(now)
+            self._watch_sockets(now)
             # Before the pickup and the pump, so a plan dropped during a cut starts behind the re-cancel
             # on this tick and never ahead of it, where the pass would wait behind its every intent;
             # with nothing in flight, `read_venue_orders`' nonce terms.
             if self._reread_tries and self._nothing_in_flight():
                 self._reread_pass(now)
+                # The watcher ran ahead of the pass, so the tick whose pass completes lifts a freeze here.
+                self._lift_freeze()
             # No plan before the startup pass has run: until it has, no row is reconciled against the
             # venue, and the pass's one venue read must reach the venue before any order of this
             # process does (`read_venue_orders` says why).
@@ -1355,7 +1367,11 @@ class ProbeExecutor:
 
     def on_socket_state(self, event) -> None:
         """The client's socket-state stream, the strategy's `on_socket_state` once it subscribed:
-        `DISCONNECTED` names an endpoint down, `CONNECTED` one back. The re-read pass is owed on each
+        `DISCONNECTED` names an endpoint down, kept in `_sockets_down` with the moment its first drop
+        arrived, which the watchdog's grace reads (`_watch_sockets`), and `CONNECTED` one back, the return
+        that empties the set stamping `_sockets_emptied_at`, which the freeze's lift reads (`_lift_freeze`).
+        A drop while the watchdog's freeze stands freezes nothing again -- the freeze is one state -- and
+        holds its lift until that endpoint's return too. The re-read pass is owed on each
         return of an endpoint held down -- the data socket's, whatever the execution socket reports, and
         a second socket's later return owes it again, an empty population consuming that arm with the
         holdings read alone -- and runs on the tick, never here: it reads the Cache and the venue, which
@@ -1372,13 +1388,16 @@ class ProbeExecutor:
         `CONNECTED` under its own string. Arming once the set empties, both sockets resubscribed, was
         set aside: it rests on the execution client reporting `CONNECTED` under the string its
         `DISCONNECTED` carried, unmeasured offline, and an entry whose return never comes under that
-        string would hold the pass off for the life of the process. Bookkeeping, never a submission: log
-        and continue."""
+        string would hold the pass off for the life of the process; such an entry holds the set non-empty,
+        so the watchdog's freeze stands on it until a restart, the freeze's page the operator's read of it.
+        Bookkeeping, never a submission: log and continue."""
         try:
             endpoint = str(getattr(event, "endpoint", "?"))
             state = getattr(event, "state", None)
             if state == SocketState.DISCONNECTED:
-                self._sockets_down.add(endpoint)
+                # A repeated drop keeps the first one's moment: a socket reporting down again and again is
+                # still the one cut, and the grace runs from its start.
+                self._sockets_down.setdefault(endpoint, self._now())
                 if self._reread_armed_by in (None, endpoint):
                     self._reread_tries = 0  # a mint's arm, or this endpoint's own return's: a return arms the pass again
                     self._reread_armed_by = None
@@ -1388,7 +1407,9 @@ class ProbeExecutor:
                     endpoint,
                 )
             elif state == SocketState.CONNECTED and endpoint in self._sockets_down:
-                self._sockets_down.discard(endpoint)
+                del self._sockets_down[endpoint]
+                if not self._sockets_down:
+                    self._sockets_emptied_at = self._now()
                 self._reread_tries = _REREAD_ATTEMPTS
                 self._reread_armed_by = endpoint
                 logger.warning(
@@ -1409,9 +1430,63 @@ class ProbeExecutor:
         mint inside a cut reads at most once, on a tick inside the mint-to-`DISCONNECTED` gap, one try spent
         at WARNING and the tick held up to `_VENUE_READ_TIMEOUT_SECONDS`. The cost is a stale entry, an
         endpoint whose `CONNECTED` never comes under its `DISCONNECTED`'s string, holding every later mint's
-        settlement off until a startup inside the re-attach window."""
+        settlement off, and the watchdog's freeze standing with it, which pages, until a restart, whose
+        startup reads the rows inside the re-attach window."""
         if not self._sockets_down:
             self._reread_tries = _REREAD_ATTEMPTS
+
+    def _watch_sockets(self, now: datetime) -> None:
+        """The account-wide stale-socket watchdog, first on every tick after the startup pass. Frozen, it
+        asks for the lift (`_lift_freeze`). Not frozen, an endpoint held down past `_SOCKET_DOWN_GRACE`
+        freezes the loop: `_frozen`, which `_fold_holds` publishes as `socket_down` at `none` so that
+        every new intent is refused, the gauge, the CRITICAL, and the cancels in `_trip_kill`'s order --
+        `_cancel_resting(active)`, one cancel of the active intent's order and one for every other order
+        the Cache holds open -- and a resting active intent then takes the two lines of `_revoke` the
+        sweep lacks, so the cancel's ack ends it `revoked` with `socket_down` and the tick's `_poll`
+        waits on that ack. `_revoke` itself, or the sweep with the level path left to revoke, would send
+        the active's cancel twice: the sweep cancels the active itself and skips only what it has just
+        requested. Under a cut of both endpoints the ack never comes: the intent ends `ambiguous` on the
+        terminal the library mints or at `_ACK_WAIT`, the plan halted, and the re-read pass on the return
+        re-cancels at the venue what still rests. Wrapped whole: `_frozen` is set before the cancels, so
+        a raise in them leaves the level path to revoke the intent, and no plan is dropped."""
+        try:
+            self._lift_freeze()
+            if self._frozen:
+                return
+            stale = sorted(endpoint for endpoint, since in self._sockets_down.items() if now - since > _SOCKET_DOWN_GRACE)
+            if not stale:
+                return
+            self._frozen = True
+            _set_frozen(True)
+            logger.critical(
+                "the execution watchdog froze the loop -- socket %s down past the %ds grace: the active intent is revoked "
+                "with socket_down, each order the Cache holds open is cancelled, and every new intent is refused until the "
+                "sockets are back and the re-read pass has settled",
+                ", ".join(stale),
+                int(_SOCKET_DOWN_GRACE.total_seconds()),
+            )
+            active = self._active
+            self._cancel_resting(active)
+            if active is not None and active.phase == "resting":
+                active.revoke_reasons = ("socket_down",)
+                self._enter(active, "cancelling")
+        except Exception:
+            logger.exception("executor socket watchdog raised -- continuing")
+
+    def _lift_freeze(self) -> None:
+        """Lift the watchdog's freeze once no endpoint is held down and a re-read pass has completed since
+        the return that emptied the set -- its reads answered and its settle with them, so the loop resumes
+        on the venue's own account of the cut. Called by `_watch_sockets` and again after the tick's pass;
+        a pass whose budget is spent stamps nothing, so the freeze stands. Returns at once unless frozen:
+        once both moments are set the condition holds for the life of the process."""
+        if not self._frozen:
+            return
+        emptied, completed = self._sockets_emptied_at, self._reread_completed_at
+        if self._sockets_down or emptied is None or completed is None or completed < emptied:
+            return
+        self._frozen = False
+        _set_frozen(False)
+        logger.info("the execution watchdog's freeze lifted -- the sockets are back and the re-read pass has settled")
 
     def _adopt_resting_orders(self, now: datetime) -> None:
         """The startup pass (D10), run once on the first tick: decide, per resting order this
@@ -1676,7 +1751,10 @@ class ProbeExecutor:
         re-read it and page the same line. A run whose reads answer -- the ledger's, and the venue's
         orders when the population is not empty -- ends by settling the position gauge from the
         venue's holdings (`_settle_positions_from_venue`), so an opposing hand trade the state machine
-        refused settles at the next such arm; a run whose read fails returns before the settle.
+        refused settles at the next such arm; a run whose read fails returns before the settle. A settle
+        that fails spends one try as a failed read does, so the next tick runs the pass again under the
+        same budget over the rows still open; a run whose settle answers closes the arm and stamps
+        `_reread_completed_at`, the completion the watchdog's freeze lifts on (`_lift_freeze`).
         Wrapped whole: a raise here may never drop a plan."""
         self._reread_armed_by = None  # a return's arm is consumed by this run, whatever it reads
         rows: dict = {}
@@ -1725,7 +1803,6 @@ class ProbeExecutor:
                     exc_info=True,
                 )
             return
-        self._reread_tries = 0
         if rows:
             restored = [cid for cid in rows if cid in self._restored_fills]
             if len(rows) > len(restored):
@@ -1737,7 +1814,19 @@ class ProbeExecutor:
                     "the re-read pass reads %d restored row(s) with a fill since its last read against the venue", len(restored)
                 )
             self._reconcile_adopted_rows(rows, {str(report.venue_order_id): report for report in reports}, recancel=True)
-        self._settle_positions_from_venue("the re-read pass")
+        if not self._settle_positions_from_venue("the re-read pass"):
+            self._reread_tries -= 1
+            if self._reread_tries:
+                logger.warning("the re-read pass could not read the venue's holdings -- asking again next tick")
+            else:
+                logger.critical(
+                    "the re-read pass could not read the venue's holdings on %d ticks -- the position gauge keeps its reading%s",
+                    _REREAD_ATTEMPTS,
+                    " and the execution watchdog's freeze stands" if self._frozen else "",
+                )
+            return
+        self._reread_tries = 0
+        self._reread_completed_at = self._now()
 
     def _reset_fills_read(self, entries) -> None:
         """A pass's trade-history state (`_trades_cover`): nothing read yet, no failure, and the floor
