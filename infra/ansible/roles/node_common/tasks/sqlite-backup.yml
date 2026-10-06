@@ -1,0 +1,41 @@
+---
+- name: render the SQLite backup systemd unit
+  ansible.builtin.template:
+    src: sqlite-backup.service.j2
+    dest: /etc/systemd/system/zcrypto-sqlite-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+
+# The unit passes the script its arguments and its two prefixes, so systemd holds that unit before the script lands: a
+# converge stopped in between leaves an old script under a new unit, never the reverse, and on a fresh node the timer
+# starts only once its script exists. Ungated, as the self-check's reload is.
+- name: reload systemd, so the unit's arguments are in place before the script lands
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: install the SQLite backup script
+  ansible.builtin.copy:
+    src: zcrypto-sqlite-backup.sh
+    dest: /usr/local/sbin/zcrypto-sqlite-backup
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: render the SQLite backup systemd timer
+  ansible.builtin.template:
+    src: sqlite-backup.timer.j2
+    dest: /etc/systemd/system/zcrypto-sqlite-backup.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: node_common_sqlite_backup_timer_install
+
+# A first-install preview never wrote the timer, so systemd cannot find it there.
+- name: enable + start the SQLite backup timer
+  ansible.builtin.systemd_service:
+    name: zcrypto-sqlite-backup.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and node_common_sqlite_backup_timer_install is changed)

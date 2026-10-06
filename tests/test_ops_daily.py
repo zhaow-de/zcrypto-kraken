@@ -2143,11 +2143,15 @@ def test_the_real_register_yields_a_refdata_reminder():
     giving it a `tmp_path` fixture would move it off the path `main` takes."""
     read = ops_daily.read_reminders("tok", now=NOW, window=DAY, opener=_canned(_counter(0)))
     assert read.unreadable is None, read.unreadable
-    # The committed deploy log decides whether the observability node's patch pass is a third.
-    assert {r.name for r in read.reminders} - {"mon patch pass"} == {"refdata sweep", "healable re-derivation"}
+    # The committed deploy log decides which nodes' patch passes join them.
+    assert {r.name for r in read.reminders} - set(_PATCH_PASS_NAMES.values()) == {"refdata sweep", "healable re-derivation"}
 
 
-def _converge(ts: str, *, limit="zcrypto-mon", tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
+_PATCH_PASS_HOSTS = [host for host, _ in ops_daily.PATCH_PASSES]
+_PATCH_PASS_NAMES = {host: f"{ops_daily.ssh_alias(host)} patch pass" for host in _PATCH_PASS_HOSTS}
+
+
+def _converge(ts: str, *, limit, tags="", skip_tags="", rc=0, playbook="site.yml") -> dict:
     return {"ts": ts, "limit": limit, "tags": tags, "skip_tags": skip_tags, "rc": rc, "playbook": playbook}
 
 
@@ -2157,17 +2161,19 @@ def _deploy_log(tmp_path, *rows):
     return log
 
 
-_MON_LOG = (
-    _converge("2026-10-06T09:00:00Z"),  # the node's first converge
-    _converge("2026-11-03T10:00:00Z"),  # a patch pass's re-converge
-    _converge("2026-11-20T10:00:00Z", tags="mon"),  # a token re-mint or a replaced secret, which is no pass
-    _converge("2026-11-21T10:00:00Z", rc=2),  # a full converge that failed
-    _converge("2026-11-22T10:00:00Z", limit="zcrypto-ops"),
-    _converge("2026-11-23T10:00:00Z", playbook="bootstrap.yml"),
-    _converge("2026-11-24T10:00:00Z", skip_tags="engine"),  # a converge that skipped a tag, which is no full one
-)
+def _node_log(host: str) -> tuple[dict, ...]:
+    return (
+        _converge("2026-10-06T09:00:00Z", limit=host),  # the node's first converge
+        _converge("2026-11-03T10:00:00Z", limit=host),  # a patch pass's re-converge
+        _converge("2026-11-20T10:00:00Z", limit=host, tags="mon"),  # a token re-mint or a replaced secret, which is no pass
+        _converge("2026-11-21T10:00:00Z", limit=host, rc=2),  # a full converge that failed
+        _converge("2026-11-22T10:00:00Z", limit="zcrypto-ops"),
+        _converge("2026-11-23T10:00:00Z", limit=host, playbook="bootstrap.yml"),
+        _converge("2026-11-24T10:00:00Z", limit=host, skip_tags="engine"),  # a converge that skipped a tag, which is no full one
+    )
 
 
+@pytest.mark.parametrize(("host", "runbook"), ops_daily.PATCH_PASSES, ids=_PATCH_PASS_HOSTS)
 @pytest.mark.parametrize(
     "now,status,owed",
     [
@@ -2176,34 +2182,79 @@ _MON_LOG = (
         (datetime(2026, 12, 9, 3, 0, tzinfo=timezone.utc), "OVERDUE by 6 days", True),
     ],
 )
-def test_the_mon_patch_pass_is_due_a_month_after_the_nodes_last_full_converge(tmp_path, now, status, owed):
+def test_a_nodes_patch_pass_is_due_a_month_after_its_last_full_converge(tmp_path, host, runbook, now, status, owed):
     read = ops_daily.read_reminders(
         "tok",
         now=now,
         window=DAY,
         opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
-        deploy_log=_deploy_log(tmp_path, *_MON_LOG),
+        deploy_log=_deploy_log(tmp_path, *_node_log(host)),
     )
-    patch = _reminder(read, "mon patch pass")
+    patch = _reminder(read, _PATCH_PASS_NAMES[host])
     assert patch.status.startswith(status) and "2026-11-03" in patch.status, patch.status
     assert patch.owed is owed
-    assert patch.runbook == "infra/runbooks/mon.md#mon-patch-pass"
+    assert patch.runbook == runbook
     assert read.unreadable is None
 
 
-@pytest.mark.parametrize("rows", [(), _MON_LOG[2:]], ids=["an empty log", "no full converge of the node"])
-def test_a_deploy_log_with_no_full_converge_of_the_node_owes_no_patch_pass(tmp_path, rows):
+@pytest.mark.parametrize("host", _PATCH_PASS_HOSTS)
+@pytest.mark.parametrize("rows", ["an empty log", "no full converge of the node"])
+def test_a_host_with_no_full_converge_on_record_owes_no_patch_pass(tmp_path, host, rows):
+    others = [other for other in _PATCH_PASS_HOSTS if other != host]
+    log = [_converge("2026-08-20T10:00:00Z", limit=other) for other in others]
+    if rows == "no full converge of the node":
+        log += _node_log(host)[2:]
     read = ops_daily.read_reminders(
         "tok",
         now=NOW,
         window=DAY,
         opener=_canned(_counter(0)),
         register=_register(tmp_path, *_TWO_SWEEPS),
-        deploy_log=_deploy_log(tmp_path, *rows),
+        deploy_log=_deploy_log(tmp_path, *log),
     )
     assert read.unreadable is None, read.unreadable
-    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"}
+    assert {r.name for r in read.reminders} == {"refdata sweep", "healable re-derivation"} | {_PATCH_PASS_NAMES[o] for o in others}
+
+
+def test_a_hosts_malformed_row_leaves_the_next_hosts_patch_pass_read(tmp_path, monkeypatch):
+    first = ops_daily.PATCH_PASSES[0][0]
+    monkeypatch.setattr(ops_daily, "PATCH_PASSES", (*ops_daily.PATCH_PASSES, ("zcrypto-red", "infra/runbooks/capture.md")))
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=_deploy_log(
+            tmp_path, _converge("not-a-date", limit=first), _converge("2026-08-20T10:00:00Z", limit="zcrypto-red")
+        ),
+    )
+    assert read.unreadable and read.unreadable.count("the deploy log could not be read") == 1, read.unreadable
+    assert _reminder(read, "red patch pass").status.startswith("due in 22 days")
+    assert f"{ops_daily.ssh_alias(first)} patch pass" not in {r.name for r in read.reminders}
+
+
+def test_a_deploy_log_that_cannot_be_opened_is_noted_once_however_many_hosts_read_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(ops_daily, "PATCH_PASSES", (*ops_daily.PATCH_PASSES, ("zcrypto-red", "infra/runbooks/capture.md")))
+    read = ops_daily.read_reminders(
+        "tok",
+        now=NOW,
+        window=DAY,
+        opener=_canned(_counter(0)),
+        register=_register(tmp_path, *_TWO_SWEEPS),
+        deploy_log=tmp_path,
+    )
+    assert read.unreadable and read.unreadable.count("the deploy log could not be read") == 1, read.unreadable
+    assert not [r for r in read.reminders if r.name.endswith("patch pass")]
+
+
+@pytest.mark.parametrize(("host", "runbook"), ops_daily.PATCH_PASSES, ids=_PATCH_PASS_HOSTS)
+def test_each_patch_pass_is_named_as_its_runbook_section_reads(host, runbook):
+    path, anchor = runbook.split("#")
+    _, section = (Path(__file__).resolve().parents[1] / path).read_text().split(f'<a name="{anchor}"></a>')
+    section = section.split('\n<a name="')[0]
+    assert f"`OWED {_PATCH_PASS_NAMES[host]}`" in section, f"{runbook} does not read the reminder's name"
 
 
 def test_every_runbook_citation_the_instrument_itself_prints_resolves():

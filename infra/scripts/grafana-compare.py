@@ -3,8 +3,8 @@
     uv run python infra/scripts/grafana-compare.py [--day YYYY-MM-DD]
 Each query node of infra/grafana/alerts.yaml is sent as an instant query, `time=<epoch seconds>`, to each stack's
 datasource proxy at the top of each UTC hour of the day named, the preceding UTC day by default; the rule's own
-range selector supplies the window. The node's own rule group and `host` exist on the node alone, so both are
-outside the comparison by name. The last line is one summary whatever the outcome:
+range selector supplies the window. The rule groups the node alone evaluates, and the hosts they are named for, exist
+on the node alone, so both are outside the comparison by name. The last line is one summary whatever the outcome:
   `compare: <nodes> nodes × 24 instants, <n> differences`, exit 0 at none and 1 otherwise, one line per difference above it;
   `compare: failed: <what failed>`, exit 2, naming the stack where a stack failed -- never a match, never a skip.
 The requests go one at a time, so a run adds one query at a time to either stack's query path. The tokens are only
@@ -41,8 +41,8 @@ grafana_auth = _load_sibling("grafana_auth", "grafana_auth.py")
 _query_tool = _load_sibling("grafana_query", "grafana-query.py")
 
 ALERTS = _HERE.parents[1] / "infra" / "grafana" / "alerts.yaml"
-EXCLUDED_GROUPS = ("zcrypto-mon",)
-EXCLUDED_HOSTS = ("zcrypto-mon",)
+EXCLUDED_GROUPS = ("zcrypto-mon", "zcrypto-hc")
+EXCLUDED_HOSTS = ("zcrypto-mon", "zcrypto-hc")
 # The rules that select a direct shipper's log stream, which reaches the node only at the cutover; the test holds
 # this tuple to the measured basis's listing over the rule file, so an eighth such rule fails the test, not a run.
 DIRECT_SHIPPED_RULES = (

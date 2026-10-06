@@ -908,13 +908,13 @@ def test_the_slack_template_and_the_logs_board_name_every_host_of_the_topology()
 
 def test_a_rule_that_names_no_host_is_held_to_the_unfiltered_hosts_only_in_a_group_pushed_to_the_node_alone(monkeypatch):
     family = "zcrypto_family_no_keep_list_admits_total"
-    (node_only,) = node_only_groups()
 
     def rule(group: str) -> dict:
         return {"uid": f"a-rule-of-{group}", "ruleGroup": group, "data": [{"datasourceUid": PROM_DS, "model": {"expr": family}}]}
 
-    monkeypatch.setitem(globals(), "_rules", lambda: (rule(node_only), rule("zcrypto-fleet")))
-    assert _admission_expectations() == [
-        (f"a-rule-of-{node_only}", family, UNFILTERED_HOSTS, _BECAUSE_NODE_ONLY),
-        ("a-rule-of-zcrypto-fleet", family, None, _BECAUSE_PUBLISHED),
-    ]
+    for node_only in sorted(node_only_groups()):
+        monkeypatch.setitem(globals(), "_rules", lambda group=node_only: (rule(group), rule("zcrypto-fleet")))
+        assert _admission_expectations() == [
+            (f"a-rule-of-{node_only}", family, UNFILTERED_HOSTS, _BECAUSE_NODE_ONLY),
+            ("a-rule-of-zcrypto-fleet", family, None, _BECAUSE_PUBLISHED),
+        ]

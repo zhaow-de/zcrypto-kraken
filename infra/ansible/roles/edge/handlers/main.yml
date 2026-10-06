@@ -1,0 +1,6 @@
+---
+- name: reload caddy
+  ansible.builtin.systemd_service:
+    name: caddy
+    state: reloaded
+  when: not edge_units_previewed

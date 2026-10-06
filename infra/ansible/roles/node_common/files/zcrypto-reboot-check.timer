@@ -1,4 +1,4 @@
-# Installed by the `mon` Ansible role at /etc/systemd/system/zcrypto-reboot-check.timer, a copy of
+# Installed by the `node_common` Ansible role at /etc/systemd/system/zcrypto-reboot-check.timer, a copy of
 # the capture role's timer; edit this file and re-converge instead of editing the host's copy.
 [Unit]
 Description=Publish the pending-reboot flag as a node-exporter textfile

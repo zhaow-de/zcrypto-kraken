@@ -1,0 +1,12 @@
+# Rendered by the `{{ node_common_role_name }}` Ansible role at /etc/systemd/system/{{ node_common_selfcheck_name }}.timer; edit
+# infra/ansible/roles/node_common/templates/selfcheck.timer.j2 and re-converge.
+[Unit]
+Description={{ node_common_selfcheck_timer_description }}
+
+[Timer]
+# No Persistent=: a slot missed while the node was down is the signal.
+OnCalendar={{ node_common_selfcheck_on_calendar }}
+Unit={{ node_common_selfcheck_name }}.service
+
+[Install]
+WantedBy=timers.target
