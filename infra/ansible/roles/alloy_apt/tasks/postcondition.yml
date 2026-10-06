@@ -1,0 +1,25 @@
+---
+# A state read, not a notify: a `restart alloy` stranded by a later failure is never sent again, and on a host whose
+# package does not restart Alloy on an upgrade the old binary keeps running behind a green converge.
+- name: apply the pending alloy restart before reading what the process runs
+  ansible.builtin.meta: flush_handlers
+
+- name: read whether the running alloy process runs the installed binary
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      pid=$(systemctl show -p MainPID --value alloy)
+      if [ -z "$pid" ] || [ "$pid" = "0" ]; then echo __not_running__; else readlink "/proc/$pid/exe"; fi
+    executable: /bin/bash
+  register: alloy_apt_running_exe
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: restart alloy when its process predates the installed binary or none runs
+  ansible.builtin.systemd_service:
+    name: alloy
+    state: restarted
+  when: >-
+    not ansible_check_mode
+    and (alloy_apt_running_exe.stdout | default('') in ['', '__not_running__']
+         or alloy_apt_running_exe.stdout is search(' \\(deleted\\)$'))

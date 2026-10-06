@@ -122,6 +122,7 @@ def test_only_the_roles_that_joined_the_tag_carry_it_and_no_play_does():
     widens in that change."""
     carriers = [p for p in [*_role_yaml(), SITE, ANSIBLE / "bootstrap.yml"] if TAG in _every_tag(load_tasks(p))]
     assert carriers == [
+        ROLES / "access" / "tasks" / "main.yml",
         ROLES / "cache" / "tasks" / "main.yml",
         CAPTURE,
         ROLES / "nas" / "tasks" / "main.yml",

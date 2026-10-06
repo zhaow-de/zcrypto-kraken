@@ -2,59 +2,6 @@
 - name: wireguard + probe dependencies
   ansible.builtin.apt: {name: [wireguard-tools], state: present}
 
-- name: add the Grafana apt repository (deb822 format; module fetches + stores the signing key)
-  ansible.builtin.deb822_repository:
-    name: grafana
-    types: [deb]
-    uris: https://apt.grafana.com
-    suites: [stable]
-    components: [main]
-    signed_by: https://apt.grafana.com/gpg.key
-# Alloy and Caddy are apt packages from THIRD-PARTY repos, so this role FOLLOWS what apt installs
-# rather than driving it. Both the version force and the hold are gone, and the hold is actively
-# CLEARED rather than merely unset, so a host provisioned under the old model converges back.
-#
-# `apt-mark hold` makes `apt upgrade` skip a package SILENTLY, and nothing in that output says which
-# entries are held. A version force was worse: with ansible's default `allow_downgrade: false` a
-# repo that ships a newer build turns this task into a refused downgrade, and a failure here --
-# third in the role -- drops the host from the play and takes the pinned-leaves and Caddyfile tasks
-# with it, which ARE the client-cert revocation path.
-#
-# Deliberately NOT recorded in fleet-pins.md: a version there would have no producer and no
-# consumer, so it would drift into a confidently-wrong number. Read it off the host with `dpkg-query
-# -W alloy`. Ordering: `dpkg_selections` hard-fails on a package dpkg has never seen, so the
-# selections task stays AFTER the apt install.
-- name: alloy present — version FOLLOWED from apt, never forced (see the note above)
-  ansible.builtin.apt:
-    name: alloy
-    state: present
-    update_cache: true
-- name: alloy is never held — a hold makes `apt upgrade` skip it silently
-  ansible.builtin.dpkg_selections: {name: alloy, selection: install}
-
-- name: alloy env — CONFIG_FILE + credentials (the deb's unit reads EnvironmentFile=/etc/default/alloy)
-  ansible.builtin.template:
-    src: alloy-env.j2
-    dest: /etc/default/alloy
-    owner: root
-    group: alloy
-    mode: '0640'
-  no_log: true # renders the Grafana Cloud push credentials — keep them out of --diff output
-  notify: restart alloy
-- name: >-
-    alloy config — UNGATED copy; every converge ships it, so a hand edit cannot outlive the next
-    converge. That is the whole drift remedy: the other tiers carry asserts because their copies
-    are digest-gated and an ordinary converge skips them — this one is not.
-  ansible.builtin.copy:
-    src: config.alloy
-    dest: /etc/alloy/config.alloy
-    owner: root
-    group: alloy
-    mode: '0640'
-  notify: restart alloy
-- name: alloy enabled + started
-  ansible.builtin.systemd: {name: alloy, enabled: true, state: started}
-
 - name: textfile dir for the probe
   ansible.builtin.file: {path: /var/lib/zaccess-textfiles, state: directory, mode: '0755'}
 - name: probe script
@@ -102,7 +49,8 @@
     suites: [any-version]
     components: [main]
     signed_by: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-# Caddy follows apt too, and the version pin was never what protected the mTLS edge: the Caddyfile
+# Caddy follows apt, the one third-party package here that does (Alloy is held at the fleet's version
+# below), and a version pin was never what protected the mTLS edge: the Caddyfile
 # task below runs `validate: caddy validate` -- the INSTALLED binary against the NEW config, before
 # writing it -- so a version whose client-auth syntax moved fails the converge loudly and version-
 # independently. A Caddy that cannot parse its config does not start, so the failure direction is
@@ -112,7 +60,7 @@
     name: caddy
     state: present
     update_cache: true
-- name: caddy is never held — same reason as alloy above
+- name: caddy is never held — a hold makes `apt upgrade` skip it silently
   ansible.builtin.dpkg_selections: {name: caddy, selection: install}
 
 # spec 00075 D16.
@@ -169,9 +117,9 @@
 
 # LAST IN THE ROLE, and skipped under `--check`, because an assert that fails takes the rest of the
 # play with it and below it are the pinned-leaves and Caddyfile tasks that ARE the client-cert
-# revocation path. `flush_handlers` runs before it for the same reason: force_handlers defaults to
-# False, so a failure here would strand `reload caddy`, the handler that makes a deleted pinned leaf
-# take effect.
+# revocation path. `flush_handlers` runs before it, and before the Alloy part between the two, for the
+# same reason: force_handlers defaults to False, so a failure in either would strand `reload caddy`, the
+# handler that makes a deleted pinned leaf take effect.
 #
 # The relay is Accept=no with no --exit-idle-time, so one long-lived systemd-socket-proxyd holds the
 # listener. Rewriting the unit does not replace its target -- no ExecReload, the target is a
@@ -193,6 +141,49 @@
 # an operator's session.
 - name: apply pending handlers before the relay drift gate
   ansible.builtin.meta: flush_handlers
+
+# Alloy is held at the fleet's version and pinned, through the shared apt role (spec 00123 D3, D5), and runs here,
+# after the revocation path and the flush above, so no Alloy failure in a real pass takes the pinned leaves, the
+# Caddyfile or `reload caddy` with it. A preview that cannot fetch the Grafana repository's signing key still refuses
+# the whole converge, as the Caddy repository's fetch already does.
+- name: install, pin and hold alloy at the version committed for this host
+  ansible.builtin.import_role:
+    name: alloy_apt
+  tags: [alloy]
+
+- name: alloy env — CONFIG_FILE + credentials (the deb's unit reads EnvironmentFile=/etc/default/alloy)
+  ansible.builtin.template:
+    src: alloy-env.j2
+    dest: /etc/default/alloy
+    owner: root
+    group: alloy
+    mode: '0640'
+  no_log: true # renders the Grafana Cloud push credentials — keep them out of --diff output
+  notify: restart alloy
+  tags: [alloy]
+- name: >-
+    alloy config — UNGATED copy; every converge ships it, so a hand edit cannot outlive the next
+    converge. That is the whole drift remedy: the other tiers carry asserts because their copies
+    are digest-gated and an ordinary converge skips them — this one is not.
+  ansible.builtin.copy:
+    src: config.alloy
+    dest: /etc/alloy/config.alloy
+    owner: root
+    group: alloy
+    mode: '0640'
+    validate: alloy validate %s
+  notify: restart alloy
+  tags: [alloy]
+- name: alloy enabled + started
+  ansible.builtin.systemd: {name: alloy, enabled: true, state: started}
+  when: not alloy_apt_previewed
+  tags: [alloy]
+
+- name: restart alloy when its process does not run the installed binary
+  ansible.builtin.import_role:
+    name: alloy_apt
+    tasks_from: postcondition
+  tags: [alloy]
 
 # Read the RUNNING process's argv, never `systemctl show`: after a daemon-reload that reports the NEW
 # value while the process keeps the old one -- the same trap the deploy skills'

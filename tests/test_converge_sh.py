@@ -319,6 +319,7 @@ PUBLISHED = [
         {"ops_image_digest": DIGEST, "ops_alloy_digest": DIGEST, "liquidations_decision": "roll-after"},
     ),
     (["--limit", "zaccess", "--tags", "access"], "zaccess", "access", {}),
+    (["--limit", "zaccess", "--tags", "alloy"], "zaccess", "alloy", {}),
     (["--limit", "zcrypto", "--tags", "chrony"], "zcrypto", "chrony", {}),
     (["--limit", "zcrypto-ops", "-e", "ops_reconcile_mint=false"], "zcrypto-ops", "", {"ops_reconcile_mint": "false"}),
     (
