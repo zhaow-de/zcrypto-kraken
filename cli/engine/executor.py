@@ -1199,9 +1199,9 @@ class ProbeExecutor:
         folded in, each reason appended after the gate's in this order: `socket_down` and
         `reconciliation_unread` lower the level to `none`, `daily_loss_hold` to `reduce_only` unless it
         reads `none` already. Unfolded, the gauge, the board and the exec record's `level` -- the one
-        the tracking trip's eligibility reads -- would read the gate's `full` while every intent is
-        refused. `inputs` keeps the gate's keys and gains the three as booleans under the reasons'
-        names."""
+        the tracking trip's eligibility reads -- would read the gate's `full` while the executor
+        refuses every intent, or under the day-loss hold every opening one. `inputs` keeps the gate's
+        keys and gains the three as booleans under the reasons' names."""
         frozen = self._frozen
         unread = self._reconciliation_refusal is not None
         day_loss = self._day_loss_hold
