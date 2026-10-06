@@ -3522,6 +3522,26 @@ def test_through_its_alias_a_stop_of_the_dead_man_service_is_the_operators():
     assert ops_daily.classify_action(step, host=None, resolve=_identity) is ops_daily.Tier.PREPARED
 
 
+@pytest.mark.parametrize(
+    ("step", "host"),
+    [
+        ("ssh access systemctl restart wg-quick@wg0", None),
+        ("ssh access sudo systemctl restart wg-quick@zaccess0", None),
+        ("ssh access sudo systemctl restart caddy", None),
+        ("ssh access sudo systemctl restart alloy", None),
+        ("sudo systemctl restart caddy", "zaccess"),
+        ("sudo systemctl restart alloy", "access"),
+    ],
+)
+def test_on_the_bridgehead_a_restart_is_the_owners_under_either_of_its_names(step, host):
+    assert ops_daily.classify_action(step, host=host, resolve=_identity) is ops_daily.Tier.PREPARED
+
+
+def test_the_ops_end_of_the_bridgeheads_tunnel_stays_the_passs_own():
+    step = "ssh hp sudo systemctl restart wg-quick@zaccess0"
+    assert ops_daily.classify_action(step, host=None, resolve=_identity) is ops_daily.Tier.AUTONOMOUS
+
+
 # --- the `zcrypto engine` read shapes: one flag table per sub, held to the CLI's own options ---------------------
 
 _ENGINE_READS = [

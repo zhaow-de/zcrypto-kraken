@@ -1622,9 +1622,9 @@ _PROTECTED_OBJECTS = (
     "grafana-push.sh",
     "@sha256:",
 )
-_TELEMETRY_HOSTS = frozenset(
-    {"ops", "nas", "zaccess", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"}
-)
+# The bridgehead, `zaccess`, is absent under every name it is reached by: it carries the ops tunnel and the mTLS edge, so
+# a restart, start or stop there is the owner's, its Alloy's included.
+_TELEMETRY_HOSTS = frozenset({"ops", "nas", "zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3", "zcrypto-mon", "zcrypto-hc"})
 # A cache node's Docker daemon carries Valkey and Sentinel, so any other restart there can be a failover: the one
 # object the pass may take is Alloy's container. An allowlist, because a container id names nothing a denylist matches.
 _CACHE_HOSTS = frozenset({"zcrypto-valkey1", "zcrypto-valkey2", "zcrypto-valkey3"})
